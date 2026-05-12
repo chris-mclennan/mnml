@@ -224,22 +224,24 @@ impl App {
         }
     }
 
-    /// Close the pane at `id`. Refuses (with a toast) if it's an editor with
-    /// unsaved changes — save first. (Force-close / discard is a later command.)
+    /// Close the pane at `id`. If it's a dirty editor the unsaved changes are
+    /// discarded (a toast says so). (A Save/Discard/Cancel overlay is a later
+    /// refinement; for now closing = discard, like clicking the × on the tab.)
     pub fn close_pane(&mut self, id: PaneId) {
         if id >= self.panes.len() {
             return;
         }
         // (`Pane` has only the `Editor` variant for now — `let` is irrefutable.)
         #[allow(irrefutable_let_patterns)]
-        if let Pane::Editor(b) = &self.panes[id]
-            && b.dirty
-        {
-            let name = b.display_name();
-            self.toast(format!("unsaved changes in {name} — save first (Ctrl+S)"));
-            return;
-        }
+        let discarded = if let Pane::Editor(b) = &self.panes[id] {
+            b.dirty.then(|| b.display_name())
+        } else {
+            None
+        };
         self.panes.remove(id);
+        if let Some(name) = discarded {
+            self.toast(format!("closed {name} — discarded unsaved changes"));
+        }
         // Re-point `active` past the removal (single-leaf model for now).
         self.active = match self.active {
             _ if self.panes.is_empty() => None,
