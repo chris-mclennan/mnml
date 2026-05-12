@@ -144,6 +144,9 @@ pub struct App {
     pub dynamic_commands: Vec<crate::command::DynCommand>,
     /// Plugin-command ids invoked since the IPC layer last drained them.
     pending_plugin_invocations: Vec<String>,
+    /// LSP client subsystem — one server subprocess per (project-root, language),
+    /// feeding diagnostics + go-to-def/hover results back through `tick`.
+    pub lsp: crate::lsp::LspManager,
 }
 
 type HttpJobDone = (u64, Result<crate::request_pane::ResponseView, String>);
@@ -157,6 +160,7 @@ impl App {
             .map_err(|e| format!("cannot open workspace {}: {e}", workspace.display()))?;
         let tree = Tree::open(&workspace);
         let git = GitStatus::new(&workspace);
+        let lsp = crate::lsp::LspManager::new(&workspace, &config);
         let keymap = crate::input::keymap::Keymap::build(&config);
         Ok(App {
             workspace,
@@ -188,6 +192,7 @@ impl App {
             next_job_id: 1,
             dynamic_commands: Vec::new(),
             pending_plugin_invocations: Vec::new(),
+            lsp,
         })
     }
 
@@ -594,11 +599,99 @@ impl App {
         // etc. route to `Pane::Request` once that track lands.)
         match Buffer::open(&path, &self.config) {
             Ok(buf) => {
+                let text = buf.editor.text().to_string();
                 self.panes.push(Pane::Editor(buf));
                 let new_id = self.panes.len() - 1;
                 self.reveal_pane(new_id);
+                self.lsp.did_open(&path, &text);
             }
             Err(e) => self.toast(format!("cannot open {}: {e}", path.display())),
+        }
+    }
+
+    /// Tell the LSP server `path` was saved (re-reads the file — we just wrote it).
+    fn notify_lsp_saved(&mut self, path: &Path) {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            self.lsp.did_save(path, &text);
+        }
+    }
+
+    // ─── LSP commands ───────────────────────────────────────────────
+    /// `lsp.goto_definition` — ask the server where the symbol under the cursor
+    /// is defined; the answer arrives async (`tick` jumps there).
+    pub fn lsp_goto_definition(&mut self) {
+        self.lsp_request_at_cursor(
+            |lsp, p, l, c| lsp.goto_definition(p, l, c),
+            "go-to-definition",
+        );
+    }
+    /// `lsp.hover` — ask the server for hover docs at the cursor (`tick` toasts them).
+    pub fn lsp_hover(&mut self) {
+        self.lsp_request_at_cursor(|lsp, p, l, c| lsp.hover(p, l, c), "hover");
+    }
+    fn lsp_request_at_cursor(
+        &mut self,
+        send: impl FnOnce(&mut crate::lsp::LspManager, &Path, u32, u32) -> bool,
+        what: &str,
+    ) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("LSP needs a saved file");
+            return;
+        };
+        let text = b.editor.text().to_string();
+        let (row, col) = b.editor.row_col();
+        // Sync the latest text first so positions line up, then send the request.
+        self.lsp.did_change(&path, &text);
+        if !send(&mut self.lsp, &path, row as u32, col as u32) {
+            self.toast(format!("no language server for this file ({what})"));
+        }
+    }
+    /// Apply one LSP event (called from `tick`).
+    fn apply_lsp_event(&mut self, ev: crate::lsp::LspEvent) {
+        use crate::lsp::LspEvent;
+        match ev {
+            LspEvent::Diagnostics { path, diags } => {
+                for pane in &mut self.panes {
+                    if let Pane::Editor(b) = pane
+                        && b.is_at(&path)
+                    {
+                        b.diagnostics = diags.clone();
+                    }
+                }
+            }
+            LspEvent::GotoDefinition {
+                path,
+                line,
+                character,
+            } => {
+                self.open_path(&path);
+                if let Some(b) = self.active_editor_mut() {
+                    b.editor.place_cursor(line as usize, character as usize);
+                }
+            }
+            LspEvent::Hover { text } => {
+                let one = text
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty())
+                    .unwrap_or("");
+                let shown: String = one.chars().take(160).collect();
+                self.toast(if shown.is_empty() {
+                    "hover: (nothing)".to_string()
+                } else {
+                    format!("hover: {shown}")
+                });
+            }
+            LspEvent::Message(m) => self.toast(m),
+        }
+    }
+    pub fn drain_lsp_events(&mut self) {
+        for ev in self.lsp.poll() {
+            self.apply_lsp_event(ev);
         }
     }
 
@@ -2226,8 +2319,8 @@ impl App {
         if id >= self.panes.len() {
             return;
         }
-        let discarded = match &self.panes[id] {
-            Pane::Editor(b) => b.dirty.then(|| b.display_name()),
+        let (discarded, closed_path) = match &self.panes[id] {
+            Pane::Editor(b) => (b.dirty.then(|| b.display_name()), b.path.clone()),
             Pane::MdPreview(_)
             | Pane::Diff(_)
             | Pane::GitGraph(_)
@@ -2235,7 +2328,7 @@ impl App {
             | Pane::Request(_)
             | Pane::Pty(_)
             | Pane::Ai(_)
-            | Pane::Tests(_) => None,
+            | Pane::Tests(_) => (None, None),
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -2244,6 +2337,15 @@ impl App {
             self.active = self.layout.first_leaf();
         }
         self.remove_pane_storage(id);
+        // If no other editor pane still shows that file, tell the LSP server.
+        if let Some(p) = closed_path
+            && !self
+                .panes
+                .iter()
+                .any(|pane| matches!(pane, Pane::Editor(b) if b.is_at(&p)))
+        {
+            self.lsp.did_close(&p);
+        }
         // If we dropped the last leaf but background buffers remain, show one.
         if self.active.is_none() && !self.panes.is_empty() {
             self.reveal_pane(self.panes.len() - 1);
@@ -2363,6 +2465,7 @@ impl App {
         if let Some(p) = saved_path {
             self.refresh_md_previews(&p);
             self.refresh_blame_for(&p);
+            self.notify_lsp_saved(&p);
         }
     }
     pub fn save_all(&mut self) {
@@ -2385,6 +2488,7 @@ impl App {
         for p in saved {
             self.refresh_md_previews(&p);
             self.refresh_blame_for(&p);
+            self.notify_lsp_saved(&p);
         }
         self.toast(format!("saved {n} file(s)"));
     }
@@ -2599,6 +2703,7 @@ impl App {
         self.drain_http_jobs();
         self.drain_ai_jobs();
         self.drain_tests_jobs();
+        self.drain_lsp_events();
         self.refresh_live_ai_panes();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL

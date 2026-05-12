@@ -48,6 +48,8 @@ pub struct Buffer {
     /// `Some` ⇔ blame-gutter mode is on for this buffer (`git.blame_toggle`):
     /// one entry per file line, computed when toggled on, refreshed on save.
     pub blame: Option<Vec<crate::git::blame::BlameLine>>,
+    /// LSP diagnostics for this file (replaced wholesale on each `publishDiagnostics`).
+    pub diagnostics: Vec<crate::lsp::Diagnostic>,
 }
 
 impl Buffer {
@@ -71,6 +73,7 @@ impl Buffer {
             read_only: false,
             highlights: Vec::new(),
             blame: None,
+            diagnostics: Vec::new(),
         };
         b.refresh_highlights();
         Ok(b)
@@ -96,6 +99,7 @@ impl Buffer {
             read_only: false,
             highlights: Vec::new(),
             blame: None,
+            diagnostics: Vec::new(),
         }
     }
 

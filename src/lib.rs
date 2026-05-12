@@ -30,6 +30,7 @@ pub mod http;
 pub mod input;
 pub mod ipc;
 pub mod layout;
+pub mod lsp;
 pub mod pane;
 pub mod picker;
 pub mod playwright;

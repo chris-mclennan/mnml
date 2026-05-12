@@ -89,6 +89,12 @@ pub fn draw_pane(
         SignKind::Modified => theme::cur().blue,
         SignKind::Removed => theme::cur().red,
     };
+    let diag_color = |s: crate::lsp::Severity| match s {
+        crate::lsp::Severity::Error => theme::cur().red,
+        crate::lsp::Severity::Warning => theme::cur().yellow,
+        crate::lsp::Severity::Info => theme::cur().cyan,
+        crate::lsp::Severity::Hint => theme::cur().comment,
+    };
 
     let mut lines: Vec<Line> = Vec::with_capacity(text_h);
     for r in 0..text_h {
@@ -114,6 +120,20 @@ pub fn draw_pane(
         } else {
             format!("{:>num_w$} ", line_no + 1)
         };
+        // Worst LSP diagnostic severity touching this line (if any).
+        let diag_sev: Option<crate::lsp::Severity> = buf
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                (d.range.start.line as usize) <= line_no && line_no <= (d.range.end.line as usize)
+            })
+            .map(|d| d.severity)
+            .min_by_key(|s| match s {
+                crate::lsp::Severity::Error => 0u8,
+                crate::lsp::Severity::Warning => 1,
+                crate::lsp::Severity::Info => 2,
+                crate::lsp::Severity::Hint => 3,
+            });
         let num_style = Style::default()
             .fg(if blame_on {
                 if is_cur {
@@ -121,21 +141,27 @@ pub fn draw_pane(
                 } else {
                     theme::cur().comment
                 }
+            } else if let Some(s) = diag_sev {
+                diag_color(s)
             } else if is_cur {
                 theme::cur().fg
             } else {
                 theme::cur().base16[0x03]
             })
             .bg(base_bg);
-        // The 1-cell git-sign column to the left of the number.
+        // The 1-cell sign column: an LSP severity dot wins, else the git change mark.
         let sign = signs.and_then(|v| {
             v.binary_search_by_key(&line_no, |&(l, _)| l)
                 .ok()
                 .map(|i| v[i].1)
         });
-        let sign_span = match sign {
-            Some(k) => Span::styled("▎", Style::default().fg(sign_color(k)).bg(base_bg)),
-            None => Span::styled(" ", Style::default().bg(base_bg)),
+        let sign_span = if let Some(s) = diag_sev {
+            Span::styled("●", Style::default().fg(diag_color(s)).bg(base_bg))
+        } else {
+            match sign {
+                Some(k) => Span::styled("▎", Style::default().fg(sign_color(k)).bg(base_bg)),
+                None => Span::styled(" ", Style::default().bg(base_bg)),
+            }
         };
 
         // Selection columns on this line.

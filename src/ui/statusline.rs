@@ -106,6 +106,29 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             left.push(Seg::new(format!(" {glyph} "), gc, theme::cur().statusline));
             let name = format!("{}{} ", b.display_name(), if b.dirty { " ●" } else { "" });
             left.push(Seg::new(name, theme::cur().fg, theme::cur().statusline));
+            // LSP diagnostics count (errors then warnings), if any.
+            let (errs, warns) =
+                b.diagnostics
+                    .iter()
+                    .fold((0u32, 0u32), |(e, w), d| match d.severity {
+                        crate::lsp::Severity::Error => (e + 1, w),
+                        crate::lsp::Severity::Warning => (e, w + 1),
+                        _ => (e, w),
+                    });
+            if errs > 0 {
+                left.push(Seg::new(
+                    format!("  {errs} "),
+                    theme::cur().red,
+                    theme::cur().statusline,
+                ));
+            }
+            if warns > 0 {
+                left.push(Seg::new(
+                    format!(" ⚠ {warns} "),
+                    theme::cur().yellow,
+                    theme::cur().statusline,
+                ));
+            }
         }
         None => left.push(Seg::new(
             " [no file] ",

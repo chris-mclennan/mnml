@@ -295,6 +295,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_worktree_picker(),
         },
         Command {
+            id: "lsp.goto_definition",
+            title: "LSP: go to definition",
+            group: "lsp",
+            keys: &["f12"],
+            run: |app| app.lsp_goto_definition(),
+        },
+        Command {
+            id: "lsp.hover",
+            title: "LSP: hover (docs at cursor)",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_hover(),
+        },
+        Command {
             id: "rqst.send",
             title: "HTTP: send request (.http/.curl) — or re-fire a request pane",
             group: "http",

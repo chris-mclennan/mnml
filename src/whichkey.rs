@@ -161,6 +161,16 @@ pub fn root() -> &'static Leader {
                         ],
                     ),
                 ),
+                (
+                    'l',
+                    group(
+                        "+lsp",
+                        vec![
+                            ('d', cmd("lsp.goto_definition", "go to definition")),
+                            ('h', cmd("lsp.hover", "hover docs")),
+                        ],
+                    ),
+                ),
                 ('w', cmd("file.save", "write/save")),
                 ('q', cmd("buffer.close", "close buffer")),
                 ('e', cmd("view.toggle_tree", "explorer")),
