@@ -42,6 +42,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 let p = b.path.clone().unwrap_or_else(|| name.clone().into());
                 icons::for_path(&p, false, false, nerd)
             }
+            Pane::MdPreview(p) => icons::for_path(&p.path, false, false, nerd),
         };
         let badge = if pane.is_dirty() { "●" } else { "×" };
         // ` <icon> <name> <badge> `

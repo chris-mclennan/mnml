@@ -23,6 +23,7 @@ pub mod bufferline;
 pub mod close_prompt;
 pub mod editor_view;
 pub mod icons;
+pub mod md_preview;
 pub mod picker;
 pub mod statusline;
 pub mod theme;
@@ -146,7 +147,11 @@ fn render_layout(
         Layout::Empty => None,
         Layout::Leaf(id) => {
             let focused = app.active == Some(*id);
-            editor_view::draw_pane(frame, app, *id, area, focused)
+            if matches!(app.panes.get(*id), Some(crate::pane::Pane::MdPreview(_))) {
+                md_preview::draw(frame, app, *id, area, focused)
+            } else {
+                editor_view::draw_pane(frame, app, *id, area, focused)
+            }
         }
         Layout::Split {
             dir,

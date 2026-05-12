@@ -102,10 +102,14 @@ to `themes/*.toml` (`[base_30]` + `[base_16]` colour tables), enumerated by `bui
 `THEME_SOURCES` and parsed (serde/`toml`) at first use; `onedark` is the default (also
 kept hardcoded as the seed/fallback).
 `[ui] theme = "…"` at launch, `theme.pick` command / `:set theme=…` at runtime
-(re-highlights open buffers). headless+IPC (interactive TUI listens too) + the
-`run.sh`/`dev.sh` wrappers. Next: the tracks (Git diff/stage/blame, HTTP, Pty/AI-CLI,
-AI-API, CDP, the `.test` E2E format, plugins) + queued polish (markdown preview pane,
-right-click context menus on files/tabs). See `.local/PLAN.md` for the full plan.
+(re-highlights open buffers). Markdown preview — `Pane::MdPreview` (`src/ui/md_preview.rs`,
+a block-level renderer: headings/lists/fenced code/blockquotes/hrules styled, inline
+markers unwrapped); `markdown.preview` command (`<leader>m`) opens a rendered, read-only,
+scrollable view in a split next to the source, refreshed when the source is saved.
+headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh` wrappers. Next: the
+tracks (Git diff/stage/blame, HTTP, Pty/AI-CLI, AI-API, CDP, the `.test` E2E format,
+plugins) + queued polish (right-click context menus on files/tabs, inline-styled markdown,
+line-wrapped preview). See `.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)

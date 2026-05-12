@@ -356,28 +356,103 @@ impl App {
             self.toast("nothing to split");
             return;
         };
-        let new_buf = match self.panes.get(cur) {
-            Some(Pane::Editor(b)) => match &b.path {
-                Some(p) => {
-                    Buffer::open(p, &self.config).unwrap_or_else(|_| Buffer::scratch(&self.config))
-                }
-                None => Buffer::scratch(&self.config),
-            },
+        // The new half re-opens the current file fresh (own cursor), else a scratch.
+        let path = match self.panes.get(cur) {
+            Some(Pane::Editor(b)) => b.path.clone(),
+            Some(Pane::MdPreview(p)) => Some(p.path.clone()),
+            None => None,
+        };
+        let new_buf = match path {
+            Some(p) => {
+                Buffer::open(&p, &self.config).unwrap_or_else(|_| Buffer::scratch(&self.config))
+            }
             None => Buffer::scratch(&self.config),
         };
-        self.panes.push(Pane::Editor(new_buf));
+        let new_id = self.split_leaf_with(cur, dir, Pane::Editor(new_buf));
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+    }
+
+    /// Replace `Leaf(leaf)` with `Split{leaf, new-pane}`; returns the new pane id.
+    fn split_leaf_with(
+        &mut self,
+        leaf: PaneId,
+        dir: crate::layout::SplitDir,
+        pane: Pane,
+    ) -> PaneId {
+        self.panes.push(pane);
         let new_id = self.panes.len() - 1;
         self.layout.replace_leaf(
-            cur,
+            leaf,
             Layout::Split {
                 dir,
                 ratio: 50,
-                first: Box::new(Layout::Leaf(cur)),
+                first: Box::new(Layout::Leaf(leaf)),
                 second: Box::new(Layout::Leaf(new_id)),
             },
         );
+        new_id
+    }
+
+    /// Open a rendered-markdown preview of the active `.md` buffer, in a split to
+    /// the right. If one's already open for this file, just focus it.
+    pub fn open_md_preview(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("no active buffer");
+            return;
+        };
+        let path = match self.panes.get(cur) {
+            Some(Pane::Editor(b)) if b.language_ext.as_deref() == Some("md") => b.path.clone(),
+            Some(Pane::Editor(_)) => {
+                self.toast("not a markdown file");
+                return;
+            }
+            Some(Pane::MdPreview(p)) => Some(p.path.clone()), // already a preview — re-open beside it
+            None => None,
+        };
+        let Some(path) = path else {
+            self.toast("markdown preview needs a saved .md file");
+            return;
+        };
+        // Already showing a preview of this file somewhere? Focus it.
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::MdPreview(mp) if mp.path == path))
+        {
+            self.reveal_pane(id);
+            return;
+        }
+        let source = match self.panes.get(cur) {
+            Some(Pane::Editor(b)) => b.editor.text().to_string(),
+            _ => std::fs::read_to_string(&path).unwrap_or_default(),
+        };
+        let new_id = self.split_leaf_with(
+            cur,
+            crate::layout::SplitDir::Horizontal,
+            Pane::MdPreview(crate::pane::MdPreview {
+                path,
+                source,
+                scroll: 0,
+            }),
+        );
         self.active = Some(new_id);
         self.focus = Focus::Pane;
+    }
+
+    /// After a `.md` buffer is saved, refresh any open previews of that file.
+    fn refresh_md_previews(&mut self, path: &Path) {
+        let fresh = std::fs::read_to_string(path).ok();
+        for pane in &mut self.panes {
+            if let Pane::MdPreview(p) = pane
+                && p.path == path
+            {
+                if let Some(s) = &fresh {
+                    p.source = s.clone();
+                }
+                p.scroll = 0;
+            }
+        }
     }
 
     /// Move focus to the leaf in direction `d` of the focused one (by the rects
@@ -503,11 +578,9 @@ impl App {
         if id >= self.panes.len() {
             return;
         }
-        #[allow(irrefutable_let_patterns)]
-        let discarded = if let Pane::Editor(b) = &self.panes[id] {
-            b.dirty.then(|| b.display_name())
-        } else {
-            None
+        let discarded = match &self.panes[id] {
+            Pane::Editor(b) => b.dirty.then(|| b.display_name()),
+            Pane::MdPreview(_) => None,
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -577,6 +650,7 @@ impl App {
         let id = self.close_prompt?;
         match self.panes.get(id)? {
             Pane::Editor(b) => Some((b.display_name(), b.path.is_some())),
+            Pane::MdPreview(p) => Some((p.title(), false)),
         }
     }
 
@@ -598,24 +672,39 @@ impl App {
     }
 
     pub fn save_active(&mut self) {
-        match self.active_editor_mut() {
+        let saved_path = match self.active_editor_mut() {
             Some(buf) if buf.path.is_some() => {
                 let name = buf.display_name();
                 match buf.save_to_disk() {
                     Ok(()) => {
+                        let p = buf.path.clone();
                         self.toast(format!("saved {name}"));
                         self.git.refresh();
                         self.disarm_quit();
+                        p
                     }
-                    Err(e) => self.toast(format!("save failed: {e}")),
+                    Err(e) => {
+                        self.toast(format!("save failed: {e}"));
+                        None
+                    }
                 }
             }
-            Some(_) => self.toast("nothing to save (scratch buffer)".to_string()),
-            None => self.toast("no active editor".to_string()),
+            Some(_) => {
+                self.toast("nothing to save (scratch buffer)".to_string());
+                None
+            }
+            None => {
+                self.toast("no active editor".to_string());
+                None
+            }
+        };
+        if let Some(p) = saved_path {
+            self.refresh_md_previews(&p);
         }
     }
     pub fn save_all(&mut self) {
         let mut n = 0;
+        let mut saved: Vec<std::path::PathBuf> = Vec::new();
         for pane in &mut self.panes {
             if let Pane::Editor(b) = pane
                 && b.path.is_some()
@@ -623,10 +712,16 @@ impl App {
                 && b.save_to_disk().is_ok()
             {
                 n += 1;
+                if let Some(p) = &b.path {
+                    saved.push(p.clone());
+                }
             }
         }
         self.git.refresh();
         self.disarm_quit();
+        for p in saved {
+            self.refresh_md_previews(&p);
+        }
         self.toast(format!("saved {n} file(s)"));
     }
 
@@ -662,7 +757,6 @@ impl App {
         };
         self.config.editor.input_style = style.to_string();
         for pane in &mut self.panes {
-            #[allow(irrefutable_let_patterns)]
             if let Pane::Editor(b) = pane {
                 b.input = crate::input::make_handler_for(style, &self.config);
             }

@@ -204,10 +204,24 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
 fn handle_pane_key(app: &mut App, key: KeyEvent) {
     let viewport = pane_viewport(app);
     let Some(i) = app.active else { return };
+    // A markdown preview is read-only: only scroll + Esc.
+    if let Some(Pane::MdPreview(p)) = app.panes.get_mut(i) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => p.scroll = p.scroll.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => p.scroll += 1,
+            KeyCode::PageUp => p.scroll = p.scroll.saturating_sub(viewport),
+            KeyCode::PageDown => p.scroll += viewport,
+            KeyCode::Home | KeyCode::Char('g') => p.scroll = 0,
+            KeyCode::End | KeyCode::Char('G') => p.scroll = usize::MAX, // clamped on draw
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // `b` borrows app.panes; `&mut app.clipboard` is a disjoint field — fine.
     let ev = match app.panes.get_mut(i) {
         Some(Pane::Editor(b)) => b.feed_key(key, &mut app.clipboard, viewport),
-        None => return,
+        _ => return,
     };
     match ev {
         BufferEvent::Edited | BufferEvent::Redraw | BufferEvent::NoOp => {}
@@ -417,15 +431,26 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         .find(|(r, _)| contains(*r, x, y))
     {
         let vp = (tr.height as usize).max(1);
-        let op = if delta < 0 {
-            EditOp::MoveUp
-        } else {
-            EditOp::MoveDown
-        };
-        for _ in 0..delta.unsigned_abs() {
-            if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
-                b.editor.apply(op.clone(), vp, &mut app.clipboard);
+        match app.panes.get_mut(pid) {
+            Some(Pane::Editor(b)) => {
+                let op = if delta < 0 {
+                    EditOp::MoveUp
+                } else {
+                    EditOp::MoveDown
+                };
+                for _ in 0..delta.unsigned_abs() {
+                    b.editor.apply(op.clone(), vp, &mut app.clipboard);
+                }
             }
+            Some(Pane::MdPreview(p)) => {
+                let n = delta.unsigned_abs() as usize;
+                p.scroll = if delta < 0 {
+                    p.scroll.saturating_sub(n)
+                } else {
+                    p.scroll + n
+                };
+            }
+            None => {}
         }
     }
 }

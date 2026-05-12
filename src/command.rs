@@ -204,6 +204,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_theme_picker(),
         },
         Command {
+            id: "markdown.preview",
+            title: "Markdown: open rendered preview (split)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_md_preview(),
+        },
+        Command {
             id: "whichkey.leader",
             title: "Leader menu (which-key)",
             group: "view",
