@@ -387,7 +387,7 @@ impl App {
         let path = match self.panes.get(cur) {
             Some(Pane::Editor(b)) => b.path.clone(),
             Some(Pane::MdPreview(p)) => Some(p.path.clone()),
-            Some(Pane::Diff(_)) | Some(Pane::Request(_)) | None => None,
+            Some(Pane::Diff(_)) | Some(Pane::Request(_)) | Some(Pane::Pty(_)) | None => None,
         };
         let new_buf = match path {
             Some(p) => {
@@ -430,7 +430,10 @@ impl App {
         };
         let path = match self.panes.get(cur) {
             Some(Pane::Editor(b)) if b.language_ext.as_deref() == Some("md") => b.path.clone(),
-            Some(Pane::Editor(_)) | Some(Pane::Diff(_)) | Some(Pane::Request(_)) => {
+            Some(Pane::Editor(_))
+            | Some(Pane::Diff(_))
+            | Some(Pane::Request(_))
+            | Some(Pane::Pty(_)) => {
                 self.toast("not a markdown file");
                 return;
             }
@@ -480,6 +483,56 @@ impl App {
                 p.scroll = 0;
             }
         }
+    }
+
+    // ─── pty / AI-CLI panes ─────────────────────────────────────────
+    /// Open an embedded terminal (`profile` = shell / `claude` / `codex`) as a
+    /// stacked split below the focused leaf (a terminal "drawer"), and focus it.
+    pub fn open_pty(&mut self, profile: crate::pty_pane::BinaryProfile) {
+        // The initial size is a guess — `ui/pty_view` resizes the session to its
+        // rendered area on the first frame.
+        match crate::pty_pane::PtySession::spawn(profile, 24, 80) {
+            Ok(s) => {
+                let pane = Pane::Pty(s);
+                match self.active {
+                    Some(cur) => {
+                        let new_id =
+                            self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                        self.active = Some(new_id);
+                    }
+                    None => {
+                        self.panes.push(pane);
+                        let id = self.panes.len() - 1;
+                        self.layout = Layout::Leaf(id);
+                        self.active = Some(id);
+                    }
+                }
+                self.focus = Focus::Pane;
+            }
+            Err(e) => self.toast(format!("can't open terminal: {e}")),
+        }
+    }
+
+    pub fn open_shell(&mut self) {
+        self.open_pty(crate::pty_pane::BinaryProfile::shell(Some(
+            self.workspace.clone(),
+        )));
+    }
+    pub fn open_claude_code(&mut self) {
+        self.open_pty(crate::pty_pane::BinaryProfile::claude_code(
+            self.workspace.clone(),
+        ));
+    }
+    pub fn open_codex(&mut self) {
+        self.open_pty(crate::pty_pane::BinaryProfile::codex(
+            self.workspace.clone(),
+        ));
+    }
+
+    /// True if any pane is a pty (the event loop polls faster while one's open so
+    /// streaming output stays smooth).
+    pub fn has_pty_pane(&self) -> bool {
+        self.panes.iter().any(|p| matches!(p, Pane::Pty(_)))
     }
 
     // ─── HTTP: request pane ─────────────────────────────────────────
@@ -1018,7 +1071,7 @@ impl App {
         }
         let discarded = match &self.panes[id] {
             Pane::Editor(b) => b.dirty.then(|| b.display_name()),
-            Pane::MdPreview(_) | Pane::Diff(_) | Pane::Request(_) => None,
+            Pane::MdPreview(_) | Pane::Diff(_) | Pane::Request(_) | Pane::Pty(_) => None,
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -1091,6 +1144,7 @@ impl App {
             Pane::MdPreview(p) => Some((p.title(), false)),
             Pane::Diff(d) => Some((d.title(), false)),
             Pane::Request(r) => Some((r.title(), false)),
+            Pane::Pty(s) => Some((s.title(), false)),
         }
     }
 

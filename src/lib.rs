@@ -30,6 +30,7 @@ pub mod layout;
 pub mod pane;
 pub mod picker;
 pub mod prompt;
+pub mod pty_pane;
 pub mod request_pane;
 pub mod tree;
 pub mod tui;

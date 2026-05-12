@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use crate::buffer::Buffer;
 use crate::git::diff::Hunk;
+use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
 
 // `Editor`'s payload (`Buffer`) is much bigger than the others'; boxing it would
@@ -23,7 +24,8 @@ pub enum Pane {
     Diff(DiffView),
     /// A request fired from a `.http`/`.curl` file, with its response.
     Request(RequestPane),
-    // Pty(PtySession),       // Pty / AI-CLI track
+    /// An embedded terminal (shell / `claude` / `codex`).
+    Pty(PtySession),
     // Ai(AiPanel),           // AI track
 }
 
@@ -93,6 +95,7 @@ impl Pane {
             Pane::MdPreview(p) => p.title(),
             Pane::Diff(d) => d.title(),
             Pane::Request(r) => r.title(),
+            Pane::Pty(s) => s.title(),
         }
     }
 
@@ -100,7 +103,7 @@ impl Pane {
     pub fn is_dirty(&self) -> bool {
         match self {
             Pane::Editor(b) => b.dirty,
-            Pane::MdPreview(_) | Pane::Diff(_) | Pane::Request(_) => false,
+            Pane::MdPreview(_) | Pane::Diff(_) | Pane::Request(_) | Pane::Pty(_) => false,
         }
     }
 

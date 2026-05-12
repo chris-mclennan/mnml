@@ -255,6 +255,28 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.copy_active_curl(),
         },
         Command {
+            id: "term.shell",
+            title: "Terminal: open a shell (split below)",
+            group: "ai",
+            keys: &["ctrl+t"],
+            run: |app| app.open_shell(),
+        },
+        Command {
+            id: "ai.claude_code",
+            title: "AI: open Claude Code (split below)",
+            group: "ai",
+            // No global key — `Ctrl+Shift+A` isn't distinguishable in most terminals; use `<leader>a c`.
+            keys: &[],
+            run: |app| app.open_claude_code(),
+        },
+        Command {
+            id: "ai.codex",
+            title: "AI: open Codex (split below)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_codex(),
+        },
+        Command {
             id: "whichkey.leader",
             title: "Leader menu (which-key)",
             group: "view",

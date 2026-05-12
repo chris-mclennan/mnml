@@ -109,6 +109,17 @@ pub fn root() -> &'static Leader {
                     ),
                 ),
                 (
+                    'a',
+                    group(
+                        "+ai/term",
+                        vec![
+                            ('t', cmd("term.shell", "shell")),
+                            ('c', cmd("ai.claude_code", "claude code")),
+                            ('x', cmd("ai.codex", "codex")),
+                        ],
+                    ),
+                ),
+                (
                     's',
                     group(
                         "+split",

@@ -103,7 +103,9 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
         if app.should_quit {
             break;
         }
-        if event::poll(Duration::from_millis(120))? {
+        // Poll faster while a pty is open so streaming output stays smooth.
+        let timeout = Duration::from_millis(if app.has_pty_pane() { 40 } else { 120 });
+        if event::poll(timeout)? {
             match event::read()? {
                 Event::Key(k) if k.kind != KeyEventKind::Release => dispatch_key(app, k),
                 Event::Mouse(m) => dispatch_mouse(app, m),
@@ -289,6 +291,22 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('y') => app.copy_active_curl(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
+        }
+        return;
+    }
+    // A pty pane swallows almost everything (so readline / vim-in-pty work) and
+    // forwards it to the child. The global chords (`Ctrl+E` cycle focus, `Ctrl+B`
+    // tree, …) already had their shot in `dispatch_key` before us, so they remain
+    // the way out — nothing here intercepts. (Esc is forwarded too — terminal apps
+    // need it.) An exited child swallows nothing; close it with `Ctrl+W`.
+    if let Some(Pane::Pty(s)) = app.panes.get_mut(i) {
+        if !s.is_exited() {
+            let bytes = pty_key_bytes(key);
+            if !bytes.is_empty() {
+                s.write_bytes(&bytes);
+            }
+        } else if key.code == KeyCode::Esc {
+            app.focus_tree();
         }
         return;
     }
@@ -545,6 +563,7 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     rp.scroll + n
                 };
             }
+            Some(Pane::Pty(_)) => {} // pty scrollback isn't wired yet
             None => {}
         }
     }
@@ -552,4 +571,74 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
 
 fn contains(r: Rect, x: u16, y: u16) -> bool {
     x >= r.x && x < r.x.saturating_add(r.width) && y >= r.y && y < r.y.saturating_add(r.height)
+}
+
+/// Translate a key event into the byte sequence a pty child expects (xterm-ish).
+fn pty_key_bytes(key: KeyEvent) -> Vec<u8> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let prefix_alt = |b: Vec<u8>| {
+        if alt {
+            let mut v = vec![0x1b];
+            v.extend(b);
+            v
+        } else {
+            b
+        }
+    };
+    match key.code {
+        KeyCode::Char(c) => {
+            if ctrl {
+                // Control char: letters → 1..26, plus the usual @ [ \ ] ^ _.
+                let b = match c.to_ascii_lowercase() {
+                    'a'..='z' => Some((c.to_ascii_lowercase() as u8) - b'a' + 1),
+                    ' ' | '@' => Some(0),
+                    '[' => Some(0x1b),
+                    '\\' => Some(0x1c),
+                    ']' => Some(0x1d),
+                    '^' => Some(0x1e),
+                    '_' | '?' => Some(0x1f),
+                    _ => None,
+                };
+                match b {
+                    Some(b) => prefix_alt(vec![b]),
+                    None => prefix_alt(c.to_string().into_bytes()),
+                }
+            } else {
+                prefix_alt(c.to_string().into_bytes())
+            }
+        }
+        KeyCode::Enter => prefix_alt(vec![b'\r']),
+        KeyCode::Tab => prefix_alt(vec![b'\t']),
+        KeyCode::BackTab => b"\x1b[Z".to_vec(),
+        KeyCode::Backspace => prefix_alt(vec![0x7f]),
+        KeyCode::Esc => vec![0x1b],
+        KeyCode::Up => b"\x1b[A".to_vec(),
+        KeyCode::Down => b"\x1b[B".to_vec(),
+        KeyCode::Right => b"\x1b[C".to_vec(),
+        KeyCode::Left => b"\x1b[D".to_vec(),
+        KeyCode::Home => b"\x1b[H".to_vec(),
+        KeyCode::End => b"\x1b[F".to_vec(),
+        KeyCode::PageUp => b"\x1b[5~".to_vec(),
+        KeyCode::PageDown => b"\x1b[6~".to_vec(),
+        KeyCode::Insert => b"\x1b[2~".to_vec(),
+        KeyCode::Delete => b"\x1b[3~".to_vec(),
+        KeyCode::F(n @ 1..=4) => format!("\x1bO{}", (b'P' + (n - 1)) as char).into_bytes(),
+        KeyCode::F(n) => {
+            // xterm "modifyOtherKeys"-ish CSI for F5..F12.
+            let code = match n {
+                5 => 15,
+                6 => 17,
+                7 => 18,
+                8 => 19,
+                9 => 20,
+                10 => 21,
+                11 => 23,
+                12 => 24,
+                _ => return Vec::new(),
+            };
+            format!("\x1b[{code}~").into_bytes()
+        }
+        _ => Vec::new(),
+    }
 }

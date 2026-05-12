@@ -146,10 +146,21 @@ URL) and writes one `.curl` stub per operation under `<out>/<tag>/<operationId>.
 params → `{{name}}`, `security` ⇒ `Authorization: Bearer {{TOKEN}}`, JSON body from a spec
 `example`); `mnml discover SPEC [--out DIR] [--base-url URL]` (default out `.mnml/requests`).
 Still to do for HTTP: editable request-pane field tabs (right now you edit the `.http` file in
-a normal editor). Then: **Pty/AI-CLI** (the AI track — `claude`/`codex` panes + `claude -p`
-one-shots; a raw API client is deferred), LSP, CDP, the `.test` E2E format, plugins; plus
-queued polish (right-click context menus on files/tabs, line-wrapped preview). See
-`.local/PLAN.md` for the full plan.
+a normal editor). **Pty / AI-CLI panes — first cut done:** `src/pty_pane.rs` (`portable-pty` +
+`vt100`) — `PtySession` = a live pty + child + a `Mutex<vt100::Parser>` a reader thread pumps;
+`BinaryProfile::shell()/claude_code(ws)/codex(ws)` (claude injects `.mnml/CLAUDE.md` via
+`--append-system-prompt`); `Pane::Pty(PtySession)`; `src/ui/pty_view.rs` renders the vt100 grid
+(theme bg/fg for the default colours, resizes the session to its area each frame, places the
+caret when focused, "[process exited]" banner). `term.shell` (`Ctrl+T` / `<leader>a t`),
+`ai.claude_code` (`<leader>a c`), `ai.codex` (`<leader>a x`) open one as a stacked split below
+the focused leaf. A focused pty forwards keys→bytes to the child (`tui::pty_key_bytes`,
+xterm-ish) — the global chords (esp. `Ctrl+E` cycle-focus, `Ctrl+B` tree) are the way back out
+since they resolve before pane dispatch; `Ctrl+W` closes the pane (kills child, joins reader).
+The event loop polls at 40 ms while a pty is open. *Follow-ups:* tail the Claude Code / Codex
+session JSONL so an in-IDE AI view mirrors the CLI conversation; `claude -p` one-shots for
+`ai.explain/refactor/fix/write_tests` + request-debug; pty scrollback. Then: LSP, CDP, the
+`.test` E2E format, plugins; plus queued polish (right-click context menus on files/tabs,
+line-wrapped preview). See `.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)
