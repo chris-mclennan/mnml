@@ -67,6 +67,9 @@ pub struct PaneRects {
     pub close_prompt_buttons: Vec<(Rect, u8)>,
     /// On-screen cell where the text-input prompt's caret should sit (when open).
     pub prompt_caret: Option<(u16, u16)>,
+    /// The context-menu overlay's outer box (when open) and `(rect, item-index)` per row.
+    pub context_menu_box: Option<Rect>,
+    pub context_menu_items: Vec<(Rect, usize)>,
 }
 
 pub struct App {
@@ -110,6 +113,8 @@ pub struct App {
     /// The single-line text-input overlay (commit message, …), when open. Steals
     /// key input like the picker.
     pub prompt: Option<crate::prompt::Prompt>,
+    /// The right-click context menu, when open. Steals key + mouse input.
+    pub context_menu: Option<crate::context_menu::ContextMenu>,
     /// Channel for background HTTP sends (lazily created on the first `rqst.send`):
     /// worker threads send `(job_id, result)`; [`Self::tick`] drains it and updates
     /// the matching `Pane::Request`.
@@ -165,6 +170,7 @@ impl App {
             dragging: None,
             close_prompt: None,
             prompt: None,
+            context_menu: None,
             http_chan: None,
             ai_chan: None,
             tests_chan: None,
@@ -200,6 +206,127 @@ impl App {
     pub fn whichkey_menu(&self) -> Option<(&str, Vec<crate::whichkey::Entry>)> {
         let prefix = self.whichkey.as_deref()?;
         Some((prefix, crate::whichkey::continuations(prefix)))
+    }
+
+    // ─── context menu (right-click) ─────────────────────────────────
+    /// Right-click in the file tree on `path` (at screen cell `anchor`).
+    pub fn open_tree_context_menu(&mut self, path: PathBuf, is_dir: bool, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let rel = rel_path(&self.workspace, &path);
+        let items = if is_dir {
+            vec![
+                MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
+                MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
+                MenuItem::new("Refresh tree", MenuAction::Command("tree.refresh")),
+            ]
+        } else {
+            vec![
+                MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
+                MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
+                MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
+                MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
+            ]
+        };
+        self.context_menu = Some(ContextMenu::new(Some(name), anchor, items));
+    }
+
+    /// Right-click on a bufferline tab (the pane `id`) at screen cell `anchor`.
+    pub fn open_tab_context_menu(&mut self, id: PaneId, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = self.panes.get(id).map(Pane::title).unwrap_or_default();
+        let mut items = vec![
+            MenuItem::new("Close", MenuAction::CloseTab(id)),
+            MenuItem::new("Close others", MenuAction::CloseOtherTabs(id)),
+            MenuItem::new("Close all", MenuAction::CloseAllTabs),
+        ];
+        if let Some(Pane::Editor(b)) = self.panes.get(id)
+            && let Some(p) = &b.path
+        {
+            items.push(MenuItem::new(
+                "Copy path",
+                MenuAction::CopyPath(rel_path(&self.workspace, p)),
+            ));
+        }
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
+    pub fn context_menu_cancel(&mut self) {
+        self.context_menu = None;
+    }
+    pub fn context_menu_move(&mut self, delta: isize) {
+        if let Some(m) = &mut self.context_menu {
+            if delta < 0 {
+                m.move_up();
+            } else {
+                m.move_down();
+            }
+        }
+    }
+    pub fn context_menu_select(&mut self, i: usize) {
+        if let Some(m) = &mut self.context_menu {
+            m.set_selected(i);
+        }
+    }
+    /// Run the highlighted context-menu item and close the menu.
+    pub fn context_menu_accept(&mut self) {
+        let Some(menu) = self.context_menu.take() else {
+            return;
+        };
+        let Some(item) = menu.items.into_iter().nth(menu.selected) else {
+            return;
+        };
+        self.run_menu_action(item.action);
+    }
+
+    fn run_menu_action(&mut self, action: crate::context_menu::MenuAction) {
+        use crate::context_menu::MenuAction::*;
+        match action {
+            OpenPath(p) => self.open_path(&p),
+            OpenInSplit(p) => {
+                self.split_active(crate::layout::SplitDir::Horizontal);
+                self.open_path(&p);
+            }
+            RevealInFinder(p) => {
+                // macOS; harmless no-op (an Err we ignore) elsewhere.
+                let _ = std::process::Command::new("open").arg("-R").arg(&p).spawn();
+            }
+            CopyPath(text) => {
+                self.clipboard.set(text.clone(), false);
+                self.toast(format!("copied {text}"));
+            }
+            Command(id) => {
+                crate::command::run(id, self);
+            }
+            CloseTab(id) => self.close_pane(id),
+            CloseOtherTabs(id) => self.close_panes_except(Some(id)),
+            CloseAllTabs => self.close_panes_except(None),
+        }
+    }
+
+    /// Close every pane (optionally keeping `keep`), skipping dirty editors so
+    /// nothing is lost silently — they're kept and counted.
+    fn close_panes_except(&mut self, keep: Option<PaneId>) {
+        let mut kept_dirty = 0usize;
+        // Walk high→low so the indices below the one we close stay valid.
+        for i in (0..self.panes.len()).rev() {
+            if Some(i) == keep {
+                continue;
+            }
+            if matches!(self.panes.get(i), Some(Pane::Editor(b)) if b.dirty) {
+                kept_dirty += 1;
+                continue;
+            }
+            self.force_close_pane(i);
+        }
+        if kept_dirty > 0 {
+            self.toast(format!(
+                "kept {kept_dirty} unsaved buffer(s) — save or :q! them"
+            ));
+        }
     }
 
     // ─── picker / palette ───────────────────────────────────────────

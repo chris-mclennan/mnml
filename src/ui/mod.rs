@@ -22,6 +22,7 @@
 pub mod ai_view;
 pub mod bufferline;
 pub mod close_prompt;
+pub mod context_menu;
 pub mod diff_view;
 pub mod editor_view;
 pub mod icons;
@@ -126,6 +127,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         prompt::draw(frame, app, area);
     } else {
         app.rects.prompt_caret = None;
+    }
+    if app.context_menu.is_some() {
+        context_menu::draw(frame, app, area);
+    } else {
+        app.rects.context_menu_box = None;
+        app.rects.context_menu_items.clear();
     }
 
     // ── terminal cursor ──

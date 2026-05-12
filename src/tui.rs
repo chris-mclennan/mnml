@@ -135,6 +135,17 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         handle_picker_key(app, key);
         return;
     }
+    // The right-click context menu steals keys: ↑↓/jk move, Enter runs, Esc closes.
+    if app.context_menu.is_some() {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.context_menu_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.context_menu_move(1),
+            KeyCode::Enter => app.context_menu_accept(),
+            KeyCode::Esc => app.context_menu_cancel(),
+            _ => {} // keep the menu up
+        }
+        return;
+    }
     // The "unsaved changes" confirm overlay steals keys: s/Enter = Save, d = Discard, c/Esc = Cancel.
     if app.close_prompt.is_some() {
         match key.code {
@@ -493,7 +504,54 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
 
+    // The context menu is modal: a left-click on a row runs it; anywhere else
+    // (or a right-click) dismisses.
+    if app.context_menu.is_some() {
+        match m.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(&(_, i)) = app
+                    .rects
+                    .context_menu_items
+                    .iter()
+                    .find(|(r, _)| contains(*r, x, y))
+                {
+                    app.context_menu_select(i);
+                    app.context_menu_accept();
+                } else {
+                    app.context_menu_cancel();
+                }
+            }
+            MouseEventKind::Down(MouseButton::Right) => app.context_menu_cancel(),
+            _ => {}
+        }
+        return;
+    }
+
     match m.kind {
+        MouseEventKind::Down(MouseButton::Right) => {
+            // Right-click → a context menu on the bufferline tab / tree row under it.
+            if let Some(&(_, id)) = app
+                .rects
+                .bufferline_tabs
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+            {
+                app.open_tab_context_menu(id, (x, y));
+                return;
+            }
+            if let Some(tr) = app.rects.tree
+                && contains(tr, x, y)
+            {
+                let idx = (y - tr.y) as usize + app.rects.tree_scroll;
+                if idx < app.tree.visible_rows().len() {
+                    app.tree.set_cursor(idx);
+                    app.focus_tree();
+                    if let Some(row) = app.tree.selected_row() {
+                        app.open_tree_context_menu(row.path.clone(), row.is_dir, (x, y));
+                    }
+                }
+            }
+        }
         MouseEventKind::Down(MouseButton::Left) => {
             // Grab a split divider? (do this first — it sits between two pane rects)
             if app.begin_divider_drag(x, y) {

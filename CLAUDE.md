@@ -188,8 +188,16 @@ the pane ↑↓ select, Enter jumps to the test's source, `r` re-runs (same args
 `R` last-failed, Esc → tree. *Follow-ups (per `.local/PLAN.md`):* trace support (`show-trace` → a native
 text-timeline `Pane::Trace`), heal-with-Claude from a failed test, the `[feature: private]` DocDB live
 `Pane::TestExecutions` (dev+staging+prod in one panel) + CodeBuild, a flaky-test dashboard.
-Then: LSP, CDP, the `.test` E2E format, plugins; plus queued polish (right-click context menus on
-files/tabs, line-wrapped preview). See `.local/PLAN.md` for the full plan.
+**Right-click context menus — done:** `src/context_menu.rs` (`ContextMenu{title,items:Vec<MenuItem{label,
+action: MenuAction}>,anchor,selected}`) + `src/ui/context_menu.rs` (a bordered floating list at the click,
+clamped to screen, selected row highlighted). Right-click a tree file → Open / Open in split / Reveal in
+Finder / Copy path; a tree dir → Reveal in Finder / Copy path / Refresh tree; a bufferline tab → Close /
+Close others / Close all (dirty editors are kept + counted) / Copy path. Modal like the picker — ↑↓/jk
+select, Enter runs, Esc / click-away dismisses, click a row runs it. `App.context_menu` +
+`open_tree_context_menu` / `open_tab_context_menu` / `context_menu_accept` / `run_menu_action`;
+`tui::dispatch_mouse` handles `Down(Right)` → menu on the tree row / tab under it.
+Then: LSP, CDP, the `.test` E2E format, plugins; plus queued polish (line-wrapped markdown preview,
+editable request-pane field tabs). See `.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)
