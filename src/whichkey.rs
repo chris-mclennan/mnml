@@ -169,6 +169,7 @@ pub fn root() -> &'static Leader {
                             ('d', cmd("lsp.goto_definition", "go to definition")),
                             ('h', cmd("lsp.hover", "hover docs")),
                             ('r', cmd("lsp.references", "find references")),
+                            ('R', cmd("lsp.rename", "rename symbol")),
                             ('e', cmd("lsp.diagnostics", "diagnostics list")),
                             ('n', cmd("lsp.next_diagnostic", "next diagnostic")),
                             ('p', cmd("lsp.prev_diagnostic", "prev diagnostic")),

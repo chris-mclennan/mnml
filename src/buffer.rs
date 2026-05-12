@@ -199,6 +199,32 @@ impl Buffer {
             InputResult::App(cmd) => BufferEvent::App(cmd),
         }
     }
+
+    /// Apply a batch of editor ops that didn't come from a key (LSP rename /
+    /// code actions), then refresh the dirty flag + syntax highlights. Returns
+    /// `true` if anything changed. `read_only` buffers are left untouched.
+    pub fn apply_edit_ops(
+        &mut self,
+        ops: Vec<crate::edit_op::EditOp>,
+        clipboard: &mut Clipboard,
+        viewport_rows: usize,
+    ) -> bool {
+        if self.read_only {
+            return false;
+        }
+        let mut changed = false;
+        for op in ops {
+            changed |= self
+                .editor
+                .apply(op, viewport_rows, clipboard)
+                .buffer_changed;
+        }
+        if changed {
+            self.recompute_dirty();
+            self.refresh_highlights();
+        }
+        changed
+    }
 }
 
 fn comment_token_for(ext: Option<&str>) -> &'static str {

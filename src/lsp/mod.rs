@@ -82,6 +82,9 @@ pub enum LspEvent {
     Hover { text: String },
     /// Result of a `textDocument/references` request — `(path, line, character)` per hit.
     References(Vec<(PathBuf, u32, u32)>),
+    /// Result of a `textDocument/rename` request — a `WorkspaceEdit` flattened to
+    /// `(path, [(range, new_text)])` per affected file.
+    Rename(Vec<(PathBuf, Vec<(Range, String)>)>),
     /// A server-side message worth surfacing as a toast.
     Message(String),
 }
@@ -311,6 +314,17 @@ impl LspManager {
         }
         sent
     }
+    /// Send a `textDocument/rename` request — the reply arrives as [`LspEvent::Rename`].
+    pub fn rename(&mut self, path: &Path, line: u32, character: u32, new_name: &str) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.rename(path, line, character, new_name);
+                sent = true;
+            }
+        }
+        sent
+    }
     fn request_at(&mut self, method: &str, path: &Path, line: u32, character: u32) -> bool {
         let mut sent = false;
         for c in self.clients.values_mut() {
@@ -392,9 +406,41 @@ pub(crate) fn parse_diagnostic(v: &serde_json::Value) -> Option<Diagnostic> {
     })
 }
 
+/// Byte offset in `text` of the `character`-th char on the 0-based `line`
+/// (LSP positions are line + UTF-16 units; we treat `character` as a *char*
+/// index — fine for ASCII / BMP). `character` past the end of the line maps to
+/// the line's end (before the `\n`). `None` if `line` is out of range.
+pub(crate) fn byte_at(text: &str, line: u32, character: u32) -> Option<usize> {
+    let mut start = 0usize;
+    for _ in 0..line {
+        let nl = text[start..].find('\n')?;
+        start += nl + 1;
+    }
+    let line_text = match text[start..].find('\n') {
+        Some(nl) => &text[start..start + nl],
+        None => &text[start..],
+    };
+    match line_text.char_indices().nth(character as usize) {
+        Some((off, _)) => Some(start + off),
+        None => Some(start + line_text.len()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn byte_at_resolves_positions() {
+        let t = "ab\ncde\nf";
+        assert_eq!(byte_at(t, 0, 0), Some(0));
+        assert_eq!(byte_at(t, 0, 2), Some(2)); // end of line 0 (the '\n')
+        assert_eq!(byte_at(t, 1, 0), Some(3));
+        assert_eq!(byte_at(t, 1, 1), Some(4));
+        assert_eq!(byte_at(t, 1, 9), Some(6)); // past end → line end
+        assert_eq!(byte_at(t, 2, 0), Some(7));
+        assert_eq!(byte_at(t, 3, 0), None); // out of range
+    }
 
     #[test]
     fn uri_round_trips() {

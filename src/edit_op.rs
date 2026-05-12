@@ -57,6 +57,15 @@ pub enum EditOp {
     /// Delete the current selection (no-op if none).
     DeleteSelection,
     ReplaceSelection(String),
+    /// Replace the bytes `[start, end)` with `text`, leaving the cursor after the
+    /// inserted text. Offsets must be valid char boundaries in the *current*
+    /// buffer (callers applying several edits should sort them descending by
+    /// `start` so earlier offsets stay valid). Used by LSP rename / code actions.
+    ReplaceRange {
+        start: usize,
+        end: usize,
+        text: String,
+    },
     /// Indent the current line / each line of the selection by one tab-width.
     Indent,
     Outdent,

@@ -11,6 +11,8 @@ pub enum PromptKind {
     AiAsk,
     /// Accept ⇒ `git checkout -b <input>`.
     NewBranch,
+    /// Accept ⇒ `textDocument/rename` with the typed name (LSP).
+    LspRename,
 }
 
 #[derive(Debug)]

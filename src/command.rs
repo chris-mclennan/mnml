@@ -323,6 +323,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_diagnostics_pane(),
         },
         Command {
+            id: "lsp.rename",
+            title: "LSP: rename symbol",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_rename(),
+        },
+        Command {
             id: "lsp.next_diagnostic",
             title: "LSP: next diagnostic",
             group: "lsp",

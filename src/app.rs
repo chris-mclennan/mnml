@@ -38,6 +38,29 @@ fn rel_path(workspace: &Path, p: &Path) -> String {
         .into_owned()
 }
 
+/// Turn a file's `(range, new_text)` LSP edits into `EditOp::ReplaceRange`s with
+/// byte offsets resolved against `text`, sorted *descending* by start so applying
+/// them in order keeps the earlier offsets valid. Edits with unresolvable
+/// positions are dropped.
+fn build_replace_ops(
+    text: &str,
+    edits: &[(crate::lsp::Range, String)],
+) -> Vec<crate::edit_op::EditOp> {
+    let mut tuples: Vec<(usize, usize, String)> = edits
+        .iter()
+        .filter_map(|(r, t)| {
+            let s = crate::lsp::byte_at(text, r.start.line, r.start.character)?;
+            let e = crate::lsp::byte_at(text, r.end.line, r.end.character)?;
+            Some((s.min(e), s.max(e), t.clone()))
+        })
+        .collect();
+    tuples.sort_by_key(|t| std::cmp::Reverse(t.0));
+    tuples
+        .into_iter()
+        .map(|(start, end, text)| crate::edit_op::EditOp::ReplaceRange { start, end, text })
+        .collect()
+}
+
 /// Screen regions captured during render, consumed for mouse routing on the next event.
 #[derive(Debug, Default, Clone)]
 pub struct PaneRects {
@@ -118,6 +141,9 @@ pub struct App {
     /// The LSP hover popup, when open (set when a `textDocument/hover` reply
     /// arrives). The next key dismisses it (j/k/arrows scroll it first).
     pub hover: Option<crate::hover::HoverPopup>,
+    /// `(path, line, character)` of an in-flight LSP rename — captured when the
+    /// rename prompt opens so the accept handler sends the request for that spot.
+    pending_rename: Option<(PathBuf, u32, u32)>,
     /// Channel for background HTTP sends (lazily created on the first `rqst.send`):
     /// worker threads send `(job_id, result)`; [`Self::tick`] drains it and updates
     /// the matching `Pane::Request`.
@@ -189,6 +215,7 @@ impl App {
             prompt: None,
             context_menu: None,
             hover: None,
+            pending_rename: None,
             http_chan: None,
             ai_chan: None,
             tests_chan: None,
@@ -699,6 +726,43 @@ impl App {
             None => self.toast(msg),
         }
     }
+    /// `lsp.rename` — open a one-line prompt (seeded with the identifier under
+    /// the cursor); on accept, send `textDocument/rename` for that spot.
+    pub fn lsp_rename(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("LSP needs a saved file");
+            return;
+        };
+        let (row, col) = b.editor.row_col();
+        let word = self.word_under_cursor();
+        self.pending_rename = Some((path, row as u32, col as u32));
+        let kind = crate::prompt::PromptKind::LspRename;
+        self.prompt = Some(match word {
+            Some(w) => crate::prompt::Prompt::seeded(kind, "Rename symbol to", w),
+            None => crate::prompt::Prompt::new(kind, "Rename symbol to"),
+        });
+    }
+    /// The `[A-Za-z0-9_]` run straddling the active editor's cursor, if any.
+    fn word_under_cursor(&self) -> Option<String> {
+        let b = self.active_editor()?;
+        let (row, col) = b.editor.row_col();
+        let chars: Vec<char> = b.editor.line_str(row).chars().collect();
+        let is_id = |c: char| c.is_alphanumeric() || c == '_';
+        let col = col.min(chars.len());
+        let mut start = col;
+        while start > 0 && is_id(chars[start - 1]) {
+            start -= 1;
+        }
+        let mut end = col;
+        while end < chars.len() && is_id(chars[end]) {
+            end += 1;
+        }
+        (start < end).then(|| chars[start..end].iter().collect())
+    }
     fn lsp_request_at_cursor(
         &mut self,
         send: impl FnOnce(&mut crate::lsp::LspManager, &Path, u32, u32) -> bool,
@@ -772,9 +836,73 @@ impl App {
                     items,
                 ));
             }
+            LspEvent::Rename(edits) => self.apply_rename_edits(edits),
             LspEvent::Message(m) => self.toast(m),
         }
     }
+
+    /// Apply a flattened `WorkspaceEdit` (from `textDocument/rename`): edit each
+    /// affected file — through `Editor::apply` if it's open as a buffer (left
+    /// dirty for review), else by splicing the file on disk directly.
+    fn apply_rename_edits(&mut self, edits: Vec<(PathBuf, Vec<(crate::lsp::Range, String)>)>) {
+        if edits.is_empty() {
+            self.toast("rename: no changes");
+            return;
+        }
+        let (mut buffers, mut disk, mut total) = (0usize, 0usize, 0usize);
+        for (path, file_edits) in edits {
+            let idx = self
+                .panes
+                .iter()
+                .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&path)));
+            if let Some(idx) = idx {
+                let ops = match self.panes.get(idx) {
+                    Some(Pane::Editor(b)) => build_replace_ops(b.editor.text(), &file_edits),
+                    _ => Vec::new(),
+                };
+                if ops.is_empty() {
+                    continue;
+                }
+                let n = ops.len();
+                let clip = &mut self.clipboard;
+                let applied = match self.panes.get_mut(idx) {
+                    Some(Pane::Editor(b)) => b.apply_edit_ops(ops, clip, 0),
+                    _ => false,
+                };
+                if applied {
+                    buffers += 1;
+                    total += n;
+                    if let Some(Pane::Editor(b)) = self.panes.get(idx) {
+                        let t = b.editor.text().to_string();
+                        self.lsp.did_change(&path, &t);
+                    }
+                }
+            } else if let Ok(text) = std::fs::read_to_string(&path) {
+                let ops = build_replace_ops(&text, &file_edits);
+                if ops.is_empty() {
+                    continue;
+                }
+                let n = ops.len();
+                let mut s = text;
+                for op in &ops {
+                    if let crate::edit_op::EditOp::ReplaceRange { start, end, text } = op {
+                        s.replace_range(*start..*end, text);
+                    }
+                }
+                if std::fs::write(&path, s).is_ok() {
+                    disk += 1;
+                    total += n;
+                }
+            }
+        }
+        if disk > 0 {
+            self.git.refresh();
+        }
+        self.toast(format!(
+            "renamed {total} occurrence(s): {buffers} open buffer(s), {disk} on-disk file(s) — review & save"
+        ));
+    }
+
     pub fn drain_lsp_events(&mut self) {
         for ev in self.lsp.poll() {
             self.apply_lsp_event(ev);
@@ -1993,6 +2121,7 @@ impl App {
     }
     pub fn prompt_cancel(&mut self) {
         self.prompt = None;
+        self.pending_rename = None;
     }
     pub fn prompt_accept(&mut self) {
         let Some(p) = self.prompt.take() else { return };
@@ -2024,6 +2153,27 @@ impl App {
             crate::prompt::PromptKind::NewBranch => {
                 let name = p.input.clone();
                 self.create_branch(&name);
+            }
+            crate::prompt::PromptKind::LspRename => {
+                let new_name = p.input.trim().to_string();
+                let Some((path, line, ch)) = self.pending_rename.take() else {
+                    return;
+                };
+                if new_name.is_empty() {
+                    self.toast("rename cancelled (empty name)");
+                    return;
+                }
+                // Sync the buffer's current text so the server's positions line up.
+                let text = self.panes.iter().find_map(|p| match p {
+                    Pane::Editor(b) if b.is_at(&path) => Some(b.editor.text().to_string()),
+                    _ => None,
+                });
+                if let Some(t) = text {
+                    self.lsp.did_change(&path, &t);
+                }
+                if !self.lsp.rename(&path, line, ch, &new_name) {
+                    self.toast("no language server for this file (rename)");
+                }
             }
         }
     }

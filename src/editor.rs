@@ -521,6 +521,18 @@ impl Editor {
                 self.anchor = None;
                 out.buffer_changed = true;
             }
+            ReplaceRange { start, end, text } => {
+                let len = self.text.len();
+                let start = start.min(len);
+                let end = end.min(len).max(start);
+                if self.text.is_char_boundary(start) && self.text.is_char_boundary(end) {
+                    self.checkpoint();
+                    self.text.replace_range(start..end, &text);
+                    self.cursor = start + text.len();
+                    self.anchor = None;
+                    out.buffer_changed = true;
+                }
+            }
             Indent => {
                 self.checkpoint();
                 let pad: String = " ".repeat(self.tab_width);

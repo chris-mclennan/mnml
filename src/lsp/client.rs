@@ -15,7 +15,7 @@ use std::thread::JoinHandle;
 
 use serde_json::json;
 
-use super::{LspEvent, ServerConfig, parse_diagnostic, path_to_uri, uri_to_path};
+use super::{LspEvent, Pos, Range, ServerConfig, parse_diagnostic, path_to_uri, uri_to_path};
 
 type Pending = Arc<Mutex<HashMap<i64, String>>>;
 type Sink = Arc<Mutex<ChildStdin>>;
@@ -82,7 +82,9 @@ impl LspClient {
                         "synchronization": { "didSave": true },
                         "publishDiagnostics": {},
                         "hover": { "contentFormat": ["markdown", "plaintext"] },
-                        "definition": { "linkSupport": true }
+                        "definition": { "linkSupport": true },
+                        "references": {},
+                        "rename": {}
                     }
                 }
             }),
@@ -162,6 +164,18 @@ impl LspClient {
                 "textDocument": { "uri": path_to_uri(path) },
                 "position": { "line": line, "character": character },
                 "context": { "includeDeclaration": true }
+            }),
+        );
+    }
+
+    /// `textDocument/rename` — the reply is a `WorkspaceEdit`.
+    pub fn rename(&mut self, path: &Path, line: u32, character: u32, new_name: &str) {
+        self.request(
+            "textDocument/rename",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "position": { "line": line, "character": character },
+                "newName": new_name
             }),
         );
     }
@@ -324,6 +338,12 @@ fn handle_message(
                     let _ = tx.send(LspEvent::References(locs));
                 }
             }
+            "textDocument/rename" => {
+                let edits = parse_workspace_edit(result);
+                if !edits.is_empty() {
+                    let _ = tx.send(LspEvent::Rename(edits));
+                }
+            }
             _ => {}
         }
     }
@@ -349,6 +369,68 @@ fn first_location(result: &serde_json::Value) -> Option<(PathBuf, u32, u32)> {
         uri_to_path(uri)?,
         start.get("line")?.as_u64()? as u32,
         start.get("character")?.as_u64()? as u32,
+    ))
+}
+
+/// Parse a `WorkspaceEdit` (`{ changes: { uri: TextEdit[] } }` and/or
+/// `{ documentChanges: [{ textDocument: {uri}, edits: TextEdit[] }, …] }`) into
+/// `(path, [(range, new_text)])` per file. `null` / unknown shapes ⇒ empty.
+fn parse_workspace_edit(result: &serde_json::Value) -> Vec<(PathBuf, Vec<(Range, String)>)> {
+    let mut out: Vec<(PathBuf, Vec<(Range, String)>)> = Vec::new();
+    let mut push = |uri: &str, edits: &serde_json::Value| {
+        let Some(path) = uri_to_path(uri) else { return };
+        let mut parsed: Vec<(Range, String)> = Vec::new();
+        if let Some(arr) = edits.as_array() {
+            for e in arr {
+                if let Some(te) = parse_text_edit(e) {
+                    parsed.push(te);
+                }
+            }
+        }
+        if !parsed.is_empty() {
+            out.push((path, parsed));
+        }
+    };
+    if let Some(changes) = result.get("changes").and_then(|c| c.as_object()) {
+        for (uri, edits) in changes {
+            push(uri, edits);
+        }
+    }
+    if let Some(dcs) = result.get("documentChanges").and_then(|d| d.as_array()) {
+        for dc in dcs {
+            // Skip create/rename/delete-file operations (they have a "kind" field).
+            if dc.get("kind").is_some() {
+                continue;
+            }
+            if let (Some(uri), Some(edits)) = (
+                dc.get("textDocument")
+                    .and_then(|t| t.get("uri"))
+                    .and_then(|u| u.as_str()),
+                dc.get("edits"),
+            ) {
+                push(uri, edits);
+            }
+        }
+    }
+    out
+}
+
+fn parse_text_edit(v: &serde_json::Value) -> Option<(Range, String)> {
+    let r = v.get("range")?;
+    let pos = |k: &str| -> Option<Pos> {
+        let p = r.get(k)?;
+        Some(Pos {
+            line: p.get("line")?.as_u64()? as u32,
+            character: p.get("character")?.as_u64()? as u32,
+        })
+    };
+    let new_text = v.get("newText").and_then(|t| t.as_str())?.to_string();
+    Some((
+        Range {
+            start: pos("start")?,
+            end: pos("end")?,
+        },
+        new_text,
     ))
 }
 
@@ -391,6 +473,30 @@ mod tests {
             (PathBuf::from("/y.rs"), 7, 0)
         );
         assert!(first_location(&json!(null)).is_none());
+    }
+
+    #[test]
+    fn parse_workspace_edit_handles_both_shapes() {
+        let te = |l: u64, c0: u64, c1: u64, t: &str| {
+            json!({"range": {"start": {"line": l, "character": c0}, "end": {"line": l, "character": c1}}, "newText": t})
+        };
+        // `changes` form
+        let we = json!({"changes": {"file:///a.rs": [te(1, 4, 7, "bar")]}});
+        let got = parse_workspace_edit(&we);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, PathBuf::from("/a.rs"));
+        assert_eq!(got[0].1[0].1, "bar");
+        // `documentChanges` form, with a file-op entry that must be skipped
+        let we2 = json!({"documentChanges": [
+            {"kind": "create", "uri": "file:///new.rs"},
+            {"textDocument": {"uri": "file:///b.rs", "version": 3}, "edits": [te(0, 0, 3, "baz")]}
+        ]});
+        let got2 = parse_workspace_edit(&we2);
+        assert_eq!(got2.len(), 1);
+        assert_eq!(got2[0].0, PathBuf::from("/b.rs"));
+        assert_eq!(got2[0].1[0].0.start.line, 0);
+        // null ⇒ empty
+        assert!(parse_workspace_edit(&json!(null)).is_empty());
     }
 
     #[test]

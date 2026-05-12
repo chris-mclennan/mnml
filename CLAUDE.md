@@ -77,7 +77,7 @@ user might be mid-edit *inside mnml* on something untouched.
 - The user is happy to have Claude pick which track/feature to do next ("keep going,
   you decide the order — we'll do them all eventually") — choose the most valuable;
   don't ask which. Lean toward *bounded* items when starting a fresh session; save the
-  big tracks (CDP, the `private` feature, LSP completion/rename) for when there's room.
+  big tracks (CDP, the `private` feature, LSP completion) for when there's room.
   After each landed feature: update this Status block + commit + `./run.sh restart`.
 
 ## Status
@@ -272,8 +272,13 @@ panel in a split below the focused leaf — ↑↓/jk select, Enter jumps to the
 wheel moves the selection; it's rebuilt live whenever diagnostics change (`App::refresh_diagnostics_panes`).
 `lsp.next_diagnostic` / `lsp.prev_diagnostic` (`<leader>l n` / `<leader>l p`, `App::lsp_goto_diagnostic`) move
 the cursor to the next/prev diagnostic in the active buffer (wrapping) and pop its message in the hover popup.
-Known simplifications (in `src/lsp/mod.rs`): full-text doc sync, char-offset columns, `initialize` not
-awaited before `didOpen`. Then: completion/rename (LSP follow-ups), CDP,
+`lsp.rename` (`<leader>l R`) — one-line prompt (`PromptKind::LspRename`, seeded with the identifier under the
+cursor; `App.pending_rename` holds the `(path,line,col)`) → `textDocument/rename`; the reply `WorkspaceEdit`
+(`changes` / `documentChanges`, file-ops skipped) is flattened to `LspEvent::Rename` and `App::apply_rename_edits`
+edits each file — through `Buffer::apply_edit_ops` + the new `EditOp::ReplaceRange{start,end,text}` if it's open
+(left dirty for review), else by splicing the file on disk; `crate::lsp::byte_at` resolves LSP positions →
+byte offsets, edits applied descending-by-offset. Known simplifications (in `src/lsp/mod.rs`): full-text doc
+sync, char-offset columns, `initialize` not awaited before `didOpen`. Then: completion (LSP follow-up), CDP,
 more `.test` coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native launcher
 actions), Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus queued
 polish (line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.
