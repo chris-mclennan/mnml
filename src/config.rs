@@ -137,10 +137,9 @@ impl Config {
 
 fn home_config_path() -> Option<PathBuf> {
     // Respect $XDG_CONFIG_HOME, else ~/.config.
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
+        && !xdg.is_empty() {
             return Some(PathBuf::from(xdg).join("mnml").join("config.toml"));
         }
-    }
     std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config").join("mnml").join("config.toml"))
 }

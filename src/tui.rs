@@ -36,8 +36,13 @@ pub fn run(mut app: App) -> Result<(), String> {
 fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
     let mut out = io::stdout();
-    execute!(out, EnterAlternateScreen, EnableMouseCapture, SetCursorStyle::SteadyBar)?;
-    Terminal::new(CrosstermBackend::new(out))
+    if let Err(e) = execute!(out, EnterAlternateScreen, EnableMouseCapture, SetCursorStyle::SteadyBar) {
+        let _ = disable_raw_mode();
+        return Err(e);
+    }
+    Terminal::new(CrosstermBackend::new(out)).inspect_err(|_| {
+        let _ = disable_raw_mode();
+    })
 }
 
 fn restore_terminal(term: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
@@ -154,11 +159,10 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
 }
 
 fn apply_to_active_editor(app: &mut App, op: EditOp, viewport: usize) {
-    if let Some(i) = app.active {
-        if let Some(Pane::Editor(b)) = app.panes.get_mut(i) {
+    if let Some(i) = app.active
+        && let Some(Pane::Editor(b)) = app.panes.get_mut(i) {
             b.editor.apply(op, viewport, &mut app.clipboard);
         }
-    }
 }
 
 // ─── mouse dispatch (shared with headless/IPC) ──────────────────────
@@ -183,8 +187,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             // Tree?
-            if let Some(tr) = app.rects.tree {
-                if contains(tr, x, y) {
+            if let Some(tr) = app.rects.tree
+                && contains(tr, x, y) {
                     app.focus_tree();
                     if y > tr.y {
                         let idx = (y - tr.y - 1) as usize + app.rects.tree_scroll;
@@ -201,21 +205,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     }
                     return;
                 }
-            }
             // Editor text?
-            if let Some(tr) = app.rects.editor_text {
-                if contains(tr, x, y) {
+            if let Some(tr) = app.rects.editor_text
+                && contains(tr, x, y) {
                     app.focus_pane();
                     let row = app.active_editor().map(|b| b.scroll).unwrap_or(0) + (y - tr.y) as usize;
                     let col = app.active_editor().map(|b| b.h_scroll).unwrap_or(0) + (x - tr.x) as usize;
-                    if let Some(i) = app.active {
-                        if let Some(Pane::Editor(b)) = app.panes.get_mut(i) {
+                    if let Some(i) = app.active
+                        && let Some(Pane::Editor(b)) = app.panes.get_mut(i) {
                             b.editor.place_cursor(row, col);
                         }
-                    }
-                    return;
                 }
-            }
         }
         MouseEventKind::ScrollUp => scroll_under(app, x, y, -3),
         MouseEventKind::ScrollDown => scroll_under(app, x, y, 3),
@@ -224,8 +224,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
 }
 
 fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
-    if let Some(tr) = app.rects.tree {
-        if contains(tr, x, y) {
+    if let Some(tr) = app.rects.tree
+        && contains(tr, x, y) {
             for _ in 0..delta.unsigned_abs() {
                 if delta < 0 {
                     app.tree.move_up();
@@ -235,15 +235,13 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             }
             return;
         }
-    }
-    if let Some(tr) = app.rects.body {
-        if contains(tr, x, y) {
+    if let Some(tr) = app.rects.body
+        && contains(tr, x, y) {
             let vp = app.rects.editor_text.map(|r| r.height as usize).unwrap_or(20).max(1);
             for _ in 0..delta.unsigned_abs() {
                 apply_to_active_editor(app, if delta < 0 { EditOp::MoveUp } else { EditOp::MoveDown }, vp);
             }
         }
-    }
 }
 
 fn contains(r: Rect, x: u16, y: u16) -> bool {

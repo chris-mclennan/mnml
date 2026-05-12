@@ -85,9 +85,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // ── terminal cursor ──
     // Only show it when the editor pane has focus (P0 buffers are read-only, but
     // showing where the caret is still helps); otherwise hide it offscreen-ish.
-    if app.focus == Focus::Pane {
-        if let Some((x, y)) = cursor_pos {
+    if app.focus == Focus::Pane
+        && let Some((x, y)) = cursor_pos {
             frame.set_cursor_position((x, y));
         }
-    }
 }

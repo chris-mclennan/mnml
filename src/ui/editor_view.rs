@@ -20,9 +20,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(u16, u16)> 
     frame.render_widget(Paragraph::new("").style(Style::default().bg(theme::BG_DARK)), area);
 
     let idx = app.active?;
-    let buf = match app.panes.get_mut(idx)? {
-        Pane::Editor(b) => b,
-    };
+    let Pane::Editor(buf) = app.panes.get_mut(idx)?;
 
     let line_count = buf.editor.line_count();
     let gutter_w = (line_count.to_string().len().max(3) + 1) as u16; // "  12 "

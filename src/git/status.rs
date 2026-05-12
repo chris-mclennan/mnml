@@ -74,36 +74,30 @@ fn probe(workspace: &Path) -> Snapshot {
         .args(["symbolic-ref", "--short", "-q", "HEAD"])
         .current_dir(workspace)
         .output()
-    {
-        if out.status.success() {
+        && out.status.success() {
             let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !b.is_empty() {
                 snap.branch = Some(b);
             }
         }
-    }
-    if snap.branch.is_none() {
-        if let Ok(out) = Command::new("git")
+    if snap.branch.is_none()
+        && let Ok(out) = Command::new("git")
             .args(["rev-parse", "--short", "HEAD"])
             .current_dir(workspace)
             .output()
-        {
-            if out.status.success() {
+            && out.status.success() {
                 let h = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !h.is_empty() {
                     snap.branch = Some(format!("@{h}"));
                 }
             }
-        }
-    }
 
     // Status.
     if let Ok(out) = Command::new("git")
         .args(["status", "--porcelain"])
         .current_dir(workspace)
         .output()
-    {
-        if out.status.success() {
+        && out.status.success() {
             for line in String::from_utf8_lossy(&out.stdout).lines() {
                 if line.len() < 3 {
                     continue;
@@ -132,7 +126,6 @@ fn probe(workspace: &Path) -> Snapshot {
                 snap.files.insert(abs, state);
             }
         }
-    }
 
     snap
 }

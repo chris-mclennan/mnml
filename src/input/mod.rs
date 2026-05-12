@@ -106,6 +106,7 @@ pub trait InputHandler: Send {
 }
 
 /// Build the configured handler. Unknown style names fall back to `"standard"`.
+#[allow(clippy::match_single_binding)] // the `"vim"` arm lands in P3
 pub fn make_handler(cfg: &Config) -> Box<dyn InputHandler> {
     match cfg.editor.input_style.as_str() {
         // "vim" => Box::new(crate::input::vim::VimInputHandler::new(cfg)),  // P3

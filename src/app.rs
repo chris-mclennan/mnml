@@ -176,13 +176,11 @@ impl App {
     pub fn save_all(&mut self) {
         let mut n = 0;
         for pane in &mut self.panes {
-            if let Pane::Editor(b) = pane {
-                if b.path.is_some() && b.dirty {
-                    if b.save_to_disk().is_ok() {
+            if let Pane::Editor(b) = pane
+                && b.path.is_some() && b.dirty
+                    && b.save_to_disk().is_ok() {
                         n += 1;
                     }
-                }
-            }
         }
         self.git.refresh();
         self.toast(format!("saved {n} file(s)"));
@@ -207,18 +205,16 @@ impl App {
     pub fn cycle_focus(&mut self) {
         let was_pane = self.focus == Focus::Pane;
         self.focus = self.focus.next(self.active.is_some());
-        if was_pane && self.focus != Focus::Pane {
-            if let Some(b) = self.active_editor_mut() {
+        if was_pane && self.focus != Focus::Pane
+            && let Some(b) = self.active_editor_mut() {
                 b.input.on_blur();
             }
-        }
     }
     pub fn focus_tree(&mut self) {
-        if self.focus == Focus::Pane {
-            if let Some(b) = self.active_editor_mut() {
+        if self.focus == Focus::Pane
+            && let Some(b) = self.active_editor_mut() {
                 b.input.on_blur();
             }
-        }
         self.focus = Focus::Tree;
     }
     pub fn focus_pane(&mut self) {
@@ -255,11 +251,10 @@ impl App {
     /// Per-event-loop housekeeping (cheap).
     pub fn tick(&mut self) {
         self.git.tick();
-        if let Some((_, t)) = &self.toast {
-            if t.elapsed() >= TOAST_TTL {
+        if let Some((_, t)) = &self.toast
+            && t.elapsed() >= TOAST_TTL {
                 self.toast = None;
             }
-        }
     }
 }
 

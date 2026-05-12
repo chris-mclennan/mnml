@@ -159,8 +159,8 @@ impl Tree {
 
     /// Toggle expand/collapse on the row under the cursor (no-op on files).
     pub fn toggle_current(&mut self) {
-        if let Some(row) = self.selected_row() {
-            if row.is_dir {
+        if let Some(row) = self.selected_row()
+            && row.is_dir {
                 if self.expanded.contains(&row.path) {
                     self.expanded.remove(&row.path);
                 } else {
@@ -169,20 +169,18 @@ impl Tree {
                 let max = self.visible_rows().len().saturating_sub(1);
                 self.cursor = self.cursor.min(max);
             }
-        }
     }
 
     /// `→`-style: expand a collapsed dir, or move into the first child of an open one.
     pub fn expand_or_descend(&mut self) {
-        if let Some(row) = self.selected_row() {
-            if row.is_dir {
+        if let Some(row) = self.selected_row()
+            && row.is_dir {
                 if !self.expanded.contains(&row.path) {
                     self.expanded.insert(row.path);
                 } else {
                     self.move_down(); // first child is the next visible row
                 }
             }
-        }
     }
 
     /// `←`-style: collapse an open dir, or hop up to the parent dir.
@@ -192,15 +190,13 @@ impl Tree {
                 self.expanded.remove(&row.path);
                 return;
             }
-            if let Some(parent) = row.path.parent() {
-                if parent != self.root {
-                    if let Some(idx) =
+            if let Some(parent) = row.path.parent()
+                && parent != self.root
+                    && let Some(idx) =
                         self.visible_rows().iter().position(|r| r.path == parent)
                     {
                         self.cursor = idx;
                     }
-                }
-            }
         }
     }
 }
@@ -238,13 +234,12 @@ fn order_dfs(root: &Path, raw: Vec<Entry>) -> Vec<Entry> {
         if let Some(e) = by_path.get(&p) {
             let is_dir = e.is_dir;
             out.push(e.clone());
-            if is_dir {
-                if let Some(kids) = children.get(&p) {
+            if is_dir
+                && let Some(kids) = children.get(&p) {
                     for k in kids.iter().rev() {
                         stack.push(k.clone());
                     }
                 }
-            }
         }
     }
     out

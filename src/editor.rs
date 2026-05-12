@@ -175,13 +175,11 @@ impl Editor {
         let start = self.line_start(line);
         let end = self.line_end(line);
         let mut b = start;
-        let mut c = 0;
-        for ch in self.text[start..end].chars() {
+        for (c, ch) in self.text[start..end].chars().enumerate() {
             if c == col {
                 break;
             }
             b += ch.len_utf8();
-            c += 1;
         }
         b
     }
@@ -774,8 +772,8 @@ impl Editor {
         }
         let mut i = self.cursor;
         // skip the current run (whatever class the char under the cursor is, if not space)
-        if let Some(c) = self.char_at(i) {
-            if class_of(c) != CharClass::Space {
+        if let Some(c) = self.char_at(i)
+            && class_of(c) != CharClass::Space {
                 let cls = class_of(c);
                 while i < len {
                     match self.char_at(i) {
@@ -784,7 +782,6 @@ impl Editor {
                     }
                 }
             }
-        }
         // skip whitespace
         while i < len {
             match self.char_at(i) {
@@ -866,8 +863,8 @@ impl Editor {
     fn word_right_target(&self) -> usize {
         let len = self.text.len();
         let mut i = self.cursor;
-        if let Some(c) = self.char_at(i) {
-            if class_of(c) != CharClass::Space {
+        if let Some(c) = self.char_at(i)
+            && class_of(c) != CharClass::Space {
                 let cls = class_of(c);
                 while i < len {
                     match self.char_at(i) {
@@ -876,7 +873,6 @@ impl Editor {
                     }
                 }
             }
-        }
         while i < len {
             match self.char_at(i) {
                 Some(c) if class_of(c) == CharClass::Space => i = self.next_char_boundary(i),
