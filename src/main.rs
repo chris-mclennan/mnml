@@ -33,7 +33,50 @@ fn main() -> ExitCode {
             args.next();
             discover_subcommand(args.collect())
         }
+        Some("test") => {
+            args.next();
+            test_subcommand(args.collect())
+        }
         _ => run_tui(args.collect()),
+    }
+}
+
+// ───────────────────────── `.test` E2E runner ─────────────────────
+
+fn test_subcommand(argv: Vec<String>) -> ExitCode {
+    let paths: Vec<PathBuf> = argv
+        .into_iter()
+        .filter(|a| !a.starts_with('-'))
+        .map(PathBuf::from)
+        .collect();
+    let paths = if paths.is_empty() {
+        vec![PathBuf::from("tests/e2e")]
+    } else {
+        paths
+    };
+
+    let mut total = 0usize;
+    let mut failed = 0usize;
+    for root in &paths {
+        let (outcomes, _) = mnml::e2e::run_path(root);
+        if outcomes.is_empty() {
+            eprintln!("mnml test: no .test files under {}", root.display());
+        }
+        for o in outcomes {
+            total += 1;
+            if o.passed {
+                println!("  ok   {}", o.name);
+            } else {
+                failed += 1;
+                println!("  FAIL {} — {}", o.name, o.message.unwrap_or_default());
+            }
+        }
+    }
+    println!("\n{}/{} passed", total - failed, total);
+    if failed == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 

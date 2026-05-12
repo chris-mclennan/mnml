@@ -1,0 +1,13 @@
+# Open a seeded file, type into it, save — the dirty marker should clear.
+write notes.txt first line
+open notes.txt
+expect screen contains "first line"
+expect dirty false
+expect pane "notes.txt"
+
+type "TYPED "
+expect dirty true
+expect screen contains "TYPED first line"
+
+key ctrl+s
+expect dirty false

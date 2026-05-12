@@ -18,6 +18,7 @@ pub mod clipboard;
 pub mod command;
 pub mod config;
 pub mod context_menu;
+pub mod e2e;
 pub mod edit_op;
 pub mod editor;
 pub mod focus;

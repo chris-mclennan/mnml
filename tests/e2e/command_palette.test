@@ -1,0 +1,8 @@
+# Opening the command palette via its command shows the picker chrome; Esc closes it.
+write a.txt hello
+open a.txt
+command palette
+expect screen contains "Command palette"
+key esc
+expect screen lacks "Command palette"
+expect screen contains "hello"
