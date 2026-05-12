@@ -649,6 +649,56 @@ impl App {
     pub fn lsp_references(&mut self) {
         self.lsp_request_at_cursor(|lsp, p, l, c| lsp.references(p, l, c), "references");
     }
+    /// `lsp.{next,prev}_diagnostic` — move the cursor to the next / previous
+    /// diagnostic in the active buffer (wrapping), and show its message in the
+    /// hover popup.
+    pub fn lsp_goto_diagnostic(&mut self, forward: bool) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        if b.diagnostics.is_empty() {
+            self.toast("no diagnostics in this file");
+            return;
+        }
+        let (row, col) = b.editor.row_col();
+        let cur = (row as u32, col as u32);
+        let mut diags: Vec<(u32, u32, String)> = b
+            .diagnostics
+            .iter()
+            .map(|d| {
+                (
+                    d.range.start.line,
+                    d.range.start.character,
+                    d.message.clone(),
+                )
+            })
+            .collect();
+        diags.sort_by_key(|&(l, c, _)| (l, c));
+        let target = if forward {
+            diags
+                .iter()
+                .find(|&&(l, c, _)| (l, c) > cur)
+                .or_else(|| diags.first())
+        } else {
+            diags
+                .iter()
+                .rev()
+                .find(|&&(l, c, _)| (l, c) < cur)
+                .or_else(|| diags.last())
+        };
+        let Some(&(l, c, ref msg)) = target else {
+            return;
+        };
+        let (l, c, msg) = (l, c, msg.clone());
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(l as usize, c as usize);
+        }
+        match crate::hover::HoverPopup::from_text(&msg) {
+            Some(h) => self.hover = Some(h),
+            None => self.toast(msg),
+        }
+    }
     fn lsp_request_at_cursor(
         &mut self,
         send: impl FnOnce(&mut crate::lsp::LspManager, &Path, u32, u32) -> bool,

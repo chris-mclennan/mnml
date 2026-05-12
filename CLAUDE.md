@@ -270,6 +270,8 @@ state: every diagnostic on an open buffer, errors-first; `src/ui/diagnostics_vie
 [`▶`-marked selection, `rel:line:col  message  (source)` per row, header err/warn counts]); a "Problems"
 panel in a split below the focused leaf — ↑↓/jk select, Enter jumps to the location, `r` refreshes, Esc → tree,
 wheel moves the selection; it's rebuilt live whenever diagnostics change (`App::refresh_diagnostics_panes`).
+`lsp.next_diagnostic` / `lsp.prev_diagnostic` (`<leader>l n` / `<leader>l p`, `App::lsp_goto_diagnostic`) move
+the cursor to the next/prev diagnostic in the active buffer (wrapping) and pop its message in the hover popup.
 Known simplifications (in `src/lsp/mod.rs`): full-text doc sync, char-offset columns, `initialize` not
 awaited before `didOpen`. Then: completion/rename (LSP follow-ups), CDP,
 more `.test` coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native launcher

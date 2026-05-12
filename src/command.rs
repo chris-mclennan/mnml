@@ -323,6 +323,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_diagnostics_pane(),
         },
         Command {
+            id: "lsp.next_diagnostic",
+            title: "LSP: next diagnostic",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_goto_diagnostic(true),
+        },
+        Command {
+            id: "lsp.prev_diagnostic",
+            title: "LSP: previous diagnostic",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_goto_diagnostic(false),
+        },
+        Command {
             id: "rqst.send",
             title: "HTTP: send request (.http/.curl) — or re-fire a request pane",
             group: "http",
