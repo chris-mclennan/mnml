@@ -249,7 +249,7 @@ fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
                     .apply(EditOp::MoveToLine(n), 20, &mut app.clipboard);
             }
         }
-        ExCommand(s) => app.toast(format!(":{s} — ex-commands land with the vim handler")),
+        ExCommand(s) => app.run_ex_command(&s),
         RunCommand(id) => {
             command::run(&id, app);
         }

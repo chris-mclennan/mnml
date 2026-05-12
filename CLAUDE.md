@@ -73,16 +73,19 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
-P0–P2 done (minus which-key, deferred to P3). Working: NvChad-ish layout; editable
-buffers via the VSCode-style `StandardInputHandler` with selection/undo/clipboard;
-fuzzy file finder (`Ctrl+P`) + command palette (`Ctrl+Shift+P`) + buffer switcher
-(`src/picker.rs` / `src/fuzzy.rs`); tree-sitter syntax highlight (`src/highlight.rs`,
-6 grammars so far) + indent guides; headless+IPC (interactive TUI listens too) + the
-`run.sh`/`dev.sh` wrappers. Next: **P3** — the vim handler (`src/input/vim.rs`) + the
-config-driven `[keys.*]` resolver (`src/input/keymap.rs`) + which-key popup (`<leader>`)
-+ editor splits (`src/layout.rs` HSplit/VSplit + `Ctrl+\` / `Ctrl+W hjkl`). Then the
-tracks (Git diff/stage/blame, HTTP, Pty/AI-CLI, AI-API, CDP, the `.test` E2E format,
-plugins). See `.local/PLAN.md` for the full plan. Highlight follow-ups: more grammars
+P0–P3a done (which-key deferred). Working: NvChad-ish layout; editable buffers via
+either `StandardInputHandler` (VSCode-style, modeless) or `VimInputHandler` (modal:
+Normal/Insert/Visual + `:`-line), swappable at runtime (`editor.toggle_keymap` /
+`editor.use_vim` / `editor.use_standard` in the palette, or `:set input=vim`);
+`:`-commands (`w q wq x q! wa wqa qa bd bn bp e set …`) via `App::run_ex_command`;
+selection/undo/clipboard; fuzzy file finder (`Ctrl+P`) + command palette
+(`Ctrl+Shift+P`) + buffer switcher (`src/picker.rs` / `src/fuzzy.rs`); tree-sitter
+syntax highlight (`src/highlight.rs`, 6 grammars so far) + indent guides; headless+IPC
+(interactive TUI listens too) + the `run.sh`/`dev.sh` wrappers. Next: **P3b** which-key
+popup (`<leader>` in vim normal) + **P3c** config-driven `[keys.*]` resolver
+(`src/input/keymap.rs`) + **P3d** editor splits (`src/layout.rs` HSplit/VSplit + `Ctrl+\`
+/ `Ctrl+W hjkl`). Then the tracks (Git diff/stage/blame, HTTP, Pty/AI-CLI, AI-API, CDP,
+the `.test` E2E format, plugins). See `.local/PLAN.md` for the full plan. Highlight follow-ups: more grammars
 (typescript/css/html/c/bash/markdown), incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)

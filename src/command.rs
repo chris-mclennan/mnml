@@ -161,5 +161,26 @@ fn builtin_commands() -> Vec<Command> {
             default_key: "",
             run: |app| app.tree.refresh(),
         },
+        Command {
+            id: "editor.use_vim",
+            title: "Editing: use vim keymap",
+            group: "editor",
+            default_key: "",
+            run: |app| app.set_input_style("vim"),
+        },
+        Command {
+            id: "editor.use_standard",
+            title: "Editing: use standard (VSCode) keymap",
+            group: "editor",
+            default_key: "",
+            run: |app| app.set_input_style("standard"),
+        },
+        Command {
+            id: "editor.toggle_keymap",
+            title: "Editing: toggle vim ⇄ standard keymap",
+            group: "editor",
+            default_key: "",
+            run: |app| app.toggle_input_style(),
+        },
     ]
 }

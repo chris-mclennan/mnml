@@ -3,11 +3,14 @@
 //! The editor/buffer/render layers never branch on which handler is active — only
 //! the statusline (mode chip) and the cursor-shape code read [`EditingMode`].
 //!
-//! P0 ships the trait + a stub `StandardInputHandler` that ignores everything; P1
-//! fills in the VSCode-style keymap, P3 adds `VimInputHandler`.
+//! Two handlers ship today: `StandardInputHandler` (modeless, VSCode-style) and
+//! `VimInputHandler` (modal). They swap at runtime via `App::set_input_style`
+//! (`editor.toggle_keymap` / `:set input=vim`). A config-driven `[keys.*]`
+//! resolver — so both are fully remappable — lands with `keymap.rs` later.
 
 pub mod keymap;
 pub mod standard;
+pub mod vim;
 
 use ratatui::crossterm::event::KeyEvent;
 
@@ -105,11 +108,15 @@ pub trait InputHandler: Send {
     fn on_blur(&mut self) {}
 }
 
-/// Build the configured handler. Unknown style names fall back to `"standard"`.
-#[allow(clippy::match_single_binding)] // the `"vim"` arm lands in P3
-pub fn make_handler(cfg: &Config) -> Box<dyn InputHandler> {
-    match cfg.editor.input_style.as_str() {
-        // "vim" => Box::new(crate::input::vim::VimInputHandler::new(cfg)),  // P3
+/// Build a handler for the given style name. Unknown names fall back to `"standard"`.
+pub fn make_handler_for(style: &str, cfg: &Config) -> Box<dyn InputHandler> {
+    match style {
+        "vim" => Box::new(vim::VimInputHandler::new(cfg)),
         _ => Box::new(standard::StandardInputHandler::new(cfg)),
     }
+}
+
+/// Build the configured handler. Unknown style names fall back to `"standard"`.
+pub fn make_handler(cfg: &Config) -> Box<dyn InputHandler> {
+    make_handler_for(&cfg.editor.input_style, cfg)
 }

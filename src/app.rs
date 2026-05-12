@@ -334,6 +334,123 @@ impl App {
         }
     }
 
+    // ─── keymap (vim ⇄ standard) ────────────────────────────────────
+    /// Swap every editor buffer's input handler to `style` (`"vim"` | `"standard"`),
+    /// remember it as the new default, and toast the result.
+    pub fn set_input_style(&mut self, style: &str) {
+        let style = match style {
+            "vim" => "vim",
+            "standard" | "vscode" => "standard",
+            other => {
+                self.toast(format!("unknown input style: {other}"));
+                return;
+            }
+        };
+        self.config.editor.input_style = style.to_string();
+        for pane in &mut self.panes {
+            #[allow(irrefutable_let_patterns)]
+            if let Pane::Editor(b) = pane {
+                b.input = crate::input::make_handler_for(style, &self.config);
+            }
+        }
+        self.toast(format!("input: {style}"));
+    }
+    pub fn toggle_input_style(&mut self) {
+        let next = if self.config.editor.input_style == "vim" {
+            "standard"
+        } else {
+            "vim"
+        };
+        self.set_input_style(next);
+    }
+
+    /// Interpret a vim `:`-line (without the leading `:`). Anything we don't
+    /// recognise is bridged to a registered command if one matches, else toasted.
+    pub fn run_ex_command(&mut self, line: &str) {
+        let line = line.trim();
+        if line.is_empty() {
+            return;
+        }
+        // Bare number ⇒ jump to that line.
+        if let Ok(n) = line.parse::<usize>() {
+            if let Some(b) = self.active_editor_mut() {
+                b.editor.place_cursor(n.saturating_sub(1), 0);
+            }
+            return;
+        }
+        let (cmd, rest) = match line.split_once(char::is_whitespace) {
+            Some((c, r)) => (c, r.trim()),
+            None => (line, ""),
+        };
+        match cmd {
+            "w" | "write" => {
+                if rest.is_empty() {
+                    self.save_active();
+                } else {
+                    self.toast(":w <path> not supported yet");
+                }
+            }
+            "q" | "quit" => {
+                if self.active.is_some() && self.active_pane().is_some_and(Pane::is_dirty) {
+                    self.toast("unsaved changes — use :q! to discard");
+                } else {
+                    self.close_active_pane();
+                    if self.panes.is_empty() {
+                        self.should_quit = true;
+                    }
+                }
+            }
+            "q!" | "quit!" => {
+                self.close_active_pane();
+                if self.panes.is_empty() {
+                    self.should_quit = true;
+                }
+            }
+            "wq" | "x" | "xit" => {
+                self.save_active();
+                self.close_active_pane();
+                if self.panes.is_empty() {
+                    self.should_quit = true;
+                }
+            }
+            "wa" | "wall" => self.save_all(),
+            "wqa" | "wqall" | "xa" | "xall" => {
+                self.save_all();
+                self.should_quit = true;
+            }
+            "qa" | "qall" | "quitall" => self.should_quit = true,
+            "qa!" | "qall!" => self.should_quit = true,
+            "bd" | "bdelete" => self.close_active_pane(),
+            "bn" | "bnext" => self.next_buffer(),
+            "bp" | "bprev" | "bprevious" => self.prev_buffer(),
+            "e" | "edit" => {
+                if rest.is_empty() {
+                    self.toast(":e needs a path");
+                } else {
+                    let p = self.workspace.join(rest);
+                    self.open_path(&p);
+                }
+            }
+            "set" => {
+                // `:set input=vim` / `:set input=standard`
+                if let Some(v) = rest.strip_prefix("input=") {
+                    self.set_input_style(v.trim());
+                } else {
+                    self.toast(format!(":set {rest} — not supported"));
+                }
+            }
+            "noh" | "nohl" | "nohlsearch" => {}
+            other => {
+                // Last resort: maybe it names a registered command.
+                if crate::command::registry().get(other).is_some() {
+                    crate::command::run(other, self);
+                } else {
+                    self.toast(format!(":{line} — unknown command"));
+                }
+            }
+        }
+    }
+
     // ─── focus ──────────────────────────────────────────────────────
     pub fn cycle_focus(&mut self) {
         let was_pane = self.focus == Focus::Pane;

@@ -1,0 +1,911 @@
+//! The modal handler: Normal / Insert / Visual / Visual-Line + a `:` command
+//! line. ALL chord/count/operator/cmdline state is private to this file — the
+//! rest of the app only ever sees `EditingMode` (via the trait) and the
+//! `pending_display()` hint string. Counts never reach the editor: a `3w`
+//! becomes `Repeat(3, MoveWordRight)` and `Editor::apply` loops.
+//!
+//! Coverage (P3a): `hjkl w b e 0 ^ $ gg G {N}G` motions; `i a I A o O` inserts;
+//! `x X D C s S dd cc yy p P d{motion} c{motion} y{motion}`; `u` / `Ctrl-R`;
+//! `v` / `V` visual with motions + `y d c x`; `gd`/`gD` → LSP commands;
+//! `gcc`/`gc{motion}` → toggle-comment; `ZZ` → `:x`, `ZQ` → `:q!`; `:`-line →
+//! `AppCommand::ExCommand`. Leader-key which-key and a full `[keys.vim]`
+//! resolver land in P3b/P3c.
+
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+use crate::config::Config;
+use crate::edit_op::EditOp;
+use crate::input::{AppCommand, EditCtx, EditingMode, InputHandler, InputResult};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VimMode {
+    Normal,
+    Insert,
+    Visual,
+    VisualLine,
+}
+
+/// A pending operator awaiting a motion (`d`, `c`, `y`, `>`, `<`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingOp {
+    Delete,
+    Change,
+    Yank,
+    Indent,
+    Outdent,
+}
+
+/// A multi-key prefix that isn't an operator (`g…`, `Z…`, `r…`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Prefix {
+    None,
+    /// Saw `g` — expecting `g`, `d`, `D`, `c`, …
+    G,
+    /// Saw `gc` — expecting `c` (→ `gcc`) or a motion.
+    Gc,
+    /// Saw `Z` — expecting `Z` (→ `:x`) or `Q` (→ `:q!`).
+    Z,
+    /// Saw `r` — replace the char under the cursor with the next typed char.
+    Replace,
+}
+
+#[derive(Debug)]
+pub struct VimInputHandler {
+    mode: VimMode,
+    /// The count being typed (e.g. `12` in `12dd`). `None` ⇒ 1.
+    count: Option<u32>,
+    op: Option<PendingOp>,
+    prefix: Prefix,
+    /// `Some` while the user is typing a `:`-line (without the leading `:`).
+    cmdline: Option<String>,
+    tab_width: usize,
+}
+
+impl VimInputHandler {
+    pub fn new(cfg: &Config) -> Self {
+        VimInputHandler {
+            mode: VimMode::Normal,
+            count: None,
+            op: None,
+            prefix: Prefix::None,
+            cmdline: None,
+            tab_width: cfg.editor.tab_width.max(1),
+        }
+    }
+
+    fn reset_pending(&mut self) {
+        self.count = None;
+        self.op = None;
+        self.prefix = Prefix::None;
+    }
+
+    fn count1(&self) -> u32 {
+        self.count.unwrap_or(1).max(1)
+    }
+
+    /// `n` copies of `op`, collapsed into a single `Repeat` when `n > 1`.
+    fn repeated(op: EditOp, n: u32) -> Vec<EditOp> {
+        if n > 1 {
+            vec![EditOp::Repeat(n, Box::new(op))]
+        } else {
+            vec![op]
+        }
+    }
+
+    fn enter_insert(&mut self) {
+        self.mode = VimMode::Insert;
+        self.reset_pending();
+    }
+
+    fn enter_normal(&mut self) {
+        self.mode = VimMode::Normal;
+        self.reset_pending();
+        self.cmdline = None;
+    }
+
+    /// Map a key to a pure cursor motion (used standalone and after an operator).
+    /// `None` ⇒ not a motion.
+    fn motion(code: KeyCode) -> Option<EditOp> {
+        use EditOp::*;
+        Some(match code {
+            KeyCode::Char('h') | KeyCode::Left => MoveLeft,
+            KeyCode::Char('l') | KeyCode::Right => MoveRight,
+            KeyCode::Char('j') | KeyCode::Down => MoveDown,
+            KeyCode::Char('k') | KeyCode::Up => MoveUp,
+            KeyCode::Char('w') => MoveWordRight,
+            KeyCode::Char('b') => MoveWordLeft,
+            KeyCode::Char('e') => MoveWordEnd,
+            KeyCode::Char('0') | KeyCode::Home => MoveLineStart,
+            KeyCode::Char('^') => MoveLineFirstNonWs,
+            KeyCode::Char('$') | KeyCode::End => MoveLineEnd,
+            KeyCode::Char('G') => MoveBufferEnd,
+            KeyCode::PageUp => PageUp,
+            KeyCode::PageDown => PageDown,
+            _ => return None,
+        })
+    }
+
+    fn handle_cmdline(&mut self, key: KeyEvent, line: String) -> InputResult {
+        match key.code {
+            KeyCode::Esc => {
+                self.cmdline = None;
+                InputResult::Consumed
+            }
+            KeyCode::Enter => {
+                self.cmdline = None;
+                if line.is_empty() {
+                    InputResult::Consumed
+                } else {
+                    InputResult::App(AppCommand::ExCommand(line))
+                }
+            }
+            KeyCode::Backspace => {
+                if line.is_empty() {
+                    self.cmdline = None;
+                    InputResult::Consumed
+                } else {
+                    let mut s = line;
+                    s.pop();
+                    self.cmdline = Some(s);
+                    InputResult::Consumed
+                }
+            }
+            KeyCode::Char(c) => {
+                let mut s = line;
+                s.push(c);
+                self.cmdline = Some(s);
+                InputResult::Consumed
+            }
+            _ => {
+                self.cmdline = Some(line);
+                InputResult::Consumed
+            }
+        }
+    }
+
+    fn handle_insert(&mut self, key: KeyEvent, _ctx: &EditCtx) -> InputResult {
+        use EditOp::*;
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc => {
+                // vim drifts the cursor one left when leaving Insert.
+                self.enter_normal();
+                InputResult::Ops(vec![MoveLeft])
+            }
+            KeyCode::Char('c') if ctrl => {
+                self.enter_normal();
+                InputResult::Consumed
+            }
+            KeyCode::Char(c) if !ctrl => InputResult::Ops(vec![InsertChar(c)]),
+            KeyCode::Enter => InputResult::Ops(vec![InsertNewline]),
+            KeyCode::Tab => InputResult::Ops(vec![InsertStr(" ".repeat(self.tab_width))]),
+            KeyCode::Backspace => InputResult::Ops(vec![Backspace]),
+            KeyCode::Delete => InputResult::Ops(vec![DeleteForward]),
+            KeyCode::Left => InputResult::Ops(vec![MoveLeft]),
+            KeyCode::Right => InputResult::Ops(vec![MoveRight]),
+            KeyCode::Up => InputResult::Ops(vec![MoveUp]),
+            KeyCode::Down => InputResult::Ops(vec![MoveDown]),
+            KeyCode::Home => InputResult::Ops(vec![MoveLineStart]),
+            KeyCode::End => InputResult::Ops(vec![MoveLineEnd]),
+            _ => InputResult::Ignored,
+        }
+    }
+
+    fn handle_normal(&mut self, key: KeyEvent, _ctx: &EditCtx) -> InputResult {
+        use EditOp::*;
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+        // ── multi-key prefixes ───────────────────────────────────────
+        match self.prefix {
+            Prefix::Replace => {
+                self.reset_pending();
+                return match key.code {
+                    KeyCode::Char(c) => InputResult::Ops(vec![ReplaceSelection(c.to_string())]),
+                    KeyCode::Esc => InputResult::Consumed,
+                    _ => InputResult::Consumed,
+                };
+            }
+            Prefix::Z => {
+                self.reset_pending();
+                return match key.code {
+                    KeyCode::Char('Z') => InputResult::App(AppCommand::ExCommand("x".into())),
+                    KeyCode::Char('Q') => InputResult::App(AppCommand::ExCommand("q!".into())),
+                    _ => InputResult::Consumed,
+                };
+            }
+            Prefix::G => {
+                let n = self.count1();
+                self.reset_pending();
+                return match key.code {
+                    KeyCode::Char('g') => InputResult::Ops(vec![MoveBufferStart]),
+                    KeyCode::Char('d') => {
+                        InputResult::App(AppCommand::RunCommand("lsp.goto_definition".into()))
+                    }
+                    KeyCode::Char('D') => {
+                        InputResult::App(AppCommand::RunCommand("lsp.goto_declaration".into()))
+                    }
+                    KeyCode::Char('c') => {
+                        self.prefix = Prefix::Gc;
+                        self.count = if n > 1 { Some(n) } else { None };
+                        InputResult::Consumed
+                    }
+                    _ => InputResult::Consumed,
+                };
+            }
+            Prefix::Gc => {
+                self.reset_pending();
+                if key.code == KeyCode::Char('c') {
+                    return InputResult::Ops(vec![ToggleLineComment]);
+                }
+                // `gc` + motion: select the motion's span, comment it, collapse.
+                return match Self::motion(key.code) {
+                    Some(m) => {
+                        InputResult::Ops(vec![SelectStart, m, ToggleLineComment, SelectClear])
+                    }
+                    None => InputResult::Consumed,
+                };
+            }
+            Prefix::None => {}
+        }
+
+        // ── operator-pending (we already saw d / c / y / > / <) ──────
+        if let Some(op) = self.op {
+            // A second copy of the operator key ⇒ linewise (`dd`, `yy`, `cc`, `>>`, `<<`).
+            let doubled = matches!(
+                (op, key.code),
+                (PendingOp::Delete, KeyCode::Char('d'))
+                    | (PendingOp::Change, KeyCode::Char('c'))
+                    | (PendingOp::Yank, KeyCode::Char('y'))
+                    | (PendingOp::Indent, KeyCode::Char('>'))
+                    | (PendingOp::Outdent, KeyCode::Char('<'))
+            );
+            let n = self.count1();
+            self.reset_pending();
+            if key.code == KeyCode::Esc {
+                return InputResult::Consumed;
+            }
+            if doubled {
+                return match op {
+                    PendingOp::Delete => InputResult::Ops(Self::repeated(DeleteLine, n)),
+                    PendingOp::Yank => InputResult::Ops(Self::repeated(YankLine, n)),
+                    PendingOp::Change => {
+                        self.mode = VimMode::Insert;
+                        // clear the line's contents but keep the line, then insert
+                        InputResult::Ops(vec![SelectLine, ReplaceSelection(String::new())])
+                    }
+                    PendingOp::Indent => InputResult::Ops(Self::repeated(Indent, n)),
+                    PendingOp::Outdent => InputResult::Ops(Self::repeated(Outdent, n)),
+                };
+            }
+            // operator + word for delete/change has a tighter form (`dw`, `cw`).
+            if let Some(m) = Self::motion(key.code) {
+                let mut ops = vec![SelectStart];
+                if n > 1 {
+                    ops.push(Repeat(n, Box::new(m)));
+                } else {
+                    ops.push(m);
+                }
+                match op {
+                    PendingOp::Delete => ops.push(DeleteSelection),
+                    PendingOp::Yank => {
+                        ops.push(YankSelection);
+                        ops.push(SelectClear);
+                    }
+                    PendingOp::Change => {
+                        ops.push(ReplaceSelection(String::new()));
+                        self.mode = VimMode::Insert;
+                    }
+                    PendingOp::Indent => {
+                        ops.push(Indent);
+                        ops.push(SelectClear);
+                    }
+                    PendingOp::Outdent => {
+                        ops.push(Outdent);
+                        ops.push(SelectClear);
+                    }
+                }
+                return InputResult::Ops(ops);
+            }
+            // Not a motion ⇒ abort the operator.
+            return InputResult::Consumed;
+        }
+
+        // ── count prefix (`0` is a motion, not a count, when no count yet) ──
+        if let KeyCode::Char(c @ '0'..='9') = key.code {
+            if c == '0' && self.count.is_none() {
+                // fallthrough to motion handling below
+            } else {
+                let d = c as u32 - '0' as u32;
+                self.count = Some(self.count.unwrap_or(0).saturating_mul(10).saturating_add(d));
+                return InputResult::Consumed;
+            }
+        }
+
+        // ── `{N}G` → go to line N ────────────────────────────────────
+        if key.code == KeyCode::Char('G')
+            && let Some(n) = self.count
+        {
+            self.reset_pending();
+            return InputResult::Ops(vec![MoveToLine(n as usize)]);
+        }
+
+        // ── plain motions ────────────────────────────────────────────
+        if let Some(m) = Self::motion(key.code) {
+            let n = self.count1();
+            self.reset_pending();
+            return InputResult::Ops(Self::repeated(m, n));
+        }
+
+        let n = self.count1();
+        match key.code {
+            // enter Insert in various places
+            KeyCode::Char('i') => {
+                self.enter_insert();
+                InputResult::Consumed
+            }
+            KeyCode::Char('I') => {
+                self.enter_insert();
+                InputResult::Ops(vec![MoveLineFirstNonWs])
+            }
+            KeyCode::Char('a') => {
+                self.enter_insert();
+                InputResult::Ops(vec![MoveRight])
+            }
+            KeyCode::Char('A') => {
+                self.enter_insert();
+                InputResult::Ops(vec![MoveLineEnd])
+            }
+            KeyCode::Char('o') => {
+                self.enter_insert();
+                InputResult::Ops(vec![InsertNewlineBelow])
+            }
+            KeyCode::Char('O') => {
+                self.enter_insert();
+                InputResult::Ops(vec![InsertNewlineAbove])
+            }
+            // single-char edits
+            KeyCode::Char('x') => {
+                self.reset_pending();
+                InputResult::Ops(Self::repeated(DeleteForward, n))
+            }
+            KeyCode::Char('X') => {
+                self.reset_pending();
+                InputResult::Ops(Self::repeated(Backspace, n))
+            }
+            KeyCode::Char('D') => {
+                self.reset_pending();
+                InputResult::Ops(vec![DeleteToLineEnd])
+            }
+            KeyCode::Char('C') => {
+                self.enter_insert();
+                InputResult::Ops(vec![DeleteToLineEnd])
+            }
+            KeyCode::Char('s') => {
+                self.enter_insert();
+                InputResult::Ops(vec![DeleteForward])
+            }
+            KeyCode::Char('S') => {
+                self.enter_insert();
+                InputResult::Ops(vec![SelectLine, ReplaceSelection(String::new())])
+            }
+            KeyCode::Char('r') if ctrl => {
+                self.reset_pending();
+                InputResult::Ops(Self::repeated(Redo, n))
+            }
+            KeyCode::Char('r') => {
+                self.prefix = Prefix::Replace;
+                InputResult::Consumed
+            }
+            KeyCode::Char('J') => {
+                self.reset_pending();
+                // join: go to line end, delete forward (the newline + leading ws would
+                // need a dedicated op — approximate with DeleteForward for now).
+                InputResult::Ops(vec![MoveLineEnd, DeleteForward])
+            }
+            // paste / undo / redo
+            KeyCode::Char('p') => {
+                self.reset_pending();
+                InputResult::Ops(Self::repeated(PasteAfter, n))
+            }
+            KeyCode::Char('P') => {
+                self.reset_pending();
+                InputResult::Ops(Self::repeated(PasteBefore, n))
+            }
+            KeyCode::Char('u') => {
+                self.reset_pending();
+                InputResult::Ops(Self::repeated(Undo, n))
+            }
+            // operators
+            KeyCode::Char('d') => {
+                self.op = Some(PendingOp::Delete);
+                self.count = if n > 1 { Some(n) } else { None };
+                InputResult::Consumed
+            }
+            KeyCode::Char('c') => {
+                self.op = Some(PendingOp::Change);
+                self.count = if n > 1 { Some(n) } else { None };
+                InputResult::Consumed
+            }
+            KeyCode::Char('y') => {
+                self.op = Some(PendingOp::Yank);
+                self.count = if n > 1 { Some(n) } else { None };
+                InputResult::Consumed
+            }
+            KeyCode::Char('>') => {
+                self.op = Some(PendingOp::Indent);
+                self.count = if n > 1 { Some(n) } else { None };
+                InputResult::Consumed
+            }
+            KeyCode::Char('<') => {
+                self.op = Some(PendingOp::Outdent);
+                self.count = if n > 1 { Some(n) } else { None };
+                InputResult::Consumed
+            }
+            // prefixes
+            KeyCode::Char('g') => {
+                self.prefix = Prefix::G;
+                self.count = if n > 1 { Some(n) } else { None };
+                InputResult::Consumed
+            }
+            KeyCode::Char('Z') => {
+                self.prefix = Prefix::Z;
+                InputResult::Consumed
+            }
+            // visual modes
+            KeyCode::Char('v') => {
+                self.mode = VimMode::Visual;
+                self.reset_pending();
+                InputResult::Ops(vec![SelectStart])
+            }
+            KeyCode::Char('V') => {
+                self.mode = VimMode::VisualLine;
+                self.reset_pending();
+                InputResult::Ops(vec![SelectLine])
+            }
+            // command line
+            KeyCode::Char(':') => {
+                self.reset_pending();
+                self.cmdline = Some(String::new());
+                InputResult::Consumed
+            }
+            KeyCode::Char('/') if ctrl => {
+                self.reset_pending();
+                InputResult::Ops(vec![ToggleLineComment])
+            }
+            KeyCode::Esc => {
+                self.reset_pending();
+                InputResult::Consumed
+            }
+            _ => {
+                self.reset_pending();
+                InputResult::Ignored
+            }
+        }
+    }
+
+    fn handle_visual(&mut self, key: KeyEvent, _ctx: &EditCtx) -> InputResult {
+        use EditOp::*;
+        let linewise = self.mode == VimMode::VisualLine;
+
+        // count prefix inside visual
+        if let KeyCode::Char(c @ '1'..='9') = key.code {
+            let d = c as u32 - '0' as u32;
+            self.count = Some(self.count.unwrap_or(0).saturating_mul(10).saturating_add(d));
+            return InputResult::Consumed;
+        }
+        if let KeyCode::Char(c @ '0'..='9') = key.code
+            && self.count.is_some()
+        {
+            let d = c as u32 - '0' as u32;
+            self.count = Some(self.count.unwrap().saturating_mul(10).saturating_add(d));
+            return InputResult::Consumed;
+        }
+
+        if let Some(m) = Self::motion(key.code) {
+            let n = self.count1();
+            self.count = None;
+            return InputResult::Ops(Self::repeated(m, n));
+        }
+
+        self.count = None;
+        match key.code {
+            KeyCode::Esc => {
+                self.enter_normal();
+                InputResult::Ops(vec![SelectClear])
+            }
+            KeyCode::Char('v') => {
+                if linewise {
+                    self.mode = VimMode::Visual;
+                    InputResult::Consumed
+                } else {
+                    self.enter_normal();
+                    InputResult::Ops(vec![SelectClear])
+                }
+            }
+            KeyCode::Char('V') => {
+                if linewise {
+                    self.enter_normal();
+                    InputResult::Ops(vec![SelectClear])
+                } else {
+                    self.mode = VimMode::VisualLine;
+                    InputResult::Ops(vec![SelectLine])
+                }
+            }
+            KeyCode::Char('d') | KeyCode::Char('x') => {
+                self.enter_normal();
+                InputResult::Ops(vec![DeleteSelection])
+            }
+            KeyCode::Char('c') | KeyCode::Char('s') => {
+                self.mode = VimMode::Insert;
+                self.reset_pending();
+                InputResult::Ops(vec![ReplaceSelection(String::new())])
+            }
+            KeyCode::Char('y') => {
+                self.enter_normal();
+                InputResult::Ops(vec![YankSelection, SelectClear])
+            }
+            KeyCode::Char('>') => {
+                self.enter_normal();
+                InputResult::Ops(vec![Indent, SelectClear])
+            }
+            KeyCode::Char('<') => {
+                self.enter_normal();
+                InputResult::Ops(vec![Outdent, SelectClear])
+            }
+            KeyCode::Char('g') => {
+                self.prefix = Prefix::G;
+                InputResult::Consumed
+            }
+            KeyCode::Char('U') | KeyCode::Char('u') => {
+                // case ops aren't in the EditOp vocabulary yet — ignore quietly.
+                InputResult::Consumed
+            }
+            KeyCode::Char(':') => {
+                self.cmdline = Some(String::new());
+                InputResult::Consumed
+            }
+            _ => InputResult::Consumed,
+        }
+    }
+}
+
+impl InputHandler for VimInputHandler {
+    fn handle_key(&mut self, key: KeyEvent, ctx: &EditCtx) -> InputResult {
+        if let Some(line) = self.cmdline.take() {
+            return self.handle_cmdline(key, line);
+        }
+        match self.mode {
+            VimMode::Insert => self.handle_insert(key, ctx),
+            VimMode::Normal => self.handle_normal(key, ctx),
+            VimMode::Visual | VimMode::VisualLine => self.handle_visual(key, ctx),
+        }
+    }
+
+    fn mode(&self) -> EditingMode {
+        match self.mode {
+            VimMode::Normal => EditingMode::Normal,
+            VimMode::Insert => EditingMode::Insert,
+            VimMode::Visual | VimMode::VisualLine => EditingMode::Visual,
+        }
+    }
+
+    fn pending_display(&self) -> Option<String> {
+        if let Some(line) = &self.cmdline {
+            return Some(format!(":{line}"));
+        }
+        let mut s = String::new();
+        if let Some(n) = self.count {
+            s.push_str(&n.to_string());
+        }
+        if let Some(op) = self.op {
+            s.push(match op {
+                PendingOp::Delete => 'd',
+                PendingOp::Change => 'c',
+                PendingOp::Yank => 'y',
+                PendingOp::Indent => '>',
+                PendingOp::Outdent => '<',
+            });
+        }
+        match self.prefix {
+            Prefix::G => s.push('g'),
+            Prefix::Gc => s.push_str("gc"),
+            Prefix::Z => s.push('Z'),
+            Prefix::Replace => s.push('r'),
+            Prefix::None => {}
+        }
+        if self.mode == VimMode::VisualLine {
+            return Some(if s.is_empty() {
+                "V-LINE".into()
+            } else {
+                format!("V-LINE {s}")
+            });
+        }
+        if s.is_empty() { None } else { Some(s) }
+    }
+
+    fn name(&self) -> &'static str {
+        "vim"
+    }
+
+    fn on_blur(&mut self) {
+        // Drop to Normal and forget any half-typed chord / `:`-line.
+        self.mode = VimMode::Normal;
+        self.reset_pending();
+        self.cmdline = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::crossterm::event::KeyEvent;
+
+    fn h() -> VimInputHandler {
+        VimInputHandler::new(&Config::default())
+    }
+    fn ctx() -> EditCtx {
+        EditCtx {
+            cursor: 0,
+            line_len: 4,
+            line_idx: 0,
+            line_count: 3,
+            at_line_start: true,
+            at_line_end: false,
+            has_selection: false,
+        }
+    }
+    fn k(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+    fn kc(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+    fn kctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+    fn ops(r: InputResult) -> Vec<EditOp> {
+        match r {
+            InputResult::Ops(v) => v,
+            _ => panic!("expected Ops"),
+        }
+    }
+
+    #[test]
+    fn starts_in_normal() {
+        assert_eq!(h().mode(), EditingMode::Normal);
+    }
+
+    #[test]
+    fn i_enters_insert_esc_returns() {
+        let mut v = h();
+        assert!(matches!(
+            v.handle_key(k('i'), &ctx()),
+            InputResult::Consumed
+        ));
+        assert_eq!(v.mode(), EditingMode::Insert);
+        assert_eq!(
+            ops(v.handle_key(k('a'), &ctx())),
+            vec![EditOp::InsertChar('a')]
+        );
+        assert_eq!(
+            ops(v.handle_key(kc(KeyCode::Esc), &ctx())),
+            vec![EditOp::MoveLeft]
+        );
+        assert_eq!(v.mode(), EditingMode::Normal);
+    }
+
+    #[test]
+    fn o_opens_line_below_and_inserts() {
+        let mut v = h();
+        assert_eq!(
+            ops(v.handle_key(k('o'), &ctx())),
+            vec![EditOp::InsertNewlineBelow]
+        );
+        assert_eq!(v.mode(), EditingMode::Insert);
+    }
+
+    #[test]
+    fn hjkl_move() {
+        let mut v = h();
+        assert_eq!(ops(v.handle_key(k('h'), &ctx())), vec![EditOp::MoveLeft]);
+        assert_eq!(ops(v.handle_key(k('j'), &ctx())), vec![EditOp::MoveDown]);
+        assert_eq!(ops(v.handle_key(k('k'), &ctx())), vec![EditOp::MoveUp]);
+        assert_eq!(ops(v.handle_key(k('l'), &ctx())), vec![EditOp::MoveRight]);
+    }
+
+    #[test]
+    fn count_then_word_is_repeat() {
+        let mut v = h();
+        assert!(matches!(
+            v.handle_key(k('5'), &ctx()),
+            InputResult::Consumed
+        ));
+        assert_eq!(
+            ops(v.handle_key(k('w'), &ctx())),
+            vec![EditOp::Repeat(5, Box::new(EditOp::MoveWordRight))]
+        );
+    }
+
+    #[test]
+    fn dw_deletes_word() {
+        let mut v = h();
+        assert!(matches!(
+            v.handle_key(k('d'), &ctx()),
+            InputResult::Consumed
+        ));
+        assert_eq!(
+            ops(v.handle_key(k('w'), &ctx())),
+            vec![
+                EditOp::SelectStart,
+                EditOp::MoveWordRight,
+                EditOp::DeleteSelection
+            ]
+        );
+    }
+
+    #[test]
+    fn dd_deletes_line() {
+        let mut v = h();
+        assert!(matches!(
+            v.handle_key(k('d'), &ctx()),
+            InputResult::Consumed
+        ));
+        assert_eq!(ops(v.handle_key(k('d'), &ctx())), vec![EditOp::DeleteLine]);
+    }
+
+    #[test]
+    fn count_dd_repeats_delete_line() {
+        let mut v = h();
+        v.handle_key(k('3'), &ctx());
+        v.handle_key(k('d'), &ctx());
+        assert_eq!(
+            ops(v.handle_key(k('d'), &ctx())),
+            vec![EditOp::Repeat(3, Box::new(EditOp::DeleteLine))]
+        );
+    }
+
+    #[test]
+    fn yy_yanks_line() {
+        let mut v = h();
+        v.handle_key(k('y'), &ctx());
+        assert_eq!(ops(v.handle_key(k('y'), &ctx())), vec![EditOp::YankLine]);
+    }
+
+    #[test]
+    fn x_deletes_forward_p_pastes_u_undo_ctrlr_redo() {
+        let mut v = h();
+        assert_eq!(
+            ops(v.handle_key(k('x'), &ctx())),
+            vec![EditOp::DeleteForward]
+        );
+        assert_eq!(ops(v.handle_key(k('p'), &ctx())), vec![EditOp::PasteAfter]);
+        assert_eq!(ops(v.handle_key(k('u'), &ctx())), vec![EditOp::Undo]);
+        assert_eq!(ops(v.handle_key(kctrl('r'), &ctx())), vec![EditOp::Redo]);
+    }
+
+    #[test]
+    fn gg_to_buffer_start_lone_g_pends() {
+        let mut v = h();
+        assert!(matches!(
+            v.handle_key(k('g'), &ctx()),
+            InputResult::Consumed
+        ));
+        assert_eq!(v.pending_display().as_deref(), Some("g"));
+        assert_eq!(
+            ops(v.handle_key(k('g'), &ctx())),
+            vec![EditOp::MoveBufferStart]
+        );
+        assert_eq!(v.pending_display(), None);
+    }
+
+    #[test]
+    fn cap_g_to_buffer_end_count_g_to_line() {
+        let mut v = h();
+        assert_eq!(
+            ops(v.handle_key(k('G'), &ctx())),
+            vec![EditOp::MoveBufferEnd]
+        );
+        let mut v = h();
+        v.handle_key(k('1'), &ctx());
+        v.handle_key(k('2'), &ctx());
+        assert_eq!(
+            ops(v.handle_key(k('G'), &ctx())),
+            vec![EditOp::MoveToLine(12)]
+        );
+    }
+
+    #[test]
+    fn visual_select_extend_yank() {
+        let mut v = h();
+        assert_eq!(ops(v.handle_key(k('v'), &ctx())), vec![EditOp::SelectStart]);
+        assert_eq!(v.mode(), EditingMode::Visual);
+        assert_eq!(ops(v.handle_key(k('l'), &ctx())), vec![EditOp::MoveRight]);
+        assert_eq!(
+            ops(v.handle_key(k('y'), &ctx())),
+            vec![EditOp::YankSelection, EditOp::SelectClear]
+        );
+        assert_eq!(v.mode(), EditingMode::Normal);
+    }
+
+    #[test]
+    fn cmdline_wq_becomes_excommand() {
+        let mut v = h();
+        assert!(matches!(
+            v.handle_key(k(':'), &ctx()),
+            InputResult::Consumed
+        ));
+        assert_eq!(v.pending_display().as_deref(), Some(":"));
+        v.handle_key(k('w'), &ctx());
+        v.handle_key(k('q'), &ctx());
+        assert_eq!(v.pending_display().as_deref(), Some(":wq"));
+        match v.handle_key(kc(KeyCode::Enter), &ctx()) {
+            InputResult::App(AppCommand::ExCommand(s)) => assert_eq!(s, "wq"),
+            _ => panic!("expected ExCommand"),
+        }
+    }
+
+    #[test]
+    fn cmdline_esc_cancels() {
+        let mut v = h();
+        v.handle_key(k(':'), &ctx());
+        v.handle_key(k('q'), &ctx());
+        assert!(matches!(
+            v.handle_key(kc(KeyCode::Esc), &ctx()),
+            InputResult::Consumed
+        ));
+        assert_eq!(v.pending_display(), None);
+    }
+
+    #[test]
+    fn zz_and_zq() {
+        let mut v = h();
+        v.handle_key(k('Z'), &ctx());
+        match v.handle_key(k('Z'), &ctx()) {
+            InputResult::App(AppCommand::ExCommand(s)) => assert_eq!(s, "x"),
+            _ => panic!("ZZ → :x"),
+        }
+        let mut v = h();
+        v.handle_key(k('Z'), &ctx());
+        match v.handle_key(k('Q'), &ctx()) {
+            InputResult::App(AppCommand::ExCommand(s)) => assert_eq!(s, "q!"),
+            _ => panic!("ZQ → :q!"),
+        }
+    }
+
+    #[test]
+    fn gd_runs_lsp_command() {
+        let mut v = h();
+        v.handle_key(k('g'), &ctx());
+        match v.handle_key(k('d'), &ctx()) {
+            InputResult::App(AppCommand::RunCommand(id)) => assert_eq!(id, "lsp.goto_definition"),
+            _ => panic!("gd → lsp.goto_definition"),
+        }
+    }
+
+    #[test]
+    fn gcc_toggles_comment() {
+        let mut v = h();
+        v.handle_key(k('g'), &ctx());
+        v.handle_key(k('c'), &ctx());
+        assert_eq!(
+            ops(v.handle_key(k('c'), &ctx())),
+            vec![EditOp::ToggleLineComment]
+        );
+    }
+
+    #[test]
+    fn on_blur_resets() {
+        let mut v = h();
+        v.handle_key(k('i'), &ctx());
+        v.handle_key(k('d'), &ctx());
+        v.on_blur();
+        assert_eq!(v.mode(), EditingMode::Normal);
+        assert_eq!(v.pending_display(), None);
+    }
+
+    #[test]
+    fn unknown_normal_key_is_ignored() {
+        let mut v = h();
+        assert!(matches!(v.handle_key(k('Q'), &ctx()), InputResult::Ignored));
+    }
+}
