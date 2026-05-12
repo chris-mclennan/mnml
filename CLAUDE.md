@@ -237,10 +237,17 @@ run against the same `App` + `ui::draw` the terminal/headless paths use — with
 and synthesized key events (no real event loop, no file-IPC; deterministic + fast). `<text>` may be
 `"…"`-wrapped (`\n \t \\ \"` unescaped). `mnml test [path…]` runs files/dirs of `.test` (default
 `tests/e2e/`), non-zero exit on failure; `tests/e2e.rs` runs `tests/e2e/**/*.test` under `cargo test`
-(seeded with `edit_and_save.test`, `command_palette.test`). Then: LSP, CDP, plugin hooks, more `.test`
-coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native launcher actions),
-Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus queued polish
-(line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.
+(seeded with `edit_and_save.test`, `command_palette.test`). **Plugins — done (first cut):** out-of-process
+helpers over the `.mnml/ipc/` channel — IPC commands `register-command {id,title,group,keys}` /
+`run-command <id>` / `type <text>`; a `register`ed command (`crate::command::DynCommand` on `App`) shows
+up in the palette + resolves as a keybinding (`Keymap::bind`), and invoking it (palette / key / `run-command`)
+appends a `{"event":"plugin-command","id":…}` line via `ipc::drain_plugin_events` (called once per run-loop
+tick) for the owning plugin to react to; `command::run` falls back to `App::run_dynamic_command` after the
+builtin lookup. Protocol + limits documented in `docs/PLUGINS.md` (and it contrasts plugins [out-of-process,
+IPC] with Cargo features [compiled-in]); `examples/plugins/insert-timestamp.sh` is a working example. Then:
+LSP, CDP, more `.test` coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native
+launcher actions), Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus
+queued polish (line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)
