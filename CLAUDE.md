@@ -136,10 +136,16 @@ commits refresh open graph panes. **staging view** — `Pane::GitStatus` (`src/g
 summarises `git diff --cached`; the result lands (via `App.pending_commit_msg_job`, sharing `ai_chan`)
 in the commit prompt pre-seeded with its first line (`Prompt::seeded`). Per-hunk staging (diff pane),
 commit, and staging-pane ops all run through `App::after_git_change()` (refreshes the cached status +
-every open `GitGraph`/`GitStatus` pane). headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
+every open `GitGraph`/`GitStatus` pane). **branches / worktrees** — `src/git/branch.rs` (local/remote
+branch lists, `git worktree list --porcelain`, `checkout` / `checkout --track` / `checkout -b`):
+`git.checkout` (`<leader>g o`, `b` in the staging pane) — fuzzy picker over local + remote branches
+→ `git checkout` (remotes via `--track`); `git.new_branch` (`<leader>g n`, `B`) — prompt → `git checkout
+-b`; `git.worktrees` (`<leader>g w`, `w`) — picker over the worktrees → opens a shell pane in the chosen
+one; after a checkout `App::after_checkout()` refreshes git + tree and toasts (warns if unsaved editors
+are open). headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
 wrappers. The statusline git segment shows branch + `⇡ahead ⇣behind` + `✚staged ●modified
 …untracked ⚠conflicts` (only the nonzero parts), from `git status --porcelain -b`. The Git
-track is done (phase 3 — branch/worktree rail, commit-with-Codex, "recompose commit with AI", multi-repo — is queued; see `.local/PLAN.md`). **HTTP track — in progress:** `src/http/` holds `Request`/`Response` +
+track is done (phase 4 — branch-rail UI [vs the picker], commit-with-Codex, "recompose commit with AI", multi-repo — is queued; see `.local/PLAN.md`). **HTTP track — in progress:** `src/http/` holds `Request`/`Response` +
 `send` (reqwest blocking, rustls), `curl.rs` (parse a pasted cURL), `file.rs` (`.http`/
 `.rest`/`.curl` parsing, multi-block via `### name`), `template.rs` (`{{VAR}}` from
 `.mnml/env/<name>.env` → process env → dynamic `{{$uuid}}`/`{{$timestamp}}`/…), `script.rs`
