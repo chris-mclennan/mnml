@@ -74,6 +74,11 @@ user might be mid-edit *inside mnml* on something untouched.
 - Don't copy code verbatim from `../mnml1` or `../rqst`; port + restructure.
 - When a track needs something from the core, add a `Command` / `EditOp` / `Pane`
   variant — don't special-case across layers.
+- The user is happy to have Claude pick which track/feature to do next ("keep going,
+  you decide the order — we'll do them all eventually") — choose the most valuable;
+  don't ask which. Lean toward *bounded* items when starting a fresh session; save the
+  big tracks (CDP, the `private` feature, LSP completion/rename) for when there's room.
+  After each landed feature: update this Status block + commit + `./run.sh restart`.
 
 ## Status
 
