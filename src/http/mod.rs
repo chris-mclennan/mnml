@@ -9,14 +9,16 @@
 //!   `@capture` (post-response) directives carried in `#` comments.
 //! - [`chain`] — `.chain.json` sequences: each step extracts response values into
 //!   variables the later steps `{{…}}`.
+//! - [`discover`] — read an OpenAPI / Swagger spec → one `.curl` stub per operation.
 //! - [`send`] — fire a [`Request`] with `reqwest`'s blocking client, capture the
 //!   [`Response`] (status, headers, body, elapsed).
 //!
-//! Still to come (its own pass): OpenAPI → stub discovery, and editable
-//! request-pane field tabs.
+//! Still to come (its own pass): editable request-pane field tabs (right now you
+//! edit the `.http` file in a normal editor).
 
 pub mod chain;
 pub mod curl;
+pub mod discover;
 pub mod file;
 pub mod script;
 pub mod template;

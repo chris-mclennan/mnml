@@ -4,6 +4,7 @@
 //!   - `mnml run FILE [--env NAME] [--workspace DIR]` — send one `.curl` / `.http`
 //!     request, after `{{VAR}}` substitution from `.mnml/env/<NAME>.env`.
 //!   - `mnml chain run FILE [--env NAME] [--workspace DIR]` — run a `.chain.json`.
+//!   - `mnml discover SPEC [--out DIR] [--base-url URL]` — OpenAPI/Swagger → `.curl` stubs.
 //!
 //! Later phases add `mnml test GLOB`, `mnml ipc …`.
 
@@ -27,6 +28,10 @@ fn main() -> ExitCode {
                 args.next();
             }
             chain_subcommand(args.collect())
+        }
+        Some("discover") => {
+            args.next();
+            discover_subcommand(args.collect())
         }
         _ => run_tui(args.collect()),
     }
@@ -250,6 +255,62 @@ fn chain_subcommand(argv: Vec<String>) -> ExitCode {
         }
         Err(e) => {
             eprintln!("mnml chain: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn discover_subcommand(argv: Vec<String>) -> ExitCode {
+    let usage = "usage: mnml discover SPEC [--out DIR] [--base-url URL]\n  SPEC is a local OpenAPI/Swagger JSON file or an http(s):// URL";
+    let (mut spec, mut out, mut base_url) = (None::<String>, None::<PathBuf>, None::<String>);
+    let mut it = argv.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--out" | "-o" => match it.next() {
+                Some(v) => out = Some(PathBuf::from(v)),
+                None => {
+                    eprintln!("mnml discover: --out needs a path");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--base-url" => match it.next() {
+                Some(v) => base_url = Some(v),
+                None => {
+                    eprintln!("mnml discover: --base-url needs a value");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "-h" | "--help" => {
+                println!("{usage}");
+                return ExitCode::SUCCESS;
+            }
+            s if s.starts_with('-') => {
+                eprintln!("mnml discover: unknown flag: {s}");
+                return ExitCode::FAILURE;
+            }
+            s if spec.is_none() => spec = Some(s.to_string()),
+            s => {
+                eprintln!("mnml discover: unexpected extra argument: {s}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let Some(spec) = spec else {
+        eprintln!("{usage}");
+        return ExitCode::FAILURE;
+    };
+    let out = out.unwrap_or_else(|| PathBuf::from(".mnml/requests"));
+    match mnml::http::discover::run(&mnml::http::discover::Options {
+        spec,
+        out: out.clone(),
+        base_url,
+    }) {
+        Ok(n) => {
+            println!("wrote {n} .curl stub(s) under {}", out.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("mnml discover: {e}");
             ExitCode::FAILURE
         }
     }

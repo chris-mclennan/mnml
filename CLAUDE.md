@@ -140,11 +140,16 @@ request line + headers + body, then status/headers/pretty body + ✓/✗ asserts
 `.chain.json` (`[{ "request": "a.curl", "extract": { "VAR": "$.path" } }, …]`): each step
 expands `{{}}` against the running env, sends, runs its `@assert`/`@capture`, then `extract`s
 into env vars for the next step; stops at the first transport error / non-2xx-3xx / failed
-assert / empty extract — wired as `mnml chain run FILE [--env NAME] [--workspace DIR]`. Still
-to do for HTTP: OpenAPI→stub discovery, editable request-pane field tabs (right now you edit
-the `.http` file in a normal editor). Then: Pty/AI-CLI, AI-API, CDP, the `.test` E2E format,
-plugins; plus queued polish (right-click context menus on files/tabs, line-wrapped preview).
-See `.local/PLAN.md` for the full plan.
+assert / empty extract — wired as `mnml chain run FILE [--env NAME] [--workspace DIR]`.
+**Discover** — `src/http/discover.rs` reads an OpenAPI/Swagger spec (local JSON or http(s)
+URL) and writes one `.curl` stub per operation under `<out>/<tag>/<operationId>.curl` (path
+params → `{{name}}`, `security` ⇒ `Authorization: Bearer {{TOKEN}}`, JSON body from a spec
+`example`); `mnml discover SPEC [--out DIR] [--base-url URL]` (default out `.mnml/requests`).
+Still to do for HTTP: editable request-pane field tabs (right now you edit the `.http` file in
+a normal editor). Then: **Pty/AI-CLI** (the AI track — `claude`/`codex` panes + `claude -p`
+one-shots; a raw API client is deferred), LSP, CDP, the `.test` E2E format, plugins; plus
+queued polish (right-click context menus on files/tabs, line-wrapped preview). See
+`.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)
