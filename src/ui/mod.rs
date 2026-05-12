@@ -28,6 +28,7 @@ pub mod diff_view;
 pub mod editor_view;
 pub mod git_graph_view;
 pub mod git_status_view;
+pub mod hover;
 pub mod icons;
 pub mod md_preview;
 pub mod picker;
@@ -136,6 +137,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     } else {
         app.rects.context_menu_box = None;
         app.rects.context_menu_items.clear();
+    }
+    if app.hover.is_some() {
+        hover::draw(frame, app, area, cursor_pos);
     }
 
     // ── terminal cursor ──

@@ -115,6 +115,9 @@ pub struct App {
     pub prompt: Option<crate::prompt::Prompt>,
     /// The right-click context menu, when open. Steals key + mouse input.
     pub context_menu: Option<crate::context_menu::ContextMenu>,
+    /// The LSP hover popup, when open (set when a `textDocument/hover` reply
+    /// arrives). The next key dismisses it (j/k/arrows scroll it first).
+    pub hover: Option<crate::hover::HoverPopup>,
     /// Channel for background HTTP sends (lazily created on the first `rqst.send`):
     /// worker threads send `(job_id, result)`; [`Self::tick`] drains it and updates
     /// the matching `Pane::Request`.
@@ -185,6 +188,7 @@ impl App {
             close_prompt: None,
             prompt: None,
             context_menu: None,
+            hover: None,
             http_chan: None,
             ai_chan: None,
             tests_chan: None,
@@ -690,19 +694,10 @@ impl App {
                     b.editor.place_cursor(line as usize, character as usize);
                 }
             }
-            LspEvent::Hover { text } => {
-                let one = text
-                    .lines()
-                    .map(str::trim)
-                    .find(|l| !l.is_empty())
-                    .unwrap_or("");
-                let shown: String = one.chars().take(160).collect();
-                self.toast(if shown.is_empty() {
-                    "hover: (nothing)".to_string()
-                } else {
-                    format!("hover: {shown}")
-                });
-            }
+            LspEvent::Hover { text } => match crate::hover::HoverPopup::from_text(&text) {
+                Some(h) => self.hover = Some(h),
+                None => self.toast("hover: (nothing)"),
+            },
             LspEvent::References(locs) => {
                 use crate::picker::PickerItem;
                 if locs.is_empty() {

@@ -138,6 +138,41 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         handle_picker_key(app, key);
         return;
     }
+    // An LSP hover popup is up: arrows / j / k / PgUp / PgDn scroll it; Esc
+    // closes it; anything else closes it and is then handled normally.
+    if app.hover.is_some() {
+        match key.code {
+            KeyCode::Esc => {
+                app.hover = None;
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(h) = &mut app.hover {
+                    h.scroll_by(-1);
+                }
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(h) = &mut app.hover {
+                    h.scroll_by(1);
+                }
+                return;
+            }
+            KeyCode::PageUp => {
+                if let Some(h) = &mut app.hover {
+                    h.scroll_by(-6);
+                }
+                return;
+            }
+            KeyCode::PageDown => {
+                if let Some(h) = &mut app.hover {
+                    h.scroll_by(6);
+                }
+                return;
+            }
+            _ => app.hover = None, // fall through to normal handling
+        }
+    }
     // The right-click context menu steals keys: ↑↓/jk move, Enter runs, Esc closes.
     if app.context_menu.is_some() {
         match key.code {
@@ -597,6 +632,11 @@ fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
 
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
+
+    // A click anywhere dismisses the hover popup (then the click still lands).
+    if app.hover.is_some() && matches!(m.kind, MouseEventKind::Down(_)) {
+        app.hover = None;
+    }
 
     // While the picker is open it owns the mouse.
     if app.picker.is_some() {
