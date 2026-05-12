@@ -725,6 +725,50 @@ impl App {
         self.ask_ai(title, crate::ai::action_prompt(what, &code, &lang));
     }
 
+    /// `rqst.ai_debug` (`.` in a request pane) — hand the request + its response
+    /// (or transport error) to `claude -p` and ask why it's failing / how to fix.
+    pub fn ai_debug_request(&mut self) {
+        use crate::request_pane::RunState;
+        let prompt = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Request(rp)) => {
+                let req = &rp.request;
+                let mut req_text = format!("{} {}\n", req.method, req.url);
+                for (k, v) in &req.headers {
+                    req_text.push_str(&format!("{k}: {v}\n"));
+                }
+                if let Some(b) = &req.body {
+                    req_text.push_str(&format!("\n{b}\n"));
+                }
+                let resp_text = match &rp.state {
+                    RunState::Sending => "(still in flight — wait for it)".to_string(),
+                    RunState::Failed(e) => format!("transport error: {e}"),
+                    RunState::Done(r) => {
+                        let mut s = format!("{} {}\n", r.status, r.status_text);
+                        for (k, v) in &r.headers {
+                            s.push_str(&format!("{k}: {v}\n"));
+                        }
+                        let body: String = r.body.chars().take(4000).collect();
+                        s.push_str(&format!("\n{body}\n"));
+                        s
+                    }
+                };
+                if matches!(rp.state, RunState::Sending) {
+                    self.toast("wait for the response first");
+                    return;
+                }
+                format!(
+                    "This HTTP request isn't behaving. What's likely wrong and how do I fix it? \
+                     Be concise.\n\n## Request\n```http\n{req_text}```\n\n## Response\n```\n{resp_text}```"
+                )
+            }
+            _ => {
+                self.toast("open a request pane first (rqst.send)");
+                return;
+            }
+        };
+        self.ask_ai("AI: debug request", prompt);
+    }
+
     /// Re-fire the active `Pane::Ai`'s prompt (its `r` key).
     pub fn resend_active_ai(&mut self) {
         if let Some(cur) = self

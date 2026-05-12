@@ -255,6 +255,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.copy_active_curl(),
         },
         Command {
+            id: "rqst.ai_debug",
+            title: "HTTP: ask Claude why this request is failing",
+            group: "http",
+            keys: &[],
+            run: |app| app.ai_debug_request(),
+        },
+        Command {
             id: "term.shell",
             title: "Terminal: open a shell (split below)",
             group: "ai",

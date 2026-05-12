@@ -289,6 +289,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::End | KeyCode::Char('G') => rp.scroll = usize::MAX, // clamped on draw
             KeyCode::Char('r') => app.send_request_from_active(),
             KeyCode::Char('y') => app.copy_active_curl(),
+            KeyCode::Char('.') => app.ai_debug_request(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }

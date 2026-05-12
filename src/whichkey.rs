@@ -105,6 +105,7 @@ pub fn root() -> &'static Leader {
                         vec![
                             ('s', cmd("rqst.send", "send request")),
                             ('y', cmd("rqst.copy_curl", "copy as curl")),
+                            ('d', cmd("rqst.ai_debug", "ask Claude (debug)")),
                         ],
                     ),
                 ),
