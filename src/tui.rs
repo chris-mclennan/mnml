@@ -133,6 +133,16 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         handle_picker_key(app, key);
         return;
     }
+    // The "unsaved changes" confirm overlay steals keys: s/Enter = Save, d = Discard, c/Esc = Cancel.
+    if app.close_prompt.is_some() {
+        match key.code {
+            KeyCode::Char('s' | 'S') | KeyCode::Enter => app.close_prompt_resolve(0),
+            KeyCode::Char('d' | 'D') => app.close_prompt_resolve(1),
+            KeyCode::Char('c' | 'C') | KeyCode::Esc => app.close_prompt_resolve(2),
+            _ => {}
+        }
+        return;
+    }
     // A leader sequence in flight: walk the which-key trie until a leaf / dead end / Esc.
     if app.whichkey.is_some() {
         match key.code {
@@ -299,6 +309,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
             }
             _ => {}
+        }
+        return;
+    }
+
+    // The "unsaved changes" overlay is modal too — only its buttons respond.
+    if app.close_prompt.is_some() {
+        if let MouseEventKind::Down(MouseButton::Left) = m.kind
+            && let Some(&(_, choice)) = app
+                .rects
+                .close_prompt_buttons
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+        {
+            app.close_prompt_resolve(choice);
         }
         return;
     }

@@ -54,6 +54,8 @@ pub struct PaneRects {
     pub picker_items: Vec<(Rect, usize)>,
     /// On-screen cell where the picker's query caret should sit (when open).
     pub picker_caret: Option<(u16, u16)>,
+    /// `(rect, choice)` per button in the close-confirm overlay (0=Save, 1=Discard, 2=Cancel).
+    pub close_prompt_buttons: Vec<(Rect, u8)>,
 }
 
 pub struct App {
@@ -91,6 +93,9 @@ pub struct App {
     /// The split divider currently being dragged (between mouse-down on it and
     /// mouse-up), so drag events resize *that* split even off-target.
     pub dragging: Option<crate::layout::DividerHit>,
+    /// A buffer whose close is awaiting a Save/Discard/Cancel decision (the
+    /// confirm overlay is up). Steals key input like the picker.
+    pub close_prompt: Option<PaneId>,
 }
 
 impl App {
@@ -121,6 +126,7 @@ impl App {
             keymap,
             whichkey: None,
             dragging: None,
+            close_prompt: None,
         })
     }
 
@@ -444,11 +450,27 @@ impl App {
         self.dragging = None;
     }
 
-    /// Close the buffer at `id`, discarding unsaved changes with a toast. If it's
-    /// shown in a leaf, that leaf is removed (its parent split collapses into the
-    /// sibling); if the closed leaf was focused, focus moves to the next leaf —
-    /// or, if none remain but a background buffer does, that buffer is shown.
+    /// Close the buffer at `id`. If it's a dirty editor, this opens the
+    /// Save/Discard/Cancel confirm overlay instead and returns; otherwise it
+    /// closes immediately. Use [`Self::force_close_pane`] to skip the prompt.
     pub fn close_pane(&mut self, id: PaneId) {
+        if id >= self.panes.len() {
+            return;
+        }
+        let dirty = matches!(self.panes.get(id), Some(Pane::Editor(b)) if b.dirty);
+        if dirty {
+            self.close_prompt = Some(id);
+            return;
+        }
+        self.force_close_pane(id);
+    }
+
+    /// Close the buffer at `id` unconditionally, discarding unsaved changes (with
+    /// a toast). If it's shown in a leaf, that leaf is removed (its parent split
+    /// collapses into the sibling); if the closed leaf was focused, focus moves
+    /// to the next leaf — or, if none remain but a background buffer does, that
+    /// buffer is shown.
+    pub fn force_close_pane(&mut self, id: PaneId) {
         if id >= self.panes.len() {
             return;
         }
@@ -458,8 +480,7 @@ impl App {
         } else {
             None
         };
-        let was_in_leaf = self.layout.contains(id);
-        if was_in_leaf {
+        if self.layout.contains(id) {
             self.layout.remove_leaf(id);
         }
         if self.active == Some(id) {
@@ -481,6 +502,52 @@ impl App {
     pub fn close_active_pane(&mut self) {
         if let Some(i) = self.active {
             self.close_pane(i);
+        }
+    }
+    pub fn force_close_active_pane(&mut self) {
+        if let Some(i) = self.active {
+            self.force_close_pane(i);
+        }
+    }
+
+    /// Resolve the close-confirm overlay. `choice`: 0 = Save (then close),
+    /// 1 = Discard (close, lose changes), 2 = Cancel.
+    pub fn close_prompt_resolve(&mut self, choice: u8) {
+        let Some(id) = self.close_prompt.take() else {
+            return;
+        };
+        match choice {
+            0 => {
+                // Save then close. A save failure aborts the close (the toast says why).
+                let ok = match self.panes.get_mut(id) {
+                    Some(Pane::Editor(b)) if b.path.is_some() => match b.save_to_disk() {
+                        Ok(()) => true,
+                        Err(e) => {
+                            self.toast(format!("save failed: {e}"));
+                            false
+                        }
+                    },
+                    Some(Pane::Editor(_)) => {
+                        self.toast("can't save a scratch buffer — pick Discard or Cancel");
+                        false
+                    }
+                    _ => true,
+                };
+                if ok {
+                    self.git.refresh();
+                    self.disarm_quit();
+                    self.force_close_pane(id);
+                }
+            }
+            1 => self.force_close_pane(id),
+            _ => {} // cancel
+        }
+    }
+    /// `(display_name, has_path)` for the buffer awaiting a close decision, if any.
+    pub fn close_prompt_info(&self) -> Option<(String, bool)> {
+        let id = self.close_prompt?;
+        match self.panes.get(id)? {
+            Pane::Editor(b) => Some((b.display_name(), b.path.is_some())),
         }
     }
 
@@ -621,13 +688,14 @@ impl App {
                 }
             }
             "q!" | "quit!" => {
-                self.close_active_pane();
+                self.force_close_active_pane();
                 if self.panes.is_empty() {
                     self.should_quit = true;
                 }
             }
             "wq" | "x" | "xit" => {
                 self.save_active();
+                // After a successful save the buffer's clean, so this won't prompt.
                 self.close_active_pane();
                 if self.panes.is_empty() {
                     self.should_quit = true;

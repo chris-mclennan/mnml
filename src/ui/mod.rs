@@ -20,6 +20,7 @@
 //! palette / which-key / popups) draw on top.
 
 pub mod bufferline;
+pub mod close_prompt;
 pub mod editor_view;
 pub mod icons;
 pub mod picker;
@@ -109,6 +110,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.whichkey.is_some() {
         whichkey::draw(frame, app, area);
     }
+    if app.close_prompt.is_some() {
+        close_prompt::draw(frame, app, area);
+    } else {
+        app.rects.close_prompt_buttons.clear();
+    }
 
     // ── terminal cursor ──
     // The picker's query caret wins when it's open; otherwise the editor caret
@@ -117,6 +123,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.set_cursor_position((x, y));
     } else if app.focus == Focus::Pane
         && app.whichkey.is_none()
+        && app.close_prompt.is_none()
         && let Some((x, y)) = cursor_pos
     {
         frame.set_cursor_position((x, y));
