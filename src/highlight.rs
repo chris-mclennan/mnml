@@ -227,6 +227,50 @@ fn build_config(ext: &str) -> Option<HighlightConfiguration> {
             "",
             "",
         ),
+        "ts" | "cts" | "mts" => (
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            "typescript",
+            tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            "",
+            tree_sitter_typescript::LOCALS_QUERY,
+        ),
+        "tsx" => (
+            tree_sitter_typescript::LANGUAGE_TSX.into(),
+            "tsx",
+            tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            "",
+            tree_sitter_typescript::LOCALS_QUERY,
+        ),
+        "css" | "scss" => (
+            tree_sitter_css::LANGUAGE.into(),
+            "css",
+            tree_sitter_css::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ),
+        "html" | "htm" => (
+            tree_sitter_html::LANGUAGE.into(),
+            "html",
+            tree_sitter_html::HIGHLIGHTS_QUERY,
+            tree_sitter_html::INJECTIONS_QUERY,
+            "",
+        ),
+        "sh" | "bash" | "zsh" => (
+            tree_sitter_bash::LANGUAGE.into(),
+            "bash",
+            tree_sitter_bash::HIGHLIGHT_QUERY,
+            "",
+            "",
+        ),
+        // Markdown's inline grammar lives behind injections, which we don't resolve
+        // yet — so this colors block structure (headings, fences, lists, quotes).
+        "md" | "markdown" => (
+            tree_sitter_md::LANGUAGE.into(),
+            "markdown",
+            tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
+            tree_sitter_md::INJECTION_QUERY_BLOCK,
+            "",
+        ),
         _ => return None,
     };
     let mut cfg = HighlightConfiguration::new(lang, name, hl_q, inj_q, loc_q).ok()?;
@@ -269,5 +313,26 @@ mod tests {
             "number should be orange: {:?}",
             lines[1]
         );
+    }
+
+    #[test]
+    fn extra_grammars_load_and_color_something() {
+        // Each grammar's queries must compile (`HighlightConfiguration::new` ok)
+        // and produce at least one span on a representative line.
+        let cases: &[(&str, &str)] = &[
+            ("ts", "const x: number = 1;\n"),
+            ("tsx", "const C = () => <div>{x}</div>;\n"),
+            ("css", "a { color: red; }\n"),
+            ("sh", "echo \"hi\" && ls -la\n"),
+            ("html", "<div class=\"x\">hi</div>\n"),
+            ("md", "# Heading\n\n- item\n"),
+        ];
+        for &(ext, src) in cases {
+            let lines = highlight_lines(src, ext);
+            assert!(
+                !lines.is_empty() && lines.iter().any(|l| !l.is_empty()),
+                "{ext}: expected some highlight spans, got {lines:?}"
+            );
+        }
     }
 }
