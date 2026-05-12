@@ -111,7 +111,7 @@ pub fn draw(
             }
             rows.push(Line::from(tally));
             rows.push(Line::from(Span::styled(
-                "  ↵ open · ↑↓ select · r re-run · a all · f file · R last-failed · esc → tree",
+                "  ↵ open · ↑↓ select · h heal (Claude) · r re-run · a all · f file · R last-failed · esc → tree",
                 dim,
             )));
             rows.push(Line::from(Span::styled(

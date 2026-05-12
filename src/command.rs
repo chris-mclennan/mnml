@@ -354,6 +354,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.rerun_failed_tests(),
         },
         Command {
+            id: "test.heal",
+            title: "Tests: ask Claude to fix the highlighted failing test",
+            group: "test",
+            keys: &[],
+            run: |app| app.heal_selected_test(),
+        },
+        Command {
             id: "whichkey.leader",
             title: "Leader menu (which-key)",
             group: "view",

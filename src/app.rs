@@ -919,6 +919,49 @@ impl App {
         self.run_playwright(args);
     }
 
+    /// `test.heal` (`h` in a tests pane) — hand the highlighted *failing* test (its
+    /// title, file, error, and the spec source) to `claude -p` and ask for a fix.
+    /// Reuses the AI machinery; `c` in the resulting `Pane::Ai` promotes it to an
+    /// interactive Claude Code session (which can actually apply the fix / call
+    /// your healer agent).
+    pub fn heal_selected_test(&mut self) {
+        let info = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Tests(t)) => match t.selected_test() {
+                Some(tc) if tc.status == crate::playwright::TestStatus::Failed => Some((
+                    tc.title.clone(),
+                    tc.suite_path.clone(),
+                    tc.file.clone(),
+                    tc.line,
+                    tc.error.clone().unwrap_or_default(),
+                )),
+                Some(_) => {
+                    self.toast("that test isn't failing — nothing to heal");
+                    None
+                }
+                None => None,
+            },
+            _ => {
+                self.toast("select a failing test in the results pane first");
+                None
+            }
+        };
+        let Some((title, suite, file, line, error)) = info else {
+            return;
+        };
+        let src = std::fs::read_to_string(self.workspace.join(&file)).unwrap_or_default();
+        let where_ = if suite.is_empty() {
+            format!("{file}:{line}")
+        } else {
+            format!("{suite} › {title}  ({file}:{line})")
+        };
+        let prompt = format!(
+            "This Playwright test is failing. Work out why and propose a fix — change the \
+             test or the code under test as appropriate. Be concise; reply with the patch in a \
+             fenced block plus a short note.\n\n## Failing test\n{where_}\n\n## Error\n```\n{error}\n```\n\n## {file}\n```ts\n{src}\n```"
+        );
+        self.ask_ai(format!("AI: heal {title}"), prompt);
+    }
+
     /// Jump the editor to the source of the highlighted test in a `Pane::Tests`.
     pub fn jump_to_selected_test(&mut self) {
         let Some(cur) = self.active else { return };

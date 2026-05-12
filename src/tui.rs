@@ -326,6 +326,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('R') => app.rerun_failed_tests(),
             KeyCode::Char('a') => app.run_tests_all(),
             KeyCode::Char('f') => app.run_tests_file(),
+            KeyCode::Char('h') => app.heal_selected_test(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }

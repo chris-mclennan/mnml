@@ -118,6 +118,7 @@ pub fn root() -> &'static Leader {
                             ('f', cmd("test.run_file", "run this file")),
                             ('t', cmd("test.run_at_cursor", "run test at cursor")),
                             ('l', cmd("test.rerun_failed", "re-run last-failed")),
+                            ('h', cmd("test.heal", "heal failing test (Claude)")),
                         ],
                     ),
                 ),
