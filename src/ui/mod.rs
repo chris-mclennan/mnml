@@ -19,6 +19,7 @@
 //! editor per `Layout::Leaf`, 1-cell dividers between splits. Overlays (picker /
 //! palette / which-key / popups) draw on top.
 
+pub mod ai_view;
 pub mod bufferline;
 pub mod close_prompt;
 pub mod diff_view;
@@ -165,6 +166,7 @@ fn render_layout(
                 Some(crate::pane::Pane::Diff(_)) => 2,
                 Some(crate::pane::Pane::Request(_)) => 3,
                 Some(crate::pane::Pane::Pty(_)) => 4,
+                Some(crate::pane::Pane::Ai(_)) => 5,
                 _ => 0,
             };
             match kind {
@@ -172,6 +174,7 @@ fn render_layout(
                 2 => diff_view::draw(frame, app, *id, area, focused),
                 3 => request_view::draw(frame, app, *id, area, focused),
                 4 => pty_view::draw(frame, app, *id, area, focused),
+                5 => ai_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

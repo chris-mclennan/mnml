@@ -11,6 +11,7 @@
 //!
 //! See `.local/PLAN.md` for the full design + roadmap.
 
+pub mod ai;
 pub mod app;
 pub mod buffer;
 pub mod clipboard;

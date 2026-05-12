@@ -156,11 +156,19 @@ caret when focused, "[process exited]" banner). `term.shell` (`Ctrl+T` / `<leade
 the focused leaf. A focused pty forwards keys→bytes to the child (`tui::pty_key_bytes`,
 xterm-ish) — the global chords (esp. `Ctrl+E` cycle-focus, `Ctrl+B` tree) are the way back out
 since they resolve before pane dispatch; `Ctrl+W` closes the pane (kills child, joins reader).
-The event loop polls at 40 ms while a pty is open. *Follow-ups:* tail the Claude Code / Codex
-session JSONL so an in-IDE AI view mirrors the CLI conversation; `claude -p` one-shots for
-`ai.explain/refactor/fix/write_tests` + request-debug; pty scrollback. Then: LSP, CDP, the
-`.test` E2E format, plugins; plus queued polish (right-click context menus on files/tabs,
-line-wrapped preview). See `.local/PLAN.md` for the full plan.
+The event loop polls at 40 ms while a pty is open. **AI on-selection actions — done:** `src/ai/mod.rs`
+runs `claude -p "<prompt>"` (the CLI in print mode — tool use, returns text, user's auth) on a
+worker thread; `Pane::Ai(AiPane)` (`Asking|Done|Failed` + scroll) shows the answer rendered as
+markdown (via `md_preview::render_markdown`) — `src/ui/ai_view.rs`. Commands `ai.explain` /
+`ai.fix` / `ai.refactor` / `ai.write_tests` (`<leader>a e/f/r/w`) feed the active editor's
+selection (or the whole buffer if nothing's selected) + a task prompt; `ai.ask` (`<leader>a a`)
+takes a free-text question via the prompt overlay (`PromptKind::AiAsk`). Results land via
+`App.ai_chan` / `App::tick` (same pattern as the request pane); `r` re-asks, Esc → tree.
+*Follow-ups:* tail the Claude Code / Codex session JSONL so the pty pane and an in-IDE AI view
+share a conversation; parse a returned patch into a `Pane::Diff` with accept/reject;
+request-debug (`Ctrl+.` on a failing request → `claude -p`); pty scrollback; cancel a running
+one-shot. Then: LSP, CDP, the `.test` E2E format, plugins; plus queued polish (right-click
+context menus on files/tabs, line-wrapped preview). See `.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)

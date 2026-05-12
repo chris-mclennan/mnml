@@ -7,6 +7,8 @@
 pub enum PromptKind {
     /// Accept ⇒ `git commit -m <input>`.
     GitCommit,
+    /// Accept ⇒ `claude -p <input>`, answer in a `Pane::Ai`.
+    AiAsk,
 }
 
 #[derive(Debug)]

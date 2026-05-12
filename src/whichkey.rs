@@ -113,6 +113,11 @@ pub fn root() -> &'static Leader {
                     group(
                         "+ai/term",
                         vec![
+                            ('a', cmd("ai.ask", "ask claude…")),
+                            ('e', cmd("ai.explain", "explain selection")),
+                            ('f', cmd("ai.fix", "fix bugs")),
+                            ('r', cmd("ai.refactor", "refactor")),
+                            ('w', cmd("ai.write_tests", "write tests")),
                             ('t', cmd("term.shell", "shell")),
                             ('c', cmd("ai.claude_code", "claude code")),
                             ('x', cmd("ai.codex", "codex")),

@@ -70,7 +70,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     if field_y + 1 < inner.y + inner.height {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                "  enter to commit · esc to cancel",
+                "  enter to submit · esc to cancel",
                 Style::default()
                     .fg(theme::cur().comment)
                     .bg(theme::cur().bg_darker),

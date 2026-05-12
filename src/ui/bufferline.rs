@@ -46,6 +46,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Diff(_) => (if nerd { "\u{f0e7e}" } else { "±" }, theme::cur().orange),
             Pane::Request(_) => (if nerd { "\u{f0a3e}" } else { "⚡" }, theme::cur().yellow),
             Pane::Pty(_) => (if nerd { "\u{f489}" } else { "▶" }, theme::cur().teal),
+            Pane::Ai(_) => (if nerd { "\u{f0e0a}" } else { "✦" }, theme::cur().purple),
         };
         let badge = if pane.is_dirty() { "●" } else { "×" };
         // ` <icon> <name> <badge> `

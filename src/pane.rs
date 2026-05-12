@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use crate::ai::AiPane;
 use crate::buffer::Buffer;
 use crate::git::diff::Hunk;
 use crate::pty_pane::PtySession;
@@ -26,7 +27,8 @@ pub enum Pane {
     Request(RequestPane),
     /// An embedded terminal (shell / `claude` / `codex`).
     Pty(PtySession),
-    // Ai(AiPanel),           // AI track
+    /// An AI one-shot (`claude -p`) prompt + its answer.
+    Ai(AiPane),
 }
 
 pub struct MdPreview {
@@ -96,6 +98,7 @@ impl Pane {
             Pane::Diff(d) => d.title(),
             Pane::Request(r) => r.title(),
             Pane::Pty(s) => s.title(),
+            Pane::Ai(a) => a.tab_title(),
         }
     }
 
@@ -103,7 +106,9 @@ impl Pane {
     pub fn is_dirty(&self) -> bool {
         match self {
             Pane::Editor(b) => b.dirty,
-            Pane::MdPreview(_) | Pane::Diff(_) | Pane::Request(_) | Pane::Pty(_) => false,
+            Pane::MdPreview(_) | Pane::Diff(_) | Pane::Request(_) | Pane::Pty(_) | Pane::Ai(_) => {
+                false
+            }
         }
     }
 

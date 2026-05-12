@@ -294,6 +294,21 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // An AI pane: read-only — scroll, `r` re-ask, Esc → tree.
+    if let Some(Pane::Ai(a)) = app.panes.get_mut(i) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => a.scroll = a.scroll.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => a.scroll += 1,
+            KeyCode::PageUp => a.scroll = a.scroll.saturating_sub(viewport),
+            KeyCode::PageDown => a.scroll += viewport,
+            KeyCode::Home | KeyCode::Char('g') => a.scroll = 0,
+            KeyCode::End | KeyCode::Char('G') => a.scroll = usize::MAX, // clamped on draw
+            KeyCode::Char('r') => app.resend_active_ai(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // A pty pane swallows almost everything (so readline / vim-in-pty work) and
     // forwards it to the child. The global chords (`Ctrl+E` cycle focus, `Ctrl+B`
     // tree, …) already had their shot in `dispatch_key` before us, so they remain
@@ -564,6 +579,14 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 };
             }
             Some(Pane::Pty(_)) => {} // pty scrollback isn't wired yet
+            Some(Pane::Ai(a)) => {
+                let n = delta.unsigned_abs() as usize;
+                a.scroll = if delta < 0 {
+                    a.scroll.saturating_sub(n)
+                } else {
+                    a.scroll + n
+                };
+            }
             None => {}
         }
     }

@@ -137,6 +137,12 @@ impl Editor {
         self.anchor
             .map(|a| (a.min(self.cursor), a.max(self.cursor)))
     }
+    /// The selected text, or `""` when there's no selection.
+    pub fn selected_text(&self) -> String {
+        self.selection()
+            .map(|(lo, hi)| self.text[lo..hi].to_string())
+            .unwrap_or_default()
+    }
     pub fn has_selection(&self) -> bool {
         self.anchor.map(|a| a != self.cursor).unwrap_or(false)
     }

@@ -117,10 +117,17 @@ pub struct App {
         std::sync::mpsc::Sender<HttpJobDone>,
         std::sync::mpsc::Receiver<HttpJobDone>,
     )>,
+    /// Channel for background `claude -p` runs (lazily created); worker threads
+    /// send `(job_id, result)`, [`Self::tick`] drains it into the matching `Pane::Ai`.
+    ai_chan: Option<(
+        std::sync::mpsc::Sender<AiJobDone>,
+        std::sync::mpsc::Receiver<AiJobDone>,
+    )>,
     next_job_id: u64,
 }
 
 type HttpJobDone = (u64, Result<crate::request_pane::ResponseView, String>);
+type AiJobDone = (u64, Result<String, String>);
 
 impl App {
     pub fn new(workspace: PathBuf, config: Config) -> Result<App, String> {
@@ -153,6 +160,7 @@ impl App {
             close_prompt: None,
             prompt: None,
             http_chan: None,
+            ai_chan: None,
             next_job_id: 1,
         })
     }
@@ -387,7 +395,11 @@ impl App {
         let path = match self.panes.get(cur) {
             Some(Pane::Editor(b)) => b.path.clone(),
             Some(Pane::MdPreview(p)) => Some(p.path.clone()),
-            Some(Pane::Diff(_)) | Some(Pane::Request(_)) | Some(Pane::Pty(_)) | None => None,
+            Some(Pane::Diff(_))
+            | Some(Pane::Request(_))
+            | Some(Pane::Pty(_))
+            | Some(Pane::Ai(_))
+            | None => None,
         };
         let new_buf = match path {
             Some(p) => {
@@ -433,7 +445,8 @@ impl App {
             Some(Pane::Editor(_))
             | Some(Pane::Diff(_))
             | Some(Pane::Request(_))
-            | Some(Pane::Pty(_)) => {
+            | Some(Pane::Pty(_))
+            | Some(Pane::Ai(_)) => {
                 self.toast("not a markdown file");
                 return;
             }
@@ -533,6 +546,142 @@ impl App {
     /// streaming output stays smooth).
     pub fn has_pty_pane(&self) -> bool {
         self.panes.iter().any(|p| matches!(p, Pane::Pty(_)))
+    }
+
+    // ─── AI: `claude -p` one-shots ──────────────────────────────────
+    /// Open a `Pane::Ai` showing `title` and the answer to `prompt`, and kick off
+    /// `claude -p <prompt>` on a background thread (`tick` delivers the answer).
+    pub fn ask_ai(&mut self, title: impl Into<String>, prompt: String) {
+        let job_id = self.next_job_id;
+        self.next_job_id += 1;
+        let tx = self
+            .ai_chan
+            .get_or_insert_with(std::sync::mpsc::channel)
+            .0
+            .clone();
+        let p = prompt.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send((job_id, crate::ai::one_shot(&p)));
+        });
+        let pane = Pane::Ai(crate::ai::AiPane::new(title, prompt, job_id));
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// Re-send the prompt an existing `Pane::Ai` holds.
+    fn reask_ai(&mut self, pane_id: PaneId) {
+        let prompt = match self.panes.get(pane_id) {
+            Some(Pane::Ai(a)) => a.prompt.clone(),
+            _ => return,
+        };
+        let job_id = self.next_job_id;
+        self.next_job_id += 1;
+        let tx = self
+            .ai_chan
+            .get_or_insert_with(std::sync::mpsc::channel)
+            .0
+            .clone();
+        let p = prompt.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send((job_id, crate::ai::one_shot(&p)));
+        });
+        if let Some(Pane::Ai(a)) = self.panes.get_mut(pane_id) {
+            a.job_id = job_id;
+            a.state = crate::ai::AiState::Asking;
+            a.scroll = 0;
+        }
+    }
+
+    /// `ai.explain` / `ai.fix` / `ai.refactor` / `ai.write_tests` — feed the active
+    /// editor's selection (or the whole buffer) + a task prompt to `claude -p`.
+    pub fn ai_action(&mut self, what: &str) {
+        let (code, lang) = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Editor(b)) => {
+                let sel = b.editor.selected_text();
+                let code = if sel.trim().is_empty() {
+                    b.editor.text().to_string()
+                } else {
+                    sel
+                };
+                (code, b.language_ext.clone().unwrap_or_default())
+            }
+            // Re-fire from an existing AI pane.
+            Some(Pane::Ai(_)) => {
+                if let Some(cur) = self.active {
+                    self.reask_ai(cur);
+                }
+                return;
+            }
+            _ => {
+                self.toast("AI actions need an editor (select code, or use the whole file)");
+                return;
+            }
+        };
+        if code.trim().is_empty() {
+            self.toast("nothing to send");
+            return;
+        }
+        let title = format!("AI: {}", what.replace('_', " "));
+        self.ask_ai(title, crate::ai::action_prompt(what, &code, &lang));
+    }
+
+    /// Re-fire the active `Pane::Ai`'s prompt (its `r` key).
+    pub fn resend_active_ai(&mut self) {
+        if let Some(cur) = self
+            .active
+            .filter(|&i| matches!(self.panes.get(i), Some(Pane::Ai(_))))
+        {
+            self.reask_ai(cur);
+        }
+    }
+
+    /// `ai.ask` — accepted from the text-input prompt: a free-text question to `claude -p`.
+    pub fn open_ai_ask_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::AiAsk,
+            "Ask Claude",
+        ));
+    }
+
+    /// Deliver any completed `claude -p` runs to their `Pane::Ai`.
+    fn drain_ai_jobs(&mut self) {
+        use crate::ai::AiState;
+        let Some((_, rx)) = &self.ai_chan else {
+            return;
+        };
+        let done: Vec<AiJobDone> = rx.try_iter().collect();
+        let mut toasts: Vec<String> = Vec::new();
+        for (job_id, result) in done {
+            let Some(Pane::Ai(a)) = self.panes.iter_mut().find(
+                |p| matches!(p, Pane::Ai(a) if a.job_id == job_id && matches!(a.state, AiState::Asking)),
+            ) else {
+                continue;
+            };
+            match result {
+                Ok(text) => {
+                    toasts.push(format!("{} — done", a.title));
+                    a.state = AiState::Done(text);
+                }
+                Err(e) => {
+                    toasts.push(format!("AI: {e}"));
+                    a.state = AiState::Failed(e);
+                }
+            }
+        }
+        for t in toasts {
+            self.toast(t);
+        }
     }
 
     // ─── HTTP: request pane ─────────────────────────────────────────
@@ -943,6 +1092,15 @@ impl App {
                     Err(e) => self.toast(format!("git commit: {e}")),
                 }
             }
+            crate::prompt::PromptKind::AiAsk => {
+                let q = p.input.trim();
+                if q.is_empty() {
+                    return;
+                }
+                let short: String = q.chars().take(24).collect();
+                let ellip = if q.chars().count() > 24 { "…" } else { "" };
+                self.ask_ai(format!("AI: {short}{ellip}"), q.to_string());
+            }
         }
     }
 
@@ -1071,7 +1229,9 @@ impl App {
         }
         let discarded = match &self.panes[id] {
             Pane::Editor(b) => b.dirty.then(|| b.display_name()),
-            Pane::MdPreview(_) | Pane::Diff(_) | Pane::Request(_) | Pane::Pty(_) => None,
+            Pane::MdPreview(_) | Pane::Diff(_) | Pane::Request(_) | Pane::Pty(_) | Pane::Ai(_) => {
+                None
+            }
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -1145,6 +1305,7 @@ impl App {
             Pane::Diff(d) => Some((d.title(), false)),
             Pane::Request(r) => Some((r.title(), false)),
             Pane::Pty(s) => Some((s.title(), false)),
+            Pane::Ai(a) => Some((a.tab_title(), false)),
         }
     }
 
@@ -1429,6 +1590,7 @@ impl App {
     pub fn tick(&mut self) {
         self.git.tick();
         self.drain_http_jobs();
+        self.drain_ai_jobs();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL
         {
