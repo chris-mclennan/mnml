@@ -138,6 +138,12 @@ pub struct App {
     /// answer landing in a `Pane::Ai`).
     pending_commit_msg_job: Option<u64>,
     next_job_id: u64,
+    /// Commands registered at runtime by IPC plugins (`register-command`). They
+    /// show up in the palette/which-key + keymap; invoking one queues its id in
+    /// `pending_plugin_invocations` for the IPC layer to log as an event.
+    pub dynamic_commands: Vec<crate::command::DynCommand>,
+    /// Plugin-command ids invoked since the IPC layer last drained them.
+    pending_plugin_invocations: Vec<String>,
 }
 
 type HttpJobDone = (u64, Result<crate::request_pane::ResponseView, String>);
@@ -180,6 +186,8 @@ impl App {
             tests_chan: None,
             pending_commit_msg_job: None,
             next_job_id: 1,
+            dynamic_commands: Vec::new(),
+            pending_plugin_invocations: Vec::new(),
         })
     }
 
@@ -383,16 +391,54 @@ impl App {
         }
         self.open_picker(Picker::new(PickerKind::Buffers, "Switch buffer", items));
     }
-    /// Open the command palette over the registered commands.
+    /// Open the command palette over the registered commands (builtins + any
+    /// plugin-registered ones).
     pub fn open_command_palette(&mut self) {
         use crate::picker::PickerItem;
-        let items: Vec<PickerItem> = crate::command::registry()
+        let mut items: Vec<PickerItem> = crate::command::registry()
             .all()
             .iter()
             .filter(|c| c.id != "palette")
             .map(|c| PickerItem::new(c.id, format!("{}  ·  {}", c.group, c.title), c.key_hint()))
             .collect();
+        for dc in &self.dynamic_commands {
+            items.push(PickerItem::new(
+                dc.id.clone(),
+                format!("{}  ·  {}", dc.group, dc.title),
+                dc.keys.join(" / "),
+            ));
+        }
         self.open_picker(Picker::new(PickerKind::Commands, "Command palette", items));
+    }
+
+    // ─── plugin-registered (dynamic) commands ───────────────────────
+    /// Add (or replace) a plugin-registered command and bind any keyspecs it asked
+    /// for. Idempotent on `id`.
+    pub fn register_dynamic_command(&mut self, dc: crate::command::DynCommand) {
+        for spec in &dc.keys {
+            self.keymap.bind(spec, &dc.id);
+        }
+        if let Some(slot) = self.dynamic_commands.iter_mut().find(|c| c.id == dc.id) {
+            *slot = dc;
+        } else {
+            self.toast(format!("plugin command registered: {}", dc.title));
+            self.dynamic_commands.push(dc);
+        }
+    }
+    /// If `id` is a plugin command, queue it for the IPC layer to log and return
+    /// true; otherwise false. (Called by `command::run` after the builtin lookup.)
+    pub fn run_dynamic_command(&mut self, id: &str) -> bool {
+        if self.dynamic_commands.iter().any(|c| c.id == id) {
+            self.pending_plugin_invocations.push(id.to_string());
+            true
+        } else {
+            false
+        }
+    }
+    /// Take the plugin-command ids invoked since the last call (the IPC layer
+    /// appends a `plugin-command` event for each so the plugin can react).
+    pub fn take_pending_plugin_invocations(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_plugin_invocations)
     }
     /// Open the theme picker over the built-in themes.
     pub fn open_theme_picker(&mut self) {

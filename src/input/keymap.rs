@@ -87,6 +87,14 @@ impl Keymap {
     pub fn resolve(&self, ev: &KeyEvent) -> Option<&str> {
         self.map.get(&Chord::of(ev)).map(String::as_str)
     }
+
+    /// Bind one keyspec → command id (used for plugin-registered commands). A
+    /// keyspec that doesn't parse is ignored. Overwrites any existing binding.
+    pub fn bind(&mut self, spec: &str, id: &str) {
+        if let Some(ev) = parse_key_spec(spec) {
+            self.map.insert(Chord::of(&ev), id.to_string());
+        }
+    }
 }
 
 /// Parse a key spec. Modifiers (`ctrl+`, `shift+`, `alt+`) may prefix in any

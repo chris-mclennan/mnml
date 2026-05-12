@@ -35,6 +35,19 @@ impl Command {
     }
 }
 
+/// A command registered at runtime by an out-of-process plugin (over the file-IPC
+/// channel — see `ipc::IpcCommand::RegisterCommand`). Invoking it doesn't call
+/// Rust code; it appends a `{"event":"plugin-command","id":…}` line the plugin
+/// reads. Lives on `App` (not the static [`Registry`]) since it's per-session.
+#[derive(Debug, Clone)]
+pub struct DynCommand {
+    pub id: String,
+    pub title: String,
+    pub group: String,
+    /// Keyspecs to bind (best-effort — bad specs are ignored). May be empty.
+    pub keys: Vec<String>,
+}
+
 pub struct Registry {
     commands: Vec<Command>,
     by_id: HashMap<&'static str, usize>,
@@ -66,18 +79,19 @@ pub fn registry() -> &'static Registry {
     R.get_or_init(Registry::build)
 }
 
-/// Run a command by id against `app`. Returns false if the id is unknown.
+/// Run a command by id against `app`. Builtins call their Rust handler; a
+/// plugin-registered (`DynCommand`) id is queued for the IPC layer to report.
+/// Returns false if the id matches neither.
 pub fn run(id: &str, app: &mut App) -> bool {
-    match registry().get(id) {
-        Some(cmd) => {
-            (cmd.run)(app);
-            true
-        }
-        None => {
-            app.toast(format!("no such command: {id}"));
-            false
-        }
+    if let Some(cmd) = registry().get(id) {
+        (cmd.run)(app);
+        return true;
     }
+    if app.run_dynamic_command(id) {
+        return true;
+    }
+    app.toast(format!("no such command: {id}"));
+    false
 }
 
 fn builtin_commands() -> Vec<Command> {

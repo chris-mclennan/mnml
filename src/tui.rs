@@ -101,6 +101,7 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
         if let Some(ipc) = ipc.as_mut() {
             ipc::dump_screen_status(ipc, term.current_buffer_mut(), app);
             ipc::drain_commands(ipc, app);
+            ipc::drain_plugin_events(ipc, app);
         }
         if app.should_quit {
             break;

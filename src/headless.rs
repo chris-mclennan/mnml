@@ -36,7 +36,9 @@ pub fn run(mut app: App) -> Result<bool, String> {
         if app.should_quit {
             break;
         }
-        if !ipc::drain_commands(&mut ipc, &mut app) {
+        let any = ipc::drain_commands(&mut ipc, &mut app);
+        ipc::drain_plugin_events(&ipc, &mut app);
+        if !any {
             std::thread::sleep(POLL_SLEEP);
         }
     }

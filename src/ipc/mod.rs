@@ -10,6 +10,7 @@
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::Deserialize;
 
 use crate::app::App;
@@ -22,6 +23,21 @@ struct RawCommand {
     path: Option<String>,
     #[serde(default)]
     key: Option<String>,
+    /// `run-command` / `register-command`: the command id.
+    #[serde(default)]
+    id: Option<String>,
+    /// `register-command`: palette title.
+    #[serde(default)]
+    title: Option<String>,
+    /// `register-command`: which-key / palette group (default `"plugin"`).
+    #[serde(default)]
+    group: Option<String>,
+    /// `register-command`: keyspecs to bind.
+    #[serde(default)]
+    keys: Vec<String>,
+    /// `type`: literal text to type.
+    #[serde(default)]
+    text: Option<String>,
 }
 
 #[derive(Debug)]
@@ -30,6 +46,17 @@ pub enum IpcCommand {
     Open(PathBuf),
     /// Inject a key by spec (e.g. `"ctrl+q"`, `"down"`, `"enter"`).
     Key(String),
+    /// Type literal text into the focused pane, char by char (`\n` ⇒ Enter).
+    Type(String),
+    /// Run a registered command by id (builtin or plugin-registered).
+    RunCommand(String),
+    /// Register a plugin command (`id`, `title`, `group`, `keys`).
+    RegisterCommand {
+        id: String,
+        title: String,
+        group: String,
+        keys: Vec<String>,
+    },
     /// Force a fresh dump of `screen.txt` / `status.json`.
     Snapshot,
     /// Stop the loop.
@@ -148,6 +175,23 @@ fn parse_command(line: &str) -> IpcCommand {
             Some(k) => IpcCommand::Key(k),
             None => IpcCommand::Unknown(line.to_string()),
         },
+        "type" => match raw.text {
+            Some(t) => IpcCommand::Type(t),
+            None => IpcCommand::Unknown(line.to_string()),
+        },
+        "run-command" => match raw.id {
+            Some(id) => IpcCommand::RunCommand(id),
+            None => IpcCommand::Unknown(line.to_string()),
+        },
+        "register-command" => match raw.id {
+            Some(id) => IpcCommand::RegisterCommand {
+                title: raw.title.unwrap_or_else(|| id.clone()),
+                group: raw.group.unwrap_or_else(|| "plugin".to_string()),
+                keys: raw.keys,
+                id,
+            },
+            None => IpcCommand::Unknown(line.to_string()),
+        },
         "snapshot" => IpcCommand::Snapshot,
         "quit" => IpcCommand::Quit,
         "restart" => IpcCommand::Restart,
@@ -176,6 +220,43 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
             } else {
                 json_event(&[("event", "key_unparsed"), ("key", spec)])
             }
+        }
+        IpcCommand::Type(text) => {
+            for c in text.chars() {
+                let ev = if c == '\n' {
+                    KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+                } else {
+                    KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+                };
+                crate::tui::dispatch_key(app, ev);
+            }
+            json_event(&[("event", "type"), ("text", text)])
+        }
+        IpcCommand::RunCommand(id) => {
+            let ok = crate::command::run(id, app);
+            json_event(&[
+                ("event", "command_run"),
+                ("id", id),
+                ("ok", if ok { "true" } else { "false" }),
+            ])
+        }
+        IpcCommand::RegisterCommand {
+            id,
+            title,
+            group,
+            keys,
+        } => {
+            app.register_dynamic_command(crate::command::DynCommand {
+                id: id.clone(),
+                title: title.clone(),
+                group: group.clone(),
+                keys: keys.clone(),
+            });
+            json_event(&[
+                ("event", "command_registered"),
+                ("id", id),
+                ("title", title),
+            ])
         }
         IpcCommand::Snapshot => json_event(&[("event", "snapshot")]),
         IpcCommand::Quit => {
@@ -210,6 +291,16 @@ pub fn drain_commands(ipc: &mut Ipc, app: &mut App) -> bool {
         ipc.append_event(&ev);
     }
     any
+}
+
+/// Emit a `{"event":"plugin-command","id":…}` line for every plugin-registered
+/// command invoked since the last call (from the palette, a keybinding, or an
+/// IPC `run-command`) so the plugin that owns it can react. Both run loops call
+/// this once per iteration after input handling.
+pub fn drain_plugin_events(ipc: &Ipc, app: &mut App) {
+    for id in app.take_pending_plugin_invocations() {
+        ipc.append_event(&json_event(&[("event", "plugin-command"), ("id", &id)]));
+    }
 }
 
 /// Render a `ratatui::buffer::Buffer` to plain text (rows joined by `\n`,
@@ -306,4 +397,57 @@ fn json_str(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    #[test]
+    fn parses_plugin_commands() {
+        assert!(matches!(
+            parse_command(r#"{"cmd":"register-command","id":"p.a","title":"A"}"#),
+            IpcCommand::RegisterCommand { .. }
+        ));
+        assert!(matches!(
+            parse_command(r#"{"cmd":"run-command","id":"file.save"}"#),
+            IpcCommand::RunCommand(_)
+        ));
+        assert!(matches!(
+            parse_command(r#"{"cmd":"type","text":"hi"}"#),
+            IpcCommand::Type(_)
+        ));
+        // missing the required field ⇒ Unknown
+        assert!(matches!(
+            parse_command(r#"{"cmd":"run-command"}"#),
+            IpcCommand::Unknown(_)
+        ));
+    }
+
+    #[test]
+    fn plugin_command_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let ipc = Ipc::init(dir.path()).unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Config::default()).unwrap();
+
+        apply(
+            &mut app,
+            &IpcCommand::RegisterCommand {
+                id: "plugin.x".into(),
+                title: "X".into(),
+                group: "plugin".into(),
+                keys: vec![],
+            },
+        );
+        assert!(app.dynamic_commands.iter().any(|c| c.id == "plugin.x"));
+
+        // Invoke it the way a keybinding/palette would.
+        assert!(crate::command::run("plugin.x", &mut app));
+        drain_plugin_events(&ipc, &mut app);
+
+        let log = std::fs::read_to_string(dir.path().join(".mnml/ipc/events.jsonl")).unwrap();
+        assert!(log.contains(r#""event":"plugin-command""#), "log: {log}");
+        assert!(log.contains(r#""id":"plugin.x""#), "log: {log}");
+    }
 }
