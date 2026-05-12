@@ -43,7 +43,11 @@ pub struct GitStatus {
 
 impl GitStatus {
     pub fn new(workspace: &Path) -> Self {
-        let mut g = GitStatus { workspace: workspace.to_path_buf(), snapshot: Snapshot::default(), probed_at: None };
+        let mut g = GitStatus {
+            workspace: workspace.to_path_buf(),
+            snapshot: Snapshot::default(),
+            probed_at: None,
+        };
         g.refresh();
         g
     }
@@ -74,58 +78,70 @@ fn probe(workspace: &Path) -> Snapshot {
         .args(["symbolic-ref", "--short", "-q", "HEAD"])
         .current_dir(workspace)
         .output()
-        && out.status.success() {
-            let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !b.is_empty() {
-                snap.branch = Some(b);
-            }
+        && out.status.success()
+    {
+        let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !b.is_empty() {
+            snap.branch = Some(b);
         }
+    }
     if snap.branch.is_none()
         && let Ok(out) = Command::new("git")
             .args(["rev-parse", "--short", "HEAD"])
             .current_dir(workspace)
             .output()
-            && out.status.success() {
-                let h = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !h.is_empty() {
-                    snap.branch = Some(format!("@{h}"));
-                }
-            }
+        && out.status.success()
+    {
+        let h = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !h.is_empty() {
+            snap.branch = Some(format!("@{h}"));
+        }
+    }
 
     // Status.
     if let Ok(out) = Command::new("git")
         .args(["status", "--porcelain"])
         .current_dir(workspace)
         .output()
-        && out.status.success() {
-            for line in String::from_utf8_lossy(&out.stdout).lines() {
-                if line.len() < 3 {
-                    continue;
-                }
-                let bytes = line.as_bytes();
-                let (x, y) = (bytes[0] as char, bytes[1] as char);
-                let path_part = line[3..].trim();
-                // handle "old -> new" for renames; take the new path
-                let rel = path_part.rsplit(" -> ").next().unwrap_or(path_part).trim_matches('"');
-                let abs = workspace.join(rel);
-                let state = if x == 'U' || y == 'U' || (x == 'D' && y == 'D') || (x == 'A' && y == 'A') {
-                    snap.conflicts += 1;
-                    FileState::Conflicted
-                } else if x == '?' && y == '?' {
-                    snap.untracked += 1;
-                    FileState::Untracked
-                } else {
-                    if x != ' ' && x != '?' {
-                        snap.staged += 1;
-                    }
-                    if y != ' ' && y != '?' {
-                        snap.modified += 1;
-                    }
-                    if y != ' ' { FileState::Modified } else { FileState::Staged }
-                };
-                snap.files.insert(abs, state);
+        && out.status.success()
+    {
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            if line.len() < 3 {
+                continue;
             }
+            let bytes = line.as_bytes();
+            let (x, y) = (bytes[0] as char, bytes[1] as char);
+            let path_part = line[3..].trim();
+            // handle "old -> new" for renames; take the new path
+            let rel = path_part
+                .rsplit(" -> ")
+                .next()
+                .unwrap_or(path_part)
+                .trim_matches('"');
+            let abs = workspace.join(rel);
+            let state = if x == 'U' || y == 'U' || (x == 'D' && y == 'D') || (x == 'A' && y == 'A')
+            {
+                snap.conflicts += 1;
+                FileState::Conflicted
+            } else if x == '?' && y == '?' {
+                snap.untracked += 1;
+                FileState::Untracked
+            } else {
+                if x != ' ' && x != '?' {
+                    snap.staged += 1;
+                }
+                if y != ' ' && y != '?' {
+                    snap.modified += 1;
+                }
+                if y != ' ' {
+                    FileState::Modified
+                } else {
+                    FileState::Staged
+                }
+            };
+            snap.files.insert(abs, state);
         }
+    }
 
     snap
 }

@@ -122,9 +122,20 @@ impl Editor {
         let e = self.line_end(line);
         &self.text[s..e]
     }
+    /// Byte range `[start, end)` of line `line`'s content (the newline excluded).
+    pub fn line_byte_range(&self, line: usize) -> (usize, usize) {
+        (self.line_start(line), self.line_end(line))
+    }
+    /// Char-column count of `text[..byte_offset_within_line]` relative to the
+    /// start of the line that contains `byte`. Public so the view can map a
+    /// selection's byte offsets to columns.
+    pub fn byte_to_col(&self, byte: usize) -> usize {
+        self.col_at_byte(byte)
+    }
     /// The full selection range as byte offsets `[lo, hi)`, or `None`.
     pub fn selection(&self) -> Option<(usize, usize)> {
-        self.anchor.map(|a| (a.min(self.cursor), a.max(self.cursor)))
+        self.anchor
+            .map(|a| (a.min(self.cursor), a.max(self.cursor)))
     }
     pub fn has_selection(&self) -> bool {
         self.anchor.map(|a| a != self.cursor).unwrap_or(false)
@@ -144,7 +155,10 @@ impl Editor {
 
     // ─── line geometry helpers ──────────────────────────────────────
     fn current_line(&self) -> usize {
-        self.text[..self.cursor].bytes().filter(|&b| b == b'\n').count()
+        self.text[..self.cursor]
+            .bytes()
+            .filter(|&b| b == b'\n')
+            .count()
     }
     /// Byte offset of the start of line `line` (clamped to last line).
     fn line_start(&self, line: usize) -> usize {
@@ -220,7 +234,11 @@ impl Editor {
 
     // ─── undo plumbing ──────────────────────────────────────────────
     fn snapshot(&self) -> Snapshot {
-        Snapshot { text: self.text.clone(), cursor: self.cursor, anchor: self.anchor }
+        Snapshot {
+            text: self.text.clone(),
+            cursor: self.cursor,
+            anchor: self.anchor,
+        }
     }
     /// Begin a fresh undo group for a mutation that is *about* to change text.
     fn checkpoint(&mut self) {
@@ -541,7 +559,8 @@ impl Editor {
                 let token = self.comment_token.clone();
                 let trimmed = token.trim_end().to_string();
                 // Decide add vs remove from the first selected line's leading content.
-                let first_line = self.text[..self.selection().map(|(l, _)| l).unwrap_or(self.cursor)]
+                let first_line = self.text
+                    [..self.selection().map(|(l, _)| l).unwrap_or(self.cursor)]
                     .bytes()
                     .filter(|&b| b == b'\n')
                     .count();
@@ -644,7 +663,7 @@ impl Editor {
                 }
             }
             PasteAfter => {
-                let s = clip.get().to_string();
+                let s = clip.text();
                 if s.is_empty() {
                     return;
                 }
@@ -658,7 +677,11 @@ impl Editor {
                         payload = format!("\n{}", s.trim_end_matches('\n'));
                     }
                     self.text.insert_str(insert_at, &payload);
-                    self.cursor = if eol < self.text.len() { insert_at } else { insert_at + 1 };
+                    self.cursor = if eol < self.text.len() {
+                        insert_at
+                    } else {
+                        insert_at + 1
+                    };
                 } else {
                     let at = self.next_char_boundary(self.cursor).min(self.text.len());
                     self.text.insert_str(at, &s);
@@ -668,7 +691,7 @@ impl Editor {
                 out.buffer_changed = true;
             }
             PasteBefore => {
-                let s = clip.get().to_string();
+                let s = clip.text();
                 if s.is_empty() {
                     return;
                 }
@@ -686,7 +709,7 @@ impl Editor {
                 out.buffer_changed = true;
             }
             Paste => {
-                let s = clip.get().to_string();
+                let s = clip.text();
                 if s.is_empty() {
                     return;
                 }
@@ -773,15 +796,16 @@ impl Editor {
         let mut i = self.cursor;
         // skip the current run (whatever class the char under the cursor is, if not space)
         if let Some(c) = self.char_at(i)
-            && class_of(c) != CharClass::Space {
-                let cls = class_of(c);
-                while i < len {
-                    match self.char_at(i) {
-                        Some(c) if class_of(c) == cls => i = self.next_char_boundary(i),
-                        _ => break,
-                    }
+            && class_of(c) != CharClass::Space
+        {
+            let cls = class_of(c);
+            while i < len {
+                match self.char_at(i) {
+                    Some(c) if class_of(c) == cls => i = self.next_char_boundary(i),
+                    _ => break,
                 }
             }
+        }
         // skip whitespace
         while i < len {
             match self.char_at(i) {
@@ -864,15 +888,16 @@ impl Editor {
         let len = self.text.len();
         let mut i = self.cursor;
         if let Some(c) = self.char_at(i)
-            && class_of(c) != CharClass::Space {
-                let cls = class_of(c);
-                while i < len {
-                    match self.char_at(i) {
-                        Some(c) if class_of(c) == cls => i = self.next_char_boundary(i),
-                        _ => break,
-                    }
+            && class_of(c) != CharClass::Space
+        {
+            let cls = class_of(c);
+            while i < len {
+                match self.char_at(i) {
+                    Some(c) if class_of(c) == cls => i = self.next_char_boundary(i),
+                    _ => break,
                 }
             }
+        }
         while i < len {
             match self.char_at(i) {
                 Some(c) if class_of(c) == CharClass::Space => i = self.next_char_boundary(i),
@@ -960,7 +985,7 @@ mod tests {
     use crate::edit_op::EditOp::*;
 
     fn ed(s: &str) -> (Editor, Clipboard) {
-        (Editor::new(s, 4), Clipboard::new())
+        (Editor::new(s, 4), Clipboard::detached())
     }
     fn run(e: &mut Editor, c: &mut Clipboard, ops: &[EditOp]) {
         for op in ops {
@@ -971,7 +996,11 @@ mod tests {
     #[test]
     fn insert_and_undo_coalesce() {
         let (mut e, mut c) = ed("");
-        run(&mut e, &mut c, &[InsertChar('a'), InsertChar('b'), InsertChar('c')]);
+        run(
+            &mut e,
+            &mut c,
+            &[InsertChar('a'), InsertChar('b'), InsertChar('c')],
+        );
         assert_eq!(e.text(), "abc");
         e.apply(Undo, 10, &mut c);
         assert_eq!(e.text(), ""); // whole burst undone as one group

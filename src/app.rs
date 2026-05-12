@@ -51,6 +51,9 @@ pub struct App {
     /// Set alongside `should_quit` when the loop should exit *for a rebuild+relaunch*
     /// (the `run.sh` wrapper watches for the distinct exit code).
     pub restart_requested: bool,
+    /// True after a quit was refused because of unsaved changes — a second
+    /// `request_quit` then goes through. Cleared by saving.
+    pub quit_armed: bool,
     pub rects: PaneRects,
     /// The active register / system-clipboard bridge, threaded into `Editor::apply`.
     pub clipboard: Clipboard,
@@ -76,6 +79,7 @@ impl App {
             toast: None,
             should_quit: false,
             restart_requested: false,
+            quit_armed: false,
             rects: PaneRects::default(),
             clipboard: Clipboard::new(),
         })
@@ -169,6 +173,7 @@ impl App {
                     Ok(()) => {
                         self.toast(format!("saved {name}"));
                         self.git.refresh();
+                        self.disarm_quit();
                     }
                     Err(e) => self.toast(format!("save failed: {e}")),
                 }
@@ -181,18 +186,24 @@ impl App {
         let mut n = 0;
         for pane in &mut self.panes {
             if let Pane::Editor(b) = pane
-                && b.path.is_some() && b.dirty
-                    && b.save_to_disk().is_ok() {
-                        n += 1;
-                    }
+                && b.path.is_some()
+                && b.dirty
+                && b.save_to_disk().is_ok()
+            {
+                n += 1;
+            }
         }
         self.git.refresh();
+        self.disarm_quit();
         self.toast(format!("saved {n} file(s)"));
     }
 
     pub fn editing_mode(&self) -> EditingMode {
         match self.focus {
-            Focus::Pane => self.active_editor().map(Buffer::editing_mode).unwrap_or(EditingMode::None),
+            Focus::Pane => self
+                .active_editor()
+                .map(Buffer::editing_mode)
+                .unwrap_or(EditingMode::None),
             _ => EditingMode::None,
         }
     }
@@ -209,16 +220,19 @@ impl App {
     pub fn cycle_focus(&mut self) {
         let was_pane = self.focus == Focus::Pane;
         self.focus = self.focus.next(self.active.is_some());
-        if was_pane && self.focus != Focus::Pane
-            && let Some(b) = self.active_editor_mut() {
-                b.input.on_blur();
-            }
+        if was_pane
+            && self.focus != Focus::Pane
+            && let Some(b) = self.active_editor_mut()
+        {
+            b.input.on_blur();
+        }
     }
     pub fn focus_tree(&mut self) {
         if self.focus == Focus::Pane
-            && let Some(b) = self.active_editor_mut() {
-                b.input.on_blur();
-            }
+            && let Some(b) = self.active_editor_mut()
+        {
+            b.input.on_blur();
+        }
         self.focus = Focus::Tree;
     }
     pub fn focus_pane(&mut self) {
@@ -239,9 +253,16 @@ impl App {
 
     // ─── misc ───────────────────────────────────────────────────────
     pub fn request_quit(&mut self) {
-        // P0: buffers are read-only so there's never anything unsaved. A
-        // confirm-on-dirty guard lands with editing in P1.
-        self.should_quit = true;
+        let dirty = self.panes.iter().any(|p| p.is_dirty());
+        if dirty && !self.quit_armed {
+            self.quit_armed = true;
+            self.toast("unsaved changes — press quit again, or save first");
+        } else {
+            self.should_quit = true;
+        }
+    }
+    fn disarm_quit(&mut self) {
+        self.quit_armed = false;
     }
     /// Exit so the `run.sh` wrapper rebuilds and relaunches us with the same args.
     pub fn request_restart(&mut self) {
@@ -254,16 +275,20 @@ impl App {
     }
     /// Current toast text if it hasn't expired.
     pub fn live_toast(&self) -> Option<&str> {
-        self.toast.as_ref().filter(|(_, t)| t.elapsed() < TOAST_TTL).map(|(s, _)| s.as_str())
+        self.toast
+            .as_ref()
+            .filter(|(_, t)| t.elapsed() < TOAST_TTL)
+            .map(|(s, _)| s.as_str())
     }
 
     /// Per-event-loop housekeeping (cheap).
     pub fn tick(&mut self) {
         self.git.tick();
         if let Some((_, t)) = &self.toast
-            && t.elapsed() >= TOAST_TTL {
-                self.toast = None;
-            }
+            && t.elapsed() >= TOAST_TTL
+        {
+            self.toast = None;
+        }
     }
 }
 

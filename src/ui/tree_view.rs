@@ -12,7 +12,10 @@ use crate::git::status::FileState;
 use crate::ui::{icons, theme};
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
-    frame.render_widget(Paragraph::new("").style(Style::default().bg(theme::BG_DARKER)), area);
+    frame.render_widget(
+        Paragraph::new("").style(Style::default().bg(theme::BG_DARKER)),
+        area,
+    );
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -24,7 +27,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("workspace");
-    let header_glyph = if app.config.ui.ascii_icons { "*" } else { "\u{f07b}" };
+    let header_glyph = if app.config.ui.ascii_icons {
+        "*"
+    } else {
+        "\u{f07b}"
+    };
     let header = Line::from(vec![
         Span::styled(
             format!(" {header_glyph} "),
@@ -32,12 +39,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ),
         Span::styled(
             pad_to(format!("{ws_name} "), width.saturating_sub(3)),
-            Style::default().fg(theme::BLUE).bg(theme::BG_DARKER).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::BLUE)
+                .bg(theme::BG_DARKER)
+                .add_modifier(Modifier::BOLD),
         ),
     ]);
     frame.render_widget(Paragraph::new(header), Rect { height: 1, ..area });
 
-    let body = Rect { y: area.y + 1, height: area.height.saturating_sub(1), ..area };
+    let body = Rect {
+        y: area.y + 1,
+        height: area.height.saturating_sub(1),
+        ..area
+    };
     if body.height == 0 {
         return;
     }

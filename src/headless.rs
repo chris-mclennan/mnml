@@ -27,7 +27,9 @@ pub fn run(mut app: App) -> Result<bool, String> {
 
     loop {
         app.tick();
-        terminal.draw(|f| ui::draw(f, &mut app)).map_err(|e| format!("render: {e}"))?;
+        terminal
+            .draw(|f| ui::draw(f, &mut app))
+            .map_err(|e| format!("render: {e}"))?;
         dump(&ipc, &terminal, &app);
         if app.should_quit {
             break;
@@ -44,7 +46,9 @@ pub fn run(mut app: App) -> Result<bool, String> {
     }
 
     // Final dump so the host sees the end state.
-    terminal.draw(|f| ui::draw(f, &mut app)).map_err(|e| format!("render: {e}"))?;
+    terminal
+        .draw(|f| ui::draw(f, &mut app))
+        .map_err(|e| format!("render: {e}"))?;
     dump(&ipc, &terminal, &app);
     ipc.append_event(if app.restart_requested {
         "{\"event\":\"exit\",\"restart\":true}"
@@ -61,7 +65,11 @@ fn dump(ipc: &Ipc, terminal: &Terminal<TestBackend>, app: &App) {
 
 fn screen_size() -> (u16, u16) {
     let parse = |k: &str, d: u16| -> u16 {
-        std::env::var(k).ok().and_then(|v| v.parse::<u16>().ok()).filter(|&n| n >= 10).unwrap_or(d)
+        std::env::var(k)
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .filter(|&n| n >= 10)
+            .unwrap_or(d)
     };
     (parse("MNML_COLS", 120), parse("MNML_ROWS", 40))
 }
@@ -84,7 +92,10 @@ mod tests {
         terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
         let text = ipc::screen_to_text(terminal.backend().buffer());
         assert!(text.contains("Hello, mnml!"), "screen was:\n{text}");
-        assert!(text.contains("hello.txt"), "bufferline/statusline should name the file:\n{text}");
+        assert!(
+            text.contains("hello.txt"),
+            "bufferline/statusline should name the file:\n{text}"
+        );
     }
 
     #[test]

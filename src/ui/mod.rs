@@ -37,7 +37,10 @@ use crate::pane::Pane;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-    frame.render_widget(Block::default().style(Style::default().bg(theme::BG_DARK)), area);
+    frame.render_widget(
+        Block::default().style(Style::default().bg(theme::BG_DARK)),
+        area,
+    );
 
     // Split off the bottom statusline (full width).
     let v = RLayout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);

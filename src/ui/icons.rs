@@ -63,7 +63,10 @@ fn filename_icon(name: &str) -> Option<Icon> {
         ".dockerignore" => ("\u{F0868}", Color::Rgb(0x45, 0x8E, 0xE6)),
         ".npmrc" => ("\u{E71E}", Color::Rgb(0xE8, 0x27, 0x4B)),
         ".nvmrc" => ("\u{E718}", Color::Rgb(0x5F, 0xA0, 0x4E)),
-        "dockerfile" | "docker-compose.yml" | "docker-compose.yaml" | "compose.yml"
+        "dockerfile"
+        | "docker-compose.yml"
+        | "docker-compose.yaml"
+        | "compose.yml"
         | "compose.yaml" => ("\u{F0868}", Color::Rgb(0x45, 0x8E, 0xE6)),
         "readme" | "readme.md" => ("\u{F00BA}", Color::Rgb(0xED, 0xED, 0xED)),
         "license" => ("\u{E60A}", Color::Rgb(0xD0, 0xBF, 0x41)),
@@ -137,8 +140,14 @@ mod tests {
 
     #[test]
     fn known_extensions_resolve() {
-        assert_eq!(for_path(&PathBuf::from("app.ts"), false, false, true).0, "\u{E628}");
-        assert_eq!(for_path(&PathBuf::from("lib.rs"), false, false, true).0, "\u{E68B}");
+        assert_eq!(
+            for_path(&PathBuf::from("app.ts"), false, false, true).0,
+            "\u{E628}"
+        );
+        assert_eq!(
+            for_path(&PathBuf::from("lib.rs"), false, false, true).0,
+            "\u{E68B}"
+        );
     }
     #[test]
     fn filename_beats_extension() {
@@ -147,11 +156,20 @@ mod tests {
     }
     #[test]
     fn unknown_falls_back() {
-        assert_eq!(for_path(&PathBuf::from("weird.xyz"), false, false, true), DEFAULT_FILE);
+        assert_eq!(
+            for_path(&PathBuf::from("weird.xyz"), false, false, true),
+            DEFAULT_FILE
+        );
     }
     #[test]
     fn ascii_mode() {
-        assert_eq!(for_path(&PathBuf::from("app.ts"), false, false, false), DEFAULT_FILE_ASCII);
-        assert_eq!(for_path(&PathBuf::from("src"), true, false, false), FOLDER_CLOSED_ASCII);
+        assert_eq!(
+            for_path(&PathBuf::from("app.ts"), false, false, false),
+            DEFAULT_FILE_ASCII
+        );
+        assert_eq!(
+            for_path(&PathBuf::from("src"), true, false, false),
+            FOLDER_CLOSED_ASCII
+        );
     }
 }

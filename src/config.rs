@@ -40,8 +40,15 @@ pub struct UiConfig {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            editor: EditorConfig { input_style: "standard".to_string(), tab_width: 4 },
-            ui: UiConfig { theme: "onedark".to_string(), ascii_icons: false, tree_width: 30 },
+            editor: EditorConfig {
+                input_style: "standard".to_string(),
+                tab_width: 4,
+            },
+            ui: UiConfig {
+                theme: "onedark".to_string(),
+                ascii_icons: false,
+                tree_width: 30,
+            },
             keys: BTreeMap::new(),
             lsp: BTreeMap::new(),
             ai: toml::Value::Table(Default::default()),
@@ -138,8 +145,14 @@ impl Config {
 fn home_config_path() -> Option<PathBuf> {
     // Respect $XDG_CONFIG_HOME, else ~/.config.
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
-        && !xdg.is_empty() {
-            return Some(PathBuf::from(xdg).join("mnml").join("config.toml"));
-        }
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config").join("mnml").join("config.toml"))
+        && !xdg.is_empty()
+    {
+        return Some(PathBuf::from(xdg).join("mnml").join("config.toml"));
+    }
+    std::env::var_os("HOME").map(|h| {
+        PathBuf::from(h)
+            .join(".config")
+            .join("mnml")
+            .join("config.toml")
+    })
 }

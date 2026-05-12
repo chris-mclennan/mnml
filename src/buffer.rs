@@ -35,14 +35,17 @@ pub struct Buffer {
     saved_text: String,
     pub language_ext: Option<String>,
     pub input: Box<dyn InputHandler>,
-    /// P0: buffers are display-only until the standard handler can edit (P1).
+    /// When true, key input never mutates the text (used for diff views etc.).
     pub read_only: bool,
 }
 
 impl Buffer {
     pub fn open(path: &Path, cfg: &Config) -> std::io::Result<Buffer> {
         let text = std::fs::read_to_string(path)?;
-        let ext = path.extension().and_then(|e| e.to_str()).map(|s| s.to_string());
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_string());
         let mut editor = Editor::new(text.clone(), cfg.editor.tab_width);
         editor.set_comment_token(comment_token_for(ext.as_deref()));
         Ok(Buffer {
@@ -54,8 +57,15 @@ impl Buffer {
             saved_text: text,
             language_ext: ext,
             input: input::make_handler(cfg),
-            read_only: true,
+            read_only: false,
         })
+    }
+
+    /// Open a buffer that input can't mutate (diff views, log tails, …).
+    pub fn open_readonly(path: &Path, cfg: &Config) -> std::io::Result<Buffer> {
+        let mut b = Buffer::open(path, cfg)?;
+        b.read_only = true;
+        Ok(b)
     }
 
     pub fn scratch(cfg: &Config) -> Buffer {
@@ -68,7 +78,7 @@ impl Buffer {
             saved_text: String::new(),
             language_ext: None,
             input: input::make_handler(cfg),
-            read_only: true,
+            read_only: false,
         }
     }
 
@@ -118,7 +128,12 @@ impl Buffer {
 
     /// Feed one key through the handler → editor. `viewport_rows` is the editor
     /// body height (for page motions).
-    pub fn feed_key(&mut self, key: KeyEvent, clipboard: &mut Clipboard, viewport_rows: usize) -> BufferEvent {
+    pub fn feed_key(
+        &mut self,
+        key: KeyEvent,
+        clipboard: &mut Clipboard,
+        viewport_rows: usize,
+    ) -> BufferEvent {
         if self.read_only {
             return BufferEvent::Unhandled(key);
         }
@@ -146,9 +161,13 @@ impl Buffer {
 
 fn comment_token_for(ext: Option<&str>) -> &'static str {
     match ext {
-        Some("rs" | "ts" | "tsx" | "js" | "jsx" | "cjs" | "mjs" | "c" | "cpp" | "h" | "hpp" | "cs"
-        | "go" | "java" | "kt" | "swift" | "php" | "scss" | "less") => "// ",
-        Some("py" | "rb" | "sh" | "bash" | "zsh" | "toml" | "yaml" | "yml" | "ini" | "conf") => "# ",
+        Some(
+            "rs" | "ts" | "tsx" | "js" | "jsx" | "cjs" | "mjs" | "c" | "cpp" | "h" | "hpp" | "cs"
+            | "go" | "java" | "kt" | "swift" | "php" | "scss" | "less",
+        ) => "// ",
+        Some("py" | "rb" | "sh" | "bash" | "zsh" | "toml" | "yaml" | "yml" | "ini" | "conf") => {
+            "# "
+        }
         Some("lua" | "sql") => "-- ",
         Some("html" | "htm" | "xml" | "vue" | "svelte") => "<!-- ", // close token is wired with comment support later
         _ => "// ",

@@ -27,7 +27,12 @@ struct Seg {
 
 impl Seg {
     fn new(text: impl Into<String>, fg: Color, bg: Color) -> Self {
-        Seg { text: text.into(), fg, bg, bold: false }
+        Seg {
+            text: text.into(),
+            fg,
+            bg,
+            bold: false,
+        }
     }
     fn bold(mut self) -> Self {
         self.bold = true;
@@ -35,7 +40,11 @@ impl Seg {
     }
     fn style(&self) -> Style {
         let s = Style::default().fg(self.fg).bg(self.bg);
-        if self.bold { s.add_modifier(Modifier::BOLD) } else { s }
+        if self.bold {
+            s.add_modifier(Modifier::BOLD)
+        } else {
+            s
+        }
     }
     fn cols(&self) -> usize {
         self.text.chars().count()
@@ -43,7 +52,10 @@ impl Seg {
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
-    frame.render_widget(Paragraph::new("").style(Style::default().bg(theme::STATUSLINE)), area);
+    frame.render_widget(
+        Paragraph::new("").style(Style::default().bg(theme::STATUSLINE)),
+        area,
+    );
     if area.width == 0 {
         return;
     }
@@ -55,7 +67,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut left = vec![Seg::new(format!(" {mode_label} "), theme::BG_DARKER, mode_bg).bold()];
     if let Some(branch) = &app.git.snapshot().branch {
         let n = app.git.snapshot().change_count();
-        let txt = if n > 0 { format!("  {branch}  +{n} ") } else { format!("  {branch} ") };
+        let txt = if n > 0 {
+            format!("  {branch}  +{n} ")
+        } else {
+            format!("  {branch} ")
+        };
         left.push(Seg::new(txt, theme::GREEN, theme::BG2));
     }
     let (fname, lang) = match app.active_editor() {
@@ -65,13 +81,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ),
         None => ("[no file]".to_string(), "—".to_string()),
     };
-    left.push(Seg::new(format!("  {fname} "), theme::FG, theme::STATUSLINE));
+    left.push(Seg::new(
+        format!("  {fname} "),
+        theme::FG,
+        theme::STATUSLINE,
+    ));
 
     // ── right segments ──
     let mut right: Vec<Seg> = Vec::new();
     if let Some(b) = app.active_editor() {
         let (row, col) = b.editor.row_col();
-        right.push(Seg::new(format!(" Ln {} Col {} ", row + 1, col + 1), theme::FG, theme::BG2));
+        right.push(Seg::new(
+            format!(" Ln {} Col {} ", row + 1, col + 1),
+            theme::FG,
+            theme::BG2,
+        ));
     }
     right.push(Seg::new(format!("  {lang} "), theme::BG_DARKER, theme::BLUE).bold());
 
@@ -85,7 +109,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         used += s.cols();
         let next_bg = left.get(i + 1).map(|n| n.bg).unwrap_or(theme::STATUSLINE);
         if arrows {
-            spans.push(Span::styled(PL_RIGHT, Style::default().fg(s.bg).bg(next_bg)));
+            spans.push(Span::styled(
+                PL_RIGHT,
+                Style::default().fg(s.bg).bg(next_bg),
+            ));
             used += 1;
         }
     }
@@ -93,7 +120,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut right_spans: Vec<Span> = Vec::new();
     let mut right_used = 0usize;
     for (i, s) in right.iter().enumerate() {
-        let prev_bg = if i == 0 { theme::STATUSLINE } else { right[i - 1].bg };
+        let prev_bg = if i == 0 {
+            theme::STATUSLINE
+        } else {
+            right[i - 1].bg
+        };
         if arrows {
             right_spans.push(Span::styled(PL_LEFT, Style::default().fg(s.bg).bg(prev_bg)));
             right_used += 1;
@@ -110,7 +141,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .unwrap_or_default();
     let is_pending = app.pending_display().is_some();
     let mid_text: String = {
-        let m = if middle.is_empty() { String::new() } else { format!(" {middle} ") };
+        let m = if middle.is_empty() {
+            String::new()
+        } else {
+            format!(" {middle} ")
+        };
         let mc = m.chars().count();
         if mc >= mid_avail {
             m.chars().take(mid_avail).collect()
@@ -121,7 +156,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     };
     let mid_style = if is_pending {
-        Style::default().fg(theme::YELLOW).bg(theme::STATUSLINE).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme::YELLOW)
+            .bg(theme::STATUSLINE)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme::COMMENT).bg(theme::STATUSLINE)
     };

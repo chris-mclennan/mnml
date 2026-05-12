@@ -13,7 +13,10 @@ use crate::pane::Pane;
 use crate::ui::{icons, theme};
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
-    frame.render_widget(Paragraph::new("").style(Style::default().bg(theme::BG_DARKER)), area);
+    frame.render_widget(
+        Paragraph::new("").style(Style::default().bg(theme::BG_DARKER)),
+        area,
+    );
     app.rects.bufferline_tabs.clear();
     if area.width == 0 {
         return;
@@ -42,7 +45,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             break;
         }
         let (bg, name_fg, badge_fg) = if active {
-            (theme::BG, theme::FG, if pane.is_dirty() { theme::ORANGE } else { theme::GREY_FG })
+            (
+                theme::BG,
+                theme::FG,
+                if pane.is_dirty() {
+                    theme::ORANGE
+                } else {
+                    theme::GREY_FG
+                },
+            )
         } else {
             (theme::BG_DARKER, theme::GREY_FG, theme::GREY)
         };
@@ -52,11 +63,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         spans.push(Span::styled(
             format!(" {glyph} "),
-            Style::default().fg(if active { icon_color } else { theme::GREY }).bg(bg),
+            Style::default()
+                .fg(if active { icon_color } else { theme::GREY })
+                .bg(bg),
         ));
         spans.push(Span::styled(format!("{name} "), name_style));
-        spans.push(Span::styled(format!("{badge} "), Style::default().fg(badge_fg).bg(bg)));
-        app.rects.bufferline_tabs.push((Rect { x, y: area.y, width: cells, height: 1 }, i));
+        spans.push(Span::styled(
+            format!("{badge} "),
+            Style::default().fg(badge_fg).bg(bg),
+        ));
+        app.rects.bufferline_tabs.push((
+            Rect {
+                x,
+                y: area.y,
+                width: cells,
+                height: 1,
+            },
+            i,
+        ));
         x += cells;
         // thin separator into the strip background
         if i + 1 < app.panes.len() {
@@ -65,7 +89,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
     if app.panes.is_empty() {
-        spans.push(Span::styled("  no buffers ", Style::default().fg(theme::GREY_FG).bg(theme::BG_DARKER)));
+        spans.push(Span::styled(
+            "  no buffers ",
+            Style::default().fg(theme::GREY_FG).bg(theme::BG_DARKER),
+        ));
         x += "  no buffers ".chars().count() as u16;
     }
     // fill the gap up to the cap
@@ -78,7 +105,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // right cap
     spans.push(Span::styled(
         cap_label,
-        Style::default().fg(theme::BG_DARKER).bg(theme::BLUE).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(theme::BG_DARKER)
+            .bg(theme::BLUE)
+            .add_modifier(Modifier::BOLD),
     ));
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);

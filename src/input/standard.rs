@@ -1,29 +1,126 @@
-//! Modeless, VSCode-style keymap. P0 stub: it ignores every key (so the editor
-//! pane is read-only). P1 fills in the translation logic — typing, arrows,
-//! Shift-select, Ctrl+C/X/V/Z/Y/A, word motions, indent, comment-toggle, save —
-//! driven by `[keys.standard]` from config rather than a hardcoded table.
+//! Modeless, VSCode-style keymap. Typing inserts; arrows move (Shift extends a
+//! selection); Ctrl+C/X/V/Z/Y/A do the usual; Ctrl+←/→ are word motions;
+//! Ctrl+Backspace/Del delete words; Ctrl+/ toggles a line comment; Alt+↑/↓ move
+//! the line; Ctrl+S saves; Esc clears a selection (then falls through so the
+//! tree gets focus).
+//!
+//! TODO(P3): make the bindings data-driven from `[keys.standard]` config — for
+//! now it's a hardcoded match. The `[keys.*]` resolver lands alongside the vim
+//! handler since both need the same `KeySpec`→action machinery.
 
-use ratatui::crossterm::event::KeyEvent;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::config::Config;
-use crate::input::{EditCtx, EditingMode, InputHandler, InputResult};
+use crate::edit_op::EditOp;
+use crate::input::{AppCommand, EditCtx, EditingMode, InputHandler, InputResult};
 
 #[derive(Debug)]
 pub struct StandardInputHandler {
-    #[allow(dead_code)]
     tab_width: usize,
 }
 
 impl StandardInputHandler {
     pub fn new(cfg: &Config) -> Self {
-        StandardInputHandler { tab_width: cfg.editor.tab_width }
+        StandardInputHandler {
+            tab_width: cfg.editor.tab_width.max(1),
+        }
     }
 }
 
 impl InputHandler for StandardInputHandler {
-    fn handle_key(&mut self, _key: KeyEvent, _ctx: &EditCtx) -> InputResult {
-        // P0: nothing is editable yet — let everything fall through to global chords.
-        InputResult::Ignored
+    fn handle_key(&mut self, key: KeyEvent, ctx: &EditCtx) -> InputResult {
+        use EditOp::*;
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+        // A plain typed character (no Ctrl/Alt; Shift just gives an uppercase char).
+        if let KeyCode::Char(c) = key.code
+            && !ctrl
+            && !alt
+        {
+            return InputResult::Ops(vec![InsertChar(c)]);
+        }
+
+        // A motion that should extend the selection when Shift is held, else replace it.
+        let mv = |op: EditOp| -> InputResult {
+            if shift {
+                if ctx.has_selection {
+                    InputResult::Ops(vec![op])
+                } else {
+                    InputResult::Ops(vec![SelectStart, op])
+                }
+            } else {
+                InputResult::Ops(vec![SelectClear, op])
+            }
+        };
+
+        match key.code {
+            KeyCode::Char(c) if ctrl => match c.to_ascii_lowercase() {
+                'a' => InputResult::Ops(vec![SelectAll]),
+                'c' => InputResult::Ops(vec![if ctx.has_selection {
+                    YankSelection
+                } else {
+                    YankLine
+                }]),
+                'x' => InputResult::Ops(if ctx.has_selection {
+                    vec![CutSelection]
+                } else {
+                    vec![YankLine, DeleteLine]
+                }),
+                'v' => InputResult::Ops(vec![Paste]),
+                'z' if shift => InputResult::Ops(vec![Redo]),
+                'z' => InputResult::Ops(vec![Undo]),
+                'y' => InputResult::Ops(vec![Redo]),
+                '/' => InputResult::Ops(vec![ToggleLineComment]),
+                's' => InputResult::App(AppCommand::Save),
+                'd' => InputResult::Ops(vec![SelectWord]), // closest we have to "select occurrence" for now
+                'l' => InputResult::Ops(vec![SelectLine]),
+                'g' => InputResult::Ignored, // "go to line" → palette/prompt later
+                _ => InputResult::Ignored,
+            },
+
+            KeyCode::Enter => InputResult::Ops(vec![InsertNewline]),
+            KeyCode::Tab => {
+                if ctx.has_selection {
+                    InputResult::Ops(vec![Indent])
+                } else {
+                    InputResult::Ops(vec![InsertStr(" ".repeat(self.tab_width))])
+                }
+            }
+            KeyCode::BackTab => InputResult::Ops(vec![Outdent]),
+
+            KeyCode::Backspace if ctrl => InputResult::Ops(vec![DeleteWordLeft]),
+            KeyCode::Backspace => InputResult::Ops(vec![Backspace]),
+            KeyCode::Delete if ctrl => InputResult::Ops(vec![DeleteWordRight]),
+            KeyCode::Delete => InputResult::Ops(vec![DeleteForward]),
+
+            KeyCode::Left if ctrl => mv(MoveWordLeft),
+            KeyCode::Right if ctrl => mv(MoveWordRight),
+            KeyCode::Left => mv(MoveLeft),
+            KeyCode::Right => mv(MoveRight),
+            KeyCode::Up if alt => InputResult::Ops(vec![MoveLineUp]),
+            KeyCode::Down if alt => InputResult::Ops(vec![MoveLineDown]),
+            KeyCode::Up => mv(MoveUp),
+            KeyCode::Down => mv(MoveDown),
+
+            KeyCode::Home if ctrl => mv(MoveBufferStart),
+            KeyCode::End if ctrl => mv(MoveBufferEnd),
+            KeyCode::Home => mv(MoveLineStart),
+            KeyCode::End => mv(MoveLineEnd),
+            KeyCode::PageUp => mv(PageUp),
+            KeyCode::PageDown => mv(PageDown),
+
+            KeyCode::Esc => {
+                if ctx.has_selection {
+                    InputResult::Ops(vec![SelectClear])
+                } else {
+                    InputResult::Ignored
+                }
+            }
+
+            _ => InputResult::Ignored,
+        }
     }
 
     fn mode(&self) -> EditingMode {
@@ -32,5 +129,177 @@ impl InputHandler for StandardInputHandler {
 
     fn name(&self) -> &'static str {
         "standard"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use ratatui::crossterm::event::KeyEvent;
+
+    fn h() -> StandardInputHandler {
+        StandardInputHandler::new(&Config::default())
+    }
+    fn ctx(has_sel: bool) -> EditCtx {
+        EditCtx {
+            cursor: 0,
+            line_len: 0,
+            line_idx: 0,
+            line_count: 1,
+            at_line_start: true,
+            at_line_end: true,
+            has_selection: has_sel,
+        }
+    }
+    fn key(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, mods)
+    }
+    fn ops(r: InputResult) -> Vec<EditOp> {
+        match r {
+            InputResult::Ops(v) => v,
+            _ => panic!("expected Ops"),
+        }
+    }
+
+    #[test]
+    fn typing_inserts() {
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Char('a'), KeyModifiers::NONE), &ctx(false))),
+            vec![EditOp::InsertChar('a')]
+        );
+        // Shift'd capital still inserts.
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Char('A'), KeyModifiers::SHIFT), &ctx(false))),
+            vec![EditOp::InsertChar('A')]
+        );
+    }
+
+    #[test]
+    fn enter_backspace_tab() {
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Enter, KeyModifiers::NONE), &ctx(false))),
+            vec![EditOp::InsertNewline]
+        );
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Backspace, KeyModifiers::NONE), &ctx(false))),
+            vec![EditOp::Backspace]
+        );
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Tab, KeyModifiers::NONE), &ctx(false))),
+            vec![EditOp::InsertStr("    ".to_string())]
+        );
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Tab, KeyModifiers::NONE), &ctx(true))),
+            vec![EditOp::Indent]
+        );
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::BackTab, KeyModifiers::NONE), &ctx(false))),
+            vec![EditOp::Outdent]
+        );
+    }
+
+    #[test]
+    fn arrows_and_selection() {
+        // plain arrow clears any selection then moves
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Left, KeyModifiers::NONE), &ctx(true))),
+            vec![EditOp::SelectClear, EditOp::MoveLeft]
+        );
+        // shift arrow with no selection: start one, then move
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Right, KeyModifiers::SHIFT), &ctx(false))),
+            vec![EditOp::SelectStart, EditOp::MoveRight]
+        );
+        // shift arrow with an active selection: just extend
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Right, KeyModifiers::SHIFT), &ctx(true))),
+            vec![EditOp::MoveRight]
+        );
+        // ctrl arrow → word motion
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Left, KeyModifiers::CONTROL), &ctx(false))),
+            vec![EditOp::SelectClear, EditOp::MoveWordLeft]
+        );
+        // alt up/down → move line
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Up, KeyModifiers::ALT), &ctx(false))),
+            vec![EditOp::MoveLineUp]
+        );
+    }
+
+    #[test]
+    fn clipboard_and_history() {
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Char('a'), KeyModifiers::CONTROL), &ctx(false))),
+            vec![EditOp::SelectAll]
+        );
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL), &ctx(true))),
+            vec![EditOp::YankSelection]
+        );
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL), &ctx(false))),
+            vec![EditOp::YankLine]
+        );
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Char('x'), KeyModifiers::CONTROL), &ctx(true))),
+            vec![EditOp::CutSelection]
+        );
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Char('x'), KeyModifiers::CONTROL), &ctx(false))),
+            vec![EditOp::YankLine, EditOp::DeleteLine]
+        );
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Char('v'), KeyModifiers::CONTROL), &ctx(false))),
+            vec![EditOp::Paste]
+        );
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Char('z'), KeyModifiers::CONTROL), &ctx(false))),
+            vec![EditOp::Undo]
+        );
+        assert_eq!(
+            ops(h().handle_key(
+                key(
+                    KeyCode::Char('z'),
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT
+                ),
+                &ctx(false)
+            )),
+            vec![EditOp::Redo]
+        );
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Char('y'), KeyModifiers::CONTROL), &ctx(false))),
+            vec![EditOp::Redo]
+        );
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Char('/'), KeyModifiers::CONTROL), &ctx(false))),
+            vec![EditOp::ToggleLineComment]
+        );
+    }
+
+    #[test]
+    fn ctrl_s_is_save_app_command() {
+        match h().handle_key(key(KeyCode::Char('s'), KeyModifiers::CONTROL), &ctx(false)) {
+            InputResult::App(AppCommand::Save) => {}
+            _ => panic!("Ctrl+S should be App(Save)"),
+        }
+    }
+
+    #[test]
+    fn esc_clears_selection_else_ignored() {
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Esc, KeyModifiers::NONE), &ctx(true))),
+            vec![EditOp::SelectClear]
+        );
+        assert!(matches!(
+            h().handle_key(key(KeyCode::Esc, KeyModifiers::NONE), &ctx(false)),
+            InputResult::Ignored
+        ));
+    }
+
+    #[test]
+    fn mode_is_none() {
+        assert_eq!(h().mode(), EditingMode::None);
     }
 }

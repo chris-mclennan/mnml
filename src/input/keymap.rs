@@ -17,13 +17,23 @@ pub fn parse_key_spec(spec: &str) -> Option<KeyEvent> {
     let mut rest = spec;
     loop {
         let lower = rest.to_ascii_lowercase();
-        if let Some(r) = lower.strip_prefix("ctrl+").or_else(|| lower.strip_prefix("c-")) {
+        if let Some(r) = lower
+            .strip_prefix("ctrl+")
+            .or_else(|| lower.strip_prefix("c-"))
+        {
             mods |= KeyModifiers::CONTROL;
             rest = &rest[rest.len() - r.len()..];
-        } else if let Some(r) = lower.strip_prefix("shift+").or_else(|| lower.strip_prefix("s-")) {
+        } else if let Some(r) = lower
+            .strip_prefix("shift+")
+            .or_else(|| lower.strip_prefix("s-"))
+        {
             mods |= KeyModifiers::SHIFT;
             rest = &rest[rest.len() - r.len()..];
-        } else if let Some(r) = lower.strip_prefix("alt+").or_else(|| lower.strip_prefix("a-")).or_else(|| lower.strip_prefix("meta+")) {
+        } else if let Some(r) = lower
+            .strip_prefix("alt+")
+            .or_else(|| lower.strip_prefix("a-"))
+            .or_else(|| lower.strip_prefix("meta+"))
+        {
             mods |= KeyModifiers::ALT;
             rest = &rest[rest.len() - r.len()..];
         } else {
@@ -88,7 +98,10 @@ mod tests {
         assert_eq!(parse_key_spec("enter").unwrap().code, KeyCode::Enter);
         assert_eq!(parse_key_spec("down").unwrap().code, KeyCode::Down);
         let e = parse_key_spec("ctrl+shift+p").unwrap();
-        assert!(e.modifiers.contains(KeyModifiers::CONTROL) && e.modifiers.contains(KeyModifiers::SHIFT));
+        assert!(
+            e.modifiers.contains(KeyModifiers::CONTROL)
+                && e.modifiers.contains(KeyModifiers::SHIFT)
+        );
         assert_eq!(parse_key_spec("a").unwrap().code, KeyCode::Char('a'));
         assert!(parse_key_spec("nope-not-a-key").is_none());
     }

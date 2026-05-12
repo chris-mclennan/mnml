@@ -29,12 +29,16 @@ fn parse_args() -> Result<Args, String> {
             "--headless" => headless = true,
             "--ascii" => ascii = true,
             "--input" => {
-                input_style =
-                    Some(it.next().ok_or_else(|| "--input needs a value (vim|standard)".to_string())?);
+                input_style = Some(
+                    it.next()
+                        .ok_or_else(|| "--input needs a value (vim|standard)".to_string())?,
+                );
             }
             "--config" => {
-                config_path =
-                    Some(PathBuf::from(it.next().ok_or_else(|| "--config needs a path".to_string())?));
+                config_path = Some(PathBuf::from(
+                    it.next()
+                        .ok_or_else(|| "--config needs a path".to_string())?,
+                ));
             }
             "-h" | "--help" => {
                 println!(
@@ -53,12 +57,18 @@ fn parse_args() -> Result<Args, String> {
         }
     }
 
-    let workspace = workspace
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let workspace =
+        workspace.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let workspace = workspace
         .canonicalize()
         .map_err(|e| format!("cannot open workspace {}: {e}", workspace.display()))?;
-    Ok(Args { workspace, headless, input_style, ascii, config_path })
+    Ok(Args {
+        workspace,
+        headless,
+        input_style,
+        ascii,
+        config_path,
+    })
 }
 
 fn main() -> ExitCode {

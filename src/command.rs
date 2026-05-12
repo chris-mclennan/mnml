@@ -31,7 +31,11 @@ pub struct Registry {
 impl Registry {
     fn build() -> Self {
         let commands = builtin_commands();
-        let by_id = commands.iter().enumerate().map(|(i, c)| (c.id, i)).collect();
+        let by_id = commands
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.id, i))
+            .collect();
         Registry { commands, by_id }
     }
 

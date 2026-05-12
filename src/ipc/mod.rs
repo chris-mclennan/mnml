@@ -64,7 +64,14 @@ impl Ipc {
         std::fs::write(&events_path, b"")?;
         std::fs::write(&screen_path, b"")?;
         std::fs::write(&status_path, b"{}")?;
-        Ok(Ipc { dir, cmd_path, screen_path, status_path, events_path, cmd_offset: 0 })
+        Ok(Ipc {
+            dir,
+            cmd_path,
+            screen_path,
+            status_path,
+            events_path,
+            cmd_offset: 0,
+        })
     }
 
     pub fn dir(&self) -> &Path {
@@ -117,7 +124,11 @@ impl Ipc {
         let _ = std::fs::write(&self.status_path, json.as_bytes());
     }
     pub fn append_event(&self, json_line: &str) {
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.events_path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.events_path)
+        {
             let _ = writeln!(f, "{json_line}");
         }
     }
@@ -150,7 +161,11 @@ fn parse_command(line: &str) -> IpcCommand {
 pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
     match cmd {
         IpcCommand::Open(p) => {
-            let path = if p.is_absolute() { p.clone() } else { app.workspace.join(p) };
+            let path = if p.is_absolute() {
+                p.clone()
+            } else {
+                app.workspace.join(p)
+            };
             app.open_path(&path);
             json_event(&[("event", "open"), ("path", &path.display().to_string())])
         }
@@ -164,11 +179,13 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
         }
         IpcCommand::Snapshot => json_event(&[("event", "snapshot")]),
         IpcCommand::Quit => {
-            app.request_quit();
+            // Scripts/E2E know what they're doing — force, bypassing the dirty guard.
+            app.should_quit = true;
             json_event(&[("event", "quit")])
         }
         IpcCommand::Restart => {
-            app.request_restart();
+            app.restart_requested = true;
+            app.should_quit = true;
             json_event(&[("event", "restart")])
         }
         IpcCommand::Unknown(s) => json_event(&[("event", "unknown"), ("raw", s)]),
@@ -230,7 +247,9 @@ pub fn status_json(app: &App) -> String {
     format!(
         "{{\"focus\":{},\"activePane\":{},\"activeFile\":{},\"cursor\":{{\"line\":{},\"col\":{}}},\"mode\":{},\"treeCursor\":{},\"treeSelection\":{},\"treeVisible\":{},\"panes\":[{}],\"quit\":{}}}",
         json_str(focus),
-        app.active.map(|i| i.to_string()).unwrap_or_else(|| "null".to_string()),
+        app.active
+            .map(|i| i.to_string())
+            .unwrap_or_else(|| "null".to_string()),
         json_str(&active_file),
         cur_row,
         cur_col,
@@ -244,7 +263,10 @@ pub fn status_json(app: &App) -> String {
 }
 
 fn json_event(pairs: &[(&str, &str)]) -> String {
-    let body: Vec<String> = pairs.iter().map(|(k, v)| format!("{}:{}", json_str(k), json_str(v))).collect();
+    let body: Vec<String> = pairs
+        .iter()
+        .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+        .collect();
     format!("{{{}}}", body.join(","))
 }
 

@@ -20,6 +20,7 @@ use ratatui::crossterm::terminal::{
 use ratatui::layout::Rect;
 
 use crate::app::App;
+use crate::buffer::BufferEvent;
 use crate::edit_op::EditOp;
 use crate::focus::Focus;
 use crate::layout::Layout;
@@ -32,13 +33,20 @@ pub fn run(mut app: App) -> Result<bool, String> {
     let mut term = setup_terminal().map_err(|e| format!("terminal setup failed: {e}"))?;
     let result = run_loop(&mut term, &mut app);
     let _ = restore_terminal(&mut term);
-    result.map(|()| app.restart_requested).map_err(|e| format!("{e}"))
+    result
+        .map(|()| app.restart_requested)
+        .map_err(|e| format!("{e}"))
 }
 
 fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
     let mut out = io::stdout();
-    if let Err(e) = execute!(out, EnterAlternateScreen, EnableMouseCapture, SetCursorStyle::SteadyBar) {
+    if let Err(e) = execute!(
+        out,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        SetCursorStyle::SteadyBar
+    ) {
         let _ = disable_raw_mode();
         return Err(e);
     }
@@ -128,43 +136,77 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_pane_key(app: &mut App, key: KeyEvent) {
-    // P0: buffers are read-only. We still want to navigate/scroll a file, so map
-    // motion keys directly to editor ops here. P1 routes everything through the
-    // buffer's `InputHandler` (`buffer.feed_key`) instead.
-    let viewport = app
-        .rects
-        .editor_text
-        .map(|r| r.height as usize)
-        .unwrap_or(20)
-        .max(1);
-    let op: Option<EditOp> = match key.code {
-        KeyCode::Esc => {
-            app.focus_tree();
-            return;
-        }
-        KeyCode::Up | KeyCode::Char('k') => Some(EditOp::MoveUp),
-        KeyCode::Down | KeyCode::Char('j') => Some(EditOp::MoveDown),
-        KeyCode::Left | KeyCode::Char('h') => Some(EditOp::MoveLeft),
-        KeyCode::Right | KeyCode::Char('l') => Some(EditOp::MoveRight),
-        KeyCode::PageUp => Some(EditOp::PageUp),
-        KeyCode::PageDown => Some(EditOp::PageDown),
-        KeyCode::Home | KeyCode::Char('0') => Some(EditOp::MoveLineStart),
-        KeyCode::End | KeyCode::Char('$') => Some(EditOp::MoveLineEnd),
-        KeyCode::Char('w') => Some(EditOp::MoveWordRight),
-        KeyCode::Char('b') => Some(EditOp::MoveWordLeft),
-        KeyCode::Char('G') => Some(EditOp::MoveBufferEnd),
-        _ => None,
+    let viewport = pane_viewport(app);
+    let Some(i) = app.active else { return };
+    // `b` borrows app.panes; `&mut app.clipboard` is a disjoint field — fine.
+    let ev = match app.panes.get_mut(i) {
+        Some(Pane::Editor(b)) => b.feed_key(key, &mut app.clipboard, viewport),
+        None => return,
     };
-    if let Some(op) = op {
-        apply_to_active_editor(app, op, viewport);
+    match ev {
+        BufferEvent::Edited | BufferEvent::Redraw | BufferEvent::NoOp => {}
+        BufferEvent::App(cmd) => apply_app_command(app, cmd),
+        BufferEvent::Unhandled(k) => {
+            // Not text-editing. Esc releases focus to the tree; the rest (config-
+            // driven keymap → command resolver) lands with the keymap work in P3.
+            if k.code == KeyCode::Esc {
+                app.focus_tree();
+            }
+        }
     }
 }
 
+fn pane_viewport(app: &App) -> usize {
+    app.rects
+        .editor_text
+        .map(|r| r.height as usize)
+        .unwrap_or(20)
+        .max(1)
+}
+
+/// Apply a raw `EditOp` to the active editor (used for mouse scroll). For key
+/// input, route through `Buffer::feed_key` so the handler sees it.
 fn apply_to_active_editor(app: &mut App, op: EditOp, viewport: usize) {
     if let Some(i) = app.active
-        && let Some(Pane::Editor(b)) = app.panes.get_mut(i) {
-            b.editor.apply(op, viewport, &mut app.clipboard);
+        && let Some(Pane::Editor(b)) = app.panes.get_mut(i)
+    {
+        b.editor.apply(op, viewport, &mut app.clipboard);
+    }
+}
+
+fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
+    use crate::input::AppCommand::*;
+    match cmd {
+        Save => {
+            command::run("file.save", app);
         }
+        SaveAll => {
+            command::run("file.save_all", app);
+        }
+        Quit => app.request_quit(),
+        ForceQuit => app.should_quit = true,
+        CloseBuffer => {
+            command::run("buffer.close", app);
+        }
+        NextBuffer => {
+            command::run("buffer.next", app);
+        }
+        PrevBuffer => {
+            command::run("buffer.prev", app);
+        }
+        GotoLine(n) => {
+            if let Some(i) = app.active
+                && let Some(Pane::Editor(b)) = app.panes.get_mut(i)
+            {
+                b.editor
+                    .apply(EditOp::MoveToLine(n), 20, &mut app.clipboard);
+            }
+        }
+        ExCommand(s) => app.toast(format!(":{s} — ex-commands land with the vim handler")),
+        RunCommand(id) => {
+            command::run(&id, app);
+        }
+    }
 }
 
 // ─── mouse dispatch (shared with headless/IPC) ──────────────────────
@@ -190,34 +232,38 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
             // Tree?
             if let Some(tr) = app.rects.tree
-                && contains(tr, x, y) {
-                    app.focus_tree();
-                    if y > tr.y {
-                        let idx = (y - tr.y - 1) as usize + app.rects.tree_scroll;
-                        if idx < app.tree.visible_rows().len() {
-                            app.tree.set_cursor(idx);
-                            if let Some(row) = app.tree.selected_row() {
-                                if row.is_dir {
-                                    app.tree.toggle_current();
-                                } else {
-                                    app.open_path(&row.path);
-                                }
+                && contains(tr, x, y)
+            {
+                app.focus_tree();
+                if y > tr.y {
+                    let idx = (y - tr.y - 1) as usize + app.rects.tree_scroll;
+                    if idx < app.tree.visible_rows().len() {
+                        app.tree.set_cursor(idx);
+                        if let Some(row) = app.tree.selected_row() {
+                            if row.is_dir {
+                                app.tree.toggle_current();
+                            } else {
+                                app.open_path(&row.path);
                             }
                         }
                     }
-                    return;
                 }
+                return;
+            }
             // Editor text?
             if let Some(tr) = app.rects.editor_text
-                && contains(tr, x, y) {
-                    app.focus_pane();
-                    let row = app.active_editor().map(|b| b.scroll).unwrap_or(0) + (y - tr.y) as usize;
-                    let col = app.active_editor().map(|b| b.h_scroll).unwrap_or(0) + (x - tr.x) as usize;
-                    if let Some(i) = app.active
-                        && let Some(Pane::Editor(b)) = app.panes.get_mut(i) {
-                            b.editor.place_cursor(row, col);
-                        }
+                && contains(tr, x, y)
+            {
+                app.focus_pane();
+                let row = app.active_editor().map(|b| b.scroll).unwrap_or(0) + (y - tr.y) as usize;
+                let col =
+                    app.active_editor().map(|b| b.h_scroll).unwrap_or(0) + (x - tr.x) as usize;
+                if let Some(i) = app.active
+                    && let Some(Pane::Editor(b)) = app.panes.get_mut(i)
+                {
+                    b.editor.place_cursor(row, col);
                 }
+            }
         }
         MouseEventKind::ScrollUp => scroll_under(app, x, y, -3),
         MouseEventKind::ScrollDown => scroll_under(app, x, y, 3),
@@ -227,23 +273,38 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
 
 fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
     if let Some(tr) = app.rects.tree
-        && contains(tr, x, y) {
-            for _ in 0..delta.unsigned_abs() {
-                if delta < 0 {
-                    app.tree.move_up();
-                } else {
-                    app.tree.move_down();
-                }
+        && contains(tr, x, y)
+    {
+        for _ in 0..delta.unsigned_abs() {
+            if delta < 0 {
+                app.tree.move_up();
+            } else {
+                app.tree.move_down();
             }
-            return;
         }
+        return;
+    }
     if let Some(tr) = app.rects.body
-        && contains(tr, x, y) {
-            let vp = app.rects.editor_text.map(|r| r.height as usize).unwrap_or(20).max(1);
-            for _ in 0..delta.unsigned_abs() {
-                apply_to_active_editor(app, if delta < 0 { EditOp::MoveUp } else { EditOp::MoveDown }, vp);
-            }
+        && contains(tr, x, y)
+    {
+        let vp = app
+            .rects
+            .editor_text
+            .map(|r| r.height as usize)
+            .unwrap_or(20)
+            .max(1);
+        for _ in 0..delta.unsigned_abs() {
+            apply_to_active_editor(
+                app,
+                if delta < 0 {
+                    EditOp::MoveUp
+                } else {
+                    EditOp::MoveDown
+                },
+                vp,
+            );
         }
+    }
 }
 
 fn contains(r: Rect, x: u16, y: u16) -> bool {

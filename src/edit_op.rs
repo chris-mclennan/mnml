@@ -94,11 +94,11 @@ impl EditOp {
     pub fn is_mutation(&self) -> bool {
         use EditOp::*;
         match self {
-            MoveLeft | MoveRight | MoveUp | MoveDown | MoveWordLeft | MoveWordRight | MoveWordEnd
-            | MoveLineStart | MoveLineFirstNonWs | MoveLineEnd | MoveBufferStart | MoveBufferEnd
-            | MoveToLine(_) | PageUp | PageDown | SelectStart | SelectClear | SelectLine
-            | SelectAll | SelectWord | AddCursorBelow | AddCursorAbove | YankLine | YankSelection
-            | Undo | Redo => false,
+            MoveLeft | MoveRight | MoveUp | MoveDown | MoveWordLeft | MoveWordRight
+            | MoveWordEnd | MoveLineStart | MoveLineFirstNonWs | MoveLineEnd | MoveBufferStart
+            | MoveBufferEnd | MoveToLine(_) | PageUp | PageDown | SelectStart | SelectClear
+            | SelectLine | SelectAll | SelectWord | AddCursorBelow | AddCursorAbove | YankLine
+            | YankSelection | Undo | Redo => false,
             Repeat(_, inner) => inner.is_mutation(),
             _ => true,
         }

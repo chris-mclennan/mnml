@@ -17,7 +17,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(u16, u16)> 
     if area.width == 0 || area.height == 0 {
         return None;
     }
-    frame.render_widget(Paragraph::new("").style(Style::default().bg(theme::BG_DARK)), area);
+    frame.render_widget(
+        Paragraph::new("").style(Style::default().bg(theme::BG_DARK)),
+        area,
+    );
 
     let idx = app.active?;
     let Pane::Editor(buf) = app.panes.get_mut(idx)?;
@@ -48,7 +51,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(u16, u16)> 
         }
     }
 
+    let selection = buf.editor.selection();
     let gutter_num_w = gutter_w.saturating_sub(1) as usize;
+    let sel_bg = theme::BASE16_02;
     let mut lines: Vec<Line> = Vec::with_capacity(text_h);
     for r in 0..text_h {
         let line_no = buf.scroll + r;
@@ -60,23 +65,65 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(u16, u16)> 
             continue;
         }
         let is_cur = line_no == cur_row;
-        let bg = if is_cur { theme::LINE } else { theme::BG_DARK };
+        let base_bg = if is_cur { theme::LINE } else { theme::BG_DARK };
         let gutter = format!("{:>gutter_num_w$} ", line_no + 1);
-        let gutter_style =
-            Style::default().fg(if is_cur { theme::FG } else { theme::BASE16_03 }).bg(bg);
+        let gutter_style = Style::default()
+            .fg(if is_cur { theme::FG } else { theme::BASE16_03 })
+            .bg(base_bg);
+
+        // This line's content byte range and the part of the selection inside it.
+        let (ls, le) = buf.editor.line_byte_range(line_no);
+        let (sel_start_col, sel_end_col, extend_eol) = match selection {
+            Some((lo, hi)) if hi > ls && lo < le.max(ls) + 1 => {
+                let sl = lo.clamp(ls, le);
+                let sh = hi.clamp(ls, le);
+                (
+                    buf.editor.byte_to_col(sl),
+                    buf.editor.byte_to_col(sh),
+                    hi > le,
+                )
+            }
+            _ => (0, 0, false),
+        };
+        let has_sel_here = sel_end_col > sel_start_col || extend_eol;
 
         let raw = buf.editor.line_str(line_no);
-        let visible: String = raw.chars().skip(buf.h_scroll).take(tw).collect();
-        let pad = tw.saturating_sub(visible.chars().count());
-        lines.push(Line::from(vec![
-            Span::styled(gutter, gutter_style),
-            Span::styled(visible, Style::default().fg(theme::FG).bg(bg)),
-            Span::styled(" ".repeat(pad), Style::default().bg(bg)),
-        ]));
+        // Build visible spans, switching bg at the selection boundaries.
+        let mut spans: Vec<Span> = vec![Span::styled(gutter, gutter_style)];
+        let chars: Vec<char> = raw.chars().collect();
+        let vis_start = buf.h_scroll;
+        let mut col = vis_start;
+        let mut produced = 0usize;
+        while produced < tw && col < chars.len() {
+            let in_sel = has_sel_here && col >= sel_start_col && col < sel_end_col;
+            // run of same-bg cells
+            let mut s = String::new();
+            while produced < tw && col < chars.len() {
+                let here_in_sel = has_sel_here && col >= sel_start_col && col < sel_end_col;
+                if here_in_sel != in_sel {
+                    break;
+                }
+                s.push(chars[col]);
+                col += 1;
+                produced += 1;
+            }
+            let bg = if in_sel { sel_bg } else { base_bg };
+            spans.push(Span::styled(s, Style::default().fg(theme::FG).bg(bg)));
+        }
+        // trailing pad — selection-colored if this line continues into the next
+        let pad = tw.saturating_sub(produced);
+        let pad_bg = if extend_eol { sel_bg } else { base_bg };
+        spans.push(Span::styled(" ".repeat(pad), Style::default().bg(pad_bg)));
+        lines.push(Line::from(spans));
     }
     frame.render_widget(Paragraph::new(lines), area);
 
-    app.rects.editor_text = Some(Rect { x: text_x, y: area.y, width: text_w, height: area.height });
+    app.rects.editor_text = Some(Rect {
+        x: text_x,
+        y: area.y,
+        width: text_w,
+        height: area.height,
+    });
 
     // On-screen cursor cell.
     let cy = area.y + (cur_row.saturating_sub(buf.scroll)) as u16;

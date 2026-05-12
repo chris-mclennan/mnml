@@ -11,26 +11,58 @@ use crate::app::App;
 use crate::ui::theme;
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
-    frame.render_widget(Paragraph::new("").style(Style::default().bg(theme::BG_DARK)), area);
+    frame.render_widget(
+        Paragraph::new("").style(Style::default().bg(theme::BG_DARK)),
+        area,
+    );
     if area.height < 6 {
         return;
     }
-    let ws = app.workspace.file_name().and_then(|n| n.to_str()).unwrap_or("workspace");
+    let ws = app
+        .workspace
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("workspace");
     let dim = Style::default().fg(theme::COMMENT).bg(theme::BG_DARK);
-    let key = Style::default().fg(theme::YELLOW).bg(theme::BG_DARK).add_modifier(Modifier::BOLD);
+    let key = Style::default()
+        .fg(theme::YELLOW)
+        .bg(theme::BG_DARK)
+        .add_modifier(Modifier::BOLD);
 
     let body = vec![
-        Line::from(Span::styled("mnml", Style::default().fg(theme::BLUE).bg(theme::BG_DARK).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            "mnml",
+            Style::default()
+                .fg(theme::BLUE)
+                .bg(theme::BG_DARK)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(Span::styled(format!("workspace · {ws}"), dim)),
         Line::from(""),
-        Line::from(vec![Span::styled("↑/↓  ", key), Span::styled("navigate the tree", dim)]),
-        Line::from(vec![Span::styled("⏎    ", key), Span::styled("open file / toggle folder", dim)]),
-        Line::from(vec![Span::styled("^E   ", key), Span::styled("cycle focus (tree ⇄ editor)", dim)]),
-        Line::from(vec![Span::styled("^B   ", key), Span::styled("toggle the file tree", dim)]),
+        Line::from(vec![
+            Span::styled("↑/↓  ", key),
+            Span::styled("navigate the tree", dim),
+        ]),
+        Line::from(vec![
+            Span::styled("⏎    ", key),
+            Span::styled("open file / toggle folder", dim),
+        ]),
+        Line::from(vec![
+            Span::styled("^E   ", key),
+            Span::styled("cycle focus (tree ⇄ editor)", dim),
+        ]),
+        Line::from(vec![
+            Span::styled("^B   ", key),
+            Span::styled("toggle the file tree", dim),
+        ]),
         Line::from(vec![Span::styled("^Q   ", key), Span::styled("quit", dim)]),
     ];
     let n = body.len() as u16;
     let top = area.y + area.height.saturating_sub(n) / 2;
-    let inner = Rect { y: top, height: n.min(area.height), ..area };
+    let inner = Rect {
+        y: top,
+        height: n.min(area.height),
+        ..area
+    };
     frame.render_widget(Paragraph::new(body).alignment(Alignment::Center), inner);
 }
