@@ -22,6 +22,9 @@ pub enum PickerKind {
     Branches,
     /// `id` = a worktree path. Accept ⇒ open a shell pane there.
     Worktrees,
+    /// `id` = `"<abs-path>\t<line>\t<col>"` (0-based). Accept ⇒ open + jump there.
+    /// Used for LSP references (and any future "list of source locations").
+    Locations,
 }
 
 #[derive(Debug, Clone)]

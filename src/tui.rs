@@ -506,7 +506,17 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         _ => return,
     };
     match ev {
-        BufferEvent::Edited | BufferEvent::Redraw | BufferEvent::NoOp => {}
+        BufferEvent::Edited => {
+            // Keep the LSP server's view in sync (full-text didChange).
+            let upd = match app.panes.get(i) {
+                Some(Pane::Editor(b)) => b.path.clone().map(|p| (p, b.editor.text().to_string())),
+                _ => None,
+            };
+            if let Some((p, text)) = upd {
+                app.lsp.did_change(&p, &text);
+            }
+        }
+        BufferEvent::Redraw | BufferEvent::NoOp => {}
         BufferEvent::App(cmd) => apply_app_command(app, cmd),
         BufferEvent::Unhandled(k) => {
             // Not text-editing. Esc releases focus to the tree; the rest (config-

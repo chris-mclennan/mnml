@@ -154,6 +154,18 @@ impl LspClient {
         );
     }
 
+    /// `textDocument/references` (params carry the extra `context`).
+    pub fn references(&mut self, path: &Path, line: u32, character: u32) {
+        self.request(
+            "textDocument/references",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "position": { "line": line, "character": character },
+                "context": { "includeDeclaration": true }
+            }),
+        );
+    }
+
     fn request(&mut self, method: &str, params: serde_json::Value) {
         let id = self.next_id;
         self.next_id += 1;
@@ -301,6 +313,15 @@ fn handle_message(
             "textDocument/hover" => {
                 if let Some(text) = hover_text(result) {
                     let _ = tx.send(LspEvent::Hover { text });
+                }
+            }
+            "textDocument/references" => {
+                let locs: Vec<(PathBuf, u32, u32)> = result
+                    .as_array()
+                    .map(|a| a.iter().filter_map(first_location).collect())
+                    .unwrap_or_default();
+                if !locs.is_empty() {
+                    let _ = tx.send(LspEvent::References(locs));
                 }
             }
             _ => {}

@@ -79,6 +79,8 @@ pub enum LspEvent {
     },
     /// Result of a `textDocument/hover` request — show this (markdown-ish) text.
     Hover { text: String },
+    /// Result of a `textDocument/references` request — `(path, line, character)` per hit.
+    References(Vec<(PathBuf, u32, u32)>),
     /// A server-side message worth surfacing as a toast.
     Message(String),
 }
@@ -296,6 +298,17 @@ impl LspManager {
     /// Send a `textDocument/hover` request for the cursor position.
     pub fn hover(&mut self, path: &Path, line: u32, character: u32) -> bool {
         self.request_at("textDocument/hover", path, line, character)
+    }
+    /// Send a `textDocument/references` request for the cursor position.
+    pub fn references(&mut self, path: &Path, line: u32, character: u32) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.references(path, line, character);
+                sent = true;
+            }
+        }
+        sent
     }
     fn request_at(&mut self, method: &str, path: &Path, line: u32, character: u32) -> bool {
         let mut sent = false;

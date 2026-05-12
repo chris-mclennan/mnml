@@ -309,6 +309,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_hover(),
         },
         Command {
+            id: "lsp.references",
+            title: "LSP: find references (→ picker)",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_references(),
+        },
+        Command {
             id: "rqst.send",
             title: "HTTP: send request (.http/.curl) — or re-fire a request pane",
             group: "http",

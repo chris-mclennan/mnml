@@ -497,6 +497,18 @@ impl App {
             PickerKind::Tasks => self.run_task(&item.id),
             PickerKind::Branches => self.checkout_branch(&item.id),
             PickerKind::Worktrees => self.open_worktree_shell(&item.id),
+            PickerKind::Locations => {
+                let mut parts = item.id.split('\t');
+                if let (Some(p), Some(l), Some(c)) = (parts.next(), parts.next(), parts.next()) {
+                    let path = std::path::PathBuf::from(p);
+                    let line: usize = l.parse().unwrap_or(0);
+                    let col: usize = c.parse().unwrap_or(0);
+                    self.open_path(&path);
+                    if let Some(b) = self.active_editor_mut() {
+                        b.editor.place_cursor(line, col);
+                    }
+                }
+            }
         }
     }
 
@@ -629,6 +641,10 @@ impl App {
     pub fn lsp_hover(&mut self) {
         self.lsp_request_at_cursor(|lsp, p, l, c| lsp.hover(p, l, c), "hover");
     }
+    /// `lsp.references` — find references to the symbol at the cursor (→ picker).
+    pub fn lsp_references(&mut self) {
+        self.lsp_request_at_cursor(|lsp, p, l, c| lsp.references(p, l, c), "references");
+    }
     fn lsp_request_at_cursor(
         &mut self,
         send: impl FnOnce(&mut crate::lsp::LspManager, &Path, u32, u32) -> bool,
@@ -685,6 +701,30 @@ impl App {
                 } else {
                     format!("hover: {shown}")
                 });
+            }
+            LspEvent::References(locs) => {
+                use crate::picker::PickerItem;
+                if locs.is_empty() {
+                    self.toast("no references");
+                    return;
+                }
+                let n = locs.len();
+                let items: Vec<PickerItem> = locs
+                    .into_iter()
+                    .map(|(p, l, c)| {
+                        let rel = rel_path(&self.workspace, &p);
+                        PickerItem::new(
+                            format!("{}\t{}\t{}", p.display(), l, c),
+                            format!("{rel}:{}:{}", l + 1, c + 1),
+                            String::new(),
+                        )
+                    })
+                    .collect();
+                self.open_picker(Picker::new(
+                    PickerKind::Locations,
+                    format!("References ({n})"),
+                    items,
+                ));
             }
             LspEvent::Message(m) => self.toast(m),
         }
