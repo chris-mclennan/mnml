@@ -118,10 +118,18 @@ line-number gutter on the active editor for a per-line `<sha> <author>` column
 (`src/git/blame.rs` parses `git blame --porcelain`), refreshed on save; **commit** —
 `git.commit` (`<leader>g c`) opens the single-line text-input overlay (`src/prompt.rs` /
 `src/ui/prompt.rs`, a generic "type a string, Enter" sibling of the fuzzy picker) →
-`git commit -m`. headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
+`git commit -m`; **commit graph** — `Pane::GitGraph` (`src/git/log.rs` reads `git log --all`
++ `for-each-ref` and computes a single-row-per-commit lane layout — node `●`, pass-through
+`│`, corner glyphs at branch/merge points; `src/git/graph.rs` = `GitGraphPane` state w/ a
+lazily-loaded per-commit detail; `src/ui/git_graph_view.rs` draws the lane graph + commit rows
+[hash · ref chips · subject · age · author, selected row highlit] above a detail panel
+[message · parents · changed files]). `git.graph` (`<leader>g l`); in the pane ↑↓/jk select,
+PgUp/PgDn/g/G jump, Enter opens that commit's diff (`DiffScope::Commit(hash)` → `git show` —
+read-only, staging refused), `r` refresh, `y` copy hash, Esc → tree, wheel moves the selection;
+commits refresh open graph panes. headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
 wrappers. The statusline git segment shows branch + `⇡ahead ⇣behind` + `✚staged ●modified
 …untracked ⚠conflicts` (only the nonzero parts), from `git status --porcelain -b`. The Git
-track is done. **HTTP track — in progress:** `src/http/` holds `Request`/`Response` +
+track is done (phase 2 — branch/worktree rail, a stage-view, commit-with-Claude/Codex — is queued; see `.local/PLAN.md`). **HTTP track — in progress:** `src/http/` holds `Request`/`Response` +
 `send` (reqwest blocking, rustls), `curl.rs` (parse a pasted cURL), `file.rs` (`.http`/
 `.rest`/`.curl` parsing, multi-block via `### name`), `template.rs` (`{{VAR}}` from
 `.mnml/env/<name>.env` → process env → dynamic `{{$uuid}}`/`{{$timestamp}}`/…), `script.rs`
