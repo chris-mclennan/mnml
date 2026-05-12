@@ -23,6 +23,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         area,
     );
     app.rects.bufferline_tabs.clear();
+    app.rects.bufferline_tab_close.clear();
     if area.width == 0 {
         return;
     }
@@ -86,6 +87,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             },
             i,
         ));
+        // the close target = the badge + its trailing space (the last 2 cells of the tab)
+        if cells >= 2 {
+            app.rects.bufferline_tab_close.push((
+                Rect {
+                    x: x + cells - 2,
+                    y: area.y,
+                    width: 2,
+                    height: 1,
+                },
+                i,
+            ));
+        }
         x += cells;
         // thin separator into the strip background
         if i + 1 < app.panes.len() {

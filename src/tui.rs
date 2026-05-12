@@ -132,6 +132,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('b') => Some("view.toggle_tree"),
             KeyCode::Char('e') => Some("focus.cycle"),
             KeyCode::Char('s') => Some("file.save"),
+            KeyCode::Char('w' | 'W') => Some("buffer.close"),
             KeyCode::Char('p' | 'P') if shift => Some("palette"),
             KeyCode::Char('p' | 'P') => Some("picker.files"),
             _ => None,
@@ -300,13 +301,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
 
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            // Bufferline tab?
-            if let Some((_, id)) = app
+            // Bufferline tab — clicking the close badge closes; clicking elsewhere on the tab activates.
+            if let Some(&(_, id)) = app
+                .rects
+                .bufferline_tab_close
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+            {
+                app.close_pane(id);
+                return;
+            }
+            if let Some(&(_, id)) = app
                 .rects
                 .bufferline_tabs
                 .iter()
                 .find(|(r, _)| contains(*r, x, y))
-                .map(|(r, id)| (*r, *id))
             {
                 if id < app.panes.len() {
                     app.active = Some(id);
@@ -315,13 +324,13 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
-            // Tree?
+            // Tree? (no header now — row 0 of the rail is the first entry)
             if let Some(tr) = app.rects.tree
                 && contains(tr, x, y)
             {
                 app.focus_tree();
-                if y > tr.y {
-                    let idx = (y - tr.y - 1) as usize + app.rects.tree_scroll;
+                {
+                    let idx = (y - tr.y) as usize + app.rects.tree_scroll;
                     if idx < app.tree.visible_rows().len() {
                         app.tree.set_cursor(idx);
                         if let Some(row) = app.tree.selected_row() {

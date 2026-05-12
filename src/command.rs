@@ -137,7 +137,7 @@ fn builtin_commands() -> Vec<Command> {
             id: "buffer.close",
             title: "Close buffer",
             group: "buffer",
-            default_key: "",
+            default_key: "ctrl+w",
             run: |app| app.close_active_pane(),
         },
         Command {

@@ -27,8 +27,10 @@ pub struct PaneRects {
     /// Tree scroll offset at render time (so a click maps to the right row).
     pub tree_scroll: usize,
     pub bufferline: Option<Rect>,
-    /// `(rect, pane_id)` for each tab in the bufferline.
+    /// `(rect, pane_id)` for each tab in the bufferline (whole tab → activate).
     pub bufferline_tabs: Vec<(Rect, PaneId)>,
+    /// `(rect, pane_id)` for each tab's close badge (the trailing `×`/`●` → close).
+    pub bufferline_tab_close: Vec<(Rect, PaneId)>,
     /// The active pane's body (the whole pane area).
     pub body: Option<Rect>,
     /// The editable text region inside the body (gutter excluded).
@@ -222,20 +224,41 @@ impl App {
         }
     }
 
-    pub fn close_active_pane(&mut self) {
-        let Some(i) = self.active else { return };
-        if i < self.panes.len() {
-            self.panes.remove(i);
+    /// Close the pane at `id`. Refuses (with a toast) if it's an editor with
+    /// unsaved changes — save first. (Force-close / discard is a later command.)
+    pub fn close_pane(&mut self, id: PaneId) {
+        if id >= self.panes.len() {
+            return;
         }
-        if self.panes.is_empty() {
-            self.layout = Layout::Empty;
-            self.active = None;
+        // (`Pane` has only the `Editor` variant for now — `let` is irrefutable.)
+        #[allow(irrefutable_let_patterns)]
+        if let Pane::Editor(b) = &self.panes[id]
+            && b.dirty
+        {
+            let name = b.display_name();
+            self.toast(format!("unsaved changes in {name} — save first (Ctrl+S)"));
+            return;
+        }
+        self.panes.remove(id);
+        // Re-point `active` past the removal (single-leaf model for now).
+        self.active = match self.active {
+            _ if self.panes.is_empty() => None,
+            Some(a) if a == id => Some(id.min(self.panes.len() - 1)),
+            Some(a) if a > id => Some(a - 1),
+            other => other,
+        };
+        self.layout = match self.active {
+            Some(a) => Layout::Leaf(a),
+            None => Layout::Empty,
+        };
+        if self.active.is_none() {
             self.focus = Focus::Tree;
-        } else {
-            // P0 single-pane model: collapse to the last remaining pane.
-            let last = self.panes.len() - 1;
-            self.layout = Layout::Leaf(last);
-            self.active = Some(last);
+        }
+    }
+
+    pub fn close_active_pane(&mut self) {
+        if let Some(i) = self.active {
+            self.close_pane(i);
         }
     }
 
