@@ -124,12 +124,15 @@ wrappers. The statusline git segment shows branch + `⇡ahead ⇣behind` + `✚s
 track is done. **HTTP track — in progress:** `src/http/` holds `Request`/`Response` +
 `send` (reqwest blocking, rustls), `curl.rs` (parse a pasted cURL), `file.rs` (`.http`/
 `.rest`/`.curl` parsing, multi-block via `### name`), `template.rs` (`{{VAR}}` from
-`.mnml/env/<name>.env` → process env → dynamic `{{$uuid}}`/`{{$timestamp}}`/…); wired as
-`mnml run FILE [--env NAME] [--workspace DIR]` (expand → parse → send → print, non-zero
-exit on non-2xx). Still to do for HTTP: `@assert`/`@capture` directives, `.chain.json`
-sequences, OpenAPI→stub discovery, and the `Pane::Request` editor UI. Then: Pty/AI-CLI,
-AI-API, CDP, the `.test` E2E format, plugins; plus queued polish (right-click context
-menus on files/tabs, line-wrapped preview). See `.local/PLAN.md` for the full plan.
+`.mnml/env/<name>.env` → process env → dynamic `{{$uuid}}`/`{{$timestamp}}`/…), `script.rs`
+(`@set-header`/`@set-env` pre-request + `@assert`/`@capture` post-response directives in `#`
+comments, with a `.foo.bar[0]`/`$.path` JSON resolver); wired as `mnml run FILE [--env NAME]
+[--workspace DIR]` — apply `@set-*` → expand `{{}}` → parse → send → print body → run
+`@assert`s (✓/✗, non-zero exit on any failure; without asserts a non-2xx fails) → show
+`@capture`s. Still to do for HTTP: `.chain.json` sequences, OpenAPI→stub discovery, and the
+`Pane::Request` editor UI. Then: Pty/AI-CLI, AI-API, CDP, the `.test` E2E format, plugins;
+plus queued polish (right-click context menus on files/tabs, line-wrapped preview). See
+`.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)

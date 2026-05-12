@@ -5,14 +5,17 @@
 //!   [`file`]).
 //! - [`template`] — `{{VAR}}` substitution from `.mnml/env/<name>.env` (then
 //!   process env), plus dynamic `{{$uuid}}` / `{{$timestamp}}` / … vars.
+//! - [`script`] — `@set-header` / `@set-env` (pre-request) and `@assert` /
+//!   `@capture` (post-response) directives carried in `#` comments.
 //! - [`send`] — fire a [`Request`] with `reqwest`'s blocking client, capture the
 //!   [`Response`] (status, headers, body, elapsed).
 //!
-//! Still to come (its own pass): `@assert` / `@capture` directives, `.chain.json`
-//! sequences, OpenAPI → stub discovery, and the `Pane::Request` editor UI.
+//! Still to come (its own pass): `.chain.json` sequences, OpenAPI → stub
+//! discovery, and the `Pane::Request` editor UI.
 
 pub mod curl;
 pub mod file;
+pub mod script;
 pub mod template;
 
 use std::time::{Duration, Instant};

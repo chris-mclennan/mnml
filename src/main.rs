@@ -202,17 +202,43 @@ fn do_run(file: &Path, env_name: Option<&str>, workspace: Option<&Path>) -> Resu
         .map(Path::to_path_buf)
         .or_else(|| file.parent().map(Path::to_path_buf))
         .unwrap_or_else(|| PathBuf::from("."));
-    let env = EnvSet::select(&ws, env_name);
+    let mut env = EnvSet::select(&ws, env_name);
     if let Some(name) = &env.name {
         eprintln!("env: {name}");
     }
 
-    let missing = http::template::unresolved(&raw, &env);
+    // Parse the request (its url/headers/body still hold `{{vars}}`), then the
+    // `@`-directives. `apply_pre` runs `@set-header` / `@set-env` before we
+    // expand the request's own fields, so `{{NAME}}` can reference `@set-env`s.
+    let script = http::script::parse(&raw);
+    let mut req = http::parse(&raw).map_err(|e| e.to_string())?;
+    http::script::apply_pre(&script, &mut req, &mut env);
+
+    let mut missing: Vec<String> = Vec::new();
+    let mut collect = |s: &str| {
+        for m in http::template::unresolved(s, &env) {
+            if !missing.contains(&m) {
+                missing.push(m);
+            }
+        }
+    };
+    collect(&req.url);
+    for (_, v) in &req.headers {
+        collect(v);
+    }
+    if let Some(b) = &req.body {
+        collect(b);
+    }
     if !missing.is_empty() {
         eprintln!("warning: unresolved variables: {}", missing.join(", "));
     }
-    let expanded = http::template::expand(&raw, &env);
-    let req = http::parse(&expanded).map_err(|e| e.to_string())?;
+    req.url = http::template::expand(&req.url, &env);
+    for (_, v) in &mut req.headers {
+        *v = http::template::expand(v, &env);
+    }
+    if let Some(b) = &mut req.body {
+        *b = http::template::expand(b, &env);
+    }
 
     println!("→ {} {}", req.method, req.url);
     let resp = http::send(&req)?;
@@ -222,7 +248,6 @@ fn do_run(file: &Path, env_name: Option<&str>, workspace: Option<&Path>) -> Resu
         resp.status_text,
         resp.elapsed.as_millis()
     );
-    // A few interesting response headers.
     for name in ["content-type", "content-length", "location", "x-request-id"] {
         if let Some(v) = resp.header(name) {
             println!("  {name}: {v}");
@@ -241,8 +266,37 @@ fn do_run(file: &Path, env_name: Option<&str>, workspace: Option<&Path>) -> Resu
         println!("{}", resp.body);
     }
 
-    // Non-2xx is a failed run (assertions land in a later pass).
-    if !(200..300).contains(&resp.status) {
+    // `@assert` directives — print pass/fail; a failure fails the run.
+    let mut failed = 0usize;
+    if !script.assertions.is_empty() {
+        println!();
+        for r in http::script::run_assertions(&script, resp.status, &resp.headers, &resp.body) {
+            if r.passed {
+                println!("  ✓ {}", r.label);
+            } else {
+                failed += 1;
+                match &r.detail {
+                    Some(d) => println!("  ✗ {} — {d}", r.label),
+                    None => println!("  ✗ {}", r.label),
+                }
+            }
+        }
+    }
+
+    // `@capture` directives — show what got captured (into the env, for chains).
+    let captured = http::script::apply_captures(&script, &resp.headers, &resp.body, &mut env);
+    if !captured.is_empty() {
+        println!();
+        for (name, value) in &captured {
+            println!("  ⇒ {name} = {value}");
+        }
+    }
+
+    if failed > 0 {
+        return Err(format!("{failed} assertion(s) failed"));
+    }
+    // With no assertions, a non-2xx is the failure signal.
+    if script.assertions.is_empty() && !(200..300).contains(&resp.status) {
         return Err(format!("HTTP {}", resp.status));
     }
     Ok(())
