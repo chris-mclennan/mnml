@@ -1,8 +1,13 @@
-//! The bottom statusline — NvChad-style powerline segments. The mode chip is
-//! the only place that reads `EditingMode` (it shows the editing mode if there
-//! is one, else a context label — `TREE` when the tree has focus, `VIEW` for a
-//! read-only buffer). Left: mode · git · file. Right: position · language. The
-//! gap between holds a centered toast / pending-key hint.
+//! The bottom statusline — NvChad-style powerline segments. The mode chip is the
+//! only place that reads `EditingMode` (it shows the editing mode if there is
+//! one, else a context label — `TREE` / `VIEW` / `EDIT`).
+//!
+//! Left:  `[mode] [git branch +N] [<icon> file ●]`
+//! Right: `[Ln:Col] [<folder> workspace] [language]`
+//! The gap holds a centered toast / pending-key hint.
+//!
+//! TODO: when the git track lands, flesh the left side out — split git changes
+//! into `+N ~N -N`, add a sync/ahead-behind indicator, a GitHub/PR badge, etc.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -13,7 +18,7 @@ use ratatui::widgets::Paragraph;
 use crate::app::App;
 use crate::focus::Focus;
 use crate::input::EditingMode;
-use crate::ui::theme;
+use crate::ui::{icons, theme};
 
 const PL_RIGHT: &str = "\u{e0b0}"; //
 const PL_LEFT: &str = "\u{e0b2}"; //
@@ -61,8 +66,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let width = area.width as usize;
     let arrows = !app.config.ui.ascii_icons;
+    let nerd = !app.config.ui.ascii_icons;
 
-    // ── left segments ──
+    // ── left ──
     let (mode_label, mode_bg) = mode_chip(app);
     let mut left = vec![Seg::new(format!(" {mode_label} "), theme::BG_DARKER, mode_bg).bold()];
     if let Some(branch) = &app.git.snapshot().branch {
@@ -74,20 +80,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         left.push(Seg::new(txt, theme::GREEN, theme::BG2));
     }
-    let (fname, lang) = match app.active_editor() {
-        Some(b) => (
-            format!("{}{}", b.display_name(), if b.dirty { " ●" } else { "" }),
-            b.language_ext.clone().unwrap_or_else(|| "text".to_string()),
-        ),
-        None => ("[no file]".to_string(), "—".to_string()),
-    };
-    left.push(Seg::new(
-        format!("  {fname} "),
-        theme::FG,
-        theme::STATUSLINE,
-    ));
+    // file segment: icon (its devicon color) + name + dirty marker, both on STATUSLINE bg.
+    match app.active_editor() {
+        Some(b) => {
+            let p = b.path.clone().unwrap_or_else(|| b.display_name().into());
+            let (glyph, gc) = icons::for_path(&p, false, false, nerd);
+            left.push(Seg::new(format!(" {glyph} "), gc, theme::STATUSLINE));
+            let name = format!("{}{} ", b.display_name(), if b.dirty { " ●" } else { "" });
+            left.push(Seg::new(name, theme::FG, theme::STATUSLINE));
+        }
+        None => left.push(Seg::new(" [no file] ", theme::COMMENT, theme::STATUSLINE)),
+    }
 
-    // ── right segments ──
+    // ── right ──
     let mut right: Vec<Seg> = Vec::new();
     if let Some(b) = app.active_editor() {
         let (row, col) = b.editor.row_col();
@@ -97,41 +102,31 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             theme::BG2,
         ));
     }
+    // workspace / cwd block (the name that used to sit atop the file tree).
+    let ws_name = app
+        .workspace
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("workspace");
+    let folder_glyph = if nerd { "\u{f07b}" } else { "" };
+    right.push(
+        Seg::new(
+            format!(" {folder_glyph} {ws_name} "),
+            theme::BLUE,
+            theme::BG3,
+        )
+        .bold(),
+    );
+    // language block.
+    let lang = app
+        .active_editor()
+        .and_then(|b| b.language_ext.clone())
+        .unwrap_or_else(|| "—".to_string());
     right.push(Seg::new(format!("  {lang} "), theme::BG_DARKER, theme::BLUE).bold());
 
-    // ── render ──
-    let mut spans: Vec<Span> = Vec::new();
-    let mut used = 0usize;
-
-    // left, with `` transitions; the trailing arrow blends into the spacer.
-    for (i, s) in left.iter().enumerate() {
-        spans.push(Span::styled(s.text.clone(), s.style()));
-        used += s.cols();
-        let next_bg = left.get(i + 1).map(|n| n.bg).unwrap_or(theme::STATUSLINE);
-        if arrows {
-            spans.push(Span::styled(
-                PL_RIGHT,
-                Style::default().fg(s.bg).bg(next_bg),
-            ));
-            used += 1;
-        }
-    }
-    // right, built so the leading `` blends from the spacer.
-    let mut right_spans: Vec<Span> = Vec::new();
-    let mut right_used = 0usize;
-    for (i, s) in right.iter().enumerate() {
-        let prev_bg = if i == 0 {
-            theme::STATUSLINE
-        } else {
-            right[i - 1].bg
-        };
-        if arrows {
-            right_spans.push(Span::styled(PL_LEFT, Style::default().fg(s.bg).bg(prev_bg)));
-            right_used += 1;
-        }
-        right_spans.push(Span::styled(s.text.clone(), s.style()));
-        right_used += s.cols();
-    }
+    // ── render: left segments + spacer + right segments, with `` / `` transitions ──
+    let (mut spans, used) = render_left(&left, arrows, theme::STATUSLINE);
+    let (right_spans, right_used) = render_right(&right, arrows, theme::STATUSLINE);
 
     // middle: toast / pending-key hint, centered in the leftover space.
     let mid_avail = width.saturating_sub(used + right_used);
@@ -167,6 +162,43 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     spans.extend(right_spans);
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// Left-anchored segments; a `` after each (its fg = this bg, bg = next bg),
+/// skipped between two same-bg neighbors so a multi-span segment looks unified.
+fn render_left(segs: &[Seg], arrows: bool, tail_bg: Color) -> (Vec<Span<'static>>, usize) {
+    let mut out = Vec::new();
+    let mut used = 0;
+    for (i, s) in segs.iter().enumerate() {
+        out.push(Span::styled(s.text.clone(), s.style()));
+        used += s.cols();
+        let next_bg = segs.get(i + 1).map(|n| n.bg).unwrap_or(tail_bg);
+        if arrows && next_bg != s.bg {
+            out.push(Span::styled(
+                PL_RIGHT,
+                Style::default().fg(s.bg).bg(next_bg),
+            ));
+            used += 1;
+        }
+    }
+    (out, used)
+}
+
+/// Right-anchored segments; a `` before each (its fg = this bg, bg = prev bg),
+/// skipped between two same-bg neighbors.
+fn render_right(segs: &[Seg], arrows: bool, head_bg: Color) -> (Vec<Span<'static>>, usize) {
+    let mut out = Vec::new();
+    let mut used = 0;
+    for (i, s) in segs.iter().enumerate() {
+        let prev_bg = if i == 0 { head_bg } else { segs[i - 1].bg };
+        if arrows && prev_bg != s.bg {
+            out.push(Span::styled(PL_LEFT, Style::default().fg(s.bg).bg(prev_bg)));
+            used += 1;
+        }
+        out.push(Span::styled(s.text.clone(), s.style()));
+        used += s.cols();
+    }
+    (out, used)
 }
 
 /// `(label, bg_color)` for the mode chip.

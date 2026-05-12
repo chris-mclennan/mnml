@@ -1,6 +1,11 @@
 //! The "tabufline" — a strip of open-buffer tabs (NvChad-style). It sits over
 //! the pane body only, not above the tree rail. A small `TABS` cap is pinned to
-//! the right (tabpage indicators / `+` button come later).
+//! the right.
+//!
+//! TODO(later): flesh out the right-hand cluster to match NvChad — a `+`
+//! "new file" button, the `TABS` label, tabpage indicators (`1` `2` …), a
+//! tabpage close `×`, a theme-toggle slider, and a window close `×`. Each is a
+//! clickable segment (record its rect in `app.rects` like the buffer tabs).
 
 use ratatui::Frame;
 use ratatui::layout::Rect;

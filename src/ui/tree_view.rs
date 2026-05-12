@@ -1,9 +1,11 @@
-//! The file-tree rail. Background matches the editor; folders (icon + name) are
-//! blue, NvChad-style; git-touched files take a status tint.
+//! The file-tree rail. Background matches the editor; folders show a collapse
+//! chevron + a blue folder icon + a blue name (NvChad-style); git-touched files
+//! take a status tint. (The workspace name lives in the statusline now, not a
+//! header here — the rail just starts with the first entry.)
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -13,7 +15,9 @@ use crate::git::status::FileState;
 use crate::ui::{icons, theme};
 
 /// The rail's background — same as the editor body so they blend.
-const RAIL_BG: ratatui::style::Color = theme::BG_DARK;
+const RAIL_BG: Color = theme::BG_DARK;
+const CHEVRON_OPEN: &str = "\u{f107}"; //  (angle-down)
+const CHEVRON_CLOSED: &str = "\u{f105}"; //  (angle-right)
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(Paragraph::new("").style(Style::default().bg(RAIL_BG)), area);
@@ -21,26 +25,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let width = area.width as usize;
-
-    // Header — a subtle title line (NvChad's nvim-tree shows the root, not a loud bar).
-    let ws_name = app.workspace.file_name().and_then(|n| n.to_str()).unwrap_or("workspace");
-    let header_glyph = if app.config.ui.ascii_icons { "*" } else { "\u{f07b}" };
-    let header = Line::from(vec![
-        Span::styled(format!(" {header_glyph} "), Style::default().fg(theme::BLUE).bg(RAIL_BG)),
-        Span::styled(
-            pad_to(format!("{ws_name} "), width.saturating_sub(3)),
-            Style::default().fg(theme::BLUE).bg(RAIL_BG).add_modifier(Modifier::BOLD),
-        ),
-    ]);
-    frame.render_widget(Paragraph::new(header), Rect { height: 1, ..area });
-
-    let body = Rect { y: area.y + 1, height: area.height.saturating_sub(1), ..area };
-    if body.height == 0 {
-        return;
-    }
     let rows = app.tree.visible_rows();
     let cursor = app.tree.cursor();
-    let h = body.height as usize;
+    let h = area.height as usize;
 
     // Keep the cursor on screen.
     if cursor < app.tree.scroll {
@@ -62,7 +49,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let (glyph, icon_color) = icons::for_path(&row.path, row.is_dir, row.is_expanded, nerd);
         let indent = "  ".repeat(row.depth);
 
-        // Folders are blue (icon + name). Files take a git tint if any, else default fg.
+        // In Nerd-Font mode, folders get an explicit collapse chevron; files get a
+        // blank placeholder so their icons line up under folders' icons. In ASCII
+        // mode the ▶/▼ folder glyph already conveys state, so no separate chevron.
+        let prefix = if nerd {
+            let chev = if row.is_dir {
+                if row.is_expanded {
+                    CHEVRON_OPEN
+                } else {
+                    CHEVRON_CLOSED
+                }
+            } else {
+                " "
+            };
+            format!("{indent}{chev} {glyph} ")
+        } else {
+            format!("{indent}{glyph} ")
+        };
+
+        // Folders are blue (chevron + icon + name). Files: git tint, else default fg.
         let name_color = if row.is_dir {
             theme::BLUE
         } else {
@@ -82,25 +87,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         if row.is_dir || (is_cursor && focused) {
             name_style = name_style.add_modifier(Modifier::BOLD);
         }
+        // The chevron+icon prefix is blue for folders, the devicon color for files.
+        let prefix_color = if row.is_dir { theme::BLUE } else { icon_color };
 
-        let prefix = format!("{indent}{glyph} ");
         let used = prefix.chars().count() + row.name.chars().count();
         let pad = width.saturating_sub(used);
         lines.push(Line::from(vec![
-            Span::styled(prefix, Style::default().fg(icon_color).bg(bg)),
+            Span::styled(prefix, Style::default().fg(prefix_color).bg(bg)),
             Span::styled(row.name.clone(), name_style),
             Span::styled(" ".repeat(pad), Style::default().bg(bg)),
         ]));
     }
-    frame.render_widget(Paragraph::new(lines), body);
-}
-
-fn pad_to(mut s: String, width: usize) -> String {
-    let n = s.chars().count();
-    if n < width {
-        s.push_str(&" ".repeat(width - n));
-    } else if n > width {
-        s = s.chars().take(width).collect();
-    }
-    s
+    frame.render_widget(Paragraph::new(lines), area);
 }
