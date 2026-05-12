@@ -1,0 +1,162 @@
+//! The fuzzy-picker overlay — a generic "type to filter a list, pick one"
+//! widget. Used for the command palette (`Ctrl+Shift+P`), the file finder
+//! (`Ctrl+P`), and the buffer switcher. The caller supplies items keyed by an
+//! opaque `id`; `App::picker_accept` maps the chosen `id` back to an action by
+//! `PickerKind`.
+
+use crate::fuzzy::fuzzy_match;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerKind {
+    /// `id` = a filesystem path. Accept ⇒ open it.
+    Files,
+    /// `id` = a pane index (as a string). Accept ⇒ make it active.
+    Buffers,
+    /// `id` = a command id. Accept ⇒ run it.
+    Commands,
+}
+
+#[derive(Debug, Clone)]
+pub struct PickerItem {
+    pub id: String,
+    /// The text shown and fuzzy-matched against.
+    pub label: String,
+    /// A right-aligned, dimmed hint (a keybinding, a directory, …).
+    pub detail: String,
+}
+
+impl PickerItem {
+    pub fn new(id: impl Into<String>, label: impl Into<String>, detail: impl Into<String>) -> Self {
+        PickerItem {
+            id: id.into(),
+            label: label.into(),
+            detail: detail.into(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Picker {
+    pub kind: PickerKind,
+    pub title: String,
+    items: Vec<PickerItem>,
+    pub query: String,
+    /// Indices into `items`, filtered + sorted (best match first).
+    filtered: Vec<usize>,
+    /// Index into `filtered`.
+    pub selected: usize,
+    /// First visible row (the view keeps `selected` on screen).
+    pub scroll: usize,
+}
+
+impl Picker {
+    pub fn new(kind: PickerKind, title: impl Into<String>, items: Vec<PickerItem>) -> Self {
+        let mut p = Picker {
+            kind,
+            title: title.into(),
+            items,
+            query: String::new(),
+            filtered: Vec::new(),
+            selected: 0,
+            scroll: 0,
+        };
+        p.refilter();
+        p
+    }
+
+    fn refilter(&mut self) {
+        let mut scored: Vec<(i64, usize)> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, it)| fuzzy_match(&self.query, &it.label).map(|(s, _)| (s, i)))
+            .collect();
+        // Best score first; ties keep the original order.
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        self.filtered = scored.into_iter().map(|(_, i)| i).collect();
+        self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
+        self.scroll = 0;
+    }
+
+    pub fn items_view(&self) -> impl Iterator<Item = &PickerItem> {
+        self.filtered.iter().map(move |&i| &self.items[i])
+    }
+    pub fn len(&self) -> usize {
+        self.filtered.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.filtered.is_empty()
+    }
+    pub fn selected_item(&self) -> Option<&PickerItem> {
+        self.filtered.get(self.selected).map(|&i| &self.items[i])
+    }
+
+    pub fn type_char(&mut self, c: char) {
+        self.query.push(c);
+        self.refilter();
+    }
+    pub fn backspace(&mut self) {
+        self.query.pop();
+        self.refilter();
+    }
+    pub fn clear_query(&mut self) {
+        self.query.clear();
+        self.refilter();
+    }
+    pub fn move_down(&mut self) {
+        if self.selected + 1 < self.filtered.len() {
+            self.selected += 1;
+        }
+    }
+    pub fn move_up(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
+    pub fn set_selected(&mut self, idx: usize) {
+        if idx < self.filtered.len() {
+            self.selected = idx;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p() -> Picker {
+        Picker::new(
+            PickerKind::Commands,
+            "Commands",
+            vec![
+                PickerItem::new("file.save", "Save file", "ctrl+s"),
+                PickerItem::new("view.toggle_tree", "Toggle file tree", "ctrl+b"),
+                PickerItem::new("app.quit", "Quit mnml", "ctrl+q"),
+            ],
+        )
+    }
+
+    #[test]
+    fn filters_and_orders_by_match() {
+        let mut pk = p();
+        assert_eq!(pk.len(), 3);
+        pk.type_char('s');
+        pk.type_char('a');
+        pk.type_char('v');
+        // "sav" matches "Save file" best
+        assert_eq!(pk.selected_item().unwrap().id, "file.save");
+        pk.backspace();
+        pk.backspace();
+        pk.backspace();
+        assert_eq!(pk.len(), 3);
+    }
+
+    #[test]
+    fn selection_clamps() {
+        let mut pk = p();
+        pk.move_down();
+        pk.move_down();
+        pk.move_down(); // can't go past the last
+        assert_eq!(pk.selected, 2);
+        pk.move_up();
+        assert_eq!(pk.selected, 1);
+    }
+}

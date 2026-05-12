@@ -66,6 +66,15 @@ impl Tree {
         &self.root
     }
 
+    /// Every (non-directory) file under the workspace, in display order — for the file picker.
+    pub fn all_files(&self) -> Vec<PathBuf> {
+        self.entries
+            .iter()
+            .filter(|e| !e.is_dir)
+            .map(|e| e.path.clone())
+            .collect()
+    }
+
     /// Re-scan the workspace, preserving expansion state (dropping stale entries).
     pub fn refresh(&mut self) {
         self.rescan();

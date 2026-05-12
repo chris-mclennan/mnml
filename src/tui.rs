@@ -75,7 +75,9 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
     let mut ipc = Ipc::init(&app.workspace).ok();
     if let Some(ipc) = ipc.as_mut() {
         let (w, h) = term.size().map(|s| (s.width, s.height)).unwrap_or((0, 0));
-        ipc.append_event(&format!("{{\"event\":\"start\",\"mode\":\"tui\",\"cols\":{w},\"rows\":{h}}}"));
+        ipc.append_event(&format!(
+            "{{\"event\":\"start\",\"mode\":\"tui\",\"cols\":{w},\"rows\":{h}}}"
+        ));
     }
 
     loop {
@@ -113,35 +115,55 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
 // ─── key dispatch (shared with headless/IPC) ────────────────────────
 
 pub fn dispatch_key(app: &mut App, key: KeyEvent) {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    // An open picker / palette overlay steals all keys until it's dismissed.
+    if app.picker.is_some() {
+        handle_picker_key(app, key);
+        return;
+    }
 
-    // Global chords (any focus). For P0 a small hardcoded set routed through the
-    // command registry; the config-driven keymap resolver lands with P1.
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+    // Global chords (any focus). Hardcoded for now; the config-driven `[keys.*]`
+    // resolver lands with the vim handler in P3.
     if ctrl {
-        match key.code {
-            KeyCode::Char('q') => {
-                command::run("app.quit", app);
-                return;
-            }
-            KeyCode::Char('b') => {
-                command::run("view.toggle_tree", app);
-                return;
-            }
-            KeyCode::Char('e') => {
-                command::run("focus.cycle", app);
-                return;
-            }
-            KeyCode::Char('s') => {
-                command::run("file.save", app);
-                return;
-            }
-            _ => {}
+        let global = match key.code {
+            KeyCode::Char('q') => Some("app.quit"),
+            KeyCode::Char('b') => Some("view.toggle_tree"),
+            KeyCode::Char('e') => Some("focus.cycle"),
+            KeyCode::Char('s') => Some("file.save"),
+            KeyCode::Char('p' | 'P') if shift => Some("palette"),
+            KeyCode::Char('p' | 'P') => Some("picker.files"),
+            _ => None,
+        };
+        if let Some(id) = global {
+            command::run(id, app);
+            return;
         }
     }
 
     match app.focus {
         Focus::Tree => handle_tree_key(app, key),
         Focus::Pane => handle_pane_key(app, key),
+    }
+}
+
+fn handle_picker_key(app: &mut App, key: KeyEvent) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let Some(picker) = app.picker.as_mut() else {
+        return;
+    };
+    match key.code {
+        KeyCode::Esc => app.close_picker(),
+        KeyCode::Enter => app.picker_accept(),
+        KeyCode::Up => picker.move_up(),
+        KeyCode::Down => picker.move_down(),
+        KeyCode::Char('p') if ctrl => picker.move_up(),
+        KeyCode::Char('n') if ctrl => picker.move_down(),
+        KeyCode::Char('u') if ctrl => picker.clear_query(),
+        KeyCode::Backspace => picker.backspace(),
+        KeyCode::Char(c) if !ctrl => picker.type_char(c),
+        _ => {}
     }
 }
 
@@ -237,6 +259,45 @@ fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
 
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
+
+    // While the picker is open it owns the mouse.
+    if app.picker.is_some() {
+        match m.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(&(_, fi)) = app
+                    .rects
+                    .picker_items
+                    .iter()
+                    .find(|(r, _)| contains(*r, x, y))
+                {
+                    if let Some(p) = app.picker.as_mut() {
+                        p.set_selected(fi);
+                    }
+                    app.picker_accept();
+                } else if app
+                    .rects
+                    .picker_box
+                    .map(|r| !contains(r, x, y))
+                    .unwrap_or(true)
+                {
+                    app.close_picker(); // click outside dismisses
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if let Some(p) = app.picker.as_mut() {
+                    p.move_up();
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if let Some(p) = app.picker.as_mut() {
+                    p.move_down();
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             // Bufferline tab?

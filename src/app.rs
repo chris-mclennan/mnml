@@ -15,6 +15,7 @@ use crate::git::GitStatus;
 use crate::input::EditingMode;
 use crate::layout::{Layout, PaneId};
 use crate::pane::Pane;
+use crate::picker::{Picker, PickerKind};
 use crate::tree::Tree;
 
 const TOAST_TTL: Duration = Duration::from_secs(4);
@@ -33,6 +34,11 @@ pub struct PaneRects {
     /// The editable text region inside the body (gutter excluded).
     pub editor_text: Option<Rect>,
     pub statusline: Option<Rect>,
+    /// The picker overlay's outer box (when open) and `(rect, filtered-index)` per visible row.
+    pub picker_box: Option<Rect>,
+    pub picker_items: Vec<(Rect, usize)>,
+    /// On-screen cell where the picker's query caret should sit (when open).
+    pub picker_caret: Option<(u16, u16)>,
 }
 
 pub struct App {
@@ -57,6 +63,8 @@ pub struct App {
     pub rects: PaneRects,
     /// The active register / system-clipboard bridge, threaded into `Editor::apply`.
     pub clipboard: Clipboard,
+    /// The fuzzy-picker / command-palette overlay, when open. Steals key input.
+    pub picker: Option<Picker>,
 }
 
 impl App {
@@ -82,7 +90,92 @@ impl App {
             quit_armed: false,
             rects: PaneRects::default(),
             clipboard: Clipboard::new(),
+            picker: None,
         })
+    }
+
+    // ─── picker / palette ───────────────────────────────────────────
+    pub fn open_picker(&mut self, picker: Picker) {
+        self.picker = Some(picker);
+    }
+    pub fn close_picker(&mut self) {
+        self.picker = None;
+    }
+    /// Open the fuzzy file finder over every file in the workspace.
+    pub fn open_file_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let root = self.workspace.clone();
+        let items: Vec<PickerItem> = self
+            .tree
+            .all_files()
+            .into_iter()
+            .map(|p| {
+                let rel = p.strip_prefix(&root).unwrap_or(&p).to_path_buf();
+                let label = rel.to_string_lossy().to_string();
+                let dir = rel
+                    .parent()
+                    .map(|d| d.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                PickerItem::new(p.to_string_lossy().to_string(), label, dir)
+            })
+            .collect();
+        self.open_picker(Picker::new(PickerKind::Files, "Open file", items));
+    }
+    /// Open the buffer switcher over the currently-open panes.
+    pub fn open_buffer_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let items: Vec<PickerItem> = self
+            .panes
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                PickerItem::new(
+                    i.to_string(),
+                    p.title(),
+                    if p.is_dirty() { "●" } else { "" },
+                )
+            })
+            .collect();
+        if items.is_empty() {
+            self.toast("no open buffers");
+            return;
+        }
+        self.open_picker(Picker::new(PickerKind::Buffers, "Switch buffer", items));
+    }
+    /// Open the command palette over the registered commands.
+    pub fn open_command_palette(&mut self) {
+        use crate::picker::PickerItem;
+        let items: Vec<PickerItem> = crate::command::registry()
+            .all()
+            .iter()
+            .filter(|c| c.id != "palette")
+            .map(|c| PickerItem::new(c.id, format!("{}  ·  {}", c.group, c.title), c.default_key))
+            .collect();
+        self.open_picker(Picker::new(PickerKind::Commands, "Command palette", items));
+    }
+    /// Act on the picker's current selection, then close it.
+    pub fn picker_accept(&mut self) {
+        let Some(picker) = self.picker.take() else {
+            return;
+        };
+        let Some(item) = picker.selected_item().cloned() else {
+            return;
+        };
+        match picker.kind {
+            PickerKind::Files => self.open_path(Path::new(&item.id)),
+            PickerKind::Buffers => {
+                if let Ok(i) = item.id.parse::<usize>()
+                    && i < self.panes.len()
+                {
+                    self.active = Some(i);
+                    self.layout = Layout::Leaf(i);
+                    self.focus_pane();
+                }
+            }
+            PickerKind::Commands => {
+                crate::command::run(&item.id, self);
+            }
+        }
     }
 
     // ─── panes / buffers ────────────────────────────────────────────

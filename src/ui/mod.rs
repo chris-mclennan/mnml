@@ -21,6 +21,7 @@
 pub mod bufferline;
 pub mod editor_view;
 pub mod icons;
+pub mod picker;
 pub mod statusline;
 pub mod theme;
 pub mod tree_view;
@@ -93,8 +94,21 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     statusline::draw(frame, app, statusline_area);
     app.rects.statusline = Some(statusline_area);
 
-    // ── terminal cursor (only when the editor pane has focus) ──
-    if app.focus == Focus::Pane
+    // ── overlays (picker / palette) ──
+    if app.picker.is_some() {
+        picker::draw(frame, app, area);
+    } else {
+        app.rects.picker_box = None;
+        app.rects.picker_items.clear();
+        app.rects.picker_caret = None;
+    }
+
+    // ── terminal cursor ──
+    // The picker's query caret wins when it's open; otherwise the editor caret
+    // when the editor pane has focus; otherwise nothing (ratatui hides it).
+    if let Some((x, y)) = app.rects.picker_caret {
+        frame.set_cursor_position((x, y));
+    } else if app.focus == Focus::Pane
         && let Some((x, y)) = cursor_pos
     {
         frame.set_cursor_position((x, y));

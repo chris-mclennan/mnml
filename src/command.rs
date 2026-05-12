@@ -113,6 +113,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.save_all(),
         },
         Command {
+            id: "picker.files",
+            title: "Open file…",
+            group: "go",
+            default_key: "ctrl+p",
+            run: |app| app.open_file_picker(),
+        },
+        Command {
+            id: "picker.buffers",
+            title: "Switch buffer…",
+            group: "go",
+            default_key: "",
+            run: |app| app.open_buffer_picker(),
+        },
+        Command {
+            id: "palette",
+            title: "Command palette",
+            group: "go",
+            default_key: "ctrl+shift+p",
+            run: |app| app.open_command_palette(),
+        },
+        Command {
             id: "buffer.close",
             title: "Close buffer",
             group: "buffer",
