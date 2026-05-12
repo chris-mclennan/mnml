@@ -25,7 +25,7 @@ pub fn draw_pane(
         return None;
     }
     frame.render_widget(
-        Paragraph::new("").style(Style::default().bg(theme::BG_DARK)),
+        Paragraph::new("").style(Style::default().bg(theme::cur().bg_dark)),
         area,
     );
 
@@ -63,8 +63,8 @@ pub fn draw_pane(
 
     let selection = buf.editor.selection();
     let gutter_num_w = gutter_w.saturating_sub(1) as usize;
-    let sel_bg = theme::BASE16_02;
-    let guide_fg = theme::BASE16_03;
+    let sel_bg = theme::cur().base16[0x02];
+    let guide_fg = theme::cur().base16[0x03];
 
     let mut lines: Vec<Line> = Vec::with_capacity(text_h);
     for r in 0..text_h {
@@ -72,15 +72,23 @@ pub fn draw_pane(
         if line_no >= line_count {
             lines.push(Line::from(Span::styled(
                 " ".repeat(area.width as usize),
-                Style::default().bg(theme::BG_DARK),
+                Style::default().bg(theme::cur().bg_dark),
             )));
             continue;
         }
         let is_cur = line_no == cur_row;
-        let base_bg = if is_cur { theme::LINE } else { theme::BG_DARK };
+        let base_bg = if is_cur {
+            theme::cur().line
+        } else {
+            theme::cur().bg_dark
+        };
         let gutter = format!("{:>gutter_num_w$} ", line_no + 1);
         let gutter_style = Style::default()
-            .fg(if is_cur { theme::FG } else { theme::BASE16_03 })
+            .fg(if is_cur {
+                theme::cur().fg
+            } else {
+                theme::cur().base16[0x03]
+            })
             .bg(base_bg);
 
         // Selection columns on this line.
@@ -113,10 +121,13 @@ pub fn draw_pane(
                 if raw_ch == ' ' && has_content && c >= tab_w && c % tab_w == 0 && c < indent_cols {
                     ('│', guide_fg)
                 } else {
-                    (raw_ch, syntax_color(spans_for_line, c).unwrap_or(theme::FG))
+                    (
+                        raw_ch,
+                        syntax_color(spans_for_line, c).unwrap_or(theme::cur().fg),
+                    )
                 }
             } else {
-                (' ', theme::FG)
+                (' ', theme::cur().fg)
             };
             cells.push((ch, fg, bg));
         }

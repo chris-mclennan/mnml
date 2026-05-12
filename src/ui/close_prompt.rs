@@ -42,15 +42,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::ORANGE).bg(theme::BG_DARKER))
+        .border_style(
+            Style::default()
+                .fg(theme::cur().orange)
+                .bg(theme::cur().bg_darker),
+        )
         .title(Span::styled(
             " Unsaved changes ",
             Style::default()
-                .fg(theme::BG_DARKER)
-                .bg(theme::ORANGE)
+                .fg(theme::cur().bg_darker)
+                .bg(theme::cur().orange)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(theme::BG_DARKER));
+        .style(Style::default().bg(theme::cur().bg_darker));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height < 3 {
@@ -61,7 +65,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             msg,
-            Style::default().fg(theme::FG).bg(theme::BG_DARKER),
+            Style::default()
+                .fg(theme::cur().fg)
+                .bg(theme::cur().bg_darker),
         ))),
         Rect::new(inner.x, inner.y, inner.width, 1),
     );
@@ -72,11 +78,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         // The default (first) button gets a brighter style.
         let style = if i == 0 {
             Style::default()
-                .fg(theme::BG_DARKER)
-                .bg(theme::BLUE)
+                .fg(theme::cur().bg_darker)
+                .bg(theme::cur().blue)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme::FG).bg(theme::BG2)
+            Style::default().fg(theme::cur().fg).bg(theme::cur().bg2)
         };
         let bw = label.chars().count() as u16;
         if bx + bw > inner.x + inner.width {

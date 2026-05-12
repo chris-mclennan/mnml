@@ -71,26 +71,28 @@ fn color_for(idx: usize) -> Color {
     let name = HIGHLIGHT_NAMES.get(idx).copied().unwrap_or("");
     let head = name.split('.').next().unwrap_or(name);
     match head {
-        "keyword" => theme::BASE16_0E,
+        "keyword" => theme::cur().base16[0x0e],
         "string" => match name {
-            "string.escape" | "string.special" => theme::BASE16_0C,
-            _ => theme::BASE16_0B,
+            "string.escape" | "string.special" => theme::cur().base16[0x0c],
+            _ => theme::cur().base16[0x0b],
         },
-        "comment" => theme::COMMENT,
-        "function" => theme::BASE16_0D,
-        "constructor" => theme::BASE16_0C,
-        "type" => theme::BASE16_0A,
-        "number" | "boolean" | "constant" | "escape" => theme::BASE16_09,
-        "attribute" | "tag" | "label" => theme::BASE16_0A,
-        "module" | "namespace" => theme::BASE16_0A,
-        "property" => theme::BASE16_08,
+        "comment" => theme::cur().comment,
+        "function" => theme::cur().base16[0x0d],
+        "constructor" => theme::cur().base16[0x0c],
+        "type" => theme::cur().base16[0x0a],
+        "number" | "boolean" | "constant" | "escape" => theme::cur().base16[0x09],
+        "attribute" | "tag" | "label" => theme::cur().base16[0x0a],
+        "module" | "namespace" => theme::cur().base16[0x0a],
+        "property" => theme::cur().base16[0x08],
         "variable" => match name {
-            "variable.builtin" | "variable.parameter" | "variable.member" => theme::BASE16_08,
-            _ => theme::BASE16_05,
+            "variable.builtin" | "variable.parameter" | "variable.member" => {
+                theme::cur().base16[0x08]
+            }
+            _ => theme::cur().base16[0x05],
         },
-        "operator" => theme::BASE16_05,
-        "punctuation" => theme::BASE16_0F,
-        _ => theme::BASE16_05,
+        "operator" => theme::cur().base16[0x05],
+        "punctuation" => theme::cur().base16[0x0f],
+        _ => theme::cur().base16[0x05],
     }
 }
 
@@ -291,7 +293,9 @@ mod tests {
         assert!(!lines[0].is_empty(), "line 0 should have spans");
         // line 1 has the string "hi"
         assert!(
-            lines[1].iter().any(|&(_, _, c)| c == theme::BASE16_0B),
+            lines[1]
+                .iter()
+                .any(|&(_, _, c)| c == theme::cur().base16[0x0b]),
             "string should be green: {:?}",
             lines[1]
         );
@@ -309,7 +313,9 @@ mod tests {
         let lines = highlight_lines("{\n  \"a\": 1\n}\n", "json");
         assert_eq!(lines.len(), 4);
         assert!(
-            lines[1].iter().any(|&(_, _, c)| c == theme::BASE16_09),
+            lines[1]
+                .iter()
+                .any(|&(_, _, c)| c == theme::cur().base16[0x09]),
             "number should be orange: {:?}",
             lines[1]
         );

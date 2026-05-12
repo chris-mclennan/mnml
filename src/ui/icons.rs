@@ -13,7 +13,9 @@ pub const DEFAULT_FILE: Icon = ("\u{F15B}", Color::Rgb(0x6d, 0x80, 0x86));
 pub const DEFAULT_FILE_ASCII: Icon = ("·", Color::Rgb(0x6d, 0x80, 0x86));
 
 // Folders are blue (matches NvChad's nvim-tree look), not the upstream yellow.
-const FOLDER_BLUE: Color = Color::Rgb(0x61, 0xaf, 0xef); // == theme::BLUE
+// onedark blue, baked in (this is a `const`); the tree/statusline override the
+// folder colour with the *live* theme's `blue` when rendering, so themes still apply.
+const FOLDER_BLUE: Color = Color::Rgb(0x61, 0xaf, 0xef);
 pub const FOLDER_CLOSED: Icon = ("\u{F07B}", FOLDER_BLUE);
 pub const FOLDER_OPEN: Icon = ("\u{F07C}", FOLDER_BLUE);
 pub const FOLDER_CLOSED_ASCII: Icon = ("\u{25B6}", FOLDER_BLUE); // ▶

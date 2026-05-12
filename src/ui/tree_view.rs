@@ -5,7 +5,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -14,14 +14,14 @@ use crate::focus::Focus;
 use crate::git::status::FileState;
 use crate::ui::{icons, theme};
 
-/// The rail's background — NvChad's `darker_black`, a touch darker than the
-/// editor body (`black`) so the panels read as distinct.
-const RAIL_BG: Color = theme::BG_DARKER;
 const CHEVRON_OPEN: &str = "\u{f107}"; //  (angle-down)
 const CHEVRON_CLOSED: &str = "\u{f105}"; //  (angle-right)
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
-    frame.render_widget(Paragraph::new("").style(Style::default().bg(RAIL_BG)), area);
+    // The rail bg — NvChad's `darker_black`, a touch darker than the editor body
+    // (`black`) so the panels read as distinct.
+    let rail_bg = theme::cur().bg_darker;
+    frame.render_widget(Paragraph::new("").style(Style::default().bg(rail_bg)), area);
     app.rects.tree = None;
     if area.height < 2 || area.width == 0 {
         return;
@@ -81,26 +81,34 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
         // Folders are blue (chevron + icon + name). Files: git tint, else default fg.
         let name_color = if row.is_dir {
-            theme::BLUE
+            theme::cur().blue
         } else {
             match git_files.get(&row.path).copied() {
-                Some(FileState::Modified) => theme::YELLOW,
-                Some(FileState::Staged | FileState::Untracked) => theme::GREEN,
-                Some(FileState::Conflicted) => theme::RED,
-                None => theme::FG,
+                Some(FileState::Modified) => theme::cur().yellow,
+                Some(FileState::Staged | FileState::Untracked) => theme::cur().green,
+                Some(FileState::Conflicted) => theme::cur().red,
+                None => theme::cur().fg,
             }
         };
         let bg = if is_cursor {
-            if focused { theme::BG2 } else { theme::BG }
+            if focused {
+                theme::cur().bg2
+            } else {
+                theme::cur().bg
+            }
         } else {
-            RAIL_BG
+            rail_bg
         };
         let mut name_style = Style::default().fg(name_color).bg(bg);
         if row.is_dir || (is_cursor && focused) {
             name_style = name_style.add_modifier(Modifier::BOLD);
         }
         // The chevron+icon prefix is blue for folders, the devicon color for files.
-        let prefix_color = if row.is_dir { theme::BLUE } else { icon_color };
+        let prefix_color = if row.is_dir {
+            theme::cur().blue
+        } else {
+            icon_color
+        };
 
         let used = prefix.chars().count() + row.name.chars().count();
         let pad = width.saturating_sub(used);

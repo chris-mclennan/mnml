@@ -82,6 +82,7 @@ pub fn root() -> &'static Leader {
                         vec![
                             ('e', cmd("view.toggle_tree", "explorer")),
                             ('k', cmd("editor.toggle_keymap", "vim ⇄ standard")),
+                            ('t', cmd("theme.pick", "theme…")),
                         ],
                     ),
                 ),

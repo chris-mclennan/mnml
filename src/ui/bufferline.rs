@@ -19,7 +19,7 @@ use crate::ui::{icons, theme};
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(
-        Paragraph::new("").style(Style::default().bg(theme::BG_DARKER)),
+        Paragraph::new("").style(Style::default().bg(theme::cur().bg_darker)),
         area,
     );
     app.rects.bufferline_tabs.clear();
@@ -52,16 +52,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         let (bg, name_fg, badge_fg) = if active {
             (
-                theme::BG,
-                theme::FG,
+                theme::cur().bg,
+                theme::cur().fg,
                 if pane.is_dirty() {
-                    theme::ORANGE
+                    theme::cur().orange
                 } else {
-                    theme::GREY_FG
+                    theme::cur().grey_fg
                 },
             )
         } else {
-            (theme::BG_DARKER, theme::GREY_FG, theme::GREY)
+            (
+                theme::cur().bg_darker,
+                theme::cur().grey_fg,
+                theme::cur().grey,
+            )
         };
         let mut name_style = Style::default().fg(name_fg).bg(bg);
         if active {
@@ -70,7 +74,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         spans.push(Span::styled(
             format!(" {glyph} "),
             Style::default()
-                .fg(if active { icon_color } else { theme::GREY })
+                .fg(if active {
+                    icon_color
+                } else {
+                    theme::cur().grey
+                })
                 .bg(bg),
         ));
         spans.push(Span::styled(format!("{name} "), name_style));
@@ -102,14 +110,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         x += cells;
         // thin separator into the strip background
         if i + 1 < app.panes.len() {
-            spans.push(Span::styled(" ", Style::default().bg(theme::BG_DARKER)));
+            spans.push(Span::styled(
+                " ",
+                Style::default().bg(theme::cur().bg_darker),
+            ));
             x += 1;
         }
     }
     if app.panes.is_empty() {
         spans.push(Span::styled(
             "  no buffers ",
-            Style::default().fg(theme::GREY_FG).bg(theme::BG_DARKER),
+            Style::default()
+                .fg(theme::cur().grey_fg)
+                .bg(theme::cur().bg_darker),
         ));
         x += "  no buffers ".chars().count() as u16;
     }
@@ -117,15 +130,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if x < tabs_max_x {
         spans.push(Span::styled(
             " ".repeat((tabs_max_x - x) as usize),
-            Style::default().bg(theme::BG_DARKER),
+            Style::default().bg(theme::cur().bg_darker),
         ));
     }
     // right cap
     spans.push(Span::styled(
         cap_label,
         Style::default()
-            .fg(theme::BG_DARKER)
-            .bg(theme::BLUE)
+            .fg(theme::cur().bg_darker)
+            .bg(theme::cur().blue)
             .add_modifier(Modifier::BOLD),
     ));
 

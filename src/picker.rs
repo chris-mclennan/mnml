@@ -14,6 +14,8 @@ pub enum PickerKind {
     Buffers,
     /// `id` = a command id. Accept ⇒ run it.
     Commands,
+    /// `id` = a theme name. Accept ⇒ switch to it.
+    Themes,
 }
 
 #[derive(Debug, Clone)]

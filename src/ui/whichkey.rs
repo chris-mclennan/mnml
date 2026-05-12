@@ -50,15 +50,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::PURPLE).bg(theme::BG_DARKER))
+        .border_style(
+            Style::default()
+                .fg(theme::cur().purple)
+                .bg(theme::cur().bg_darker),
+        )
         .title(Span::styled(
             title,
             Style::default()
-                .fg(theme::PURPLE)
-                .bg(theme::BG_DARKER)
+                .fg(theme::cur().purple)
+                .bg(theme::cur().bg_darker)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(theme::BG_DARKER));
+        .style(Style::default().bg(theme::cur().bg_darker));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
@@ -77,28 +81,38 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
                 continue;
             };
             // Group labels already carry a leading `+` (e.g. "+find").
-            let key_color = if is_group { theme::BLUE } else { theme::YELLOW };
-            let label_color = if is_group { theme::BLUE } else { theme::FG };
+            let key_color = if is_group {
+                theme::cur().blue
+            } else {
+                theme::cur().yellow
+            };
+            let label_color = if is_group {
+                theme::cur().blue
+            } else {
+                theme::cur().fg
+            };
             let cell_used = 1 + 3 + label.chars().count();
             let pad = (cell_w as usize).saturating_sub(cell_used);
             spans.push(Span::styled(
                 key.to_string(),
                 Style::default()
                     .fg(key_color)
-                    .bg(theme::BG_DARKER)
+                    .bg(theme::cur().bg_darker)
                     .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
                 " → ",
-                Style::default().fg(theme::COMMENT).bg(theme::BG_DARKER),
+                Style::default()
+                    .fg(theme::cur().comment)
+                    .bg(theme::cur().bg_darker),
             ));
             spans.push(Span::styled(
                 label,
-                Style::default().fg(label_color).bg(theme::BG_DARKER),
+                Style::default().fg(label_color).bg(theme::cur().bg_darker),
             ));
             spans.push(Span::styled(
                 " ".repeat(pad),
-                Style::default().bg(theme::BG_DARKER),
+                Style::default().bg(theme::cur().bg_darker),
             ));
         }
         lines.push(Line::from(spans));
@@ -107,11 +121,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     if (lines.len() as u16) < inner.height {
         lines.push(Line::from(Span::styled(
             "  esc to cancel",
-            Style::default().fg(theme::GREY_FG).bg(theme::BG_DARKER),
+            Style::default()
+                .fg(theme::cur().grey_fg)
+                .bg(theme::cur().bg_darker),
         )));
     }
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(theme::BG_DARKER)),
+        Paragraph::new(lines).style(Style::default().bg(theme::cur().bg_darker)),
         inner,
     );
 }

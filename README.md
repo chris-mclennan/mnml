@@ -63,9 +63,10 @@ glyphs); pass `--ascii` (or `[ui] ascii_icons = true`) to fall back.
 
 TOML, merged from (lowest → highest precedence): built-in defaults →
 `~/.config/mnml/config.toml` → `<workspace>/.mnml/config.toml` → `--config PATH`.
-Sections: `[editor]` (`input_style`, `tab_width`), `[ui]` (`theme`, `ascii_icons`,
-`tree_width`), `[keys.*]` (keybindings). `[lsp.*]` / `[ai]` / `[tools]` are parsed
-and kept for their tracks.
+Sections: `[editor]` (`input_style`, `tab_width`), `[ui]` (`theme` — `onedark` /
+`gruvbox` / `catppuccin`; `ascii_icons`; `tree_width`), `[keys.*]` (keybindings).
+`[lsp.*]` / `[ai]` / `[tools]` are parsed and kept for their tracks. Switch theme
+at runtime with the `theme.pick` command (palette / `<leader>tt`) or `:set theme=…`.
 
 ## License
 

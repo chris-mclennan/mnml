@@ -58,7 +58,7 @@ impl Seg {
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(
-        Paragraph::new("").style(Style::default().bg(theme::STATUSLINE)),
+        Paragraph::new("").style(Style::default().bg(theme::cur().statusline)),
         area,
     );
     if area.width == 0 {
@@ -70,7 +70,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // ── left ──
     let (mode_label, mode_bg) = mode_chip(app);
-    let mut left = vec![Seg::new(format!(" {mode_label} "), theme::BG_DARKER, mode_bg).bold()];
+    let mut left =
+        vec![Seg::new(format!(" {mode_label} "), theme::cur().bg_darker, mode_bg).bold()];
     if let Some(branch) = &app.git.snapshot().branch {
         let n = app.git.snapshot().change_count();
         let txt = if n > 0 {
@@ -78,18 +79,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             format!("  {branch} ")
         };
-        left.push(Seg::new(txt, theme::GREEN, theme::BG2));
+        left.push(Seg::new(txt, theme::cur().green, theme::cur().bg2));
     }
     // file segment: icon (its devicon color) + name + dirty marker, both on STATUSLINE bg.
     match app.active_editor() {
         Some(b) => {
             let p = b.path.clone().unwrap_or_else(|| b.display_name().into());
             let (glyph, gc) = icons::for_path(&p, false, false, nerd);
-            left.push(Seg::new(format!(" {glyph} "), gc, theme::STATUSLINE));
+            left.push(Seg::new(format!(" {glyph} "), gc, theme::cur().statusline));
             let name = format!("{}{} ", b.display_name(), if b.dirty { " ●" } else { "" });
-            left.push(Seg::new(name, theme::FG, theme::STATUSLINE));
+            left.push(Seg::new(name, theme::cur().fg, theme::cur().statusline));
         }
-        None => left.push(Seg::new(" [no file] ", theme::COMMENT, theme::STATUSLINE)),
+        None => left.push(Seg::new(
+            " [no file] ",
+            theme::cur().comment,
+            theme::cur().statusline,
+        )),
     }
 
     // ── right ──
@@ -98,8 +103,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let (row, col) = b.editor.row_col();
         right.push(Seg::new(
             format!(" Ln {} Col {} ", row + 1, col + 1),
-            theme::FG,
-            theme::BG2,
+            theme::cur().fg,
+            theme::cur().bg2,
         ));
     }
     // workspace / cwd block (the name that used to sit atop the file tree).
@@ -112,8 +117,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     right.push(
         Seg::new(
             format!(" {folder_glyph} {ws_name} "),
-            theme::BLUE,
-            theme::BG3,
+            theme::cur().blue,
+            theme::cur().bg3,
         )
         .bold(),
     );
@@ -122,11 +127,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .active_editor()
         .and_then(|b| b.language_ext.clone())
         .unwrap_or_else(|| "—".to_string());
-    right.push(Seg::new(format!("  {lang} "), theme::BG_DARKER, theme::BLUE).bold());
+    right.push(
+        Seg::new(
+            format!("  {lang} "),
+            theme::cur().bg_darker,
+            theme::cur().blue,
+        )
+        .bold(),
+    );
 
     // ── render: left segments + spacer + right segments, with `` / `` transitions ──
-    let (mut spans, used) = render_left(&left, arrows, theme::STATUSLINE);
-    let (right_spans, right_used) = render_right(&right, arrows, theme::STATUSLINE);
+    let (mut spans, used) = render_left(&left, arrows, theme::cur().statusline);
+    let (right_spans, right_used) = render_right(&right, arrows, theme::cur().statusline);
 
     // middle: toast / pending-key hint, centered in the leftover space.
     let mid_avail = width.saturating_sub(used + right_used);
@@ -152,11 +164,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let mid_style = if is_pending {
         Style::default()
-            .fg(theme::YELLOW)
-            .bg(theme::STATUSLINE)
+            .fg(theme::cur().yellow)
+            .bg(theme::cur().statusline)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme::COMMENT).bg(theme::STATUSLINE)
+        Style::default()
+            .fg(theme::cur().comment)
+            .bg(theme::cur().statusline)
     };
     spans.push(Span::styled(mid_text, mid_style));
     spans.extend(right_spans);
@@ -204,16 +218,16 @@ fn render_right(segs: &[Seg], arrows: bool, head_bg: Color) -> (Vec<Span<'static
 /// `(label, bg_color)` for the mode chip.
 fn mode_chip(app: &App) -> (&'static str, Color) {
     match app.editing_mode() {
-        EditingMode::Insert => ("INSERT", theme::GREEN),
-        EditingMode::Visual => ("VISUAL", theme::PURPLE),
-        EditingMode::Normal => ("NORMAL", theme::RED),
+        EditingMode::Insert => ("INSERT", theme::cur().green),
+        EditingMode::Visual => ("VISUAL", theme::cur().purple),
+        EditingMode::Normal => ("NORMAL", theme::cur().red),
         EditingMode::None => match app.focus {
-            Focus::Tree => ("TREE", theme::BLUE),
+            Focus::Tree => ("TREE", theme::cur().blue),
             Focus::Pane => {
                 if app.active_editor().map(|b| b.read_only).unwrap_or(true) {
-                    ("VIEW", theme::CYAN)
+                    ("VIEW", theme::cur().cyan)
                 } else {
-                    ("EDIT", theme::GREEN)
+                    ("EDIT", theme::cur().green)
                 }
             }
         },

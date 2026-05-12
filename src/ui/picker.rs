@@ -30,8 +30,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BLUE).bg(theme::BG_DARKER))
-        .style(Style::default().bg(theme::BG_DARKER));
+        .border_style(
+            Style::default()
+                .fg(theme::cur().blue)
+                .bg(theme::cur().bg_darker),
+        )
+        .style(Style::default().bg(theme::cur().bg_darker));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
@@ -57,19 +61,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
             Span::styled(
                 title,
                 Style::default()
-                    .fg(theme::BG_DARKER)
-                    .bg(theme::BLUE)
+                    .fg(theme::cur().bg_darker)
+                    .bg(theme::cur().blue)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" ", Style::default().bg(theme::BG_DARKER)),
+            Span::styled(" ", Style::default().bg(theme::cur().bg_darker)),
             Span::styled(
                 prompt.clone(),
-                Style::default().fg(theme::FG).bg(theme::BG_DARKER),
+                Style::default()
+                    .fg(theme::cur().fg)
+                    .bg(theme::cur().bg_darker),
             ),
-            Span::styled(" ".repeat(pad), Style::default().bg(theme::BG_DARKER)),
+            Span::styled(" ".repeat(pad), Style::default().bg(theme::cur().bg_darker)),
             Span::styled(
                 counter,
-                Style::default().fg(theme::COMMENT).bg(theme::BG_DARKER),
+                Style::default()
+                    .fg(theme::cur().comment)
+                    .bg(theme::cur().bg_darker),
             ),
         ])),
         query_area,
@@ -91,7 +99,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let mut lines: Vec<Line> = Vec::with_capacity(visible);
     for (row, item) in picker.items_view().enumerate().skip(scroll).take(visible) {
         let is_sel = row == picker.selected;
-        let bg = if is_sel { theme::BG2 } else { theme::BG_DARKER };
+        let bg = if is_sel {
+            theme::cur().bg2
+        } else {
+            theme::cur().bg_darker
+        };
         let marker = if is_sel { "▌ " } else { "  " };
         let detail = item.detail.clone();
         let dw = detail.chars().count();
@@ -100,19 +112,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         let label: String = item.label.chars().take(label_avail).collect();
         let used = 2 + label.chars().count() + if dw > 0 { dw + 1 } else { 0 };
         let gap = lw.saturating_sub(used);
-        let mut label_style = Style::default().fg(theme::FG).bg(bg);
+        let mut label_style = Style::default().fg(theme::cur().fg).bg(bg);
         if is_sel {
             label_style = label_style.add_modifier(Modifier::BOLD);
         }
         let mut spans = vec![
-            Span::styled(marker, Style::default().fg(theme::BLUE).bg(bg)),
+            Span::styled(marker, Style::default().fg(theme::cur().blue).bg(bg)),
             Span::styled(label, label_style),
             Span::styled(" ".repeat(gap), Style::default().bg(bg)),
         ];
         if dw > 0 {
             spans.push(Span::styled(
                 format!("{detail} "),
-                Style::default().fg(theme::COMMENT).bg(bg),
+                Style::default().fg(theme::cur().comment).bg(bg),
             ));
         }
         let scr_y = list_area.y + (row - scroll) as u16;
@@ -130,11 +142,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
             "  (no matches)",
-            Style::default().fg(theme::COMMENT).bg(theme::BG_DARKER),
+            Style::default()
+                .fg(theme::cur().comment)
+                .bg(theme::cur().bg_darker),
         )));
     }
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(theme::BG_DARKER)),
+        Paragraph::new(lines).style(Style::default().bg(theme::cur().bg_darker)),
         list_area,
     );
 }

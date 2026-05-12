@@ -43,7 +43,7 @@ use crate::layout::{Layout, SplitDir, split_rects};
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     frame.render_widget(
-        Block::default().style(Style::default().bg(theme::BG_DARK)),
+        Block::default().style(Style::default().bg(theme::cur().bg_dark)),
         area,
     );
 
@@ -176,7 +176,9 @@ fn render_layout(
 }
 
 fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir) {
-    let style = Style::default().fg(theme::LINE).bg(theme::BG_DARK);
+    let style = Style::default()
+        .fg(theme::cur().line)
+        .bg(theme::cur().bg_dark);
     match dir {
         SplitDir::Horizontal => {
             for dy in 0..rect.height {

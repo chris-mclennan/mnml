@@ -197,6 +197,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_input_style(),
         },
         Command {
+            id: "theme.pick",
+            title: "Pick theme…",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_theme_picker(),
+        },
+        Command {
             id: "whichkey.leader",
             title: "Leader menu (which-key)",
             group: "view",

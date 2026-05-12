@@ -12,7 +12,7 @@ use crate::ui::theme;
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(
-        Paragraph::new("").style(Style::default().bg(theme::BG_DARK)),
+        Paragraph::new("").style(Style::default().bg(theme::cur().bg_dark)),
         area,
     );
     if area.height < 6 {
@@ -23,18 +23,20 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("workspace");
-    let dim = Style::default().fg(theme::COMMENT).bg(theme::BG_DARK);
+    let dim = Style::default()
+        .fg(theme::cur().comment)
+        .bg(theme::cur().bg_dark);
     let key = Style::default()
-        .fg(theme::YELLOW)
-        .bg(theme::BG_DARK)
+        .fg(theme::cur().yellow)
+        .bg(theme::cur().bg_dark)
         .add_modifier(Modifier::BOLD);
 
     let body = vec![
         Line::from(Span::styled(
             "mnml",
             Style::default()
-                .fg(theme::BLUE)
-                .bg(theme::BG_DARK)
+                .fg(theme::cur().blue)
+                .bg(theme::cur().bg_dark)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(format!("workspace · {ws}"), dim)),

@@ -220,6 +220,34 @@ impl App {
             .collect();
         self.open_picker(Picker::new(PickerKind::Commands, "Command palette", items));
     }
+    /// Open the theme picker over the built-in themes.
+    pub fn open_theme_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let cur = crate::ui::theme::cur().name;
+        let items: Vec<PickerItem> = crate::ui::theme::names()
+            .into_iter()
+            .map(|n| PickerItem::new(n, n, if n == cur { "current" } else { "" }))
+            .collect();
+        self.open_picker(Picker::new(PickerKind::Themes, "Theme", items));
+    }
+    /// Switch the active theme by name, re-highlight open buffers, and remember it.
+    pub fn set_theme(&mut self, name: &str) {
+        match crate::ui::theme::set(name) {
+            Some(t) => {
+                self.config.ui.theme = t.name.to_string();
+                for pane in &mut self.panes {
+                    if let Some(b) = pane.as_editor_mut() {
+                        b.refresh_highlights();
+                    }
+                }
+                self.toast(format!("theme: {}", t.name));
+            }
+            None => self.toast(format!(
+                "unknown theme: {name} (have: {})",
+                crate::ui::theme::names().join(", ")
+            )),
+        }
+    }
     /// Act on the picker's current selection, then close it.
     pub fn picker_accept(&mut self) {
         let Some(picker) = self.picker.take() else {
@@ -240,6 +268,7 @@ impl App {
             PickerKind::Commands => {
                 crate::command::run(&item.id, self);
             }
+            PickerKind::Themes => self.set_theme(&item.id),
         }
     }
 
@@ -720,9 +749,11 @@ impl App {
                 }
             }
             "set" => {
-                // `:set input=vim` / `:set input=standard`
+                // `:set input=vim|standard` · `:set theme=onedark|gruvbox|catppuccin`
                 if let Some(v) = rest.strip_prefix("input=") {
                     self.set_input_style(v.trim());
+                } else if let Some(v) = rest.strip_prefix("theme=") {
+                    self.set_theme(v.trim());
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }

@@ -87,6 +87,14 @@ fn main() -> ExitCode {
     if args.ascii {
         config.ui.ascii_icons = true;
     }
+    // Apply the configured theme (silently falls back to onedark if unknown).
+    if config.ui.theme != "onedark" && mnml::ui::theme::set(&config.ui.theme).is_none() {
+        eprintln!(
+            "mnml: unknown theme {:?} — using onedark (try one of: {})",
+            config.ui.theme,
+            mnml::ui::theme::names().join(", ")
+        );
+    }
 
     let app = match App::new(args.workspace, config) {
         Ok(a) => a,

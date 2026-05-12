@@ -92,13 +92,18 @@ Split{dir,ratio,first,second}`), `ui::draw` recursively renders one editor per l
 allowed (bufferline shows all), `App.active` = focused pane = uniquely the focused leaf;
 `view.split_right`/`view.split_down`, `view.focus_{left,right,up,down}`,
 `view.focus_next_split`, `view.close_split` commands, surfaced in the which-key `+split`
-submenu (`<leader>s …` / `Ctrl+K s …`); click a leaf to focus it; mouse-drag resize is
-TODO (divider rects recorded, fixed 50/50 for now). tree-sitter syntax highlight
-(`src/highlight.rs`, 6 grammars so far) + indent guides; headless+IPC (interactive TUI
-listens too) + the `run.sh`/`dev.sh` wrappers. Next: the tracks (Git
-diff/stage/blame, HTTP, Pty/AI-CLI, AI-API, CDP, the `.test` E2E format, plugins). See
-`.local/PLAN.md` for the full plan. Highlight follow-ups: more grammars
-(typescript/css/html/c/bash/markdown), incremental tree-sitter parsing, relative line numbers.
+submenu (`<leader>s …` / `Ctrl+K s …`); click a leaf to focus it, drag a divider to
+resize it; closing a dirty buffer pops a Save/Discard/Cancel overlay (`src/ui/close_prompt.rs`).
+tree-sitter syntax highlight (`src/highlight.rs`, 12 grammars: rs/js/jsx/ts/tsx/py/json/go/
+toml/css/bash/html/md) + indent guides. **Theme engine** (`src/ui/theme.rs`): a `Theme`
+struct (named UI colours + `base16[16]`) behind an `RwLock`; `theme::cur()` reads it,
+`theme::set(name)` swaps it; built-ins `onedark` (default) / `gruvbox` / `catppuccin`;
+`[ui] theme = "…"` at launch, `theme.pick` command / `:set theme=…` at runtime
+(re-highlights open buffers). headless+IPC (interactive TUI listens too) + the
+`run.sh`/`dev.sh` wrappers. Next: the tracks (Git diff/stage/blame, HTTP, Pty/AI-CLI,
+AI-API, CDP, the `.test` E2E format, plugins) + queued polish (markdown preview pane,
+right-click context menus on files/tabs). See `.local/PLAN.md` for the full plan.
+Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)
 
