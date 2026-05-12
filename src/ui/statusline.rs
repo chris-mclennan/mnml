@@ -72,14 +72,31 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let (mode_label, mode_bg) = mode_chip(app);
     let mut left =
         vec![Seg::new(format!(" {mode_label} "), theme::cur().bg_darker, mode_bg).bold()];
-    if let Some(branch) = &app.git.snapshot().branch {
-        let n = app.git.snapshot().change_count();
-        let txt = if n > 0 {
-            format!("  {branch}  +{n} ")
-        } else {
-            format!("  {branch} ")
-        };
-        left.push(Seg::new(txt, theme::cur().green, theme::cur().bg2));
+    {
+        let g = app.git.snapshot();
+        if let Some(branch) = &g.branch {
+            let mut txt = format!("  {branch}");
+            if g.ahead > 0 {
+                txt.push_str(&format!("  ⇡{}", g.ahead));
+            }
+            if g.behind > 0 {
+                txt.push_str(&format!(" ⇣{}", g.behind));
+            }
+            if g.staged > 0 {
+                txt.push_str(&format!("  ✚{}", g.staged));
+            }
+            if g.modified > 0 {
+                txt.push_str(&format!("  ●{}", g.modified));
+            }
+            if g.untracked > 0 {
+                txt.push_str(&format!("  …{}", g.untracked));
+            }
+            if g.conflicts > 0 {
+                txt.push_str(&format!("  ⚠{}", g.conflicts));
+            }
+            txt.push(' ');
+            left.push(Seg::new(txt, theme::cur().green, theme::cur().bg2));
+        }
     }
     // file segment: icon (its devicon color) + name + dirty marker, both on STATUSLINE bg.
     match app.active_editor() {

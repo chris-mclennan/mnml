@@ -20,6 +20,9 @@ pub enum FileState {
 #[derive(Debug, Clone, Default)]
 pub struct Snapshot {
     pub branch: Option<String>,
+    /// Commits the local branch is ahead / behind its upstream (0 if no upstream).
+    pub ahead: usize,
+    pub behind: usize,
     pub modified: usize,
     pub staged: usize,
     pub untracked: usize,
@@ -101,14 +104,31 @@ fn probe(workspace: &Path) -> Snapshot {
         }
     }
 
-    // Status.
+    // Status (`-b` adds the `## branch…remote [ahead N, behind M]` header line).
     if let Ok(out) = Command::new("git")
-        .args(["status", "--porcelain"])
+        .args(["status", "--porcelain", "-b"])
         .current_dir(workspace)
         .output()
         && out.status.success()
     {
         for line in String::from_utf8_lossy(&out.stdout).lines() {
+            if let Some(rest) = line.strip_prefix("## ") {
+                let num_after = |needle: &str| -> usize {
+                    rest.find(needle)
+                        .and_then(|i| {
+                            rest[i + needle.len()..]
+                                .split([',', ']'])
+                                .next()?
+                                .trim()
+                                .parse()
+                                .ok()
+                        })
+                        .unwrap_or(0)
+                };
+                snap.ahead = num_after("ahead ");
+                snap.behind = num_after("behind ");
+                continue;
+            }
             if line.len() < 3 {
                 continue;
             }

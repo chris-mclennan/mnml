@@ -114,8 +114,9 @@ hunks (header + context/`+`/`-` lines), `n`/`p` move the cursor hunk, `s`/`u` st
 it (`git apply --cached [--reverse]`), `r` refreshes, Enter jumps to the hunk's line in the
 source editor; `git.diff_file` (`<leader>g d`, opens in a split next to the source) /
 `git.diff` (worktree). headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
-wrappers. Next: the rest of the Git track (blame gutter → commit-from-mnml → statusline
-ahead/behind+staged/unstaged polish), then HTTP, Pty/AI-CLI, AI-API, CDP, the `.test`
+wrappers. The statusline git segment shows branch + `⇡ahead ⇣behind` + `✚staged ●modified
+…untracked ⚠conflicts` (only the nonzero parts), from `git status --porcelain -b`. Next:
+the rest of the Git track (blame gutter → commit-from-mnml), then HTTP, Pty/AI-CLI, AI-API, CDP, the `.test`
 E2E format, plugins; plus queued polish (right-click context menus on files/tabs,
 inline-styled markdown, line-wrapped preview). See `.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
