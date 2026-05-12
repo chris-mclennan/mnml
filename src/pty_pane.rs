@@ -65,6 +65,18 @@ impl BinaryProfile {
         }
     }
 
+    /// `claude --resume <session_id>` — open an existing session (e.g. one started
+    /// by an `ai.*` one-shot) interactively, with its conversation already loaded.
+    pub fn claude_code_resume(workspace: PathBuf, session_id: String) -> Self {
+        BinaryProfile {
+            label: "claude code (resumed)".to_string(),
+            exe: "claude".to_string(),
+            args: vec!["--resume".to_string(), session_id],
+            cwd: Some(workspace),
+            env: Vec::new(),
+        }
+    }
+
     /// `codex` (OpenAI Codex CLI).
     pub fn codex(workspace: PathBuf) -> Self {
         BinaryProfile {

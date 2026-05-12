@@ -49,6 +49,10 @@ pub fn draw(
         rows.push(Line::from(Span::styled(format!("  {prompt_first}"), dim)));
     }
     rows.push(Line::from(Span::styled(
+        "  r re-ask · c continue in Claude Code · esc → tree",
+        dim,
+    )));
+    rows.push(Line::from(Span::styled(
         "─".repeat(area.width as usize),
         Style::default().fg(t.line).bg(t.bg_dark),
     )));

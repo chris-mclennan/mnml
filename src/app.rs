@@ -549,21 +549,29 @@ impl App {
     }
 
     // ─── AI: `claude -p` one-shots ──────────────────────────────────
-    /// Open a `Pane::Ai` showing `title` and the answer to `prompt`, and kick off
-    /// `claude -p <prompt>` on a background thread (`tick` delivers the answer).
-    pub fn ask_ai(&mut self, title: impl Into<String>, prompt: String) {
+    /// Allocate a job id + fresh session id and spawn `claude -p --session-id …`
+    /// on a worker thread. Returns `(job_id, session_id)` for the `Pane::Ai`.
+    fn spawn_ai_job(&mut self, prompt: String) -> (u64, String) {
         let job_id = self.next_job_id;
         self.next_job_id += 1;
+        let session_id = crate::ai::gen_session_id();
         let tx = self
             .ai_chan
             .get_or_insert_with(std::sync::mpsc::channel)
             .0
             .clone();
-        let p = prompt.clone();
+        let sid = session_id.clone();
         std::thread::spawn(move || {
-            let _ = tx.send((job_id, crate::ai::one_shot(&p)));
+            let _ = tx.send((job_id, crate::ai::one_shot(&prompt, &sid)));
         });
-        let pane = Pane::Ai(crate::ai::AiPane::new(title, prompt, job_id));
+        (job_id, session_id)
+    }
+
+    /// Open a `Pane::Ai` showing `title` and the answer to `prompt`, and kick off
+    /// `claude -p <prompt>` on a background thread (`tick` delivers the answer).
+    pub fn ask_ai(&mut self, title: impl Into<String>, prompt: String) {
+        let (job_id, session_id) = self.spawn_ai_job(prompt.clone());
+        let pane = Pane::Ai(crate::ai::AiPane::new(title, prompt, session_id, job_id));
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
@@ -579,28 +587,38 @@ impl App {
         self.focus = Focus::Pane;
     }
 
-    /// Re-send the prompt an existing `Pane::Ai` holds.
+    /// Re-send the prompt an existing `Pane::Ai` holds (with a fresh session id).
     fn reask_ai(&mut self, pane_id: PaneId) {
         let prompt = match self.panes.get(pane_id) {
             Some(Pane::Ai(a)) => a.prompt.clone(),
             _ => return,
         };
-        let job_id = self.next_job_id;
-        self.next_job_id += 1;
-        let tx = self
-            .ai_chan
-            .get_or_insert_with(std::sync::mpsc::channel)
-            .0
-            .clone();
-        let p = prompt.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send((job_id, crate::ai::one_shot(&p)));
-        });
+        let (job_id, session_id) = self.spawn_ai_job(prompt);
         if let Some(Pane::Ai(a)) = self.panes.get_mut(pane_id) {
             a.job_id = job_id;
+            a.session_id = session_id;
             a.state = crate::ai::AiState::Asking;
             a.scroll = 0;
         }
+    }
+
+    /// `c` in a `Pane::Ai`: open `claude --resume <session>` interactively (a split
+    /// below) so you can carry the conversation further.
+    pub fn continue_active_ai(&mut self) {
+        let sid = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Ai(a)) if !matches!(a.state, crate::ai::AiState::Asking) => {
+                a.session_id.clone()
+            }
+            Some(Pane::Ai(_)) => {
+                self.toast("wait for the answer first");
+                return;
+            }
+            _ => return,
+        };
+        self.open_pty(crate::pty_pane::BinaryProfile::claude_code_resume(
+            self.workspace.clone(),
+            sid,
+        ));
     }
 
     /// `ai.explain` / `ai.fix` / `ai.refactor` / `ai.write_tests` — feed the active

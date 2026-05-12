@@ -10,6 +10,10 @@
 //! interactive agentic AI is the `Pane::Pty` `claude`/`codex` panes; this is the
 //! "do one thing to this code" surface.
 //!
+//! Each one-shot is given a session id, so a `Pane::Ai` can be *promoted* to a
+//! full interactive Claude Code pane (`claude --resume <id>`) when you want to go
+//! deeper — the quick answer isn't a dead end.
+//!
 //! Follow-ups: stream the output incrementally instead of waiting for completion;
 //! parse a returned patch into a `Pane::Diff` with accept/reject; tail the CLI
 //! session JSONL so the pty pane and this view share a conversation.
@@ -22,6 +26,8 @@ pub struct AiPane {
     pub title: String,
     /// The exact prompt sent to `claude -p` (re-sent on `r`).
     pub prompt: String,
+    /// The `--session-id` used for this run — `c` resumes it as an interactive pane.
+    pub session_id: String,
     /// Matched against the worker's reply (re-fire / shifted indices ⇒ stale).
     pub job_id: u64,
     pub state: AiState,
@@ -36,10 +42,11 @@ pub enum AiState {
 }
 
 impl AiPane {
-    pub fn new(title: impl Into<String>, prompt: String, job_id: u64) -> Self {
+    pub fn new(title: impl Into<String>, prompt: String, session_id: String, job_id: u64) -> Self {
         AiPane {
             title: title.into(),
             prompt,
+            session_id,
             job_id,
             state: AiState::Asking,
             scroll: 0,
@@ -58,11 +65,12 @@ impl AiPane {
 /// The binary used for one-shot prompts. (`codex exec` could be wired similarly.)
 const CLI: &str = "claude";
 
-/// Run `claude -p <prompt>` to completion and return its stdout (trimmed), or a
-/// one-line error. Blocking — call from a worker thread.
-pub fn one_shot(prompt: &str) -> Result<String, String> {
+/// Run `claude -p --session-id <session_id> <prompt>` to completion and return
+/// its stdout (trimmed), or a one-line error. Blocking — call from a worker
+/// thread. The session id lets the answer be resumed interactively later.
+pub fn one_shot(prompt: &str, session_id: &str) -> Result<String, String> {
     let out = Command::new(CLI)
-        .arg("-p")
+        .args(["-p", "--session-id", session_id])
         .arg(prompt)
         .output()
         .map_err(|e| format!("running `{CLI} -p`: {e} — is the Claude Code CLI on PATH?"))?;
@@ -82,6 +90,46 @@ pub fn one_shot(prompt: &str) -> Result<String, String> {
             .unwrap_or("`claude -p` failed");
         Err(msg.lines().next().unwrap_or(msg).to_string())
     }
+}
+
+/// A fresh UUID-v4-shaped session id (from `/dev/urandom`, with a time+pid
+/// fallback). Not crypto — just needs to be unique per `claude -p` run.
+pub fn gen_session_id() -> String {
+    let mut b = [0u8; 16];
+    let filled = {
+        use std::io::Read;
+        std::fs::File::open("/dev/urandom")
+            .and_then(|mut f| f.read_exact(&mut b))
+            .is_ok()
+    };
+    if !filled {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+            ^ ((std::process::id() as u128) << 64);
+        let mut z = seed;
+        for chunk in b.chunks_mut(8) {
+            z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut x = z as u64;
+            x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            x ^= x >> 31;
+            for (i, by) in chunk.iter_mut().enumerate() {
+                *by = x.to_le_bytes()[i];
+            }
+        }
+    }
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let mut s = String::with_capacity(36);
+    for (i, by) in b.iter().enumerate() {
+        if matches!(i, 4 | 6 | 8 | 10) {
+            s.push('-');
+        }
+        s.push_str(&format!("{by:02x}"));
+    }
+    s
 }
 
 // ── prompts for the on-selection actions ────────────────────────────
