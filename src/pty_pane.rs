@@ -88,6 +88,20 @@ impl BinaryProfile {
         }
     }
 
+    /// A named `[tasks.<name>]` entry — run `cmdline` via `$SHELL -c` in a pty pane.
+    /// `cwd` defaults to the workspace.
+    pub fn task(name: &str, cmdline: &str, cwd: PathBuf) -> Self {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        BinaryProfile {
+            label: format!("task: {name}"),
+            exe: shell,
+            args: vec!["-c".to_string(), cmdline.to_string()],
+            cwd: Some(cwd),
+            env: Vec::new(),
+            session_id: None,
+        }
+    }
+
     /// `codex` (OpenAI Codex CLI).
     pub fn codex(workspace: PathBuf) -> Self {
         BinaryProfile {

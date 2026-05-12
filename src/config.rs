@@ -1,9 +1,13 @@
 //! Configuration. Merged from (lowest → highest precedence): built-in defaults,
 //! `~/.config/mnml/config.toml`, `<workspace>/.mnml/config.toml`, then `--config PATH`.
 //!
-//! `[editor]`, `[ui]` and `[keys.*]` are live. `[lsp.*]`, `[ai]`, `[tools]` are
-//! parsed-and-kept (so existing config files keep working) but unused until their
-//! tracks land.
+//! `[editor]`, `[ui]`, `[keys.*]`, `[tasks.*]` and `[startup]` are live. `[lsp.*]`,
+//! `[ai]`, `[tools]` are parsed-and-kept (so existing config files keep working)
+//! but unused until their tracks land.
+//!
+//! `[tasks.<name>]` defines a shell command (`cmd = "..."`, optional `cwd`)
+//! openable in a pty pane via the `task.run` command; `[startup] tasks = [...]`
+//! lists task names auto-run in pty panes when a workspace opens.
 //!
 //! `[keys.*]` maps **key spec → command id**, like VSCode's `keybindings.json`
 //! (the reverse direction is awkward — a key can only do one thing — and this way
@@ -28,6 +32,18 @@ pub struct Config {
     /// `[ai]` / `[tools]` — raw tables, validated by the AI track later.
     pub ai: toml::Value,
     pub tools: toml::Value,
+    /// `[tasks.<name>]` — named shell commands openable in a pty pane (`task.run`).
+    pub tasks: BTreeMap<String, TaskDef>,
+    /// `[startup] tasks = [...]` — task names auto-run in pty panes on workspace open.
+    pub startup_tasks: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskDef {
+    /// The shell command line (run via `$SHELL -c`).
+    pub cmd: String,
+    /// Working directory — relative paths are resolved against the workspace; `None` ⇒ workspace.
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +76,8 @@ impl Default for Config {
             lsp: BTreeMap::new(),
             ai: toml::Value::Table(Default::default()),
             tools: toml::Value::Table(Default::default()),
+            tasks: BTreeMap::new(),
+            startup_tasks: Vec::new(),
         }
     }
 }
@@ -78,6 +96,22 @@ struct RawConfig {
     ai: Option<toml::Value>,
     #[serde(default)]
     tools: Option<toml::Value>,
+    #[serde(default)]
+    tasks: BTreeMap<String, RawTask>,
+    #[serde(default)]
+    startup: RawStartup,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawTask {
+    cmd: String,
+    cwd: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawStartup {
+    #[serde(default)]
+    tasks: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -146,6 +180,16 @@ impl Config {
         if let Some(v) = raw.tools {
             self.tools = v;
         }
+        for (k, v) in raw.tasks {
+            self.tasks.insert(
+                k,
+                TaskDef {
+                    cmd: v.cmd,
+                    cwd: v.cwd,
+                },
+            );
+        }
+        self.startup_tasks.extend(raw.startup.tasks);
     }
 }
 

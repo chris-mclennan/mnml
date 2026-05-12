@@ -196,8 +196,14 @@ Close others / Close all (dirty editors are kept + counted) / Copy path. Modal l
 select, Enter runs, Esc / click-away dismisses, click a row runs it. `App.context_menu` +
 `open_tree_context_menu` / `open_tab_context_menu` / `context_menu_accept` / `run_menu_action`;
 `tui::dispatch_mouse` handles `Down(Right)` → menu on the tree row / tab under it.
-Then: LSP, CDP, the `.test` E2E format, plugins; plus queued polish (line-wrapped markdown preview,
-editable request-pane field tabs). See `.local/PLAN.md` for the full plan.
+**Tasks / launcher — done (first cut):** `[tasks.<name>]` config (`cmd = "shell line"`, optional `cwd`
+— relative to the workspace) + `[startup] tasks = ["name", …]`; `task.run` command (`<leader>o`) opens a
+picker over the configured tasks and runs the chosen one via `$SHELL -c` in a pty pane
+(`BinaryProfile::task`); `App::run_startup_tasks()` (called once by `tui`/`headless` before the loop)
+spawns the `[startup]` ones. Absorbs `../private-playwright/start-launcher.sh`: drop it in as a task /
+startup task instead of running it separately (the Playwright track will grow native equivalents later).
+Then: LSP, CDP, the `.test` E2E format, plugins, the graphical-Git-GUI-style `Pane::GitGraph` (see `.local/PLAN.md`);
+plus queued polish (line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)

@@ -438,6 +438,52 @@ impl App {
                 crate::command::run(&item.id, self);
             }
             PickerKind::Themes => self.set_theme(&item.id),
+            PickerKind::Tasks => self.run_task(&item.id),
+        }
+    }
+
+    /// `task.run` — open a picker over `[tasks.<name>]` config entries.
+    pub fn open_task_picker(&mut self) {
+        use crate::picker::PickerItem;
+        if self.config.tasks.is_empty() {
+            self.toast("no [tasks.*] defined in config".to_string());
+            return;
+        }
+        let items: Vec<PickerItem> = self
+            .config
+            .tasks
+            .iter()
+            .map(|(name, t)| PickerItem::new(name.clone(), name.clone(), t.cmd.clone()))
+            .collect();
+        self.open_picker(Picker::new(PickerKind::Tasks, "Run task", items));
+    }
+
+    /// Run a named `[tasks.<name>]` entry in a new pty pane.
+    pub fn run_task(&mut self, name: &str) {
+        let Some(def) = self.config.tasks.get(name).cloned() else {
+            self.toast(format!("unknown task: {name}"));
+            return;
+        };
+        let cwd = match &def.cwd {
+            Some(rel) => {
+                let p = Path::new(rel);
+                if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    self.workspace.join(p)
+                }
+            }
+            None => self.workspace.clone(),
+        };
+        self.open_pty(crate::pty_pane::BinaryProfile::task(name, &def.cmd, cwd));
+    }
+
+    /// `[startup] tasks = [...]` — run each on workspace open (called once by the
+    /// event loop). Unknown names are toasted and skipped.
+    pub fn run_startup_tasks(&mut self) {
+        let names = self.config.startup_tasks.clone();
+        for name in names {
+            self.run_task(&name);
         }
     }
 

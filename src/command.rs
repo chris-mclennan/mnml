@@ -361,6 +361,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.heal_selected_test(),
         },
         Command {
+            id: "task.run",
+            title: "Tasks: run a configured task in a terminal pane",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_task_picker(),
+        },
+        Command {
             id: "whichkey.leader",
             title: "Leader menu (which-key)",
             group: "view",

@@ -160,6 +160,7 @@ pub fn root() -> &'static Leader {
                 ('e', cmd("view.toggle_tree", "explorer")),
                 ('m', cmd("markdown.preview", "markdown preview")),
                 ('p', cmd("palette", "command palette")),
+                ('o', cmd("task.run", "run task…")),
                 ('r', cmd("app.restart", "restart mnml")),
             ],
         )

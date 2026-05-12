@@ -16,6 +16,8 @@ pub enum PickerKind {
     Commands,
     /// `id` = a theme name. Accept ⇒ switch to it.
     Themes,
+    /// `id` = a `[tasks.<name>]` task name. Accept ⇒ run it in a pty pane.
+    Tasks,
 }
 
 #[derive(Debug, Clone)]

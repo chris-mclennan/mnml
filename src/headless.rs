@@ -25,6 +25,8 @@ pub fn run(mut app: App) -> Result<bool, String> {
         ipc.dir().display().to_string()
     ));
 
+    app.run_startup_tasks();
+
     loop {
         app.tick();
         terminal

@@ -93,6 +93,8 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
         ));
     }
 
+    app.run_startup_tasks();
+
     loop {
         app.tick();
         term.draw(|f| ui::draw(f, app))?;
