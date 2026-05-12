@@ -14,7 +14,8 @@ use crate::ui;
 
 const POLL_SLEEP: Duration = Duration::from_millis(40);
 
-pub fn run(mut app: App) -> Result<(), String> {
+/// Run headless (virtual screen + file-IPC). `Ok(true)` ⇒ restart requested.
+pub fn run(mut app: App) -> Result<bool, String> {
     let (w, h) = screen_size();
     let backend = TestBackend::new(w, h);
     let mut terminal = Terminal::new(backend).map_err(|e| format!("headless terminal: {e}"))?;
@@ -45,8 +46,12 @@ pub fn run(mut app: App) -> Result<(), String> {
     // Final dump so the host sees the end state.
     terminal.draw(|f| ui::draw(f, &mut app)).map_err(|e| format!("render: {e}"))?;
     dump(&ipc, &terminal, &app);
-    ipc.append_event("{\"event\":\"exit\"}");
-    Ok(())
+    ipc.append_event(if app.restart_requested {
+        "{\"event\":\"exit\",\"restart\":true}"
+    } else {
+        "{\"event\":\"exit\"}"
+    });
+    Ok(app.restart_requested)
 }
 
 fn dump(ipc: &Ipc, terminal: &Terminal<TestBackend>, app: &App) {

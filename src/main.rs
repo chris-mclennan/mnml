@@ -93,7 +93,9 @@ fn main() -> ExitCode {
     };
 
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        // 75 (EX_TEMPFAIL) is the agreed "rebuild + relaunch me" code that `run.sh` loops on.
+        Ok(true) => ExitCode::from(75),
+        Ok(false) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("mnml: {e}");
             ExitCode::FAILURE

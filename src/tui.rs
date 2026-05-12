@@ -26,11 +26,13 @@ use crate::layout::Layout;
 use crate::pane::Pane;
 use crate::{command, ui};
 
-pub fn run(mut app: App) -> Result<(), String> {
+/// Run the terminal UI. `Ok(true)` ⇒ exit for a rebuild+relaunch (the `run.sh`
+/// wrapper watches for that); `Ok(false)` ⇒ normal quit.
+pub fn run(mut app: App) -> Result<bool, String> {
     let mut term = setup_terminal().map_err(|e| format!("terminal setup failed: {e}"))?;
     let result = run_loop(&mut term, &mut app);
     let _ = restore_terminal(&mut term);
-    result.map_err(|e| format!("{e}"))
+    result.map(|()| app.restart_requested).map_err(|e| format!("{e}"))
 }
 
 fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {

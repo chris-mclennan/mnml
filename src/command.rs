@@ -74,6 +74,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.request_quit(),
         },
         Command {
+            id: "app.restart",
+            title: "Restart mnml (rebuild + relaunch via run.sh)",
+            group: "app",
+            default_key: "",
+            run: |app| app.request_restart(),
+        },
+        Command {
             id: "view.toggle_tree",
             title: "Toggle file tree",
             group: "view",

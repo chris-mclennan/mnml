@@ -48,6 +48,9 @@ pub struct App {
     pub git: GitStatus,
     pub toast: Option<(String, Instant)>,
     pub should_quit: bool,
+    /// Set alongside `should_quit` when the loop should exit *for a rebuild+relaunch*
+    /// (the `run.sh` wrapper watches for the distinct exit code).
+    pub restart_requested: bool,
     pub rects: PaneRects,
     /// The active register / system-clipboard bridge, threaded into `Editor::apply`.
     pub clipboard: Clipboard,
@@ -72,6 +75,7 @@ impl App {
             git,
             toast: None,
             should_quit: false,
+            restart_requested: false,
             rects: PaneRects::default(),
             clipboard: Clipboard::new(),
         })
@@ -237,6 +241,11 @@ impl App {
     pub fn request_quit(&mut self) {
         // P0: buffers are read-only so there's never anything unsaved. A
         // confirm-on-dirty guard lands with editing in P1.
+        self.should_quit = true;
+    }
+    /// Exit so the `run.sh` wrapper rebuilds and relaunches us with the same args.
+    pub fn request_restart(&mut self) {
+        self.restart_requested = true;
         self.should_quit = true;
     }
 

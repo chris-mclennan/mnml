@@ -32,8 +32,10 @@ pub enum IpcCommand {
     Key(String),
     /// Force a fresh dump of `screen.txt` / `status.json`.
     Snapshot,
-    /// Stop the headless loop.
+    /// Stop the loop.
     Quit,
+    /// Stop the loop with the restart exit code (the `run.sh` wrapper rebuilds + relaunches).
+    Restart,
     /// Unknown / malformed — recorded as an event but otherwise ignored.
     Unknown(String),
 }
@@ -137,6 +139,7 @@ fn parse_command(line: &str) -> IpcCommand {
         },
         "snapshot" => IpcCommand::Snapshot,
         "quit" => IpcCommand::Quit,
+        "restart" => IpcCommand::Restart,
         _ => IpcCommand::Unknown(line.to_string()),
     }
 }
@@ -161,8 +164,12 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
         }
         IpcCommand::Snapshot => json_event(&[("event", "snapshot")]),
         IpcCommand::Quit => {
-            app.should_quit = true;
+            app.request_quit();
             json_event(&[("event", "quit")])
+        }
+        IpcCommand::Restart => {
+            app.request_restart();
+            json_event(&[("event", "restart")])
         }
         IpcCommand::Unknown(s) => json_event(&[("event", "unknown"), ("raw", s)]),
     }
