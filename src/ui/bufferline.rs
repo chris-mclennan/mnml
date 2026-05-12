@@ -1,6 +1,6 @@
-//! The top "tabufline" — a strip of all open buffers, NvChad-style. (Tabpage
-//! indicators / theme toggle on the right come later; for now it's just the
-//! buffer strip.)
+//! The "tabufline" — a strip of open-buffer tabs (NvChad-style). It sits over
+//! the pane body only, not above the tree rail. A small `TABS` cap is pinned to
+//! the right (tabpage indicators / `+` button come later).
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -19,6 +19,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let nerd = !app.config.ui.ascii_icons;
+    let cap_label = " TABS ";
+    let cap_w = cap_label.chars().count() as u16;
+    let tabs_max_x = area.x + area.width.saturating_sub(cap_w);
 
     let mut spans: Vec<Span> = Vec::new();
     let mut x = area.x;
@@ -31,27 +34,52 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 icons::for_path(&p, false, false, nerd)
             }
         };
-        let dirty = if pane.is_dirty() { " ●" } else { "" };
-        let label = format!(" {glyph} {name}{dirty} ");
+        let badge = if pane.is_dirty() { "●" } else { "×" };
+        // ` <icon> <name> <badge> `
+        let label = format!(" {glyph} {name} {badge} ");
         let cells = label.chars().count() as u16;
-        if x + cells > area.x + area.width {
+        if x + cells > tabs_max_x {
             break;
         }
-        let (bg, fg) = if active { (theme::BG, theme::FG) } else { (theme::BG_DARKER, theme::GREY_FG) };
-        // icon segment + label segment so the icon keeps its color
-        let icon_seg = format!(" {glyph} ");
-        let rest = format!("{name}{dirty} ");
-        let mut name_style = Style::default().fg(fg).bg(bg);
+        let (bg, name_fg, badge_fg) = if active {
+            (theme::BG, theme::FG, if pane.is_dirty() { theme::ORANGE } else { theme::GREY_FG })
+        } else {
+            (theme::BG_DARKER, theme::GREY_FG, theme::GREY)
+        };
+        let mut name_style = Style::default().fg(name_fg).bg(bg);
         if active {
             name_style = name_style.add_modifier(Modifier::BOLD);
         }
-        spans.push(Span::styled(icon_seg.clone(), Style::default().fg(if active { icon_color } else { theme::GREY }).bg(bg)));
-        spans.push(Span::styled(rest.clone(), name_style));
+        spans.push(Span::styled(
+            format!(" {glyph} "),
+            Style::default().fg(if active { icon_color } else { theme::GREY }).bg(bg),
+        ));
+        spans.push(Span::styled(format!("{name} "), name_style));
+        spans.push(Span::styled(format!("{badge} "), Style::default().fg(badge_fg).bg(bg)));
         app.rects.bufferline_tabs.push((Rect { x, y: area.y, width: cells, height: 1 }, i));
         x += cells;
+        // thin separator into the strip background
+        if i + 1 < app.panes.len() {
+            spans.push(Span::styled(" ", Style::default().bg(theme::BG_DARKER)));
+            x += 1;
+        }
     }
     if app.panes.is_empty() {
-        spans.push(Span::styled(" mnml ", Style::default().fg(theme::GREY_FG).bg(theme::BG_DARKER)));
+        spans.push(Span::styled("  no buffers ", Style::default().fg(theme::GREY_FG).bg(theme::BG_DARKER)));
+        x += "  no buffers ".chars().count() as u16;
     }
+    // fill the gap up to the cap
+    if x < tabs_max_x {
+        spans.push(Span::styled(
+            " ".repeat((tabs_max_x - x) as usize),
+            Style::default().bg(theme::BG_DARKER),
+        ));
+    }
+    // right cap
+    spans.push(Span::styled(
+        cap_label,
+        Style::default().fg(theme::BG_DARKER).bg(theme::BLUE).add_modifier(Modifier::BOLD),
+    ));
+
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }

@@ -1,14 +1,17 @@
 //! The render path — backend-agnostic, so the same `draw` serves the real
-//! terminal (`tui.rs`) and the headless virtual screen (`headless.rs`). Layout:
+//! terminal (`tui.rs`) and the headless virtual screen (`headless.rs`). Layout
+//! mirrors NvChad: the file-tree rail is a full-height column on the left (the
+//! buffer tabs do NOT sit above it); the right column is a one-line bufferline
+//! over the pane body; the statusline spans the full width at the bottom.
 //!
 //! ```text
-//! ┌───────────────────────────────────────────────┐
-//! │ bufferline (open buffers · tabpages)        h1 │
-//! ├──────────┬────────────────────────────────────┤
-//! │  tree    │  active pane body                   │
-//! │  rail    │  (editor view / welcome)            │
+//! ┌──────────┬────────────────────────────────────┐
+//! │  tree    │ bufferline (open buffers)        h1 │
+//! │  rail    ├────────────────────────────────────┤
+//! │ (full    │ active pane body                   │
+//! │  height) │ (editor view / welcome)            │
 //! ├──────────┴────────────────────────────────────┤
-//! │ statusline (mode · file · git · Ln:Col · lang) │
+//! │ statusline (mode · git · file … Ln:Col · lang) │
 //! └───────────────────────────────────────────────┘
 //! ```
 //!
@@ -24,7 +27,7 @@ pub mod tree_view;
 pub mod welcome;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout as RLayout};
+use ratatui::layout::{Constraint, Layout as RLayout};
 use ratatui::style::Style;
 use ratatui::widgets::Block;
 
@@ -34,39 +37,44 @@ use crate::pane::Pane;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-    // Paint the whole frame with the editor background first so gaps look intentional.
     frame.render_widget(Block::default().style(Style::default().bg(theme::BG_DARK)), area);
 
-    let rows = RLayout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)])
-        .split(area);
-    let (top, mid, bottom) = (rows[0], rows[1], rows[2]);
+    // Split off the bottom statusline (full width).
+    let v = RLayout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
+    let (upper, statusline_area) = (v[0], v[1]);
 
-    // ── bufferline ──
-    bufferline::draw(frame, app, top);
-    app.rects.bufferline = Some(top);
-
-    // ── tree | body ──
-    let (tree_area, body_area) = if app.tree_visible {
-        let w = app.config.ui.tree_width.min(mid.width.saturating_sub(20)).max(8);
-        let cols = RLayout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(w), Constraint::Min(1)])
-            .split(mid);
+    // tree rail | right column
+    let (tree_area, right) = if app.tree_visible {
+        let w = app
+            .config
+            .ui
+            .tree_width
+            .min(upper.width.saturating_sub(20))
+            .max(8);
+        let cols = RLayout::horizontal([Constraint::Length(w), Constraint::Min(1)]).split(upper);
         (Some(cols[0]), cols[1])
     } else {
-        (None, mid)
+        (None, upper)
     };
+
+    // right column: bufferline (h1) over the body
+    let r = RLayout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(right);
+    let (bufferline_area, body_area) = (r[0], r[1]);
+
+    // ── tree rail (full height of `upper`) ──
     if let Some(ta) = tree_area {
         tree_view::draw(frame, app, ta);
         app.rects.tree = Some(ta);
     } else {
         app.rects.tree = None;
     }
-    app.rects.body = Some(body_area);
 
-    // ── active pane ──
+    // ── bufferline ──
+    bufferline::draw(frame, app, bufferline_area);
+    app.rects.bufferline = Some(bufferline_area);
+
+    // ── active pane body ──
+    app.rects.body = Some(body_area);
     let mut cursor_pos: Option<(u16, u16)> = None;
     match app.active.and_then(|i| app.panes.get(i)) {
         Some(Pane::Editor(_)) => {
@@ -79,14 +87,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // ── statusline ──
-    statusline::draw(frame, app, bottom);
-    app.rects.statusline = Some(bottom);
+    statusline::draw(frame, app, statusline_area);
+    app.rects.statusline = Some(statusline_area);
 
-    // ── terminal cursor ──
-    // Only show it when the editor pane has focus (P0 buffers are read-only, but
-    // showing where the caret is still helps); otherwise hide it offscreen-ish.
+    // ── terminal cursor (only when the editor pane has focus) ──
     if app.focus == Focus::Pane
-        && let Some((x, y)) = cursor_pos {
-            frame.set_cursor_position((x, y));
-        }
+        && let Some((x, y)) = cursor_pos
+    {
+        frame.set_cursor_position((x, y));
+    }
 }

@@ -18,17 +18,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let width = area.width as usize;
 
-    // Header.
+    // Header — a subtle title line (NvChad's nvim-tree shows the root, not a loud bar).
     let ws_name = app
         .workspace
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or("workspace")
-        .to_uppercase();
-    let header = Line::from(Span::styled(
-        pad_to(format!(" {ws_name} "), width),
-        Style::default().fg(theme::BG_DARKER).bg(theme::BLUE).add_modifier(Modifier::BOLD),
-    ));
+        .unwrap_or("workspace");
+    let header_glyph = if app.config.ui.ascii_icons { "*" } else { "\u{f07b}" };
+    let header = Line::from(vec![
+        Span::styled(
+            format!(" {header_glyph} "),
+            Style::default().fg(theme::YELLOW).bg(theme::BG_DARKER),
+        ),
+        Span::styled(
+            pad_to(format!("{ws_name} "), width.saturating_sub(3)),
+            Style::default().fg(theme::BLUE).bg(theme::BG_DARKER).add_modifier(Modifier::BOLD),
+        ),
+    ]);
     frame.render_widget(Paragraph::new(header), Rect { height: 1, ..area });
 
     let body = Rect { y: area.y + 1, height: area.height.saturating_sub(1), ..area };
