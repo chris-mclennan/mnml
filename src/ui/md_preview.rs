@@ -1,8 +1,8 @@
 //! The rendered-markdown preview pane (`Pane::MdPreview`). A line-oriented
 //! renderer: headings, lists, fenced code blocks, blockquotes, horizontal rules
 //! get block-level styling; inline `**bold**` / `*italic*` / `` `code` `` /
-//! `[label](url)` markers are unwrapped to their text (full inline styling is a
-//! later refinement). No wrapping yet — long lines clip. Read-only; scrolls.
+//! `[label](url)` are rendered as styled spans. No wrapping yet — long lines
+//! clip. Read-only; scrolls.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -55,22 +55,68 @@ pub fn draw(
     None // no caret in a preview
 }
 
-/// Strip inline markdown markers from a run of text, keeping the inner text.
-fn unwrap_inline(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let bytes = s.as_bytes();
+fn push_text(out: &mut Vec<Span<'static>>, buf: &mut String, style: Style) {
+    if !buf.is_empty() {
+        out.push(Span::styled(std::mem::take(buf), style));
+    }
+}
+
+/// Parse a run of text into styled spans, honouring `**bold**`, `*italic*`,
+/// `` `code` ``, and `[label](url)` links. `base` is the style for plain text
+/// (it carries the fg/bg from the surrounding block, so e.g. a list item's text
+/// stays on the list line's background). Underscores are left literal — they're
+/// far more often `snake_case` than markdown emphasis.
+fn inline_spans(s: &str, base: Style) -> Vec<Span<'static>> {
+    let t = theme::cur();
+    let code_style = Style::default().fg(t.base16[0x0b]).bg(t.bg2);
+    let link_style = base.fg(t.cyan).add_modifier(Modifier::UNDERLINED);
+    let url_style = Style::default().fg(t.comment).bg(t.bg_dark);
+
+    let mut out: Vec<Span> = Vec::new();
+    let mut buf = String::new();
     let mut i = 0;
-    while i < bytes.len() {
+    while i < s.len() {
         let rest = &s[i..];
-        if rest.starts_with("**") || rest.starts_with("__") {
-            i += 2; // bold markers — drop, keep the inner text
+
+        // strong: **...**
+        if let Some(after) = rest.strip_prefix("**")
+            && let Some(end) = after.find("**")
+            && end > 0
+        {
+            push_text(&mut out, &mut buf, base);
+            out.push(Span::styled(
+                after[..end].to_string(),
+                base.add_modifier(Modifier::BOLD),
+            ));
+            i += 2 + end + 2;
             continue;
         }
-        if rest.starts_with('`') || rest.starts_with('*') || rest.starts_with('_') {
-            i += 1; // code / italic markers — drop
+        // code: `...`
+        if rest.starts_with('`')
+            && let Some(end) = rest[1..].find('`')
+            && end > 0
+        {
+            push_text(&mut out, &mut buf, base);
+            out.push(Span::styled(rest[1..1 + end].to_string(), code_style));
+            i += 1 + end + 1;
             continue;
         }
-        // [label](url) → "label (url)"
+        // italic: *...* (single asterisk; `**` was handled above)
+        if rest.starts_with('*')
+            && !rest.starts_with("**")
+            && let Some(end) = rest[1..].find('*')
+            && end > 0
+            && !rest[1..1 + end].starts_with(' ')
+        {
+            push_text(&mut out, &mut buf, base);
+            out.push(Span::styled(
+                rest[1..1 + end].to_string(),
+                base.add_modifier(Modifier::ITALIC),
+            ));
+            i += 1 + end + 1;
+            continue;
+        }
+        // link: [label](url)
         if rest.starts_with('[')
             && let Some(rb) = rest.find(']')
             && rest[rb..].starts_with("](")
@@ -78,26 +124,41 @@ fn unwrap_inline(s: &str) -> String {
         {
             let label = &rest[1..rb];
             let url = &rest[rb + 2..rb + 2 + rp];
-            out.push_str(label);
-            if !url.is_empty() {
-                out.push_str(" (");
-                out.push_str(url);
-                out.push(')');
+            push_text(&mut out, &mut buf, base);
+            out.push(Span::styled(label.to_string(), link_style));
+            if !url.is_empty() && url != label {
+                out.push(Span::styled(format!(" ({url})"), url_style));
             }
             i += rb + 2 + rp + 1;
             continue;
         }
+
         let ch = rest.chars().next().unwrap();
-        out.push(ch);
+        buf.push(ch);
         i += ch.len_utf8();
+    }
+    push_text(&mut out, &mut buf, base);
+    if out.is_empty() {
+        out.push(Span::styled(String::new(), base));
     }
     out
 }
 
-/// Render markdown `src` to styled lines (block-level styling; inline markers unwrapped).
+/// Build a styled line from an optional prefix span plus inline-parsed `text`.
+fn styled_line(prefix: Option<Span<'static>>, text: &str, base: Style) -> Line<'static> {
+    let mut spans = Vec::new();
+    if let Some(p) = prefix {
+        spans.push(p);
+    }
+    spans.extend(inline_spans(text, base));
+    Line::from(spans)
+}
+
+/// Render markdown `src` to styled lines (block-level styling + inline spans).
 pub fn render_markdown(src: &str) -> Vec<Line<'static>> {
     let t = theme::cur();
-    let plain = |s: String| Line::from(Span::styled(s, Style::default().fg(t.fg).bg(t.bg_dark)));
+    let body = Style::default().fg(t.fg).bg(t.bg_dark);
+    let blank = || Line::from(Span::styled(String::new(), body));
     let mut out: Vec<Line> = Vec::new();
     let mut in_code = false;
     for raw in src.lines() {
@@ -129,7 +190,6 @@ pub fn render_markdown(src: &str) -> Vec<Line<'static>> {
                     break;
                 }
             }
-            let text = unwrap_inline(r.trim());
             let color = match level {
                 1 => t.blue,
                 2 => t.cyan,
@@ -137,17 +197,14 @@ pub fn render_markdown(src: &str) -> Vec<Line<'static>> {
                 4 => t.yellow,
                 _ => t.purple,
             };
-            let mut style = Style::default()
-                .fg(color)
-                .bg(t.bg_dark)
-                .add_modifier(Modifier::BOLD);
+            let mut style = body.fg(color).add_modifier(Modifier::BOLD);
             if level <= 2 {
                 style = style.add_modifier(Modifier::UNDERLINED);
             }
             if !out.is_empty() {
-                out.push(plain(String::new()));
+                out.push(blank());
             }
-            out.push(Line::from(Span::styled(text, style)));
+            out.push(styled_line(None, r.trim(), style));
             continue;
         }
         // horizontal rule
@@ -163,16 +220,15 @@ pub fn render_markdown(src: &str) -> Vec<Line<'static>> {
         }
         // blockquote
         if let Some(q) = trimmed.strip_prefix('>') {
-            out.push(Line::from(vec![
-                Span::styled("▏ ", Style::default().fg(t.purple).bg(t.bg_dark)),
-                Span::styled(
-                    unwrap_inline(q.trim_start()),
-                    Style::default()
-                        .fg(t.comment)
-                        .bg(t.bg_dark)
-                        .add_modifier(Modifier::ITALIC),
-                ),
-            ]));
+            let quote = body.fg(t.comment).add_modifier(Modifier::ITALIC);
+            out.push(styled_line(
+                Some(Span::styled(
+                    "▏ ",
+                    Style::default().fg(t.purple).bg(t.bg_dark),
+                )),
+                q.trim_start(),
+                quote,
+            ));
             continue;
         }
         // list items (preserve the source's leading indentation)
@@ -182,34 +238,33 @@ pub fn render_markdown(src: &str) -> Vec<Line<'static>> {
             .or_else(|| trimmed.strip_prefix("* "))
             .or_else(|| trimmed.strip_prefix("+ "))
         {
-            out.push(Line::from(vec![
-                Span::styled(
+            out.push(styled_line(
+                Some(Span::styled(
                     format!("{indent}• "),
                     Style::default().fg(t.blue).bg(t.bg_dark),
-                ),
-                Span::styled(unwrap_inline(item), Style::default().fg(t.fg).bg(t.bg_dark)),
-            ]));
+                )),
+                item,
+                body,
+            ));
             continue;
         }
         if let Some(dot) = trimmed.find(". ")
-            && trimmed[..dot].chars().all(|c| c.is_ascii_digit())
             && !trimmed[..dot].is_empty()
+            && trimmed[..dot].chars().all(|c| c.is_ascii_digit())
         {
             let num = &trimmed[..dot];
-            out.push(Line::from(vec![
-                Span::styled(
+            out.push(styled_line(
+                Some(Span::styled(
                     format!("{indent}{num}. "),
                     Style::default().fg(t.blue).bg(t.bg_dark),
-                ),
-                Span::styled(
-                    unwrap_inline(&trimmed[dot + 2..]),
-                    Style::default().fg(t.fg).bg(t.bg_dark),
-                ),
-            ]));
+                )),
+                &trimmed[dot + 2..],
+                body,
+            ));
             continue;
         }
         // plain paragraph line
-        out.push(plain(unwrap_inline(line)));
+        out.push(styled_line(None, line, body));
     }
     out
 }
@@ -219,23 +274,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unwrap_inline_strips_markers() {
-        assert_eq!(
-            unwrap_inline("a **bold** and `code` and *it*"),
-            "a bold and code and it"
+    fn inline_spans_styles_markers() {
+        let base = Style::default();
+        let spans = inline_spans("a **bold** and `code` and *it*", base);
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "a bold and code and it");
+        let bold = spans.iter().find(|s| s.content == "bold").unwrap();
+        assert!(bold.style.add_modifier.contains(Modifier::BOLD));
+        let it = spans.iter().find(|s| s.content == "it").unwrap();
+        assert!(it.style.add_modifier.contains(Modifier::ITALIC));
+        // `code` gets a distinct background, not the base style.
+        let code = spans.iter().find(|s| s.content == "code").unwrap();
+        assert!(code.style.bg.is_some());
+    }
+
+    #[test]
+    fn inline_spans_renders_links_and_keeps_underscores() {
+        let base = Style::default();
+        let spans = inline_spans("see [docs](http://x) for some_snake_case", base);
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "see docs (http://x) for some_snake_case");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.content == "docs" && s.style.add_modifier.contains(Modifier::UNDERLINED))
         );
-        assert_eq!(
-            unwrap_inline("see [the docs](http://x) ok"),
-            "see the docs (http://x) ok"
-        );
-        assert_eq!(unwrap_inline("plain text"), "plain text");
     }
 
     #[test]
     fn render_handles_blocks() {
         let md = "# Title\n\nsome **text**\n\n- one\n- two\n\n```\ncode\n```\n> a quote\n---\n";
         let lines = render_markdown(md);
-        // produced *something* for each block; not empty
         assert!(lines.len() >= 6, "got {} lines", lines.len());
     }
 }
