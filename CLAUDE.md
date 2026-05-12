@@ -136,9 +136,13 @@ the send on a **background thread** (`App.http_chan`; `App::tick` drains it) —
 holds the state (`RunState::Sending|Done|Failed`), `src/ui/request_view.rs` renders the
 request line + headers + body, then status/headers/pretty body + ✓/✗ asserts + ⇒ captures
 (scroll with `k/j`/PgUp/PgDn, `r` re-fires, `y` copies-as-curl, Esc → tree); `rqst.copy_curl`
-(`<leader>h y`) copies the request as a curl command. Still to do for HTTP: `.chain.json`
-sequences, OpenAPI→stub discovery, editable request-pane field tabs (right now you edit the
-`.http` file in a normal editor). Then: Pty/AI-CLI, AI-API, CDP, the `.test` E2E format,
+(`<leader>h y`) copies the request as a curl command. **Chains** — `src/http/chain.rs` runs a
+`.chain.json` (`[{ "request": "a.curl", "extract": { "VAR": "$.path" } }, …]`): each step
+expands `{{}}` against the running env, sends, runs its `@assert`/`@capture`, then `extract`s
+into env vars for the next step; stops at the first transport error / non-2xx-3xx / failed
+assert / empty extract — wired as `mnml chain run FILE [--env NAME] [--workspace DIR]`. Still
+to do for HTTP: OpenAPI→stub discovery, editable request-pane field tabs (right now you edit
+the `.http` file in a normal editor). Then: Pty/AI-CLI, AI-API, CDP, the `.test` E2E format,
 plugins; plus queued polish (right-click context menus on files/tabs, line-wrapped preview).
 See `.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.

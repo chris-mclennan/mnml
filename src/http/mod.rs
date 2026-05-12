@@ -7,12 +7,15 @@
 //!   process env), plus dynamic `{{$uuid}}` / `{{$timestamp}}` / … vars.
 //! - [`script`] — `@set-header` / `@set-env` (pre-request) and `@assert` /
 //!   `@capture` (post-response) directives carried in `#` comments.
+//! - [`chain`] — `.chain.json` sequences: each step extracts response values into
+//!   variables the later steps `{{…}}`.
 //! - [`send`] — fire a [`Request`] with `reqwest`'s blocking client, capture the
 //!   [`Response`] (status, headers, body, elapsed).
 //!
-//! Still to come (its own pass): `.chain.json` sequences, OpenAPI → stub
-//! discovery, and the `Pane::Request` editor UI.
+//! Still to come (its own pass): OpenAPI → stub discovery, and editable
+//! request-pane field tabs.
 
+pub mod chain;
 pub mod curl;
 pub mod file;
 pub mod script;

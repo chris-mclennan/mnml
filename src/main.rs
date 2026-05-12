@@ -3,8 +3,9 @@
 //!     — the TUI (or the headless virtual-screen + file-IPC harness with `--headless`).
 //!   - `mnml run FILE [--env NAME] [--workspace DIR]` — send one `.curl` / `.http`
 //!     request, after `{{VAR}}` substitution from `.mnml/env/<NAME>.env`.
+//!   - `mnml chain run FILE [--env NAME] [--workspace DIR]` — run a `.chain.json`.
 //!
-//! Later phases add `mnml chain run FILE`, `mnml test GLOB`, `mnml ipc …`.
+//! Later phases add `mnml test GLOB`, `mnml ipc …`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -14,11 +15,21 @@ use mnml::config::Config;
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1).peekable();
-    if matches!(args.peek().map(String::as_str), Some("run")) {
-        args.next();
-        return run_subcommand(args.collect());
+    match args.peek().map(String::as_str) {
+        Some("run") => {
+            args.next();
+            run_subcommand(args.collect())
+        }
+        Some("chain") => {
+            args.next();
+            // `mnml chain run FILE …` (the `run` word is optional).
+            if matches!(args.peek().map(String::as_str), Some("run")) {
+                args.next();
+            }
+            chain_subcommand(args.collect())
+        }
+        _ => run_tui(args.collect()),
     }
-    run_tui(args.collect())
 }
 
 // ───────────────────────── TUI / headless ─────────────────────────
@@ -186,6 +197,59 @@ fn run_subcommand(argv: Vec<String>) -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("mnml run: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Shared `FILE [--env NAME] [--workspace DIR]` parsing for `run` / `chain`.
+fn parse_file_env_ws(
+    argv: Vec<String>,
+    usage: &str,
+) -> Result<(PathBuf, Option<String>, Option<PathBuf>), String> {
+    let (mut file, mut env_name, mut workspace) = (None, None, None);
+    let mut it = argv.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--env" | "-e" => env_name = Some(it.next().ok_or("--env needs a value")?),
+            "--workspace" | "-w" => {
+                workspace = Some(PathBuf::from(it.next().ok_or("--workspace needs a path")?))
+            }
+            "-h" | "--help" => return Err(format!("__help__{usage}")),
+            s if s.starts_with('-') => return Err(format!("unknown flag: {s}")),
+            s if file.is_none() => file = Some(PathBuf::from(s)),
+            s => return Err(format!("unexpected extra argument: {s}")),
+        }
+    }
+    Ok((file.ok_or("missing FILE")?, env_name, workspace))
+}
+
+fn chain_subcommand(argv: Vec<String>) -> ExitCode {
+    let usage = "usage: mnml chain run FILE [--env NAME] [--workspace DIR]";
+    let (file, env_name, workspace) = match parse_file_env_ws(argv, usage) {
+        Ok(t) => t,
+        Err(e) if e.starts_with("__help__") => {
+            println!("{}", &e["__help__".len()..]);
+            return ExitCode::SUCCESS;
+        }
+        Err(e) => {
+            eprintln!("mnml chain: {e}\n{usage}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let ws = workspace
+        .or_else(|| file.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let mut out = String::new();
+    let result = mnml::http::chain::run(&file, &ws, env_name.as_deref(), &mut out);
+    print!("{out}");
+    match result {
+        Ok(()) => {
+            println!("✓ chain passed");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("mnml chain: {e}");
             ExitCode::FAILURE
         }
     }
