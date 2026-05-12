@@ -90,7 +90,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         welcome::draw(frame, app, body_area);
         None
     } else {
-        render_layout(frame, app, &layout, body_area)
+        let mut path = Vec::new();
+        render_layout(frame, app, &layout, body_area, &mut path)
     };
 
     // ── statusline ──
@@ -124,12 +125,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
 /// Recursively render a layout subtree into `area`: leaves draw their editor;
 /// splits draw a 1-cell divider and recurse. Only the focused leaf returns a
-/// cursor cell, so the `.or` chain bubbles it up.
+/// cursor cell, so the `.or` chain bubbles it up. `path` accumulates the
+/// first(false)/second(true) choices to the current node, recorded with each
+/// divider so the mouse can drag-resize a specific split.
 fn render_layout(
     frame: &mut Frame,
     app: &mut App,
     layout: &Layout,
     area: Rect,
+    path: &mut Vec<bool>,
 ) -> Option<(u16, u16)> {
     match layout {
         Layout::Empty => None,
@@ -146,10 +150,19 @@ fn render_layout(
             let (a, divider, b) = split_rects(area, *dir, *ratio);
             if divider.width > 0 && divider.height > 0 {
                 draw_divider(frame, divider, *dir);
-                app.rects.split_dividers.push((divider, *dir));
+                app.rects.split_dividers.push(crate::layout::DividerHit {
+                    rect: divider,
+                    dir: *dir,
+                    area,
+                    path: path.clone(),
+                });
             }
-            let c1 = render_layout(frame, app, first, a);
-            let c2 = render_layout(frame, app, second, b);
+            path.push(false);
+            let c1 = render_layout(frame, app, first, a, path);
+            path.pop();
+            path.push(true);
+            let c2 = render_layout(frame, app, second, b, path);
+            path.pop();
             c1.or(c2)
         }
     }

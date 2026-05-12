@@ -305,6 +305,10 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
 
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => {
+            // Grab a split divider? (do this first — it sits between two pane rects)
+            if app.begin_divider_drag(x, y) {
+                return;
+            }
             // Bufferline tab — clicking the close badge closes; clicking elsewhere on the tab activates.
             if let Some(&(_, id)) = app
                 .rects
@@ -360,6 +364,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
             }
         }
+        MouseEventKind::Drag(MouseButton::Left) => app.drag_divider_to(x, y),
+        MouseEventKind::Up(MouseButton::Left) => app.end_divider_drag(),
         MouseEventKind::ScrollUp => scroll_under(app, x, y, -3),
         MouseEventKind::ScrollDown => scroll_under(app, x, y, 3),
         _ => {}

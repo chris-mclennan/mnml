@@ -46,8 +46,8 @@ pub struct PaneRects {
     /// (gutter excluded). Click → focus that leaf + place the cursor; also the
     /// geometry `Ctrl+W`-style focus navigation uses.
     pub editor_panes: Vec<(Rect, PaneId)>,
-    /// `(rect, dir)` per split divider (for future drag-to-resize).
-    pub split_dividers: Vec<(Rect, crate::layout::SplitDir)>,
+    /// One entry per split divider, with enough info to drag-resize it.
+    pub split_dividers: Vec<crate::layout::DividerHit>,
     pub statusline: Option<Rect>,
     /// The picker overlay's outer box (when open) and `(rect, filtered-index)` per visible row.
     pub picker_box: Option<Rect>,
@@ -88,6 +88,9 @@ pub struct App {
     /// While a leader sequence is in flight: the keys typed after `<leader>`
     /// (`Some("")` ⇒ the popup just opened). Steals key input like the picker.
     pub whichkey: Option<String>,
+    /// The split divider currently being dragged (between mouse-down on it and
+    /// mouse-up), so drag events resize *that* split even off-target.
+    pub dragging: Option<crate::layout::DividerHit>,
 }
 
 impl App {
@@ -117,6 +120,7 @@ impl App {
             picker: None,
             keymap,
             whichkey: None,
+            dragging: None,
         })
     }
 
@@ -406,6 +410,38 @@ impl App {
             .unwrap_or(0);
         self.active = Some(leaves[(here + 1) % leaves.len()]);
         self.focus = Focus::Pane;
+    }
+
+    /// If `(x, y)` is on a split divider, begin dragging it. Returns true if so.
+    pub fn begin_divider_drag(&mut self, x: u16, y: u16) -> bool {
+        if let Some(d) = self
+            .rects
+            .split_dividers
+            .iter()
+            .find(|d| {
+                x >= d.rect.x
+                    && x < d.rect.x + d.rect.width
+                    && y >= d.rect.y
+                    && y < d.rect.y + d.rect.height
+            })
+            .cloned()
+        {
+            self.dragging = Some(d);
+            true
+        } else {
+            false
+        }
+    }
+    /// Continue a divider drag: set the split's ratio from the pointer position.
+    pub fn drag_divider_to(&mut self, x: u16, y: u16) {
+        if let Some(d) = &self.dragging {
+            let ratio = d.ratio_for(x, y);
+            let path = d.path.clone();
+            self.layout.set_ratio_at(&path, ratio);
+        }
+    }
+    pub fn end_divider_drag(&mut self) {
+        self.dragging = None;
     }
 
     /// Close the buffer at `id`, discarding unsaved changes with a toast. If it's

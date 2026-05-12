@@ -140,6 +140,24 @@ impl Layout {
         }
     }
 
+    /// Set the `ratio` of the `Split` reached by following `path` from the root
+    /// (`false` = into `first`, `true` = into `second`). No-op if the path doesn't
+    /// land on a `Split`. The ratio is clamped to 10..=90.
+    pub fn set_ratio_at(&mut self, path: &[bool], ratio: u16) {
+        let mut node = self;
+        for &go_second in path {
+            match node {
+                Layout::Split { first, second, .. } => {
+                    node = if go_second { second } else { first };
+                }
+                _ => return,
+            }
+        }
+        if let Layout::Split { ratio: r, .. } = node {
+            *r = ratio.clamp(10, 90);
+        }
+    }
+
     /// After `app.panes.remove(removed)`, every leaf id past `removed` shifts down
     /// by one. Apply that re-index to the tree.
     pub fn shift_after(&mut self, removed: PaneId) {
@@ -191,8 +209,35 @@ impl Layout {
     }
 }
 
-/// A split divider's screen rect plus its orientation (for drag-to-resize, later).
+/// A split divider's screen rect plus its orientation.
 pub type DividerRect = (Rect, SplitDir);
+
+/// Everything the event loop needs to drag-resize one split: the divider's
+/// screen rect, the split's orientation, the area the whole split occupies (so a
+/// drag position maps to a ratio), and the path to that `Split` node from the
+/// root (for [`Layout::set_ratio_at`]).
+#[derive(Debug, Clone)]
+pub struct DividerHit {
+    pub rect: Rect,
+    pub dir: SplitDir,
+    pub area: Rect,
+    pub path: Vec<bool>,
+}
+
+impl DividerHit {
+    /// The ratio (10..=90) implied by a pointer at `(x, y)` within `self.area`.
+    pub fn ratio_for(&self, x: u16, y: u16) -> u16 {
+        let (pos, start, span) = match self.dir {
+            SplitDir::Horizontal => (x, self.area.x, self.area.width),
+            SplitDir::Vertical => (y, self.area.y, self.area.height),
+        };
+        if span == 0 {
+            return 50;
+        }
+        let off = pos.saturating_sub(start) as u32;
+        ((off * 100) / span as u32).clamp(10, 90) as u16
+    }
+}
 
 /// Carve `area` into `(first, divider, second)` for a split. The divider is one
 /// cell on the split axis (omitted — zero-sized — if `area` is too small).
@@ -300,6 +345,46 @@ mod tests {
         };
         l.shift_after(2); // pretend pane 2 was removed from app.panes
         assert_eq!(l.leaves(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn set_ratio_walks_the_path() {
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::Leaf(0)),
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Vertical,
+                ratio: 50,
+                first: Box::new(Layout::Leaf(1)),
+                second: Box::new(Layout::Leaf(2)),
+            }),
+        };
+        l.set_ratio_at(&[], 70); // the outer split
+        l.set_ratio_at(&[true], 30); // the nested split (go into `second`)
+        l.set_ratio_at(&[false], 99); // a Leaf — no-op
+        let Layout::Split { ratio, second, .. } = &l else {
+            panic!()
+        };
+        assert_eq!(*ratio, 70);
+        let Layout::Split { ratio: inner, .. } = &**second else {
+            panic!()
+        };
+        assert_eq!(*inner, 30);
+    }
+
+    #[test]
+    fn divider_hit_ratio_for() {
+        let area = Rect::new(10, 0, 100, 20);
+        let h = DividerHit {
+            rect: Rect::new(60, 0, 1, 20),
+            dir: SplitDir::Horizontal,
+            area,
+            path: vec![],
+        };
+        assert_eq!(h.ratio_for(60, 5), 50); // 50 cols into a 100-wide area at x=10
+        assert_eq!(h.ratio_for(10, 5), 10); // clamped low
+        assert_eq!(h.ratio_for(109, 5), 90); // clamped high
     }
 
     #[test]
