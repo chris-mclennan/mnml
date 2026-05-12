@@ -167,11 +167,18 @@ overlay (`PromptKind::AiAsk`). Results land via `App.ai_chan` / `App::tick` (sam
 request pane). In the AI pane: `r` re-asks (fresh session), Esc → tree, and **`c` promotes it to
 an interactive Claude Code pane** — `claude --resume <session_id>` in a `Pane::Pty` below, with
 the conversation already loaded (so a quick `-p` answer isn't a dead end — you can drill in /
-let it apply edits). *Follow-ups:* tail the Claude Code / Codex session JSONL so the pty pane and
-the AI view share a rendered conversation; parse a returned patch into a `Pane::Diff` with
-accept/reject; request-debug (`Ctrl+.` on a failing request → `claude -p`); pty scrollback; cancel
-a running one-shot. Then: LSP, CDP, the `.test` E2E format, plugins; plus queued polish
-(right-click context menus on files/tabs, line-wrapped preview). See `.local/PLAN.md` for the full plan.
+let it apply edits). **JSONL session tail — done:** `src/ai/transcript.rs` reads
+`~/.claude/projects/<dashed-cwd>/<session-id>.jsonl` into `Vec<Turn>` (user / assistant / thinking
+preview / tool-use one-liner / truncated tool-result; meta + side-chain lines skipped); `AiState::Live
+{path, last_len, turns}` is a live mirror — `App::tick` re-reads when the `.jsonl` grows;
+`ui/ai_view.rs` renders the turns (assistant text as markdown). `claude` panes are spawned with a
+known `--session-id` (`BinaryProfile.session_id`), so `ai.session_view` (`<leader>a m`) opens a
+mirror for the active `claude`/Ai pane; `c`-promoting a `Pane::Ai` also flips that pane into a
+live mirror of the (now-interactive) session. `G` follows the bottom. *Follow-ups:* parse a returned
+patch into a `Pane::Diff` with accept/reject; request-debug (`Ctrl+.` on a failing request →
+`claude -p`); pty scrollback; cancel a running one-shot; incremental JSONL parse from `last_len`.
+Then: LSP, CDP, the `.test` E2E format, plugins; plus queued polish (right-click context menus on
+files/tabs, line-wrapped preview). See `.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)

@@ -312,6 +312,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.ai_action("write_tests"),
         },
         Command {
+            id: "ai.session_view",
+            title: "AI: mirror this Claude session's transcript (live)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_session_view(),
+        },
+        Command {
             id: "whichkey.leader",
             title: "Leader menu (which-key)",
             group: "view",

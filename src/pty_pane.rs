@@ -29,6 +29,9 @@ pub struct BinaryProfile {
     pub cwd: Option<PathBuf>,
     /// Extra env vars to set in the child.
     pub env: Vec<(String, String)>,
+    /// For `claude` profiles: the `--session-id` / `--resume` id, so mnml can
+    /// open a transcript mirror of this session. `None` for shells / codex.
+    pub session_id: Option<String>,
 }
 
 impl BinaryProfile {
@@ -42,13 +45,16 @@ impl BinaryProfile {
             args: Vec::new(),
             cwd,
             env: Vec::new(),
+            session_id: None,
         }
     }
 
-    /// `claude` (Claude Code). If the workspace has a `.mnml/CLAUDE.md`, inject it
-    /// via `--append-system-prompt` so the assistant orients before message #1.
+    /// `claude` (Claude Code), with a known `--session-id` (so mnml can mirror the
+    /// transcript). If the workspace has a `.mnml/CLAUDE.md`, inject it via
+    /// `--append-system-prompt` so the assistant orients before message #1.
     pub fn claude_code(workspace: PathBuf) -> Self {
-        let mut args = Vec::new();
+        let sid = crate::ai::gen_session_id();
+        let mut args = vec!["--session-id".to_string(), sid.clone()];
         let brief = workspace.join(".mnml").join("CLAUDE.md");
         if let Ok(text) = std::fs::read_to_string(&brief)
             && !text.trim().is_empty()
@@ -62,6 +68,7 @@ impl BinaryProfile {
             args,
             cwd: Some(workspace),
             env: Vec::new(),
+            session_id: Some(sid),
         }
     }
 
@@ -71,9 +78,10 @@ impl BinaryProfile {
         BinaryProfile {
             label: "claude code (resumed)".to_string(),
             exe: "claude".to_string(),
-            args: vec!["--resume".to_string(), session_id],
+            args: vec!["--resume".to_string(), session_id.clone()],
             cwd: Some(workspace),
             env: Vec::new(),
+            session_id: Some(session_id),
         }
     }
 
@@ -85,6 +93,7 @@ impl BinaryProfile {
             args: Vec::new(),
             cwd: Some(workspace),
             env: Vec::new(),
+            session_id: None,
         }
     }
 }

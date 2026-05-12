@@ -118,6 +118,7 @@ pub fn root() -> &'static Leader {
                             ('f', cmd("ai.fix", "fix bugs")),
                             ('r', cmd("ai.refactor", "refactor")),
                             ('w', cmd("ai.write_tests", "write tests")),
+                            ('m', cmd("ai.session_view", "mirror session")),
                             ('t', cmd("term.shell", "shell")),
                             ('c', cmd("ai.claude_code", "claude code")),
                             ('x', cmd("ai.codex", "codex")),

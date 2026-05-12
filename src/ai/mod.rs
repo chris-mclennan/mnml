@@ -12,21 +12,26 @@
 //!
 //! Each one-shot is given a session id, so a `Pane::Ai` can be *promoted* to a
 //! full interactive Claude Code pane (`claude --resume <id>`) when you want to go
-//! deeper — the quick answer isn't a dead end.
+//! deeper — the quick answer isn't a dead end. A promoted (or any) session can
+//! also be mirrored as a rendered transcript ([`transcript`], [`AiState::Live`]).
 //!
-//! Follow-ups: stream the output incrementally instead of waiting for completion;
-//! parse a returned patch into a `Pane::Diff` with accept/reject; tail the CLI
-//! session JSONL so the pty pane and this view share a conversation.
+//! Follow-ups: stream `claude -p` output incrementally instead of waiting for
+//! completion; parse a returned patch into a `Pane::Diff` with accept/reject.
 
+pub mod transcript;
+
+use std::path::PathBuf;
 use std::process::Command;
 
-/// The `Pane::Ai` payload — one AI request and its answer.
+/// The `Pane::Ai` payload — either a `claude -p` one-shot (+ its answer) or a
+/// live mirror of a Claude Code session transcript.
 pub struct AiPane {
     /// Short label for the bufferline / close prompt.
     pub title: String,
-    /// The exact prompt sent to `claude -p` (re-sent on `r`).
+    /// For a one-shot: the prompt sent to `claude -p` (re-sent on `r`). For a
+    /// live mirror: a short label (the session id prefix).
     pub prompt: String,
-    /// The `--session-id` used for this run — `c` resumes it as an interactive pane.
+    /// The Claude Code session id — `c` resumes it as an interactive pty pane.
     pub session_id: String,
     /// Matched against the worker's reply (re-fire / shifted indices ⇒ stale).
     pub job_id: u64,
@@ -36,9 +41,19 @@ pub struct AiPane {
 }
 
 pub enum AiState {
+    /// A `claude -p` run is in flight.
     Asking,
+    /// `claude -p` finished — its (markdown) answer.
     Done(String),
+    /// `claude -p` failed — the error.
     Failed(String),
+    /// A live mirror of a session transcript: `path` is the `.jsonl`, `last_len`
+    /// the size we last parsed at, `turns` the parsed conversation.
+    Live {
+        path: PathBuf,
+        last_len: u64,
+        turns: Vec<transcript::Turn>,
+    },
 }
 
 impl AiPane {
@@ -52,11 +67,36 @@ impl AiPane {
             scroll: 0,
         }
     }
+
+    /// A live transcript mirror of `session_id` at `path` (read once now).
+    pub fn live(session_id: String, path: PathBuf) -> Self {
+        let turns = transcript::read(&path);
+        let last_len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let short: String = session_id.chars().take(8).collect();
+        AiPane {
+            title: format!("claude session {short}"),
+            prompt: format!("session {short}"),
+            session_id,
+            job_id: 0,
+            state: AiState::Live {
+                path,
+                last_len,
+                turns,
+            },
+            scroll: usize::MAX, // start at the bottom (newest)
+        }
+    }
+
+    pub fn is_live(&self) -> bool {
+        matches!(self.state, AiState::Live { .. })
+    }
+
     pub fn tab_title(&self) -> String {
         let marker = match self.state {
             AiState::Asking => "…",
             AiState::Failed(_) => "✗",
             AiState::Done(_) => "✦",
+            AiState::Live { .. } => "●",
         };
         format!("{} {marker}", self.title)
     }

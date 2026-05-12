@@ -588,9 +588,10 @@ impl App {
     }
 
     /// Re-send the prompt an existing `Pane::Ai` holds (with a fresh session id).
+    /// No-op for a live transcript mirror (it has no `-p` prompt).
     fn reask_ai(&mut self, pane_id: PaneId) {
         let prompt = match self.panes.get(pane_id) {
-            Some(Pane::Ai(a)) => a.prompt.clone(),
+            Some(Pane::Ai(a)) if !a.is_live() => a.prompt.clone(),
             _ => return,
         };
         let (job_id, session_id) = self.spawn_ai_job(prompt);
@@ -603,22 +604,92 @@ impl App {
     }
 
     /// `c` in a `Pane::Ai`: open `claude --resume <session>` interactively (a split
-    /// below) so you can carry the conversation further.
+    /// below) so you can carry the conversation further — and flip this pane into
+    /// a live transcript mirror of that session.
     pub fn continue_active_ai(&mut self) {
-        let sid = match self.active.and_then(|i| self.panes.get(i)) {
-            Some(Pane::Ai(a)) if !matches!(a.state, crate::ai::AiState::Asking) => {
-                a.session_id.clone()
-            }
-            Some(Pane::Ai(_)) => {
+        let Some(cur) = self.active else { return };
+        let sid = match self.panes.get(cur) {
+            Some(Pane::Ai(a)) if matches!(a.state, crate::ai::AiState::Asking) => {
                 self.toast("wait for the answer first");
                 return;
             }
+            Some(Pane::Ai(a)) => a.session_id.clone(),
             _ => return,
         };
+        // Flip the source pane to a live mirror (unless it already is one).
+        if let Some(path) = crate::ai::transcript::session_path(&self.workspace, &sid)
+            && let Some(Pane::Ai(a)) = self.panes.get_mut(cur)
+            && !a.is_live()
+        {
+            let turns = crate::ai::transcript::read(&path);
+            let last_len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            a.state = crate::ai::AiState::Live {
+                path,
+                last_len,
+                turns,
+            };
+            a.scroll = usize::MAX;
+        }
         self.open_pty(crate::pty_pane::BinaryProfile::claude_code_resume(
             self.workspace.clone(),
             sid,
         ));
+    }
+
+    /// `ai.session_view` — open a live transcript mirror for the active `Pane::Pty`'s
+    /// session (a `claude` pane started by mnml, which knows its `--session-id`).
+    pub fn open_session_view(&mut self) {
+        let Some(cur) = self.active else { return };
+        let sid = match self.panes.get(cur) {
+            Some(Pane::Pty(s)) => match &s.profile.session_id {
+                Some(sid) => sid.clone(),
+                None => {
+                    self.toast("this terminal has no Claude session to mirror");
+                    return;
+                }
+            },
+            Some(Pane::Ai(a)) => a.session_id.clone(),
+            _ => {
+                self.toast("open a Claude Code pane first (<leader>a c)");
+                return;
+            }
+        };
+        let Some(path) = crate::ai::transcript::session_path(&self.workspace, &sid) else {
+            self.toast("can't locate the session transcript ($HOME unset?)");
+            return;
+        };
+        // If we're already showing this session's mirror, just focus it.
+        if let Some(i) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Ai(a) if a.is_live() && a.session_id == sid))
+        {
+            self.reveal_pane(i);
+            return;
+        }
+        let pane = Pane::Ai(crate::ai::AiPane::live(sid, path));
+        let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+    }
+
+    /// Re-read any live transcript mirrors whose `.jsonl` has grown.
+    fn refresh_live_ai_panes(&mut self) {
+        for pane in &mut self.panes {
+            if let Pane::Ai(a) = pane
+                && let crate::ai::AiState::Live {
+                    path,
+                    last_len,
+                    turns,
+                } = &mut a.state
+            {
+                let len = std::fs::metadata(&*path).map(|m| m.len()).unwrap_or(0);
+                if len != *last_len {
+                    *turns = crate::ai::transcript::read(path);
+                    *last_len = len;
+                }
+            }
+        }
     }
 
     /// `ai.explain` / `ai.fix` / `ai.refactor` / `ai.write_tests` — feed the active
@@ -1609,6 +1680,7 @@ impl App {
         self.git.tick();
         self.drain_http_jobs();
         self.drain_ai_jobs();
+        self.refresh_live_ai_panes();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL
         {

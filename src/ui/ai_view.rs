@@ -1,7 +1,8 @@
-//! Renders a `Pane::Ai` — the prompt sent to `claude -p` and, once the worker
-//! returns, the answer (rendered as markdown via [`super::md_preview::render_markdown`],
-//! since the CLI replies in markdown). Read-only + scrollable; `r` re-asks
-//! (handled in `tui.rs`).
+//! Renders a `Pane::Ai` — either a `claude -p` answer (markdown, via
+//! [`super::md_preview::render_markdown`]) or a live mirror of a Claude Code
+//! session transcript (user / assistant / thinking / tool calls / tool results).
+//! Read-only + scrollable; `r` re-asks, `c` continues interactively (handled in
+//! `tui.rs`). `G` jumps to the bottom (follow the conversation).
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -10,6 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::ai::AiState;
+use crate::ai::transcript::Turn;
 use crate::app::App;
 use crate::layout::PaneId;
 use crate::pane::Pane;
@@ -35,6 +37,7 @@ pub fn draw(
     };
 
     let dim = Style::default().fg(t.comment).bg(t.bg_dark);
+    let body = Style::default().fg(t.fg).bg(t.bg_dark);
     let mut rows: Vec<Line> = Vec::new();
     rows.push(Line::from(Span::styled(
         format!("✦ {}", ai.title),
@@ -43,15 +46,16 @@ pub fn draw(
             .bg(t.bg_dark)
             .add_modifier(Modifier::BOLD),
     )));
-    // The prompt, dimmed — first line only (it can be long when it wraps a code block).
     let prompt_first = ai.prompt.lines().next().unwrap_or("").trim();
     if !prompt_first.is_empty() {
         rows.push(Line::from(Span::styled(format!("  {prompt_first}"), dim)));
     }
-    rows.push(Line::from(Span::styled(
-        "  r re-ask · c continue in Claude Code · esc → tree",
-        dim,
-    )));
+    let hint = if ai.is_live() {
+        "  live mirror · c open interactive pane · G follow · esc → tree"
+    } else {
+        "  r re-ask · c continue in Claude Code · esc → tree"
+    };
+    rows.push(Line::from(Span::styled(hint, dim)));
     rows.push(Line::from(Span::styled(
         "─".repeat(area.width as usize),
         Style::default().fg(t.line).bg(t.bg_dark),
@@ -73,6 +77,14 @@ pub fn draw(
                 .add_modifier(Modifier::BOLD),
         ))),
         AiState::Done(text) => rows.extend(md_preview::render_markdown(text)),
+        AiState::Live { turns, .. } => {
+            if turns.is_empty() {
+                rows.push(Line::from(Span::styled("  (no messages yet)", dim)));
+            }
+            for turn in turns {
+                render_turn(turn, &t, body, dim, &mut rows);
+            }
+        }
     }
 
     let h = area.height as usize;
@@ -85,4 +97,62 @@ pub fn draw(
     );
     app.rects.editor_panes.push((area, pane_id));
     None
+}
+
+fn render_turn(
+    turn: &Turn,
+    t: &theme::Theme,
+    body: Style,
+    dim: Style,
+    rows: &mut Vec<Line<'static>>,
+) {
+    let blank = || Line::from(Span::styled(String::new(), body));
+    match turn {
+        Turn::User(text) => {
+            rows.push(blank());
+            rows.push(Line::from(Span::styled(
+                "▸ you",
+                Style::default()
+                    .fg(t.cyan)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            for l in text.lines() {
+                rows.push(Line::from(Span::styled(format!("  {l}"), body)));
+            }
+        }
+        Turn::Assistant(text) => {
+            rows.push(blank());
+            rows.push(Line::from(Span::styled(
+                "◆ claude",
+                Style::default()
+                    .fg(t.purple)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            rows.extend(md_preview::render_markdown(text));
+        }
+        Turn::Thinking(preview) => {
+            rows.push(Line::from(Span::styled(
+                format!("  💭 {preview}"),
+                dim.add_modifier(Modifier::ITALIC),
+            )));
+        }
+        Turn::ToolUse { name, summary } => {
+            rows.push(Line::from(vec![
+                Span::styled("  ⚙ ", Style::default().fg(t.yellow).bg(t.bg_dark)),
+                Span::styled(
+                    name.clone(),
+                    Style::default()
+                        .fg(t.yellow)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("  {summary}"), dim),
+            ]));
+        }
+        Turn::ToolResult(text) => {
+            rows.push(Line::from(Span::styled(format!("    → {text}"), dim)));
+        }
+    }
 }
