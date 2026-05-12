@@ -2,12 +2,14 @@
 //! syntax groups, indices `0x00..=0x0f`) plus a set of named UI-chrome colors
 //! (NvChad's `base_30`). The active theme lives behind an `RwLock`; `cur()`
 //! reads it (cheap — it's `Copy`), `set(name)` swaps it. `[ui] theme = "…"`
-//! picks one at launch; the `theme.pick` command switches at runtime (and
-//! re-runs syntax highlighting so cached colors refresh).
+//! picks one at launch; the `theme.pick` command / `:set theme=…` switch at
+//! runtime (and re-run syntax highlighting so cached colors refresh).
 //!
-//! Built-in themes: `onedark` (the default — transcribed verbatim from
-//! `NvChad/base46`), `gruvbox`, `catppuccin`. More are just another entry in
-//! [`THEMES`].
+//! Themes come from `themes/*.lua` — NvChad's base46 schemes, vendored verbatim
+//! and parsed at first use (`build.rs` enumerates the dir → `THEME_SOURCES`).
+//! `onedark` is the default and is also kept hardcoded here as the seed / a
+//! fallback if the vendored file is unavailable. Drop a `.lua` in `themes/` in
+//! the same `M.base_30` / `M.base_16` format to add one.
 
 use std::sync::{OnceLock, RwLock};
 
@@ -105,132 +107,139 @@ pub const fn onedark() -> Theme {
     }
 }
 
-/// **gruvbox** (dark) — approximated from the gruvbox-dark-hard palette.
-pub const fn gruvbox() -> Theme {
-    Theme {
-        name: "gruvbox",
-        bg: rgb(0x32302f),
-        bg2: rgb(0x3c3836),
-        bg3: rgb(0x504945),
-        bg_dark: rgb(0x282828),
-        bg_darker: rgb(0x1d2021),
-        statusline: rgb(0x32302f),
-        line: rgb(0x3c3836),
-        lightbg: rgb(0x32302f),
-        fg: rgb(0xebdbb2),
-        comment: rgb(0x928374),
-        grey: rgb(0x504945),
-        grey_fg: rgb(0x665c54),
-        red: rgb(0xfb4934),
-        pink: rgb(0xd3869b),
-        green: rgb(0xb8bb26),
-        vibrant_green: rgb(0x98971a),
-        yellow: rgb(0xfabd2f),
-        sun: rgb(0xd79921),
-        orange: rgb(0xfe8019),
-        blue: rgb(0x83a598),
-        nord_blue: rgb(0x83a598),
-        teal: rgb(0x689d6a),
-        cyan: rgb(0x8ec07c),
-        purple: rgb(0xd3869b),
-        dark_purple: rgb(0xb16286),
-        base16: [
-            rgb(0x282828), // 00
-            rgb(0x3c3836), // 01
-            rgb(0x504945), // 02
-            rgb(0x665c54), // 03 comments
-            rgb(0x7c6f64), // 04
-            rgb(0xebdbb2), // 05 fg
-            rgb(0xd5c4a1), // 06
-            rgb(0xfbf1c7), // 07
-            rgb(0xfb4934), // 08 variables
-            rgb(0xd65d0e), // 09 numbers
-            rgb(0xfabd2f), // 0A types
-            rgb(0xb8bb26), // 0B strings
-            rgb(0x8ec07c), // 0C
-            rgb(0x83a598), // 0D functions
-            rgb(0xd3869b), // 0E keywords
-            rgb(0xd65d0e), // 0F delimiters
-        ],
+// ── the vendored NvChad base46 themes ──────────────────────────────────
+// `build.rs` emits `THEME_SOURCES: &[(&str, &str)]` — (name, the `.lua` file's
+// contents) for every file in `themes/`. We parse the `M.base_30` / `M.base_16`
+// tables out of each at first use.
+include!(concat!(env!("OUT_DIR"), "/theme_sources.rs"));
+
+fn parse_hex(s: &str) -> Option<[u8; 3]> {
+    let s = s.trim().strip_prefix('#')?;
+    let h = |x: &str| u8::from_str_radix(x, 16).ok();
+    match s.len() {
+        6 => Some([h(&s[0..2])?, h(&s[2..4])?, h(&s[4..6])?]),
+        3 => {
+            let d = |i: usize| h(&s[i..i + 1]).map(|v| v * 17);
+            Some([d(0)?, d(1)?, d(2)?])
+        }
+        _ => None,
     }
 }
 
-/// **catppuccin** (mocha) — approximated from the Catppuccin Mocha palette.
-pub const fn catppuccin() -> Theme {
-    Theme {
-        name: "catppuccin",
-        bg: rgb(0x292c3c),
-        bg2: rgb(0x313244),
-        bg3: rgb(0x45475a),
-        bg_dark: rgb(0x1e1e2e),
-        bg_darker: rgb(0x181825),
-        statusline: rgb(0x232337),
-        line: rgb(0x313244),
-        lightbg: rgb(0x292c3c),
-        fg: rgb(0xcdd6f4),
-        comment: rgb(0x7f849c),
-        grey: rgb(0x45475a),
-        grey_fg: rgb(0x6c7086),
-        red: rgb(0xf38ba8),
-        pink: rgb(0xf5c2e7),
-        green: rgb(0xa6e3a1),
-        vibrant_green: rgb(0x94e2d5),
-        yellow: rgb(0xf9e2af),
-        sun: rgb(0xf9e2af),
-        orange: rgb(0xfab387),
-        blue: rgb(0x89b4fa),
-        nord_blue: rgb(0x74c7ec),
-        teal: rgb(0x94e2d5),
-        cyan: rgb(0x89dceb),
-        purple: rgb(0xcba6f7),
-        dark_purple: rgb(0xb4befe),
-        base16: [
-            rgb(0x1e1e2e), // 00
-            rgb(0x313244), // 01
-            rgb(0x45475a), // 02
-            rgb(0x585b70), // 03 comments
-            rgb(0x6c7086), // 04
-            rgb(0xcdd6f4), // 05 fg
-            rgb(0xbac2de), // 06
-            rgb(0xa6adc8), // 07
-            rgb(0xf38ba8), // 08 variables
-            rgb(0xfab387), // 09 numbers
-            rgb(0xf9e2af), // 0A types
-            rgb(0xa6e3a1), // 0B strings
-            rgb(0x94e2d5), // 0C
-            rgb(0x89b4fa), // 0D functions
-            rgb(0xcba6f7), // 0E keywords
-            rgb(0xf5c2e7), // 0F delimiters
-        ],
-    }
+/// The `{...}` body of `M.<key> = { ... }`, if present.
+fn lua_block<'a>(src: &'a str, key: &str) -> Option<&'a str> {
+    let i = src.find(key)?;
+    let rest = &src[i..];
+    let lb = rest.find('{')?;
+    let rb = rest[lb..].find('}')? + lb;
+    Some(&rest[lb + 1..rb])
 }
 
-/// One registry entry: a name and a builder.
-type ThemeEntry = (&'static str, fn() -> Theme);
+/// `name = "#hex"` pairs in a Lua-table body — split on commas *and* newlines so
+/// one-per-line and inline `{ a = "#…", b = "#…" }` both work; comments tolerated.
+fn lua_pairs(block: &str) -> std::collections::HashMap<String, [u8; 3]> {
+    let mut m = std::collections::HashMap::new();
+    for chunk in block.split([',', '\n']) {
+        let Some((k, v)) = chunk.split_once('=') else {
+            continue;
+        };
+        let k = k.trim();
+        if k.is_empty() || !k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            continue;
+        }
+        let Some(q1) = v.find('"') else { continue };
+        let Some(q2) = v[q1 + 1..].find('"') else {
+            continue;
+        };
+        if let Some(rgb) = parse_hex(&v[q1 + 1..q1 + 1 + q2]) {
+            m.insert(k.to_string(), rgb);
+        }
+    }
+    m
+}
 
-/// The registry of built-in themes (`onedark` first = the default).
-pub const THEMES: &[ThemeEntry] = &[
-    ("onedark", onedark),
-    ("gruvbox", gruvbox),
-    ("catppuccin", catppuccin),
-];
+/// Parse one base46 `.lua` source into a [`Theme`]. `None` if it has no
+/// `M.base_30` table (then it isn't a usable theme file); missing individual
+/// colours fall back sensibly (and a missing `base_16` table falls back to
+/// onedark's syntax palette).
+fn parse_base46(name: &'static str, src: &str) -> Option<Theme> {
+    let b30 = lua_pairs(lua_block(src, "base_30")?);
+    let b16 = lua_block(src, "base_16").map(lua_pairs).unwrap_or_default();
+    let col = |k: &str| b30.get(k).map(|&[r, g, b]| Color::Rgb(r, g, b));
+    let pick = |keys: &[&str], default: Color| keys.iter().find_map(|k| col(k)).unwrap_or(default);
+    let od = onedark();
+    let white = pick(&["white"], od.fg);
+    let black = pick(&["black"], od.bg_dark);
+    let mut base16 = od.base16;
+    for (i, slot) in base16.iter_mut().enumerate() {
+        if let Some(&[r, g, b]) = b16.get(&format!("base{i:02X}")) {
+            *slot = Color::Rgb(r, g, b);
+        }
+    }
+    Some(Theme {
+        name,
+        bg: pick(&["one_bg", "black"], black),
+        bg2: pick(&["one_bg2", "one_bg"], black),
+        bg3: pick(&["one_bg3", "one_bg2"], black),
+        bg_dark: black,
+        bg_darker: pick(&["darker_black"], black),
+        statusline: pick(&["statusline_bg", "black2"], black),
+        line: pick(&["line", "one_bg3"], black),
+        lightbg: pick(&["lightbg", "one_bg"], black),
+        fg: white,
+        comment: pick(&["light_grey", "grey_fg2", "grey_fg", "grey"], white),
+        grey: pick(&["grey", "grey_fg"], white),
+        grey_fg: pick(&["grey_fg", "grey"], white),
+        red: pick(&["red"], white),
+        pink: pick(&["pink", "baby_pink"], white),
+        green: pick(&["green"], white),
+        vibrant_green: pick(&["vibrant_green", "green"], white),
+        yellow: pick(&["yellow"], white),
+        sun: pick(&["sun", "yellow"], white),
+        orange: pick(&["orange"], white),
+        blue: pick(&["blue"], white),
+        nord_blue: pick(&["nord_blue", "blue"], white),
+        teal: pick(&["teal"], white),
+        cyan: pick(&["cyan", "blue"], white),
+        purple: pick(&["purple"], white),
+        dark_purple: pick(&["dark_purple", "purple"], white),
+        base16,
+    })
+}
+
+/// All themes (parsed once). `onedark` is guaranteed present (the hardcoded copy
+/// is the fallback if the vendored file is missing or unparseable).
+fn themes() -> &'static [Theme] {
+    static THEMES: OnceLock<Vec<Theme>> = OnceLock::new();
+    THEMES.get_or_init(|| {
+        let mut v: Vec<Theme> = THEME_SOURCES
+            .iter()
+            .filter_map(|&(name, src)| parse_base46(name, src))
+            .collect();
+        if !v.iter().any(|t| t.name == "onedark") {
+            v.insert(0, onedark());
+        }
+        v
+    })
+}
 
 /// Look a theme up by name (case-insensitive). `None` if unknown.
 pub fn lookup(name: &str) -> Option<Theme> {
-    THEMES
+    let name = name.trim();
+    themes()
         .iter()
-        .find(|(n, _)| n.eq_ignore_ascii_case(name.trim()))
-        .map(|(_, f)| f())
+        .find(|t| t.name.eq_ignore_ascii_case(name))
+        .copied()
 }
 
-/// Built-in theme names, for the picker.
+/// All theme names, for the picker (sorted).
 pub fn names() -> Vec<&'static str> {
-    THEMES.iter().map(|(n, _)| *n).collect()
+    themes().iter().map(|t| t.name).collect()
 }
 
 fn active() -> &'static RwLock<Theme> {
     static ACTIVE: OnceLock<RwLock<Theme>> = OnceLock::new();
-    ACTIVE.get_or_init(|| RwLock::new(onedark()))
+    ACTIVE.get_or_init(|| RwLock::new(lookup("onedark").unwrap_or_else(onedark)))
 }
 
 /// The current theme (a cheap `Copy`).
@@ -256,12 +265,40 @@ mod tests {
     }
 
     #[test]
-    fn registry_and_lookup() {
-        assert_eq!(onedark().name, "onedark");
-        assert!(lookup("ONEDARK").is_some());
+    fn vendored_themes_load() {
+        // build.rs bundles all of NvChad's base46 themes (~90+).
+        let all = names();
+        assert!(
+            all.len() > 50,
+            "expected the vendored themes, got {}",
+            all.len()
+        );
+        assert!(all.contains(&"onedark"));
+        assert!(all.contains(&"gruvbox"));
+        assert!(all.contains(&"catppuccin"));
+        assert!(lookup("ONEDARK").is_some()); // case-insensitive
         assert!(lookup("nope").is_none());
-        assert!(names().contains(&"gruvbox"));
         assert_eq!(onedark().base16.len(), 16);
+    }
+
+    #[test]
+    fn parse_base46_extracts_colours() {
+        let src = r##"
+            local M = {}
+            M.base_30 = { white = "#abcdef", black = "#111213", one_bg = "#222324", blue = "#3456ef" }
+            M.base_16 = { base00 = "#010203", base0E = "#c678dd" }
+            M.type = "dark"
+            return M
+        "##;
+        let t = parse_base46("demo", src).unwrap();
+        assert_eq!(t.fg, Color::Rgb(0xab, 0xcd, 0xef));
+        assert_eq!(t.bg_dark, Color::Rgb(0x11, 0x12, 0x13));
+        assert_eq!(t.bg, Color::Rgb(0x22, 0x23, 0x24));
+        assert_eq!(t.blue, Color::Rgb(0x34, 0x56, 0xef));
+        assert_eq!(t.base16[0x00], Color::Rgb(0x01, 0x02, 0x03));
+        assert_eq!(t.base16[0x0e], Color::Rgb(0xc6, 0x78, 0xdd));
+        // a missing colour falls back (no `red` → onedark's fg, here `#abcdef`)
+        assert_eq!(t.red, Color::Rgb(0xab, 0xcd, 0xef));
     }
 
     #[test]
