@@ -11,11 +11,13 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::cursor::SetCursorStyle;
 use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEvent, MouseEventKind,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    supports_keyboard_enhancement,
 };
 use ratatui::layout::Rect;
 
@@ -51,12 +53,24 @@ fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
         let _ = disable_raw_mode();
         return Err(e);
     }
+    // Ask for the kitty keyboard protocol so chords the legacy encoding can't
+    // express — `Ctrl+Shift+P`, `Ctrl+I` vs `Tab`, etc. — come through distinctly.
+    // No-op on terminals that don't support it; harmless if it errors.
+    if supports_keyboard_enhancement().unwrap_or(false) {
+        let _ = execute!(
+            out,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        );
+    }
     Terminal::new(CrosstermBackend::new(out)).inspect_err(|_| {
         let _ = disable_raw_mode();
     })
 }
 
 fn restore_terminal(term: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
+    if supports_keyboard_enhancement().unwrap_or(false) {
+        let _ = execute!(term.backend_mut(), PopKeyboardEnhancementFlags);
+    }
     disable_raw_mode()?;
     execute!(
         term.backend_mut(),
@@ -124,6 +138,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
+    // F1 → command palette (a real VSCode binding, and our terminal-proof fallback
+    // for `Ctrl+Shift+P` since legacy terminals can't distinguish it from `Ctrl+P`).
+    if key.code == KeyCode::F(1) {
+        command::run("palette", app);
+        return;
+    }
+
     // Global chords (any focus). Hardcoded for now; the config-driven `[keys.*]`
     // resolver lands with the vim handler in P3.
     if ctrl {
@@ -133,6 +154,8 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('e') => Some("focus.cycle"),
             KeyCode::Char('s') => Some("file.save"),
             KeyCode::Char('w' | 'W') => Some("buffer.close"),
+            // `Ctrl+Shift+P` only arrives distinct when the kitty keyboard protocol
+            // is active (iTerm2/kitty/wezterm/alacritty/ghostty); else it == `Ctrl+P`.
             KeyCode::Char('p' | 'P') if shift => Some("palette"),
             KeyCode::Char('p' | 'P') => Some("picker.files"),
             _ => None,

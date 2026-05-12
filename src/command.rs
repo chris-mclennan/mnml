@@ -130,7 +130,7 @@ fn builtin_commands() -> Vec<Command> {
             id: "palette",
             title: "Command palette",
             group: "go",
-            default_key: "ctrl+shift+p",
+            default_key: "ctrl+shift+p / f1",
             run: |app| app.open_command_palette(),
         },
         Command {
