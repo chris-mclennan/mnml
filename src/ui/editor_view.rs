@@ -46,8 +46,15 @@ pub fn draw_pane(
     };
 
     let line_count = buf.editor.line_count();
-    // Gutter = [1 sign cell][line number, right-aligned][1 space].
-    let num_w = line_count.to_string().len().max(3);
+    // Gutter = [1 sign cell][line number, right-aligned][1 space], or in blame
+    // mode [1 sign cell][`<sha> <author>`, BLAME_W wide][1 space].
+    const BLAME_W: usize = 22;
+    let blame_on = buf.blame.is_some();
+    let num_w = if blame_on {
+        BLAME_W
+    } else {
+        line_count.to_string().len().max(3)
+    };
     let gutter_w = (num_w + 2) as u16;
     let text_x = area.x + gutter_w;
     let text_w = area.width.saturating_sub(gutter_w);
@@ -99,9 +106,22 @@ pub fn draw_pane(
         } else {
             theme::cur().bg_dark
         };
-        let num_gutter = format!("{:>num_w$} ", line_no + 1);
+        let num_gutter = if blame_on {
+            match buf.blame.as_ref().and_then(|v| v.get(line_no)) {
+                Some(bl) => format!("{} ", bl.label(num_w)),
+                None => format!("{} ", " ".repeat(num_w)),
+            }
+        } else {
+            format!("{:>num_w$} ", line_no + 1)
+        };
         let num_style = Style::default()
-            .fg(if is_cur {
+            .fg(if blame_on {
+                if is_cur {
+                    theme::cur().grey_fg
+                } else {
+                    theme::cur().comment
+                }
+            } else if is_cur {
                 theme::cur().fg
             } else {
                 theme::cur().base16[0x03]

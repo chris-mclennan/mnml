@@ -225,6 +225,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_diff_worktree(),
         },
         Command {
+            id: "git.blame_toggle",
+            title: "Git: toggle blame gutter",
+            group: "git",
+            keys: &[],
+            run: |app| app.toggle_blame(),
+        },
+        Command {
             id: "whichkey.leader",
             title: "Leader menu (which-key)",
             group: "view",

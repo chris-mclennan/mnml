@@ -29,6 +29,15 @@ pub enum FocusDir {
     Down,
 }
 
+/// `p` made relative to `workspace` (for `git` arguments). Falls back to `p` if
+/// it isn't under `workspace`.
+fn rel_path(workspace: &Path, p: &Path) -> String {
+    p.strip_prefix(workspace)
+        .unwrap_or(p)
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// Screen regions captured during render, consumed for mouse routing on the next event.
 #[derive(Debug, Default, Clone)]
 pub struct PaneRects {
@@ -455,13 +464,60 @@ impl App {
         }
     }
 
-    // ─── git diff pane ──────────────────────────────────────────────
+    // ─── git: diff pane + blame ─────────────────────────────────────
     /// Workspace-relative path of an arbitrary path, for `git` arguments.
     fn rel_to_workspace(&self, p: &Path) -> String {
-        p.strip_prefix(&self.workspace)
-            .unwrap_or(p)
-            .to_string_lossy()
-            .into_owned()
+        rel_path(&self.workspace, p)
+    }
+
+    /// Toggle the editor's blame-gutter mode for the active buffer (computing
+    /// `git blame` when turning it on).
+    pub fn toggle_blame(&mut self) {
+        let Some(cur) = self.active else { return };
+        let already_on = matches!(self.panes.get(cur), Some(Pane::Editor(b)) if b.blame.is_some());
+        if already_on {
+            if let Some(Pane::Editor(b)) = self.panes.get_mut(cur) {
+                b.blame = None;
+            }
+            self.toast("blame: off");
+            return;
+        }
+        let rel = match self.panes.get(cur) {
+            Some(Pane::Editor(b)) => match &b.path {
+                Some(p) => rel_path(&self.workspace, p),
+                None => {
+                    self.toast("blame needs a saved file");
+                    return;
+                }
+            },
+            _ => {
+                self.toast("blame: not an editor");
+                return;
+            }
+        };
+        let lines = crate::git::blame::blame(&self.workspace, &rel);
+        if lines.is_empty() {
+            self.toast("git blame returned nothing (untracked file?)");
+            return;
+        }
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(cur) {
+            b.blame = Some(lines);
+        }
+        self.toast("blame: on");
+    }
+
+    /// If a buffer with blame mode on was just saved, recompute its blame.
+    fn refresh_blame_for(&mut self, path: &Path) {
+        let rel = rel_path(&self.workspace, path);
+        let ws = self.workspace.clone();
+        for pane in &mut self.panes {
+            if let Pane::Editor(b) = pane
+                && b.blame.is_some()
+                && b.is_at(path)
+            {
+                b.blame = Some(crate::git::blame::blame(&ws, &rel));
+            }
+        }
     }
     fn fetch_diff(&self, scope: &crate::pane::DiffScope) -> Vec<crate::git::diff::Hunk> {
         use crate::pane::DiffScope;
@@ -827,6 +883,7 @@ impl App {
         };
         if let Some(p) = saved_path {
             self.refresh_md_previews(&p);
+            self.refresh_blame_for(&p);
         }
     }
     pub fn save_all(&mut self) {
@@ -848,6 +905,7 @@ impl App {
         self.disarm_quit();
         for p in saved {
             self.refresh_md_previews(&p);
+            self.refresh_blame_for(&p);
         }
         self.toast(format!("saved {n} file(s)"));
     }

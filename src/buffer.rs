@@ -45,6 +45,9 @@ pub struct Buffer {
     /// Cached syntax highlighting — one span list per editor line. Recomputed on
     /// open and after every text-changing edit (cheap for normal-sized files).
     pub highlights: Vec<Vec<ColoredSpan>>,
+    /// `Some` ⇔ blame-gutter mode is on for this buffer (`git.blame_toggle`):
+    /// one entry per file line, computed when toggled on, refreshed on save.
+    pub blame: Option<Vec<crate::git::blame::BlameLine>>,
 }
 
 impl Buffer {
@@ -67,6 +70,7 @@ impl Buffer {
             input: input::make_handler(cfg),
             read_only: false,
             highlights: Vec::new(),
+            blame: None,
         };
         b.refresh_highlights();
         Ok(b)
@@ -91,6 +95,7 @@ impl Buffer {
             input: input::make_handler(cfg),
             read_only: false,
             highlights: Vec::new(),
+            blame: None,
         }
     }
 
