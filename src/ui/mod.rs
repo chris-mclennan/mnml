@@ -31,6 +31,7 @@ pub mod prompt;
 pub mod pty_view;
 pub mod request_view;
 pub mod statusline;
+pub mod tests_view;
 pub mod theme;
 pub mod tree_view;
 pub mod welcome;
@@ -167,6 +168,7 @@ fn render_layout(
                 Some(crate::pane::Pane::Request(_)) => 3,
                 Some(crate::pane::Pane::Pty(_)) => 4,
                 Some(crate::pane::Pane::Ai(_)) => 5,
+                Some(crate::pane::Pane::Tests(_)) => 6,
                 _ => 0,
             };
             match kind {
@@ -175,6 +177,7 @@ fn render_layout(
                 3 => request_view::draw(frame, app, *id, area, focused),
                 4 => pty_view::draw(frame, app, *id, area, focused),
                 5 => ai_view::draw(frame, app, *id, area, focused),
+                6 => tests_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

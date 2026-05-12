@@ -295,6 +295,42 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // A tests pane: ↑↓ select, Enter → jump to the test's source, r re-run (same
+    // args), a/f run all/file, R re-run last-failed, Esc → tree.
+    if matches!(app.panes.get(i), Some(Pane::Tests(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.tests_move_selection(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.tests_move_selection(1),
+            KeyCode::PageUp => {
+                if let Some(Pane::Tests(t)) = app.panes.get_mut(i) {
+                    t.scroll = t.scroll.saturating_sub(viewport);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::Tests(t)) = app.panes.get_mut(i) {
+                    t.scroll += viewport;
+                }
+            }
+            KeyCode::Char('g') => {
+                if let Some(Pane::Tests(t)) = app.panes.get_mut(i) {
+                    t.scroll = 0;
+                }
+            }
+            KeyCode::Char('G') => {
+                if let Some(Pane::Tests(t)) = app.panes.get_mut(i) {
+                    t.scroll = usize::MAX;
+                }
+            }
+            KeyCode::Enter => app.jump_to_selected_test(),
+            KeyCode::Char('r') => app.rerun_active_tests(),
+            KeyCode::Char('R') => app.rerun_failed_tests(),
+            KeyCode::Char('a') => app.run_tests_all(),
+            KeyCode::Char('f') => app.run_tests_file(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // An AI pane: read-only — scroll, `r` re-ask, `c` continue in interactive
     // Claude Code (resumes the session), Esc → tree.
     if let Some(Pane::Ai(a)) = app.panes.get_mut(i) {
@@ -588,6 +624,14 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     a.scroll.saturating_sub(n)
                 } else {
                     a.scroll + n
+                };
+            }
+            Some(Pane::Tests(t)) => {
+                let n = delta.unsigned_abs() as usize;
+                t.scroll = if delta < 0 {
+                    t.scroll.saturating_sub(n)
+                } else {
+                    t.scroll + n
                 };
             }
             None => {}

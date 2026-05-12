@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use crate::ai::AiPane;
 use crate::buffer::Buffer;
 use crate::git::diff::Hunk;
+use crate::playwright::TestsPane;
 use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
 
@@ -29,6 +30,8 @@ pub enum Pane {
     Pty(PtySession),
     /// An AI one-shot (`claude -p`) prompt + its answer.
     Ai(AiPane),
+    /// A Playwright test run + its results tree.
+    Tests(TestsPane),
 }
 
 pub struct MdPreview {
@@ -99,6 +102,7 @@ impl Pane {
             Pane::Request(r) => r.title(),
             Pane::Pty(s) => s.title(),
             Pane::Ai(a) => a.tab_title(),
+            Pane::Tests(t) => t.tab_title(),
         }
     }
 
@@ -106,9 +110,12 @@ impl Pane {
     pub fn is_dirty(&self) -> bool {
         match self {
             Pane::Editor(b) => b.dirty,
-            Pane::MdPreview(_) | Pane::Diff(_) | Pane::Request(_) | Pane::Pty(_) | Pane::Ai(_) => {
-                false
-            }
+            Pane::MdPreview(_)
+            | Pane::Diff(_)
+            | Pane::Request(_)
+            | Pane::Pty(_)
+            | Pane::Ai(_)
+            | Pane::Tests(_) => false,
         }
     }
 

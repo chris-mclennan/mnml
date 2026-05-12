@@ -123,11 +123,17 @@ pub struct App {
         std::sync::mpsc::Sender<AiJobDone>,
         std::sync::mpsc::Receiver<AiJobDone>,
     )>,
+    /// Channel for background `npx playwright test` runs → the matching `Pane::Tests`.
+    tests_chan: Option<(
+        std::sync::mpsc::Sender<TestsJobDone>,
+        std::sync::mpsc::Receiver<TestsJobDone>,
+    )>,
     next_job_id: u64,
 }
 
 type HttpJobDone = (u64, Result<crate::request_pane::ResponseView, String>);
 type AiJobDone = (u64, Result<String, String>);
+type TestsJobDone = (u64, Result<crate::playwright::TestRun, String>);
 
 impl App {
     pub fn new(workspace: PathBuf, config: Config) -> Result<App, String> {
@@ -161,6 +167,7 @@ impl App {
             prompt: None,
             http_chan: None,
             ai_chan: None,
+            tests_chan: None,
             next_job_id: 1,
         })
     }
@@ -399,6 +406,7 @@ impl App {
             | Some(Pane::Request(_))
             | Some(Pane::Pty(_))
             | Some(Pane::Ai(_))
+            | Some(Pane::Tests(_))
             | None => None,
         };
         let new_buf = match path {
@@ -446,7 +454,8 @@ impl App {
             | Some(Pane::Diff(_))
             | Some(Pane::Request(_))
             | Some(Pane::Pty(_))
-            | Some(Pane::Ai(_)) => {
+            | Some(Pane::Ai(_))
+            | Some(Pane::Tests(_)) => {
                 self.toast("not a markdown file");
                 return;
             }
@@ -814,6 +823,200 @@ impl App {
         }
         for t in toasts {
             self.toast(t);
+        }
+    }
+
+    // ─── Playwright: test runner ────────────────────────────────────
+    /// Open a `Pane::Tests` and kick off `npx playwright test --reporter=json
+    /// <extra_args>` on a worker thread (`tick` delivers the results).
+    fn run_playwright(&mut self, extra_args: Vec<String>) {
+        let job_id = self.next_job_id;
+        self.next_job_id += 1;
+        let tx = self
+            .tests_chan
+            .get_or_insert_with(std::sync::mpsc::channel)
+            .0
+            .clone();
+        let ws = self.workspace.clone();
+        let args = extra_args.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send((job_id, crate::playwright::run(&ws, &args)));
+        });
+        // Re-use an existing tests pane if there is one; else open a split.
+        if let Some(id) = self.panes.iter().position(|p| matches!(p, Pane::Tests(_))) {
+            if let Some(Pane::Tests(t)) = self.panes.get_mut(id) {
+                t.state = crate::playwright::TestsState::Running;
+                t.last_args = extra_args;
+                t.job_id = job_id;
+                t.scroll = 0;
+                t.selected = 0;
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::Tests(crate::playwright::TestsPane::new(
+            self.workspace.clone(),
+            extra_args,
+            job_id,
+        ));
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// `test.run_all` — the whole Playwright suite.
+    pub fn run_tests_all(&mut self) {
+        self.run_playwright(Vec::new());
+    }
+
+    /// `test.run_file` — the active editor's spec file.
+    pub fn run_tests_file(&mut self) {
+        match self.active_editor().and_then(|b| b.path.as_deref()) {
+            Some(p) => {
+                let rel = rel_path(&self.workspace, p);
+                self.run_playwright(vec![rel]);
+            }
+            None => self.toast("open a .spec file first"),
+        }
+    }
+
+    /// `test.run_at_cursor` — the test at the cursor (Playwright's `file:line` selector).
+    pub fn run_tests_at_cursor(&mut self) {
+        match self.active_editor() {
+            Some(b) => match &b.path {
+                Some(p) => {
+                    let rel = rel_path(&self.workspace, p);
+                    let line = b.editor.row_col().0 + 1;
+                    self.run_playwright(vec![format!("{rel}:{line}")]);
+                }
+                None => self.toast("open a saved .spec file first"),
+            },
+            None => self.toast("open a .spec file first"),
+        }
+    }
+
+    /// `test.rerun_failed` — re-run just the failures of the last run (Playwright's `--last-failed`).
+    pub fn rerun_failed_tests(&mut self) {
+        self.run_playwright(vec!["--last-failed".to_string()]);
+    }
+
+    /// `r` in a tests pane — re-run with the same args as last time.
+    pub fn rerun_active_tests(&mut self) {
+        let args = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Tests(t)) => t.last_args.clone(),
+            _ => return,
+        };
+        self.run_playwright(args);
+    }
+
+    /// Jump the editor to the source of the highlighted test in a `Pane::Tests`.
+    pub fn jump_to_selected_test(&mut self) {
+        let Some(cur) = self.active else { return };
+        let (rel, line) = match self.panes.get(cur) {
+            Some(Pane::Tests(t)) => match t.selected_test() {
+                Some(tc) if !tc.file.is_empty() => {
+                    (tc.file.clone(), tc.line.saturating_sub(1) as usize)
+                }
+                _ => return,
+            },
+            _ => return,
+        };
+        let path = self.workspace.join(&rel);
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&path)))
+        {
+            if let Some(Pane::Editor(b)) = self.panes.get_mut(id) {
+                b.editor.place_cursor(line, 0);
+            }
+            self.active = Some(id);
+            self.focus = Focus::Pane;
+        } else {
+            self.open_path(&path);
+            if let Some(Pane::Editor(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+                b.editor.place_cursor(line, 0);
+            }
+        }
+    }
+
+    /// Move the highlighted-test cursor in a `Pane::Tests`.
+    pub fn tests_move_selection(&mut self, delta: isize) {
+        if let Some(Pane::Tests(t)) = self.active.and_then(|i| self.panes.get_mut(i))
+            && let crate::playwright::TestsState::Done(r) = &t.state
+        {
+            let n = r.tests.len();
+            if n == 0 {
+                return;
+            }
+            let new = (t.selected as isize + delta).clamp(0, n as isize - 1) as usize;
+            t.selected = new;
+        }
+    }
+
+    fn drain_tests_jobs(&mut self) {
+        use crate::playwright::TestsState;
+        let Some((_, rx)) = &self.tests_chan else {
+            return;
+        };
+        let done: Vec<TestsJobDone> = rx.try_iter().collect();
+        let mut toasts: Vec<String> = Vec::new();
+        for (job_id, result) in done {
+            let Some(Pane::Tests(t)) = self.panes.iter_mut().find(
+                |p| matches!(p, Pane::Tests(t) if t.job_id == job_id && matches!(t.state, TestsState::Running)),
+            ) else {
+                continue;
+            };
+            match result {
+                Ok(run) => {
+                    let (p, f, s) = (run.passed(), run.failed(), run.skipped());
+                    toasts.push(if f > 0 {
+                        format!(
+                            "tests: {f} failed, {p} passed{}",
+                            if s > 0 {
+                                format!(", {s} skipped")
+                            } else {
+                                String::new()
+                            }
+                        )
+                    } else {
+                        format!(
+                            "tests: all {p} passed{}",
+                            if s > 0 {
+                                format!(" ({s} skipped)")
+                            } else {
+                                String::new()
+                            }
+                        )
+                    });
+                    t.selected = run
+                        .tests
+                        .iter()
+                        .position(|tc| tc.status == crate::playwright::TestStatus::Failed)
+                        .unwrap_or(0);
+                    t.state = TestsState::Done(Box::new(run));
+                }
+                Err(e) => {
+                    toasts.push(format!(
+                        "playwright: {}",
+                        e.lines().next().unwrap_or("error")
+                    ));
+                    t.state = TestsState::Failed(e);
+                }
+            }
+        }
+        for tt in toasts {
+            self.toast(tt);
         }
     }
 
@@ -1362,9 +1565,12 @@ impl App {
         }
         let discarded = match &self.panes[id] {
             Pane::Editor(b) => b.dirty.then(|| b.display_name()),
-            Pane::MdPreview(_) | Pane::Diff(_) | Pane::Request(_) | Pane::Pty(_) | Pane::Ai(_) => {
-                None
-            }
+            Pane::MdPreview(_)
+            | Pane::Diff(_)
+            | Pane::Request(_)
+            | Pane::Pty(_)
+            | Pane::Ai(_)
+            | Pane::Tests(_) => None,
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -1439,6 +1645,7 @@ impl App {
             Pane::Request(r) => Some((r.title(), false)),
             Pane::Pty(s) => Some((s.title(), false)),
             Pane::Ai(a) => Some((a.tab_title(), false)),
+            Pane::Tests(t) => Some((t.tab_title(), false)),
         }
     }
 
@@ -1724,6 +1931,7 @@ impl App {
         self.git.tick();
         self.drain_http_jobs();
         self.drain_ai_jobs();
+        self.drain_tests_jobs();
         self.refresh_live_ai_panes();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL

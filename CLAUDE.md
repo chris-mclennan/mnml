@@ -177,6 +177,17 @@ mirror for the active `claude`/Ai pane; `c`-promoting a `Pane::Ai` also flips th
 live mirror of the (now-interactive) session. `G` follows the bottom. *Follow-ups:* parse a returned
 patch into a `Pane::Diff` with accept/reject; request-debug (`Ctrl+.` on a failing request →
 `claude -p`); pty scrollback; cancel a running one-shot; incremental JSONL parse from `last_len`.
+**Playwright track — runner + results tree done:** `src/playwright/mod.rs` runs `npx playwright test
+--reporter=json [args]` on a worker thread (`App.tests_chan` / `App::tick`), parses the JSON report
+into a flat `TestRun{tests: Vec<TestCase{title,suite_path,file,line,status,duration_ms,error}>}` (ANSI
+stripped from error messages); `Pane::Tests(TestsPane{state:Running|Done|Failed,...})` shows the
+command + a ✓/✗/≈/⊘ tally + the tests grouped by file (highlighted selection, failure error inline) —
+`src/ui/tests_view.rs`. Commands `test.run_all` / `test.run_file` / `test.run_at_cursor` (Playwright's
+`file:line` selector) / `test.rerun_failed` (`--last-failed`) under `<leader>T` (`+test` a/f/t/l); in
+the pane ↑↓ select, Enter jumps to the test's source, `r` re-runs (same args), `a`/`f` run all/file,
+`R` last-failed, Esc → tree. *Follow-ups (per `.local/PLAN.md`):* trace support (`show-trace` → a native
+text-timeline `Pane::Trace`), heal-with-Claude from a failed test, the `[feature: private]` DocDB live
+`Pane::TestExecutions` (dev+staging+prod in one panel) + CodeBuild, a flaky-test dashboard.
 Then: LSP, CDP, the `.test` E2E format, plugins; plus queued polish (right-click context menus on
 files/tabs, line-wrapped preview). See `.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.

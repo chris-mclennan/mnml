@@ -30,6 +30,7 @@ pub mod ipc;
 pub mod layout;
 pub mod pane;
 pub mod picker;
+pub mod playwright;
 pub mod prompt;
 pub mod pty_pane;
 pub mod request_pane;
