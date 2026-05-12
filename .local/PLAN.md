@@ -35,8 +35,8 @@ generic fuzzy picker overlay; NvChad onedark theme, devicons, tree-sitter highli
 - **LSP** — client subsystem; completion, go-to-def, hover, diagnostics, rename; config-driven server table.
 - **Git (rich)** — status chip (early) → diff pane, stage/unstage hunks, blame gutter, commit from inside the IDE.
 - **Search** — ripgrep-backed project search + search/replace, results into the picker.
-- **Pty / AI-CLI panes** — shell, `claude` CLI, `codex`, as `Pane::Pty`; tail Claude Code's session JSONL (and Codex's if it has one) so a CLI pane and the in-IDE AI view share a conversation.
-- **AI (API-based)** — embedded chat panel (Claude/OpenAI), workspace-aware **tool use** (read/write files w/ diff approval, grep, run request, run command, get diagnostics…), AI-on-selection actions (explain / refactor / fix / write tests → diff you accept), AI request-debugging in the request pane.
+- **Pty / AI-CLI panes** (the AI track) — shell, `claude` CLI, `codex`, as `Pane::Pty`; tail Claude Code's session JSONL (and Codex's if it has one) so a CLI pane and the in-IDE AI view share a conversation. **AI-on-selection actions** (explain / refactor / fix / write tests → a diff you accept) and **request-debug** (`Ctrl+.` on a failing request) are *one-shot `claude -p` subprocesses* (the CLI in print/non-interactive mode — does tool use, returns text, reuses the user's auth), not a raw-API client. **Decision:** the CLIs already do tool use / file edits / agentic loops / MCP and the vendors keep them current — re-implementing that as an API client (provider abstraction, tool registry, diff-approval UI, SSE streaming, rate-limit handling, key management) is a large surface for something that exists. So the AI track is pty + `claude -p`, no embedded API client.
+- ~~**AI (API-based)**~~ — *deferred / probably skipped.* A raw Claude/OpenAI client (`ai/provider.rs`) would only earn its keep for fully headless/scripted AI in the `.test` harness with no subprocess, or for users who want OpenAI without the CLIs. Not gating anything; revisit behind `[ai]` config only if there's real demand.
 - **HTTP** — request capability baked into mnml (its own `src/http/` modules — *port* rqst's logic, not a `rqst` crate dep): paste-a-curl, `.http`/`.rest`/`.curl` files into a `Pane::Request`, request chains, `@assert`/`@capture`, `{{var}}`/`{{$uuid}}` templating, OpenAPI→stub discovery, history; headless `mnml run file.curl` / `mnml chain run x.chain.json`.
 - **CDP / web** — launch Chrome with remote debugging, JSON-RPC over WebSocket, capture network → curl, drive a page (navigate/click/eval); feeds the request pane *and* the E2E web tests.
 - **E2E test format** — a declarative `.test` format (steps + expectations) run against the headless+IPC harness (and CDP for web flows); mnml's own UI test suite is written in it; reusable for testing other TUIs.
@@ -127,13 +127,14 @@ src/
                      .mnml project context like mnml1). Threaded read pump → channel. Pane::Pty. ai/claude_code.rs tails
                      the session JSONL these write so the in-IDE AI view stays in sync.
 
-  ai/mod.rs          (AI track) AiPanel state (conversation, streaming, tool-call log). ai/provider.rs (Claude API +
-                     OpenAI API clients — port rqst's claude/openai; reqwest). ai/claude_code.rs (tail Claude Code /
-                     Codex session JSONL; emit into the same conversation). ai/tools.rs (tool registry the API path can
-                     call — read_file, write_file(diff-approved), list_dir, grep, run_request, run_command, get_diagnostics,
-                     git_status, open_file, …; allow/deny from [tools] config). ai/actions.rs (on-selection commands:
-                     explain / refactor / fix / write-tests → produce a diff → DiffView with accept/reject). ai/debug.rs
-                     (request-debug flow — port rqst's). Pane::Ai for the chat; actions surface as Commands.
+  ai/mod.rs          (AI track — pty + `claude -p`, NOT a raw-API client) ai/claude_code.rs (tail the Claude Code /
+                     Codex session JSONL so the in-IDE view mirrors the CLI pane's conversation; emit into the same view).
+                     ai/oneshot.rs (run `claude -p "<prompt>"` as a subprocess on a thread → capture stdout). ai/actions.rs
+                     (on-selection commands: explain / refactor / fix / write-tests → feed the selection to `claude -p` →
+                     show the answer, or parse a proposed patch → DiffView with accept/reject). ai/debug.rs (request-debug:
+                     `Ctrl+.` on a failing request → `claude -p` with the request+response). Surface as Commands; Pane::Ai is
+                     the conversation view (shared with the JSONL tail). [ai/provider.rs — a raw Claude/OpenAI client — is
+                     deferred; only worth it for headless `.test` AI with no subprocess. Don't build unless asked.]
 
   http/mod.rs        (HTTP track) Request { method, url, headers, body }; send via reqwest (blocking); Response capture.
   http/curl.rs       Parse a pasted curl → Request. (Port rqst/src/curl.rs.)
@@ -277,7 +278,8 @@ Vim chord state is private to `vim.rs`; `on_blur()` resets it. CI grep later: `g
 
 Editor core lands first (P0–P3) because everything else plugs into the `Pane`/`Command` spine. After that the tracks
 are independent — do whichever is most useful next. Suggested early order once core is solid: Vim → Git(status→diff) →
-HTTP → Pty/AI-CLI → LSP → AI-API → CDP → E2E format → Plugins → polish/laters. **The IPC + headless harness is built
+HTTP → Pty/AI-CLI (the AI track — pty panes + `claude -p` one-shots) → LSP → CDP → E2E format → Plugins →
+polish/laters. (A raw AI-API client is deferred — see the AI track note.) **The IPC + headless harness is built
 inside P0–P1, not as a track** — it's load-bearing for testing everything after.
 
 **P0 — skeleton compiles, opens a workspace, renders chrome, headless+IPC stub works.**
@@ -338,12 +340,16 @@ user will test with their account). Commands: `term.shell`, `ai.claude_code`, `a
 spawn Claude Code in another, `Esc` back to the editor, resize doesn't corrupt; the AI chat view (next track) shows the
 CLI conversation.
 
-**Track — AI (API-based).** `ai/provider.rs` (Claude + OpenAI clients — port rqst's); `ai/tools.rs` (tool registry —
-read_file, write_file(diff-approved), list_dir, grep, run_request, run_command, get_diagnostics, git_status, open_file…;
-allow/deny from `[tools]`); `ai/mod.rs` + `ai/actions.rs` + `ai/debug.rs`; `Pane::Ai` + `ui/ai_view.rs` (streaming text,
-tool-call cards, diff accept/reject); on-selection commands `ai.explain`/`ai.refactor`/`ai.fix`/`ai.write_tests` (→ produce
-a diff → `Pane::Diff` accept/reject); request-pane `Ctrl+.` → `ai.debug_request`. The chat shares state with the CLI-pane
-JSONL tail so "agentic via Claude Code CLI" and "API chat" are one conversation surface. *Done when:* ask the AI panel to
+**Track — AI (folded into the Pty/AI-CLI track — `claude -p` one-shots, not a raw-API client).** Beyond the CLI panes:
+`ai/oneshot.rs` (spawn `claude -p "<prompt>"` on a thread, capture stdout via the same channel pattern as the pty pump);
+`ai/actions.rs` (on-selection commands `ai.explain`/`ai.refactor`/`ai.fix`/`ai.write_tests` → feed the selection + a task
+prompt to `claude -p` → show the answer, or — when the prompt asks for a patch — parse it to a `Pane::Diff` with
+accept/reject); `ai/debug.rs` (`Ctrl+.` on a failing request → `claude -p` with the request+response → suggested fix);
+`Pane::Ai` + `ui/ai_view.rs` is the conversation view, kept in sync with the CLI pane via the JSONL tail. *Why no API
+client:* the CLIs already do tool use / file edits / agentic loops / MCP and the vendors keep them current; an embedded
+client (provider abstraction, tool registry, diff-approval UI, SSE streaming, rate-limit handling, key management) is a
+large surface for a capability that exists. `ai/provider.rs` stays deferred — revisit only for headless `.test` AI with no
+subprocess, behind `[ai]` config. *Done when:* ask the AI panel to
 "add a test for this function", it reads the file via a tool call, proposes a diff, you accept it; select a block → "explain"
 streams an answer; a failing request → `Ctrl+.` → AI proposes a fix.
 
@@ -393,7 +399,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 tungstenite = "0.24"
 # LSP track
 lsp-types = "0.97"          # types only; we manage the subprocess + JSON-RPC ourselves on a thread
-# AI track: reuses reqwest + serde_json (Claude/OpenAI REST). No extra deps unless streaming SSE wants `eventsource-stream`.
+# AI track: no extra deps — it shells out to `claude` / `codex` (pty panes + `claude -p` one-shots) and tails session JSONL (serde_json). (A raw Claude/OpenAI client is deferred; if ever built it reuses reqwest + serde_json.)
 # tree-sitter (P2) — grammars bump independently; isolate quirks in highlight.rs::build_config
 tree-sitter = "0.26"; tree-sitter-highlight = "0.26"
 tree-sitter-rust = "0.24"; tree-sitter-javascript = "0.25"; tree-sitter-typescript = "0.23"; tree-sitter-python = "0.25"
@@ -425,8 +431,7 @@ Manual / harness checklist per phase/track:
 - **P3:** vim Normal motions (`hjkl w b 0 $ gg G 5G`), `i a o O`/`Esc`, `x dd yy p u Ctrl-R`, `v`/`V` + motion + `y`/`d`, `:w :q :wq :q!`, `ZZ`/`ZQ`, `<leader>` which-key; block cursor Normal / bar Insert; `--input standard` identical to P1, no mode chip; remap a key via `[keys.*]` and see it take effect; `Ctrl+\` splits, edit two files side by side, `Ctrl+W l` moves focus, drag the border to resize.
 - **Git track:** dirty repo → gutter change marks; diff pane; stage a hunk; commit; blame mode shows authors.
 - **HTTP track:** Enter on `.curl`/`.http` → request pane; `{{VAR}}` from `.mnml/env/dev.env`; `Ctrl+R` sends, status/timing/`@assert`/`@capture` render; `Ctrl+Y` copies as curl; `mnml run file.curl` exits non-zero on a failed assertion; `mnml chain run x.chain.json` threads vars.
-- **Pty/AI-CLI track:** `Ctrl+T` shell pane works; `Ctrl+Shift+A` Claude Code pane; `Esc` releases; resize doesn't corrupt; the AI chat view shows the CLI conversation.
-- **AI-API track:** AI panel "add a test for this function" → tool-call reads the file → proposes a diff → accept applies it; select block → "explain" streams; failing request → `Ctrl+.` → AI proposes a fix; deny-listed tools are refused.
+- **Pty/AI-CLI track:** `Ctrl+T` shell pane works; `Ctrl+Shift+A` Claude Code pane; `Esc` releases; resize doesn't corrupt; the in-IDE AI view mirrors the CLI conversation (JSONL tail); select a block → "explain" → `claude -p` answer; "write tests" → proposed patch → `Pane::Diff` accept applies it; failing request → `Ctrl+.` → `claude -p` suggests a fix.
 - **CDP track:** `cdp.launch` opens Chrome; browse; captured requests appear; "copy as curl" → request pane → replay; a web `.test` drives a page and asserts on captured traffic.
 - **E2E track:** `cargo test` runs the `.test` suite headlessly; a `.test` failure points at the failing step/expect; mouse steps exercise the same hit-test path as a real click.
 - **Plugin track:** a standalone script registers a palette command that appears in `Ctrl+Shift+P` and runs.
