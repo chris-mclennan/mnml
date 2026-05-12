@@ -14,16 +14,28 @@ use crate::focus::Focus;
 use crate::git::status::FileState;
 use crate::ui::{icons, theme};
 
-/// The rail's background — same as the editor body so they blend.
-const RAIL_BG: Color = theme::BG_DARK;
+/// The rail's background — NvChad's `darker_black`, a touch darker than the
+/// editor body (`black`) so the panels read as distinct.
+const RAIL_BG: Color = theme::BG_DARKER;
 const CHEVRON_OPEN: &str = "\u{f107}"; //  (angle-down)
 const CHEVRON_CLOSED: &str = "\u{f105}"; //  (angle-right)
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(Paragraph::new("").style(Style::default().bg(RAIL_BG)), area);
-    if area.height == 0 || area.width == 0 {
+    app.rects.tree = None;
+    if area.height < 2 || area.width == 0 {
         return;
     }
+    // A blank line above the first entry (NvChad leaves the tree a little breathing
+    // room at the top). Everything below — and the mouse hitbox — uses `inner`.
+    let inner = Rect {
+        x: area.x,
+        y: area.y + 1,
+        width: area.width,
+        height: area.height - 1,
+    };
+    app.rects.tree = Some(inner);
+    let area = inner;
     let width = area.width as usize;
     let rows = app.tree.visible_rows();
     let cursor = app.tree.cursor();

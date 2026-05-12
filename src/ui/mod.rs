@@ -69,9 +69,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let (bufferline_area, body_area) = (r[0], r[1]);
 
     // ── tree rail (full height of `upper`) ──
+    // (tree_view records `app.rects.tree` itself — it's the inner rect below the
+    // blank top line, so the mouse maths line up.)
     if let Some(ta) = tree_area {
         tree_view::draw(frame, app, ta);
-        app.rects.tree = Some(ta);
     } else {
         app.rects.tree = None;
     }
