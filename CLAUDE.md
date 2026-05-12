@@ -244,10 +244,22 @@ up in the palette + resolves as a keybinding (`Keymap::bind`), and invoking it (
 appends a `{"event":"plugin-command","id":…}` line via `ipc::drain_plugin_events` (called once per run-loop
 tick) for the owning plugin to react to; `command::run` falls back to `App::run_dynamic_command` after the
 builtin lookup. Protocol + limits documented in `docs/PLUGINS.md` (and it contrasts plugins [out-of-process,
-IPC] with Cargo features [compiled-in]); `examples/plugins/insert-timestamp.sh` is a working example. Then:
-LSP, CDP, more `.test` coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native
-launcher actions), Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus
-queued polish (line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.
+IPC] with Cargo features [compiled-in]); `examples/plugins/insert-timestamp.sh` is a working example.
+**LSP — first cut:** `src/lsp/{mod,client}.rs` — one server subprocess per `(project-root, language)`, JSON-RPC
+over stdio on a reader thread that forwards `publishDiagnostics` + `definition`/`hover` responses (and replies
+`null` to server→client requests so strict servers don't stall) over an mpsc channel `App::tick` drains.
+Servers from `[lsp.<name>]` config (`cmd`/`args`/`extensions`/`root_markers`/`language_id`) layered over
+built-in defaults (rust-analyzer / pyright-langserver / typescript-language-server / gopls / clangd); an
+uninstalled/dying server just disables LSP for that language (no retry, one toast). Wiring: `did_open` on
+open, `did_save` on save, `did_close` when the last pane for a file closes, a lazy `did_change` before
+goto/hover; diagnostics land on `buffer.diagnostics` → `editor_view` paints a severity dot in the gutter
+sign cell + tints the line number, `statusline` shows error/warning counts. Commands `lsp.goto_definition`
+(`F12` / `<leader>l d`) + `lsp.hover` (`<leader>l h`, toasts the first line). Known simplifications (in
+`src/lsp/mod.rs`): full-text + on-save doc sync, char-offset columns, `initialize` not awaited before
+`didOpen`. Then: completion/rename/references + a hover popup + diagnostics list pane (LSP follow-ups), CDP,
+more `.test` coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native launcher
+actions), Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus queued
+polish (line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)
