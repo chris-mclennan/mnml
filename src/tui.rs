@@ -218,6 +218,32 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // A git diff pane: scroll, `n`/`p` move the cursor hunk, `s`/`u` stage/unstage,
+    // `r` refresh, Enter jump to the hunk in the source, Esc → tree.
+    if let Some(Pane::Diff(d)) = app.panes.get_mut(i) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => d.scroll = d.scroll.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => d.scroll += 1,
+            KeyCode::PageUp => d.scroll = d.scroll.saturating_sub(viewport),
+            KeyCode::PageDown => d.scroll += viewport,
+            KeyCode::Char('n') | KeyCode::Char(']') => {
+                d.cursor = (d.cursor + 1).min(d.hunks.len().saturating_sub(1));
+            }
+            KeyCode::Char('p') | KeyCode::Char('[') => d.cursor = d.cursor.saturating_sub(1),
+            KeyCode::Home | KeyCode::Char('g') => {
+                d.scroll = 0;
+                d.cursor = 0;
+            }
+            KeyCode::End | KeyCode::Char('G') => d.scroll = usize::MAX,
+            KeyCode::Char('s') => app.apply_cursor_hunk(false),
+            KeyCode::Char('u') => app.apply_cursor_hunk(true),
+            KeyCode::Char('r') => app.refresh_active_diff(),
+            KeyCode::Enter => app.jump_to_cursor_hunk(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // `b` borrows app.panes; `&mut app.clipboard` is a disjoint field — fine.
     let ev = match app.panes.get_mut(i) {
         Some(Pane::Editor(b)) => b.feed_key(key, &mut app.clipboard, viewport),
@@ -448,6 +474,14 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     p.scroll.saturating_sub(n)
                 } else {
                     p.scroll + n
+                };
+            }
+            Some(Pane::Diff(d)) => {
+                let n = delta.unsigned_abs() as usize;
+                d.scroll = if delta < 0 {
+                    d.scroll.saturating_sub(n)
+                } else {
+                    d.scroll + n
                 };
             }
             None => {}

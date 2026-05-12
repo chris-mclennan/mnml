@@ -360,7 +360,7 @@ impl App {
         let path = match self.panes.get(cur) {
             Some(Pane::Editor(b)) => b.path.clone(),
             Some(Pane::MdPreview(p)) => Some(p.path.clone()),
-            None => None,
+            Some(Pane::Diff(_)) | None => None,
         };
         let new_buf = match path {
             Some(p) => {
@@ -403,7 +403,7 @@ impl App {
         };
         let path = match self.panes.get(cur) {
             Some(Pane::Editor(b)) if b.language_ext.as_deref() == Some("md") => b.path.clone(),
-            Some(Pane::Editor(_)) => {
+            Some(Pane::Editor(_)) | Some(Pane::Diff(_)) => {
                 self.toast("not a markdown file");
                 return;
             }
@@ -451,6 +451,132 @@ impl App {
                     p.source = s.clone();
                 }
                 p.scroll = 0;
+            }
+        }
+    }
+
+    // ─── git diff pane ──────────────────────────────────────────────
+    /// Workspace-relative path of an arbitrary path, for `git` arguments.
+    fn rel_to_workspace(&self, p: &Path) -> String {
+        p.strip_prefix(&self.workspace)
+            .unwrap_or(p)
+            .to_string_lossy()
+            .into_owned()
+    }
+    fn fetch_diff(&self, scope: &crate::pane::DiffScope) -> Vec<crate::git::diff::Hunk> {
+        use crate::pane::DiffScope;
+        match scope {
+            DiffScope::Unstaged(Some(p)) => {
+                crate::git::diff::diff_file(&self.workspace, &self.rel_to_workspace(p))
+            }
+            DiffScope::Unstaged(None) => crate::git::diff::diff_worktree(&self.workspace),
+            DiffScope::Staged => crate::git::diff::diff_staged(&self.workspace),
+        }
+    }
+    /// Open a `git diff` view of the active editor's file, in a split to the right.
+    pub fn open_diff_file(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("no active buffer");
+            return;
+        };
+        let path = match self.panes.get(cur) {
+            Some(Pane::Editor(b)) => b.path.clone(),
+            Some(Pane::Diff(d)) => match &d.scope {
+                crate::pane::DiffScope::Unstaged(p) => p.clone(),
+                crate::pane::DiffScope::Staged => None,
+            },
+            _ => None,
+        };
+        let Some(path) = path else {
+            self.toast("git diff needs a saved file");
+            return;
+        };
+        let scope = crate::pane::DiffScope::Unstaged(Some(path));
+        let hunks = self.fetch_diff(&scope);
+        if hunks.is_empty() {
+            self.toast("no unstaged changes in that file");
+            return;
+        }
+        let new_id = self.split_leaf_with(
+            cur,
+            crate::layout::SplitDir::Horizontal,
+            Pane::Diff(crate::pane::DiffView::new(scope, hunks)),
+        );
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+    }
+    /// Open a `git diff` view of the whole worktree, in the focused leaf.
+    pub fn open_diff_worktree(&mut self) {
+        let scope = crate::pane::DiffScope::Unstaged(None);
+        let hunks = self.fetch_diff(&scope);
+        if hunks.is_empty() {
+            self.toast("no unstaged changes");
+            return;
+        }
+        self.panes
+            .push(Pane::Diff(crate::pane::DiffView::new(scope, hunks)));
+        let id = self.panes.len() - 1;
+        self.reveal_pane(id);
+    }
+    /// Re-run the active diff pane's `git diff` (after staging, or on demand).
+    pub fn refresh_active_diff(&mut self) {
+        let Some(cur) = self.active else { return };
+        let scope = match self.panes.get(cur) {
+            Some(Pane::Diff(d)) => d.scope.clone(),
+            _ => return,
+        };
+        let hunks = self.fetch_diff(&scope);
+        if let Some(Pane::Diff(d)) = self.panes.get_mut(cur) {
+            d.cursor = d.cursor.min(hunks.len().saturating_sub(1));
+            d.hunks = hunks;
+        }
+    }
+    /// Stage (`reverse == false`) / unstage the cursor hunk of the active diff pane.
+    pub fn apply_cursor_hunk(&mut self, reverse: bool) {
+        let Some(cur) = self.active else { return };
+        let hunk = match self.panes.get(cur) {
+            Some(Pane::Diff(d)) => d.hunks.get(d.cursor).cloned(),
+            _ => return,
+        };
+        let Some(hunk) = hunk else { return };
+        match crate::git::diff::apply_hunk(&self.workspace, &hunk, reverse) {
+            Ok(()) => {
+                self.toast(if reverse {
+                    "unstaged hunk"
+                } else {
+                    "staged hunk"
+                });
+                self.git.refresh();
+                self.refresh_active_diff();
+            }
+            Err(e) => self.toast(format!("git apply failed: {e}")),
+        }
+    }
+    /// Jump the source editor to the cursor hunk's first new-file line (if that
+    /// file is open). Used by Enter in the diff pane.
+    pub fn jump_to_cursor_hunk(&mut self) {
+        let Some(cur) = self.active else { return };
+        let (path, line) = match self.panes.get(cur) {
+            Some(Pane::Diff(d)) => match d.hunks.get(d.cursor) {
+                Some(h) => (h.file.clone(), h.new_start.saturating_sub(1)),
+                None => return,
+            },
+            _ => return,
+        };
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&path)))
+        {
+            if let Some(Pane::Editor(b)) = self.panes.get_mut(id) {
+                b.editor.place_cursor(line, 0);
+            }
+            self.active = Some(id);
+            self.focus = Focus::Pane;
+        } else {
+            self.open_path(&path);
+            if let Some(Pane::Editor(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+                b.editor.place_cursor(line, 0);
             }
         }
     }
@@ -580,7 +706,7 @@ impl App {
         }
         let discarded = match &self.panes[id] {
             Pane::Editor(b) => b.dirty.then(|| b.display_name()),
-            Pane::MdPreview(_) => None,
+            Pane::MdPreview(_) | Pane::Diff(_) => None,
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -651,6 +777,7 @@ impl App {
         match self.panes.get(id)? {
             Pane::Editor(b) => Some((b.display_name(), b.path.is_some())),
             Pane::MdPreview(p) => Some((p.title(), false)),
+            Pane::Diff(d) => Some((d.title(), false)),
         }
     }
 

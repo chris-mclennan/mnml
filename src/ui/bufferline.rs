@@ -43,6 +43,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 icons::for_path(&p, false, false, nerd)
             }
             Pane::MdPreview(p) => icons::for_path(&p.path, false, false, nerd),
+            Pane::Diff(_) => (if nerd { "\u{f0e7e}" } else { "±" }, theme::cur().orange),
         };
         let badge = if pane.is_dirty() { "●" } else { "×" };
         // ` <icon> <name> <badge> `

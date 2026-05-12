@@ -21,6 +21,7 @@
 
 pub mod bufferline;
 pub mod close_prompt;
+pub mod diff_view;
 pub mod editor_view;
 pub mod icons;
 pub mod md_preview;
@@ -147,10 +148,17 @@ fn render_layout(
         Layout::Empty => None,
         Layout::Leaf(id) => {
             let focused = app.active == Some(*id);
-            if matches!(app.panes.get(*id), Some(crate::pane::Pane::MdPreview(_))) {
-                md_preview::draw(frame, app, *id, area, focused)
-            } else {
-                editor_view::draw_pane(frame, app, *id, area, focused)
+            // Resolve the variant first so the immutable peek doesn't outlive into
+            // the `&mut App` draw call.
+            let kind: u8 = match app.panes.get(*id) {
+                Some(crate::pane::Pane::MdPreview(_)) => 1,
+                Some(crate::pane::Pane::Diff(_)) => 2,
+                _ => 0,
+            };
+            match kind {
+                1 => md_preview::draw(frame, app, *id, area, focused),
+                2 => diff_view::draw(frame, app, *id, area, focused),
+                _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }
         Layout::Split {

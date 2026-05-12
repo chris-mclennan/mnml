@@ -211,6 +211,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_md_preview(),
         },
         Command {
+            id: "git.diff_file",
+            title: "Git: diff this file (split)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_diff_file(),
+        },
+        Command {
+            id: "git.diff",
+            title: "Git: diff the worktree",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_diff_worktree(),
+        },
+        Command {
             id: "whichkey.leader",
             title: "Leader menu (which-key)",
             group: "view",

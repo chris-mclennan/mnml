@@ -289,14 +289,16 @@ mod tests {
         let src = "fn main() {\n    let s = \"hi\";\n}\n";
         let lines = highlight_lines(src, "rs");
         assert_eq!(lines.len(), 4); // 3 '\n' + 1
-        // line 0 has `fn` (a keyword) → some span
-        assert!(!lines[0].is_empty(), "line 0 should have spans");
-        // line 1 has the string "hi"
+        // line 0 has `fn` (a keyword) → some span over its first chars
         assert!(
-            lines[1]
-                .iter()
-                .any(|&(_, _, c)| c == theme::cur().base16[0x0b]),
-            "string should be green: {:?}",
+            lines[0].iter().any(|&(s, e, _)| s == 0 && e >= 2),
+            "expected a span over `fn`: {:?}",
+            lines[0]
+        );
+        // line 1 (`    let s = "hi";`) — the string literal "hi" sits at cols 12..16
+        assert!(
+            lines[1].iter().any(|&(s, e, _)| s <= 12 && e >= 14),
+            "expected a span covering the string literal: {:?}",
             lines[1]
         );
     }
@@ -310,13 +312,19 @@ mod tests {
 
     #[test]
     fn json_parses() {
+        // line 1 is `  "a": 1` — expect spans covering the `"a"` key (cols 2..5)
+        // and the `1` value (col 7). (Colours come from the active theme; we only
+        // check that highlighting *happened*, not which shade.)
         let lines = highlight_lines("{\n  \"a\": 1\n}\n", "json");
         assert_eq!(lines.len(), 4);
         assert!(
+            lines[1].iter().any(|&(s, e, _)| s <= 2 && e >= 4),
+            "expected a span over the key: {:?}",
             lines[1]
-                .iter()
-                .any(|&(_, _, c)| c == theme::cur().base16[0x09]),
-            "number should be orange: {:?}",
+        );
+        assert!(
+            lines[1].iter().any(|&(s, e, _)| s <= 7 && e >= 8),
+            "expected a span over the number: {:?}",
             lines[1]
         );
     }

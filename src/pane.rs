@@ -1,25 +1,27 @@
 //! The "open thing" abstraction. `Editor` is the workhorse; `MdPreview` is a
-//! read-only rendered-markdown view. Later tracks add `Pty`, `Request`, `Diff`,
-//! `Ai` — each is additive (a new variant + a new renderer + a `match` arm
-//! here), never a refactor of the panes that already exist.
+//! read-only rendered-markdown view; `Diff` is a `git diff` view with hunk
+//! navigation + staging. Later tracks add `Pty`, `Request`, `Ai` — each is
+//! additive (a new variant + a renderer + a `match` arm here), never a refactor.
 
 use std::path::PathBuf;
 
 use crate::buffer::Buffer;
+use crate::git::diff::Hunk;
 
-// `Editor`'s payload (`Buffer`) is much bigger than `MdPreview`'s; boxing it
-// would ripple a `Box` through every `Pane::Editor(b)` site for a handful of
-// bytes of slack in a Vec that holds ~1–10 panes. Not worth it (revisit if more
-// chunky variants land).
+// `Editor`'s payload (`Buffer`) is much bigger than the others'; boxing it would
+// ripple a `Box` through every `Pane::Editor(b)` site for a handful of bytes of
+// slack in a Vec that holds ~1–10 panes. Not worth it (revisit if more chunky
+// variants land).
 #[allow(clippy::large_enum_variant)]
 pub enum Pane {
     Editor(Buffer),
     /// A rendered-markdown view of `path`. `source` is a snapshot of the `.md`
     /// text (refreshed when the source buffer is saved); `scroll` is the top row.
     MdPreview(MdPreview),
+    /// A `git diff` view (hunk nav + stage/unstage).
+    Diff(DiffView),
     // Pty(PtySession),       // Pty / AI-CLI track
     // Request(RequestPane),  // HTTP track
-    // Diff(DiffView),        // Git / AI tracks
     // Ai(AiPanel),           // AI track
 }
 
@@ -40,12 +42,54 @@ impl MdPreview {
     }
 }
 
+/// What a [`DiffView`] is showing.
+#[derive(Debug, Clone)]
+pub enum DiffScope {
+    /// Unstaged changes — `git diff` for one file (`Some`) or the whole worktree.
+    Unstaged(Option<PathBuf>),
+    /// Staged changes — `git diff --cached`.
+    Staged,
+}
+
+pub struct DiffView {
+    pub scope: DiffScope,
+    pub hunks: Vec<Hunk>,
+    /// Top rendered row.
+    pub scroll: usize,
+    /// The "current" hunk index (what `s`/`u` act on, what `n`/`p` move).
+    pub cursor: usize,
+}
+
+impl DiffView {
+    pub fn new(scope: DiffScope, hunks: Vec<Hunk>) -> Self {
+        DiffView {
+            scope,
+            hunks,
+            scroll: 0,
+            cursor: 0,
+        }
+    }
+    pub fn title(&self) -> String {
+        match &self.scope {
+            DiffScope::Unstaged(Some(p)) => format!(
+                "diff: {}",
+                p.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            ),
+            DiffScope::Unstaged(None) => "diff: worktree".to_string(),
+            DiffScope::Staged => "diff: staged".to_string(),
+        }
+    }
+}
+
 impl Pane {
     /// Short title for the bufferline tab.
     pub fn title(&self) -> String {
         match self {
             Pane::Editor(b) => b.display_name(),
             Pane::MdPreview(p) => p.title(),
+            Pane::Diff(d) => d.title(),
         }
     }
 
@@ -53,21 +97,21 @@ impl Pane {
     pub fn is_dirty(&self) -> bool {
         match self {
             Pane::Editor(b) => b.dirty,
-            Pane::MdPreview(_) => false,
+            Pane::MdPreview(_) | Pane::Diff(_) => false,
         }
     }
 
     pub fn as_editor(&self) -> Option<&Buffer> {
         match self {
             Pane::Editor(b) => Some(b),
-            Pane::MdPreview(_) => None,
+            _ => None,
         }
     }
 
     pub fn as_editor_mut(&mut self) -> Option<&mut Buffer> {
         match self {
             Pane::Editor(b) => Some(b),
-            Pane::MdPreview(_) => None,
+            _ => None,
         }
     }
 }

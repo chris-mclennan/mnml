@@ -87,6 +87,16 @@ pub fn root() -> &'static Leader {
                     ),
                 ),
                 (
+                    'g',
+                    group(
+                        "+git",
+                        vec![
+                            ('d', cmd("git.diff_file", "diff file")),
+                            ('D', cmd("git.diff", "diff worktree")),
+                        ],
+                    ),
+                ),
+                (
                     's',
                     group(
                         "+split",

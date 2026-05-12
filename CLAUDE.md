@@ -109,11 +109,15 @@ scrollable view in a split next to the source, refreshed when the source is save
 Git: branch + change counts in the statusline + tree tint (P0); **gutter line-signs** —
 `src/git/diff.rs` parses `git diff HEAD --unified=0` into per-file added/modified/removed
 line marks (kept in `GitStatus`'s ~3s-cached `Snapshot.line_changes`), drawn as a coloured
-`▎` in the editor gutter. headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
-wrappers. Next: the rest of the Git track (diff pane → stage/unstage hunks → blame → commit
-+ statusline polish), then HTTP, Pty/AI-CLI, AI-API, CDP, the `.test` E2E format, plugins;
-plus queued polish (right-click context menus on files/tabs, inline-styled markdown,
-line-wrapped preview). See `.local/PLAN.md` for the full plan.
+`▎` in the editor gutter; **diff pane** — `Pane::Diff` (`src/ui/diff_view.rs`) shows parsed
+hunks (header + context/`+`/`-` lines), `n`/`p` move the cursor hunk, `s`/`u` stage/unstage
+it (`git apply --cached [--reverse]`), `r` refreshes, Enter jumps to the hunk's line in the
+source editor; `git.diff_file` (`<leader>g d`, opens in a split next to the source) /
+`git.diff` (worktree). headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
+wrappers. Next: the rest of the Git track (blame gutter → commit-from-mnml → statusline
+ahead/behind+staged/unstaged polish), then HTTP, Pty/AI-CLI, AI-API, CDP, the `.test`
+E2E format, plugins; plus queued polish (right-click context menus on files/tabs,
+inline-styled markdown, line-wrapped preview). See `.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)
