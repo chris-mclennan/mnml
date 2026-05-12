@@ -27,6 +27,7 @@ pub mod icons;
 pub mod md_preview;
 pub mod picker;
 pub mod prompt;
+pub mod request_view;
 pub mod statusline;
 pub mod theme;
 pub mod tree_view;
@@ -161,11 +162,13 @@ fn render_layout(
             let kind: u8 = match app.panes.get(*id) {
                 Some(crate::pane::Pane::MdPreview(_)) => 1,
                 Some(crate::pane::Pane::Diff(_)) => 2,
+                Some(crate::pane::Pane::Request(_)) => 3,
                 _ => 0,
             };
             match kind {
                 1 => md_preview::draw(frame, app, *id, area, focused),
                 2 => diff_view::draw(frame, app, *id, area, focused),
+                3 => request_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

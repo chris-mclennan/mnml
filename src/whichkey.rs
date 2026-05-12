@@ -99,6 +99,16 @@ pub fn root() -> &'static Leader {
                     ),
                 ),
                 (
+                    'h',
+                    group(
+                        "+http",
+                        vec![
+                            ('s', cmd("rqst.send", "send request")),
+                            ('y', cmd("rqst.copy_curl", "copy as curl")),
+                        ],
+                    ),
+                ),
+                (
                     's',
                     group(
                         "+split",

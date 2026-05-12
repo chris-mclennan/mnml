@@ -239,6 +239,22 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_commit_prompt(),
         },
         Command {
+            id: "rqst.send",
+            title: "HTTP: send request (.http/.curl) — or re-fire a request pane",
+            group: "http",
+            // No global default key (`Ctrl+R` is vim's redo). Use `<leader>h s` or
+            // the palette; a request pane also re-fires with its own `r` key.
+            keys: &[],
+            run: |app| app.send_request_from_active(),
+        },
+        Command {
+            id: "rqst.copy_curl",
+            title: "HTTP: copy the request as a curl command",
+            group: "http",
+            keys: &[],
+            run: |app| app.copy_active_curl(),
+        },
+        Command {
             id: "whichkey.leader",
             title: "Leader menu (which-key)",
             group: "view",

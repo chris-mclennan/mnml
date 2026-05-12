@@ -110,7 +110,17 @@ pub struct App {
     /// The single-line text-input overlay (commit message, …), when open. Steals
     /// key input like the picker.
     pub prompt: Option<crate::prompt::Prompt>,
+    /// Channel for background HTTP sends (lazily created on the first `rqst.send`):
+    /// worker threads send `(job_id, result)`; [`Self::tick`] drains it and updates
+    /// the matching `Pane::Request`.
+    http_chan: Option<(
+        std::sync::mpsc::Sender<HttpJobDone>,
+        std::sync::mpsc::Receiver<HttpJobDone>,
+    )>,
+    next_job_id: u64,
 }
+
+type HttpJobDone = (u64, Result<crate::request_pane::ResponseView, String>);
 
 impl App {
     pub fn new(workspace: PathBuf, config: Config) -> Result<App, String> {
@@ -142,6 +152,8 @@ impl App {
             dragging: None,
             close_prompt: None,
             prompt: None,
+            http_chan: None,
+            next_job_id: 1,
         })
     }
 
@@ -375,7 +387,7 @@ impl App {
         let path = match self.panes.get(cur) {
             Some(Pane::Editor(b)) => b.path.clone(),
             Some(Pane::MdPreview(p)) => Some(p.path.clone()),
-            Some(Pane::Diff(_)) | None => None,
+            Some(Pane::Diff(_)) | Some(Pane::Request(_)) | None => None,
         };
         let new_buf = match path {
             Some(p) => {
@@ -418,7 +430,7 @@ impl App {
         };
         let path = match self.panes.get(cur) {
             Some(Pane::Editor(b)) if b.language_ext.as_deref() == Some("md") => b.path.clone(),
-            Some(Pane::Editor(_)) | Some(Pane::Diff(_)) => {
+            Some(Pane::Editor(_)) | Some(Pane::Diff(_)) | Some(Pane::Request(_)) => {
                 self.toast("not a markdown file");
                 return;
             }
@@ -467,6 +479,205 @@ impl App {
                 }
                 p.scroll = 0;
             }
+        }
+    }
+
+    // ─── HTTP: request pane ─────────────────────────────────────────
+    /// `rqst.send` — parse the active `.http`/`.rest`/`.curl` editor (the block
+    /// under the cursor for multi-block `.http` files), expand `{{vars}}` against
+    /// `.mnml/env/$MNML_ENV`, open a `Pane::Request` split, and fire the request
+    /// on a background thread. `tick` delivers the response.
+    pub fn send_request_from_active(&mut self) {
+        use crate::http::{self, template::EnvSet};
+        let Some(cur) = self.active else {
+            self.toast("no active editor");
+            return;
+        };
+        // From an existing request pane, `rqst.send` just re-fires it.
+        if matches!(self.panes.get(cur), Some(Pane::Request(_))) {
+            self.refire_request(cur);
+            return;
+        }
+        let (path, ext, text, cursor_row) = match self.panes.get(cur) {
+            Some(Pane::Editor(b)) => (
+                b.path.clone(),
+                b.language_ext.clone().unwrap_or_default(),
+                b.editor.text().to_string(),
+                b.editor.row_col().0,
+            ),
+            _ => {
+                self.toast("not an editor");
+                return;
+            }
+        };
+        if !matches!(ext.as_str(), "http" | "rest" | "curl") {
+            self.toast("rqst.send needs a .http / .rest / .curl file");
+            return;
+        }
+
+        // Pick the request + the directive text. For `.http`/`.rest`, use the
+        // block under the cursor; otherwise treat the whole buffer as one request.
+        let (mut request, script_src): (http::Request, String) =
+            if matches!(ext.as_str(), "http" | "rest")
+                && let Ok(blocks) = http::file::parse_all(&text)
+            {
+                let lines: Vec<&str> = text.split('\n').collect();
+                let b = blocks
+                    .iter()
+                    .find(|b| cursor_row >= b.start_line && cursor_row <= b.end_line)
+                    .unwrap_or(&blocks[0]);
+                let src =
+                    lines[b.start_line..=b.end_line.min(lines.len().saturating_sub(1))].join("\n");
+                (b.request.clone(), src)
+            } else {
+                match http::parse(&text) {
+                    Ok(r) => (r, text.clone()),
+                    Err(e) => {
+                        self.toast(format!("can't parse request: {e}"));
+                        return;
+                    }
+                }
+            };
+        let script = http::script::parse(&script_src);
+        let mut env = EnvSet::select(&self.workspace, None);
+        http::script::apply_pre(&script, &mut request, &mut env);
+        request.url = http::template::expand(&request.url, &env);
+        for (_, v) in &mut request.headers {
+            *v = http::template::expand(v, &env);
+        }
+        if let Some(b) = &mut request.body {
+            *b = http::template::expand(b, &env);
+        }
+
+        let job_id = self.spawn_http_job(request.clone(), script.clone());
+        let pane = Pane::Request(crate::request_pane::RequestPane::new(
+            path, request, script, job_id,
+        ));
+        let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+    }
+
+    /// Re-send the request a `Pane::Request` already holds (its `r` key / re-`rqst.send`).
+    fn refire_request(&mut self, pane_id: PaneId) {
+        let (request, script) = match self.panes.get(pane_id) {
+            Some(Pane::Request(rp)) => (rp.request.clone(), rp.script.clone()),
+            _ => return,
+        };
+        let job_id = self.spawn_http_job(request, script);
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(pane_id) {
+            rp.job_id = job_id;
+            rp.state = crate::request_pane::RunState::Sending;
+            rp.scroll = 0;
+        }
+    }
+
+    /// Allocate a job id, ensure the result channel exists, spawn the worker.
+    fn spawn_http_job(
+        &mut self,
+        request: crate::http::Request,
+        script: crate::http::script::Script,
+    ) -> u64 {
+        use crate::request_pane::ResponseView;
+        let job_id = self.next_job_id;
+        self.next_job_id += 1;
+        let tx = self
+            .http_chan
+            .get_or_insert_with(std::sync::mpsc::channel)
+            .0
+            .clone();
+        std::thread::spawn(move || {
+            let result: Result<ResponseView, String> = (|| {
+                let resp = crate::http::send(&request)?;
+                let assertions = crate::http::script::run_assertions(
+                    &script,
+                    resp.status,
+                    &resp.headers,
+                    &resp.body,
+                );
+                let mut env = crate::http::template::EnvSet::empty();
+                let captures = crate::http::script::apply_captures(
+                    &script,
+                    &resp.headers,
+                    &resp.body,
+                    &mut env,
+                );
+                Ok(ResponseView {
+                    status: resp.status,
+                    status_text: resp.status_text,
+                    headers: resp.headers,
+                    body: resp.body,
+                    elapsed: resp.elapsed,
+                    assertions,
+                    captures,
+                })
+            })();
+            let _ = tx.send((job_id, result));
+        });
+        job_id
+    }
+
+    /// `rqst.copy_curl` — copy the active request (in an editor: parse the buffer;
+    /// in a request pane: the request it holds) to the clipboard as a curl command.
+    pub fn copy_active_curl(&mut self) {
+        let curl = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Request(rp)) => Some(rp.as_curl()),
+            Some(Pane::Editor(b))
+                if matches!(b.language_ext.as_deref(), Some("http" | "rest" | "curl")) =>
+            {
+                crate::http::parse(b.editor.text()).ok().map(|r| {
+                    crate::request_pane::RequestPane::new(None, r, Default::default(), 0).as_curl()
+                })
+            }
+            _ => None,
+        };
+        match curl {
+            Some(c) => {
+                self.clipboard.set(c, false);
+                self.toast("copied request as curl");
+            }
+            None => self.toast("no request here to copy"),
+        }
+    }
+
+    /// Deliver any completed background HTTP sends to their request panes.
+    fn drain_http_jobs(&mut self) {
+        use crate::request_pane::RunState;
+        let Some((_, rx)) = &self.http_chan else {
+            return;
+        };
+        let done: Vec<HttpJobDone> = rx.try_iter().collect();
+        let mut toasts: Vec<String> = Vec::new();
+        for (job_id, result) in done {
+            let Some(Pane::Request(rp)) = self.panes.iter_mut().find(
+                |p| matches!(p, Pane::Request(rp) if rp.job_id == job_id && matches!(rp.state, RunState::Sending)),
+            ) else {
+                continue;
+            };
+            match result {
+                Ok(rv) => {
+                    let failed = rv.assertions.iter().filter(|a| !a.passed).count();
+                    let total = rv.assertions.len();
+                    toasts.push(if total > 0 {
+                        format!(
+                            "← {} · {}/{} asserts passed",
+                            rv.status,
+                            total - failed,
+                            total
+                        )
+                    } else {
+                        format!("← {} {}", rv.status, rv.status_text)
+                    });
+                    rp.state = RunState::Done(Box::new(rv));
+                }
+                Err(e) => {
+                    toasts.push(format!("request failed: {e}"));
+                    rp.state = RunState::Failed(e);
+                }
+            }
+        }
+        for t in toasts {
+            self.toast(t);
         }
     }
 
@@ -807,7 +1018,7 @@ impl App {
         }
         let discarded = match &self.panes[id] {
             Pane::Editor(b) => b.dirty.then(|| b.display_name()),
-            Pane::MdPreview(_) | Pane::Diff(_) => None,
+            Pane::MdPreview(_) | Pane::Diff(_) | Pane::Request(_) => None,
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -879,6 +1090,7 @@ impl App {
             Pane::Editor(b) => Some((b.display_name(), b.path.is_some())),
             Pane::MdPreview(p) => Some((p.title(), false)),
             Pane::Diff(d) => Some((d.title(), false)),
+            Pane::Request(r) => Some((r.title(), false)),
         }
     }
 
@@ -1162,6 +1374,7 @@ impl App {
     /// Per-event-loop housekeeping (cheap).
     pub fn tick(&mut self) {
         self.git.tick();
+        self.drain_http_jobs();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL
         {

@@ -276,6 +276,22 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // A request pane: read-only — scroll, `r` re-fire, `y` copy-as-curl, Esc → tree.
+    if let Some(Pane::Request(rp)) = app.panes.get_mut(i) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => rp.scroll = rp.scroll.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => rp.scroll += 1,
+            KeyCode::PageUp => rp.scroll = rp.scroll.saturating_sub(viewport),
+            KeyCode::PageDown => rp.scroll += viewport,
+            KeyCode::Home | KeyCode::Char('g') => rp.scroll = 0,
+            KeyCode::End | KeyCode::Char('G') => rp.scroll = usize::MAX, // clamped on draw
+            KeyCode::Char('r') => app.send_request_from_active(),
+            KeyCode::Char('y') => app.copy_active_curl(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // `b` borrows app.panes; `&mut app.clipboard` is a disjoint field — fine.
     let ev = match app.panes.get_mut(i) {
         Some(Pane::Editor(b)) => b.feed_key(key, &mut app.clipboard, viewport),
@@ -519,6 +535,14 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     d.scroll.saturating_sub(n)
                 } else {
                     d.scroll + n
+                };
+            }
+            Some(Pane::Request(rp)) => {
+                let n = delta.unsigned_abs() as usize;
+                rp.scroll = if delta < 0 {
+                    rp.scroll.saturating_sub(n)
+                } else {
+                    rp.scroll + n
                 };
             }
             None => {}

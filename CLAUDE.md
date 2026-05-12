@@ -129,10 +129,18 @@ track is done. **HTTP track — in progress:** `src/http/` holds `Request`/`Resp
 comments, with a `.foo.bar[0]`/`$.path` JSON resolver); wired as `mnml run FILE [--env NAME]
 [--workspace DIR]` — apply `@set-*` → expand `{{}}` → parse → send → print body → run
 `@assert`s (✓/✗, non-zero exit on any failure; without asserts a non-2xx fails) → show
-`@capture`s. Still to do for HTTP: `.chain.json` sequences, OpenAPI→stub discovery, and the
-`Pane::Request` editor UI. Then: Pty/AI-CLI, AI-API, CDP, the `.test` E2E format, plugins;
-plus queued polish (right-click context menus on files/tabs, line-wrapped preview). See
-`.local/PLAN.md` for the full plan.
+`@capture`s. Inside the IDE: **`rqst.send`** (`<leader>h s`) on a `.http`/`.rest`/`.curl`
+editor (the `### block` under the cursor for multi-block files) parses + applies `@set-*` +
+expands `{{}}` (env from `.mnml/env/$MNML_ENV`), opens a `Pane::Request` split, and fires
+the send on a **background thread** (`App.http_chan`; `App::tick` drains it) — `src/request_pane.rs`
+holds the state (`RunState::Sending|Done|Failed`), `src/ui/request_view.rs` renders the
+request line + headers + body, then status/headers/pretty body + ✓/✗ asserts + ⇒ captures
+(scroll with `k/j`/PgUp/PgDn, `r` re-fires, `y` copies-as-curl, Esc → tree); `rqst.copy_curl`
+(`<leader>h y`) copies the request as a curl command. Still to do for HTTP: `.chain.json`
+sequences, OpenAPI→stub discovery, editable request-pane field tabs (right now you edit the
+`.http` file in a normal editor). Then: Pty/AI-CLI, AI-API, CDP, the `.test` E2E format,
+plugins; plus queued polish (right-click context menus on files/tabs, line-wrapped preview).
+See `.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)
