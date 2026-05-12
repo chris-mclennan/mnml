@@ -85,6 +85,22 @@ pub fn root() -> &'static Leader {
                         ],
                     ),
                 ),
+                (
+                    's',
+                    group(
+                        "+split",
+                        vec![
+                            ('v', cmd("view.split_right", "split right")),
+                            ('s', cmd("view.split_down", "split down")),
+                            ('h', cmd("view.focus_left", "focus left")),
+                            ('j', cmd("view.focus_down", "focus down")),
+                            ('k', cmd("view.focus_up", "focus up")),
+                            ('l', cmd("view.focus_right", "focus right")),
+                            ('w', cmd("view.focus_next_split", "focus next")),
+                            ('c', cmd("view.close_split", "close split")),
+                        ],
+                    ),
+                ),
                 ('w', cmd("file.save", "write/save")),
                 ('q', cmd("buffer.close", "close buffer")),
                 ('e', cmd("view.toggle_tree", "explorer")),

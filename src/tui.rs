@@ -26,7 +26,6 @@ use crate::buffer::BufferEvent;
 use crate::edit_op::EditOp;
 use crate::focus::Focus;
 use crate::ipc::{self, Ipc};
-use crate::layout::Layout;
 use crate::pane::Pane;
 use crate::{command, ui};
 
@@ -214,21 +213,16 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
 }
 
 fn pane_viewport(app: &App) -> usize {
-    app.rects
-        .editor_text
-        .map(|r| r.height as usize)
+    app.active
+        .and_then(|cur| {
+            app.rects
+                .editor_panes
+                .iter()
+                .find(|(_, p)| *p == cur)
+                .map(|(r, _)| r.height as usize)
+        })
         .unwrap_or(20)
         .max(1)
-}
-
-/// Apply a raw `EditOp` to the active editor (used for mouse scroll). For key
-/// input, route through `Buffer::feed_key` so the handler sees it.
-fn apply_to_active_editor(app: &mut App, op: EditOp, viewport: usize) {
-    if let Some(i) = app.active
-        && let Some(Pane::Editor(b)) = app.panes.get_mut(i)
-    {
-        b.editor.apply(op, viewport, &mut app.clipboard);
-    }
 }
 
 fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
@@ -327,11 +321,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .iter()
                 .find(|(r, _)| contains(*r, x, y))
             {
-                if id < app.panes.len() {
-                    app.active = Some(id);
-                    app.layout = Layout::Leaf(id);
-                    app.focus_pane();
-                }
+                app.reveal_pane(id);
                 return;
             }
             // Tree? (no header now — row 0 of the rail is the first entry)
@@ -354,17 +344,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
-            // Editor text?
-            if let Some(tr) = app.rects.editor_text
-                && contains(tr, x, y)
+            // Editor text in some split leaf? Focus that leaf and place the cursor.
+            if let Some(&(tr, pid)) = app
+                .rects
+                .editor_panes
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
             {
+                app.active = Some(pid);
                 app.focus_pane();
-                let row = app.active_editor().map(|b| b.scroll).unwrap_or(0) + (y - tr.y) as usize;
-                let col =
-                    app.active_editor().map(|b| b.h_scroll).unwrap_or(0) + (x - tr.x) as usize;
-                if let Some(i) = app.active
-                    && let Some(Pane::Editor(b)) = app.panes.get_mut(i)
-                {
+                if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+                    let row = b.scroll + (y - tr.y) as usize;
+                    let col = b.h_scroll + (x - tr.x) as usize;
                     b.editor.place_cursor(row, col);
                 }
             }
@@ -388,25 +379,23 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         }
         return;
     }
-    if let Some(tr) = app.rects.body
-        && contains(tr, x, y)
+    // Scroll whichever split leaf is under the pointer (not necessarily the focused one).
+    if let Some(&(tr, pid)) = app
+        .rects
+        .editor_panes
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
     {
-        let vp = app
-            .rects
-            .editor_text
-            .map(|r| r.height as usize)
-            .unwrap_or(20)
-            .max(1);
+        let vp = (tr.height as usize).max(1);
+        let op = if delta < 0 {
+            EditOp::MoveUp
+        } else {
+            EditOp::MoveDown
+        };
         for _ in 0..delta.unsigned_abs() {
-            apply_to_active_editor(
-                app,
-                if delta < 0 {
-                    EditOp::MoveUp
-                } else {
-                    EditOp::MoveDown
-                },
-                vp,
-            );
+            if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+                b.editor.apply(op.clone(), vp, &mut app.clipboard);
+            }
         }
     }
 }

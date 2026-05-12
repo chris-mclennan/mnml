@@ -1,6 +1,7 @@
 //! The editor pane body: a line-number gutter + the text, with tree-sitter
-//! syntax colors, indent guides, current-line highlight, and selection. Returns
-//! the on-screen cursor cell so `ui::draw` can place the terminal caret.
+//! syntax colors, indent guides, current-line highlight, and selection. Renders
+//! one leaf into `area`; with splits this is called per leaf. Returns the
+//! on-screen cursor cell when `focused`, so `ui::draw` can place the caret.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -9,10 +10,17 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::App;
+use crate::layout::PaneId;
 use crate::pane::Pane;
 use crate::ui::theme;
 
-pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(u16, u16)> {
+pub fn draw_pane(
+    frame: &mut Frame,
+    app: &mut App,
+    pane_id: PaneId,
+    area: Rect,
+    focused: bool,
+) -> Option<(u16, u16)> {
     if area.width == 0 || area.height == 0 {
         return None;
     }
@@ -22,8 +30,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(u16, u16)> 
     );
 
     let tab_w = app.config.editor.tab_width.max(1);
-    let idx = app.active?;
-    let Pane::Editor(buf) = app.panes.get_mut(idx)?;
+    let Some(Pane::Editor(buf)) = app.panes.get_mut(pane_id) else {
+        return None;
+    };
 
     let line_count = buf.editor.line_count();
     let gutter_w = (line_count.to_string().len().max(3) + 1) as u16; // "  12 "
@@ -127,13 +136,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(u16, u16)> 
     }
     frame.render_widget(Paragraph::new(lines), area);
 
-    app.rects.editor_text = Some(Rect {
-        x: text_x,
-        y: area.y,
-        width: text_w,
-        height: area.height,
-    });
+    app.rects.editor_panes.push((
+        Rect {
+            x: text_x,
+            y: area.y,
+            width: text_w,
+            height: area.height,
+        },
+        pane_id,
+    ));
 
+    if !focused {
+        return None;
+    }
     let cy = area.y + (cur_row.saturating_sub(buf.scroll)) as u16;
     let cx = text_x + (cur_col.saturating_sub(buf.h_scroll)) as u16;
     if cy < area.y + area.height && cx < area.x.saturating_add(area.width) {

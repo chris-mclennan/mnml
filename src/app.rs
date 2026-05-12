@@ -20,6 +20,15 @@ use crate::tree::Tree;
 
 const TOAST_TTL: Duration = Duration::from_secs(4);
 
+/// Direction for `Ctrl+W`-style focus navigation between splits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusDir {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 /// Screen regions captured during render, consumed for mouse routing on the next event.
 #[derive(Debug, Default, Clone)]
 pub struct PaneRects {
@@ -31,10 +40,14 @@ pub struct PaneRects {
     pub bufferline_tabs: Vec<(Rect, PaneId)>,
     /// `(rect, pane_id)` for each tab's close badge (the trailing `×`/`●` → close).
     pub bufferline_tab_close: Vec<(Rect, PaneId)>,
-    /// The active pane's body (the whole pane area).
+    /// The whole central split-tree area.
     pub body: Option<Rect>,
-    /// The editable text region inside the body (gutter excluded).
-    pub editor_text: Option<Rect>,
+    /// `(text_area, pane_id)` per visible editor leaf — the editable region
+    /// (gutter excluded). Click → focus that leaf + place the cursor; also the
+    /// geometry `Ctrl+W`-style focus navigation uses.
+    pub editor_panes: Vec<(Rect, PaneId)>,
+    /// `(rect, dir)` per split divider (for future drag-to-resize).
+    pub split_dividers: Vec<(Rect, crate::layout::SplitDir)>,
     pub statusline: Option<Rect>,
     /// The picker overlay's outer box (when open) and `(rect, filtered-index)` per visible row.
     pub picker_box: Option<Rect>,
@@ -48,7 +61,9 @@ pub struct App {
     pub config: Config,
     pub panes: Vec<Pane>,
     pub layout: Layout,
-    /// The active pane id. Kept in sync with `layout.focused_leaf()` (one leaf for now).
+    /// The focused pane id. Invariant (see [`crate::layout`]): every pane is in
+    /// exactly one leaf, so this uniquely identifies the focused leaf. `None` ⇔
+    /// `layout == Empty` ⇔ no panes open.
     pub active: Option<PaneId>,
     pub focus: Focus,
     pub tree: Tree,
@@ -209,9 +224,7 @@ impl App {
                 if let Ok(i) = item.id.parse::<usize>()
                     && i < self.panes.len()
                 {
-                    self.active = Some(i);
-                    self.layout = Layout::Leaf(i);
-                    self.focus_pane();
+                    self.reveal_pane(i);
                 }
             }
             PickerKind::Commands => {
@@ -237,62 +250,193 @@ impl App {
         self.active_pane_mut().and_then(Pane::as_editor_mut)
     }
 
-    /// Open `path` in an editor pane (refocusing if it's already open).
+    /// Show pane `id` in the focused leaf (demoting whatever it showed to a
+    /// background buffer). If `id` is already shown in some leaf, just focus that
+    /// leaf instead — a buffer is never in two leaves at once. If nothing is open,
+    /// create the first leaf showing `id`.
+    pub fn reveal_pane(&mut self, id: PaneId) {
+        if id >= self.panes.len() {
+            return;
+        }
+        if self.layout.contains(id) {
+            self.active = Some(id);
+        } else if let Some(cur) = self.active {
+            self.layout.set_leaf_pane(cur, id);
+            self.active = Some(id);
+        } else {
+            self.layout = Layout::Leaf(id);
+            self.active = Some(id);
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// Open `path` in the focused leaf. If it's already an open buffer it's
+    /// revealed/refocused; otherwise a new buffer is opened. The buffer the
+    /// focused leaf was showing stays open as a background tab.
     pub fn open_path(&mut self, path: &Path) {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        // Pick a pane kind by extension — only `Editor` exists in P0; `.http`/`.rest`/`.curl`
-        // will route to `Pane::Request` once that track lands.
         if let Some(i) = self
             .panes
             .iter()
             .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&path)))
         {
-            self.layout = Layout::Leaf(i);
-            self.active = Some(i);
-            self.focus = Focus::Pane;
+            self.reveal_pane(i);
             return;
         }
+        // (Pane kind is picked by extension — only `Editor` exists in P0; `.http`
+        // etc. route to `Pane::Request` once that track lands.)
         match Buffer::open(&path, &self.config) {
             Ok(buf) => {
                 self.panes.push(Pane::Editor(buf));
-                let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
-                self.active = Some(id);
-                self.focus = Focus::Pane;
+                let new_id = self.panes.len() - 1;
+                self.reveal_pane(new_id);
             }
             Err(e) => self.toast(format!("cannot open {}: {e}", path.display())),
         }
     }
 
-    /// Close the pane at `id`. If it's a dirty editor the unsaved changes are
-    /// discarded (a toast says so). (A Save/Discard/Cancel overlay is a later
-    /// refinement; for now closing = discard, like clicking the × on the tab.)
+    /// Drop `app.panes[removed]` and re-index every higher reference (the layout's
+    /// leaves, `active`). Caller must have already detached `removed` from the
+    /// layout if it was in a leaf.
+    fn remove_pane_storage(&mut self, removed: PaneId) {
+        if removed >= self.panes.len() {
+            return;
+        }
+        self.panes.remove(removed);
+        self.layout.shift_after(removed);
+        self.active = self
+            .active
+            .map(|a| if a > removed { a - 1 } else { a })
+            .filter(|_| !self.panes.is_empty());
+    }
+
+    /// Split the focused leaf, opening a fresh buffer (a re-open of the same file,
+    /// or a scratch buffer) in the new half and focusing it.
+    pub fn split_active(&mut self, dir: crate::layout::SplitDir) {
+        let Some(cur) = self.active else {
+            self.toast("nothing to split");
+            return;
+        };
+        let new_buf = match self.panes.get(cur) {
+            Some(Pane::Editor(b)) => match &b.path {
+                Some(p) => {
+                    Buffer::open(p, &self.config).unwrap_or_else(|_| Buffer::scratch(&self.config))
+                }
+                None => Buffer::scratch(&self.config),
+            },
+            None => Buffer::scratch(&self.config),
+        };
+        self.panes.push(Pane::Editor(new_buf));
+        let new_id = self.panes.len() - 1;
+        self.layout.replace_leaf(
+            cur,
+            Layout::Split {
+                dir,
+                ratio: 50,
+                first: Box::new(Layout::Leaf(cur)),
+                second: Box::new(Layout::Leaf(new_id)),
+            },
+        );
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+    }
+
+    /// Move focus to the leaf in direction `d` of the focused one (by the rects
+    /// recorded at last render). No wrap.
+    pub fn focus_dir(&mut self, d: FocusDir) {
+        let Some(cur) = self.active else { return };
+        let Some(&(cur_rect, _)) = self.rects.editor_panes.iter().find(|(_, p)| *p == cur) else {
+            return;
+        };
+        let (cx, cy) = (
+            cur_rect.x as i32 + cur_rect.width as i32 / 2,
+            cur_rect.y as i32 + cur_rect.height as i32 / 2,
+        );
+        let mut best: Option<(i64, PaneId)> = None;
+        for &(r, pid) in &self.rects.editor_panes {
+            if pid == cur {
+                continue;
+            }
+            let (mx, my) = (
+                r.x as i32 + r.width as i32 / 2,
+                r.y as i32 + r.height as i32 / 2,
+            );
+            let on_side = match d {
+                FocusDir::Left => mx < cx,
+                FocusDir::Right => mx > cx,
+                FocusDir::Up => my < cy,
+                FocusDir::Down => my > cy,
+            };
+            if !on_side {
+                continue;
+            }
+            // Require some overlap on the perpendicular axis (so a left-and-up
+            // neighbour doesn't steal a "go left").
+            let overlap = match d {
+                FocusDir::Left | FocusDir::Right => {
+                    r.y < cur_rect.y + cur_rect.height && cur_rect.y < r.y + r.height
+                }
+                FocusDir::Up | FocusDir::Down => {
+                    r.x < cur_rect.x + cur_rect.width && cur_rect.x < r.x + r.width
+                }
+            };
+            if !overlap {
+                continue;
+            }
+            let dist = ((mx - cx) as i64).pow(2) + ((my - cy) as i64).pow(2);
+            if best.is_none_or(|(bd, _)| dist < bd) {
+                best = Some((dist, pid));
+            }
+        }
+        if let Some((_, pid)) = best {
+            self.active = Some(pid);
+            self.focus = Focus::Pane;
+        }
+    }
+
+    /// Cycle focus to the next leaf (left-to-right / top-to-bottom order).
+    pub fn focus_next_split(&mut self) {
+        let leaves = self.layout.leaves();
+        if leaves.len() < 2 {
+            return;
+        }
+        let here = self
+            .active
+            .and_then(|a| leaves.iter().position(|&l| l == a))
+            .unwrap_or(0);
+        self.active = Some(leaves[(here + 1) % leaves.len()]);
+        self.focus = Focus::Pane;
+    }
+
+    /// Close the buffer at `id`, discarding unsaved changes with a toast. If it's
+    /// shown in a leaf, that leaf is removed (its parent split collapses into the
+    /// sibling); if the closed leaf was focused, focus moves to the next leaf —
+    /// or, if none remain but a background buffer does, that buffer is shown.
     pub fn close_pane(&mut self, id: PaneId) {
         if id >= self.panes.len() {
             return;
         }
-        // (`Pane` has only the `Editor` variant for now — `let` is irrefutable.)
         #[allow(irrefutable_let_patterns)]
         let discarded = if let Pane::Editor(b) = &self.panes[id] {
             b.dirty.then(|| b.display_name())
         } else {
             None
         };
-        self.panes.remove(id);
+        let was_in_leaf = self.layout.contains(id);
+        if was_in_leaf {
+            self.layout.remove_leaf(id);
+        }
+        if self.active == Some(id) {
+            self.active = self.layout.first_leaf();
+        }
+        self.remove_pane_storage(id);
+        // If we dropped the last leaf but background buffers remain, show one.
+        if self.active.is_none() && !self.panes.is_empty() {
+            self.reveal_pane(self.panes.len() - 1);
+        }
         if let Some(name) = discarded {
             self.toast(format!("closed {name} — discarded unsaved changes"));
         }
-        // Re-point `active` past the removal (single-leaf model for now).
-        self.active = match self.active {
-            _ if self.panes.is_empty() => None,
-            Some(a) if a == id => Some(id.min(self.panes.len() - 1)),
-            Some(a) if a > id => Some(a - 1),
-            other => other,
-        };
-        self.layout = match self.active {
-            Some(a) => Layout::Leaf(a),
-            None => Layout::Empty,
-        };
         if self.active.is_none() {
             self.focus = Focus::Tree;
         }
@@ -304,23 +448,21 @@ impl App {
         }
     }
 
+    /// Cycle the focused leaf to the next open buffer (wrapping). A buffer
+    /// already visible in another leaf just gets focused there.
     pub fn next_buffer(&mut self) {
         if self.panes.is_empty() {
             return;
         }
         let cur = self.active.unwrap_or(0);
-        let nxt = (cur + 1) % self.panes.len();
-        self.layout = Layout::Leaf(nxt);
-        self.active = Some(nxt);
+        self.reveal_pane((cur + 1) % self.panes.len());
     }
     pub fn prev_buffer(&mut self) {
         if self.panes.is_empty() {
             return;
         }
         let cur = self.active.unwrap_or(0);
-        let prv = (cur + self.panes.len() - 1) % self.panes.len();
-        self.layout = Layout::Leaf(prv);
-        self.active = Some(prv);
+        self.reveal_pane((cur + self.panes.len() - 1) % self.panes.len());
     }
 
     pub fn save_active(&mut self) {

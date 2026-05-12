@@ -73,7 +73,7 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
-P0–P3c done (P3d splits remaining). Working: NvChad-ish layout; editable buffers via
+P0–P3 done. Working: NvChad-ish layout; editable buffers via
 either `StandardInputHandler` (VSCode-style, modeless) or `VimInputHandler` (modal:
 Normal/Insert/Visual + `:`-line), swappable at runtime (`editor.toggle_keymap` /
 `editor.use_vim` / `editor.use_standard` in the palette, or `:set input=vim`);
@@ -86,10 +86,16 @@ resolve through `App::keymap` (`src/input/keymap.rs::Keymap`), built from each
 config (`"key" = "command.id"`, `= "none"` to unbind); which-key leader popup
 (`src/whichkey.rs` trie + `src/ui/whichkey.rs`) — `<space>` in vim Normal or `Ctrl+K`
 opens it, keys descend a group, a leaf runs its command (`whichkey.leader` command;
-state on `App.whichkey`); tree-sitter syntax highlight (`src/highlight.rs`, 6 grammars so
-far) + indent guides; headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
-wrappers. Next: **P3d** editor splits (`src/layout.rs` HSplit/VSplit + `Ctrl+\` /
-`Ctrl+W hjkl` + recursive render). Then the tracks (Git
+state on `App.whichkey`); editor splits — `Layout` is a binary split tree (`Empty | Leaf |
+Split{dir,ratio,first,second}`), `ui::draw` recursively renders one editor per leaf with
+1-cell dividers; each leaf shows a distinct buffer, background buffers (in no leaf) are
+allowed (bufferline shows all), `App.active` = focused pane = uniquely the focused leaf;
+`view.split_right`/`view.split_down`, `view.focus_{left,right,up,down}`,
+`view.focus_next_split`, `view.close_split` commands, surfaced in the which-key `+split`
+submenu (`<leader>s …` / `Ctrl+K s …`); click a leaf to focus it; mouse-drag resize is
+TODO (divider rects recorded, fixed 50/50 for now). tree-sitter syntax highlight
+(`src/highlight.rs`, 6 grammars so far) + indent guides; headless+IPC (interactive TUI
+listens too) + the `run.sh`/`dev.sh` wrappers. Next: the tracks (Git
 diff/stage/blame, HTTP, Pty/AI-CLI, AI-API, CDP, the `.test` E2E format, plugins). See
 `.local/PLAN.md` for the full plan. Highlight follow-ups: more grammars
 (typescript/css/html/c/bash/markdown), incremental tree-sitter parsing, relative line numbers.

@@ -15,8 +15,9 @@
 //! └───────────────────────────────────────────────┘
 //! ```
 //!
-//! Later: a recursive split tree replaces "active pane body", and overlays
-//! (picker / palette / which-key / popups) draw on top.
+//! "active pane body" is actually a recursive split tree (`render_layout`) — one
+//! editor per `Layout::Leaf`, 1-cell dividers between splits. Overlays (picker /
+//! palette / which-key / popups) draw on top.
 
 pub mod bufferline;
 pub mod editor_view;
@@ -29,13 +30,14 @@ pub mod welcome;
 pub mod whichkey;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout as RLayout};
+use ratatui::layout::{Constraint, Layout as RLayout, Rect};
 use ratatui::style::Style;
-use ratatui::widgets::Block;
+use ratatui::text::Span;
+use ratatui::widgets::{Block, Paragraph};
 
 use crate::app::App;
 use crate::focus::Focus;
-use crate::pane::Pane;
+use crate::layout::{Layout, SplitDir, split_rects};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
@@ -78,18 +80,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     bufferline::draw(frame, app, bufferline_area);
     app.rects.bufferline = Some(bufferline_area);
 
-    // ── active pane body ──
+    // ── the split-tree of pane bodies ──
     app.rects.body = Some(body_area);
-    let mut cursor_pos: Option<(u16, u16)> = None;
-    match app.active.and_then(|i| app.panes.get(i)) {
-        Some(Pane::Editor(_)) => {
-            cursor_pos = editor_view::draw(frame, app, body_area);
-        }
-        None => {
-            welcome::draw(frame, app, body_area);
-            app.rects.editor_text = None;
-        }
-    }
+    app.rects.editor_panes.clear();
+    app.rects.split_dividers.clear();
+    let layout = app.layout.clone();
+    let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {
+        welcome::draw(frame, app, body_area);
+        None
+    } else {
+        render_layout(frame, app, &layout, body_area)
+    };
 
     // ── statusline ──
     statusline::draw(frame, app, statusline_area);
@@ -117,5 +118,58 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         && let Some((x, y)) = cursor_pos
     {
         frame.set_cursor_position((x, y));
+    }
+}
+
+/// Recursively render a layout subtree into `area`: leaves draw their editor;
+/// splits draw a 1-cell divider and recurse. Only the focused leaf returns a
+/// cursor cell, so the `.or` chain bubbles it up.
+fn render_layout(
+    frame: &mut Frame,
+    app: &mut App,
+    layout: &Layout,
+    area: Rect,
+) -> Option<(u16, u16)> {
+    match layout {
+        Layout::Empty => None,
+        Layout::Leaf(id) => {
+            let focused = app.active == Some(*id);
+            editor_view::draw_pane(frame, app, *id, area, focused)
+        }
+        Layout::Split {
+            dir,
+            ratio,
+            first,
+            second,
+        } => {
+            let (a, divider, b) = split_rects(area, *dir, *ratio);
+            if divider.width > 0 && divider.height > 0 {
+                draw_divider(frame, divider, *dir);
+                app.rects.split_dividers.push((divider, *dir));
+            }
+            let c1 = render_layout(frame, app, first, a);
+            let c2 = render_layout(frame, app, second, b);
+            c1.or(c2)
+        }
+    }
+}
+
+fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir) {
+    let style = Style::default().fg(theme::LINE).bg(theme::BG_DARK);
+    match dir {
+        SplitDir::Horizontal => {
+            for dy in 0..rect.height {
+                frame.render_widget(
+                    Paragraph::new(Span::styled("│", style)),
+                    Rect::new(rect.x, rect.y + dy, 1, 1),
+                );
+            }
+        }
+        SplitDir::Vertical => {
+            frame.render_widget(
+                Paragraph::new(Span::styled("─".repeat(rect.width as usize), style)),
+                rect,
+            );
+        }
     }
 }

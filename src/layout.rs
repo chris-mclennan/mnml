@@ -1,48 +1,324 @@
-//! The window layout. The tree rail, the top bufferline, and the bottom
-//! statusline live *outside* this tree; `Layout` describes how the central area
-//! is carved into panes. P0 only ever holds `Empty` or a single `Leaf`; the
-//! split variants land in P3 — keeping the type here from day one means splits
-//! are additive.
+//! The window layout: a binary split tree over the central pane area. The tree
+//! rail, the bufferline, and the statusline live *outside* this tree. Each
+//! [`Layout::Leaf`] references a pane (buffer) in `App::panes`. Invariants the
+//! `App` methods maintain: **no buffer is in two leaves at once**, and the
+//! *focused* buffer (`App::active`) is always in a leaf — so `active` uniquely
+//! identifies the focused leaf. Buffers in *no* leaf are allowed (background tabs
+//! the bufferline still lists); revealing one shows it in the focused leaf.
+
+use ratatui::layout::Rect;
 
 /// Index of a pane in `App::panes`.
 pub type PaneId = usize;
+
+/// How a split arranges its two children.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitDir {
+    /// Side by side — `first` on the left, `second` on the right, vertical divider.
+    Horizontal,
+    /// Stacked — `first` on top, `second` below, horizontal divider.
+    Vertical,
+}
 
 #[derive(Debug, Clone)]
 pub enum Layout {
     Empty,
     Leaf(PaneId),
-    // HSplit(Box<Layout>, Box<Layout>, /* ratio×100 of the top */ u16),   // P3
-    // VSplit(Box<Layout>, Box<Layout>, /* ratio×100 of the left */ u16),  // P3
+    Split {
+        dir: SplitDir,
+        /// Percent of the split's long axis given to `first` (clamped 10..=90).
+        ratio: u16,
+        first: Box<Layout>,
+        second: Box<Layout>,
+    },
 }
 
 impl Layout {
-    /// The id of the currently-focused leaf, if any. (With splits this will
-    /// track a focus path; for now there's at most one leaf.)
-    pub fn focused_leaf(&self) -> Option<PaneId> {
+    /// Every pane id referenced by the tree (left-to-right / top-to-bottom).
+    pub fn leaves(&self) -> Vec<PaneId> {
+        let mut out = Vec::new();
+        self.collect_leaves(&mut out);
+        out
+    }
+    fn collect_leaves(&self, out: &mut Vec<PaneId>) {
+        match self {
+            Layout::Empty => {}
+            Layout::Leaf(id) => out.push(*id),
+            Layout::Split { first, second, .. } => {
+                first.collect_leaves(out);
+                second.collect_leaves(out);
+            }
+        }
+    }
+
+    /// The first (leftmost / topmost) leaf, if any.
+    pub fn first_leaf(&self) -> Option<PaneId> {
         match self {
             Layout::Empty => None,
             Layout::Leaf(id) => Some(*id),
+            Layout::Split { first, second, .. } => {
+                first.first_leaf().or_else(|| second.first_leaf())
+            }
         }
     }
 
-    /// Every pane id referenced by the layout.
-    pub fn leaves(&self) -> Vec<PaneId> {
+    pub fn contains(&self, p: PaneId) -> bool {
+        self.leaves().contains(&p)
+    }
+
+    /// Re-point a leaf currently showing `from` to show `to` instead.
+    pub fn set_leaf_pane(&mut self, from: PaneId, to: PaneId) {
         match self {
-            Layout::Empty => Vec::new(),
-            Layout::Leaf(id) => vec![*id],
+            Layout::Leaf(id) if *id == from => *id = to,
+            Layout::Split { first, second, .. } => {
+                first.set_leaf_pane(from, to);
+                second.set_leaf_pane(from, to);
+            }
+            _ => {}
         }
     }
 
-    /// Re-point every leaf that referenced `old` at `new` (used when panes are
-    /// removed and the `Vec<Pane>` is re-indexed).
-    pub fn remap(&mut self, old: PaneId, new: PaneId) {
+    /// Replace the `Leaf(target)` node with `with` (used to split a leaf in place).
+    /// Returns true if the leaf was found.
+    pub fn replace_leaf(&mut self, target: PaneId, with: Layout) -> bool {
+        match self {
+            Layout::Leaf(id) if *id == target => {
+                *self = with;
+                true
+            }
+            Layout::Split { first, second, .. } => {
+                first.replace_leaf(target, with.clone()) || second.replace_leaf(target, with)
+            }
+            _ => false,
+        }
+    }
+
+    /// Remove the leaf showing `target`: if it's a child of a split, the split
+    /// collapses into its sibling; if it's the root, the tree becomes `Empty`.
+    /// Returns true if the leaf was found.
+    pub fn remove_leaf(&mut self, target: PaneId) -> bool {
+        match self {
+            Layout::Empty => false,
+            Layout::Leaf(id) => {
+                if *id == target {
+                    *self = Layout::Empty;
+                    true
+                } else {
+                    false
+                }
+            }
+            Layout::Split { first, second, .. } => {
+                // Is `target` a direct child leaf? Then collapse to the sibling.
+                if matches!(**first, Layout::Leaf(id) if id == target) {
+                    *self = std::mem::replace(second, Box::new(Layout::Empty))
+                        .as_ref()
+                        .clone();
+                    return true;
+                }
+                if matches!(**second, Layout::Leaf(id) if id == target) {
+                    *self = std::mem::replace(first, Box::new(Layout::Empty))
+                        .as_ref()
+                        .clone();
+                    return true;
+                }
+                // Otherwise recurse; if a child collapsed to Empty (shouldn't happen
+                // for a well-formed tree), collapse this split too.
+                let hit = first.remove_leaf(target) || second.remove_leaf(target);
+                if hit {
+                    if matches!(**first, Layout::Empty) {
+                        *self = std::mem::replace(second, Box::new(Layout::Empty))
+                            .as_ref()
+                            .clone();
+                    } else if matches!(**second, Layout::Empty) {
+                        *self = std::mem::replace(first, Box::new(Layout::Empty))
+                            .as_ref()
+                            .clone();
+                    }
+                }
+                hit
+            }
+        }
+    }
+
+    /// After `app.panes.remove(removed)`, every leaf id past `removed` shifts down
+    /// by one. Apply that re-index to the tree.
+    pub fn shift_after(&mut self, removed: PaneId) {
         match self {
             Layout::Empty => {}
             Layout::Leaf(id) => {
-                if *id == old {
-                    *id = new;
+                if *id > removed {
+                    *id -= 1;
                 }
             }
+            Layout::Split { first, second, .. } => {
+                first.shift_after(removed);
+                second.shift_after(removed);
+            }
         }
+    }
+
+    /// Compute each leaf's body rect inside `area`, allowing one cell per divider.
+    /// Returns `(leaf_rects, divider_rects)`.
+    pub fn compute_rects(&self, area: Rect) -> (Vec<(PaneId, Rect)>, Vec<DividerRect>) {
+        let mut leaves = Vec::new();
+        let mut divs = Vec::new();
+        self.walk_rects(area, &mut leaves, &mut divs);
+        (leaves, divs)
+    }
+    fn walk_rects(
+        &self,
+        area: Rect,
+        leaves: &mut Vec<(PaneId, Rect)>,
+        divs: &mut Vec<DividerRect>,
+    ) {
+        match self {
+            Layout::Empty => {}
+            Layout::Leaf(id) => leaves.push((*id, area)),
+            Layout::Split {
+                dir,
+                ratio,
+                first,
+                second,
+            } => {
+                let (a, divider, b) = split_rects(area, *dir, *ratio);
+                if divider.width > 0 && divider.height > 0 {
+                    divs.push((divider, *dir));
+                }
+                first.walk_rects(a, leaves, divs);
+                second.walk_rects(b, leaves, divs);
+            }
+        }
+    }
+}
+
+/// A split divider's screen rect plus its orientation (for drag-to-resize, later).
+pub type DividerRect = (Rect, SplitDir);
+
+/// Carve `area` into `(first, divider, second)` for a split. The divider is one
+/// cell on the split axis (omitted — zero-sized — if `area` is too small).
+pub fn split_rects(area: Rect, dir: SplitDir, ratio: u16) -> (Rect, Rect, Rect) {
+    let ratio = ratio.clamp(10, 90);
+    match dir {
+        SplitDir::Horizontal => {
+            if area.width < 3 {
+                return (
+                    area,
+                    Rect::new(area.x, area.y, 0, area.height),
+                    Rect::new(area.x, area.y, 0, area.height),
+                );
+            }
+            let usable = area.width - 1;
+            let w1 = ((usable as u32 * ratio as u32) / 100).max(1) as u16;
+            let w1 = w1.min(usable - 1);
+            let a = Rect::new(area.x, area.y, w1, area.height);
+            let d = Rect::new(area.x + w1, area.y, 1, area.height);
+            let b = Rect::new(area.x + w1 + 1, area.y, usable - w1, area.height);
+            (a, d, b)
+        }
+        SplitDir::Vertical => {
+            if area.height < 3 {
+                return (
+                    area,
+                    Rect::new(area.x, area.y, area.width, 0),
+                    Rect::new(area.x, area.y, area.width, 0),
+                );
+            }
+            let usable = area.height - 1;
+            let h1 = ((usable as u32 * ratio as u32) / 100).max(1) as u16;
+            let h1 = h1.min(usable - 1);
+            let a = Rect::new(area.x, area.y, area.width, h1);
+            let d = Rect::new(area.x, area.y + h1, area.width, 1);
+            let b = Rect::new(area.x, area.y + h1 + 1, area.width, usable - h1);
+            (a, d, b)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leaf_basics() {
+        let mut l = Layout::Leaf(0);
+        assert_eq!(l.leaves(), vec![0]);
+        assert_eq!(l.first_leaf(), Some(0));
+        assert!(l.contains(0));
+        l.set_leaf_pane(0, 3);
+        assert_eq!(l.leaves(), vec![3]);
+    }
+
+    #[test]
+    fn split_and_collapse() {
+        let mut l = Layout::Leaf(0);
+        // split leaf 0 → Split(Leaf 0, Leaf 1)
+        assert!(l.replace_leaf(
+            0,
+            Layout::Split {
+                dir: SplitDir::Horizontal,
+                ratio: 50,
+                first: Box::new(Layout::Leaf(0)),
+                second: Box::new(Layout::Leaf(1)),
+            }
+        ));
+        assert_eq!(l.leaves(), vec![0, 1]);
+        // nested split of leaf 1 → Split(Leaf 0, Split(Leaf 1, Leaf 2))
+        assert!(l.replace_leaf(
+            1,
+            Layout::Split {
+                dir: SplitDir::Vertical,
+                ratio: 50,
+                first: Box::new(Layout::Leaf(1)),
+                second: Box::new(Layout::Leaf(2)),
+            }
+        ));
+        assert_eq!(l.leaves(), vec![0, 1, 2]);
+        // remove leaf 1 → its sibling (Leaf 2) takes its place
+        assert!(l.remove_leaf(1));
+        assert_eq!(l.leaves(), vec![0, 2]);
+        // remove leaf 0 → collapses to just Leaf 2
+        assert!(l.remove_leaf(0));
+        assert_eq!(l.leaves(), vec![2]);
+        assert!(matches!(l, Layout::Leaf(2)));
+        // remove the last → Empty
+        assert!(l.remove_leaf(2));
+        assert!(matches!(l, Layout::Empty));
+    }
+
+    #[test]
+    fn shift_after_reindexes() {
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::Leaf(0)),
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Vertical,
+                ratio: 50,
+                first: Box::new(Layout::Leaf(1)),
+                second: Box::new(Layout::Leaf(3)),
+            }),
+        };
+        l.shift_after(2); // pretend pane 2 was removed from app.panes
+        assert_eq!(l.leaves(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn rects_sum_and_divide() {
+        let area = Rect::new(0, 0, 80, 24);
+        let l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::Leaf(0)),
+            second: Box::new(Layout::Leaf(1)),
+        };
+        let (leaves, divs) = l.compute_rects(area);
+        assert_eq!(leaves.len(), 2);
+        assert_eq!(divs.len(), 1);
+        let (_, r0) = leaves[0];
+        let (_, r1) = leaves[1];
+        // widths + 1 divider == 80
+        assert_eq!(r0.width + 1 + r1.width, 80);
+        assert_eq!(r0.height, 24);
+        assert_eq!(divs[0].0.width, 1);
     }
 }
