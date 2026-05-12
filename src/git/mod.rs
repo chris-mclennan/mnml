@@ -1,9 +1,11 @@
 //! Git integration: the lightweight status snapshot (branch / ahead-behind /
-//! change counts) for the statusline + tree tint, per-file gutter line-signs and
-//! the diff pane (`diff`), and per-line blame for the gutter blame mode
-//! (`blame`). Still to come: commit from inside the IDE.
+//! change counts) for the statusline + tree tint (`status`), per-file gutter
+//! line-signs and the diff pane with hunk stage/unstage (`diff`), per-line blame
+//! for the gutter blame mode (`blame`), and `git commit` from inside the IDE
+//! (`commit`).
 
 pub mod blame;
+pub mod commit;
 pub mod diff;
 pub mod status;
 

@@ -26,6 +26,7 @@ pub mod editor_view;
 pub mod icons;
 pub mod md_preview;
 pub mod picker;
+pub mod prompt;
 pub mod statusline;
 pub mod theme;
 pub mod tree_view;
@@ -117,15 +118,22 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     } else {
         app.rects.close_prompt_buttons.clear();
     }
+    if app.prompt.is_some() {
+        prompt::draw(frame, app, area);
+    } else {
+        app.rects.prompt_caret = None;
+    }
 
     // ── terminal cursor ──
-    // The picker's query caret wins when it's open; otherwise the editor caret
-    // when the editor pane has focus and no overlay is up; otherwise nothing.
-    if let Some((x, y)) = app.rects.picker_caret {
+    // An overlay's text caret (picker query, prompt input) wins when it's open;
+    // otherwise the editor caret when the editor pane has focus and no overlay is
+    // up; otherwise nothing.
+    if let Some((x, y)) = app.rects.prompt_caret.or(app.rects.picker_caret) {
         frame.set_cursor_position((x, y));
     } else if app.focus == Focus::Pane
         && app.whichkey.is_none()
         && app.close_prompt.is_none()
+        && app.prompt.is_none()
         && let Some((x, y)) = cursor_pos
     {
         frame.set_cursor_position((x, y));

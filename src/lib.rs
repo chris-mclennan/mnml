@@ -28,6 +28,7 @@ pub mod ipc;
 pub mod layout;
 pub mod pane;
 pub mod picker;
+pub mod prompt;
 pub mod tree;
 pub mod tui;
 pub mod ui;

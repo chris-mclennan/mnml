@@ -143,6 +143,11 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // The single-line text-input overlay (commit message, …) steals keys.
+    if app.prompt.is_some() {
+        handle_prompt_key(app, key);
+        return;
+    }
     // A leader sequence in flight: walk the which-key trie until a leaf / dead end / Esc.
     if app.whichkey.is_some() {
         match key.code {
@@ -183,6 +188,33 @@ fn handle_picker_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('u') if ctrl => picker.clear_query(),
         KeyCode::Backspace => picker.backspace(),
         KeyCode::Char(c) if !ctrl => picker.type_char(c),
+        _ => {}
+    }
+}
+
+fn handle_prompt_key(app: &mut App, key: KeyEvent) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let Some(p) = app.prompt.as_mut() else { return };
+    match key.code {
+        KeyCode::Esc => app.prompt_cancel(),
+        KeyCode::Enter => app.prompt_accept(),
+        KeyCode::Backspace => {
+            if ctrl {
+                p.delete_word();
+            } else {
+                p.backspace();
+            }
+        }
+        KeyCode::Char('w') if ctrl => p.delete_word(),
+        KeyCode::Char('u') if ctrl => {
+            p.input.clear();
+            p.cursor = 0;
+        }
+        KeyCode::Left => p.move_left(),
+        KeyCode::Right => p.move_right(),
+        KeyCode::Home => p.move_home(),
+        KeyCode::End => p.move_end(),
+        KeyCode::Char(c) if !ctrl => p.insert_char(c),
         _ => {}
     }
 }
@@ -350,6 +382,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
             _ => {}
         }
+        return;
+    }
+
+    // The text-input prompt is modal — swallow mouse events while it's open.
+    if app.prompt.is_some() {
         return;
     }
 

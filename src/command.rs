@@ -232,6 +232,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_blame(),
         },
         Command {
+            id: "git.commit",
+            title: "Git: commit staged changes",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_commit_prompt(),
+        },
+        Command {
             id: "whichkey.leader",
             title: "Leader menu (which-key)",
             group: "view",

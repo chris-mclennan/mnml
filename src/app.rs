@@ -65,6 +65,8 @@ pub struct PaneRects {
     pub picker_caret: Option<(u16, u16)>,
     /// `(rect, choice)` per button in the close-confirm overlay (0=Save, 1=Discard, 2=Cancel).
     pub close_prompt_buttons: Vec<(Rect, u8)>,
+    /// On-screen cell where the text-input prompt's caret should sit (when open).
+    pub prompt_caret: Option<(u16, u16)>,
 }
 
 pub struct App {
@@ -105,6 +107,9 @@ pub struct App {
     /// A buffer whose close is awaiting a Save/Discard/Cancel decision (the
     /// confirm overlay is up). Steals key input like the picker.
     pub close_prompt: Option<PaneId>,
+    /// The single-line text-input overlay (commit message, …), when open. Steals
+    /// key input like the picker.
+    pub prompt: Option<crate::prompt::Prompt>,
 }
 
 impl App {
@@ -136,6 +141,7 @@ impl App {
             whichkey: None,
             dragging: None,
             close_prompt: None,
+            prompt: None,
         })
     }
 
@@ -633,6 +639,45 @@ impl App {
             self.open_path(&path);
             if let Some(Pane::Editor(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
                 b.editor.place_cursor(line, 0);
+            }
+        }
+    }
+
+    // ─── commit ─────────────────────────────────────────────────────
+    /// Open the commit-message prompt. Commits whatever is staged when accepted;
+    /// if nothing's staged, `git commit` says so.
+    pub fn open_commit_prompt(&mut self) {
+        let staged = self.git.snapshot().staged;
+        let title = if staged > 0 {
+            format!("Commit message ({staged} staged)")
+        } else {
+            "Commit message (nothing staged — stage hunks first)".to_string()
+        };
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::GitCommit,
+            title,
+        ));
+    }
+    pub fn prompt_cancel(&mut self) {
+        self.prompt = None;
+    }
+    pub fn prompt_accept(&mut self) {
+        let Some(p) = self.prompt.take() else { return };
+        match p.kind {
+            crate::prompt::PromptKind::GitCommit => {
+                let msg = p.input.trim();
+                if msg.is_empty() {
+                    self.toast("commit cancelled (empty message)");
+                    return;
+                }
+                match crate::git::commit::commit(&self.workspace, msg) {
+                    Ok(summary) => {
+                        self.toast(summary);
+                        self.git.refresh();
+                        self.refresh_active_diff();
+                    }
+                    Err(e) => self.toast(format!("git commit: {e}")),
+                }
             }
         }
     }

@@ -113,10 +113,15 @@ line marks (kept in `GitStatus`'s ~3s-cached `Snapshot.line_changes`), drawn as 
 hunks (header + context/`+`/`-` lines), `n`/`p` move the cursor hunk, `s`/`u` stage/unstage
 it (`git apply --cached [--reverse]`), `r` refreshes, Enter jumps to the hunk's line in the
 source editor; `git.diff_file` (`<leader>g d`, opens in a split next to the source) /
-`git.diff` (worktree). headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
+`git.diff` (worktree); **blame gutter** — `git.blame_toggle` (`<leader>g b`) swaps the
+line-number gutter on the active editor for a per-line `<sha> <author>` column
+(`src/git/blame.rs` parses `git blame --porcelain`), refreshed on save; **commit** —
+`git.commit` (`<leader>g c`) opens the single-line text-input overlay (`src/prompt.rs` /
+`src/ui/prompt.rs`, a generic "type a string, Enter" sibling of the fuzzy picker) →
+`git commit -m`. headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
 wrappers. The statusline git segment shows branch + `⇡ahead ⇣behind` + `✚staged ●modified
-…untracked ⚠conflicts` (only the nonzero parts), from `git status --porcelain -b`. Next:
-the rest of the Git track (blame gutter → commit-from-mnml), then HTTP, Pty/AI-CLI, AI-API, CDP, the `.test`
+…untracked ⚠conflicts` (only the nonzero parts), from `git status --porcelain -b`. The Git
+track is done. Next: HTTP, Pty/AI-CLI, AI-API, CDP, the `.test`
 E2E format, plugins; plus queued polish (right-click context menus on files/tabs,
 inline-styled markdown, line-wrapped preview). See `.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.

@@ -94,6 +94,7 @@ pub fn root() -> &'static Leader {
                             ('d', cmd("git.diff_file", "diff file")),
                             ('D', cmd("git.diff", "diff worktree")),
                             ('b', cmd("git.blame_toggle", "blame toggle")),
+                            ('c', cmd("git.commit", "commit")),
                         ],
                     ),
                 ),
