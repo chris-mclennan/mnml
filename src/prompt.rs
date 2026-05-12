@@ -9,6 +9,8 @@ pub enum PromptKind {
     GitCommit,
     /// Accept ⇒ `claude -p <input>`, answer in a `Pane::Ai`.
     AiAsk,
+    /// Accept ⇒ `git checkout -b <input>`.
+    NewBranch,
 }
 
 #[derive(Debug)]

@@ -444,6 +444,8 @@ impl App {
             }
             PickerKind::Themes => self.set_theme(&item.id),
             PickerKind::Tasks => self.run_task(&item.id),
+            PickerKind::Branches => self.checkout_branch(&item.id),
+            PickerKind::Worktrees => self.open_worktree_shell(&item.id),
         }
     }
 
@@ -1704,6 +1706,10 @@ impl App {
                 let ellip = if q.chars().count() > 24 { "…" } else { "" };
                 self.ask_ai(format!("AI: {short}{ellip}"), q.to_string());
             }
+            crate::prompt::PromptKind::NewBranch => {
+                let name = p.input.clone();
+                self.create_branch(&name);
+            }
         }
     }
 
@@ -1939,6 +1945,116 @@ impl App {
             g.ai_msg_job = Some(job_id);
         }
         self.toast("asking Claude for a commit message…");
+    }
+
+    // ─── branches / worktrees ───────────────────────────────────────
+    /// Open a fuzzy picker over local + remote branches; accept ⇒ checkout.
+    pub fn open_branch_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let cur = crate::git::branch::current(&self.workspace);
+        let mut items: Vec<PickerItem> = Vec::new();
+        for b in crate::git::branch::local_branches(&self.workspace) {
+            let detail = if Some(&b) == cur.as_ref() {
+                "current"
+            } else {
+                "local"
+            };
+            items.push(PickerItem::new(format!("local:{b}"), b, detail));
+        }
+        for b in crate::git::branch::remote_branches(&self.workspace) {
+            items.push(PickerItem::new(format!("remote:{b}"), b.clone(), "remote"));
+        }
+        if items.is_empty() {
+            self.toast("no branches (not a git repo?)");
+            return;
+        }
+        self.open_picker(Picker::new(PickerKind::Branches, "Checkout branch", items));
+    }
+    /// Checkout the branch a `PickerKind::Branches` item id encodes.
+    pub fn checkout_branch(&mut self, id: &str) {
+        let result = if let Some(name) = id.strip_prefix("local:") {
+            crate::git::branch::checkout(&self.workspace, name).map(|_| name.to_string())
+        } else if let Some(remote) = id.strip_prefix("remote:") {
+            crate::git::branch::checkout_track(&self.workspace, remote).map(|_| remote.to_string())
+        } else {
+            crate::git::branch::checkout(&self.workspace, id).map(|_| id.to_string())
+        };
+        match result {
+            Ok(name) => self.after_checkout(&name),
+            Err(e) => self.toast(format!("git checkout: {e}")),
+        }
+    }
+    /// Open the "new branch name" prompt; accept ⇒ `git checkout -b <name>`.
+    pub fn open_new_branch_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::NewBranch,
+            "New branch name (off current HEAD)",
+        ));
+    }
+    pub fn create_branch(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            self.toast("branch creation cancelled (empty name)");
+            return;
+        }
+        match crate::git::branch::create(&self.workspace, name) {
+            Ok(()) => self.after_checkout(name),
+            Err(e) => self.toast(format!("git checkout -b: {e}")),
+        }
+    }
+    /// Open a picker over `git worktree list`; accept ⇒ a shell pane in that dir.
+    pub fn open_worktree_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let wts = crate::git::branch::worktrees(&self.workspace);
+        if wts.is_empty() {
+            self.toast("no worktrees (not a git repo?)");
+            return;
+        }
+        let items: Vec<PickerItem> = wts
+            .into_iter()
+            .map(|w| {
+                let detail = if w.is_current {
+                    format!("{} · current", w.label)
+                } else {
+                    w.label.clone()
+                };
+                PickerItem::new(
+                    w.path.display().to_string(),
+                    w.path.display().to_string(),
+                    detail,
+                )
+            })
+            .collect();
+        self.open_picker(Picker::new(
+            PickerKind::Worktrees,
+            "Worktree → shell",
+            items,
+        ));
+    }
+    /// Open a shell pane in `path` (a worktree directory).
+    pub fn open_worktree_shell(&mut self, path: &str) {
+        self.open_pty(crate::pty_pane::BinaryProfile::shell(Some(PathBuf::from(
+            path,
+        ))));
+    }
+    /// Common tail of a checkout / new-branch: refresh git + tree, warn that open
+    /// editors may now be stale (their file on disk could differ).
+    fn after_checkout(&mut self, label: &str) {
+        self.after_git_change();
+        self.tree.refresh();
+        let dirty_open = self
+            .panes
+            .iter()
+            .any(|p| matches!(p, Pane::Editor(b) if b.dirty));
+        if dirty_open {
+            self.toast(format!(
+                "switched to {label} — heads up: you have unsaved edits open"
+            ));
+        } else {
+            self.toast(format!(
+                "switched to {label} — reopen files if their content changed"
+            ));
+        }
     }
 
     /// Move focus to the leaf in direction `d` of the focused one (by the rects

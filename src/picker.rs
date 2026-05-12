@@ -18,6 +18,10 @@ pub enum PickerKind {
     Themes,
     /// `id` = a `[tasks.<name>]` task name. Accept ⇒ run it in a pty pane.
     Tasks,
+    /// `id` = `"local:<name>"` or `"remote:<name>"`. Accept ⇒ checkout that branch.
+    Branches,
+    /// `id` = a worktree path. Accept ⇒ open a shell pane there.
+    Worktrees,
 }
 
 #[derive(Debug, Clone)]

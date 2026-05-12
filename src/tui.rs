@@ -430,6 +430,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter => app.git_status_open_diff(),
             KeyCode::Char('c') => app.open_commit_prompt(),
             KeyCode::Char('C') => app.request_ai_commit_message(),
+            KeyCode::Char('b') => app.open_branch_picker(),
+            KeyCode::Char('B') => app.open_new_branch_prompt(),
+            KeyCode::Char('w') => app.open_worktree_picker(),
             KeyCode::Char('r') => {
                 if let Some(Pane::GitStatus(g)) = app.panes.get_mut(i) {
                     g.refresh();

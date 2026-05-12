@@ -260,6 +260,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.request_ai_commit_message(),
         },
         Command {
+            id: "git.checkout",
+            title: "Git: checkout a branch (local or remote)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_branch_picker(),
+        },
+        Command {
+            id: "git.new_branch",
+            title: "Git: create a new branch",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_new_branch_prompt(),
+        },
+        Command {
+            id: "git.worktrees",
+            title: "Git: worktrees → open a shell in one",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_worktree_picker(),
+        },
+        Command {
             id: "rqst.send",
             title: "HTTP: send request (.http/.curl) — or re-fire a request pane",
             group: "http",
