@@ -364,15 +364,38 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // forwards it to the child. The global chords (`Ctrl+E` cycle focus, `Ctrl+B`
     // tree, …) already had their shot in `dispatch_key` before us, so they remain
     // the way out — nothing here intercepts. (Esc is forwarded too — terminal apps
-    // need it.) An exited child swallows nothing; close it with `Ctrl+W`.
+    // need it.) `Shift+PgUp/PgDn/Home/End` scroll the vt100 scroll-back instead of
+    // being forwarded. An exited child swallows nothing; close it with `Ctrl+W`.
     if let Some(Pane::Pty(s)) = app.panes.get_mut(i) {
-        if !s.is_exited() {
-            let bytes = pty_key_bytes(key);
-            if !bytes.is_empty() {
-                s.write_bytes(&bytes);
+        if s.is_exited() {
+            if key.code == KeyCode::Esc {
+                app.focus_tree();
             }
-        } else if key.code == KeyCode::Esc {
-            app.focus_tree();
+            return;
+        }
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        match key.code {
+            KeyCode::PageUp if shift => {
+                s.scroll_history(viewport.saturating_sub(1) as isize);
+                return;
+            }
+            KeyCode::PageDown if shift => {
+                s.scroll_history(-(viewport.saturating_sub(1) as isize));
+                return;
+            }
+            KeyCode::Home if shift => {
+                s.scroll_to_top();
+                return;
+            }
+            KeyCode::End if shift => {
+                s.scroll_to_bottom();
+                return;
+            }
+            _ => {}
+        }
+        let bytes = pty_key_bytes(key);
+        if !bytes.is_empty() {
+            s.write_bytes(&bytes);
         }
         return;
     }
@@ -676,7 +699,11 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     rp.scroll + n
                 };
             }
-            Some(Pane::Pty(_)) => {} // pty scrollback isn't wired yet
+            Some(Pane::Pty(s)) => s.scroll_history(if delta < 0 {
+                delta.unsigned_abs() as isize
+            } else {
+                -(delta.unsigned_abs() as isize)
+            }),
             Some(Pane::Ai(a)) => {
                 let n = delta.unsigned_abs() as usize;
                 a.scroll = if delta < 0 {

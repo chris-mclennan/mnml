@@ -16,6 +16,9 @@ use std::thread::JoinHandle;
 
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
+/// How many lines of output vt100 keeps for scroll-back (`Shift+PgUp` / wheel).
+const SCROLLBACK_LINES: usize = 5000;
+
 /// What runs inside a pty pane — a config record so the caller picks "shell" vs
 /// "claude" without this module knowing about products.
 #[derive(Debug, Clone)]
@@ -145,7 +148,7 @@ impl PtySession {
             .map_err(|e| format!("spawn {}: {e} — is it on PATH?", profile.exe))?;
         drop(pair.slave);
 
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0)));
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, SCROLLBACK_LINES)));
         let exited = Arc::new(Mutex::new(false));
         let bytes_seen = Arc::new(AtomicU64::new(0));
 
@@ -219,6 +222,27 @@ impl PtySession {
     pub fn write_bytes(&mut self, bytes: &[u8]) {
         let _ = self.writer.write_all(bytes);
         let _ = self.writer.flush();
+    }
+
+    /// Scroll the view `delta` lines further into the scroll-back history (negative
+    /// ⇒ back toward the live bottom). Clamped by vt100 to the available history.
+    pub fn scroll_history(&self, delta: isize) {
+        if let Ok(mut p) = self.parser.lock() {
+            let cur = p.screen().scrollback() as isize;
+            p.set_scrollback((cur + delta).max(0) as usize);
+        }
+    }
+    /// Jump to the oldest line (`usize::MAX` is clamped to the max history).
+    pub fn scroll_to_top(&self) {
+        if let Ok(mut p) = self.parser.lock() {
+            p.set_scrollback(usize::MAX);
+        }
+    }
+    /// Back to the live view (bottom).
+    pub fn scroll_to_bottom(&self) {
+        if let Ok(mut p) = self.parser.lock() {
+            p.set_scrollback(0);
+        }
     }
 
     pub fn is_exited(&self) -> bool {

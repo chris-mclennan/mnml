@@ -84,7 +84,7 @@ pub fn draw(
 
     app.rects.editor_panes.push((area, pane_id));
 
-    if focused && !exited && !screen.hide_cursor() {
+    if focused && !exited && !screen.hide_cursor() && screen.scrollback() == 0 {
         let (cr, cc) = screen.cursor_position();
         let cx = area.x + cc.min(area.width.saturating_sub(1));
         let cy = area.y + cr.min(area.height.saturating_sub(1));
