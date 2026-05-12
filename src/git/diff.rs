@@ -155,6 +155,11 @@ pub fn diff_worktree(workspace: &Path) -> Vec<Hunk> {
 pub fn diff_staged(workspace: &Path) -> Vec<Hunk> {
     run_diff(workspace, &["diff", "--no-color", "--cached"])
 }
+/// `git show <hash>` — the diff a commit introduced (read-only; the hunks here
+/// can't be staged — they're history).
+pub fn show_commit(workspace: &Path, hash: &str) -> Vec<Hunk> {
+    run_diff(workspace, &["show", "--no-color", "--format=", hash])
+}
 
 fn run_diff(workspace: &Path, args: &[&str]) -> Vec<Hunk> {
     let Ok(out) = Command::new("git")

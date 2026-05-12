@@ -345,6 +345,48 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // The git-graph pane: ↑↓ select a commit, Enter → open that commit's diff,
+    // `r` refresh (re-run `git log`), `y` copy the commit hash, Esc → tree.
+    if matches!(app.panes.get(i), Some(Pane::GitGraph(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
+                    g.move_selection(-1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
+                    g.move_selection(1);
+                }
+            }
+            KeyCode::PageUp | KeyCode::Char('u') => {
+                if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
+                    g.move_selection(-(viewport as isize));
+                }
+            }
+            KeyCode::PageDown | KeyCode::Char('d') => {
+                if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
+                    g.move_selection(viewport as isize);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
+                    g.move_selection(isize::MIN / 2);
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
+                    g.move_selection(isize::MAX / 2);
+                }
+            }
+            KeyCode::Enter => app.open_selected_commit_diff(),
+            KeyCode::Char('r') => app.refresh_active_git_graph(),
+            KeyCode::Char('y') => app.copy_selected_commit_hash(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // An AI pane: read-only — scroll, `r` re-ask, `c` continue in interactive
     // Claude Code (resumes the session), Esc → tree.
     if let Some(Pane::Ai(a)) = app.panes.get_mut(i) {
@@ -721,6 +763,13 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 } else {
                     t.scroll + n
                 };
+            }
+            Some(Pane::GitGraph(g)) => {
+                g.move_selection(if delta < 0 {
+                    -(delta.unsigned_abs() as isize)
+                } else {
+                    delta.unsigned_abs() as isize
+                });
             }
             None => {}
         }

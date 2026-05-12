@@ -239,6 +239,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_commit_prompt(),
         },
         Command {
+            id: "git.graph",
+            title: "Git: commit graph (DAG browser)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_git_graph(),
+        },
+        Command {
             id: "rqst.send",
             title: "HTTP: send request (.http/.curl) — or re-fire a request pane",
             group: "http",

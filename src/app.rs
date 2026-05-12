@@ -576,6 +576,7 @@ impl App {
             Some(Pane::Editor(b)) => b.path.clone(),
             Some(Pane::MdPreview(p)) => Some(p.path.clone()),
             Some(Pane::Diff(_))
+            | Some(Pane::GitGraph(_))
             | Some(Pane::Request(_))
             | Some(Pane::Pty(_))
             | Some(Pane::Ai(_))
@@ -625,6 +626,7 @@ impl App {
             Some(Pane::Editor(b)) if b.language_ext.as_deref() == Some("md") => b.path.clone(),
             Some(Pane::Editor(_))
             | Some(Pane::Diff(_))
+            | Some(Pane::GitGraph(_))
             | Some(Pane::Request(_))
             | Some(Pane::Pty(_))
             | Some(Pane::Ai(_))
@@ -1498,6 +1500,7 @@ impl App {
             }
             DiffScope::Unstaged(None) => crate::git::diff::diff_worktree(&self.workspace),
             DiffScope::Staged => crate::git::diff::diff_staged(&self.workspace),
+            DiffScope::Commit(h) => crate::git::diff::show_commit(&self.workspace, h),
         }
     }
     /// Open a `git diff` view of the active editor's file, in a split to the right.
@@ -1510,7 +1513,7 @@ impl App {
             Some(Pane::Editor(b)) => b.path.clone(),
             Some(Pane::Diff(d)) => match &d.scope {
                 crate::pane::DiffScope::Unstaged(p) => p.clone(),
-                crate::pane::DiffScope::Staged => None,
+                crate::pane::DiffScope::Staged | crate::pane::DiffScope::Commit(_) => None,
             },
             _ => None,
         };
@@ -1566,6 +1569,13 @@ impl App {
             _ => return,
         };
         let Some(hunk) = hunk else { return };
+        if matches!(
+            self.panes.get(cur),
+            Some(Pane::Diff(d)) if matches!(d.scope, crate::pane::DiffScope::Commit(_))
+        ) {
+            self.toast("that's a committed change — nothing to stage");
+            return;
+        }
         match crate::git::diff::apply_hunk(&self.workspace, &hunk, reverse) {
             Ok(()) => {
                 self.toast(if reverse {
@@ -1640,6 +1650,7 @@ impl App {
                         self.toast(summary);
                         self.git.refresh();
                         self.refresh_active_diff();
+                        self.refresh_git_graph_panes();
                     }
                     Err(e) => self.toast(format!("git commit: {e}")),
                 }
@@ -1654,6 +1665,78 @@ impl App {
                 self.ask_ai(format!("AI: {short}{ellip}"), q.to_string());
             }
         }
+    }
+
+    // ─── git graph (graphical-Git-GUI-style commit DAG) ─────────────────────
+    /// Open the commit-DAG browser as a split to the right of the focused leaf.
+    pub fn open_git_graph(&mut self) {
+        let pane = Pane::GitGraph(crate::git::graph::GitGraphPane::open(&self.workspace));
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+    /// Re-run `git log` for the active git-graph pane (after a commit / fetch).
+    pub fn refresh_active_git_graph(&mut self) {
+        if let Some(Pane::GitGraph(g)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            g.refresh();
+        }
+    }
+    fn refresh_git_graph_panes(&mut self) {
+        for pane in &mut self.panes {
+            if let Pane::GitGraph(g) = pane {
+                g.refresh();
+            }
+        }
+    }
+    /// Open the selected commit's diff (`git show <hash>`) as a `Pane::Diff` in a
+    /// split to the right of the graph pane.
+    pub fn open_selected_commit_diff(&mut self) {
+        let Some(cur) = self.active else { return };
+        let hash = match self.panes.get(cur) {
+            Some(Pane::GitGraph(g)) => g.selected_commit().map(|c| c.hash.clone()),
+            _ => None,
+        };
+        let Some(hash) = hash else { return };
+        let scope = crate::pane::DiffScope::Commit(hash.clone());
+        let hunks = self.fetch_diff(&scope);
+        if hunks.is_empty() {
+            self.toast(format!(
+                "commit {} has no file changes (merge?)",
+                hash.chars().take(9).collect::<String>()
+            ));
+            return;
+        }
+        let new_id = self.split_leaf_with(
+            cur,
+            crate::layout::SplitDir::Horizontal,
+            Pane::Diff(crate::pane::DiffView::new(scope, hunks)),
+        );
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+    }
+    /// Copy the selected commit's full hash to the clipboard.
+    pub fn copy_selected_commit_hash(&mut self) {
+        let Some(cur) = self.active else { return };
+        let hash = match self.panes.get(cur) {
+            Some(Pane::GitGraph(g)) => g.selected_commit().map(|c| c.hash.clone()),
+            _ => None,
+        };
+        let Some(hash) = hash else { return };
+        self.clipboard.set(hash.clone(), false);
+        self.toast(format!(
+            "copied {}",
+            hash.chars().take(12).collect::<String>()
+        ));
     }
 
     /// Move focus to the leaf in direction `d` of the focused one (by the rects
@@ -1783,6 +1866,7 @@ impl App {
             Pane::Editor(b) => b.dirty.then(|| b.display_name()),
             Pane::MdPreview(_)
             | Pane::Diff(_)
+            | Pane::GitGraph(_)
             | Pane::Request(_)
             | Pane::Pty(_)
             | Pane::Ai(_)
@@ -1858,6 +1942,7 @@ impl App {
             Pane::Editor(b) => Some((b.display_name(), b.path.is_some())),
             Pane::MdPreview(p) => Some((p.title(), false)),
             Pane::Diff(d) => Some((d.title(), false)),
+            Pane::GitGraph(g) => Some((g.tab_title(), false)),
             Pane::Request(r) => Some((r.title(), false)),
             Pane::Pty(s) => Some((s.title(), false)),
             Pane::Ai(a) => Some((a.tab_title(), false)),

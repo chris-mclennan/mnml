@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use crate::ai::AiPane;
 use crate::buffer::Buffer;
 use crate::git::diff::Hunk;
+use crate::git::graph::GitGraphPane;
 use crate::playwright::TestsPane;
 use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
@@ -24,6 +25,8 @@ pub enum Pane {
     MdPreview(MdPreview),
     /// A `git diff` view (hunk nav + stage/unstage).
     Diff(DiffView),
+    /// A graphical-Git-GUI-style commit-DAG browser (`git log --all` + commit details).
+    GitGraph(GitGraphPane),
     /// A request fired from a `.http`/`.curl` file, with its response.
     Request(RequestPane),
     /// An embedded terminal (shell / `claude` / `codex`).
@@ -58,6 +61,8 @@ pub enum DiffScope {
     Unstaged(Option<PathBuf>),
     /// Staged changes — `git diff --cached`.
     Staged,
+    /// The diff a commit introduced — `git show <hash>` (read-only, no staging).
+    Commit(String),
 }
 
 pub struct DiffView {
@@ -88,6 +93,7 @@ impl DiffView {
             ),
             DiffScope::Unstaged(None) => "diff: worktree".to_string(),
             DiffScope::Staged => "diff: staged".to_string(),
+            DiffScope::Commit(h) => format!("commit {}", h.chars().take(9).collect::<String>()),
         }
     }
 }
@@ -99,6 +105,7 @@ impl Pane {
             Pane::Editor(b) => b.display_name(),
             Pane::MdPreview(p) => p.title(),
             Pane::Diff(d) => d.title(),
+            Pane::GitGraph(g) => g.tab_title(),
             Pane::Request(r) => r.title(),
             Pane::Pty(s) => s.title(),
             Pane::Ai(a) => a.tab_title(),
@@ -112,6 +119,7 @@ impl Pane {
             Pane::Editor(b) => b.dirty,
             Pane::MdPreview(_)
             | Pane::Diff(_)
+            | Pane::GitGraph(_)
             | Pane::Request(_)
             | Pane::Pty(_)
             | Pane::Ai(_)
