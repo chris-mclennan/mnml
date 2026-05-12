@@ -73,13 +73,17 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
-P0 + P1 + a NvChad-layout UI pass + the `run.sh`/`dev.sh` wrappers are done. Editing
-works via the VSCode-style `StandardInputHandler`; headless+IPC works. Next: **P2** —
-command palette (`Ctrl+Shift+P`) + fuzzy file finder (`Ctrl+P`) + which-key popup +
-tree-sitter syntax highlight + indent guides + icons polish. Then **P3** — the vim
-handler (`src/input/vim.rs`) + the config-driven `[keys.*]` resolver (`src/input/keymap.rs`)
-+ editor splits (`src/layout.rs`). Then the tracks (Git diff/stage/blame, HTTP, Pty/AI-CLI,
-AI-API, CDP, the `.test` E2E format, plugins). See `.local/PLAN.md` for the full plan.
+P0–P2 done (minus which-key, deferred to P3). Working: NvChad-ish layout; editable
+buffers via the VSCode-style `StandardInputHandler` with selection/undo/clipboard;
+fuzzy file finder (`Ctrl+P`) + command palette (`Ctrl+Shift+P`) + buffer switcher
+(`src/picker.rs` / `src/fuzzy.rs`); tree-sitter syntax highlight (`src/highlight.rs`,
+6 grammars so far) + indent guides; headless+IPC (interactive TUI listens too) + the
+`run.sh`/`dev.sh` wrappers. Next: **P3** — the vim handler (`src/input/vim.rs`) + the
+config-driven `[keys.*]` resolver (`src/input/keymap.rs`) + which-key popup (`<leader>`)
++ editor splits (`src/layout.rs` HSplit/VSplit + `Ctrl+\` / `Ctrl+W hjkl`). Then the
+tracks (Git diff/stage/blame, HTTP, Pty/AI-CLI, AI-API, CDP, the `.test` E2E format,
+plugins). See `.local/PLAN.md` for the full plan. Highlight follow-ups: more grammars
+(typescript/css/html/c/bash/markdown), incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)
 
