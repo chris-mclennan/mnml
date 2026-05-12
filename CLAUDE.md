@@ -260,9 +260,14 @@ open, `did_save` on save, a full-text `did_change` on every edit (diagnostics up
 `did_close` when the last pane for a file closes; diagnostics land on `buffer.diagnostics` → `editor_view`
 paints a severity dot in the gutter sign cell + tints the line number, `statusline` shows error/warning
 counts. Commands `lsp.goto_definition` (`F12` / `<leader>l d`), `lsp.hover` (`<leader>l h`, toasts the first
-line), `lsp.references` (`<leader>l r`, → fuzzy picker of `path:line:col`, Enter jumps — `PickerKind::Locations`).
+line), `lsp.references` (`<leader>l r`, → fuzzy picker of `path:line:col`, Enter jumps — `PickerKind::Locations`),
+`lsp.diagnostics` (`<leader>l e`) — `Pane::Diagnostics` (`src/lsp/diagnostics_pane.rs` = `DiagnosticsPane`
+state: every diagnostic on an open buffer, errors-first; `src/ui/diagnostics_view.rs` renders the list
+[`▶`-marked selection, `rel:line:col  message  (source)` per row, header err/warn counts]); a "Problems"
+panel in a split below the focused leaf — ↑↓/jk select, Enter jumps to the location, `r` refreshes, Esc → tree,
+wheel moves the selection; it's rebuilt live whenever diagnostics change (`App::refresh_diagnostics_panes`).
 Known simplifications (in `src/lsp/mod.rs`): full-text doc sync, char-offset columns, `initialize` not
-awaited before `didOpen`. Then: completion/rename + a hover popup + diagnostics list pane (LSP follow-ups), CDP,
+awaited before `didOpen`. Then: completion/rename + a hover popup (LSP follow-ups), CDP,
 more `.test` coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native launcher
 actions), Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus queued
 polish (line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.

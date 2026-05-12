@@ -50,6 +50,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Pty(_) => (if nerd { "\u{f489}" } else { "▶" }, theme::cur().teal),
             Pane::Ai(_) => (if nerd { "\u{f0e0a}" } else { "✦" }, theme::cur().purple),
             Pane::Tests(_) => (if nerd { "\u{f0668}" } else { "✓" }, theme::cur().green),
+            Pane::Diagnostics(_) => (if nerd { "\u{f0026}" } else { "⚠" }, theme::cur().red),
         };
         let badge = if pane.is_dirty() { "●" } else { "×" };
         // ` <icon> <name> <badge> `

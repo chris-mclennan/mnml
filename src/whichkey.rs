@@ -169,6 +169,7 @@ pub fn root() -> &'static Leader {
                             ('d', cmd("lsp.goto_definition", "go to definition")),
                             ('h', cmd("lsp.hover", "hover docs")),
                             ('r', cmd("lsp.references", "find references")),
+                            ('e', cmd("lsp.diagnostics", "diagnostics list")),
                         ],
                     ),
                 ),

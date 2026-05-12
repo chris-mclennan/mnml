@@ -15,6 +15,7 @@
 //! (works with rust-analyzer/gopls/pyright/clangd/tsserver in practice).
 
 pub mod client;
+pub mod diagnostics_pane;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

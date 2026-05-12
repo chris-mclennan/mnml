@@ -316,6 +316,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_references(),
         },
         Command {
+            id: "lsp.diagnostics",
+            title: "LSP: diagnostics list (project problems)",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.open_diagnostics_pane(),
+        },
+        Command {
             id: "rqst.send",
             title: "HTTP: send request (.http/.curl) — or re-fire a request pane",
             group: "http",

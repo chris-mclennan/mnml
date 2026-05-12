@@ -678,6 +678,7 @@ impl App {
                         b.diagnostics = diags.clone();
                     }
                 }
+                self.refresh_diagnostics_panes();
             }
             LspEvent::GotoDefinition {
                 path,
@@ -735,6 +736,94 @@ impl App {
         }
     }
 
+    // ─── diagnostics ("Problems") list pane ─────────────────────────
+    /// Collect every diagnostic currently held on an open editor buffer into a
+    /// fresh [`DiagnosticsPane`].
+    fn build_diagnostics_pane(&self) -> crate::lsp::diagnostics_pane::DiagnosticsPane {
+        let sources = self.panes.iter().filter_map(|p| match p {
+            Pane::Editor(b) => {
+                let path = b.path.clone()?;
+                if b.diagnostics.is_empty() {
+                    return None;
+                }
+                let rel = rel_path(&self.workspace, &path);
+                Some((path, rel, b.diagnostics.as_slice()))
+            }
+            _ => None,
+        });
+        crate::lsp::diagnostics_pane::DiagnosticsPane::build(sources)
+    }
+
+    /// `lsp.diagnostics` — open the project-wide diagnostics list (or refocus +
+    /// refresh the one that's already open) in a split below the focused leaf.
+    pub fn open_diagnostics_pane(&mut self) {
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Diagnostics(_)))
+        {
+            let fresh = self.build_diagnostics_pane();
+            if let Some(Pane::Diagnostics(d)) = self.panes.get_mut(id) {
+                d.items = fresh.items;
+                d.clamp();
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::Diagnostics(self.build_diagnostics_pane());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// Rebuild the item list of any open diagnostics pane (called when
+    /// diagnostics change, or on the pane's `r` key).
+    pub fn refresh_diagnostics_panes(&mut self) {
+        if !self.panes.iter().any(|p| matches!(p, Pane::Diagnostics(_))) {
+            return;
+        }
+        let fresh = self.build_diagnostics_pane();
+        for pane in &mut self.panes {
+            if let Pane::Diagnostics(d) = pane {
+                d.items = fresh.items.clone();
+                d.clamp();
+            }
+        }
+    }
+
+    pub fn move_diagnostics_selection(&mut self, delta: isize) {
+        if let Some(Pane::Diagnostics(d)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            d.move_selection(delta);
+        }
+    }
+
+    /// Open the highlighted diagnostic's file and place the cursor there.
+    pub fn jump_to_selected_diagnostic(&mut self) {
+        let target = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Diagnostics(d)) => d
+                .selected_item()
+                .map(|it| (it.path.clone(), it.line, it.col)),
+            _ => None,
+        };
+        let Some((path, line, col)) = target else {
+            return;
+        };
+        self.open_path(&path);
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(line as usize, col as usize);
+        }
+    }
+
     /// Drop `app.panes[removed]` and re-index every higher reference (the layout's
     /// leaves, `active`). Caller must have already detached `removed` from the
     /// layout if it was in a leaf.
@@ -768,6 +857,7 @@ impl App {
             | Some(Pane::Pty(_))
             | Some(Pane::Ai(_))
             | Some(Pane::Tests(_))
+            | Some(Pane::Diagnostics(_))
             | None => None,
         };
         let new_buf = match path {
@@ -818,7 +908,8 @@ impl App {
             | Some(Pane::Request(_))
             | Some(Pane::Pty(_))
             | Some(Pane::Ai(_))
-            | Some(Pane::Tests(_)) => {
+            | Some(Pane::Tests(_))
+            | Some(Pane::Diagnostics(_)) => {
                 self.toast("not a markdown file");
                 return;
             }
@@ -2368,7 +2459,8 @@ impl App {
             | Pane::Request(_)
             | Pane::Pty(_)
             | Pane::Ai(_)
-            | Pane::Tests(_) => (None, None),
+            | Pane::Tests(_)
+            | Pane::Diagnostics(_) => (None, None),
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -2455,6 +2547,7 @@ impl App {
             Pane::Pty(s) => Some((s.title(), false)),
             Pane::Ai(a) => Some((a.tab_title(), false)),
             Pane::Tests(t) => Some((t.tab_title(), false)),
+            Pane::Diagnostics(d) => Some((d.tab_title(), false)),
         }
     }
 

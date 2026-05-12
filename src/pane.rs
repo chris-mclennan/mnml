@@ -10,6 +10,7 @@ use crate::buffer::Buffer;
 use crate::git::diff::Hunk;
 use crate::git::graph::GitGraphPane;
 use crate::git::stage::GitStatusPane;
+use crate::lsp::diagnostics_pane::DiagnosticsPane;
 use crate::playwright::TestsPane;
 use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
@@ -38,6 +39,8 @@ pub enum Pane {
     Ai(AiPane),
     /// A Playwright test run + its results tree.
     Tests(TestsPane),
+    /// A workspace-wide LSP-diagnostics ("Problems") list.
+    Diagnostics(DiagnosticsPane),
 }
 
 pub struct MdPreview {
@@ -114,6 +117,7 @@ impl Pane {
             Pane::Pty(s) => s.title(),
             Pane::Ai(a) => a.tab_title(),
             Pane::Tests(t) => t.tab_title(),
+            Pane::Diagnostics(d) => d.tab_title(),
         }
     }
 
@@ -128,7 +132,8 @@ impl Pane {
             | Pane::Request(_)
             | Pane::Pty(_)
             | Pane::Ai(_)
-            | Pane::Tests(_) => false,
+            | Pane::Tests(_)
+            | Pane::Diagnostics(_) => false,
         }
     }
 
