@@ -126,10 +126,20 @@ lazily-loaded per-commit detail; `src/ui/git_graph_view.rs` draws the lane graph
 [message · parents · changed files]). `git.graph` (`<leader>g l`); in the pane ↑↓/jk select,
 PgUp/PgDn/g/G jump, Enter opens that commit's diff (`DiffScope::Commit(hash)` → `git show` —
 read-only, staging refused), `r` refresh, `y` copy hash, Esc → tree, wheel moves the selection;
-commits refresh open graph panes. headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
+commits refresh open graph panes. **staging view** — `Pane::GitStatus` (`src/git/stage.rs`:
+`git status --porcelain` → unstaged/staged file lists, `stage`/`unstage`/`stage_all`/`unstage_all`
+[`git add` / `git restore --staged`, `git reset` fallback], `staged_diff`; `GitStatusPane` state;
+`src/ui/git_status_view.rs` renders the two sections + branch/counts header). `git.status_pane`
+(`<leader>g s`); in the pane ↑↓/jk select, PgUp/PgDn/g/G jump, `s`/`u`/Space stage·unstage·toggle,
+`a`/`A` all, Enter → that file's diff, `c` commit prompt, `C` ai-commit, `r` refresh, Esc → tree.
+**AI commit message** — `git.ai_commit` (`<leader>g m`, also `C` in the staging pane): `claude -p`
+summarises `git diff --cached`; the result lands (via `App.pending_commit_msg_job`, sharing `ai_chan`)
+in the commit prompt pre-seeded with its first line (`Prompt::seeded`). Per-hunk staging (diff pane),
+commit, and staging-pane ops all run through `App::after_git_change()` (refreshes the cached status +
+every open `GitGraph`/`GitStatus` pane). headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
 wrappers. The statusline git segment shows branch + `⇡ahead ⇣behind` + `✚staged ●modified
 …untracked ⚠conflicts` (only the nonzero parts), from `git status --porcelain -b`. The Git
-track is done (phase 2 — branch/worktree rail, a stage-view, commit-with-Claude/Codex — is queued; see `.local/PLAN.md`). **HTTP track — in progress:** `src/http/` holds `Request`/`Response` +
+track is done (phase 3 — branch/worktree rail, commit-with-Codex, "recompose commit with AI", multi-repo — is queued; see `.local/PLAN.md`). **HTTP track — in progress:** `src/http/` holds `Request`/`Response` +
 `send` (reqwest blocking, rustls), `curl.rs` (parse a pasted cURL), `file.rs` (`.http`/
 `.rest`/`.curl` parsing, multi-block via `### name`), `template.rs` (`{{VAR}}` from
 `.mnml/env/<name>.env` → process env → dynamic `{{$uuid}}`/`{{$timestamp}}`/…), `script.rs`
