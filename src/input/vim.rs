@@ -462,6 +462,11 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::Ops(vec![SelectLine])
             }
+            // leader: space opens the which-key popup
+            KeyCode::Char(' ') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("whichkey.leader".into()))
+            }
             // command line
             KeyCode::Char(':') => {
                 self.reset_pending();

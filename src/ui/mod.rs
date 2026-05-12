@@ -26,6 +26,7 @@ pub mod statusline;
 pub mod theme;
 pub mod tree_view;
 pub mod welcome;
+pub mod whichkey;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout as RLayout};
@@ -94,7 +95,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     statusline::draw(frame, app, statusline_area);
     app.rects.statusline = Some(statusline_area);
 
-    // ── overlays (picker / palette) ──
+    // ── overlays (picker / palette, then which-key) ──
     if app.picker.is_some() {
         picker::draw(frame, app, area);
     } else {
@@ -102,13 +103,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.picker_items.clear();
         app.rects.picker_caret = None;
     }
+    if app.whichkey.is_some() {
+        whichkey::draw(frame, app, area);
+    }
 
     // ── terminal cursor ──
     // The picker's query caret wins when it's open; otherwise the editor caret
-    // when the editor pane has focus; otherwise nothing (ratatui hides it).
+    // when the editor pane has focus and no overlay is up; otherwise nothing.
     if let Some((x, y)) = app.rects.picker_caret {
         frame.set_cursor_position((x, y));
     } else if app.focus == Focus::Pane
+        && app.whichkey.is_none()
         && let Some((x, y)) = cursor_pos
     {
         frame.set_cursor_position((x, y));

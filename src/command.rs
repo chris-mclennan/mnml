@@ -196,5 +196,13 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.toggle_input_style(),
         },
+        Command {
+            id: "whichkey.leader",
+            title: "Leader menu (which-key)",
+            group: "view",
+            // `<space>` in vim Normal also opens this (the vim handler routes it).
+            keys: &["ctrl+k"],
+            run: |app| app.open_whichkey(),
+        },
     ]
 }

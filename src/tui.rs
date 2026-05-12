@@ -134,6 +134,16 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         handle_picker_key(app, key);
         return;
     }
+    // A leader sequence in flight: walk the which-key trie until a leaf / dead end / Esc.
+    if app.whichkey.is_some() {
+        match key.code {
+            KeyCode::Esc => app.whichkey_cancel(),
+            KeyCode::Backspace => app.whichkey_cancel(),
+            KeyCode::Char(c) => app.whichkey_feed(c),
+            _ => {} // other keys: keep the popup up
+        }
+        return;
+    }
 
     // App-level chords (any focus) resolve through the one keymap table — registry
     // defaults overlaid with `[keys.*]` config. These win over the focused pane;

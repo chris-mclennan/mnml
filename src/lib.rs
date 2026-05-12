@@ -31,3 +31,4 @@ pub mod picker;
 pub mod tree;
 pub mod tui;
 pub mod ui;
+pub mod whichkey;

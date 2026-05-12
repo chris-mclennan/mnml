@@ -73,7 +73,7 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
-P0–P3a + P3c done (which-key deferred). Working: NvChad-ish layout; editable buffers via
+P0–P3c done (P3d splits remaining). Working: NvChad-ish layout; editable buffers via
 either `StandardInputHandler` (VSCode-style, modeless) or `VimInputHandler` (modal:
 Normal/Insert/Visual + `:`-line), swappable at runtime (`editor.toggle_keymap` /
 `editor.use_vim` / `editor.use_standard` in the palette, or `:set input=vim`);
@@ -83,11 +83,13 @@ selection/undo/clipboard; fuzzy file finder (`Ctrl+P`) + command palette
 switcher (`src/picker.rs` / `src/fuzzy.rs`); config-driven keymap — app-level chords
 resolve through `App::keymap` (`src/input/keymap.rs::Keymap`), built from each
 `Command`'s default `keys: &[&str]` overlaid with `[keys.global]` / `[keys.<style>]`
-config (`"key" = "command.id"`, `= "none"` to unbind); tree-sitter syntax highlight
-(`src/highlight.rs`, 6 grammars so far) + indent guides; headless+IPC (interactive TUI
-listens too) + the `run.sh`/`dev.sh` wrappers. Next: **P3b** which-key popup (`<leader>`
-in vim normal; `Ctrl+K` chord prefix in standard — same popup machinery) + **P3d** editor
-splits (`src/layout.rs` HSplit/VSplit + `Ctrl+\` / `Ctrl+W hjkl`). Then the tracks (Git
+config (`"key" = "command.id"`, `= "none"` to unbind); which-key leader popup
+(`src/whichkey.rs` trie + `src/ui/whichkey.rs`) — `<space>` in vim Normal or `Ctrl+K`
+opens it, keys descend a group, a leaf runs its command (`whichkey.leader` command;
+state on `App.whichkey`); tree-sitter syntax highlight (`src/highlight.rs`, 6 grammars so
+far) + indent guides; headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
+wrappers. Next: **P3d** editor splits (`src/layout.rs` HSplit/VSplit + `Ctrl+\` /
+`Ctrl+W hjkl` + recursive render). Then the tracks (Git
 diff/stage/blame, HTTP, Pty/AI-CLI, AI-API, CDP, the `.test` E2E format, plugins). See
 `.local/PLAN.md` for the full plan. Highlight follow-ups: more grammars
 (typescript/css/html/c/bash/markdown), incremental tree-sitter parsing, relative line numbers.

@@ -70,6 +70,9 @@ pub struct App {
     /// Resolved key→command table (registry defaults + `[keys.*]` config).
     /// Rebuilt when the input style changes (a mode section may rebind a chord).
     pub keymap: crate::input::keymap::Keymap,
+    /// While a leader sequence is in flight: the keys typed after `<leader>`
+    /// (`Some("")` ⇒ the popup just opened). Steals key input like the picker.
+    pub whichkey: Option<String>,
 }
 
 impl App {
@@ -98,11 +101,43 @@ impl App {
             clipboard: Clipboard::new(),
             picker: None,
             keymap,
+            whichkey: None,
         })
+    }
+
+    // ─── which-key (leader menu) ────────────────────────────────────
+    /// Open the leader popup (the next keys walk the trie in `whichkey.rs`).
+    pub fn open_whichkey(&mut self) {
+        self.whichkey = Some(String::new());
+    }
+    pub fn whichkey_cancel(&mut self) {
+        self.whichkey = None;
+    }
+    /// Feed one key into the leader sequence: descend a group, run a leaf, or
+    /// (dead end) toast and close.
+    pub fn whichkey_feed(&mut self, ch: char) {
+        let Some(mut prefix) = self.whichkey.take() else {
+            return;
+        };
+        prefix.push(ch);
+        match crate::whichkey::lookup(&prefix) {
+            Some(crate::whichkey::Leader::Cmd { id, .. }) => {
+                let id = *id;
+                crate::command::run(id, self);
+            }
+            Some(crate::whichkey::Leader::Group { .. }) => self.whichkey = Some(prefix),
+            None => self.toast(format!("no leader mapping: <leader>{prefix}")),
+        }
+    }
+    /// `(prefix-typed-so-far, continuations)` for the popup, if open.
+    pub fn whichkey_menu(&self) -> Option<(&str, Vec<crate::whichkey::Entry>)> {
+        let prefix = self.whichkey.as_deref()?;
+        Some((prefix, crate::whichkey::continuations(prefix)))
     }
 
     // ─── picker / palette ───────────────────────────────────────────
     pub fn open_picker(&mut self, picker: Picker) {
+        self.whichkey = None;
         self.picker = Some(picker);
     }
     pub fn close_picker(&mut self) {
