@@ -51,6 +51,10 @@ cargo fmt              # before committing
 ./dev.sh               # cargo-watch auto-rebuild-on-save loop (needs `cargo install cargo-watch`)
 
 cargo run -- [WS] [--input vim|standard] [--ascii] [--config PATH] [--headless]
+cargo run -- run FILE [--env NAME]    # HTTP: send a .http/.curl/.rest file headlessly
+cargo run -- chain run FILE           # HTTP: run a .chain.json
+cargo run -- discover SPEC [--out DIR]  # HTTP: OpenAPI/Swagger → .curl stubs
+cargo run -- test [PATH…]             # run .test E2E scripts (default tests/e2e/); also under `cargo test`
 ```
 
 **The user keeps a `mnml` instance running via `./run.sh`.** After a `cargo build`
@@ -226,8 +230,17 @@ picker over the configured tasks and runs the chosen one via `$SHELL -c` in a pt
 (`BinaryProfile::task`); `App::run_startup_tasks()` (called once by `tui`/`headless` before the loop)
 spawns the `[startup]` ones. Absorbs `../private-playwright/start-launcher.sh`: drop it in as a task /
 startup task instead of running it separately (the Playwright track will grow native equivalents later).
-Then: LSP, CDP, the `.test` E2E format, plugins, the graphical-Git-GUI-style `Pane::GitGraph` (see `.local/PLAN.md`);
-plus queued polish (line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.
+**`.test` E2E format — done (first cut):** `src/e2e/mod.rs` — a line-based DSL: steps (`write <relpath>
+<content>` seed a fixture, `open <relpath>`, `key <spec>`, `type <text>`, `command <id>`, `wait <ms>`)
++ expectations (`expect screen contains|lacks <text>`, `expect dirty <bool>`, `expect pane <substr>`),
+run against the same `App` + `ui::draw` the terminal/headless paths use — with a ratatui `TestBackend`
+and synthesized key events (no real event loop, no file-IPC; deterministic + fast). `<text>` may be
+`"…"`-wrapped (`\n \t \\ \"` unescaped). `mnml test [path…]` runs files/dirs of `.test` (default
+`tests/e2e/`), non-zero exit on failure; `tests/e2e.rs` runs `tests/e2e/**/*.test` under `cargo test`
+(seeded with `edit_and_save.test`, `command_palette.test`). Then: LSP, CDP, plugin hooks, more `.test`
+coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native launcher actions),
+Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus queued polish
+(line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)
