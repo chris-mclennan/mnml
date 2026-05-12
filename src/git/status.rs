@@ -26,6 +26,9 @@ pub struct Snapshot {
     pub conflicts: usize,
     /// Path → state, for the tree tint. Keys are absolute (workspace-joined).
     pub files: HashMap<PathBuf, FileState>,
+    /// Path → gutter line-signs (added/modified/removed), from `git diff HEAD`.
+    /// Keys are absolute. Sorted by line within each entry.
+    pub line_changes: super::diff::LineSigns,
 }
 
 impl Snapshot {
@@ -143,6 +146,7 @@ fn probe(workspace: &Path) -> Snapshot {
         }
     }
 
+    snap.line_changes = super::diff::line_signs(workspace);
     snap
 }
 

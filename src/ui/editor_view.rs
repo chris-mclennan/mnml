@@ -10,6 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::App;
+use crate::git::diff::SignKind;
 use crate::layout::PaneId;
 use crate::pane::Pane;
 use crate::ui::theme;
@@ -30,12 +31,24 @@ pub fn draw_pane(
     );
 
     let tab_w = app.config.editor.tab_width.max(1);
+    // Git gutter signs for this file (added/modified/removed lines), from the
+    // ~3s-cached `git diff HEAD`. `app.git` / `app.panes` / `app.rects` are
+    // disjoint fields, so this borrow coexists with the `&mut Buffer` below.
+    let buf_path = match app.panes.get(pane_id) {
+        Some(Pane::Editor(b)) => b.path.clone(),
+        _ => return None,
+    };
+    let signs: Option<&Vec<(usize, SignKind)>> = buf_path
+        .as_ref()
+        .and_then(|p| app.git.snapshot().line_changes.get(p));
     let Some(Pane::Editor(buf)) = app.panes.get_mut(pane_id) else {
         return None;
     };
 
     let line_count = buf.editor.line_count();
-    let gutter_w = (line_count.to_string().len().max(3) + 1) as u16; // "  12 "
+    // Gutter = [1 sign cell][line number, right-aligned][1 space].
+    let num_w = line_count.to_string().len().max(3);
+    let gutter_w = (num_w + 2) as u16;
     let text_x = area.x + gutter_w;
     let text_w = area.width.saturating_sub(gutter_w);
     let tw = text_w as usize;
@@ -62,9 +75,13 @@ pub fn draw_pane(
     }
 
     let selection = buf.editor.selection();
-    let gutter_num_w = gutter_w.saturating_sub(1) as usize;
     let sel_bg = theme::cur().base16[0x02];
     let guide_fg = theme::cur().base16[0x03];
+    let sign_color = |k: SignKind| match k {
+        SignKind::Added => theme::cur().green,
+        SignKind::Modified => theme::cur().blue,
+        SignKind::Removed => theme::cur().red,
+    };
 
     let mut lines: Vec<Line> = Vec::with_capacity(text_h);
     for r in 0..text_h {
@@ -82,14 +99,24 @@ pub fn draw_pane(
         } else {
             theme::cur().bg_dark
         };
-        let gutter = format!("{:>gutter_num_w$} ", line_no + 1);
-        let gutter_style = Style::default()
+        let num_gutter = format!("{:>num_w$} ", line_no + 1);
+        let num_style = Style::default()
             .fg(if is_cur {
                 theme::cur().fg
             } else {
                 theme::cur().base16[0x03]
             })
             .bg(base_bg);
+        // The 1-cell git-sign column to the left of the number.
+        let sign = signs.and_then(|v| {
+            v.binary_search_by_key(&line_no, |&(l, _)| l)
+                .ok()
+                .map(|i| v[i].1)
+        });
+        let sign_span = match sign {
+            Some(k) => Span::styled("▎", Style::default().fg(sign_color(k)).bg(base_bg)),
+            None => Span::styled(" ", Style::default().bg(base_bg)),
+        };
 
         // Selection columns on this line.
         let (ls, le) = buf.editor.line_byte_range(line_no);
@@ -132,7 +159,7 @@ pub fn draw_pane(
             cells.push((ch, fg, bg));
         }
 
-        let mut spans: Vec<Span> = vec![Span::styled(gutter, gutter_style)];
+        let mut spans: Vec<Span> = vec![sign_span, Span::styled(num_gutter, num_style)];
         let mut i = 0;
         while i < cells.len() {
             let (_, fg, bg) = cells[i];

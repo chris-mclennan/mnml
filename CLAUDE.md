@@ -106,9 +106,13 @@ kept hardcoded as the seed/fallback).
 a block-level renderer: headings/lists/fenced code/blockquotes/hrules styled, inline
 markers unwrapped); `markdown.preview` command (`<leader>m`) opens a rendered, read-only,
 scrollable view in a split next to the source, refreshed when the source is saved.
-headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh` wrappers. Next: the
-tracks (Git diff/stage/blame, HTTP, Pty/AI-CLI, AI-API, CDP, the `.test` E2E format,
-plugins) + queued polish (right-click context menus on files/tabs, inline-styled markdown,
+Git: branch + change counts in the statusline + tree tint (P0); **gutter line-signs** —
+`src/git/diff.rs` parses `git diff HEAD --unified=0` into per-file added/modified/removed
+line marks (kept in `GitStatus`'s ~3s-cached `Snapshot.line_changes`), drawn as a coloured
+`▎` in the editor gutter. headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
+wrappers. Next: the rest of the Git track (diff pane → stage/unstage hunks → blame → commit
++ statusline polish), then HTTP, Pty/AI-CLI, AI-API, CDP, the `.test` E2E format, plugins;
+plus queued polish (right-click context menus on files/tabs, inline-styled markdown,
 line-wrapped preview). See `.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
