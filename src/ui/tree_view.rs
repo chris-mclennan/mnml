@@ -1,4 +1,5 @@
-//! The file-tree rail.
+//! The file-tree rail. Background matches the editor; folders (icon + name) are
+//! blue, NvChad-style; git-touched files take a status tint.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -11,47 +12,29 @@ use crate::focus::Focus;
 use crate::git::status::FileState;
 use crate::ui::{icons, theme};
 
+/// The rail's background — same as the editor body so they blend.
+const RAIL_BG: ratatui::style::Color = theme::BG_DARK;
+
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
-    frame.render_widget(
-        Paragraph::new("").style(Style::default().bg(theme::BG_DARKER)),
-        area,
-    );
+    frame.render_widget(Paragraph::new("").style(Style::default().bg(RAIL_BG)), area);
     if area.height == 0 || area.width == 0 {
         return;
     }
     let width = area.width as usize;
 
     // Header — a subtle title line (NvChad's nvim-tree shows the root, not a loud bar).
-    let ws_name = app
-        .workspace
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("workspace");
-    let header_glyph = if app.config.ui.ascii_icons {
-        "*"
-    } else {
-        "\u{f07b}"
-    };
+    let ws_name = app.workspace.file_name().and_then(|n| n.to_str()).unwrap_or("workspace");
+    let header_glyph = if app.config.ui.ascii_icons { "*" } else { "\u{f07b}" };
     let header = Line::from(vec![
-        Span::styled(
-            format!(" {header_glyph} "),
-            Style::default().fg(theme::YELLOW).bg(theme::BG_DARKER),
-        ),
+        Span::styled(format!(" {header_glyph} "), Style::default().fg(theme::BLUE).bg(RAIL_BG)),
         Span::styled(
             pad_to(format!("{ws_name} "), width.saturating_sub(3)),
-            Style::default()
-                .fg(theme::BLUE)
-                .bg(theme::BG_DARKER)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(theme::BLUE).bg(RAIL_BG).add_modifier(Modifier::BOLD),
         ),
     ]);
     frame.render_widget(Paragraph::new(header), Rect { height: 1, ..area });
 
-    let body = Rect {
-        y: area.y + 1,
-        height: area.height.saturating_sub(1),
-        ..area
-    };
+    let body = Rect { y: area.y + 1, height: area.height.saturating_sub(1), ..area };
     if body.height == 0 {
         return;
     }
@@ -79,16 +62,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let (glyph, icon_color) = icons::for_path(&row.path, row.is_dir, row.is_expanded, nerd);
         let indent = "  ".repeat(row.depth);
 
-        let name_color = match git_files.get(&row.path).copied() {
-            Some(FileState::Modified) => theme::YELLOW,
-            Some(FileState::Staged | FileState::Untracked) => theme::GREEN,
-            Some(FileState::Conflicted) => theme::RED,
-            None => theme::FG,
+        // Folders are blue (icon + name). Files take a git tint if any, else default fg.
+        let name_color = if row.is_dir {
+            theme::BLUE
+        } else {
+            match git_files.get(&row.path).copied() {
+                Some(FileState::Modified) => theme::YELLOW,
+                Some(FileState::Staged | FileState::Untracked) => theme::GREEN,
+                Some(FileState::Conflicted) => theme::RED,
+                None => theme::FG,
+            }
         };
         let bg = if is_cursor {
             if focused { theme::BG2 } else { theme::BG }
         } else {
-            theme::BG_DARKER
+            RAIL_BG
         };
         let mut name_style = Style::default().fg(name_color).bg(bg);
         if row.is_dir || (is_cursor && focused) {

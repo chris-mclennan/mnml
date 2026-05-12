@@ -12,10 +12,12 @@ pub type Icon = (&'static str, Color);
 pub const DEFAULT_FILE: Icon = ("\u{F15B}", Color::Rgb(0x6d, 0x80, 0x86));
 pub const DEFAULT_FILE_ASCII: Icon = ("·", Color::Rgb(0x6d, 0x80, 0x86));
 
-pub const FOLDER_CLOSED: Icon = ("\u{F07B}", Color::Rgb(0xe7, 0xc7, 0x87));
-pub const FOLDER_OPEN: Icon = ("\u{F07C}", Color::Rgb(0xe7, 0xc7, 0x87));
-pub const FOLDER_CLOSED_ASCII: Icon = ("\u{25B6}", Color::Rgb(0xe7, 0xc7, 0x87)); // ▶
-pub const FOLDER_OPEN_ASCII: Icon = ("\u{25BC}", Color::Rgb(0xe7, 0xc7, 0x87)); // ▼
+// Folders are blue (matches NvChad's nvim-tree look), not the upstream yellow.
+const FOLDER_BLUE: Color = Color::Rgb(0x61, 0xaf, 0xef); // == theme::BLUE
+pub const FOLDER_CLOSED: Icon = ("\u{F07B}", FOLDER_BLUE);
+pub const FOLDER_OPEN: Icon = ("\u{F07C}", FOLDER_BLUE);
+pub const FOLDER_CLOSED_ASCII: Icon = ("\u{25B6}", FOLDER_BLUE); // ▶
+pub const FOLDER_OPEN_ASCII: Icon = ("\u{25BC}", FOLDER_BLUE); // ▼
 
 /// Resolve an icon for `path`. `is_dir` distinguishes folders; `is_expanded`
 /// only matters when `is_dir`. `nerd_font` switches between real glyphs and
