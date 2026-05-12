@@ -68,7 +68,7 @@ NvChad base46 schemes: `onedark` (default), `gruvbox`, `catppuccin`, `kanagawa`,
 `tokyonight`, `nord`, `dracula`, …; `ascii_icons`; `tree_width`), `[keys.*]`
 (keybindings). `[lsp.*]` / `[ai]` / `[tools]` are parsed and kept for their tracks.
 Switch theme at runtime with the `theme.pick` command (palette / `<leader>tt`) or
-`:set theme=…`. (Themes live in `themes/*.lua` — drop one in to add it.)
+`:set theme=…`. (Themes live in `themes/*.toml` — drop one in to add it.)
 
 ## License
 

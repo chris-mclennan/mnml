@@ -1,5 +1,5 @@
-//! Enumerate the vendored `themes/*.lua` (NvChad base46) colour schemes and emit
-//! a `THEME_SOURCES: &[(&str, &str)]` table (name → file contents, via
+//! Enumerate the `themes/*.toml` colour schemes and emit a
+//! `THEME_SOURCES: &[(&str, &str)]` table (name → file contents, via
 //! `include_str!`) for `src/ui/theme.rs` to parse at startup.
 
 use std::env;
@@ -14,7 +14,7 @@ fn main() {
     if let Ok(rd) = fs::read_dir(&dir) {
         for e in rd.flatten() {
             let p = e.path();
-            if p.extension().and_then(|x| x.to_str()) == Some("lua")
+            if p.extension().and_then(|x| x.to_str()) == Some("toml")
                 && let Some(stem) = p.file_stem().and_then(|s| s.to_str())
             {
                 entries.push((stem.to_string(), p.to_string_lossy().into_owned()));

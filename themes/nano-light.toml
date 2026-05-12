@@ -1,0 +1,44 @@
+name = "nano-light"
+type = "light"   # dark | light
+# Credits to original theme https://github.com/rougier/nano-theme
+# This is a modified version of it
+# @type Base46Table
+
+[base_30]
+deep_black = "#263238"
+white = "#37474f"
+darker_black = "#f7f7f7"
+black = "#ffffff"
+black2 = "#eceff1"
+one_bg = "#ebebeb"
+one_bg2 = "#e0e0e0"
+one_bg3 = "#d4d4d4"
+grey = "#c4c4c4"
+grey_fg = "#b5b5b5"
+grey_fg2 = "#a3a3a3"
+light_grey = "#848484"
+faded_grey = "#8497a0"
+red = "#ef5350"
+tintred = "#bf616a"
+baby_pink = "#b55dc4"
+pink = "#ab47bc"
+line = "#e0e0e0"
+green = "#66bb6a"
+vibrant_green = "#75c279"
+nord_blue = "#42a5f5"
+blue = "#42a5f5"
+yellow = "#d0b22b"
+sun = "#e2c12f"
+purple = "#673ab7"
+dark_purple = "#673ab7"
+teal = "#008080"
+orange = "#ff6f00"
+cream = "#e09680"
+clay = "#d08770"
+cyan = "#26c6da"
+statusline_bg = "#eceff1"
+lightbg = "#e0e0e0"
+pmenu_bg = "#673ab7"
+folder_bg = "#4c566a"
+
+[base_16]

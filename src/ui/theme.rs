@@ -5,11 +5,12 @@
 //! picks one at launch; the `theme.pick` command / `:set theme=…` switch at
 //! runtime (and re-run syntax highlighting so cached colors refresh).
 //!
-//! Themes come from `themes/*.lua` — NvChad's base46 schemes, vendored verbatim
-//! and parsed at first use (`build.rs` enumerates the dir → `THEME_SOURCES`).
+//! Themes come from `themes/*.toml` — `[base_30]` (UI chrome) + `[base_16]`
+//! (syntax) colour tables (the NvChad base46 schema, converted from upstream),
+//! parsed at first use (`build.rs` enumerates the dir → `THEME_SOURCES`).
 //! `onedark` is the default and is also kept hardcoded here as the seed / a
-//! fallback if the vendored file is unavailable. Drop a `.lua` in `themes/` in
-//! the same `M.base_30` / `M.base_16` format to add one.
+//! fallback if the bundled file is unavailable. Drop a `.toml` in `themes/` in
+//! the same shape to add one.
 
 use std::sync::{OnceLock, RwLock};
 
@@ -107,10 +108,10 @@ pub const fn onedark() -> Theme {
     }
 }
 
-// ── the vendored NvChad base46 themes ──────────────────────────────────
-// `build.rs` emits `THEME_SOURCES: &[(&str, &str)]` — (name, the `.lua` file's
-// contents) for every file in `themes/`. We parse the `M.base_30` / `M.base_16`
-// tables out of each at first use.
+// ── the bundled themes ────────────────────────────────────────────────
+// `build.rs` emits `THEME_SOURCES: &[(&str, &str)]` — (name, file contents) for
+// every `themes/*.toml`. Each is `[base_30]` / `[base_16]` colour tables (the
+// NvChad base46 schema, converted from upstream); we parse them at first use.
 include!(concat!(env!("OUT_DIR"), "/theme_sources.rs"));
 
 fn parse_hex(s: &str) -> Option<[u8; 3]> {
@@ -126,54 +127,44 @@ fn parse_hex(s: &str) -> Option<[u8; 3]> {
     }
 }
 
-/// The `{...}` body of `M.<key> = { ... }`, if present.
-fn lua_block<'a>(src: &'a str, key: &str) -> Option<&'a str> {
-    let i = src.find(key)?;
-    let rest = &src[i..];
-    let lb = rest.find('{')?;
-    let rb = rest[lb..].find('}')? + lb;
-    Some(&rest[lb + 1..rb])
+/// The on-disk theme format: `[base_30]` (UI chrome, NvChad's named colours) and
+/// `[base_16]` (`base00`..`base0F`, the syntax palette). `name`/`type` optional.
+#[derive(serde::Deserialize)]
+struct RawTheme {
+    #[serde(default)]
+    base_30: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    base_16: std::collections::HashMap<String, String>,
 }
 
-/// `name = "#hex"` pairs in a Lua-table body — split on commas *and* newlines so
-/// one-per-line and inline `{ a = "#…", b = "#…" }` both work; comments tolerated.
-fn lua_pairs(block: &str) -> std::collections::HashMap<String, [u8; 3]> {
-    let mut m = std::collections::HashMap::new();
-    for chunk in block.split([',', '\n']) {
-        let Some((k, v)) = chunk.split_once('=') else {
-            continue;
-        };
-        let k = k.trim();
-        if k.is_empty() || !k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
-            continue;
-        }
-        let Some(q1) = v.find('"') else { continue };
-        let Some(q2) = v[q1 + 1..].find('"') else {
-            continue;
-        };
-        if let Some(rgb) = parse_hex(&v[q1 + 1..q1 + 1 + q2]) {
-            m.insert(k.to_string(), rgb);
-        }
+/// Parse one theme file into a [`Theme`]. `None` if it doesn't parse or has no
+/// `[base_30]`; missing individual colours fall back sensibly (a missing
+/// `[base_16]` slot falls back to onedark's value for that slot).
+fn parse_theme(name: &'static str, src: &str) -> Option<Theme> {
+    let raw: RawTheme = toml::from_str(src).ok()?;
+    if raw.base_30.is_empty() {
+        return None;
     }
-    m
-}
-
-/// Parse one base46 `.lua` source into a [`Theme`]. `None` if it has no
-/// `M.base_30` table (then it isn't a usable theme file); missing individual
-/// colours fall back sensibly (and a missing `base_16` table falls back to
-/// onedark's syntax palette).
-fn parse_base46(name: &'static str, src: &str) -> Option<Theme> {
-    let b30 = lua_pairs(lua_block(src, "base_30")?);
-    let b16 = lua_block(src, "base_16").map(lua_pairs).unwrap_or_default();
-    let col = |k: &str| b30.get(k).map(|&[r, g, b]| Color::Rgb(r, g, b));
-    let pick = |keys: &[&str], default: Color| keys.iter().find_map(|k| col(k)).unwrap_or(default);
+    let col = |k: &str| raw.base_30.get(k).and_then(|s| parse_hex(s));
+    let rgb_of = |[r, g, b]: [u8; 3]| Color::Rgb(r, g, b);
+    let pick = |keys: &[&str], default: Color| {
+        keys.iter()
+            .find_map(|k| col(k))
+            .map(rgb_of)
+            .unwrap_or(default)
+    };
     let od = onedark();
     let white = pick(&["white"], od.fg);
     let black = pick(&["black"], od.bg_dark);
     let mut base16 = od.base16;
     for (i, slot) in base16.iter_mut().enumerate() {
-        if let Some(&[r, g, b]) = b16.get(&format!("base{i:02X}")) {
-            *slot = Color::Rgb(r, g, b);
+        if let Some(rgb) = raw
+            .base_16
+            .get(&format!("base{i:02X}"))
+            .or_else(|| raw.base_16.get(&format!("base{i:02x}")))
+            .and_then(|s| parse_hex(s))
+        {
+            *slot = rgb_of(rgb);
         }
     }
     Some(Theme {
@@ -208,13 +199,13 @@ fn parse_base46(name: &'static str, src: &str) -> Option<Theme> {
 }
 
 /// All themes (parsed once). `onedark` is guaranteed present (the hardcoded copy
-/// is the fallback if the vendored file is missing or unparseable).
+/// is the fallback if the bundled file is missing or unparseable).
 fn themes() -> &'static [Theme] {
     static THEMES: OnceLock<Vec<Theme>> = OnceLock::new();
     THEMES.get_or_init(|| {
         let mut v: Vec<Theme> = THEME_SOURCES
             .iter()
-            .filter_map(|&(name, src)| parse_base46(name, src))
+            .filter_map(|&(name, src)| parse_theme(name, src))
             .collect();
         if !v.iter().any(|t| t.name == "onedark") {
             v.insert(0, onedark());
@@ -265,12 +256,12 @@ mod tests {
     }
 
     #[test]
-    fn vendored_themes_load() {
-        // build.rs bundles all of NvChad's base46 themes (~90+).
+    fn bundled_themes_load() {
+        // build.rs bundles all of NvChad's base46 schemes (~90+).
         let all = names();
         assert!(
             all.len() > 50,
-            "expected the vendored themes, got {}",
+            "expected the bundled themes, got {}",
             all.len()
         );
         assert!(all.contains(&"onedark"));
@@ -282,15 +273,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_base46_extracts_colours() {
+    fn parse_theme_extracts_colours() {
         let src = r##"
-            local M = {}
-            M.base_30 = { white = "#abcdef", black = "#111213", one_bg = "#222324", blue = "#3456ef" }
-            M.base_16 = { base00 = "#010203", base0E = "#c678dd" }
-            M.type = "dark"
-            return M
+            name = "demo"
+            type = "dark"
+            [base_30]
+            white = "#abcdef"
+            black = "#111213"
+            one_bg = "#222324"
+            blue = "#3456ef"
+            [base_16]
+            base00 = "#010203"
+            base0E = "#c678dd"
         "##;
-        let t = parse_base46("demo", src).unwrap();
+        let t = parse_theme("demo", src).unwrap();
         assert_eq!(t.fg, Color::Rgb(0xab, 0xcd, 0xef));
         assert_eq!(t.bg_dark, Color::Rgb(0x11, 0x12, 0x13));
         assert_eq!(t.bg, Color::Rgb(0x22, 0x23, 0x24));
@@ -299,6 +295,8 @@ mod tests {
         assert_eq!(t.base16[0x0e], Color::Rgb(0xc6, 0x78, 0xdd));
         // a missing colour falls back (no `red` → onedark's fg, here `#abcdef`)
         assert_eq!(t.red, Color::Rgb(0xab, 0xcd, 0xef));
+        // no [base_30] → not a usable theme
+        assert!(parse_theme("x", "name = \"x\"").is_none());
     }
 
     #[test]

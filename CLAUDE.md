@@ -97,9 +97,10 @@ resize it; closing a dirty buffer pops a Save/Discard/Cancel overlay (`src/ui/cl
 tree-sitter syntax highlight (`src/highlight.rs`, 12 grammars: rs/js/jsx/ts/tsx/py/json/go/
 toml/css/bash/html/md) + indent guides. **Theme engine** (`src/ui/theme.rs`): a `Theme`
 struct (named UI colours + `base16[16]`) behind an `RwLock`; `theme::cur()` reads it,
-`theme::set(name)` swaps it. Themes are all of NvChad's base46 schemes (~90), vendored
-verbatim under `themes/*.lua`, enumerated by `build.rs` → `THEME_SOURCES` and parsed at
-first use; `onedark` is the default (also kept hardcoded as the seed/fallback).
+`theme::set(name)` swaps it. Themes are all of NvChad's base46 schemes (~90), converted
+to `themes/*.toml` (`[base_30]` + `[base_16]` colour tables), enumerated by `build.rs` →
+`THEME_SOURCES` and parsed (serde/`toml`) at first use; `onedark` is the default (also
+kept hardcoded as the seed/fallback).
 `[ui] theme = "…"` at launch, `theme.pick` command / `:set theme=…` at runtime
 (re-highlights open buffers). headless+IPC (interactive TUI listens too) + the
 `run.sh`/`dev.sh` wrappers. Next: the tracks (Git diff/stage/blame, HTTP, Pty/AI-CLI,

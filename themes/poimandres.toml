@@ -1,0 +1,41 @@
+name = "poimandres"
+type = "dark"   # dark | light
+# Credits to original theme https://github.com/olivercederborg/poimandres.nvim
+# This is a modified version by @kayuxx & @siduck
+# @type Base46Table
+
+[base_30]
+white = "#e4f0fb"
+ogwhite = "#ffffff"
+black = "#1b1e28"
+darker_black = "#171922"
+black2 = "#222633"
+one_bg = "#2b3040"
+one_bg2 = "#32384a"
+one_bg3 = "#3b4258"
+grey = "#48506a"
+grey_fg = "#515977"
+grey_fg2 = "#5d678a"
+light_grey = "#657096"
+red = "#d0679d"
+baby_pink = "#fae4fc"
+pink = "#fcc5e9"
+line = "#303340"
+green = "#5fb3a1"
+vibrant_green = "#71bbab"
+nord_blue = "#91b4d5"
+blue = "#89ddff"
+seablue = "#add7ff"
+yellow = "#fffac2"
+sun = "#fff691"
+purple = "#a6accd"
+dark_purple = "#b6d7f4"
+teal = "#5de4c7"
+orange = "#91b4d5"
+cyan = "#92e0ff"
+statusline_bg = "#222633"
+lightbg = "#32384a"
+pmenu_bg = "#5fb3a1"
+folder_bg = "#91b4d5"
+
+[base_16]
