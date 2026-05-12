@@ -1,31 +1,35 @@
 #!/usr/bin/env bash
-# mnml wrapper — build + run with a restart-aware loop, plus subcommands for
-# driving the running mnml from another shell (or from an agent after a build).
+# mnml wrapper — build (in the repo) + run (in *your* cwd) with a restart-aware
+# loop, plus subcommands for driving the running mnml from another shell.
 #
 # Usage:
-#   ./run.sh [WORKSPACE] [mnml flags…]
-#                       Start. Default subcommand. Builds with cargo, runs the
-#                       binary, and *relaunches* it whenever it exits with code
-#                       75 (the "rebuild + relaunch me" signal — sent by the
-#                       `app.restart` command, or `./run.sh restart`).
-#   ./run.sh restart    Tell the running mnml to rebuild + relaunch (drops a
-#                       {"cmd":"restart"} line in its IPC mailbox). Use this from
-#                       a sibling terminal whenever you want it to pick up new code.
-#   ./run.sh stop       Send {"cmd":"quit"} to the running mnml.
-#   ./run.sh status     Print marker state (workspace, IPC dir).
-#   ./run.sh headless [WORKSPACE]
-#                       Same restart loop, but in --headless mode (virtual screen
-#                       + file-IPC; nothing on the terminal). Handy for agents.
+#   ./run.sh                      Open the directory you ran it from. Builds with
+#                                 cargo, runs the binary, and relaunches it
+#                                 whenever it exits with code 75 (the "rebuild +
+#                                 relaunch me" signal — sent by the `app.restart`
+#                                 command, or `./run.sh restart`).
+#   ./run.sh WORKSPACE [flags…]   Open WORKSPACE instead. Extra flags pass through
+#                                 to mnml (e.g. --input vim, --ascii).
+#   ./run.sh restart              Tell the running mnml to rebuild + relaunch
+#                                 (drops {"cmd":"restart"} in its IPC mailbox).
+#   ./run.sh stop                 Send {"cmd":"quit"} to the running mnml.
+#   ./run.sh status               Print marker state (workspace, IPC dir).
+#   ./run.sh headless [WORKSPACE]  Same restart loop, but --headless (virtual
+#                                 screen + file-IPC; nothing on the terminal).
 #
 # Env:
-#   MNML_RELEASE=1      Build/run target/release/mnml instead of target/debug
-#                       (the release profile has LTO on — slower rebuilds).
+#   MNML_RELEASE=1   Build/run target/release/mnml (the release profile has LTO
+#                    on — slower rebuilds, snappier binary).
 #
-# State: a marker at $TMPDIR/mnml-running-$USER.workspace records the
-# currently-running mnml's workspace path. A second instance overwrites it;
-# `restart`/`stop`/`status` target the most recent.
-set -uo pipefail
+# State: a marker at $TMPDIR/mnml-running-$USER.workspace records the running
+# mnml's workspace. A second instance overwrites it; restart/stop/status target
+# the most recent.
+# (no `set -u`: this juggles possibly-empty arrays on bash 3.2 / macOS)
+set -o pipefail
+
+INVOKE_DIR="$PWD"
 cd "$(dirname "$0")"
+REPO="$PWD"
 
 MARKER="${TMPDIR:-/tmp}/mnml-running-${USER:-x}.workspace"
 
@@ -63,27 +67,30 @@ case "${1:-start}" in
     exit 0 ;;
   -h|--help) grep -E '^# ' "$0" | sed 's/^# \?//'; exit 0 ;;
   headless) HEADLESS=1; shift ;;
-  start) shift ;;
+  start) [ "$#" -gt 0 ] && shift ;;   # the implicit default when run with no args
 esac
 
 # Build profile.
 if [ "${MNML_RELEASE:-0}" = "1" ]; then
   BUILD=(cargo build --release --quiet)
-  BIN=./target/release/mnml
+  BIN="$REPO/target/release/mnml"
 else
   BUILD=(cargo build --quiet)
-  BIN=./target/debug/mnml
+  BIN="$REPO/target/debug/mnml"
 fi
 
-# Figure out the workspace (first non-flag arg, else cwd) so the marker is right.
-ws_dir="$PWD"
+# Default workspace = the dir you invoked run.sh from (not the repo). An explicit
+# first non-flag arg overrides it. Either way, make sure mnml gets a workspace arg
+# so it doesn't fall back to the repo (its cwd is the repo when we exec it).
+ws_dir="$INVOKE_DIR"
+has_ws=0
 for a in "$@"; do
-  case "$a" in
-    -*) ;;                       # a flag — skip
-    *) ws_dir="$a"; break ;;
-  esac
+  case "$a" in -*) ;; *) ws_dir="$a"; has_ws=1; break ;; esac
 done
 ws_dir=$(cd "$ws_dir" 2>/dev/null && pwd || echo "$ws_dir")
+ARGS=("$@")
+[ "$has_ws" = 0 ] && ARGS=("$ws_dir" "${ARGS[@]}")
+
 mkdir -p "$ws_dir/.mnml/ipc" 2>/dev/null || true
 printf '%s' "$ws_dir" > "$MARKER"
 trap 'rm -f "$MARKER"' EXIT
@@ -93,7 +100,7 @@ EXTRA=()
 
 while true; do
   if ! "${BUILD[@]}"; then echo "[run.sh] build failed; exiting" >&2; exit 1; fi
-  "$BIN" "${EXTRA[@]}" "$@"
+  "$BIN" "${EXTRA[@]}" "${ARGS[@]}"
   status=$?
   if [ "$status" -eq 75 ]; then
     echo "[run.sh] restart requested — rebuilding…" >&2
