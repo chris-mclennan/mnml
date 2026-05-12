@@ -1,9 +1,15 @@
 //! Configuration. Merged from (lowest → highest precedence): built-in defaults,
 //! `~/.config/mnml/config.toml`, `<workspace>/.mnml/config.toml`, then `--config PATH`.
 //!
-//! P0 reads only `[editor]` and `[ui]`. The `[keys.*]`, `[lsp.*]`, `[ai]`, `[tools]`
-//! sections are parsed-and-kept (so existing config files keep working) but unused
-//! until their tracks land.
+//! `[editor]`, `[ui]` and `[keys.*]` are live. `[lsp.*]`, `[ai]`, `[tools]` are
+//! parsed-and-kept (so existing config files keep working) but unused until their
+//! tracks land.
+//!
+//! `[keys.*]` maps **key spec → command id**, like VSCode's `keybindings.json`
+//! (the reverse direction is awkward — a key can only do one thing — and this way
+//! `"ctrl+p" = "none"` cleanly unbinds a default). Sections: `[keys.global]`
+//! applies always; `[keys.vim]` / `[keys.standard]` overlay it for that input
+//! style. Unknown command ids are tolerated (they just never fire).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -14,7 +20,8 @@ use serde::Deserialize;
 pub struct Config {
     pub editor: EditorConfig,
     pub ui: UiConfig,
-    /// `[keys.vim]` / `[keys.standard]` — command-id → key spec. Unused in P0.
+    /// `[keys.<section>]` — key spec → command id. Sections: `global`, `vim`,
+    /// `standard`. Resolved into an [`crate::input::keymap::Keymap`].
     pub keys: BTreeMap<String, BTreeMap<String, String>>,
     /// `[lsp.<lang>]` — raw tables, validated by the LSP track later.
     pub lsp: BTreeMap<String, toml::Value>,

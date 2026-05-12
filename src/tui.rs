@@ -135,35 +135,12 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-
-    // F1 → command palette (a real VSCode binding, and our terminal-proof fallback
-    // for `Ctrl+Shift+P` since legacy terminals can't distinguish it from `Ctrl+P`).
-    if key.code == KeyCode::F(1) {
-        command::run("palette", app);
+    // App-level chords (any focus) resolve through the one keymap table — registry
+    // defaults overlaid with `[keys.*]` config. These win over the focused pane;
+    // all built-in defaults are modified/F-keys the editor doesn't want anyway.
+    if let Some(id) = app.keymap.resolve(&key).map(str::to_owned) {
+        command::run(&id, app);
         return;
-    }
-
-    // Global chords (any focus). Hardcoded for now; the config-driven `[keys.*]`
-    // resolver lands with the vim handler in P3.
-    if ctrl {
-        let global = match key.code {
-            KeyCode::Char('q') => Some("app.quit"),
-            KeyCode::Char('b') => Some("view.toggle_tree"),
-            KeyCode::Char('e') => Some("focus.cycle"),
-            KeyCode::Char('s') => Some("file.save"),
-            KeyCode::Char('w' | 'W') => Some("buffer.close"),
-            // `Ctrl+Shift+P` only arrives distinct when the kitty keyboard protocol
-            // is active (iTerm2/kitty/wezterm/alacritty/ghostty); else it == `Ctrl+P`.
-            KeyCode::Char('p' | 'P') if shift => Some("palette"),
-            KeyCode::Char('p' | 'P') => Some("picker.files"),
-            _ => None,
-        };
-        if let Some(id) = global {
-            command::run(id, app);
-            return;
-        }
     }
 
     match app.focus {

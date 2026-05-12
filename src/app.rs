@@ -67,6 +67,9 @@ pub struct App {
     pub clipboard: Clipboard,
     /// The fuzzy-picker / command-palette overlay, when open. Steals key input.
     pub picker: Option<Picker>,
+    /// Resolved key→command table (registry defaults + `[keys.*]` config).
+    /// Rebuilt when the input style changes (a mode section may rebind a chord).
+    pub keymap: crate::input::keymap::Keymap,
 }
 
 impl App {
@@ -76,6 +79,7 @@ impl App {
             .map_err(|e| format!("cannot open workspace {}: {e}", workspace.display()))?;
         let tree = Tree::open(&workspace);
         let git = GitStatus::new(&workspace);
+        let keymap = crate::input::keymap::Keymap::build(&config);
         Ok(App {
             workspace,
             config,
@@ -93,6 +97,7 @@ impl App {
             rects: PaneRects::default(),
             clipboard: Clipboard::new(),
             picker: None,
+            keymap,
         })
     }
 
@@ -151,7 +156,7 @@ impl App {
             .all()
             .iter()
             .filter(|c| c.id != "palette")
-            .map(|c| PickerItem::new(c.id, format!("{}  ·  {}", c.group, c.title), c.default_key))
+            .map(|c| PickerItem::new(c.id, format!("{}  ·  {}", c.group, c.title), c.key_hint()))
             .collect();
         self.open_picker(Picker::new(PickerKind::Commands, "Command palette", items));
     }
@@ -353,6 +358,8 @@ impl App {
                 b.input = crate::input::make_handler_for(style, &self.config);
             }
         }
+        // A `[keys.<style>]` section may rebind chords — re-resolve the table.
+        self.keymap = crate::input::keymap::Keymap::build(&self.config);
         self.toast(format!("input: {style}"));
     }
     pub fn toggle_input_style(&mut self) {

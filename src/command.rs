@@ -3,6 +3,11 @@
 //! [`Command`]. P0 ships a small builtin set; the registry is a process-global
 //! `OnceLock` (the builtin commands never change; dynamic/plugin commands get a
 //! `Mutex` when that track lands).
+//!
+//! Default keybindings live here as `keys: &[&str]` (parsed by
+//! `input::keymap::Keymap`). User `[keys.*]` config overlays them. A command may
+//! list several keyspecs — e.g. the palette is `ctrl+shift+p` *and* `f1`, because
+//! legacy terminals can't transmit the former.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -17,10 +22,17 @@ pub struct Command {
     pub title: &'static str,
     /// Which-key group / palette section (e.g. `"file"`, `"view"`, `"git"`).
     pub group: &'static str,
-    /// A human-readable default binding hint shown in the palette (the actual
-    /// resolution table is built from `[keys.*]` config later).
-    pub default_key: &'static str,
+    /// Default keyspecs (`"ctrl+q"`, `"f1"`, `"ctrl+shift+p"`, …). May be empty
+    /// (palette-only). `input::keymap::Keymap` parses these; `[keys.*]` overlays.
+    pub keys: &'static [&'static str],
     pub run: CommandFn,
+}
+
+impl Command {
+    /// A short human-readable hint for the palette (`"ctrl+shift+p / f1"` or `""`).
+    pub fn key_hint(&self) -> String {
+        self.keys.join(" / ")
+    }
 }
 
 pub struct Registry {
@@ -74,112 +86,114 @@ fn builtin_commands() -> Vec<Command> {
             id: "app.quit",
             title: "Quit mnml",
             group: "app",
-            default_key: "ctrl+q",
+            keys: &["ctrl+q"],
             run: |app| app.request_quit(),
         },
         Command {
             id: "app.restart",
             title: "Restart mnml (rebuild + relaunch via run.sh)",
             group: "app",
-            default_key: "",
+            keys: &[],
             run: |app| app.request_restart(),
         },
         Command {
             id: "view.toggle_tree",
             title: "Toggle file tree",
             group: "view",
-            default_key: "ctrl+b",
+            keys: &["ctrl+b"],
             run: |app| app.tree_visible = !app.tree_visible,
         },
         Command {
             id: "focus.cycle",
             title: "Cycle focus (tree ⇄ editor)",
             group: "view",
-            default_key: "ctrl+e",
+            keys: &["ctrl+e"],
             run: |app| app.cycle_focus(),
         },
         Command {
             id: "file.save",
             title: "Save file",
             group: "file",
-            default_key: "ctrl+s",
+            keys: &["ctrl+s"],
             run: |app| app.save_active(),
         },
         Command {
             id: "file.save_all",
             title: "Save all files",
             group: "file",
-            default_key: "",
+            keys: &[],
             run: |app| app.save_all(),
         },
         Command {
             id: "picker.files",
             title: "Open file…",
             group: "go",
-            default_key: "ctrl+p",
+            keys: &["ctrl+p"],
             run: |app| app.open_file_picker(),
         },
         Command {
             id: "picker.buffers",
             title: "Switch buffer…",
             group: "go",
-            default_key: "",
+            keys: &[],
             run: |app| app.open_buffer_picker(),
         },
         Command {
             id: "palette",
             title: "Command palette",
             group: "go",
-            default_key: "ctrl+shift+p / f1",
+            // `ctrl+shift+p` only arrives distinct under the kitty keyboard
+            // protocol; `f1` is the terminal-proof fallback (also a VSCode binding).
+            keys: &["ctrl+shift+p", "f1"],
             run: |app| app.open_command_palette(),
         },
         Command {
             id: "buffer.close",
             title: "Close buffer",
             group: "buffer",
-            default_key: "ctrl+w",
+            keys: &["ctrl+w"],
             run: |app| app.close_active_pane(),
         },
         Command {
             id: "buffer.next",
             title: "Next buffer",
             group: "buffer",
-            default_key: "",
+            keys: &["ctrl+pagedown"],
             run: |app| app.next_buffer(),
         },
         Command {
             id: "buffer.prev",
             title: "Previous buffer",
             group: "buffer",
-            default_key: "",
+            keys: &["ctrl+pageup"],
             run: |app| app.prev_buffer(),
         },
         Command {
             id: "tree.refresh",
             title: "Refresh file tree",
             group: "view",
-            default_key: "",
+            keys: &[],
             run: |app| app.tree.refresh(),
         },
         Command {
             id: "editor.use_vim",
             title: "Editing: use vim keymap",
             group: "editor",
-            default_key: "",
+            keys: &[],
             run: |app| app.set_input_style("vim"),
         },
         Command {
             id: "editor.use_standard",
             title: "Editing: use standard (VSCode) keymap",
             group: "editor",
-            default_key: "",
+            keys: &[],
             run: |app| app.set_input_style("standard"),
         },
         Command {
             id: "editor.toggle_keymap",
             title: "Editing: toggle vim ⇄ standard keymap",
             group: "editor",
-            default_key: "",
+            keys: &[],
             run: |app| app.toggle_input_style(),
         },
     ]
