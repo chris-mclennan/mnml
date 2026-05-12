@@ -251,12 +251,13 @@ over stdio on a reader thread that forwards `publishDiagnostics` + `definition`/
 Servers from `[lsp.<name>]` config (`cmd`/`args`/`extensions`/`root_markers`/`language_id`) layered over
 built-in defaults (rust-analyzer / pyright-langserver / typescript-language-server / gopls / clangd); an
 uninstalled/dying server just disables LSP for that language (no retry, one toast). Wiring: `did_open` on
-open, `did_save` on save, `did_close` when the last pane for a file closes, a lazy `did_change` before
-goto/hover; diagnostics land on `buffer.diagnostics` → `editor_view` paints a severity dot in the gutter
-sign cell + tints the line number, `statusline` shows error/warning counts. Commands `lsp.goto_definition`
-(`F12` / `<leader>l d`) + `lsp.hover` (`<leader>l h`, toasts the first line). Known simplifications (in
-`src/lsp/mod.rs`): full-text + on-save doc sync, char-offset columns, `initialize` not awaited before
-`didOpen`. Then: completion/rename/references + a hover popup + diagnostics list pane (LSP follow-ups), CDP,
+open, `did_save` on save, a full-text `did_change` on every edit (diagnostics update while typing),
+`did_close` when the last pane for a file closes; diagnostics land on `buffer.diagnostics` → `editor_view`
+paints a severity dot in the gutter sign cell + tints the line number, `statusline` shows error/warning
+counts. Commands `lsp.goto_definition` (`F12` / `<leader>l d`), `lsp.hover` (`<leader>l h`, toasts the first
+line), `lsp.references` (`<leader>l r`, → fuzzy picker of `path:line:col`, Enter jumps — `PickerKind::Locations`).
+Known simplifications (in `src/lsp/mod.rs`): full-text doc sync, char-offset columns, `initialize` not
+awaited before `didOpen`. Then: completion/rename + a hover popup + diagnostics list pane (LSP follow-ups), CDP,
 more `.test` coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native launcher
 actions), Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus queued
 polish (line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.
