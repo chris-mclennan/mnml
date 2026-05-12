@@ -23,6 +23,7 @@ use crate::app::App;
 use crate::buffer::BufferEvent;
 use crate::edit_op::EditOp;
 use crate::focus::Focus;
+use crate::ipc::{self, Ipc};
 use crate::layout::Layout;
 use crate::pane::Pane;
 use crate::{command, ui};
@@ -68,9 +69,22 @@ fn restore_terminal(term: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result
 }
 
 fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io::Result<()> {
+    // The interactive loop also speaks the file-IPC channel (so `./run.sh restart`,
+    // E2E driving, and "agent inspects the live UI" work against the real terminal,
+    // not just headless). Best-effort: if the workspace fs is read-only, skip it.
+    let mut ipc = Ipc::init(&app.workspace).ok();
+    if let Some(ipc) = ipc.as_mut() {
+        let (w, h) = term.size().map(|s| (s.width, s.height)).unwrap_or((0, 0));
+        ipc.append_event(&format!("{{\"event\":\"start\",\"mode\":\"tui\",\"cols\":{w},\"rows\":{h}}}"));
+    }
+
     loop {
         app.tick();
         term.draw(|f| ui::draw(f, app))?;
+        if let Some(ipc) = ipc.as_mut() {
+            ipc::dump_screen_status(ipc, term.current_buffer_mut(), app);
+            ipc::drain_commands(ipc, app);
+        }
         if app.should_quit {
             break;
         }
@@ -82,6 +96,16 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                 _ => {}
             }
         }
+    }
+
+    if let Some(ipc) = ipc.as_mut() {
+        term.draw(|f| ui::draw(f, app))?;
+        ipc::dump_screen_status(ipc, term.current_buffer_mut(), app);
+        ipc.append_event(if app.restart_requested {
+            "{\"event\":\"exit\",\"restart\":true}"
+        } else {
+            "{\"event\":\"exit\"}"
+        });
     }
     Ok(())
 }

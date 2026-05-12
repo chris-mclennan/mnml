@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo run:*)",
+      "Bash(cargo add:*)",
+      "Bash(cargo update:*)",
+      "Bash(cargo metadata:*)",
+      "Bash(./run.sh:*)",
+      "Bash(./dev.sh:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git restore:*)",
+      "Bash(git stash:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)"
+    ],
+    "deny": []
+  },
+  "env": {
+    "RUST_BACKTRACE": "1"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/post-build-restart.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

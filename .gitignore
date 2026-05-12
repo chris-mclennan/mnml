@@ -1,2 +1,4 @@
 /target
 .mnml/ipc/
+.claude/settings.local.json
+.claude/cache/

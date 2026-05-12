@@ -21,35 +21,25 @@ pub fn run(mut app: App) -> Result<bool, String> {
     let mut terminal = Terminal::new(backend).map_err(|e| format!("headless terminal: {e}"))?;
     let mut ipc = Ipc::init(&app.workspace).map_err(|e| format!("ipc init: {e}"))?;
     ipc.append_event(&format!(
-        "{{\"event\":\"start\",\"cols\":{w},\"rows\":{h},\"ipc\":{:?}}}",
+        "{{\"event\":\"start\",\"mode\":\"headless\",\"cols\":{w},\"rows\":{h},\"ipc\":{:?}}}",
         ipc.dir().display().to_string()
     ));
 
     loop {
         app.tick();
-        terminal
-            .draw(|f| ui::draw(f, &mut app))
-            .map_err(|e| format!("render: {e}"))?;
-        dump(&ipc, &terminal, &app);
+        terminal.draw(|f| ui::draw(f, &mut app)).map_err(|e| format!("render: {e}"))?;
+        ipc::dump_screen_status(&ipc, terminal.backend().buffer(), &app);
         if app.should_quit {
             break;
         }
-        let cmds = ipc.poll();
-        if cmds.is_empty() {
+        if !ipc::drain_commands(&mut ipc, &mut app) {
             std::thread::sleep(POLL_SLEEP);
-            continue;
-        }
-        for c in &cmds {
-            let ev = ipc::apply(&mut app, c);
-            ipc.append_event(&ev);
         }
     }
 
     // Final dump so the host sees the end state.
-    terminal
-        .draw(|f| ui::draw(f, &mut app))
-        .map_err(|e| format!("render: {e}"))?;
-    dump(&ipc, &terminal, &app);
+    terminal.draw(|f| ui::draw(f, &mut app)).map_err(|e| format!("render: {e}"))?;
+    ipc::dump_screen_status(&ipc, terminal.backend().buffer(), &app);
     ipc.append_event(if app.restart_requested {
         "{\"event\":\"exit\",\"restart\":true}"
     } else {
@@ -58,18 +48,9 @@ pub fn run(mut app: App) -> Result<bool, String> {
     Ok(app.restart_requested)
 }
 
-fn dump(ipc: &Ipc, terminal: &Terminal<TestBackend>, app: &App) {
-    ipc.write_screen(&ipc::screen_to_text(terminal.backend().buffer()));
-    ipc.write_status(&ipc::status_json(app));
-}
-
 fn screen_size() -> (u16, u16) {
     let parse = |k: &str, d: u16| -> u16 {
-        std::env::var(k)
-            .ok()
-            .and_then(|v| v.parse::<u16>().ok())
-            .filter(|&n| n >= 10)
-            .unwrap_or(d)
+        std::env::var(k).ok().and_then(|v| v.parse::<u16>().ok()).filter(|&n| n >= 10).unwrap_or(d)
     };
     (parse("MNML_COLS", 120), parse("MNML_ROWS", 40))
 }
@@ -92,10 +73,7 @@ mod tests {
         terminal.draw(|f| ui::draw(f, &mut app)).unwrap();
         let text = ipc::screen_to_text(terminal.backend().buffer());
         assert!(text.contains("Hello, mnml!"), "screen was:\n{text}");
-        assert!(
-            text.contains("hello.txt"),
-            "bufferline/statusline should name the file:\n{text}"
-        );
+        assert!(text.contains("hello.txt"), "bufferline/statusline should name the file:\n{text}");
     }
 
     #[test]

@@ -192,6 +192,26 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
     }
 }
 
+/// Write the current `screen.txt` + `status.json`. Both frontends call this
+/// after rendering — headless reads `TestBackend::buffer()`, the terminal loop
+/// reads `Terminal::current_buffer_mut()`.
+pub fn dump_screen_status(ipc: &Ipc, screen: &ratatui::buffer::Buffer, app: &App) {
+    ipc.write_screen(&screen_to_text(screen));
+    ipc.write_status(&status_json(app));
+}
+
+/// Poll the command channel and apply every queued command, logging each as an
+/// event. Returns true if any command was processed (so the caller can redraw).
+pub fn drain_commands(ipc: &mut Ipc, app: &mut App) -> bool {
+    let cmds = ipc.poll();
+    let any = !cmds.is_empty();
+    for c in &cmds {
+        let ev = apply(app, c);
+        ipc.append_event(&ev);
+    }
+    any
+}
+
 /// Render a `ratatui::buffer::Buffer` to plain text (rows joined by `\n`,
 /// trailing spaces trimmed). Used for `screen.txt`.
 pub fn screen_to_text(buf: &ratatui::buffer::Buffer) -> String {
