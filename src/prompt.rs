@@ -30,6 +30,19 @@ impl Prompt {
         }
     }
 
+    /// Like [`Self::new`] but with the input field pre-filled (caret at the end) —
+    /// e.g. an AI-suggested commit message you can then edit before confirming.
+    pub fn seeded(kind: PromptKind, title: impl Into<String>, input: impl Into<String>) -> Self {
+        let input = input.into();
+        let cursor = input.len();
+        Prompt {
+            kind,
+            title: title.into(),
+            input,
+            cursor,
+        }
+    }
+
     pub fn insert_char(&mut self, c: char) {
         self.input.insert(self.cursor, c);
         self.cursor += c.len_utf8();

@@ -9,6 +9,7 @@ use crate::ai::AiPane;
 use crate::buffer::Buffer;
 use crate::git::diff::Hunk;
 use crate::git::graph::GitGraphPane;
+use crate::git::stage::GitStatusPane;
 use crate::playwright::TestsPane;
 use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
@@ -27,6 +28,8 @@ pub enum Pane {
     Diff(DiffView),
     /// A graphical-Git-GUI-style commit-DAG browser (`git log --all` + commit details).
     GitGraph(GitGraphPane),
+    /// A staging view — worktree/index file lists + stage/unstage + commit.
+    GitStatus(GitStatusPane),
     /// A request fired from a `.http`/`.curl` file, with its response.
     Request(RequestPane),
     /// An embedded terminal (shell / `claude` / `codex`).
@@ -106,6 +109,7 @@ impl Pane {
             Pane::MdPreview(p) => p.title(),
             Pane::Diff(d) => d.title(),
             Pane::GitGraph(g) => g.tab_title(),
+            Pane::GitStatus(g) => g.tab_title(),
             Pane::Request(r) => r.title(),
             Pane::Pty(s) => s.title(),
             Pane::Ai(a) => a.tab_title(),
@@ -120,6 +124,7 @@ impl Pane {
             Pane::MdPreview(_)
             | Pane::Diff(_)
             | Pane::GitGraph(_)
+            | Pane::GitStatus(_)
             | Pane::Request(_)
             | Pane::Pty(_)
             | Pane::Ai(_)

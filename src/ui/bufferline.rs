@@ -45,6 +45,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::MdPreview(p) => icons::for_path(&p.path, false, false, nerd),
             Pane::Diff(_) => (if nerd { "\u{f0e7e}" } else { "±" }, theme::cur().orange),
             Pane::GitGraph(_) => (if nerd { "\u{f1d3}" } else { "⎇" }, theme::cur().orange),
+            Pane::GitStatus(_) => (if nerd { "\u{f1d2}" } else { "±" }, theme::cur().green),
             Pane::Request(_) => (if nerd { "\u{f0a3e}" } else { "⚡" }, theme::cur().yellow),
             Pane::Pty(_) => (if nerd { "\u{f489}" } else { "▶" }, theme::cur().teal),
             Pane::Ai(_) => (if nerd { "\u{f0e0a}" } else { "✦" }, theme::cur().purple),

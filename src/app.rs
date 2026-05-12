@@ -133,6 +133,10 @@ pub struct App {
         std::sync::mpsc::Sender<TestsJobDone>,
         std::sync::mpsc::Receiver<TestsJobDone>,
     )>,
+    /// Job id of an in-flight "AI: write me a commit message" run (it shares
+    /// `ai_chan`; when it lands, the commit prompt opens pre-seeded instead of an
+    /// answer landing in a `Pane::Ai`).
+    pending_commit_msg_job: Option<u64>,
     next_job_id: u64,
 }
 
@@ -174,6 +178,7 @@ impl App {
             http_chan: None,
             ai_chan: None,
             tests_chan: None,
+            pending_commit_msg_job: None,
             next_job_id: 1,
         })
     }
@@ -577,6 +582,7 @@ impl App {
             Some(Pane::MdPreview(p)) => Some(p.path.clone()),
             Some(Pane::Diff(_))
             | Some(Pane::GitGraph(_))
+            | Some(Pane::GitStatus(_))
             | Some(Pane::Request(_))
             | Some(Pane::Pty(_))
             | Some(Pane::Ai(_))
@@ -627,6 +633,7 @@ impl App {
             Some(Pane::Editor(_))
             | Some(Pane::Diff(_))
             | Some(Pane::GitGraph(_))
+            | Some(Pane::GitStatus(_))
             | Some(Pane::Request(_))
             | Some(Pane::Pty(_))
             | Some(Pane::Ai(_))
@@ -980,6 +987,40 @@ impl App {
         let done: Vec<AiJobDone> = rx.try_iter().collect();
         let mut toasts: Vec<String> = Vec::new();
         for (job_id, result) in done {
+            // An "AI: write me a commit message" job? Route it to the commit prompt.
+            if self.pending_commit_msg_job == Some(job_id) {
+                self.pending_commit_msg_job = None;
+                for pane in &mut self.panes {
+                    if let Pane::GitStatus(g) = pane
+                        && g.ai_msg_job == Some(job_id)
+                    {
+                        g.ai_msg_job = None;
+                    }
+                }
+                match result {
+                    Ok(text) => {
+                        let summary = text
+                            .lines()
+                            .map(str::trim)
+                            .find(|l| !l.is_empty())
+                            .unwrap_or("")
+                            .trim_matches('`')
+                            .trim()
+                            .to_string();
+                        if summary.is_empty() {
+                            toasts.push("AI returned an empty commit message".to_string());
+                        } else {
+                            self.prompt = Some(crate::prompt::Prompt::seeded(
+                                crate::prompt::PromptKind::GitCommit,
+                                "Commit message (AI draft — edit & Enter)",
+                                summary,
+                            ));
+                        }
+                    }
+                    Err(e) => toasts.push(format!("AI commit message: {e}")),
+                }
+                continue;
+            }
             let Some(Pane::Ai(a)) = self.panes.iter_mut().find(
                 |p| matches!(p, Pane::Ai(a) if a.job_id == job_id && matches!(a.state, AiState::Asking)),
             ) else {
@@ -1583,7 +1624,7 @@ impl App {
                 } else {
                     "staged hunk"
                 });
-                self.git.refresh();
+                self.after_git_change();
                 self.refresh_active_diff();
             }
             Err(e) => self.toast(format!("git apply failed: {e}")),
@@ -1648,9 +1689,8 @@ impl App {
                 match crate::git::commit::commit(&self.workspace, msg) {
                     Ok(summary) => {
                         self.toast(summary);
-                        self.git.refresh();
+                        self.after_git_change();
                         self.refresh_active_diff();
-                        self.refresh_git_graph_panes();
                     }
                     Err(e) => self.toast(format!("git commit: {e}")),
                 }
@@ -1737,6 +1777,168 @@ impl App {
             "copied {}",
             hash.chars().take(12).collect::<String>()
         ));
+    }
+
+    // ─── git status / staging view ──────────────────────────────────
+    /// Open the staging view as a split to the right of the focused leaf.
+    pub fn open_git_status(&mut self) {
+        let pane = Pane::GitStatus(crate::git::stage::GitStatusPane::open(&self.workspace));
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+    fn refresh_git_status_panes(&mut self) {
+        for pane in &mut self.panes {
+            if let Pane::GitStatus(g) = pane {
+                g.refresh();
+            }
+        }
+    }
+    /// After any staging/commit change: refresh the cached status + all git panes.
+    fn after_git_change(&mut self) {
+        self.git.refresh();
+        self.refresh_git_status_panes();
+        self.refresh_git_graph_panes();
+    }
+    /// `(rel, is_staged)` for the highlighted file in the active git-status pane.
+    fn git_status_selection(&self) -> Option<(String, bool)> {
+        match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::GitStatus(g)) => g.selected_entry().map(|(e, st)| (e.rel.clone(), st)),
+            _ => None,
+        }
+    }
+    pub fn git_stage_selected(&mut self) {
+        let Some((rel, staged)) = self.git_status_selection() else {
+            return;
+        };
+        if staged {
+            self.toast("already staged — `u` to unstage");
+            return;
+        }
+        match crate::git::stage::stage(&self.workspace, &rel) {
+            Ok(()) => {
+                self.toast(format!("staged {rel}"));
+                self.after_git_change();
+            }
+            Err(e) => self.toast(format!("git add: {e}")),
+        }
+    }
+    pub fn git_unstage_selected(&mut self) {
+        let Some((rel, staged)) = self.git_status_selection() else {
+            return;
+        };
+        if !staged {
+            self.toast("not staged — `s` to stage");
+            return;
+        }
+        match crate::git::stage::unstage(&self.workspace, &rel) {
+            Ok(()) => {
+                self.toast(format!("unstaged {rel}"));
+                self.after_git_change();
+            }
+            Err(e) => self.toast(format!("git restore --staged: {e}")),
+        }
+    }
+    /// Space in the status pane — stage if unstaged, unstage if staged.
+    pub fn git_toggle_selected(&mut self) {
+        match self.git_status_selection() {
+            Some((_, false)) => self.git_stage_selected(),
+            Some((_, true)) => self.git_unstage_selected(),
+            None => {}
+        }
+    }
+    pub fn git_stage_all_active(&mut self) {
+        if !matches!(self.active_pane(), Some(Pane::GitStatus(_))) {
+            return;
+        }
+        match crate::git::stage::stage_all(&self.workspace) {
+            Ok(()) => {
+                self.toast("staged all changes");
+                self.after_git_change();
+            }
+            Err(e) => self.toast(format!("git add -A: {e}")),
+        }
+    }
+    pub fn git_unstage_all_active(&mut self) {
+        if !matches!(self.active_pane(), Some(Pane::GitStatus(_))) {
+            return;
+        }
+        match crate::git::stage::unstage_all(&self.workspace) {
+            Ok(()) => {
+                self.toast("unstaged everything");
+                self.after_git_change();
+            }
+            Err(e) => self.toast(format!("git restore --staged: {e}")),
+        }
+    }
+    /// Enter in the status pane — open the highlighted file's diff in a split.
+    pub fn git_status_open_diff(&mut self) {
+        let Some(cur) = self.active else { return };
+        let sel = match self.panes.get(cur) {
+            Some(Pane::GitStatus(g)) => g.selected_entry().map(|(e, st)| (e.abs.clone(), st)),
+            _ => None,
+        };
+        let Some((abs, staged)) = sel else { return };
+        let scope = if staged {
+            crate::pane::DiffScope::Staged
+        } else {
+            crate::pane::DiffScope::Unstaged(Some(abs))
+        };
+        let hunks = self.fetch_diff(&scope);
+        if hunks.is_empty() {
+            self.toast("no diff for that file (untracked? — stage it to see it)");
+            return;
+        }
+        let new_id = self.split_leaf_with(
+            cur,
+            crate::layout::SplitDir::Horizontal,
+            Pane::Diff(crate::pane::DiffView::new(scope, hunks)),
+        );
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+    }
+    /// `C` in the status pane — ask `claude -p` to write a commit message from the
+    /// staged diff; when it lands, the commit prompt opens pre-seeded with the
+    /// first line (`drain_ai_jobs` routes it via `pending_commit_msg_job`).
+    pub fn request_ai_commit_message(&mut self) {
+        if self.git.snapshot().staged == 0 {
+            self.toast("nothing staged — stage some changes first");
+            return;
+        }
+        let diff = crate::git::stage::staged_diff(&self.workspace);
+        if diff.trim().is_empty() {
+            self.toast("no staged diff to summarise");
+            return;
+        }
+        // Keep the prompt from getting silly-long on huge diffs.
+        let diff = if diff.len() > 24_000 {
+            format!("{}\n…(diff truncated)…", &diff[..24_000])
+        } else {
+            diff
+        };
+        let prompt = format!(
+            "Write a git commit message for the staged changes below. \
+             First line: imperative mood, ≤72 chars, no trailing period. \
+             Then a blank line and a short body ONLY if it adds something. \
+             Output ONLY the commit message — no preamble, no code fences.\n\n\
+             ```diff\n{diff}\n```"
+        );
+        let (job_id, _sid) = self.spawn_ai_job(prompt);
+        self.pending_commit_msg_job = Some(job_id);
+        if let Some(Pane::GitStatus(g)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            g.ai_msg_job = Some(job_id);
+        }
+        self.toast("asking Claude for a commit message…");
     }
 
     /// Move focus to the leaf in direction `d` of the focused one (by the rects
@@ -1867,6 +2069,7 @@ impl App {
             Pane::MdPreview(_)
             | Pane::Diff(_)
             | Pane::GitGraph(_)
+            | Pane::GitStatus(_)
             | Pane::Request(_)
             | Pane::Pty(_)
             | Pane::Ai(_)
@@ -1943,6 +2146,7 @@ impl App {
             Pane::MdPreview(p) => Some((p.title(), false)),
             Pane::Diff(d) => Some((d.title(), false)),
             Pane::GitGraph(g) => Some((g.tab_title(), false)),
+            Pane::GitStatus(g) => Some((g.tab_title(), false)),
             Pane::Request(r) => Some((r.title(), false)),
             Pane::Pty(s) => Some((s.title(), false)),
             Pane::Ai(a) => Some((a.tab_title(), false)),

@@ -387,6 +387,59 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // The git-status / staging pane: ↑↓ select a file, `s`/`u`/Space stage/unstage,
+    // `a`/`A` stage/unstage all, Enter → that file's diff, `c` commit, `C` AI commit
+    // message, `r` refresh, Esc → tree.
+    if matches!(app.panes.get(i), Some(Pane::GitStatus(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::GitStatus(g)) = app.panes.get_mut(i) {
+                    g.move_selection(-1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::GitStatus(g)) = app.panes.get_mut(i) {
+                    g.move_selection(1);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::GitStatus(g)) = app.panes.get_mut(i) {
+                    g.move_selection(-(viewport as isize));
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::GitStatus(g)) = app.panes.get_mut(i) {
+                    g.move_selection(viewport as isize);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::GitStatus(g)) = app.panes.get_mut(i) {
+                    g.move_selection(isize::MIN / 2);
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::GitStatus(g)) = app.panes.get_mut(i) {
+                    g.move_selection(isize::MAX / 2);
+                }
+            }
+            KeyCode::Char(' ') => app.git_toggle_selected(),
+            KeyCode::Char('s') => app.git_stage_selected(),
+            KeyCode::Char('u') => app.git_unstage_selected(),
+            KeyCode::Char('a') => app.git_stage_all_active(),
+            KeyCode::Char('A') => app.git_unstage_all_active(),
+            KeyCode::Enter => app.git_status_open_diff(),
+            KeyCode::Char('c') => app.open_commit_prompt(),
+            KeyCode::Char('C') => app.request_ai_commit_message(),
+            KeyCode::Char('r') => {
+                if let Some(Pane::GitStatus(g)) = app.panes.get_mut(i) {
+                    g.refresh();
+                }
+            }
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // An AI pane: read-only — scroll, `r` re-ask, `c` continue in interactive
     // Claude Code (resumes the session), Esc → tree.
     if let Some(Pane::Ai(a)) = app.panes.get_mut(i) {
@@ -765,6 +818,13 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 };
             }
             Some(Pane::GitGraph(g)) => {
+                g.move_selection(if delta < 0 {
+                    -(delta.unsigned_abs() as isize)
+                } else {
+                    delta.unsigned_abs() as isize
+                });
+            }
+            Some(Pane::GitStatus(g)) => {
                 g.move_selection(if delta < 0 {
                     -(delta.unsigned_abs() as isize)
                 } else {

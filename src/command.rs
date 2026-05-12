@@ -246,6 +246,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_git_graph(),
         },
         Command {
+            id: "git.status_pane",
+            title: "Git: status / staging view",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_git_status(),
+        },
+        Command {
+            id: "git.ai_commit",
+            title: "Git: write a commit message with Claude (from the staged diff)",
+            group: "git",
+            keys: &[],
+            run: |app| app.request_ai_commit_message(),
+        },
+        Command {
             id: "rqst.send",
             title: "HTTP: send request (.http/.curl) — or re-fire a request pane",
             group: "http",

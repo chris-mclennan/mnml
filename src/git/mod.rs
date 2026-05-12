@@ -9,6 +9,7 @@ pub mod commit;
 pub mod diff;
 pub mod graph;
 pub mod log;
+pub mod stage;
 pub mod status;
 
 pub use status::GitStatus;

@@ -26,6 +26,7 @@ pub mod context_menu;
 pub mod diff_view;
 pub mod editor_view;
 pub mod git_graph_view;
+pub mod git_status_view;
 pub mod icons;
 pub mod md_preview;
 pub mod picker;
@@ -178,6 +179,7 @@ fn render_layout(
                 Some(crate::pane::Pane::Ai(_)) => 5,
                 Some(crate::pane::Pane::Tests(_)) => 6,
                 Some(crate::pane::Pane::GitGraph(_)) => 7,
+                Some(crate::pane::Pane::GitStatus(_)) => 8,
                 _ => 0,
             };
             match kind {
@@ -188,6 +190,7 @@ fn render_layout(
                 5 => ai_view::draw(frame, app, *id, area, focused),
                 6 => tests_view::draw(frame, app, *id, area, focused),
                 7 => git_graph_view::draw(frame, app, *id, area, focused),
+                8 => git_status_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }
