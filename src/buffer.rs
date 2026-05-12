@@ -9,7 +9,12 @@ use ratatui::crossterm::event::KeyEvent;
 use crate::clipboard::Clipboard;
 use crate::config::Config;
 use crate::editor::Editor;
+use crate::highlight::{self, ColoredSpan};
 use crate::input::{self, AppCommand, EditCtx, EditingMode, InputHandler, InputResult};
+
+/// Above this many bytes, skip syntax highlighting (re-parsing on every edit
+/// would lag). Incremental parsing lifts this later.
+const HIGHLIGHT_BYTE_LIMIT: usize = 2 * 1024 * 1024;
 
 /// What `Buffer::feed_key` reports back to the event loop.
 pub enum BufferEvent {
@@ -37,6 +42,9 @@ pub struct Buffer {
     pub input: Box<dyn InputHandler>,
     /// When true, key input never mutates the text (used for diff views etc.).
     pub read_only: bool,
+    /// Cached syntax highlighting — one span list per editor line. Recomputed on
+    /// open and after every text-changing edit (cheap for normal-sized files).
+    pub highlights: Vec<Vec<ColoredSpan>>,
 }
 
 impl Buffer {
@@ -48,7 +56,7 @@ impl Buffer {
             .map(|s| s.to_string());
         let mut editor = Editor::new(text.clone(), cfg.editor.tab_width);
         editor.set_comment_token(comment_token_for(ext.as_deref()));
-        Ok(Buffer {
+        let mut b = Buffer {
             path: Some(path.to_path_buf()),
             editor,
             scroll: 0,
@@ -58,7 +66,10 @@ impl Buffer {
             language_ext: ext,
             input: input::make_handler(cfg),
             read_only: false,
-        })
+            highlights: Vec::new(),
+        };
+        b.refresh_highlights();
+        Ok(b)
     }
 
     /// Open a buffer that input can't mutate (diff views, log tails, …).
@@ -79,7 +90,28 @@ impl Buffer {
             language_ext: None,
             input: input::make_handler(cfg),
             read_only: false,
+            highlights: Vec::new(),
         }
+    }
+
+    /// Re-run tree-sitter over the current text (no-op for unknown languages /
+    /// huge files). Call after any edit that changes the text.
+    pub fn refresh_highlights(&mut self) {
+        let text = self.editor.text();
+        if text.len() > HIGHLIGHT_BYTE_LIMIT {
+            self.highlights.clear();
+            return;
+        }
+        let ext = self.language_ext.as_deref().unwrap_or("");
+        self.highlights = highlight::highlight_lines(text, ext);
+    }
+
+    /// Spans for editor line `line`, or `&[]` if unhighlighted.
+    pub fn line_spans(&self, line: usize) -> &[ColoredSpan] {
+        self.highlights
+            .get(line)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     pub fn display_name(&self) -> String {
@@ -147,6 +179,7 @@ impl Buffer {
                 }
                 if changed {
                     self.recompute_dirty();
+                    self.refresh_highlights();
                     BufferEvent::Edited
                 } else {
                     BufferEvent::Redraw

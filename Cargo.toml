@@ -24,14 +24,24 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # System clipboard (best-effort; falls back to an internal register if unavailable).
 arboard = "3"
+# Syntax highlighting. Grammar crates' query-constant names vary (HIGHLIGHTS_QUERY vs
+# HIGHLIGHT_QUERY, presence of INJECTIONS_QUERY / LOCALS_QUERY) — quirks are isolated in
+# highlight.rs::build_config. Start with a handful; more (typescript/css/html/c/bash/md) come later.
+tree-sitter = "0.26"
+tree-sitter-highlight = "0.26"
+tree-sitter-rust = "0.24"
+tree-sitter-javascript = "0.25"
+tree-sitter-python = "0.25"
+tree-sitter-json = "0.24"
+tree-sitter-go = "0.25"
+tree-sitter-toml-ng = "0.7"
 
 # Added per-track later (kept out for now to keep build fast / resolution simple):
-#   nucleo             — fuzzy matcher (picker/palette)           [P2]
+#   nucleo             — fuzzy matcher (picker/palette) — hand-rolled in src/fuzzy.rs for now
 #   portable-pty vt100 — embedded terminal / Claude Code / Codex  [Pty track]
 #   reqwest            — HTTP request client (baked in)           [HTTP track]
 #   tungstenite        — Chrome DevTools Protocol                 [CDP track]
 #   lsp-types          — LSP client types                        [LSP track]
-#   tree-sitter*       — syntax highlighting                      [P2]
 
 [dev-dependencies]
 tempfile = "3"

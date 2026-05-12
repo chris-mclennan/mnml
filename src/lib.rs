@@ -22,6 +22,7 @@ pub mod focus;
 pub mod fuzzy;
 pub mod git;
 pub mod headless;
+pub mod highlight;
 pub mod input;
 pub mod ipc;
 pub mod layout;
