@@ -121,9 +121,15 @@ line-number gutter on the active editor for a per-line `<sha> <author>` column
 `git commit -m`. headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
 wrappers. The statusline git segment shows branch + `⇡ahead ⇣behind` + `✚staged ●modified
 …untracked ⚠conflicts` (only the nonzero parts), from `git status --porcelain -b`. The Git
-track is done. Next: HTTP, Pty/AI-CLI, AI-API, CDP, the `.test`
-E2E format, plugins; plus queued polish (right-click context menus on files/tabs,
-inline-styled markdown, line-wrapped preview). See `.local/PLAN.md` for the full plan.
+track is done. **HTTP track — in progress:** `src/http/` holds `Request`/`Response` +
+`send` (reqwest blocking, rustls), `curl.rs` (parse a pasted cURL), `file.rs` (`.http`/
+`.rest`/`.curl` parsing, multi-block via `### name`), `template.rs` (`{{VAR}}` from
+`.mnml/env/<name>.env` → process env → dynamic `{{$uuid}}`/`{{$timestamp}}`/…); wired as
+`mnml run FILE [--env NAME] [--workspace DIR]` (expand → parse → send → print, non-zero
+exit on non-2xx). Still to do for HTTP: `@assert`/`@capture` directives, `.chain.json`
+sequences, OpenAPI→stub discovery, and the `Pane::Request` editor UI. Then: Pty/AI-CLI,
+AI-API, CDP, the `.test` E2E format, plugins; plus queued polish (right-click context
+menus on files/tabs, line-wrapped preview). See `.local/PLAN.md` for the full plan.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
 
 ## Not set up yet (could add later)

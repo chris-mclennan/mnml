@@ -40,11 +40,13 @@ tree-sitter-css = "0.25.0"
 tree-sitter-bash = "0.25.1"
 tree-sitter-md = "0.5.3"
 tree-sitter-html = "0.23.2"
+# HTTP track — the baked-in request client. Blocking client (no async runtime),
+# rustls so there's no system OpenSSL dependency, and the usual content-encodings.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip", "brotli", "deflate"] }
 
 # Added per-track later (kept out for now to keep build fast / resolution simple):
 #   nucleo             — fuzzy matcher (picker/palette) — hand-rolled in src/fuzzy.rs for now
 #   portable-pty vt100 — embedded terminal / Claude Code / Codex  [Pty track]
-#   reqwest            — HTTP request client (baked in)           [HTTP track]
 #   tungstenite        — Chrome DevTools Protocol                 [CDP track]
 #   lsp-types          — LSP client types                        [LSP track]
 

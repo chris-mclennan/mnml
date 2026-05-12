@@ -1,0 +1,218 @@
+//! The baked-in HTTP request client (ported + restructured from `../rqst`).
+//!
+//! - [`Request`] — method / url / headers / body, the shared shape every source
+//!   parses into (pasted curl via [`curl`], `.http`/`.rest`/`.curl` files via
+//!   [`file`]).
+//! - [`template`] — `{{VAR}}` substitution from `.mnml/env/<name>.env` (then
+//!   process env), plus dynamic `{{$uuid}}` / `{{$timestamp}}` / … vars.
+//! - [`send`] — fire a [`Request`] with `reqwest`'s blocking client, capture the
+//!   [`Response`] (status, headers, body, elapsed).
+//!
+//! Still to come (its own pass): `@assert` / `@capture` directives, `.chain.json`
+//! sequences, OpenAPI → stub discovery, and the `Pane::Request` editor UI.
+
+pub mod curl;
+pub mod file;
+pub mod template;
+
+use std::time::{Duration, Instant};
+
+/// A request, independent of where it was parsed from. Header names keep their
+/// source casing; order is preserved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Request {
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<String>,
+}
+
+/// Why parsing a request from text failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseError {
+    NoUrl,
+    UnterminatedQuote,
+    Empty,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseError::NoUrl => write!(f, "no URL found in request"),
+            ParseError::UnterminatedQuote => write!(f, "unterminated quote in curl command"),
+            ParseError::Empty => write!(f, "empty input"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+/// Parse a request from text, auto-detecting between a pasted cURL command and
+/// the `.http` / `.rest` (REST-Client) format. Tries cURL first — the dominant
+/// case for pasted requests — unless the text unambiguously looks like an `.http`
+/// file (a leading HTTP-method line), then falls back to the `.http` parser.
+pub fn parse(input: &str) -> Result<Request, ParseError> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(ParseError::Empty);
+    }
+    if looks_like_http_file(trimmed) {
+        return file::parse(trimmed);
+    }
+    match curl::parse_curl(trimmed) {
+        Ok(r) => Ok(r),
+        Err(curl_err) => file::parse(trimmed).map_err(|_| curl_err),
+    }
+}
+
+fn looks_like_http_file(text: &str) -> bool {
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') || t.starts_with("//") {
+            continue;
+        }
+        let head = t.split_whitespace().next().unwrap_or("");
+        return matches!(
+            head.to_ascii_uppercase().as_str(),
+            "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS"
+        );
+    }
+    false
+}
+
+/// A captured HTTP response.
+#[derive(Debug, Clone)]
+pub struct Response {
+    pub status: u16,
+    pub status_text: String,
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+    pub elapsed: Duration,
+}
+
+impl Response {
+    /// Case-insensitive header lookup (first match).
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+    pub fn content_type(&self) -> Option<&str> {
+        self.header("content-type")
+    }
+    pub fn looks_like_json(&self) -> bool {
+        self.content_type()
+            .map(|ct| ct.contains("json"))
+            .unwrap_or(false)
+            || {
+                let b = self.body.trim_start();
+                b.starts_with('{') || b.starts_with('[')
+            }
+    }
+}
+
+/// Send `req` synchronously and capture the response. `Err` carries a one-line
+/// description of a transport / build failure (DNS, TLS, connect, timeout, …).
+pub fn send(req: &Request) -> Result<Response, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("client build failed: {e}"))?;
+
+    let method = reqwest::Method::from_bytes(req.method.to_uppercase().as_bytes())
+        .map_err(|_| format!("invalid HTTP method {:?}", req.method))?;
+
+    let mut builder = client.request(method, &req.url);
+    for (k, v) in &req.headers {
+        builder = builder.header(k.as_str(), v.as_str());
+    }
+    if let Some(body) = &req.body {
+        builder = builder.body(body.clone());
+    }
+
+    let start = Instant::now();
+    let resp = builder.send().map_err(|e| transport_error(&e))?;
+    let status = resp.status().as_u16();
+    let status_text = resp.status().canonical_reason().unwrap_or("").to_string();
+    let headers = resp
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+    let body = resp
+        .text()
+        .map_err(|e| format!("reading body failed: {e}"))?;
+    let elapsed = start.elapsed();
+
+    Ok(Response {
+        status,
+        status_text,
+        headers,
+        body,
+        elapsed,
+    })
+}
+
+fn transport_error(e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        "request timed out".to_string()
+    } else if e.is_connect() {
+        format!("connection failed: {e}")
+    } else if e.is_builder() {
+        format!("bad request: {e}")
+    } else {
+        e.to_string()
+    }
+}
+
+/// Deduplicate header pairs by case-insensitive name, keeping the last value but
+/// the first-seen position. (cURL's last `-H` for a name wins.)
+pub(crate) fn dedupe_keep_last(headers: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut order: Vec<String> = Vec::new();
+    let mut last: std::collections::HashMap<String, (String, String)> =
+        std::collections::HashMap::new();
+    for (k, v) in headers {
+        let key = k.to_ascii_lowercase();
+        if !last.contains_key(&key) {
+            order.push(key.clone());
+        }
+        last.insert(key, (k, v));
+    }
+    order.into_iter().filter_map(|k| last.remove(&k)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_dispatches_to_curl_and_http_file() {
+        let c = parse("curl 'https://x.com/a' -H 'accept: */*'").unwrap();
+        assert_eq!(c.url, "https://x.com/a");
+        assert_eq!(c.method, "GET");
+
+        let h = parse("POST https://x.com/b\nContent-Type: application/json\n\n{\"a\":1}").unwrap();
+        assert_eq!(h.method, "POST");
+        assert_eq!(h.url, "https://x.com/b");
+        assert_eq!(h.body.as_deref(), Some("{\"a\":1}"));
+
+        assert_eq!(parse("   "), Err(ParseError::Empty));
+        // `curl <word>` treats the word as a URL, so a bare token parses (and
+        // would then fail to send with a clear transport error) — matching cURL.
+        assert_eq!(parse("nonsense").unwrap().url, "nonsense");
+    }
+
+    #[test]
+    fn dedupe_keeps_last_value_at_first_position() {
+        let got = dedupe_keep_last(vec![
+            ("Accept".into(), "a".into()),
+            ("X".into(), "1".into()),
+            ("accept".into(), "b".into()),
+        ]);
+        assert_eq!(
+            got,
+            vec![("accept".into(), "b".into()), ("X".into(), "1".into())]
+        );
+    }
+}
