@@ -4158,10 +4158,43 @@ impl App {
         self.drain_lsp_events();
         self.drain_cdp_events();
         self.refresh_live_ai_panes();
+        self.autosave_idle_buffers();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL
         {
             self.toast = None;
+        }
+    }
+
+    /// `[editor] autosave_secs > 0` ⇒ save any dirty editor buffer whose last
+    /// edit was at least that long ago. No-op when off (the default). LSP gets a
+    /// `didSave` per saved file so the server stays in sync.
+    fn autosave_idle_buffers(&mut self) {
+        let after = self.config.editor.autosave_secs;
+        if after == 0 {
+            return;
+        }
+        let after = std::time::Duration::from_secs(after);
+        let saved: Vec<(std::path::PathBuf, String)> = self
+            .panes
+            .iter_mut()
+            .filter_map(|p| match p {
+                Pane::Editor(b) => {
+                    if b.dirty
+                        && b.path.is_some()
+                        && b.last_edited.map(|t| t.elapsed() >= after).unwrap_or(false)
+                        && b.save_to_disk().is_ok()
+                    {
+                        b.path.clone().map(|p| (p, b.editor.text().to_string()))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+        for (p, t) in saved {
+            self.lsp.did_save(&p, &t);
         }
     }
 }

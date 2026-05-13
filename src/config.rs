@@ -51,6 +51,8 @@ pub struct EditorConfig {
     /// `"vim"` or `"standard"`. Anything else falls back to `"standard"` at handler-make time.
     pub input_style: String,
     pub tab_width: usize,
+    /// Auto-save a dirty buffer this many seconds after its last edit. `0` ⇒ off.
+    pub autosave_secs: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +71,7 @@ impl Default for Config {
             editor: EditorConfig {
                 input_style: "standard".to_string(),
                 tab_width: 4,
+                autosave_secs: 0,
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),
@@ -122,6 +125,7 @@ struct RawStartup {
 struct RawEditor {
     input_style: Option<String>,
     tab_width: Option<usize>,
+    autosave_secs: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -163,6 +167,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.tab_width {
             self.editor.tab_width = v.max(1);
+        }
+        if let Some(v) = raw.editor.autosave_secs {
+            self.editor.autosave_secs = v;
         }
         if let Some(v) = raw.ui.theme {
             self.ui.theme = v;

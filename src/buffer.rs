@@ -3,6 +3,7 @@
 //! state lives here, not in `App`).
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use ratatui::crossterm::event::KeyEvent;
 
@@ -50,6 +51,9 @@ pub struct Buffer {
     pub blame: Option<Vec<crate::git::blame::BlameLine>>,
     /// LSP diagnostics for this file (replaced wholesale on each `publishDiagnostics`).
     pub diagnostics: Vec<crate::lsp::Diagnostic>,
+    /// Stamp of the last text-changing edit (used by `[editor] autosave_secs`).
+    /// `None` until the first edit; cleared back to `None` on save.
+    pub last_edited: Option<Instant>,
 }
 
 impl Buffer {
@@ -75,6 +79,7 @@ impl Buffer {
             highlights: Vec::new(),
             blame: None,
             diagnostics: Vec::new(),
+            last_edited: None,
         };
         b.refresh_highlights();
         Ok(b)
@@ -101,6 +106,7 @@ impl Buffer {
             highlights: Vec::new(),
             blame: None,
             diagnostics: Vec::new(),
+            last_edited: None,
         }
     }
 
@@ -146,6 +152,7 @@ impl Buffer {
             std::fs::write(path, self.editor.text())?;
             self.saved_text = self.editor.text().to_string();
             self.dirty = false;
+            self.last_edited = None;
         }
         Ok(())
     }
@@ -190,6 +197,7 @@ impl Buffer {
                 if changed {
                     self.recompute_dirty();
                     self.refresh_highlights();
+                    self.last_edited = Some(Instant::now());
                     BufferEvent::Edited
                 } else {
                     BufferEvent::Redraw
@@ -223,6 +231,7 @@ impl Buffer {
         if changed {
             self.recompute_dirty();
             self.refresh_highlights();
+            self.last_edited = Some(Instant::now());
         }
         changed
     }
