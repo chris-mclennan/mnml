@@ -279,13 +279,21 @@ cursor; `App.pending_rename` holds the `(path,line,col)`) → `textDocument/rena
 (`changes` / `documentChanges`, file-ops skipped) is flattened to `LspEvent::Rename` and `App::apply_rename_edits`
 edits each file — through `Buffer::apply_edit_ops` + the new `EditOp::ReplaceRange{start,end,text}` if it's open
 (left dirty for review), else by splicing the file on disk; `crate::lsp::byte_at` resolves LSP positions →
-byte offsets, edits applied descending-by-offset. `lsp.completion` (`Ctrl+Space` / `<leader>l c`) — manual
-trigger: `textDocument/completion` at the cursor → `LspEvent::Completion` pops the fuzzy picker
-(`PickerKind::LspCompletion`, `id`=insert-text, label fuzzy-matched, `detail` as the hint); accepting replaces
-the identifier prefix left of the cursor (`App.pending_completion` = `(path, prefix_byte_len)`) via
-`EditOp::ReplaceRange` — snippet items fall back to the label (no placeholder expansion yet). Known
-simplifications (in `src/lsp/mod.rs`): full-text doc sync, char-offset columns, `initialize` not awaited
-before `didOpen`. Then: as-you-type completion popup (LSP follow-up), CDP,
+byte offsets, edits applied descending-by-offset. **completion — as-you-type popup**: `src/completion.rs`
+(`CompletionPopup{path, all, filtered, selected, scroll, prefix}` — one `textDocument/completion` reply
+populates `all`; `refilter(prefix)` narrows `filtered` locally via `crate::fuzzy` as you keep typing, no
+re-request per keystroke) + `src/ui/completion.rs` (a small borderless list anchored just below the caret,
+flips above / clamps to screen, selected row highlit, dim `detail` column). `App::completion_on_edit(typed)`
+runs after every editor edit (`tui.rs` `BufferEvent::Edited`): refilters an open popup against the new prefix
+(closing it when the prefix empties / stops matching), and auto-triggers a fresh `textDocument/completion`
+on `.`/`:`(member access) or the first char of a new word; the reply (`apply_lsp_event`) opens the popup
+filtered against the *live* prefix. In the popup: ↑↓/Ctrl-N·P move, PgUp/PgDn jump, Tab/Enter accept
+(`App::completion_accept` → `EditOp::ReplaceRange` over the identifier prefix left of the cursor →
+`item.insert`; snippet items fall back to the label, no placeholder expansion), Esc dismisses, any other key
+dismisses + is handled normally, a click dismisses it. `lsp.completion` (`Ctrl+Space` / `<leader>l c`) is the
+manual trigger (requests regardless of prefix; same popup). Known simplifications (in `src/lsp/mod.rs`):
+full-text doc sync, char-offset columns, `initialize` not awaited before `didOpen`; completion list is
+filtered locally after the first reply (no re-request as the prefix grows). Then: CDP,
 more `.test` coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native launcher
 actions), Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus queued
 polish (line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.

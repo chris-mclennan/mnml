@@ -144,10 +144,10 @@ pub struct App {
     /// `(path, line, character)` of an in-flight LSP rename — captured when the
     /// rename prompt opens so the accept handler sends the request for that spot.
     pending_rename: Option<(PathBuf, u32, u32)>,
-    /// `(path, prefix_byte_len)` of an in-flight LSP completion — captured when
-    /// the completion picker opens; on accept the chosen text replaces the
-    /// `prefix_byte_len` bytes immediately before the cursor.
-    pending_completion: Option<(PathBuf, usize)>,
+    /// The as-you-type LSP completion popup, when open. Populated from a
+    /// `textDocument/completion` reply (auto-triggered as you type, or via
+    /// `lsp.completion`); re-filtered locally as you keep typing.
+    pub completion: Option<crate::completion::CompletionPopup>,
     /// Channel for background HTTP sends (lazily created on the first `rqst.send`):
     /// worker threads send `(job_id, result)`; [`Self::tick`] drains it and updates
     /// the matching `Pane::Request`.
@@ -220,7 +220,7 @@ impl App {
             context_menu: None,
             hover: None,
             pending_rename: None,
-            pending_completion: None,
+            completion: None,
             http_chan: None,
             ai_chan: None,
             tests_chan: None,
@@ -390,7 +390,6 @@ impl App {
     }
     pub fn close_picker(&mut self) {
         self.picker = None;
-        self.pending_completion = None;
     }
     /// Open the fuzzy file finder over every file in the workspace.
     pub fn open_file_picker(&mut self) {
@@ -546,37 +545,116 @@ impl App {
                     }
                 }
             }
-            PickerKind::LspCompletion => {
-                let Some((path, prefix_len)) = self.pending_completion.take() else {
-                    return;
-                };
-                let Some(idx) = self
-                    .panes
-                    .iter()
-                    .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&path)))
-                else {
-                    return;
-                };
-                let clip = &mut self.clipboard;
-                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
-                    let cursor = b.editor.cursor();
-                    let start = cursor.saturating_sub(prefix_len);
-                    b.apply_edit_ops(
-                        vec![crate::edit_op::EditOp::ReplaceRange {
-                            start,
-                            end: cursor,
-                            text: item.id.clone(),
-                        }],
-                        clip,
-                        0,
-                    );
-                }
-                if let Some(Pane::Editor(b)) = self.panes.get(idx) {
-                    let t = b.editor.text().to_string();
-                    self.lsp.did_change(&path, &t);
-                }
+        }
+    }
+
+    // ─── as-you-type LSP completion popup ───────────────────────────
+    /// Move the completion-popup selection by `delta` rows (no-op if none open).
+    pub fn completion_move(&mut self, delta: isize) {
+        if let Some(p) = &mut self.completion {
+            p.move_by(delta);
+        }
+    }
+
+    /// Accept the highlighted completion: replace the identifier prefix left of
+    /// the cursor with the item's insert text, then close the popup.
+    pub fn completion_accept(&mut self) {
+        let Some(popup) = self.completion.take() else {
+            return;
+        };
+        let Some(item) = popup.current().cloned() else {
+            return;
+        };
+        let prefix_len = popup.prefix.len(); // bytes — prefix chars are all id chars
+        let Some(idx) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&popup.path)))
+        else {
+            return;
+        };
+        let clip = &mut self.clipboard;
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+            let cursor = b.editor.cursor();
+            let start = cursor.saturating_sub(prefix_len);
+            b.apply_edit_ops(
+                vec![crate::edit_op::EditOp::ReplaceRange {
+                    start,
+                    end: cursor,
+                    text: item.insert.clone(),
+                }],
+                clip,
+                0,
+            );
+        }
+        if let Some(Pane::Editor(b)) = self.panes.get(idx) {
+            let t = b.editor.text().to_string();
+            self.lsp.did_change(&popup.path, &t);
+        }
+    }
+
+    /// The identifier prefix (`[A-Za-z0-9_]*`) immediately left of the active
+    /// editor's cursor, or `None` if there's no active editor.
+    fn cursor_id_prefix(&self) -> Option<String> {
+        let b = self.active_editor()?;
+        let cur = b.editor.cursor();
+        let t = b.editor.text();
+        let mut v: Vec<char> = t[..cur]
+            .chars()
+            .rev()
+            .take_while(|&c| c.is_alphanumeric() || c == '_')
+            .collect();
+        v.reverse();
+        Some(v.into_iter().collect())
+    }
+
+    /// Called after every editor edit. Keeps an open completion popup in sync
+    /// with what's being typed (re-filtering it, or closing it once the prefix
+    /// empties / stops matching), and auto-triggers a fresh request on a member
+    /// access (`.` / `:`) or the first character of a new word.
+    pub fn completion_on_edit(&mut self, typed: Option<char>) {
+        let is_id = |c: char| c.is_alphanumeric() || c == '_';
+        let Some(prefix) = self.cursor_id_prefix() else {
+            self.completion = None;
+            return;
+        };
+        if let Some(popup) = &mut self.completion {
+            if prefix.is_empty() || !popup.refilter(&prefix) {
+                self.completion = None;
+            } else {
+                return; // already showing — refiltered locally, no re-request
             }
         }
+        match typed {
+            Some('.') | Some(':') => self.request_completion_at_cursor(),
+            Some(c) if is_id(c) => {
+                // Auto-trigger only at the start of a word (the char *before*
+                // the one just typed isn't an identifier char) — subsequent
+                // keystrokes just narrow the popup that this request opens.
+                let at_word_start = self.active_editor().is_some_and(|b| {
+                    let cur = b.editor.cursor();
+                    let before: Vec<char> = b.editor.text()[..cur].chars().collect();
+                    before.len() < 2 || !is_id(before[before.len() - 2])
+                });
+                if at_word_start {
+                    self.request_completion_at_cursor();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Fire a `textDocument/completion` at the active editor's cursor — the reply
+    /// (`tick` → `apply_lsp_event`) opens the popup. Assumes the server already
+    /// has the latest text (the edit path sends `didChange` first). Silent if
+    /// there's no server for the file.
+    fn request_completion_at_cursor(&mut self) {
+        let Some(b) = self.active_editor() else {
+            return;
+        };
+        let Some(path) = b.path.clone() else { return };
+        let (row, col) = b.editor.row_col();
+        self.lsp.completion(&path, row as u32, col as u32);
     }
 
     /// `task.run` — open a picker over `[tasks.<name>]` config entries.
@@ -799,9 +877,9 @@ impl App {
         }
         (start < end).then(|| chars[start..end].iter().collect())
     }
-    /// `lsp.completion` — ask the server for completions at the cursor; the reply
-    /// (`tick`) pops the fuzzy picker. The identifier prefix immediately left of
-    /// the cursor is captured so accepting an item replaces it.
+    /// `lsp.completion` (`Ctrl+Space`) — manually ask the server for completions
+    /// at the cursor; the reply (`tick` → `apply_lsp_event`) opens the popup
+    /// ([`Self::completion_on_edit`] auto-triggers it as you type otherwise).
     pub fn lsp_completion(&mut self) {
         let Some(b) = self.active_editor() else {
             self.toast("no active editor");
@@ -812,19 +890,9 @@ impl App {
             return;
         };
         let text = b.editor.text().to_string();
-        let cursor = b.editor.cursor();
         let (row, col) = b.editor.row_col();
-        let prefix_len: usize = text[..cursor]
-            .chars()
-            .rev()
-            .take_while(|&c| c.is_alphanumeric() || c == '_')
-            .map(char::len_utf8)
-            .sum();
         self.lsp.did_change(&path, &text);
-        if self.lsp.completion(&path, row as u32, col as u32) {
-            self.pending_completion = Some((path, prefix_len));
-        } else {
-            self.pending_completion = None;
+        if !self.lsp.completion(&path, row as u32, col as u32) {
             self.toast("no language server for this file (completion)");
         }
     }
@@ -903,25 +971,31 @@ impl App {
             }
             LspEvent::Rename(edits) => self.apply_rename_edits(edits),
             LspEvent::Completion(items) => {
-                use crate::picker::{Picker, PickerItem, PickerKind};
+                use crate::completion::{CompletionItem, CompletionPopup};
                 if items.is_empty() {
-                    self.pending_completion = None;
-                    self.toast("no completions");
                     return;
                 }
-                let n = items.len();
-                let picker_items: Vec<PickerItem> = items
+                // Build from the *current* cursor — the request may have been
+                // fired a few keystrokes ago; we filter against the live prefix.
+                let Some(prefix) = self.cursor_id_prefix() else {
+                    return;
+                };
+                let Some(path) = self.active_editor().and_then(|b| b.path.clone()) else {
+                    return;
+                };
+                let cis: Vec<CompletionItem> = items
                     .into_iter()
-                    .take(300)
-                    .map(|(label, insert, detail)| {
-                        PickerItem::new(insert, label, detail.unwrap_or_default())
+                    .take(500)
+                    .map(|(label, insert, detail)| CompletionItem {
+                        label,
+                        insert,
+                        detail: detail.unwrap_or_default(),
                     })
                     .collect();
-                self.open_picker(Picker::new(
-                    PickerKind::LspCompletion,
-                    format!("Completions ({n})"),
-                    picker_items,
-                ));
+                let popup = CompletionPopup::new(path, cis, &prefix);
+                if !popup.is_empty() {
+                    self.completion = Some(popup);
+                }
             }
             LspEvent::Message(m) => self.toast(m),
         }

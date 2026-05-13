@@ -16,6 +16,7 @@ pub mod app;
 pub mod buffer;
 pub mod clipboard;
 pub mod command;
+pub mod completion;
 pub mod config;
 pub mod context_menu;
 pub mod e2e;

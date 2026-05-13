@@ -25,9 +25,6 @@ pub enum PickerKind {
     /// `id` = `"<abs-path>\t<line>\t<col>"` (0-based). Accept ⇒ open + jump there.
     /// Used for LSP references (and any future "list of source locations").
     Locations,
-    /// `id` = the text to insert. Accept ⇒ replace the identifier prefix left of
-    /// the cursor (`App.pending_completion`) with it. Used for LSP completion.
-    LspCompletion,
 }
 
 #[derive(Debug, Clone)]

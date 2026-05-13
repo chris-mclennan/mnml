@@ -173,6 +173,52 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => app.hover = None, // fall through to normal handling
         }
     }
+    // An as-you-type LSP completion popup is up: arrows / Ctrl+N·P move the
+    // selection, Tab / Enter accept, Esc dismisses it; identifier keys (and `.`,
+    // `:`, Backspace) fall through to the editor — the resulting edit re-filters
+    // it (`App::completion_on_edit`); anything else dismisses it and is handled
+    // normally.
+    if app.completion.is_some() {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc => {
+                app.completion = None;
+                return;
+            }
+            KeyCode::Tab | KeyCode::Enter => {
+                app.completion_accept();
+                return;
+            }
+            KeyCode::Up => {
+                app.completion_move(-1);
+                return;
+            }
+            KeyCode::Down => {
+                app.completion_move(1);
+                return;
+            }
+            KeyCode::Char('p') if ctrl => {
+                app.completion_move(-1);
+                return;
+            }
+            KeyCode::Char('n') if ctrl => {
+                app.completion_move(1);
+                return;
+            }
+            KeyCode::PageUp => {
+                app.completion_move(-8);
+                return;
+            }
+            KeyCode::PageDown => {
+                app.completion_move(8);
+                return;
+            }
+            KeyCode::Char(c)
+                if !ctrl && (c.is_alphanumeric() || c == '_' || c == '.' || c == ':') => {}
+            KeyCode::Backspace => {}
+            _ => app.completion = None, // fall through, handled normally
+        }
+    }
     // The right-click context menu steals keys: ↑↓/jk move, Enter runs, Esc closes.
     if app.context_menu.is_some() {
         match key.code {
@@ -552,6 +598,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // The plain character this key inserts (if any) — for the completion popup's
+    // auto-trigger; captured before `feed_key` consumes `key`.
+    let typed_char = match key.code {
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => Some(c),
+        _ => None,
+    };
     // `b` borrows app.panes; `&mut app.clipboard` is a disjoint field — fine.
     let ev = match app.panes.get_mut(i) {
         Some(Pane::Editor(b)) => b.feed_key(key, &mut app.clipboard, viewport),
@@ -567,6 +619,8 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             if let Some((p, text)) = upd {
                 app.lsp.did_change(&p, &text);
             }
+            // Drive the as-you-type completion popup off the fresh buffer state.
+            app.completion_on_edit(typed_char);
         }
         BufferEvent::Redraw | BufferEvent::NoOp => {}
         BufferEvent::App(cmd) => apply_app_command(app, cmd),
@@ -633,9 +687,10 @@ fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
 
-    // A click anywhere dismisses the hover popup (then the click still lands).
-    if app.hover.is_some() && matches!(m.kind, MouseEventKind::Down(_)) {
+    // A click anywhere dismisses the hover / completion popups (the click still lands).
+    if matches!(m.kind, MouseEventKind::Down(_)) {
         app.hover = None;
+        app.completion = None;
     }
 
     // While the picker is open it owns the mouse.

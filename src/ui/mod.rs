@@ -22,6 +22,7 @@
 pub mod ai_view;
 pub mod bufferline;
 pub mod close_prompt;
+pub mod completion;
 pub mod context_menu;
 pub mod diagnostics_view;
 pub mod diff_view;
@@ -140,6 +141,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if app.hover.is_some() {
         hover::draw(frame, app, area, cursor_pos);
+    }
+    if app.completion.is_some() {
+        completion::draw(frame, app, area, cursor_pos);
     }
 
     // ── terminal cursor ──
