@@ -162,6 +162,90 @@ fn build_replace_ops(
         .collect()
 }
 
+/// Case-sensitive sibling of [`crate::buffer::find_all_ci_ascii`] — same shape,
+/// non-overlapping byte ranges where `needle` occurs in `haystack`. Empty
+/// needle ⇒ empty list (caller must reject empty `find` before getting here).
+fn find_all_case_sensitive(haystack: &str, needle: &str) -> Vec<(usize, usize)> {
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let mut hits = Vec::new();
+    let mut start = 0;
+    while let Some(i) = haystack[start..].find(needle) {
+        let s = start + i;
+        let e = s + needle.len();
+        hits.push((s, e));
+        start = e;
+    }
+    hits
+}
+
+/// Parsed `:%s/<find>/<replace>/[flags]` ex-command. Returns `None` if `line`
+/// isn't a substitute. The delimiter is fixed to `/` (vim accepts arbitrary
+/// delimiters but the common case is `/`); `\/` and `\\` escape inside the
+/// fields.
+#[derive(Debug, PartialEq, Eq)]
+struct Substitute {
+    find: String,
+    replace: String,
+    /// True ⇒ case-insensitive match (`i` flag).
+    case_insensitive: bool,
+}
+
+fn parse_substitute(line: &str) -> Option<Substitute> {
+    // Accept `%s/…` and the leading-`:`-already-stripped form. The vim parser
+    // also accepts `:s/…/…/g` for current-line; we treat that as buffer-wide
+    // for now (cursor line isn't tracked separately here).
+    let rest = line
+        .strip_prefix("%s/")
+        .or_else(|| line.strip_prefix("s/"))?;
+    // Split into find / replace / flags on unescaped `/`. `\/` and `\\` survive.
+    let mut parts: Vec<String> = Vec::with_capacity(3);
+    let mut cur = String::new();
+    let mut chars = rest.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('/') => cur.push('/'),
+                Some('\\') => cur.push('\\'),
+                Some('n') => cur.push('\n'),
+                Some('t') => cur.push('\t'),
+                Some(other) => {
+                    cur.push('\\');
+                    cur.push(other);
+                }
+                None => cur.push('\\'),
+            }
+        } else if c == '/' {
+            parts.push(std::mem::take(&mut cur));
+            if parts.len() == 2 {
+                // Everything after the second `/` is flags (no more splits).
+                let flags: String = chars.collect();
+                parts.push(flags);
+                break;
+            }
+        } else {
+            cur.push(c);
+        }
+    }
+    if parts.len() < 2 {
+        // `:%s/foo` — no replacement field. Treat as `:%s/foo//` (delete).
+        parts.push(String::new());
+    }
+    let find = parts.remove(0);
+    let replace = parts.remove(0);
+    let flags = parts.first().cloned().unwrap_or_default();
+    if find.is_empty() {
+        return None;
+    }
+    let case_insensitive = flags.contains('i');
+    Some(Substitute {
+        find,
+        replace,
+        case_insensitive,
+    })
+}
+
 /// `(line, character)` of `byte` in `text` — the inverse of [`crate::lsp::byte_at`].
 /// Both 0-based; `character` is a char count (matches how we feed positions to
 /// the LSP elsewhere). A byte past the end clamps to the last line's end.
@@ -5908,6 +5992,53 @@ impl App {
 
     /// Interpret a vim `:`-line (without the leading `:`). Anything we don't
     /// recognise is bridged to a registered command if one matches, else toasted.
+    /// Apply a parsed `:%s/old/new/[flags]` to the active editor — buffer-wide
+    /// substring replace (literal, no regex). Case-insensitive when the `i`
+    /// flag is set. Result is staged as one undo step + toasted.
+    fn run_substitute(&mut self, sub: Substitute) {
+        let Some(idx) = self.active else {
+            self.toast(":%s — no active editor");
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get(idx) else {
+            self.toast(":%s — only works in editor panes");
+            return;
+        };
+        let text = b.editor.text().to_string();
+        let matches = if sub.case_insensitive {
+            crate::buffer::find_all_ci_ascii(&text, &sub.find)
+        } else {
+            find_all_case_sensitive(&text, &sub.find)
+        };
+        if matches.is_empty() {
+            self.toast(format!(":%s — no match for {:?}", sub.find));
+            return;
+        }
+        let n = matches.len();
+        // Descending order so each replace keeps earlier byte offsets valid.
+        let ops: Vec<crate::edit_op::EditOp> = matches
+            .into_iter()
+            .rev()
+            .map(|(s, e)| crate::edit_op::EditOp::ReplaceRange {
+                start: s,
+                end: e,
+                text: sub.replace.clone(),
+            })
+            .collect();
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+            let clip = &mut self.clipboard;
+            b.apply_edit_ops(ops, clip, 0);
+        }
+        // Push the new text to the LSP so diagnostics stay current.
+        if let Some(Pane::Editor(b)) = self.panes.get(idx)
+            && let Some(p) = b.path.clone()
+        {
+            let t = b.editor.text().to_string();
+            self.lsp.did_change(&p, &t);
+        }
+        self.toast(format!(":%s — {n} replacement(s)"));
+    }
+
     pub fn run_ex_command(&mut self, line: &str) {
         let line = line.trim();
         if line.is_empty() {
@@ -5918,6 +6049,14 @@ impl App {
             if let Some(b) = self.active_editor_mut() {
                 b.editor.place_cursor(n.saturating_sub(1), 0);
             }
+            return;
+        }
+        // `:%s/old/new/[flags]` — vim-style global substitute. (No regex; flags
+        // supported: `g` replace all on each line [default — we always do all
+        // matches in the whole buffer]; `i` case-insensitive; `c` confirm
+        // ignored for now — applies all without prompting.)
+        if let Some(sub) = parse_substitute(line) {
+            self.run_substitute(sub);
             return;
         }
         let (cmd, rest) = match line.split_once(char::is_whitespace) {
@@ -7123,6 +7262,81 @@ mod tests {
 
         // Disk is untouched (the dirty buffer was skipped).
         assert_eq!(fs::read_to_string(&a).unwrap(), "foo");
+    }
+
+    #[test]
+    fn parse_substitute_parses_basic_shapes() {
+        let s = parse_substitute("%s/foo/bar/g").unwrap();
+        assert_eq!(s.find, "foo");
+        assert_eq!(s.replace, "bar");
+        assert!(!s.case_insensitive);
+
+        // `i` flag.
+        let s = parse_substitute("%s/Foo/x/i").unwrap();
+        assert!(s.case_insensitive);
+
+        // Escaped slash inside the find / replace.
+        let s = parse_substitute(r"%s/a\/b/c\/d/").unwrap();
+        assert_eq!(s.find, "a/b");
+        assert_eq!(s.replace, "c/d");
+
+        // No-replacement form ⇒ delete.
+        let s = parse_substitute("%s/foo/").unwrap();
+        assert_eq!(s.find, "foo");
+        assert_eq!(s.replace, "");
+
+        // `s/…` (without the `%`) is accepted too.
+        let s = parse_substitute("s/x/y/").unwrap();
+        assert_eq!(s.find, "x");
+
+        // Empty find ⇒ None.
+        assert!(parse_substitute("%s//bar/").is_none());
+        // Not a substitute at all ⇒ None.
+        assert!(parse_substitute("w").is_none());
+        assert!(parse_substitute("qa").is_none());
+    }
+
+    #[test]
+    fn find_all_case_sensitive_no_overlap() {
+        assert_eq!(find_all_case_sensitive("foo Foo foO", "foo"), vec![(0, 3)]);
+        // Empty needle ⇒ empty.
+        assert!(find_all_case_sensitive("hi", "").is_empty());
+        // Overlap-free.
+        assert_eq!(find_all_case_sensitive("aaaa", "aa"), vec![(0, 2), (2, 4)]);
+    }
+
+    #[test]
+    fn substitute_global_replaces_all_occurrences() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("x.rs"), "let foo = foo();\nfn fooer() {}\n").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_path(&app.workspace.join("x.rs"));
+        app.run_ex_command("%s/foo/bar/g");
+        let b = app.active_editor().unwrap();
+        assert_eq!(b.editor.text(), "let bar = bar();\nfn barer() {}\n");
+        assert!(b.dirty);
+    }
+
+    #[test]
+    fn substitute_case_insensitive_with_i_flag() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("x.rs"), "Foo foo FOO").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_path(&app.workspace.join("x.rs"));
+        app.run_ex_command("%s/foo/zz/gi");
+        assert_eq!(app.active_editor().unwrap().editor.text(), "zz zz zz");
+    }
+
+    #[test]
+    fn substitute_no_match_is_a_noop() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("x.rs"), "abc").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_path(&app.workspace.join("x.rs"));
+        app.run_ex_command("%s/xyz/zzz/g");
+        let b = app.active_editor().unwrap();
+        assert_eq!(b.editor.text(), "abc");
+        assert!(!b.dirty);
     }
 
     #[test]
