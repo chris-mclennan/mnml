@@ -36,6 +36,9 @@ const NAV_STACK_MAX: usize = 50;
 /// Cap on recent find queries — newer entries push older ones off.
 const FIND_HISTORY_MAX: usize = 50;
 
+/// Cap on the recently-closed-buffers stack — newer entries push older ones off.
+const CLOSED_BUFFERS_MAX: usize = 20;
+
 /// One entry on a navigation stack — a file + a `(row, col)` so we can jump
 /// back even if the buffer's text has shifted since (the precise byte offset
 /// would be stale; row/col is a more forgiving anchor).
@@ -624,6 +627,11 @@ pub struct App {
     /// Most-recently-opened files, newest first, capped at `RECENT_FILES_MAX`.
     /// Updated every time `open_path` opens a file. Persisted in session.json.
     pub recent_files: Vec<PathBuf>,
+    /// Stack of recently closed buffers (`(path, cursor_byte, scroll)`),
+    /// newest last. `buffer.reopen` (`Ctrl+Shift+T`) pops the top entry
+    /// and re-opens it. Capped at `CLOSED_BUFFERS_MAX`. Not persisted —
+    /// closing-then-reopening across sessions is what `recent_files` is for.
+    pub closed_buffers: Vec<(PathBuf, usize, usize)>,
     /// Per-file last `(cursor_byte, scroll)`, captured when a buffer is closed
     /// or saved, restored when the file is re-opened later. Persisted in
     /// session.json so it survives restarts. Capped at `FILE_CURSORS_MAX`.
@@ -855,6 +863,7 @@ impl App {
             bufferline_first_visible: 0,
             zen_mode: false,
             recent_files: Vec::new(),
+            closed_buffers: Vec::new(),
             file_cursors: std::collections::HashMap::new(),
             global_marks: std::collections::HashMap::new(),
             nav_back: Vec::new(),
@@ -1295,6 +1304,19 @@ impl App {
             rel_path(&self.workspace, from),
             rel_path(&self.workspace, &to),
         ));
+    }
+
+    /// `buffer.reopen` — pop the most-recently-closed buffer off
+    /// [`Self::closed_buffers`] and re-open it at its captured position.
+    /// No-op when the stack is empty.
+    pub fn reopen_closed_buffer(&mut self) {
+        let Some((path, _cur, _scroll)) = self.closed_buffers.pop() else {
+            self.toast("no closed buffer to reopen");
+            return;
+        };
+        // `open_path` will pick up the captured position from `file_cursors`
+        // (which `force_close_pane` already populated).
+        self.open_path(&path);
     }
 
     /// `view.close_others` — close every non-active pane (and respect the
@@ -6591,6 +6613,21 @@ impl App {
             let cur = b.editor.cursor();
             let scroll = b.scroll;
             self.note_file_cursor(&p, cur, scroll);
+            // Push onto the recently-closed stack so `buffer.reopen` can
+            // bring it back. Skip if the file's still open in another pane
+            // (closing one of several views of the same file isn't "closed").
+            let still_open = self
+                .panes
+                .iter()
+                .enumerate()
+                .any(|(i, pane)| i != id && matches!(pane, Pane::Editor(b) if b.is_at(&p)));
+            if !still_open {
+                self.closed_buffers.push((p, cur, scroll));
+                if self.closed_buffers.len() > CLOSED_BUFFERS_MAX {
+                    let drop = self.closed_buffers.len() - CLOSED_BUFFERS_MAX;
+                    self.closed_buffers.drain(..drop);
+                }
+            }
         }
         let (discarded, closed_path) = match &self.panes[id] {
             Pane::Editor(b) => (b.dirty.then(|| b.display_name()), b.path.clone()),

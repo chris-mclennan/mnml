@@ -72,6 +72,7 @@ pub fn root() -> &'static Leader {
                             ('n', cmd("buffer.next", "next")),
                             ('p', cmd("buffer.prev", "previous")),
                             ('d', cmd("buffer.close", "delete")),
+                            ('r', cmd("buffer.reopen", "reopen closed")),
                         ],
                     ),
                 ),

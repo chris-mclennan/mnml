@@ -202,6 +202,11 @@ and the dirty badge; errors win over warnings. Widths recompute so the strip lay
 when there's a selection (chars selected).
 **Zen mode** — `view.zen` (`Ctrl+Shift+Z`) hides tree + bufferline + statusline; the editor takes the full window.
 Overlays (picker, prompt, hover, completion) still work. Not persisted — fresh launch is a normal IDE view.
+**Reopen closed buffer** — `buffer.reopen` (`Ctrl+Shift+T`, `<leader>b r`): pops the
+most-recently-closed editor off `App.closed_buffers` (capped at `CLOSED_BUFFERS_MAX = 20`, populated by
+`force_close_pane` when the file isn't open in another pane). Re-uses `open_path` so the captured
+`(cursor, scroll)` from `file_cursors` is restored. Not persisted across sessions — that's what
+`recent_files` is for.
 **Recent files** — `App::recent_files` (last 20 paths opened, de-duped, newest-first) updated in `open_path` and persisted
 in `session.json`. `picker.recent` (`Ctrl+R`) opens a fuzzy picker over them.
 **Persisted theme** — `theme.pick` writes the picked theme name to session.json; restore calls a silent `set_theme_silent`

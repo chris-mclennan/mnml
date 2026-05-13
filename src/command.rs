@@ -370,6 +370,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.close_active_pane(),
         },
         Command {
+            id: "buffer.reopen",
+            title: "Re-open the most-recently-closed buffer",
+            group: "buffer",
+            keys: &["ctrl+shift+t"],
+            run: |app| app.reopen_closed_buffer(),
+        },
+        Command {
             id: "buffer.next",
             title: "Next buffer",
             group: "buffer",
