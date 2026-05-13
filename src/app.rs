@@ -2454,6 +2454,17 @@ impl App {
                 }
                 return;
             }
+            if matches!(self.panes.get(idx), Some(Pane::Browser(b)) if b.is_pending_post_data(id)) {
+                let data = v
+                    .get("result")
+                    .and_then(|r| r.get("postData"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                    b.fill_post_data(id, data);
+                }
+                return;
+            }
             return;
         }
         let method = v

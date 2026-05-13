@@ -267,8 +267,9 @@ k/j/PgUp/PgDn/Home/End scroll, Esc → tree, `Ctrl+W` closes (kills Chrome). **`
 as selectable rows (`METHOD status host/path [mime]`, status colour-coded); ↑↓/jk/PgUp/PgDn/g/G/Home/End move the selection,
 `y` copies the selected request as a curl command (`NetEntry::as_curl` — pseudo-headers `:method`/… skipped), `Enter` opens it
 in a `Pane::Request` split (`NetEntry::to_request` → `spawn_http_job`, re-sends), `n`/Esc leave the panel (then Esc → tree);
-the wheel moves the selection too. One browser pane at a time. *Follow-ups:* fetch `Network.getRequestPostData` when
-`postData` is absent, DOM inspection, render/open the screenshot, multiple pages/targets, headless mode.
+the wheel moves the selection too. (When a request's body isn't inlined — `hasPostData:true` but no `postData` — a
+`Network.getRequestPostData` is fired and `BrowserPane::fill_post_data` patches the `NetEntry` when the reply lands.) One
+browser pane at a time. *Follow-ups:* DOM inspection, render/open the screenshot, multiple pages/targets, headless mode.
 **Right-click context menus — done:** `src/context_menu.rs` (`ContextMenu{title,items:Vec<MenuItem{label,
 action: MenuAction}>,anchor,selected}`) + `src/ui/context_menu.rs` (a bordered floating list at the click,
 clamped to screen, selected row highlighted). Right-click a tree file → Open / Open in split / Reveal in

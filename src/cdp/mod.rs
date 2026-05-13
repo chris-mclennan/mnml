@@ -74,6 +74,13 @@ pub fn capture_screenshot(id: i64) -> String {
         serde_json::json!({ "format": "png", "captureBeyondViewport": false }),
     )
 }
+pub fn get_request_post_data(id: i64, request_id: &str) -> String {
+    rpc(
+        id,
+        "Network.getRequestPostData",
+        serde_json::json!({ "requestId": request_id }),
+    )
+}
 
 /// Spawn Chrome (the first of [`CHROME_BINS`] that runs) with remote debugging on a
 /// free port, in a throwaway `profile_dir`, open `url` (`about:blank` if empty),

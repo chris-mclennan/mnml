@@ -132,6 +132,8 @@ pub struct BrowserPane {
     pub pending_eval: Option<i64>,
     /// The id of an in-flight `Page.captureScreenshot`, so its reply can be matched.
     pub pending_screenshot: Option<i64>,
+    /// Outstanding `Network.getRequestPostData` requests: `(rpc id, CDP requestId)`.
+    pending_post_data: Vec<(i64, String)>,
     /// Top visible log row (`usize::MAX` ⇒ pinned to the bottom).
     pub scroll: usize,
     /// True once the worker reported the session ended.
@@ -150,6 +152,7 @@ impl BrowserPane {
             next_id: 100,
             pending_eval: None,
             pending_screenshot: None,
+            pending_post_data: Vec::new(),
             scroll: usize::MAX, // follow the tail
             closed: false,
         };
@@ -202,6 +205,12 @@ impl BrowserPane {
             .get("postData")
             .and_then(serde_json::Value::as_str)
             .map(str::to_string);
+        // Body present but not inlined? Ask Chrome for it (filled in by id later).
+        let want_post_data = post_data.is_none()
+            && request
+                .get("hasPostData")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true);
         self.net.push(NetEntry {
             request_id: request_id.to_string(),
             method,
@@ -212,6 +221,37 @@ impl BrowserPane {
             mime: None,
             failed: None,
         });
+        if want_post_data {
+            let rid = request_id.to_string();
+            let id = self.send(|id| crate::cdp::get_request_post_data(id, &rid));
+            self.pending_post_data.push((id, request_id.to_string()));
+        }
+    }
+
+    /// A `Network.getRequestPostData` reply (`rpc_id` → its `result.postData`) —
+    /// fill the body of the [`NetEntry`] we asked about.
+    pub fn fill_post_data(&mut self, rpc_id: i64, data: &str) {
+        let Some(pos) = self
+            .pending_post_data
+            .iter()
+            .position(|(id, _)| *id == rpc_id)
+        else {
+            return;
+        };
+        let (_, request_id) = self.pending_post_data.remove(pos);
+        if let Some(e) = self
+            .net
+            .iter_mut()
+            .rev()
+            .find(|e| e.request_id == request_id)
+        {
+            e.post_data = Some(data.to_string());
+        }
+    }
+
+    /// True if `rpc_id` is an outstanding `Network.getRequestPostData` we issued.
+    pub fn is_pending_post_data(&self, rpc_id: i64) -> bool {
+        self.pending_post_data.iter().any(|(id, _)| *id == rpc_id)
     }
 
     /// Fill in the response status / mime for the matching pending [`NetEntry`].
@@ -402,6 +442,46 @@ mod tests {
         assert!(p.net[0].failed.is_none());
         p.note_net_failed("42", "ERR_TIMED_OUT");
         assert_eq!(p.net[0].failed.as_deref(), Some("ERR_TIMED_OUT"));
+    }
+
+    #[test]
+    fn deferred_post_data_is_requested_then_filled() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        p.note_net_request(
+            "9.1",
+            &serde_json::json!({
+                "method": "POST",
+                "url": "https://api.test/upload",
+                "headers": {},
+                "hasPostData": true, // body present but not inlined
+            }),
+        );
+        // A `Network.getRequestPostData` was sent; grab its id from the wire.
+        let id = loop {
+            match rx.try_recv() {
+                Ok(CdpCommand::Send(json)) => {
+                    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+                    if v["method"] == "Network.getRequestPostData" {
+                        break v["id"].as_i64().unwrap();
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => panic!("no getRequestPostData request was sent"),
+            }
+        };
+        assert!(p.is_pending_post_data(id));
+        assert!(p.net[0].post_data.is_none());
+        p.fill_post_data(id, "name=x&size=10");
+        assert_eq!(p.net[0].post_data.as_deref(), Some("name=x&size=10"));
+        assert!(!p.is_pending_post_data(id)); // consumed
+        // An inlined body needs no follow-up request.
+        p.note_net_request(
+            "9.2",
+            &serde_json::json!({"method": "POST", "url": "https://api.test/x", "postData": "a=1"}),
+        );
+        assert_eq!(p.net[1].post_data.as_deref(), Some("a=1"));
+        assert!(rx.try_recv().is_err()); // nothing more sent
     }
 
     #[test]
