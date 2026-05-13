@@ -30,15 +30,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    // ── workspace section header (always visible, click-to-toggle) ─
+    // ── row 0: a blank line above the section header (breathing room, and
+    //          matches the original "tree starts on row 1" feel). ────────
     let nerd = !app.config.ui.ascii_icons;
     let width = area.width as usize;
+    if area.height < 2 {
+        return;
+    }
+
+    // ── row 1: the workspace section header. Lowercase, x=0, no leading
+    //          space — so when the file list is expanded its rows can sit
+    //          indented under it (nesting cue, not sibling). ─────────────
     let ws_name = app
         .workspace
         .file_name()
         .and_then(|n| n.to_str())
-        .map(|s| s.to_uppercase())
-        .unwrap_or_else(|| "WORKSPACE".to_string());
+        .unwrap_or("workspace")
+        .to_string();
     let chev = if app.tree_root_expanded {
         if nerd { CHEVRON_OPEN } else { "▾" }
     } else if nerd {
@@ -46,11 +54,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         "▸"
     };
-    let header_label = format!(" {chev} {ws_name}");
+    let header_label = format!("{chev} {ws_name}");
     let header_pad = width.saturating_sub(header_label.chars().count());
     let header_rect = Rect {
         x: area.x,
-        y: area.y,
+        y: area.y + 1,
         width: area.width,
         height: 1,
     };
@@ -69,15 +77,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     app.rects.tree_toggle = Some(header_rect);
 
-    // ── file list (only when the section is expanded) ──────────────
-    if !app.tree_root_expanded || area.height < 2 {
+    // ── file list (only when the section is expanded), starting at row 2 ─
+    if !app.tree_root_expanded || area.height < 3 {
         return;
     }
     let inner = Rect {
         x: area.x,
-        y: area.y + 1,
+        y: area.y + 2,
         width: area.width,
-        height: area.height - 1,
+        height: area.height - 2,
     };
     app.rects.tree = Some(inner);
 
@@ -98,10 +106,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Tree;
 
     let mut lines: Vec<Line> = Vec::with_capacity(h);
+    // Every file row gets a 2-cell lead so the depth-0 entries sit visually
+    // indented under the workspace section header (otherwise the rail's top
+    // rows align with the header at x=0 and read as siblings, not children).
+    const ROOT_INDENT: &str = "  ";
     for (vi, row) in rows.iter().enumerate().skip(app.tree.scroll).take(h) {
         let is_cursor = vi == cursor;
         let (glyph, icon_color) = icons::for_path(&row.path, row.is_dir, row.is_expanded, nerd);
-        let indent = "  ".repeat(row.depth);
+        let indent = format!("{ROOT_INDENT}{}", "  ".repeat(row.depth));
 
         let prefix = if nerd {
             let chev = if row.is_dir {

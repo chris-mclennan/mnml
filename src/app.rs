@@ -446,10 +446,10 @@ impl App {
             focus: Focus::Tree,
             tree,
             tree_visible: true,
-            // VS-Code-style: the rail is shown, but its workspace "section"
-            // starts collapsed (just the `> NAME` header). The last session's
-            // choice overrides this in `try_restore_session`.
-            tree_root_expanded: false,
+            // VS-Code-style: the rail is shown with its workspace section
+            // expanded by default. The last session's choice overrides this
+            // in `try_restore_session`.
+            tree_root_expanded: true,
             git,
             toast: None,
             should_quit: false,
