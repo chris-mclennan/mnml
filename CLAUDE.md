@@ -450,6 +450,12 @@ labelled by title, `kind` shown as the dim detail); the picker's `accept` indexe
 `App::apply_code_action` applies the workspace edit through the same `apply_rename_edits` path (open buffers ⇒
 `Buffer::apply_edit_ops`, others ⇒ splice on disk) then fires `workspace/executeCommand` via
 `LspManager::execute_command` (fire-and-forget — the server's effects come back as future `applyEdit` / diagnostics).
+**Go to symbol** — `lsp.symbols` (`Ctrl+Shift+O` / `<leader>l s`): fires `textDocument/documentSymbol`,
+parses both reply shapes (`DocumentSymbol[]` hierarchical + legacy `SymbolInformation[]` flat) into
+`Vec<DocumentSymbol{name, kind, line, character, depth}>` (depth-first walk; `symbol_kind_label` maps the
+LSP `SymbolKind` enum → short label like "fn"/"struct"/"class"); opens a `PickerKind::Symbols` fuzzy
+picker with the symbol list indented by `depth`, kind as the dim detail; accept ⇒ jump the active editor
+to the symbol's `(line, char)`.
 **completion — as-you-type popup**: `src/completion.rs`
 (`CompletionPopup{path, all, filtered, selected, scroll, prefix}` — one `textDocument/completion` reply
 populates `all`; `refilter(prefix)` narrows `filtered` locally via `crate::fuzzy` as you keep typing, no

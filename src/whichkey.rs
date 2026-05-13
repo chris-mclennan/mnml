@@ -169,6 +169,7 @@ pub fn root() -> &'static Leader {
                         vec![
                             ('a', cmd("lsp.code_action", "code actions")),
                             ('c', cmd("lsp.completion", "complete at cursor")),
+                            ('s', cmd("lsp.symbols", "symbols in this file")),
                             ('d', cmd("lsp.goto_definition", "go to definition")),
                             ('h', cmd("lsp.hover", "hover docs")),
                             ('r', cmd("lsp.references", "find references")),

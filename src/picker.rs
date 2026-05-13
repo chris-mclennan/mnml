@@ -31,6 +31,10 @@ pub enum PickerKind {
     /// `id` = the index (as a string) into [`crate::app::App::pending_code_actions`].
     /// Accept ⇒ apply that action (workspace edit + / or `executeCommand`).
     CodeActions,
+    /// `id` = `"<line>\t<col>"` (0-based) within the active editor at request
+    /// time. Accept ⇒ jump the cursor to that line/col. Used for the LSP
+    /// "Go to Symbol in file" (`textDocument/documentSymbol`) picker.
+    Symbols,
 }
 
 #[derive(Debug, Clone)]

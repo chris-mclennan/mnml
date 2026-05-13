@@ -510,6 +510,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_code_action(),
         },
         Command {
+            id: "lsp.symbols",
+            title: "LSP: symbols in this file (→ picker)",
+            group: "lsp",
+            keys: &["ctrl+shift+o"],
+            run: |app| app.lsp_symbols(),
+        },
+        Command {
             id: "lsp.next_diagnostic",
             title: "LSP: next diagnostic",
             group: "lsp",

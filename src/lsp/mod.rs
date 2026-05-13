@@ -96,8 +96,27 @@ pub enum LspEvent {
     /// Result of a `textDocument/codeAction` request — the available actions at
     /// the requested range, in server order.
     CodeAction(Vec<CodeAction>),
+    /// Result of a `textDocument/documentSymbol` request — `(name, kind,
+    /// line, character, depth)` per symbol, depth-first (parents before
+    /// children; depth = nesting level). Both the hierarchical `DocumentSymbol[]`
+    /// reply shape and the legacy flat `SymbolInformation[]` shape feed in here.
+    DocumentSymbols(Vec<DocumentSymbol>),
     /// A server-side message worth surfacing as a toast.
     Message(String),
+}
+
+/// A single entry in a `textDocument/documentSymbol` reply. We keep just
+/// what the picker / jump needs — name, a short kind label, the position to
+/// land the cursor at, and the nesting depth (so the picker can indent
+/// children under their parent).
+#[derive(Debug, Clone)]
+pub struct DocumentSymbol {
+    pub name: String,
+    /// "fn" / "struct" / "class" / "method" / "h1" / etc.
+    pub kind: &'static str,
+    pub line: u32,
+    pub character: u32,
+    pub depth: u32,
 }
 
 /// Flattened `WorkspaceEdit` — `(path, [(range, new_text), …])` per affected
@@ -374,6 +393,18 @@ impl LspManager {
         for c in self.clients.values_mut() {
             if c.is_open(path) {
                 c.formatting(path, tab_size, insert_spaces);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send a `textDocument/documentSymbol` request — reply arrives as
+    /// [`LspEvent::DocumentSymbols`].
+    pub fn document_symbol(&mut self, path: &Path) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.document_symbol(path);
                 sent = true;
             }
         }

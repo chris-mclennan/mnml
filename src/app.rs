@@ -1335,6 +1335,16 @@ impl App {
                     self.apply_code_action(idx);
                 }
             }
+            PickerKind::Symbols => {
+                let mut parts = item.id.split('\t');
+                if let (Some(l), Some(c)) = (parts.next(), parts.next()) {
+                    let line: usize = l.parse().unwrap_or(0);
+                    let col: usize = c.parse().unwrap_or(0);
+                    if let Some(b) = self.active_editor_mut() {
+                        b.editor.place_cursor(line, col);
+                    }
+                }
+            }
         }
     }
 
@@ -1799,6 +1809,50 @@ impl App {
         }
         (start < end).then(|| chars[start..end].iter().collect())
     }
+    /// `lsp.symbols` (`Ctrl+Shift+O`) — open a fuzzy picker over the active
+    /// buffer's symbols (`textDocument/documentSymbol`). The reply lands async
+    /// in `apply_lsp_event` → `open_symbols_picker`.
+    pub fn lsp_symbols(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("LSP needs a saved file");
+            return;
+        };
+        let text = b.editor.text().to_string();
+        self.lsp.did_change(&path, &text);
+        if !self.lsp.document_symbol(&path) {
+            self.toast("no language server for this file (symbols)");
+        }
+    }
+
+    /// Apply a `textDocument/documentSymbol` reply: open a fuzzy picker over
+    /// the symbols, indented by depth. Empty list ⇒ toast.
+    fn open_symbols_picker(&mut self, symbols: Vec<crate::lsp::DocumentSymbol>) {
+        if symbols.is_empty() {
+            self.toast("no symbols");
+            return;
+        }
+        use crate::picker::PickerItem;
+        let n = symbols.len();
+        let items: Vec<PickerItem> = symbols
+            .into_iter()
+            .map(|s| {
+                let indent = "  ".repeat(s.depth as usize);
+                let label = format!("{indent}{}", s.name);
+                let detail = format!("{}  {}", s.kind, s.line + 1);
+                PickerItem::new(format!("{}\t{}", s.line, s.character), label, detail)
+            })
+            .collect();
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Symbols,
+            format!("Symbols ({n})"),
+            items,
+        ));
+    }
+
     /// `lsp.code_action` (`Ctrl+.`) — ask the server what actions apply at the
     /// cursor (or across the active selection), passing along the diagnostics
     /// that overlap so quickfixes are offered. The reply lands async in
@@ -2018,6 +2072,7 @@ impl App {
             }
             LspEvent::Formatting { path, edits } => self.apply_formatting_edits(path, edits),
             LspEvent::CodeAction(actions) => self.apply_code_action_reply(actions),
+            LspEvent::DocumentSymbols(symbols) => self.open_symbols_picker(symbols),
             LspEvent::Message(m) => self.toast(m),
         }
     }

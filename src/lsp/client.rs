@@ -17,8 +17,8 @@ use std::thread::JoinHandle;
 use serde_json::json;
 
 use super::{
-    CodeAction, CodeCommand, Diagnostic, LspEvent, Pos, Range, ServerConfig, Severity,
-    parse_diagnostic, path_to_uri, uri_to_path,
+    CodeAction, CodeCommand, Diagnostic, DocumentSymbol, LspEvent, Pos, Range, ServerConfig,
+    Severity, parse_diagnostic, path_to_uri, uri_to_path,
 };
 
 /// Tracks each in-flight request: the LSP method (so the reply parser
@@ -103,6 +103,16 @@ impl LspClient {
                                         "source", "source.organizeImports"
                                     ]
                                 }
+                            }
+                        },
+                        "documentSymbol": {
+                            "hierarchicalDocumentSymbolSupport": true,
+                            "symbolKind": {
+                                "valueSet": [
+                                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                                    11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+                                    21, 22, 23, 24, 25, 26
+                                ]
                             }
                         }
                     }
@@ -197,6 +207,16 @@ impl LspClient {
                 "position": { "line": line, "character": character },
                 "newName": new_name
             }),
+        );
+    }
+
+    /// `textDocument/documentSymbol` — reply is either `DocumentSymbol[]`
+    /// (hierarchical) or the legacy `SymbolInformation[]` (flat).
+    pub fn document_symbol(&mut self, path: &Path) {
+        self.request_with_path(
+            "textDocument/documentSymbol",
+            json!({ "textDocument": { "uri": path_to_uri(path) } }),
+            Some(path),
         );
     }
 
@@ -453,6 +473,10 @@ fn handle_message(
                 let actions = parse_code_actions(result);
                 let _ = tx.send(LspEvent::CodeAction(actions));
             }
+            "textDocument/documentSymbol" => {
+                let symbols = parse_document_symbols(result);
+                let _ = tx.send(LspEvent::DocumentSymbols(symbols));
+            }
             _ => {}
         }
     }
@@ -657,6 +681,116 @@ fn parse_code_actions(result: &serde_json::Value) -> Vec<CodeAction> {
     out
 }
 
+/// Parse a `textDocument/documentSymbol` reply, handling both shapes — the
+/// hierarchical `DocumentSymbol[]` (preferred) and the legacy flat
+/// `SymbolInformation[]`. Children are walked depth-first so the picker shows
+/// them indented under their parents. Empty / null result ⇒ empty vec.
+fn parse_document_symbols(result: &serde_json::Value) -> Vec<DocumentSymbol> {
+    let Some(arr) = result.as_array() else {
+        return Vec::new();
+    };
+    if arr.is_empty() {
+        return Vec::new();
+    }
+    let is_hierarchical = arr.iter().any(|v| v.get("range").is_some());
+    let mut out = Vec::new();
+    if is_hierarchical {
+        for v in arr {
+            walk_doc_symbol(v, 0, &mut out);
+        }
+    } else {
+        // SymbolInformation[]: flat, `location.range` for the position.
+        for v in arr {
+            if let Some(s) = parse_symbol_information(v) {
+                out.push(s);
+            }
+        }
+    }
+    out
+}
+
+fn walk_doc_symbol(v: &serde_json::Value, depth: u32, out: &mut Vec<DocumentSymbol>) {
+    let Some(name) = v.get("name").and_then(|n| n.as_str()) else {
+        return;
+    };
+    let kind = symbol_kind_label(v.get("kind").and_then(|k| k.as_u64()).unwrap_or(0));
+    // `selectionRange` is the identifier itself; fall back to the full `range`.
+    let pos = v
+        .get("selectionRange")
+        .or_else(|| v.get("range"))
+        .and_then(|r| r.get("start"))
+        .and_then(|s| {
+            Some((
+                s.get("line")?.as_u64()? as u32,
+                s.get("character")?.as_u64()? as u32,
+            ))
+        });
+    let (line, character) = pos.unwrap_or((0, 0));
+    out.push(DocumentSymbol {
+        name: name.to_string(),
+        kind,
+        line,
+        character,
+        depth,
+    });
+    if let Some(children) = v.get("children").and_then(|c| c.as_array()) {
+        for child in children {
+            walk_doc_symbol(child, depth + 1, out);
+        }
+    }
+}
+
+fn parse_symbol_information(v: &serde_json::Value) -> Option<DocumentSymbol> {
+    let name = v.get("name").and_then(|n| n.as_str())?;
+    let kind = symbol_kind_label(v.get("kind").and_then(|k| k.as_u64()).unwrap_or(0));
+    let r = v
+        .get("location")
+        .and_then(|l| l.get("range"))
+        .and_then(|r| r.get("start"))?;
+    let line = r.get("line")?.as_u64()? as u32;
+    let character = r.get("character")?.as_u64()? as u32;
+    Some(DocumentSymbol {
+        name: name.to_string(),
+        kind,
+        line,
+        character,
+        depth: 0,
+    })
+}
+
+/// LSP `SymbolKind` enum → a short display label.
+fn symbol_kind_label(k: u64) -> &'static str {
+    match k {
+        1 => "file",
+        2 => "module",
+        3 => "namespace",
+        4 => "package",
+        5 => "class",
+        6 => "method",
+        7 => "property",
+        8 => "field",
+        9 => "ctor",
+        10 => "enum",
+        11 => "interface",
+        12 => "fn",
+        13 => "var",
+        14 => "const",
+        15 => "string",
+        16 => "num",
+        17 => "bool",
+        18 => "array",
+        19 => "obj",
+        20 => "key",
+        21 => "null",
+        22 => "variant",
+        23 => "struct",
+        24 => "event",
+        25 => "op",
+        26 => "type",
+        _ => "?",
+    }
+}
+
 /// Flatten a `Hover.contents` (string | MarkedString | MarkedString[] | MarkupContent).
 fn hover_text(result: &serde_json::Value) -> Option<String> {
     let c = result.get("contents")?;
@@ -785,6 +919,50 @@ mod tests {
         // null/non-array ⇒ empty
         assert!(parse_code_actions(&json!(null)).is_empty());
         assert!(parse_code_actions(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn parse_document_symbols_handles_both_shapes() {
+        // Hierarchical DocumentSymbol[] with nested children.
+        let r = json!([
+            {
+                "name": "App", "kind": 23,
+                "range": {"start": {"line": 10, "character": 0}, "end": {"line": 100, "character": 0}},
+                "selectionRange": {"start": {"line": 10, "character": 7}, "end": {"line": 10, "character": 10}},
+                "children": [
+                    {
+                        "name": "new", "kind": 12,
+                        "range": {"start": {"line": 15, "character": 4}, "end": {"line": 20, "character": 5}},
+                        "selectionRange": {"start": {"line": 15, "character": 11}, "end": {"line": 15, "character": 14}}
+                    }
+                ]
+            }
+        ]);
+        let got = parse_document_symbols(&r);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].name, "App");
+        assert_eq!(got[0].kind, "struct");
+        assert_eq!(got[0].depth, 0);
+        assert_eq!((got[0].line, got[0].character), (10, 7));
+        assert_eq!(got[1].name, "new");
+        assert_eq!(got[1].kind, "fn");
+        assert_eq!(got[1].depth, 1);
+        assert_eq!((got[1].line, got[1].character), (15, 11));
+
+        // Legacy flat SymbolInformation[].
+        let r2 = json!([
+            {"name": "main", "kind": 12,
+             "location": {"uri": "file:///x.rs", "range": {"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 7}}}}
+        ]);
+        let got2 = parse_document_symbols(&r2);
+        assert_eq!(got2.len(), 1);
+        assert_eq!(got2[0].name, "main");
+        assert_eq!(got2[0].kind, "fn");
+        assert_eq!((got2[0].line, got2[0].character), (0, 3));
+
+        // null / empty.
+        assert!(parse_document_symbols(&json!(null)).is_empty());
+        assert!(parse_document_symbols(&json!([])).is_empty());
     }
 
     #[test]
