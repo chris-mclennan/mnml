@@ -65,13 +65,19 @@ pub fn draw(
             Style::default().fg(t.comment).bg(t.bg_dark),
         ),
     ]));
-    let hint = if b.net_focus {
+    let hint = if b.dom_focus {
+        format!(
+            "  DOM ({}) · ↑↓ select · c copy selector · R re-fetch · D logs · esc back",
+            b.dom.len()
+        )
+    } else if b.net_focus {
         format!(
             "  network ({}) · ↑↓ select · y curl · enter re-send · n logs · esc back",
             b.net.len()
         )
     } else {
-        "  g navigate · e eval JS · r reload · s screenshot · n network · esc → tree".to_string()
+        "  g navigate · e eval JS · r reload · s screenshot · n network · D DOM · esc → tree"
+            .to_string()
     };
     lines.push(Line::from(Span::styled(
         hint,
@@ -84,6 +90,51 @@ pub fn draw(
     let header_rows = lines.len();
     let h = area.height as usize;
     let body_rows = h.saturating_sub(header_rows);
+
+    if b.dom_focus {
+        // ── DOM panel: one selectable row per parsed node, indent = depth ──
+        if b.dom.is_empty() {
+            lines.push(Line::from(Span::styled(
+                if b.pending_dom.is_some() {
+                    "  fetching DOM…"
+                } else {
+                    "  (no DOM loaded yet — R re-fetches)"
+                },
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            )));
+        } else {
+            let sel = b.dom_sel.min(b.dom.len() - 1);
+            let first = if body_rows == 0 || sel < body_rows {
+                0
+            } else {
+                sel + 1 - body_rows
+            };
+            for (idx, row) in b.dom.iter().enumerate().skip(first).take(body_rows) {
+                let on = idx == sel;
+                let row_bg = if on { t.bg2 } else { t.bg_dark };
+                let marker = if on { "▶ " } else { "  " };
+                // Two spaces per depth level, capped so very deep trees don't run off.
+                let indent = "  ".repeat(row.depth.min(20));
+                let color = if row.label.starts_with('<') && !row.label.starts_with("<!") {
+                    t.blue
+                } else if row.label.starts_with('“') {
+                    t.fg
+                } else {
+                    t.comment
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(marker, Style::default().fg(t.cyan).bg(row_bg)),
+                    Span::styled(indent, Style::default().bg(row_bg)),
+                    Span::styled(row.label.clone(), Style::default().fg(color).bg(row_bg)),
+                ]));
+            }
+        }
+        frame.render_widget(
+            Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),
+            area,
+        );
+        return None;
+    }
 
     if b.net_focus {
         // ── network panel: one selectable row per captured request ─────

@@ -417,6 +417,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.browser_screenshot(),
         },
         Command {
+            id: "browser.dom",
+            title: "Browser: open the DOM panel (selectable nodes, copy selector)",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_open_dom(),
+        },
+        Command {
             id: "ai.ask",
             title: "AI: ask Claude a question (claude -p)",
             group: "ai",

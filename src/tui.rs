@@ -479,12 +479,22 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // re-send in a request pane), `g` navigate, `e` eval JS, `r` reload, Esc →
     // (leave the net panel, else) tree. `Ctrl+W` closes it (which kills Chrome).
     if matches!(app.panes.get(i), Some(Pane::Browser(_))) {
-        let net_focus = matches!(app.panes.get(i), Some(Pane::Browser(b)) if b.net_focus);
-        // In the net panel ↑↓/jk/PgUp/PgDn/g/G/Home/End move the row selection;
-        // otherwise they scroll the log.
+        let (net_focus, dom_focus) = match app.panes.get(i) {
+            Some(Pane::Browser(b)) => (b.net_focus, b.dom_focus),
+            _ => (false, false),
+        };
+        let any_panel = net_focus || dom_focus;
+        // In the net / DOM panel ↑↓/jk/PgUp/PgDn/g/G/Home/End move the row
+        // selection; otherwise they scroll the log.
         let scroll_or_select = |app: &mut App, delta: isize, jump: Option<usize>| {
             if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                if b.net_focus {
+                if b.dom_focus {
+                    match jump {
+                        Some(usize::MAX) => b.dom_sel = b.dom.len().saturating_sub(1),
+                        Some(n) => b.dom_sel = n,
+                        None => b.move_dom_sel(delta),
+                    }
+                } else if b.net_focus {
                     match jump {
                         Some(usize::MAX) => b.net_sel = b.net.len().saturating_sub(1),
                         Some(n) => b.net_sel = n,
@@ -512,25 +522,34 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::PageDown => scroll_or_select(app, viewport as isize, None),
             KeyCode::Home => scroll_or_select(app, 0, Some(0)),
             KeyCode::End | KeyCode::Char('G') => scroll_or_select(app, 0, Some(usize::MAX)),
-            KeyCode::Char('g') if net_focus => scroll_or_select(app, 0, Some(0)),
+            KeyCode::Char('g') if any_panel => scroll_or_select(app, 0, Some(0)),
             KeyCode::Char('n') => {
                 if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
                     b.net_focus = !b.net_focus;
                     if b.net_focus {
+                        b.dom_focus = false;
                         b.net_sel = b.net_sel.min(b.net.len().saturating_sub(1));
                     }
                 }
             }
+            KeyCode::Char('D') => app.browser_open_dom(),
+            KeyCode::Char('R') if dom_focus => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.fetch_dom();
+                }
+            }
             KeyCode::Char('y') if net_focus => app.copy_net_entry_curl(),
+            KeyCode::Char('c') if dom_focus => app.copy_dom_selector(),
             KeyCode::Enter if net_focus => app.open_net_entry_as_request(),
             KeyCode::Char('g') => app.browser_navigate_prompt(),
             KeyCode::Char('e') => app.browser_eval_prompt(),
             KeyCode::Char('r') => app.browser_reload(),
             KeyCode::Char('s') => app.browser_screenshot(),
             KeyCode::Esc => {
-                if net_focus {
+                if any_panel {
                     if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
                         b.net_focus = false;
+                        b.dom_focus = false;
                     }
                 } else {
                     app.focus_tree();
@@ -1087,7 +1106,13 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 });
             }
             Some(Pane::Browser(b)) => {
-                if b.net_focus {
+                if b.dom_focus {
+                    b.move_dom_sel(if delta < 0 {
+                        -(delta.unsigned_abs() as isize)
+                    } else {
+                        delta.unsigned_abs() as isize
+                    });
+                } else if b.net_focus {
                     b.move_net_sel(if delta < 0 {
                         -(delta.unsigned_abs() as isize)
                     } else {

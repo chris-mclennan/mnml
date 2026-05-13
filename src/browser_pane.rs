@@ -114,6 +114,157 @@ impl NetEntry {
     }
 }
 
+/// One rendered row of a flattened `DOM.getDocument` tree — built by [`parse_dom`].
+/// `selector` is a `tag#id.cls > tag.cls` chain back to the root (good enough to
+/// paste into a `document.querySelector` or copy out as a hint).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DomRow {
+    pub depth: usize,
+    pub label: String,
+    pub selector: String,
+}
+
+/// Walk the JSON `result.root` of a CDP `DOM.getDocument` reply (full-tree,
+/// `depth:-1 pierce:true`) into a flat, indented list of [`DomRow`]s. Element /
+/// text / doctype / comment nodes are kept (document wrappers transparently
+/// recursed); whitespace-only text and CDP shadow-root markers are skipped.
+pub fn parse_dom(root: &serde_json::Value) -> Vec<DomRow> {
+    let mut out: Vec<DomRow> = Vec::new();
+    fn truncate(s: &str, max: usize) -> String {
+        if s.chars().count() <= max {
+            s.to_string()
+        } else {
+            let keep: String = s.chars().take(max - 1).collect();
+            format!("{keep}…")
+        }
+    }
+    fn walk(node: &serde_json::Value, depth: usize, parent_sel: &str, out: &mut Vec<DomRow>) {
+        let node_type = node
+            .get("nodeType")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
+        match node_type {
+            9 | 11 => {
+                // DOCUMENT_NODE / DOCUMENT_FRAGMENT_NODE — recurse transparently.
+                if let Some(kids) = node.get("children").and_then(serde_json::Value::as_array) {
+                    for c in kids {
+                        walk(c, depth, parent_sel, out);
+                    }
+                }
+            }
+            10 => {
+                // DOCTYPE
+                let name = node
+                    .get("nodeName")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("html");
+                out.push(DomRow {
+                    depth,
+                    label: format!("<!DOCTYPE {}>", name.to_ascii_lowercase()),
+                    selector: parent_sel.to_string(),
+                });
+            }
+            8 => {
+                // COMMENT
+                let v = node
+                    .get("nodeValue")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let one = v.lines().next().unwrap_or("").trim();
+                if !one.is_empty() {
+                    out.push(DomRow {
+                        depth,
+                        label: format!("<!-- {} -->", truncate(one, 80)),
+                        selector: parent_sel.to_string(),
+                    });
+                }
+            }
+            3 => {
+                // TEXT_NODE — skip pure whitespace.
+                let v = node
+                    .get("nodeValue")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let trimmed = v.split_whitespace().collect::<Vec<_>>().join(" ");
+                if !trimmed.is_empty() {
+                    out.push(DomRow {
+                        depth,
+                        label: format!("“{}”", truncate(&trimmed, 80)),
+                        selector: parent_sel.to_string(),
+                    });
+                }
+            }
+            1 => {
+                let tag = node
+                    .get("nodeName")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?")
+                    .to_ascii_lowercase();
+                // attributes: `[name, value, name, value, …]` per CDP.
+                let mut id_attr = String::new();
+                let mut class_attr = String::new();
+                let mut other: Vec<(String, String)> = Vec::new();
+                if let Some(attrs) = node.get("attributes").and_then(serde_json::Value::as_array) {
+                    let mut it = attrs.iter();
+                    while let (Some(k), Some(v)) = (it.next(), it.next()) {
+                        match (k.as_str(), v.as_str()) {
+                            (Some("id"), Some(val)) => id_attr = val.to_string(),
+                            (Some("class"), Some(val)) => class_attr = val.to_string(),
+                            (Some(k), Some(val)) => other.push((k.to_string(), val.to_string())),
+                            _ => {}
+                        }
+                    }
+                }
+                let mut sel = if parent_sel.is_empty() {
+                    tag.clone()
+                } else {
+                    format!("{parent_sel} > {tag}")
+                };
+                if !id_attr.is_empty() {
+                    sel.push('#');
+                    sel.push_str(&id_attr);
+                }
+                for c in class_attr.split_whitespace() {
+                    sel.push('.');
+                    sel.push_str(c);
+                }
+                // The display label: `<tag id="…" class="…" …>` (first-3 attrs).
+                let mut label = format!("<{tag}");
+                if !id_attr.is_empty() {
+                    label.push_str(&format!(" id=\"{}\"", truncate(&id_attr, 40)));
+                }
+                if !class_attr.is_empty() {
+                    label.push_str(&format!(" class=\"{}\"", truncate(&class_attr, 40)));
+                }
+                for (k, v) in other.iter().take(2) {
+                    label.push_str(&format!(" {k}=\"{}\"", truncate(v, 30)));
+                }
+                if other.len() > 2 {
+                    label.push_str(&format!(" …{}", other.len() - 2));
+                }
+                label.push('>');
+                out.push(DomRow {
+                    depth,
+                    label,
+                    selector: sel.clone(),
+                });
+                if let Some(kids) = node.get("children").and_then(serde_json::Value::as_array) {
+                    for c in kids {
+                        walk(c, depth + 1, &sel, out);
+                    }
+                }
+                // contentDocument (iframe) — recurse into it too.
+                if let Some(doc) = node.get("contentDocument") {
+                    walk(doc, depth + 1, &sel, out);
+                }
+            }
+            _ => {} // unsupported (processing-instruction, etc.)
+        }
+    }
+    walk(root, 0, "", &mut out);
+    out
+}
+
 pub struct BrowserPane {
     /// The page's current URL (updated on `Page.frameNavigated`).
     pub url: String,
@@ -126,12 +277,20 @@ pub struct BrowserPane {
     pub net_focus: bool,
     /// Selected network row when `net_focus`.
     pub net_sel: usize,
+    /// Flattened DOM rows (lazy — populated on the first `D` press, refreshed on `R`).
+    pub dom: Vec<DomRow>,
+    /// True ⇒ the `D` DOM panel is showing.
+    pub dom_focus: bool,
+    /// Selected DOM row when `dom_focus`.
+    pub dom_sel: usize,
     /// Next JSON-RPC id for requests this pane issues.
     next_id: i64,
     /// The id of an in-flight `Runtime.evaluate`, so its reply can be matched.
     pub pending_eval: Option<i64>,
     /// The id of an in-flight `Page.captureScreenshot`, so its reply can be matched.
     pub pending_screenshot: Option<i64>,
+    /// The id of an in-flight `DOM.getDocument`, so its reply can be matched.
+    pub pending_dom: Option<i64>,
     /// Outstanding `Network.getRequestPostData` requests: `(rpc id, CDP requestId)`.
     pending_post_data: Vec<(i64, String)>,
     /// Top visible log row (`usize::MAX` ⇒ pinned to the bottom).
@@ -149,9 +308,13 @@ impl BrowserPane {
             net: Vec::new(),
             net_focus: false,
             net_sel: 0,
+            dom: Vec::new(),
+            dom_focus: false,
+            dom_sel: 0,
             next_id: 100,
             pending_eval: None,
             pending_screenshot: None,
+            pending_dom: None,
             pending_post_data: Vec::new(),
             scroll: usize::MAX, // follow the tail
             closed: false,
@@ -353,6 +516,43 @@ impl BrowserPane {
         self.pending_screenshot = Some(id);
     }
 
+    /// `D` (or refresh from the panel) — `DOM.getDocument`; the parsed tree lands
+    /// later as a `dom` list (see `App::apply_cdp_message`).
+    pub fn fetch_dom(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.push(LogKind::System, "fetching DOM…");
+        let id = self.send(crate::cdp::get_document);
+        self.pending_dom = Some(id);
+    }
+
+    /// Replace the flat DOM with `rows` (a fresh `DOM.getDocument` reply).
+    pub fn set_dom(&mut self, rows: Vec<DomRow>) {
+        let n = rows.len();
+        self.dom = rows;
+        if self.dom_sel >= n {
+            self.dom_sel = n.saturating_sub(1);
+        }
+    }
+
+    /// Clamp + move the DOM-panel selection by `delta`.
+    pub fn move_dom_sel(&mut self, delta: isize) {
+        if self.dom.is_empty() {
+            self.dom_sel = 0;
+            return;
+        }
+        let max = self.dom.len() - 1;
+        let cur = self.dom_sel.min(max) as isize;
+        self.dom_sel = (cur + delta).clamp(0, max as isize) as usize;
+    }
+
+    /// The currently-selected DOM row, if the panel is non-empty.
+    pub fn selected_dom(&self) -> Option<&DomRow> {
+        self.dom
+            .get(self.dom_sel.min(self.dom.len().saturating_sub(1)))
+    }
+
     pub fn tab_title(&self) -> String {
         let u = self.url.trim();
         let short = u
@@ -482,6 +682,53 @@ mod tests {
         );
         assert_eq!(p.net[1].post_data.as_deref(), Some("a=1"));
         assert!(rx.try_recv().is_err()); // nothing more sent
+    }
+
+    #[test]
+    fn parse_dom_flattens_with_selectors_and_skips_ws() {
+        // A minimal CDP DOM.getDocument shape: a document wrapping an html element
+        // with a body containing a div (id+class) holding "  hi   " and a comment.
+        let root = serde_json::json!({
+            "nodeType": 9,
+            "children": [
+                { "nodeType": 10, "nodeName": "html" },
+                {
+                    "nodeType": 1, "nodeName": "HTML", "attributes": [],
+                    "children": [
+                        {
+                            "nodeType": 1, "nodeName": "BODY", "attributes": [],
+                            "children": [
+                                {
+                                    "nodeType": 1, "nodeName": "DIV",
+                                    "attributes": ["id", "main", "class", "card sm", "data-x", "1"],
+                                    "children": [
+                                        { "nodeType": 3, "nodeValue": "   \n  " }, // skipped
+                                        { "nodeType": 3, "nodeValue": "  hi   there " },
+                                        { "nodeType": 8, "nodeValue": "todo" }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        });
+        let rows = parse_dom(&root);
+        // doctype + <html> + <body> + <div> + text "hi there" + comment
+        assert_eq!(rows.len(), 6);
+        assert_eq!(rows[0].label, "<!DOCTYPE html>");
+        assert_eq!(rows[0].depth, 0); // document wrapper is transparent
+        assert!(rows[1].label.starts_with("<html"));
+        assert_eq!(rows[1].depth, 0);
+        assert_eq!(rows[2].depth, 1);
+        assert!(rows[3].label.contains(r#"id="main""#));
+        assert!(rows[3].label.contains(r#"class="card sm""#));
+        assert!(rows[3].label.contains(r#"data-x="1""#));
+        assert_eq!(rows[3].depth, 2);
+        assert_eq!(rows[3].selector, "html > body > div#main.card.sm");
+        assert_eq!(rows[4].label, "“hi there”"); // whitespace collapsed
+        assert_eq!(rows[4].depth, 3);
+        assert!(rows[5].label.starts_with("<!--"));
     }
 
     #[test]

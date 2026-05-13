@@ -2371,6 +2371,41 @@ impl App {
         }
     }
 
+    /// `D` in a browser pane (or `browser.dom`) — fetch `DOM.getDocument` if we
+    /// haven't yet, and toggle into the DOM panel. (`R` in the panel re-fetches.)
+    pub fn browser_open_dom(&mut self) {
+        let Some(Pane::Browser(b)) = self
+            .panes
+            .iter_mut()
+            .find(|p| matches!(p, Pane::Browser(_)))
+        else {
+            self.toast("no browser pane open");
+            return;
+        };
+        if b.dom.is_empty() && b.pending_dom.is_none() {
+            b.fetch_dom();
+        }
+        b.dom_focus = true;
+        b.net_focus = false;
+        b.dom_sel = b.dom_sel.min(b.dom.len().saturating_sub(1));
+    }
+
+    /// `c` in the browser pane's DOM panel — copy the selected node's CSS-ish
+    /// selector to the clipboard.
+    pub fn copy_dom_selector(&mut self) {
+        let sel = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Browser(b)) => b.selected_dom().map(|r| r.selector.clone()),
+            _ => None,
+        };
+        match sel {
+            Some(s) if !s.is_empty() => {
+                self.clipboard.set(s, false);
+                self.toast("copied selector");
+            }
+            _ => self.toast("no selector for the highlighted row"),
+        }
+    }
+
     /// Decode a base64 PNG (from `Page.captureScreenshot`) and write it under
     /// `<workspace>/.mnml/screenshots/shot-<millis>.png`. Returns the path.
     fn save_screenshot_png(&self, b64: &str) -> Result<std::path::PathBuf, String> {
@@ -2534,6 +2569,20 @@ impl App {
                     .unwrap_or("");
                 if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
                     b.fill_post_data(id, data);
+                }
+                return;
+            }
+            if matches!(self.panes.get(idx), Some(Pane::Browser(b)) if b.pending_dom == Some(id)) {
+                let rows = v
+                    .get("result")
+                    .and_then(|r| r.get("root"))
+                    .map(crate::browser_pane::parse_dom)
+                    .unwrap_or_default();
+                let n = rows.len();
+                if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                    b.pending_dom = None;
+                    b.set_dom(rows);
+                    b.push(LogKind::System, format!("DOM loaded ({n} rows)"));
                 }
                 return;
             }
