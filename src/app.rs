@@ -29,6 +29,20 @@ const RECENT_FILES_MAX: usize = 20;
 /// they've dropped off `recent_files`.
 const FILE_CURSORS_MAX: usize = 200;
 
+/// Cap on each nav stack — deep enough to cover a few investigation chains,
+/// shallow enough that the old end is never load-bearing.
+const NAV_STACK_MAX: usize = 50;
+
+/// One entry on a navigation stack — a file + a `(row, col)` so we can jump
+/// back even if the buffer's text has shifted since (the precise byte offset
+/// would be stale; row/col is a more forgiving anchor).
+#[derive(Debug, Clone)]
+pub struct NavPoint {
+    pub path: PathBuf,
+    pub row: usize,
+    pub col: usize,
+}
+
 /// Direction for `Ctrl+W`-style focus navigation between splits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusDir {
@@ -390,6 +404,14 @@ pub struct App {
     /// or saved, restored when the file is re-opened later. Persisted in
     /// session.json so it survives restarts. Capped at `FILE_CURSORS_MAX`.
     pub file_cursors: std::collections::HashMap<PathBuf, (usize, usize)>,
+    /// Browser-style navigation back-stack: positions we've been at, oldest
+    /// first. `nav_back` (Alt+Left) pops the top, pushes the current position
+    /// onto `nav_forward`, and jumps. Pushed by `open_path` (and similar
+    /// "fresh jump" code paths) before a navigation.
+    pub nav_back: Vec<NavPoint>,
+    /// Browser-style navigation forward-stack — only populated after Alt+Left.
+    /// Cleared on any fresh jump (you can't go forward after taking a new turn).
+    pub nav_forward: Vec<NavPoint>,
     /// Is the workspace "section" inside the rail expanded? When `false` the
     /// rail shows just the `> WORKSPACE-NAME` header (clickable to expand);
     /// when `true` it shows the header (`v WORKSPACE-NAME`) + the file list.
@@ -511,6 +533,8 @@ impl App {
             zen_mode: false,
             recent_files: Vec::new(),
             file_cursors: std::collections::HashMap::new(),
+            nav_back: Vec::new(),
+            nav_forward: Vec::new(),
             // VS-Code-style: the rail is shown with its workspace section
             // expanded by default. The last session's choice overrides this
             // in `try_restore_session`.
@@ -1340,6 +1364,16 @@ impl App {
     /// focused leaf was showing stays open as a background tab.
     pub fn open_path(&mut self, path: &Path) {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        // Push the *current* position onto the back-stack before navigating
+        // (browser-style). Skip when the active editor is already on this
+        // exact file — that'd just be churn. Clears the forward stack so
+        // Alt+Right doesn't span unrelated trails.
+        if let Some(here) = self.current_nav_point()
+            && here.path != path
+        {
+            self.push_nav_back(here);
+            self.nav_forward.clear();
+        }
         // Bump the recent list — this happens whether the buffer was already
         // open or is freshly created (a re-focus is still a "recent use").
         self.note_recent_file(&path);
@@ -1370,6 +1404,90 @@ impl App {
                 self.lsp.did_open(&path, &text);
             }
             Err(e) => self.toast(format!("cannot open {}: {e}", path.display())),
+        }
+    }
+
+    /// `(path, row, col)` of the currently-active editor, or `None` if the
+    /// active pane isn't an editor with a path. Used to seed the nav stacks.
+    pub fn current_nav_point(&self) -> Option<NavPoint> {
+        let b = self.active_editor()?;
+        let path = b.path.clone()?;
+        let (row, col) = b.editor.row_col();
+        Some(NavPoint { path, row, col })
+    }
+
+    fn push_nav_back(&mut self, np: NavPoint) {
+        self.nav_back.push(np);
+        if self.nav_back.len() > NAV_STACK_MAX {
+            let drop_n = self.nav_back.len() - NAV_STACK_MAX;
+            self.nav_back.drain(..drop_n);
+        }
+    }
+
+    fn push_nav_forward(&mut self, np: NavPoint) {
+        self.nav_forward.push(np);
+        if self.nav_forward.len() > NAV_STACK_MAX {
+            let drop_n = self.nav_forward.len() - NAV_STACK_MAX;
+            self.nav_forward.drain(..drop_n);
+        }
+    }
+
+    /// Alt+Left — jump to the last position on the back-stack. The current
+    /// position goes onto the forward-stack so Alt+Right can return.
+    pub fn nav_back_jump(&mut self) {
+        let Some(prev) = self.nav_back.pop() else {
+            self.toast("nothing to go back to");
+            return;
+        };
+        if let Some(here) = self.current_nav_point() {
+            self.push_nav_forward(here);
+        }
+        self.jump_to_nav_point(prev);
+    }
+
+    /// Alt+Right — restore a position the user came from via Alt+Left.
+    pub fn nav_forward_jump(&mut self) {
+        let Some(next) = self.nav_forward.pop() else {
+            self.toast("nothing to go forward to");
+            return;
+        };
+        if let Some(here) = self.current_nav_point() {
+            self.push_nav_back(here);
+        }
+        self.jump_to_nav_point(next);
+    }
+
+    /// Open `np.path` (or refocus its buffer) and place the cursor at
+    /// `(row, col)`. Used by both nav directions — bypasses the back-stack
+    /// push that `open_path` does, since this *is* a back/forward jump.
+    fn jump_to_nav_point(&mut self, np: NavPoint) {
+        // Find an existing buffer for this file, or open one. We can't just
+        // call `open_path` (it'd push the current point onto the back-stack,
+        // which is the wrong move for an Alt+Left). Inline the bits we need.
+        let path = np.path.canonicalize().unwrap_or(np.path.clone());
+        if let Some(i) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&path)))
+        {
+            self.reveal_pane(i);
+        } else {
+            match Buffer::open(&path, &self.config) {
+                Ok(buf) => {
+                    let text = buf.editor.text().to_string();
+                    self.panes.push(Pane::Editor(buf));
+                    let new_id = self.panes.len() - 1;
+                    self.reveal_pane(new_id);
+                    self.lsp.did_open(&path, &text);
+                }
+                Err(e) => {
+                    self.toast(format!("nav: cannot open {}: {e}", path.display()));
+                    return;
+                }
+            }
+        }
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(np.row, np.col);
         }
     }
 
@@ -5758,6 +5876,37 @@ mod tests {
         assert!(names2.contains(&"a.txt".to_string()));
         assert!(names2.contains(&"b.txt".to_string()));
         assert!(app2.recent_files.len() <= RECENT_FILES_MAX);
+    }
+
+    #[test]
+    fn nav_history_back_and_forward() {
+        let (_d, mut app) = app_with_files();
+        let a = app.workspace.join("a.txt");
+        let b = app.workspace.join("b.txt");
+        app.open_path(&a);
+        // On `a` now. Move cursor a bit so the nav point is non-trivial.
+        if let Some(ed) = app.active_editor_mut() {
+            ed.editor.place_cursor(0, 3);
+        }
+        app.open_path(&b);
+        // On `b` now. Back stack has `a` at row 0, col 3.
+        assert_eq!(app.nav_back.len(), 1);
+        assert_eq!(app.nav_back[0].path, a);
+        // Alt+Left ⇒ jumps back to `a` at (0, 3), pushes `b`'s spot forward.
+        app.nav_back_jump();
+        let buf = app.active_editor().unwrap();
+        assert_eq!(buf.path.as_deref(), Some(a.as_path()));
+        assert_eq!(buf.editor.row_col(), (0, 3));
+        assert!(app.nav_back.is_empty());
+        assert_eq!(app.nav_forward.len(), 1);
+        // Alt+Right ⇒ back to `b`.
+        app.nav_forward_jump();
+        assert_eq!(
+            app.active_editor().unwrap().path.as_deref(),
+            Some(b.as_path()),
+        );
+        assert!(app.nav_forward.is_empty());
+        assert_eq!(app.nav_back.len(), 1);
     }
 
     #[test]

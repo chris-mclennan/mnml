@@ -212,6 +212,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.reload_active(false),
         },
         Command {
+            id: "nav.back",
+            title: "Go back (previous cursor / file)",
+            group: "go",
+            keys: &["alt+left"],
+            run: |app| app.nav_back_jump(),
+        },
+        Command {
+            id: "nav.forward",
+            title: "Go forward (undo an Alt+Left)",
+            group: "go",
+            keys: &["alt+right"],
+            run: |app| app.nav_forward_jump(),
+        },
+        Command {
             id: "focus.cycle",
             title: "Cycle focus (tree ⇄ editor)",
             group: "view",
