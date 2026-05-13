@@ -1,7 +1,8 @@
 //! One language-server subprocess: JSON-RPC over stdio. A reader thread parses
 //! `Content-Length`-framed messages from the server's stdout — forwarding
 //! `publishDiagnostics` notifications and the responses to requests we sent
-//! (`definition`, `hover`) over an [`super::LspEvent`] channel, and replying with
+//! (`definition` / `hover` / `references` / `rename` / `completion`) over an
+//! [`super::LspEvent`] channel, and replying with
 //! `null` to any server→client request so strict servers don't stall. Outbound
 //! messages go through a shared `Mutex<ChildStdin>` (UI thread for requests,
 //! reader thread for those `null` replies).
@@ -84,7 +85,8 @@ impl LspClient {
                         "hover": { "contentFormat": ["markdown", "plaintext"] },
                         "definition": { "linkSupport": true },
                         "references": {},
-                        "rename": {}
+                        "rename": {},
+                        "completion": { "completionItem": { "snippetSupport": false } }
                     }
                 }
             }),
@@ -344,6 +346,12 @@ fn handle_message(
                     let _ = tx.send(LspEvent::Rename(edits));
                 }
             }
+            "textDocument/completion" => {
+                let items = parse_completion(result);
+                if !items.is_empty() {
+                    let _ = tx.send(LspEvent::Completion(items));
+                }
+            }
             _ => {}
         }
     }
@@ -415,6 +423,48 @@ fn parse_workspace_edit(result: &serde_json::Value) -> Vec<(PathBuf, Vec<(Range,
     out
 }
 
+/// Parse a `textDocument/completion` result (`CompletionItem[]` or
+/// `CompletionList { items }`) into `(label, insert_text, detail)` per item.
+/// `insertText` (then `textEdit.newText`, then `label`) supplies the text to
+/// insert; snippet items (`insertTextFormat == 2`) fall back to the label since
+/// we don't expand placeholders.
+fn parse_completion(result: &serde_json::Value) -> Vec<(String, String, Option<String>)> {
+    let arr = match result {
+        serde_json::Value::Array(a) => a,
+        serde_json::Value::Object(o) => match o.get("items").and_then(|i| i.as_array()) {
+            Some(a) => a,
+            None => return Vec::new(),
+        },
+        _ => return Vec::new(),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for it in arr {
+        let Some(label) = it.get("label").and_then(|l| l.as_str()) else {
+            continue;
+        };
+        let is_snippet = it.get("insertTextFormat").and_then(|f| f.as_u64()) == Some(2);
+        let insert = if is_snippet {
+            label.to_string()
+        } else {
+            it.get("insertText")
+                .and_then(|t| t.as_str())
+                .or_else(|| {
+                    it.get("textEdit")
+                        .and_then(|e| e.get("newText"))
+                        .and_then(|t| t.as_str())
+                })
+                .unwrap_or(label)
+                .to_string()
+        };
+        let detail = it
+            .get("detail")
+            .and_then(|d| d.as_str())
+            .map(str::to_string);
+        out.push((label.to_string(), insert, detail));
+    }
+    out
+}
+
 fn parse_text_edit(v: &serde_json::Value) -> Option<(Range, String)> {
     let r = v.get("range")?;
     let pos = |k: &str| -> Option<Pos> {
@@ -477,9 +527,7 @@ mod tests {
 
     #[test]
     fn parse_workspace_edit_handles_both_shapes() {
-        let te = |l: u64, c0: u64, c1: u64, t: &str| {
-            json!({"range": {"start": {"line": l, "character": c0}, "end": {"line": l, "character": c1}}, "newText": t})
-        };
+        let te = |l: u64, c0: u64, c1: u64, t: &str| json!({"range": {"start": {"line": l, "character": c0}, "end": {"line": l, "character": c1}}, "newText": t});
         // `changes` form
         let we = json!({"changes": {"file:///a.rs": [te(1, 4, 7, "bar")]}});
         let got = parse_workspace_edit(&we);
@@ -497,6 +545,34 @@ mod tests {
         assert_eq!(got2[0].1[0].0.start.line, 0);
         // null ⇒ empty
         assert!(parse_workspace_edit(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn parse_completion_handles_list_and_array() {
+        // CompletionList { items }
+        let cl = json!({"isIncomplete": false, "items": [
+            {"label": "push", "insertText": "push", "detail": "fn(&mut self, T)"},
+            {"label": "println!", "insertText": "println!($0)", "insertTextFormat": 2},
+            {"label": "len"}
+        ]});
+        let got = parse_completion(&cl);
+        assert_eq!(got.len(), 3);
+        assert_eq!(
+            got[0],
+            (
+                "push".into(),
+                "push".into(),
+                Some("fn(&mut self, T)".into())
+            )
+        );
+        // snippet ⇒ fall back to the label, not the placeholder text
+        assert_eq!(got[1].1, "println!");
+        // no insertText ⇒ use the label
+        assert_eq!(got[2], ("len".into(), "len".into(), None));
+        // bare array form
+        let arr = json!([{"label": "x", "textEdit": {"newText": "x_edited"}}]);
+        assert_eq!(parse_completion(&arr)[0].1, "x_edited");
+        assert!(parse_completion(&json!(null)).is_empty());
     }
 
     #[test]

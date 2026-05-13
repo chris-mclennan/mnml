@@ -144,6 +144,10 @@ pub struct App {
     /// `(path, line, character)` of an in-flight LSP rename — captured when the
     /// rename prompt opens so the accept handler sends the request for that spot.
     pending_rename: Option<(PathBuf, u32, u32)>,
+    /// `(path, prefix_byte_len)` of an in-flight LSP completion — captured when
+    /// the completion picker opens; on accept the chosen text replaces the
+    /// `prefix_byte_len` bytes immediately before the cursor.
+    pending_completion: Option<(PathBuf, usize)>,
     /// Channel for background HTTP sends (lazily created on the first `rqst.send`):
     /// worker threads send `(job_id, result)`; [`Self::tick`] drains it and updates
     /// the matching `Pane::Request`.
@@ -216,6 +220,7 @@ impl App {
             context_menu: None,
             hover: None,
             pending_rename: None,
+            pending_completion: None,
             http_chan: None,
             ai_chan: None,
             tests_chan: None,
@@ -385,6 +390,7 @@ impl App {
     }
     pub fn close_picker(&mut self) {
         self.picker = None;
+        self.pending_completion = None;
     }
     /// Open the fuzzy file finder over every file in the workspace.
     pub fn open_file_picker(&mut self) {
@@ -538,6 +544,36 @@ impl App {
                     if let Some(b) = self.active_editor_mut() {
                         b.editor.place_cursor(line, col);
                     }
+                }
+            }
+            PickerKind::LspCompletion => {
+                let Some((path, prefix_len)) = self.pending_completion.take() else {
+                    return;
+                };
+                let Some(idx) = self
+                    .panes
+                    .iter()
+                    .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&path)))
+                else {
+                    return;
+                };
+                let clip = &mut self.clipboard;
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    let cursor = b.editor.cursor();
+                    let start = cursor.saturating_sub(prefix_len);
+                    b.apply_edit_ops(
+                        vec![crate::edit_op::EditOp::ReplaceRange {
+                            start,
+                            end: cursor,
+                            text: item.id.clone(),
+                        }],
+                        clip,
+                        0,
+                    );
+                }
+                if let Some(Pane::Editor(b)) = self.panes.get(idx) {
+                    let t = b.editor.text().to_string();
+                    self.lsp.did_change(&path, &t);
                 }
             }
         }
@@ -763,6 +799,35 @@ impl App {
         }
         (start < end).then(|| chars[start..end].iter().collect())
     }
+    /// `lsp.completion` — ask the server for completions at the cursor; the reply
+    /// (`tick`) pops the fuzzy picker. The identifier prefix immediately left of
+    /// the cursor is captured so accepting an item replaces it.
+    pub fn lsp_completion(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("LSP needs a saved file");
+            return;
+        };
+        let text = b.editor.text().to_string();
+        let cursor = b.editor.cursor();
+        let (row, col) = b.editor.row_col();
+        let prefix_len: usize = text[..cursor]
+            .chars()
+            .rev()
+            .take_while(|&c| c.is_alphanumeric() || c == '_')
+            .map(char::len_utf8)
+            .sum();
+        self.lsp.did_change(&path, &text);
+        if self.lsp.completion(&path, row as u32, col as u32) {
+            self.pending_completion = Some((path, prefix_len));
+        } else {
+            self.pending_completion = None;
+            self.toast("no language server for this file (completion)");
+        }
+    }
     fn lsp_request_at_cursor(
         &mut self,
         send: impl FnOnce(&mut crate::lsp::LspManager, &Path, u32, u32) -> bool,
@@ -837,6 +902,27 @@ impl App {
                 ));
             }
             LspEvent::Rename(edits) => self.apply_rename_edits(edits),
+            LspEvent::Completion(items) => {
+                use crate::picker::{Picker, PickerItem, PickerKind};
+                if items.is_empty() {
+                    self.pending_completion = None;
+                    self.toast("no completions");
+                    return;
+                }
+                let n = items.len();
+                let picker_items: Vec<PickerItem> = items
+                    .into_iter()
+                    .take(300)
+                    .map(|(label, insert, detail)| {
+                        PickerItem::new(insert, label, detail.unwrap_or_default())
+                    })
+                    .collect();
+                self.open_picker(Picker::new(
+                    PickerKind::LspCompletion,
+                    format!("Completions ({n})"),
+                    picker_items,
+                ));
+            }
             LspEvent::Message(m) => self.toast(m),
         }
     }

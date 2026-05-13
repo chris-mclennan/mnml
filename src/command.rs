@@ -323,6 +323,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_diagnostics_pane(),
         },
         Command {
+            id: "lsp.completion",
+            title: "LSP: complete at cursor (→ picker)",
+            group: "lsp",
+            keys: &["ctrl+space"],
+            run: |app| app.lsp_completion(),
+        },
+        Command {
             id: "lsp.rename",
             title: "LSP: rename symbol",
             group: "lsp",

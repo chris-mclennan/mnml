@@ -85,6 +85,9 @@ pub enum LspEvent {
     /// Result of a `textDocument/rename` request — a `WorkspaceEdit` flattened to
     /// `(path, [(range, new_text)])` per affected file.
     Rename(Vec<(PathBuf, Vec<(Range, String)>)>),
+    /// Result of a `textDocument/completion` request — `(label, insert_text, detail)`
+    /// per candidate.
+    Completion(Vec<(String, String, Option<String>)>),
     /// A server-side message worth surfacing as a toast.
     Message(String),
 }
@@ -324,6 +327,10 @@ impl LspManager {
             }
         }
         sent
+    }
+    /// Send a `textDocument/completion` request — the reply arrives as [`LspEvent::Completion`].
+    pub fn completion(&mut self, path: &Path, line: u32, character: u32) -> bool {
+        self.request_at("textDocument/completion", path, line, character)
     }
     fn request_at(&mut self, method: &str, path: &Path, line: u32, character: u32) -> bool {
         let mut sent = false;

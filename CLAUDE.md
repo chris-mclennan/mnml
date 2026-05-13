@@ -277,8 +277,13 @@ cursor; `App.pending_rename` holds the `(path,line,col)`) → `textDocument/rena
 (`changes` / `documentChanges`, file-ops skipped) is flattened to `LspEvent::Rename` and `App::apply_rename_edits`
 edits each file — through `Buffer::apply_edit_ops` + the new `EditOp::ReplaceRange{start,end,text}` if it's open
 (left dirty for review), else by splicing the file on disk; `crate::lsp::byte_at` resolves LSP positions →
-byte offsets, edits applied descending-by-offset. Known simplifications (in `src/lsp/mod.rs`): full-text doc
-sync, char-offset columns, `initialize` not awaited before `didOpen`. Then: completion (LSP follow-up), CDP,
+byte offsets, edits applied descending-by-offset. `lsp.completion` (`Ctrl+Space` / `<leader>l c`) — manual
+trigger: `textDocument/completion` at the cursor → `LspEvent::Completion` pops the fuzzy picker
+(`PickerKind::LspCompletion`, `id`=insert-text, label fuzzy-matched, `detail` as the hint); accepting replaces
+the identifier prefix left of the cursor (`App.pending_completion` = `(path, prefix_byte_len)`) via
+`EditOp::ReplaceRange` — snippet items fall back to the label (no placeholder expansion yet). Known
+simplifications (in `src/lsp/mod.rs`): full-text doc sync, char-offset columns, `initialize` not awaited
+before `didOpen`. Then: as-you-type completion popup (LSP follow-up), CDP,
 more `.test` coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native launcher
 actions), Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus queued
 polish (line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.
