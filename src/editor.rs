@@ -219,6 +219,10 @@ pub struct Editor {
     /// (`auto_indent`). Off in `Editor::new` so unit tests get vanilla
     /// newlines; on by default for real buffers via `[editor] auto_indent`.
     pub auto_indent: bool,
+    /// `Some((anchor_byte, cursor_byte))` for the last selection that was
+    /// "closed" (cleared, yanked, deleted, or changed). vim's `gv` restores
+    /// it. `None` until the user has made at least one selection.
+    last_selection: Option<(usize, usize)>,
 }
 
 impl Editor {
@@ -235,6 +239,23 @@ impl Editor {
             in_insert_run: false,
             auto_pair: false,
             auto_indent: false,
+            last_selection: None,
+        }
+    }
+
+    /// Capture the current selection as `last_selection` (the buffer's "gv
+    /// memory"). Called by `Editor::apply` on ops that close the selection
+    /// — Yank, Cut, ReplaceSelection, DeleteSelection, SelectClear.
+    fn remember_selection(&mut self) {
+        if let Some(anchor) = self.anchor
+            && anchor != self.cursor
+        {
+            let (lo, hi) = if anchor < self.cursor {
+                (anchor, self.cursor)
+            } else {
+                (self.cursor, anchor)
+            };
+            self.last_selection = Some((lo, hi));
         }
     }
 
@@ -706,7 +727,10 @@ impl Editor {
 
             // ── selection ──
             SelectStart => self.anchor = Some(self.cursor),
-            SelectClear => self.anchor = None,
+            SelectClear => {
+                self.remember_selection();
+                self.anchor = None;
+            }
             SelectAll => {
                 self.anchor = Some(0);
                 self.cursor = self.text.len();
@@ -752,6 +776,14 @@ impl Editor {
                 if let Some((o, c)) = self.enclosing_bracket_pair(open, close) {
                     self.anchor = Some(o + open.len_utf8());
                     self.cursor = c;
+                }
+            }
+            RestoreLastSelection => {
+                if let Some((lo, hi)) = self.last_selection {
+                    let lo = lo.min(self.text.len());
+                    let hi = hi.min(self.text.len());
+                    self.anchor = Some(lo);
+                    self.cursor = hi;
                 }
             }
             SelectAroundBracket(open) => {
@@ -1154,6 +1186,7 @@ impl Editor {
                     let s = self.text[lo..hi].to_string();
                     clip.set(s.clone(), false);
                     out.clipboard_set = Some(s);
+                    self.remember_selection();
                 }
             }
             CutSelection => {
@@ -1257,6 +1290,7 @@ impl Editor {
     fn delete_selection_if_any(&mut self, out: &mut EditOutcome) -> bool {
         if let Some((lo, hi)) = self.selection() {
             if hi > lo {
+                self.remember_selection();
                 self.checkpoint();
                 self.text.replace_range(lo..hi, "");
                 self.cursor = lo;
@@ -1849,6 +1883,23 @@ mod tests {
         let (mut e, mut c) = ed("only");
         e.apply(DuplicateLine, 10, &mut c);
         assert_eq!(e.text(), "only\nonly");
+    }
+
+    #[test]
+    fn restore_last_selection_brings_it_back() {
+        let (mut e, mut c) = ed("hello world");
+        // Make a selection [0, 5)
+        e.cursor = 0;
+        e.apply(EditOp::SelectStart, 10, &mut c);
+        e.cursor = 5;
+        // YankSelection captures last_selection, then explicit SelectClear.
+        e.apply(EditOp::YankSelection, 10, &mut c);
+        e.apply(EditOp::SelectClear, 10, &mut c);
+        assert!(e.selection().is_none());
+        e.cursor = 7; // move somewhere
+        e.apply(EditOp::RestoreLastSelection, 10, &mut c);
+        assert_eq!(e.selection(), Some((0, 5)));
+        assert_eq!(e.cursor, 5);
     }
 
     #[test]

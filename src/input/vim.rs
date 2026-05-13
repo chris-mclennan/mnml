@@ -241,6 +241,13 @@ impl VimInputHandler {
                         self.count = if n > 1 { Some(n) } else { None };
                         InputResult::Consumed
                     }
+                    KeyCode::Char('v') => {
+                        // `gv` — re-establish the last visual selection.
+                        // The editor restores `(anchor, cursor)`; we flip the
+                        // handler into Visual mode so subsequent keys behave.
+                        self.mode = VimMode::Visual;
+                        InputResult::Ops(vec![RestoreLastSelection])
+                    }
                     _ => InputResult::Consumed,
                 };
             }

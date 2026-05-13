@@ -54,6 +54,9 @@ pub enum EditOp {
     /// from the cursor outward.
     SelectInnerBracket(char),
     SelectAroundBracket(char),
+    /// vim `gv` — restore the editor's last remembered selection (anchor +
+    /// cursor). No-op when no selection has been made yet.
+    RestoreLastSelection,
     /// Multi-cursor — stubbed; a no-op until that "later" lands.
     AddCursorBelow,
     AddCursorAbove,
@@ -154,6 +157,7 @@ impl EditOp {
             | SelectAroundQuote(_)
             | SelectInnerBracket(_)
             | SelectAroundBracket(_)
+            | RestoreLastSelection
             | AddCursorBelow
             | AddCursorAbove
             | YankLine
