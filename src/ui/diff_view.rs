@@ -66,25 +66,95 @@ pub fn draw(
             Span::styled(format!("{}  ", h.header), head_style),
             Span::styled(h.file_rel.clone(), Style::default().fg(t.blue).bg(head_bg)),
         ]));
-        for hl in &h.lines {
-            let (marker, marker_color, body, fg) = match hl {
-                HunkLine::Context(s) => (" ", t.grey, s.as_str(), t.fg),
-                HunkLine::Added(s) => ("▏", t.green, s.as_str(), t.green),
-                HunkLine::Removed(s) => ("▏", t.red, s.as_str(), t.red),
-                HunkLine::NoNewline => (" ", t.grey, "\\ No newline at end of file", t.comment),
+        // Intraline-diff pairing: a singleton Removed immediately followed
+        // by a singleton Added (i.e. one-for-one swap, no neighbour of the
+        // same kind) gets char-level highlighting. The common prefix +
+        // suffix render in muted gray; the differing middle keeps the
+        // bright red/green so the eye lands on the change. Multi-line
+        // edits skip this — pairing them would require an LCS.
+        let pair_partner: Vec<Option<usize>> = (0..h.lines.len())
+            .map(|i| {
+                if !matches!(h.lines.get(i), Some(HunkLine::Removed(_))) {
+                    return None;
+                }
+                if !matches!(h.lines.get(i + 1), Some(HunkLine::Added(_))) {
+                    return None;
+                }
+                if i > 0 && matches!(h.lines.get(i - 1), Some(HunkLine::Removed(_))) {
+                    return None;
+                }
+                if matches!(h.lines.get(i + 2), Some(HunkLine::Added(_))) {
+                    return None;
+                }
+                Some(i + 1)
+            })
+            .collect();
+        for (li, hl) in h.lines.iter().enumerate() {
+            let (marker, marker_color, body, fg, sign) = match hl {
+                HunkLine::Context(s) => (" ", t.grey, s.as_str(), t.fg, " "),
+                HunkLine::Added(s) => ("▏", t.green, s.as_str(), t.green, "+"),
+                HunkLine::Removed(s) => ("▏", t.red, s.as_str(), t.red, "-"),
+                HunkLine::NoNewline => {
+                    (" ", t.grey, "\\ No newline at end of file", t.comment, " ")
+                }
             };
-            let sign = match hl {
-                HunkLine::Added(_) => "+",
-                HunkLine::Removed(_) => "-",
-                _ => " ",
+            // Is this line one half of an intraline-paired Removed+Added swap?
+            // If so, compute the char-range of the differing middle and split
+            // the body into prefix / middle / suffix spans.
+            let intraline_range: Option<(usize, usize)> = match hl {
+                HunkLine::Removed(s) if pair_partner[li].is_some() => {
+                    let partner_idx = pair_partner[li].unwrap();
+                    if let Some(HunkLine::Added(p)) = h.lines.get(partner_idx) {
+                        let ((a, b), _) = crate::git::diff::intraline_diff(s, p);
+                        Some((a, b))
+                    } else {
+                        None
+                    }
+                }
+                HunkLine::Added(s) if li > 0 && pair_partner[li - 1] == Some(li) => {
+                    if let Some(HunkLine::Removed(p)) = h.lines.get(li - 1) {
+                        let (_, (a, b)) = crate::git::diff::intraline_diff(p, s);
+                        Some((a, b))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
             };
-            rows.push(Line::from(vec![
-                Span::styled(marker, Style::default().fg(marker_color).bg(t.bg_dark)),
-                Span::styled(
+
+            let mut spans = vec![Span::styled(
+                marker,
+                Style::default().fg(marker_color).bg(t.bg_dark),
+            )];
+            if let Some((mid_start, mid_end)) = intraline_range
+                && mid_end > mid_start
+            {
+                let body_chars: Vec<char> = body.chars().collect();
+                let prefix: String = body_chars[..mid_start].iter().collect();
+                let middle: String = body_chars[mid_start..mid_end].iter().collect();
+                let suffix: String = body_chars[mid_end..].iter().collect();
+                spans.push(Span::styled(
+                    format!("{sign} {prefix}"),
+                    Style::default().fg(t.comment).bg(t.bg_dark),
+                ));
+                spans.push(Span::styled(
+                    middle,
+                    Style::default()
+                        .fg(fg)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled(
+                    suffix,
+                    Style::default().fg(t.comment).bg(t.bg_dark),
+                ));
+            } else {
+                spans.push(Span::styled(
                     format!("{sign} {body}"),
                     Style::default().fg(fg).bg(t.bg_dark),
-                ),
-            ]));
+                ));
+            }
+            rows.push(Line::from(spans));
         }
         rows.push(Line::from(Span::styled(
             " ",

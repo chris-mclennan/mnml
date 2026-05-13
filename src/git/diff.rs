@@ -170,6 +170,31 @@ impl Hunk {
     }
 }
 
+/// Char-level intraline diff between an old line and a new one. Returns the
+/// `(start, end)` char indices of the "middle" — the part that differs — in
+/// each string. Common prefix and common suffix outside that range are
+/// identical and can be rendered dimly so the eye lands on the change.
+///
+/// Bounds are sane: an unchanged line returns `(len, len)` for both (empty
+/// middle at the end), and a line that's entirely changed returns
+/// `(0, len)` for both. Char-indexed so callers can split-by-char without
+/// worrying about UTF-8 boundaries.
+pub fn intraline_diff(old: &str, new: &str) -> ((usize, usize), (usize, usize)) {
+    let o: Vec<char> = old.chars().collect();
+    let n: Vec<char> = new.chars().collect();
+    // common prefix
+    let mut p = 0;
+    while p < o.len() && p < n.len() && o[p] == n[p] {
+        p += 1;
+    }
+    // common suffix, not running back into the prefix
+    let mut s = 0;
+    while s < o.len() - p && s < n.len() - p && o[o.len() - 1 - s] == n[n.len() - 1 - s] {
+        s += 1;
+    }
+    ((p, o.len() - s), (p, n.len() - s))
+}
+
 /// Find the hunk in `git diff HEAD -- <rel>` whose new-side range contains
 /// `line_0based`. `None` when nothing changed at that line.
 pub fn peek_hunk_at(workspace: &Path, rel: &str, line_0based: usize) -> Option<Hunk> {
@@ -423,6 +448,30 @@ diff --git a/a.rs b/a.rs
         assert!(h.contains_new_line(9));
         assert!(h.contains_new_line(11));
         assert!(!h.contains_new_line(12));
+    }
+
+    #[test]
+    fn intraline_diff_basic_cases() {
+        // Identical lines → empty middle at the end.
+        let ((a, b), (c, d)) = intraline_diff("hello", "hello");
+        assert_eq!((a, b), (5, 5));
+        assert_eq!((c, d), (5, 5));
+        // One-char tail differs.
+        let ((a, b), (c, d)) = intraline_diff("hello!", "hello?");
+        assert_eq!(&"hello!"[..a].chars().count(), &5);
+        assert_eq!(b - a, 1);
+        assert_eq!(d - c, 1);
+        // Middle differs, common prefix + suffix.
+        let ((a, b), (c, d)) = intraline_diff("fn foo()", "fn bar()");
+        // both have `fn ` prefix (3 chars) and `()` suffix (2 chars)
+        assert_eq!(a, 3);
+        assert_eq!(b, 6);
+        assert_eq!(c, 3);
+        assert_eq!(d, 6);
+        // Entirely different.
+        let ((a, b), (c, d)) = intraline_diff("abc", "xyz");
+        assert_eq!((a, b), (0, 3));
+        assert_eq!((c, d), (0, 3));
     }
 
     #[test]

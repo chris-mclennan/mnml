@@ -266,7 +266,11 @@ cleanup so leading `+`/`-`/` ` markers survive). Toasts "no change at cursor" wh
 hunks (header + context/`+`/`-` lines), `n`/`p` move the cursor hunk, `s`/`u` stage/unstage
 it (`git apply --cached [--reverse]`), `r` refreshes, Enter jumps to the hunk's line in the
 source editor; `git.diff_file` (`<leader>g d`, opens in a split next to the source) /
-`git.diff` (worktree); **blame gutter** — `git.blame_toggle` (`<leader>g b`) swaps the
+`git.diff` (worktree). **Intraline diff** — adjacent single `Removed`/`Added` pairs (one-for-one
+swap, no neighbours of the same kind) get char-level highlighting: `git::diff::intraline_diff(old, new)`
+computes the common-prefix + common-suffix char ranges; the diff pane renders the matching prefix/suffix
+in `t.comment` (gray) and the differing middle in bold red/green so the eye lands on the change.
+Multi-line edits (runs of removeds/addeds) skip this — pairing them would need an LCS. **blame gutter** — `git.blame_toggle` (`<leader>g b`) swaps the
 line-number gutter on the active editor for a per-line `<sha> <author>` column
 (`src/git/blame.rs` parses `git blame --porcelain`), refreshed on save; **commit** —
 `git.commit` (`<leader>g c`) opens the single-line text-input overlay (`src/prompt.rs` /
