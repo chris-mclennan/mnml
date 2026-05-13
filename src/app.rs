@@ -4416,6 +4416,19 @@ impl App {
         self.rerun_active_grep();
     }
 
+    /// `editor.bracket_match` (`Ctrl+]`) — when the cursor sits on a bracket
+    /// (`()` / `[]` / `{}`), jump to its match. Toasts when there's none.
+    pub fn bracket_match_jump(&mut self) {
+        let target = self.active_editor().and_then(|b| b.editor.bracket_match());
+        let Some((row, col)) = target else {
+            self.toast("not on a bracket");
+            return;
+        };
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(row, col);
+        }
+    }
+
     /// `editor.goto_line` (`Ctrl+G`) — prompt for a 1-based line number. The
     /// input starts empty (a seed would force the user to clear it first
     /// 90% of the time); the title shows the current line as a reference.

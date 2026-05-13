@@ -202,6 +202,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_goto_line_prompt(),
         },
         Command {
+            id: "editor.bracket_match",
+            title: "Jump to matching bracket",
+            group: "editor",
+            keys: &["ctrl+]"],
+            run: |app| app.bracket_match_jump(),
+        },
+        Command {
             id: "file.new",
             title: "New file… (workspace-relative path)",
             group: "file",

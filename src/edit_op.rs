@@ -74,6 +74,8 @@ pub enum EditOp {
     /// Swap the current line with the one above / below.
     MoveLineUp,
     MoveLineDown,
+    /// Duplicate the current line below itself (VSCode `Ctrl+Shift+D`).
+    DuplicateLine,
 
     // ── clipboard / registers ──
     /// vim `yy`

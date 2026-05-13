@@ -120,7 +120,7 @@ pub fn draw_pane(
     // its matching counterpart and remember both positions so the render loop
     // can paint them with a contrasting bg. `None` ⇒ no highlight this frame.
     let bracket_pair: Option<[(usize, usize); 2]> =
-        bracket_match_positions(buf.editor.text(), buf.editor.cursor(), cur_row, cur_col);
+        buf.editor.bracket_match().map(|m| [(cur_row, cur_col), m]);
     let bracket_bg = theme::cur().bg3;
     let sign_color = |k: SignKind| match k {
         SignKind::Added => theme::cur().green,
@@ -330,88 +330,6 @@ pub fn draw_pane(
     }
 }
 
-/// Find the bracket match for the cursor. `cursor_byte` is the cursor's byte
-/// offset into `text`, `(cur_row, cur_col)` its (row, char-col) for the buffer.
-/// Returns the highlighted positions as `[(row, col); 2]` — the bracket under
-/// the cursor and its match. `None` when the cursor isn't on a bracket or no
-/// match was found within a small look-around budget.
-fn bracket_match_positions(
-    text: &str,
-    cursor_byte: usize,
-    cur_row: usize,
-    cur_col: usize,
-) -> Option<[(usize, usize); 2]> {
-    // Char at the cursor (could be EOF).
-    let here = text[cursor_byte..].chars().next()?;
-    let (open, close, forward) = match here {
-        '(' => ('(', ')', true),
-        '[' => ('[', ']', true),
-        '{' => ('{', '}', true),
-        ')' => ('(', ')', false),
-        ']' => ('[', ']', false),
-        '}' => ('{', '}', false),
-        _ => return None,
-    };
-    // Walk forward / backward counting nesting. Cap the scan to keep things
-    // snappy on enormous files.
-    const BUDGET: usize = 50_000;
-    if forward {
-        let mut depth: usize = 1;
-        let mut row = cur_row;
-        let mut col = cur_col + 1;
-        let mut iter = text[cursor_byte + here.len_utf8()..].chars();
-        for _ in 0..BUDGET {
-            let ch = iter.next()?;
-            if ch == '\n' {
-                row += 1;
-                col = 0;
-                continue;
-            }
-            if ch == open {
-                depth += 1;
-            } else if ch == close {
-                depth -= 1;
-                if depth == 0 {
-                    return Some([(cur_row, cur_col), (row, col)]);
-                }
-            }
-            col += 1;
-        }
-        None
-    } else {
-        let prefix = &text[..cursor_byte];
-        let mut chars: Vec<char> = prefix.chars().collect();
-        let mut row = 0usize;
-        let mut col = 0usize;
-        let mut positions: Vec<(usize, usize)> = Vec::with_capacity(chars.len());
-        for ch in &chars {
-            positions.push((row, col));
-            if *ch == '\n' {
-                row += 1;
-                col = 0;
-            } else {
-                col += 1;
-            }
-        }
-        let take = chars.len().min(BUDGET);
-        let start = chars.len() - take;
-        chars.drain(..start);
-        let positions = &positions[start..];
-        let mut depth: usize = 1;
-        for (i, ch) in chars.iter().enumerate().rev() {
-            if *ch == close {
-                depth += 1;
-            } else if *ch == open {
-                depth -= 1;
-                if depth == 0 {
-                    return Some([(cur_row, cur_col), positions[i]]);
-                }
-            }
-        }
-        None
-    }
-}
-
 /// Color for char column `c`, picking the innermost (last-pushed) covering span.
 fn syntax_color(spans: &[crate::highlight::ColoredSpan], c: usize) -> Option<Color> {
     spans
@@ -465,53 +383,4 @@ fn draw_breadcrumb(frame: &mut Frame, app: &App, pane_id: PaneId, area: Rect) {
         ])),
         area,
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::bracket_match_positions;
-
-    /// `(row, col)` for byte `byte` into `text`.
-    fn rc(text: &str, byte: usize) -> (usize, usize) {
-        let row = text[..byte].bytes().filter(|&b| b == b'\n').count();
-        let lstart = text[..byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let col = text[lstart..byte].chars().count();
-        (row, col)
-    }
-
-    fn find(text: &str, byte: usize) -> Option<[(usize, usize); 2]> {
-        let (r, c) = rc(text, byte);
-        bracket_match_positions(text, byte, r, c)
-    }
-
-    #[test]
-    fn matches_simple_open() {
-        let s = "fn f() { x }";
-        // Cursor on the `(`.
-        let bracket = s.find('(').unwrap();
-        let m = find(s, bracket).unwrap();
-        assert_eq!(m[0], rc(s, bracket));
-        assert_eq!(m[1], rc(s, s.find(')').unwrap()));
-    }
-
-    #[test]
-    fn matches_close_back_to_open_across_lines() {
-        let s = "{\n  a\n  b\n}";
-        let close = s.find('}').unwrap();
-        let m = find(s, close).unwrap();
-        assert_eq!(m[1], rc(s, 0));
-    }
-
-    #[test]
-    fn skips_when_not_on_bracket() {
-        assert!(find("plain text", 3).is_none());
-    }
-
-    #[test]
-    fn respects_nesting() {
-        let s = "((a))";
-        // Cursor on the *outer* `(`.
-        let m = find(s, 0).unwrap();
-        assert_eq!(m[1], rc(s, 4));
-    }
 }

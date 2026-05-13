@@ -74,6 +74,7 @@ impl InputHandler for StandardInputHandler {
                 'y' => InputResult::Ops(vec![Redo]),
                 '/' => InputResult::Ops(vec![ToggleLineComment]),
                 's' => InputResult::App(AppCommand::Save),
+                'd' if shift => InputResult::Ops(vec![DuplicateLine]),
                 'd' => InputResult::Ops(vec![SelectWord]), // closest we have to "select occurrence" for now
                 'l' => InputResult::Ops(vec![SelectLine]),
                 'g' => InputResult::Ignored, // "go to line" → palette/prompt later

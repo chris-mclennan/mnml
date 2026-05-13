@@ -256,6 +256,80 @@ impl Editor {
         self.text[self.cursor..].starts_with(c)
     }
 
+    /// `(row, col)` of the bracket that matches the one under the cursor, or
+    /// `None` if the cursor isn't on a bracket. Used by `editor.bracket_match`
+    /// (`Ctrl+]`) to jump to the pair, and by the editor renderer to paint a
+    /// match-highlight.
+    pub fn bracket_match(&self) -> Option<(usize, usize)> {
+        let here = self.text[self.cursor..].chars().next()?;
+        let (open, close, forward) = match here {
+            '(' => ('(', ')', true),
+            '[' => ('[', ']', true),
+            '{' => ('{', '}', true),
+            ')' => ('(', ')', false),
+            ']' => ('[', ']', false),
+            '}' => ('{', '}', false),
+            _ => return None,
+        };
+        const BUDGET: usize = 50_000;
+        let (cur_row, cur_col) = self.row_col();
+        if forward {
+            let mut depth: usize = 1;
+            let mut row = cur_row;
+            let mut col = cur_col + 1;
+            let mut iter = self.text[self.cursor + here.len_utf8()..].chars();
+            for _ in 0..BUDGET {
+                let ch = iter.next()?;
+                if ch == '\n' {
+                    row += 1;
+                    col = 0;
+                    continue;
+                }
+                if ch == open {
+                    depth += 1;
+                } else if ch == close {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((row, col));
+                    }
+                }
+                col += 1;
+            }
+            None
+        } else {
+            let prefix = &self.text[..self.cursor];
+            let mut chars: Vec<char> = prefix.chars().collect();
+            let mut row = 0usize;
+            let mut col = 0usize;
+            let mut positions: Vec<(usize, usize)> = Vec::with_capacity(chars.len());
+            for ch in &chars {
+                positions.push((row, col));
+                if *ch == '\n' {
+                    row += 1;
+                    col = 0;
+                } else {
+                    col += 1;
+                }
+            }
+            let take = chars.len().min(BUDGET);
+            let start = chars.len() - take;
+            chars.drain(..start);
+            let positions = &positions[start..];
+            let mut depth: usize = 1;
+            for (i, ch) in chars.iter().enumerate().rev() {
+                if *ch == close {
+                    depth += 1;
+                } else if *ch == open {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(positions[i]);
+                    }
+                }
+            }
+            None
+        }
+    }
+
     /// The leading whitespace (' ' / '\t') of the current line, up to the
     /// cursor — what `auto_indent` carries forward when Enter is pressed mid-
     /// line. (If the cursor sits inside the indent, only the chars before it
@@ -787,6 +861,22 @@ impl Editor {
                 self.checkpoint();
                 self.swap_lines(line, line + 1);
                 let col = self.goal_col;
+                self.cursor = self.byte_at_col(line + 1, col);
+                out.buffer_changed = true;
+            }
+            DuplicateLine => {
+                self.checkpoint();
+                let line = self.current_line();
+                let bol = self.line_start(line);
+                let eol = self.line_end(line);
+                // Insert `\n<line-text>` right after the current line content.
+                // (Works for the last line — no trailing newline needed beyond
+                // what gets inserted.)
+                let body = self.text[bol..eol].to_string();
+                self.text.insert(eol, '\n');
+                self.text.insert_str(eol + 1, &body);
+                // Move the cursor to the same column on the new line.
+                let col = self.col_at_byte(self.cursor);
                 self.cursor = self.byte_at_col(line + 1, col);
                 out.buffer_changed = true;
             }
@@ -1385,6 +1475,44 @@ mod tests {
         e.apply(InsertChar('('), 10, &mut c);
         assert_eq!(e.text(), "(name");
         assert_eq!(e.cursor(), 1);
+    }
+
+    #[test]
+    fn duplicate_line_inserts_copy_below() {
+        let (mut e, mut c) = ed("foo\nbar");
+        e.apply(MoveBufferStart, 10, &mut c);
+        e.apply(DuplicateLine, 10, &mut c);
+        assert_eq!(e.text(), "foo\nfoo\nbar");
+        // Cursor moved to the duplicate (same col on the new line).
+        assert_eq!(e.row_col().0, 1);
+    }
+
+    #[test]
+    fn duplicate_last_line_no_trailing_newline() {
+        let (mut e, mut c) = ed("only");
+        e.apply(DuplicateLine, 10, &mut c);
+        assert_eq!(e.text(), "only\nonly");
+    }
+
+    #[test]
+    fn bracket_match_open_to_close() {
+        let (e, _) = ed("fn f() { x }");
+        // Cursor at 0 — not on a bracket.
+        assert_eq!(e.bracket_match(), None);
+        // Place cursor on the `(`.
+        let mut e = e;
+        e.place_cursor(0, 4);
+        let m = e.bracket_match().unwrap();
+        assert_eq!(m, (0, 5)); // the `)` is at col 5
+    }
+
+    #[test]
+    fn bracket_match_across_lines() {
+        let mut e = ed("{\n  a\n  b\n}").0;
+        // Place cursor on the `}` (row 3, col 0).
+        e.place_cursor(3, 0);
+        let m = e.bracket_match().unwrap();
+        assert_eq!(m, (0, 0)); // matches the `{`
     }
 
     #[test]
