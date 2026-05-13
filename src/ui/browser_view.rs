@@ -67,7 +67,7 @@ pub fn draw(
     ]));
     let hint = if b.dom_focus {
         format!(
-            "  DOM ({}) · ↑↓ select · c copy selector · R re-fetch · D logs · esc back",
+            "  DOM ({}) · ↑↓ select · h highlight in page · c copy selector · R re-fetch · esc back",
             b.dom.len()
         )
     } else if b.net_focus {

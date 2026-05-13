@@ -276,11 +276,13 @@ in a `Pane::Request` split (`NetEntry::to_request` → `spawn_http_job`, re-send
 the wheel moves the selection too. (When a request's body isn't inlined — `hasPostData:true` but no `postData` — a
 `Network.getRequestPostData` is fired and `BrowserPane::fill_post_data` patches the `NetEntry` when the reply lands.)
 **`D` toggles a DOM panel** — first press fires `DOM.getDocument {depth:-1, pierce:true}`; `browser_pane::parse_dom` walks
-the reply into a flat `Vec<DomRow{depth,label,selector}>` (whitespace text + shadow-root wrappers skipped; iframes
+the reply into a flat `Vec<DomRow{depth,label,selector,node_id}>` (whitespace text + shadow-root wrappers skipped; iframes
 recursed); rows render indented + colour-coded (elements blue, text white, comments dim). ↑↓/jk/PgUp/PgDn/Home/End/g/G
 move the selection (wheel too), `c` copies the highlighted node's CSS-ish selector (`html > body > div#main.card`),
-`R` re-fetches, `D` (or Esc) leave the panel. One browser pane at a time. *Follow-ups:* render/open the screenshot,
-`Overlay.highlightNode` to highlight the picked DOM row in the page, multiple pages/targets, headless mode.
+**`h` draws the live highlight overlay on the page** (`Overlay.highlightNode {nodeId}` — `DOM.enable` + `Overlay.enable` are
+in the initial domain-enable set), `R` re-fetches, `D` (or Esc) leave the panel (Esc also clears any highlight via
+`Overlay.hideHighlight`). One browser pane at a time. *Follow-ups:* render/open the screenshot, multiple pages/targets,
+headless mode.
 **Right-click context menus — done:** `src/context_menu.rs` (`ContextMenu{title,items:Vec<MenuItem{label,
 action: MenuAction}>,anchor,selected}`) + `src/ui/context_menu.rs` (a bordered floating list at the click,
 clamped to screen, selected row highlighted). Right-click a tree file → Open / Open in split / Reveal in

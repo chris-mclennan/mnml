@@ -88,6 +88,25 @@ pub fn get_document(id: i64) -> String {
         serde_json::json!({ "depth": -1, "pierce": true }),
     )
 }
+pub fn highlight_node(id: i64, node_id: i64) -> String {
+    rpc(
+        id,
+        "Overlay.highlightNode",
+        serde_json::json!({
+            "nodeId": node_id,
+            "highlightConfig": {
+                "showInfo": true,
+                "contentColor": { "r": 111, "g": 168, "b": 220, "a": 0.4 },
+                "paddingColor": { "r": 200, "g": 200, "b": 100, "a": 0.35 },
+                "marginColor":  { "r": 230, "g": 130, "b": 100, "a": 0.30 },
+                "borderColor":  { "r": 80,  "g": 100, "b": 160, "a": 0.6 }
+            }
+        }),
+    )
+}
+pub fn hide_highlight(id: i64) -> String {
+    rpc(id, "Overlay.hideHighlight", serde_json::json!({}))
+}
 
 /// Spawn Chrome (the first of [`CHROME_BINS`] that runs) with remote debugging on a
 /// free port, in a throwaway `profile_dir`, open `url` (`about:blank` if empty),
@@ -138,6 +157,8 @@ pub fn run_session(
         "Runtime.enable",
         "Log.enable",
         "Network.enable",
+        "DOM.enable",
+        "Overlay.enable",
     ]) {
         let _ = ws.send(tungstenite::Message::text(rpc(
             id,

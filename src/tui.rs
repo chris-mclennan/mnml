@@ -540,6 +540,11 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('y') if net_focus => app.copy_net_entry_curl(),
             KeyCode::Char('c') if dom_focus => app.copy_dom_selector(),
+            KeyCode::Char('h') if dom_focus => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.highlight_selected_dom();
+                }
+            }
             KeyCode::Enter if net_focus => app.open_net_entry_as_request(),
             KeyCode::Char('g') => app.browser_navigate_prompt(),
             KeyCode::Char('e') => app.browser_eval_prompt(),
@@ -548,6 +553,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Esc => {
                 if any_panel {
                     if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        if b.dom_focus {
+                            b.hide_highlight();
+                        }
                         b.net_focus = false;
                         b.dom_focus = false;
                     }

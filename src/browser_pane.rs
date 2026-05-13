@@ -122,6 +122,9 @@ pub struct DomRow {
     pub depth: usize,
     pub label: String,
     pub selector: String,
+    /// The CDP `nodeId` for this node (0 if absent / synthetic) — used by
+    /// `Overlay.highlightNode` to draw a box around this element in the page.
+    pub node_id: i64,
 }
 
 /// Walk the JSON `result.root` of a CDP `DOM.getDocument` reply (full-tree,
@@ -143,6 +146,10 @@ pub fn parse_dom(root: &serde_json::Value) -> Vec<DomRow> {
             .get("nodeType")
             .and_then(serde_json::Value::as_i64)
             .unwrap_or(0);
+        let node_id = node
+            .get("nodeId")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
         match node_type {
             9 | 11 => {
                 // DOCUMENT_NODE / DOCUMENT_FRAGMENT_NODE — recurse transparently.
@@ -162,6 +169,7 @@ pub fn parse_dom(root: &serde_json::Value) -> Vec<DomRow> {
                     depth,
                     label: format!("<!DOCTYPE {}>", name.to_ascii_lowercase()),
                     selector: parent_sel.to_string(),
+                    node_id,
                 });
             }
             8 => {
@@ -176,6 +184,7 @@ pub fn parse_dom(root: &serde_json::Value) -> Vec<DomRow> {
                         depth,
                         label: format!("<!-- {} -->", truncate(one, 80)),
                         selector: parent_sel.to_string(),
+                        node_id,
                     });
                 }
             }
@@ -191,6 +200,7 @@ pub fn parse_dom(root: &serde_json::Value) -> Vec<DomRow> {
                         depth,
                         label: format!("“{}”", truncate(&trimmed, 80)),
                         selector: parent_sel.to_string(),
+                        node_id,
                     });
                 }
             }
@@ -247,6 +257,7 @@ pub fn parse_dom(root: &serde_json::Value) -> Vec<DomRow> {
                     depth,
                     label,
                     selector: sel.clone(),
+                    node_id,
                 });
                 if let Some(kids) = node.get("children").and_then(serde_json::Value::as_array) {
                     for c in kids {
@@ -551,6 +562,25 @@ impl BrowserPane {
     pub fn selected_dom(&self) -> Option<&DomRow> {
         self.dom
             .get(self.dom_sel.min(self.dom.len().saturating_sub(1)))
+    }
+
+    /// `Overlay.highlightNode` for the selected DOM row (no-op if no node).
+    pub fn highlight_selected_dom(&mut self) {
+        let Some(node_id) = self.selected_dom().map(|r| r.node_id) else {
+            return;
+        };
+        if node_id == 0 || self.closed {
+            return;
+        }
+        self.send(|id| crate::cdp::highlight_node(id, node_id));
+    }
+
+    /// `Overlay.hideHighlight` — clear any highlight box drawn on the page.
+    pub fn hide_highlight(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.send(crate::cdp::hide_highlight);
     }
 
     pub fn tab_title(&self) -> String {
