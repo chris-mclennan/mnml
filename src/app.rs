@@ -2691,6 +2691,25 @@ impl App {
                     b.push(LogKind::Nav, format!("→ {url}"));
                 }
             }
+            "Target.targetCreated" => {
+                let ti = params.and_then(|p| p.get("targetInfo"));
+                let ty = ti
+                    .and_then(|i| i.get("type"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                // The page we're driving fires this for itself (`attached:true`) — skip.
+                let attached = ti
+                    .and_then(|i| i.get("attached"))
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                if ty == "page" && !attached {
+                    let url = ti
+                        .and_then(|i| i.get("url"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("about:blank");
+                    b.push(LogKind::Nav, format!("⤴ new tab → {url}"));
+                }
+            }
             "Network.requestWillBeSent" => {
                 let rtype = params
                     .and_then(|p| p.get("type"))
@@ -2897,6 +2916,33 @@ impl App {
             let _ = tx.send((job_id, result));
         });
         job_id
+    }
+
+    /// `Y` in a request pane — copy the *response* body to the clipboard.
+    pub fn copy_active_response_body(&mut self) {
+        use crate::request_pane::RunState;
+        let body = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Request(rp)) => match &rp.state {
+                RunState::Done(r) => Some(r.body.clone()),
+                RunState::Sending => {
+                    self.toast("wait for the response first");
+                    return;
+                }
+                RunState::Failed(_) => {
+                    self.toast("no response — the request failed");
+                    return;
+                }
+            },
+            _ => None,
+        };
+        match body {
+            Some(b) if !b.is_empty() => {
+                self.clipboard.set(b, false);
+                self.toast("copied response body");
+            }
+            Some(_) => self.toast("response body is empty"),
+            None => self.toast("not a request pane"),
+        }
     }
 
     /// `rqst.copy_curl` — copy the active request (in an editor: parse the buffer;

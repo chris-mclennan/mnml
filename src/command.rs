@@ -374,6 +374,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.copy_active_curl(),
         },
         Command {
+            id: "rqst.copy_response_body",
+            title: "HTTP: copy the response body",
+            group: "http",
+            keys: &[],
+            run: |app| app.copy_active_response_body(),
+        },
+        Command {
             id: "rqst.ai_debug",
             title: "HTTP: ask Claude why this request is failing",
             group: "http",

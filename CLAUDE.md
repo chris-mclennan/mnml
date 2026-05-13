@@ -282,8 +282,9 @@ move the selection (wheel too), `c` copies the highlighted node's CSS-ish select
 **`h` draws the live highlight overlay on the page** (`Overlay.highlightNode {nodeId}` — `DOM.enable` + `Overlay.enable` are
 in the initial domain-enable set), `R` re-fetches, `D` (or Esc) leave the panel (Esc also clears any highlight via
 `Overlay.hideHighlight`). After `s` writes the PNG, `open_path_external` hands it to the OS default app (`open` on macOS,
-`xdg-open` on Linux, `cmd /C start` on Windows; best-effort, errors swallowed). One browser pane at a time. *Follow-ups:*
-multiple pages/targets, headless mode.
+`xdg-open` on Linux, `cmd /C start` on Windows; best-effort, errors swallowed). `Target.setDiscoverTargets {discover:true}`
+is also sent on connect so popups / new-tabs show up as `⤴ new tab → url` log lines (`Target.targetCreated` with
+`attached:false`). One browser pane at a time. *Follow-ups:* attach to a picked target (multiple pages), headless mode.
 **Right-click context menus — done:** `src/context_menu.rs` (`ContextMenu{title,items:Vec<MenuItem{label,
 action: MenuAction}>,anchor,selected}`) + `src/ui/context_menu.rs` (a bordered floating list at the click,
 clamped to screen, selected row highlighted). Right-click a tree file → Open / Open in split / Reveal in

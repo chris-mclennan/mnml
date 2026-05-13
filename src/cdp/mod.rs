@@ -166,6 +166,14 @@ pub fn run_session(
             serde_json::json!({}),
         )));
     }
+    // `Target.setDiscoverTargets {discover:true}` so we see popup / new-tab
+    // events (`Target.targetCreated` / `targetInfoChanged`) — the page pane
+    // logs them as new navigations the user can spot.
+    let _ = ws.send(tungstenite::Message::text(rpc(
+        99,
+        "Target.setDiscoverTargets",
+        serde_json::json!({ "discover": true }),
+    )));
     let _ = out.send(CdpEvent::Connected { ws_url });
 
     loop {
