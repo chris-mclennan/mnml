@@ -45,6 +45,17 @@ key "
 expect screen contains "let s = \"\";"
 expect screen lacks "hello"
 
+# Paragraph text objects — dip deletes a paragraph.
+write para.txt "first paragraph\nstill first\n\nsecond paragraph\nstill second\n\nthird"
+open para.txt
+command editor.use_vim
+# Cursor at top, on "first paragraph". dip deletes lines 0-1.
+key d
+key i
+key p
+expect screen contains "second paragraph"
+expect screen lacks "first paragraph"
+
 # Bracket text objects — di( deletes inside parens.
 write parens.txt "call(arg1, arg2)"
 open parens.txt

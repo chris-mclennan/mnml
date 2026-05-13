@@ -378,6 +378,13 @@ impl VimInputHandler {
                             SelectInnerQuote(q)
                         }
                     }
+                    KeyCode::Char('p') => {
+                        if around {
+                            SelectAroundParagraph
+                        } else {
+                            SelectInnerParagraph
+                        }
+                    }
                     // Brackets — vim accepts the open *or* the close as the
                     // text-object char; both mean "the surrounding pair".
                     // (`ib` / `iB` shorthands aren't wired yet — same shape.)

@@ -124,6 +124,10 @@ operator-pending state) plus new `EditOp::SelectInnerWord` / `EditOp::SelectArou
 `editor.rs::apply` from `word_bounds_at`; "around" extends to trailing whitespace, or leading whitespace
 when at end-of-line). **Quote variants** — `i"`, `a"`, `i'`, `a'`, `` i` ``, `` a` `` work too:
 `SelectInnerQuote(char)` / `SelectAroundQuote(char)` ops, with `editor::enclosing_quote_pair_on_line`
+**Paragraph variants** — `ip` / `ap` select the cursor's paragraph (`SelectInnerParagraph` /
+`SelectAroundParagraph`). A paragraph is a maximal run of non-blank lines; `ap` extends to include
+trailing blank lines (vim convention). When the cursor sits on a blank line the range covers that
+blank run instead. New `Editor::paragraph_bounds(around)` helper.
 scanning the cursor's line for unescaped quote pairs and choosing the one that flanks the cursor.
 Restricted to a single line so a multi-line string elsewhere can't fool the scan. **Bracket variants** —
 `i(`, `a(`, `i[`, `a[`, `i{`, `a{`, `i<`, `a<` (close-bracket alias accepted too: `i)` ≡ `i(`).

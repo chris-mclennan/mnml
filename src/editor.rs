@@ -859,6 +859,16 @@ impl Editor {
                     self.cursor = c + close.len_utf8();
                 }
             }
+            SelectInnerParagraph => {
+                let (lo, hi) = self.paragraph_bounds(false);
+                self.anchor = Some(lo);
+                self.cursor = hi;
+            }
+            SelectAroundParagraph => {
+                let (lo, hi) = self.paragraph_bounds(true);
+                self.anchor = Some(lo);
+                self.cursor = hi;
+            }
             SelectAroundWord => {
                 // vim `aw` — `iw` extended to include trailing whitespace,
                 // or (when the word sits at end-of-line) leading whitespace
@@ -1533,6 +1543,45 @@ impl Editor {
             }
         }
         (lo, hi)
+    }
+
+    /// Byte range of the paragraph the cursor sits in. A "paragraph" is a
+    /// maximal run of non-blank lines (blank = empty or whitespace-only).
+    /// When `around` is true, the range also includes the trailing blank
+    /// lines that immediately follow the paragraph (vim's `ap` semantic).
+    /// If the cursor is on a blank line, returns the range of that blank
+    /// run instead (graceful no-op for the operator).
+    fn paragraph_bounds(&self, around: bool) -> (usize, usize) {
+        let n = self.line_count();
+        let cur_line = self.current_line();
+        let is_blank = |l: usize| self.line_str(l).trim().is_empty();
+        // Walk up to the first blank line above (or buffer start).
+        let mut start_line = cur_line;
+        if is_blank(start_line) {
+            // Cursor on a blank line — select the blank run.
+            while start_line > 0 && is_blank(start_line - 1) {
+                start_line -= 1;
+            }
+            let mut end_line = cur_line;
+            while end_line + 1 < n && is_blank(end_line + 1) {
+                end_line += 1;
+            }
+            return (self.line_start(start_line), self.line_end(end_line));
+        }
+        while start_line > 0 && !is_blank(start_line - 1) {
+            start_line -= 1;
+        }
+        let mut end_line = cur_line;
+        while end_line + 1 < n && !is_blank(end_line + 1) {
+            end_line += 1;
+        }
+        if around {
+            // Pull in trailing blank lines.
+            while end_line + 1 < n && is_blank(end_line + 1) {
+                end_line += 1;
+            }
+        }
+        (self.line_start(start_line), self.line_end(end_line))
     }
 
     /// Find the smallest bracket pair surrounding the cursor. `open` /

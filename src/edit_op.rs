@@ -54,6 +54,11 @@ pub enum EditOp {
     /// from the cursor outward.
     SelectInnerBracket(char),
     SelectAroundBracket(char),
+    /// vim paragraph text object: `ip` selects the cursor's paragraph
+    /// (the run of non-blank lines bounded by blank lines or buffer
+    /// edges). `ap` extends to include trailing blank lines.
+    SelectInnerParagraph,
+    SelectAroundParagraph,
     /// vim `gv` — restore the editor's last remembered selection (anchor +
     /// cursor). No-op when no selection has been made yet.
     RestoreLastSelection,
@@ -174,6 +179,8 @@ impl EditOp {
             | SelectAroundQuote(_)
             | SelectInnerBracket(_)
             | SelectAroundBracket(_)
+            | SelectInnerParagraph
+            | SelectAroundParagraph
             | RestoreLastSelection
             | SwapAnchorCursor
             | FindCharOnLine { .. }
