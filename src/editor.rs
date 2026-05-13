@@ -542,6 +542,25 @@ impl Editor {
                 }
                 self.checkpoint();
                 let prev = self.prev_char_boundary(self.cursor);
+                // Smart pair-backspace: when auto-pair is on and the cursor
+                // sits between a paired `()` / `[]` / `""` etc., delete both
+                // chars in one keystroke (so the undo of an auto-pair insert
+                // is a single backspace).
+                let pair_close = self.text[prev..self.cursor]
+                    .chars()
+                    .next()
+                    .and_then(auto_pair_close);
+                let next_byte = self.next_char_boundary(self.cursor);
+                let next_char = self.text[self.cursor..next_byte].chars().next();
+                if self.auto_pair
+                    && let Some(closer) = pair_close
+                    && next_char == Some(closer)
+                {
+                    self.text.replace_range(prev..next_byte, "");
+                    self.cursor = prev;
+                    out.buffer_changed = true;
+                    return;
+                }
                 self.text.replace_range(prev..self.cursor, "");
                 self.cursor = prev;
                 out.buffer_changed = true;
@@ -1366,6 +1385,27 @@ mod tests {
         e.apply(InsertChar('('), 10, &mut c);
         assert_eq!(e.text(), "(name");
         assert_eq!(e.cursor(), 1);
+    }
+
+    #[test]
+    fn smart_pair_backspace_deletes_both() {
+        let (mut e, mut c) = ed("");
+        e.auto_pair = true;
+        e.apply(InsertChar('('), 10, &mut c); // → "()" cursor at 1
+        e.apply(Backspace, 10, &mut c);
+        assert_eq!(e.text(), "");
+        assert_eq!(e.cursor(), 0);
+    }
+
+    #[test]
+    fn pair_backspace_skipped_when_no_pair() {
+        // `(x` — backspace just deletes the `(`, not the trailing `x`.
+        let (mut e, mut c) = ed("(x");
+        e.auto_pair = true;
+        e.apply(MoveLineStart, 10, &mut c);
+        e.apply(MoveRight, 10, &mut c); // cursor between `(` and `x`
+        e.apply(Backspace, 10, &mut c);
+        assert_eq!(e.text(), "x");
     }
 
     #[test]
