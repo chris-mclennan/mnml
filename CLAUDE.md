@@ -109,6 +109,10 @@ toml/css/bash/html/md/c/cpp/rb/java/cs/lua/yaml/scala/ex/hs/php/swift/make/zig/n
 languages so fenced code blocks in markdown / embedded HTML·CSS·JS get highlighted too, and the
 markdown `text.*` captures are in `HIGHLIGHT_NAMES`) + indent guides; hybrid relative line numbers (`[ui] relative_line_numbers`,
 `:set [no]relativenumber`, `view.toggle_relative_numbers` — cursor line absolute, others = distance).
+**Build-version chip** — `build.rs::emit_git_sha` reads `git rev-parse --short=9 HEAD` (+ `git status --porcelain` for a
+`-dirty` suffix) and emits it as `cargo:rustc-env=MNML_GIT_SHA=…`; the statusline reads `env!("MNML_GIT_SHA")` and renders
+it as a small chip at the right edge so the user can tell at a glance which build is running (the `./run.sh restart`
+"is it actually picking up my changes?" question). Falls back to `build-<unix-seconds>` if git isn't available.
 **Session restore** — `[session] restore = true` (default; flip off to disable). On quit (`save_session_on_quit`, called
 from both the `tui` and `headless` loops just before exit) the open editor buffers + their cursors + the **split tree**
 (serialized via `SavedLayout`, leaves keyed by index into `open`) are written to `<workspace>/.mnml/session.json`. On

@@ -175,6 +175,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         )
         .bold(),
     );
+    // Build version chip — embedded by `build.rs` as the short git SHA (with a
+    // `-dirty` suffix if the worktree had uncommitted changes at build time).
+    // Lets the user tell at a glance which build they're looking at, so a stale
+    // `./run.sh` instance doesn't masquerade as the live one.
+    let ver = env!("MNML_GIT_SHA");
+    right.push(Seg::new(
+        format!(" {ver} "),
+        theme::cur().comment,
+        theme::cur().bg_darker,
+    ));
 
     // ── render: left segments + spacer + right segments, with `` / `` transitions ──
     let (mut spans, used) = render_left(&left, arrows, theme::cur().statusline);

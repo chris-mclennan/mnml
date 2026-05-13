@@ -1,12 +1,17 @@
 //! Enumerate the `themes/*.toml` colour schemes and emit a
 //! `THEME_SOURCES: &[(&str, &str)]` table (name → file contents, via
-//! `include_str!`) for `src/ui/theme.rs` to parse at startup.
+//! `include_str!`) for `src/ui/theme.rs` to parse at startup. Also embed
+//! a build version (git short SHA + dirty suffix, with build epoch as a
+//! fallback) into `MNML_GIT_SHA` so the statusline can show "you're running
+//! commit X".
 
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 fn main() {
+    emit_git_sha();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("themes");
     println!("cargo:rerun-if-changed=themes");
 
@@ -34,4 +39,49 @@ fn main() {
 
     let dest = Path::new(&env::var("OUT_DIR").unwrap()).join("theme_sources.rs");
     fs::write(dest, out).expect("write theme_sources.rs");
+}
+
+/// `cargo:rustc-env=MNML_GIT_SHA=<sha>[-dirty]`. Re-run when HEAD moves or the
+/// index changes so the SHA stays fresh. Falls back to the build-epoch seconds
+/// if `git` is unavailable / the repo's missing.
+fn emit_git_sha() {
+    let git_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".git");
+    // These cover branch HEAD moves + index/worktree mutations. (Cargo joins
+    // them against CARGO_MANIFEST_DIR.)
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rerun-if-changed=.git/index");
+    if let Ok(head) = fs::read_to_string(git_dir.join("HEAD"))
+        && let Some(rest) = head.strip_prefix("ref: ").map(str::trim)
+    {
+        println!("cargo:rerun-if-changed=.git/{rest}");
+    }
+
+    let sha = Command::new("git")
+        .args(["rev-parse", "--short=9", "HEAD"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+    let dirty = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| !o.stdout.trim_ascii().is_empty())
+        .unwrap_or(false);
+    let version = match sha {
+        Some(s) if dirty => format!("{s}-dirty"),
+        Some(s) => s,
+        None => {
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            format!("build-{secs}")
+        }
+    };
+    println!("cargo:rustc-env=MNML_GIT_SHA={version}");
 }
