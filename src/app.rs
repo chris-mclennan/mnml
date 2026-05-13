@@ -212,6 +212,72 @@ fn byte_to_row_col(text: &str, byte: usize) -> (usize, usize) {
     (row, col)
 }
 
+/// Workspace grep — try `rg --vimgrep` first (fast, gitignore-aware), fall back
+/// to `git grep -n --column` if `rg` isn't on PATH. Returns picker-ready items
+/// (each `id = "<abs-path>\t<line>\t<col>"` so the existing `Locations` accept
+/// handler jumps the editor cursor) and the tool name that was used (for the
+/// picker title's "rg: …" / "git grep: …" prefix).
+fn grep_workspace(
+    workspace: &std::path::Path,
+    query: &str,
+) -> (Vec<crate::picker::PickerItem>, &'static str) {
+    use crate::picker::PickerItem;
+    use std::process::Command;
+    let parse_rg = |stdout: &str| -> Vec<PickerItem> {
+        let mut out = Vec::new();
+        for line in stdout.lines().take(2000) {
+            // path:line:col:text
+            let mut it = line.splitn(4, ':');
+            let (Some(path), Some(ln), Some(col), Some(text)) =
+                (it.next(), it.next(), it.next(), it.next())
+            else {
+                continue;
+            };
+            let (Ok(ln), Ok(col)) = (ln.parse::<usize>(), col.parse::<usize>()) else {
+                continue;
+            };
+            // 1-based on the wire; Locations stores 0-based.
+            let abs = workspace.join(path);
+            out.push(PickerItem::new(
+                format!(
+                    "{}\t{}\t{}",
+                    abs.display(),
+                    ln.saturating_sub(1),
+                    col.saturating_sub(1)
+                ),
+                format!("{path}:{ln}  {}", text.trim_start()),
+                String::new(),
+            ));
+        }
+        out
+    };
+    if let Ok(o) = Command::new("rg")
+        .arg("--vimgrep")
+        .arg("--no-heading")
+        .arg("--smart-case")
+        .arg(query)
+        .arg(".")
+        .current_dir(workspace)
+        .output()
+        && o.status.success()
+        && !o.stdout.is_empty()
+    {
+        return (parse_rg(&String::from_utf8_lossy(&o.stdout)), "rg");
+    }
+    // git grep fallback (works in any repo even without rg installed).
+    if let Ok(o) = Command::new("git")
+        .args(["grep", "-n", "--column", "-I", "-e"])
+        .arg(query)
+        .current_dir(workspace)
+        .output()
+        && o.status.success()
+        && !o.stdout.is_empty()
+    {
+        return (parse_rg(&String::from_utf8_lossy(&o.stdout)), "git grep");
+    }
+    (Vec::new(), "rg")
+}
+
 /// Hand `path` to the OS's default app — `open <path>` on macOS, `xdg-open` on
 /// Linux, `cmd /C start` on Windows. Best-effort: errors are swallowed (so a
 /// headless / sandboxed env where none of those are available is fine).
@@ -3355,6 +3421,10 @@ impl App {
                 let r = p.input.clone();
                 self.accept_replace(r);
             }
+            crate::prompt::PromptKind::Grep => {
+                let q = p.input.clone();
+                self.run_workspace_grep(q);
+            }
         }
     }
 
@@ -3530,6 +3600,47 @@ impl App {
             }
         }
         self.toast(format!("replaced {n}"));
+    }
+
+    /// `find.grep` (palette) — prompt for a query and grep the workspace.
+    pub fn open_grep_prompt(&mut self) {
+        let seed = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Editor(b)) if b.editor.has_selection() => b
+                .editor
+                .selected_text()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_string(),
+            _ => String::new(),
+        };
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::Grep,
+            "Grep workspace",
+            seed,
+        ));
+    }
+
+    /// Run `rg --vimgrep <q> .` in the workspace (falling back to `git grep`),
+    /// parse `path:line:col:text` lines, and open the results in a `Locations`
+    /// picker.
+    pub fn run_workspace_grep(&mut self, q: String) {
+        let q = q.trim().to_string();
+        if q.is_empty() {
+            return;
+        }
+        let (out, used) = grep_workspace(&self.workspace, &q);
+        let n = out.len();
+        if out.is_empty() {
+            self.toast(format!("{used}: no matches for {q:?}"));
+            return;
+        }
+        let title = format!("{used}: {q}  ({n} matches)");
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Locations,
+            title,
+            out,
+        ));
     }
 
     /// `find.clear` (Esc when find is the only active overlay) — drop the matches.

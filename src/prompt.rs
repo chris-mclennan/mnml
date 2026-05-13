@@ -25,6 +25,9 @@ pub enum PromptKind {
     /// Accept ⇒ replace every match of the active find with the typed text.
     /// Requires a non-empty find state already on the active buffer.
     Replace,
+    /// Accept ⇒ grep the workspace (ripgrep; falls back to `git grep`), open
+    /// the results in a Locations picker.
+    Grep,
 }
 
 #[derive(Debug)]

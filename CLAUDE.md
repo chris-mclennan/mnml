@@ -128,6 +128,10 @@ current one (with `t.bg_dark` fg for readability). The find state is recomputed 
 `Replace N× "<query>" with`). Accept ⇒ `App::accept_replace` builds `EditOp::ReplaceRange` for every match in
 *descending* offset order so earlier byte offsets stay valid, hands them to `Buffer::apply_edit_ops` (which also
 refreshes the find matches + bumps LSP `didChange`), toasts `replaced N`.
+**Workspace grep** — `find.grep` (`Ctrl+Shift+F`) opens a `PromptKind::Grep` prompt (seeded with the selection),
+shells out to `rg --vimgrep --no-heading --smart-case <q> .` (or `git grep -n --column -I -e <q>` if `rg` isn't on
+PATH), parses `path:line:col:text`, and opens the results in the existing `Locations` picker (Enter jumps to the file at
+the matched line). Up to 2000 matches per query.
 **Theme engine** (`src/ui/theme.rs`): a `Theme`
 struct (named UI colours + `base16[16]`) behind an `RwLock`; `theme::cur()` reads it,
 `theme::set(name)` swaps it. Themes are all of NvChad's base46 schemes (~90), converted
