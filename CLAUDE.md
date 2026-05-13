@@ -186,6 +186,12 @@ space/tab per line on `save_to_disk` via `EditOp::ReplaceRange` so undo restores
 char is "empty space" — whitespace, EOF, closer, or punctuator. Typing a close char on top of an auto-inserted one
 skips over it). **Bracket-match highlight** — when the cursor sits on a bracket, paint both the bracket and its match
 with `bg3`; nested correctly via a forward/backward depth-counting scan (capped at 50k chars/side).
+**Highlight word under cursor** — `[ui] highlight_word_under_cursor` (default off; `:set [no]hlword` /
+`:set hlword!` / `view.toggle_highlight_word`). When the cursor is on an identifier (`[A-Za-z0-9_]+`,
+provided by new `editor::word_under_cursor`), every other whole-word case-sensitive occurrence in the
+buffer renders with a subtle `bg2` background tint (the cursor's own occurrence is skipped — no point
+flagging the word you're already on). New `find_word_occurrences(text, word)` does a buffer-wide single
+scan per render (cheap for typical files).
 **Trailing-whitespace highlight** — `[ui] highlight_trailing_ws` (default off; `:set [no]trailing` /
 `:set trailing!` / `view.toggle_highlight_trailing_ws`). Paints the trailing space/tab run on each line
 with a red background so stray whitespace is impossible to miss. Pure-whitespace lines aren't flagged

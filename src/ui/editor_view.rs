@@ -146,6 +146,22 @@ pub fn draw_pane(
         theme::cur().cyan,
         theme::cur().red,
     ];
+    // "Highlight word under cursor" — when on, scan the buffer for every
+    // occurrence of the identifier the cursor sits on (whole-word, case-
+    // sensitive). Stored as `(byte_start, byte_end)` ranges so the render
+    // loop can match cells by their absolute byte offset. Skips the
+    // occurrence the cursor itself is in.
+    let word_match_ranges: Vec<(usize, usize)> = if app.config.ui.highlight_word_under_cursor {
+        let w = buf.editor.word_under_cursor();
+        if w.is_empty() {
+            Vec::new()
+        } else {
+            find_word_occurrences(buf.editor.text(), w)
+        }
+    } else {
+        Vec::new()
+    };
+    let word_match_bg = theme::cur().bg2;
     let sign_color = |k: SignKind| match k {
         SignKind::Added => theme::cur().green,
         SignKind::Modified => theme::cur().blue,
@@ -228,8 +244,15 @@ pub fn draw_pane(
             }
         };
 
-        // Selection columns on this line.
+        // Word-match ranges (in char cols) on this line, converted from the
+        // pre-computed buffer-wide byte ranges. Same shape as the find-match
+        // list; non-cursor cells in these ranges get a subtle bg tint.
         let (ls, le) = buf.editor.line_byte_range(line_no);
+        let word_matches_on_line: Vec<(usize, usize)> = word_match_ranges
+            .iter()
+            .filter(|(s, e)| *s >= ls && *e <= le)
+            .map(|(s, e)| (buf.editor.byte_to_col(*s), buf.editor.byte_to_col(*e)))
+            .collect();
         let (sel_lo, sel_hi, extend_eol) = match selection {
             Some((lo, hi)) if hi > ls && lo <= le => (
                 buf.editor.byte_to_col(lo.clamp(ls, le)),
@@ -295,6 +318,11 @@ pub fn draw_pane(
                 .map(|pair| pair.iter().any(|&(l, k)| l == line_no && k == c))
                 .unwrap_or(false);
             let is_trailing = trailing_start.is_some_and(|s| c >= s && c < n);
+            // "Other occurrence of the word under the cursor" — skip the
+            // range the cursor itself sits in (no point highlighting that one).
+            let in_word_match = word_matches_on_line.iter().any(|&(s, e)| {
+                c >= s && c < e && !(line_no == cur_row && cur_col >= s && cur_col < e)
+            });
             let bg = if in_sel {
                 sel_bg
             } else if is_bracket {
@@ -308,7 +336,13 @@ pub fn draw_pane(
                 match in_match {
                     Some(true) => cur_match_bg,
                     Some(false) => match_bg,
-                    None => base_bg,
+                    None => {
+                        if in_word_match {
+                            word_match_bg
+                        } else {
+                            base_bg
+                        }
+                    }
                 }
             };
             let (ch, mut fg) = if c < n {
@@ -458,6 +492,32 @@ pub fn draw_pane(
 }
 
 /// Color for char column `c`, picking the innermost (last-pushed) covering span.
+/// Byte ranges of every whole-word, case-sensitive occurrence of `word` in
+/// `text`. "Whole word" means the chars immediately before and after the
+/// match aren't `[A-Za-z0-9_]`. Used by the "highlight word under cursor"
+/// render feature — a buffer-wide single scan, cheap enough to do every frame.
+fn find_word_occurrences(text: &str, word: &str) -> Vec<(usize, usize)> {
+    if word.is_empty() || word.len() > text.len() {
+        return Vec::new();
+    }
+    let bytes = text.as_bytes();
+    let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let wlen = word.len();
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    let mut start = 0usize;
+    while let Some(off) = text[start..].find(word) {
+        let s = start + off;
+        let e = s + wlen;
+        let before_ok = s == 0 || !is_id(bytes[s - 1]);
+        let after_ok = e == text.len() || !is_id(bytes[e]);
+        if before_ok && after_ok {
+            out.push((s, e));
+        }
+        start = s + 1; // overlap-safe: step one byte past the start
+    }
+    out
+}
+
 fn syntax_color(spans: &[crate::highlight::ColoredSpan], c: usize) -> Option<Color> {
     spans
         .iter()

@@ -6908,6 +6908,19 @@ impl App {
         self.set_highlight_trailing_ws(!self.config.ui.highlight_trailing_ws);
     }
 
+    /// Toggle "highlight word under cursor" (`:set [no]hlword`).
+    pub fn set_highlight_word_under_cursor(&mut self, on: bool) {
+        self.config.ui.highlight_word_under_cursor = on;
+        self.toast(if on {
+            "highlight word: on"
+        } else {
+            "highlight word: off"
+        });
+    }
+    pub fn toggle_highlight_word_under_cursor(&mut self) {
+        self.set_highlight_word_under_cursor(!self.config.ui.highlight_word_under_cursor);
+    }
+
     /// Toggle CDP headless launch (`:set [no]headless`). Takes effect on the
     /// **next** `browser.open` — an in-flight browser pane is unaffected.
     pub fn set_browser_headless(&mut self, on: bool) {
@@ -7127,6 +7140,12 @@ impl App {
                     self.set_highlight_trailing_ws(false);
                 } else if matches!(opt, "trailing!" | "invtrailing") {
                     self.toggle_highlight_trailing_ws();
+                } else if matches!(opt, "hlword") {
+                    self.set_highlight_word_under_cursor(true);
+                } else if matches!(opt, "nohlword") {
+                    self.set_highlight_word_under_cursor(false);
+                } else if matches!(opt, "hlword!" | "invhlword") {
+                    self.toggle_highlight_word_under_cursor();
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }

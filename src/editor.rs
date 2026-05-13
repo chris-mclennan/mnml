@@ -276,6 +276,37 @@ impl Editor {
     pub fn cursor(&self) -> usize {
         self.cursor
     }
+
+    /// The identifier under the cursor — the maximal run of `[A-Za-z0-9_]`
+    /// chars containing the cursor byte. Empty when the cursor isn't on or
+    /// adjacent to an identifier char. Used by the "highlight word under
+    /// cursor" view feature.
+    pub fn word_under_cursor(&self) -> &str {
+        let bytes = self.text.as_bytes();
+        let len = self.text.len();
+        let cur = self.cursor.min(len);
+        let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+        // Cursor may be one past the last id char (typical insert mode); the
+        // standard editor-word check is "cursor or cursor-1 sits on an id char".
+        if cur == 0 && (cur >= len || !is_id(bytes[0])) {
+            return "";
+        }
+        if cur >= len && (cur == 0 || !is_id(bytes[cur - 1])) {
+            return "";
+        }
+        if cur < len && !is_id(bytes[cur]) && (cur == 0 || !is_id(bytes[cur - 1])) {
+            return "";
+        }
+        let mut start = cur;
+        while start > 0 && is_id(bytes[start - 1]) {
+            start -= 1;
+        }
+        let mut end = cur;
+        while end < len && is_id(bytes[end]) {
+            end += 1;
+        }
+        &self.text[start..end]
+    }
     pub fn set_comment_token(&mut self, token: impl Into<String>) {
         self.comment_token = token.into();
     }
@@ -1652,6 +1683,25 @@ mod tests {
         let (mut e, mut c) = ed("only");
         e.apply(DuplicateLine, 10, &mut c);
         assert_eq!(e.text(), "only\nonly");
+    }
+
+    #[test]
+    fn word_under_cursor_basic() {
+        let (mut e, _) = ed("let foo = bar;\nfoo()");
+        // Cursor at start — on 'l'.
+        assert_eq!(e.word_under_cursor(), "let");
+        // After "let "...
+        e.place_cursor(0, 4);
+        assert_eq!(e.word_under_cursor(), "foo");
+        // On the `=` — empty.
+        e.place_cursor(0, 8);
+        assert_eq!(e.word_under_cursor(), "");
+        // On line 2, cursor at "f" of "foo()".
+        e.place_cursor(1, 0);
+        assert_eq!(e.word_under_cursor(), "foo");
+        // After the open paren — not in a word.
+        e.place_cursor(1, 4);
+        assert_eq!(e.word_under_cursor(), "");
     }
 
     #[test]
