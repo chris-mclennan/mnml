@@ -336,6 +336,10 @@ pub struct App {
     pub focus: Focus,
     pub tree: Tree,
     pub tree_visible: bool,
+    /// Bufferline horizontal scroll — index of the leftmost rendered tab. Auto
+    /// adjusts on every render to keep the active tab visible (the user never
+    /// has to scroll it manually). Reset when the pane count drops past it.
+    pub bufferline_first_visible: usize,
     /// Is the workspace "section" inside the rail expanded? When `false` the
     /// rail shows just the `> WORKSPACE-NAME` header (clickable to expand);
     /// when `true` it shows the header (`v WORKSPACE-NAME`) + the file list.
@@ -450,6 +454,7 @@ impl App {
             focus: Focus::Tree,
             tree,
             tree_visible: true,
+            bufferline_first_visible: 0,
             // VS-Code-style: the rail is shown with its workspace section
             // expanded by default. The last session's choice overrides this
             // in `try_restore_session`.

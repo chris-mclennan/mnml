@@ -32,9 +32,77 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let cap_w = cap_label.chars().count() as u16;
     let tabs_max_x = area.x + area.width.saturating_sub(cap_w);
 
+    // Pre-compute each tab's display width so we can scroll the bufferline to
+    // keep the active tab on screen (and show `‹`/`›` overflow indicators).
+    // Each tab is ` <icon> <name> <badge> ` (4 cells of chrome + name); a 1-cell
+    // separator goes between tabs.
+    let widths: Vec<u16> = app
+        .panes
+        .iter()
+        .map(|p| 4u16 + p.title().chars().count() as u16 + 1u16)
+        .collect();
+    let sep = 1u16; // cell between tabs (rendered as the bg color)
+    // Reserve 2 cells on each side of the tab strip for the overflow chevrons
+    // when there's content past the edge.
+    let overflow_l = 1u16;
+    let overflow_r = 1u16;
+    let inner_left = area.x + overflow_l;
+    let inner_right = tabs_max_x.saturating_sub(overflow_r);
+    let inner_width = inner_right.saturating_sub(inner_left);
+
+    // Adjust `bufferline_first_visible` so it (a) doesn't run off the end of
+    // the pane list, (b) includes the active tab, (c) is the smallest start
+    // that keeps the active tab visible.
+    if app.bufferline_first_visible >= app.panes.len() {
+        app.bufferline_first_visible = app.panes.len().saturating_sub(1);
+    }
+    if let Some(active) = app.active {
+        if active < app.bufferline_first_visible {
+            app.bufferline_first_visible = active;
+        } else {
+            // Walk back from `active` while the cumulative width fits.
+            let mut used = 0u16;
+            let mut first = active;
+            loop {
+                let w = widths[first] + if first > 0 { sep } else { 0 };
+                if used + w > inner_width {
+                    first += 1;
+                    break;
+                }
+                used += w;
+                if first == 0 {
+                    break;
+                }
+                first -= 1;
+            }
+            if app.bufferline_first_visible < first {
+                app.bufferline_first_visible = first;
+            }
+        }
+    }
+    let first_visible = app.bufferline_first_visible;
+
     let mut spans: Vec<Span> = Vec::new();
-    let mut x = area.x;
-    for (i, pane) in app.panes.iter().enumerate() {
+    // Left overflow chevron — only painted if there's a tab off the left edge.
+    let left_chev_used = if first_visible > 0 {
+        spans.push(Span::styled(
+            "‹",
+            Style::default()
+                .fg(theme::cur().blue)
+                .bg(theme::cur().bg_darker),
+        ));
+        1
+    } else {
+        spans.push(Span::styled(
+            " ",
+            Style::default().bg(theme::cur().bg_darker),
+        ));
+        1
+    };
+    let mut x = area.x + left_chev_used as u16;
+    let mut last_drawn: usize = first_visible;
+    let mut overflow_right = false;
+    for (i, pane) in app.panes.iter().enumerate().skip(first_visible) {
         let active = app.active == Some(i);
         let name = pane.title();
         let (glyph, icon_color) = match pane {
@@ -59,9 +127,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // ` <icon> <name> <badge> `
         let label = format!(" {glyph} {name} {badge} ");
         let cells = label.chars().count() as u16;
-        if x + cells > tabs_max_x {
+        if x + cells > inner_right {
+            overflow_right = true;
             break;
         }
+        last_drawn = i;
         let (bg, name_fg, badge_fg) = if active {
             (
                 theme::cur().bg,
@@ -138,13 +208,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ));
         x += "  no buffers ".chars().count() as u16;
     }
-    // fill the gap up to the cap
-    if x < tabs_max_x {
+    // Are there tabs past the right edge? (Either we broke out of the render
+    // loop, or there are tabs after the last one we drew that we never reached.)
+    let more_right = overflow_right || (last_drawn + 1 < app.panes.len());
+    // fill the gap up to the cap, then the right overflow chevron (or a blank
+    // cell when nothing's past the edge).
+    let fill_end = inner_right;
+    if x < fill_end {
         spans.push(Span::styled(
-            " ".repeat((tabs_max_x - x) as usize),
+            " ".repeat((fill_end - x) as usize),
             Style::default().bg(theme::cur().bg_darker),
         ));
     }
+    spans.push(Span::styled(
+        if more_right { "›" } else { " " },
+        Style::default()
+            .fg(theme::cur().blue)
+            .bg(theme::cur().bg_darker),
+    ));
+    let _ = last_drawn;
     // right cap
     spans.push(Span::styled(
         cap_label,
