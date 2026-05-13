@@ -3449,6 +3449,10 @@ impl App {
                 let r = p.input.clone();
                 self.run_grep_replace(r);
             }
+            crate::prompt::PromptKind::GotoLine => {
+                let s = p.input.trim().to_string();
+                self.goto_line_str(&s);
+            }
         }
     }
 
@@ -3880,6 +3884,38 @@ impl App {
         self.toast(parts.join(" · "));
         // Refresh the grep pane against the new state.
         self.rerun_active_grep();
+    }
+
+    /// `editor.goto_line` (`Ctrl+G`) — prompt for a 1-based line number. The
+    /// input starts empty (a seed would force the user to clear it first
+    /// 90% of the time); the title shows the current line as a reference.
+    pub fn open_goto_line_prompt(&mut self) {
+        let title = match self.active_editor() {
+            Some(b) => {
+                let (row, _) = b.editor.row_col();
+                format!("Go to line  (currently {})", row + 1)
+            }
+            None => "Go to line".to_string(),
+        };
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::GotoLine,
+            title,
+        ));
+    }
+
+    /// Move the active editor's cursor to the 1-based line number parsed from
+    /// `s` (clamped to the buffer). Empty / non-numeric input is a no-op
+    /// (the prompt accept always trims, but it might still be empty).
+    pub fn goto_line_str(&mut self, s: &str) {
+        let Ok(n) = s.parse::<usize>() else {
+            if !s.is_empty() {
+                self.toast(format!("not a number: {s:?}"));
+            }
+            return;
+        };
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(n.saturating_sub(1), 0);
+        }
     }
 
     /// `find.clear` (Esc when find is the only active overlay) — drop the matches.

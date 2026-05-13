@@ -181,6 +181,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.clear_find(),
         },
         Command {
+            id: "editor.goto_line",
+            title: "Go to line… (1-based)",
+            group: "editor",
+            keys: &["ctrl+g"],
+            run: |app| app.open_goto_line_prompt(),
+        },
+        Command {
             id: "focus.cycle",
             title: "Cycle focus (tree ⇄ editor)",
             group: "view",

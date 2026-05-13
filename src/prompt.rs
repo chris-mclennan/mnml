@@ -32,6 +32,9 @@ pub enum PromptKind {
     /// file it matched) with the typed text. ASCII case-insensitive, like the
     /// in-buffer find/replace.
     GrepReplace,
+    /// Accept ⇒ jump the active editor's cursor to the typed 1-based line
+    /// number. (`Ctrl+G` — standard-mode equivalent of vim's `:N`.)
+    GotoLine,
 }
 
 #[derive(Debug)]
