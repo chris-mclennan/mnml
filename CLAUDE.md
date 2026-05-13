@@ -213,11 +213,15 @@ overlay (`PromptKind::AiAsk`). Results stream in via `App.ai_chan` / `App::tick`
 loop polls at 40 ms while a `claude -p` run is in flight (`App::has_pending_ai`). In the AI pane:
 `r` re-asks (fresh session), `x` cancels an in-flight run
 (`App::cancel_active_ai` → `cancel` flag → worker kills `claude -p`, replies `Failed("cancelled")`),
-Esc → tree, **`a` applies the suggested code** — for a `fix`/`refactor` action the source range is
-recorded as the pane's `crate::ai::ApplyTarget{path,start,end}`; `App::apply_ai_suggestion` extracts
-the first fenced code block (`crate::ai::first_code_block`) and `ReplaceRange`s it over that range
-(offsets clamped to the buffer's current len, edit left dirty — review & undo to revert), and
-**`c` promotes it to an interactive Claude Code pane** — `claude --resume <session_id>` in a `Pane::Pty` below, with
+Esc → tree, **`a` applies the suggested code (two-phase)** — for a `fix`/`refactor` action the source
+range is recorded as the pane's `crate::ai::ApplyTarget{path,start,end}`; the *first* `a` extracts the
+answer's first fenced code block (`crate::ai::first_code_block`), diffs it against the live range
+(`crate::ai::line_diff` — common prefix/suffix trimmed to ±3 context, the middle as `-`/`+`), and stages
+it as `AiPane.pending_apply` (the pane renders the diff under a `── proposed change ──` header); the
+*second* `a` (`App::do_apply_suggestion`) `ReplaceRange`s it over the range (offsets clamped to the
+buffer's current len, edit left dirty — review & undo to revert); `r` (re-ask) discards a staged
+suggestion. The `.` key in a request pane is the sibling `App::ai_debug_request` (request + response →
+`claude -p`). **`c` promotes a `Pane::Ai` to an interactive Claude Code pane** — `claude --resume <session_id>` in a `Pane::Pty` below, with
 the conversation already loaded (so a quick `-p` answer isn't a dead end — you can drill in /
 let it apply edits). **JSONL session tail — done:** `src/ai/transcript.rs` reads
 `~/.claude/projects/<dashed-cwd>/<session-id>.jsonl` into `Vec<Turn>` (user / assistant / thinking
@@ -227,9 +231,7 @@ bytes past `last_len` (up to the last complete line) when the `.jsonl` grows, fu
 shrank; `ui/ai_view.rs` renders the turns (assistant text as markdown). `claude` panes are spawned with a
 known `--session-id` (`BinaryProfile.session_id`), so `ai.session_view` (`<leader>a m`) opens a
 mirror for the active `claude`/Ai pane; `c`-promoting a `Pane::Ai` also flips that pane into a
-live mirror of the (now-interactive) session. `G` follows the bottom. *Follow-ups:* show the
-applied suggestion as a reviewable diff (vs the current straight-replace); request-debug (`Ctrl+.`
-on a failing request → `claude -p`).
+live mirror of the (now-interactive) session. `G` follows the bottom.
 **Playwright track — runner + results tree + trace pane done:** `src/playwright/mod.rs` runs `npx playwright test
 --reporter=json --trace=retain-on-failure [args]` on a worker thread (`App.tests_chan` / `App::tick`), parses the JSON report
 into a flat `TestRun{tests: Vec<TestCase{title,suite_path,file,line,status,duration_ms,error,trace_path}>}` (ANSI

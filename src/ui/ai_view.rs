@@ -54,6 +54,8 @@ pub fn draw(
         "  live mirror · c open interactive pane · G follow · esc → tree".into()
     } else if matches!(ai.state, AiState::Asking | AiState::Streaming(_)) {
         "  x cancel · esc → tree".into()
+    } else if ai.pending_apply.is_some() {
+        "  a confirm apply · r re-ask (discards) · c continue in Claude Code · esc → tree".into()
     } else if ai.target.is_some() && matches!(ai.state, AiState::Done(_)) {
         "  r re-ask · a apply suggestion · c continue in Claude Code · esc → tree".into()
     } else {
@@ -98,6 +100,35 @@ pub fn draw(
             for turn in turns {
                 render_turn(turn, &t, body, dim, &mut rows);
             }
+        }
+    }
+
+    // ── staged-suggestion diff preview (first `a` stages; second applies) ──
+    if let Some(p) = &ai.pending_apply {
+        rows.push(Line::from(Span::styled(String::new(), body)));
+        rows.push(Line::from(Span::styled(
+            format!(
+                "  ── proposed change to {} ──",
+                p.target.path.file_name().map_or_else(
+                    || p.target.path.display().to_string(),
+                    |n| n.to_string_lossy().into_owned()
+                )
+            ),
+            Style::default()
+                .fg(t.purple)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        )));
+        for dl in &p.diff {
+            let (mark, text, color) = match dl {
+                crate::ai::DiffLine::Ctx(s) => (" ", s, t.comment),
+                crate::ai::DiffLine::Del(s) => ("-", s, t.red),
+                crate::ai::DiffLine::Add(s) => ("+", s, t.green),
+            };
+            rows.push(Line::from(Span::styled(
+                format!("  {mark} {text}"),
+                Style::default().fg(color).bg(t.bg_dark),
+            )));
         }
     }
 

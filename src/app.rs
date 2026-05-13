@@ -1507,6 +1507,7 @@ impl App {
             a.state = crate::ai::AiState::Asking;
             a.scroll = 0;
             a.cancel = cancel;
+            a.pending_apply = None;
         }
     }
 
@@ -1696,12 +1697,21 @@ impl App {
         }
     }
 
-    /// `a` in a Done `Pane::Ai` — apply the first fenced code block from the
-    /// answer over the range the AI was asked about (offsets clamped to the
-    /// buffer's current length). The edit is left dirty: review it, undo to
-    /// revert. No-op without a recorded target / a code block in the answer.
+    /// `a` in a Done `Pane::Ai`: first press *stages* the first fenced code block
+    /// from the answer against the range the AI was asked about — building a diff
+    /// preview the pane renders. A second `a` applies it (a `ReplaceRange`, left
+    /// dirty: review, undo to revert). `r` (re-ask) discards a staged suggestion.
+    /// No-op without a recorded target / a code block in the answer.
     pub fn apply_ai_suggestion(&mut self) {
         let Some(cur) = self.active else { return };
+        // If a suggestion is already staged, this press applies it.
+        if let Some(Pane::Ai(a)) = self.panes.get_mut(cur)
+            && let Some(p) = a.pending_apply.take()
+        {
+            self.do_apply_suggestion(p.target, p.code);
+            return;
+        }
+        // Otherwise stage it: parse target + code, diff against the live range.
         let parsed: Result<(crate::ai::ApplyTarget, String), &'static str> =
             match self.panes.get(cur) {
                 Some(Pane::Ai(a)) => match (&a.target, &a.state) {
@@ -1726,6 +1736,36 @@ impl App {
                 return;
             }
         };
+        // The current text of the target range (from the open editor, or disk).
+        let old = self
+            .panes
+            .iter()
+            .find_map(|p| match p {
+                Pane::Editor(b) if b.is_at(&target.path) => Some(b.editor.text().to_string()),
+                _ => None,
+            })
+            .or_else(|| std::fs::read_to_string(&target.path).ok())
+            .unwrap_or_default();
+        let old_range = {
+            let s = target.start.min(old.len());
+            let e = target.end.min(old.len()).max(s);
+            old[s..e].to_string()
+        };
+        if old_range == code {
+            self.toast("the suggestion matches what's already there");
+            return;
+        }
+        let diff = crate::ai::line_diff(&old_range, &code);
+        if let Some(Pane::Ai(a)) = self.panes.get_mut(cur) {
+            a.pending_apply = Some(crate::ai::PendingApply { target, code, diff });
+            a.scroll = usize::MAX; // show the preview at the bottom
+        }
+        self.toast("review the diff below — press a again to apply (r re-asks)");
+    }
+
+    /// Actually splice the AI suggestion's `code` over `target` in the editor
+    /// (opening the file if needed), left dirty.
+    fn do_apply_suggestion(&mut self, target: crate::ai::ApplyTarget, code: String) {
         if !self
             .panes
             .iter()

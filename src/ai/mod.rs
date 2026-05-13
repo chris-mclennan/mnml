@@ -16,9 +16,10 @@
 //! also be mirrored as a rendered transcript ([`transcript`], [`AiState::Live`]).
 //!
 //! An on-selection `fix`/`refactor` answer carries an [`ApplyTarget`] (the source
-//! file + byte range it was asked about); `a` in the pane extracts the answer's
-//! first fenced code block ([`first_code_block`]) and writes it back over that
-//! range (left dirty for review).
+//! file + byte range it was asked about); the first `a` in the pane extracts the
+//! answer's first fenced code block ([`first_code_block`]), diffs it against the
+//! live range ([`line_diff`] → a [`PendingApply`] the pane previews), and a second
+//! `a` writes it back over that range (left dirty for review).
 //!
 //! An in-flight `-p` run can be cancelled (`x` in the pane): the worker uses
 //! [`stream_to_channel`] / [`one_shot_cancellable`], which poll an `AtomicBool`
@@ -28,8 +29,6 @@
 //! [`AiMsg::Delta`]s while the run is in flight (the pane shows them as they
 //! arrive — [`AiState::Streaming`]), then a final [`AiMsg::Done`] with the clean
 //! trimmed answer (or [`AiMsg::Failed`]).
-//!
-//! Follow-ups: show the applied suggestion as a reviewable diff before committing it.
 
 pub mod transcript;
 
@@ -76,6 +75,84 @@ pub fn first_code_block(md: &str) -> Option<String> {
     in_block.then(|| out.trim_end_matches('\n').to_string())
 }
 
+/// One line of a [`line_diff`] preview.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiffLine {
+    /// Unchanged context (may be the synthetic `… N lines …` elision).
+    Ctx(String),
+    /// A removed line.
+    Del(String),
+    /// An added line.
+    Add(String),
+}
+
+/// A minimal line diff `old` → `new`: trim the common prefix/suffix lines (keep
+/// up to `CTX` of each, with an elision marker if more were dropped), then emit
+/// the changed middle as `Del`s then `Add`s. Good enough for previewing an AI
+/// suggestion over a selection (it's not a real LCS — two distant edit regions
+/// collapse into one block, which is fine here).
+pub fn line_diff(old: &str, new: &str) -> Vec<DiffLine> {
+    const CTX: usize = 3;
+    let o: Vec<&str> = old.split('\n').collect();
+    let n: Vec<&str> = new.split('\n').collect();
+    let mut pre = 0;
+    while pre < o.len() && pre < n.len() && o[pre] == n[pre] {
+        pre += 1;
+    }
+    let mut suf = 0;
+    while suf < o.len() - pre && suf < n.len() - pre && o[o.len() - 1 - suf] == n[n.len() - 1 - suf]
+    {
+        suf += 1;
+    }
+    let mut out: Vec<DiffLine> = Vec::new();
+    let push_ctx = |lines: &[&str], from_end: bool, out: &mut Vec<DiffLine>| {
+        if lines.len() <= CTX {
+            for l in lines {
+                out.push(DiffLine::Ctx(l.to_string()));
+            }
+        } else if from_end {
+            out.push(DiffLine::Ctx(format!(
+                "… {} unchanged lines …",
+                lines.len() - CTX
+            )));
+            for l in &lines[lines.len() - CTX..] {
+                out.push(DiffLine::Ctx(l.to_string()));
+            }
+        } else {
+            for l in &lines[..CTX] {
+                out.push(DiffLine::Ctx(l.to_string()));
+            }
+            out.push(DiffLine::Ctx(format!(
+                "… {} unchanged lines …",
+                lines.len() - CTX
+            )));
+        }
+    };
+    if pre > 0 {
+        // The leading context is the *suffix* of the common-prefix block.
+        push_ctx(&o[..pre], true, &mut out);
+    }
+    for l in &o[pre..o.len() - suf] {
+        out.push(DiffLine::Del(l.to_string()));
+    }
+    for l in &n[pre..n.len() - suf] {
+        out.push(DiffLine::Add(l.to_string()));
+    }
+    if suf > 0 {
+        push_ctx(&o[o.len() - suf..], false, &mut out);
+    }
+    out
+}
+
+/// A pending "apply this AI suggestion" awaiting confirmation: where it goes +
+/// the new code + the preview diff (`a` again applies; `r` re-ask clears it).
+#[derive(Debug, Clone)]
+pub struct PendingApply {
+    pub target: ApplyTarget,
+    pub code: String,
+    pub diff: Vec<DiffLine>,
+}
+
 /// The `Pane::Ai` payload — either a `claude -p` one-shot (+ its answer) or a
 /// live mirror of a Claude Code session transcript.
 pub struct AiPane {
@@ -94,6 +171,9 @@ pub struct AiPane {
     /// For an on-selection `fix`/`refactor`: where the suggested code can be
     /// applied back (`a` in the pane). `None` for explain / free-text asks / etc.
     pub target: Option<ApplyTarget>,
+    /// First `a` stages the suggestion here (with a diff preview); a second `a`
+    /// applies it. Cleared on apply / re-ask.
+    pub pending_apply: Option<PendingApply>,
     /// Set this to ask an in-flight `claude -p` worker to kill its child and
     /// bail (`x` in the pane while `Asking`). Replaced on each re-ask.
     pub cancel: Arc<AtomicBool>,
@@ -133,6 +213,7 @@ impl AiPane {
             state: AiState::Asking,
             scroll: 0,
             target: None,
+            pending_apply: None,
             cancel,
         }
     }
@@ -154,6 +235,7 @@ impl AiPane {
             },
             scroll: usize::MAX, // start at the bottom (newest)
             target: None,
+            pending_apply: None,
             cancel: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -475,6 +557,46 @@ mod tests {
         assert!(
             matches!(settle(false, false, b"", b""), AiMsg::Failed(m) if m == "`claude -p` failed")
         );
+    }
+
+    #[test]
+    fn line_diff_trims_common_prefix_and_suffix() {
+        use DiffLine::*;
+        // A change in the middle, short context kept verbatim.
+        let d = line_diff("a\nb\nOLD\nc\nd", "a\nb\nNEW1\nNEW2\nc\nd");
+        assert_eq!(
+            d,
+            vec![
+                Ctx("a".into()),
+                Ctx("b".into()),
+                Del("OLD".into()),
+                Add("NEW1".into()),
+                Add("NEW2".into()),
+                Ctx("c".into()),
+                Ctx("d".into()),
+            ]
+        );
+        // Pure append: no Del, just the new tail.
+        assert_eq!(
+            line_diff("a\nb", "a\nb\nc"),
+            vec![Ctx("a".into()), Ctx("b".into()), Add("c".into())]
+        );
+        // Long leading context is elided down to 3 lines (+ a marker).
+        let d = line_diff("1\n2\n3\n4\n5\nX", "1\n2\n3\n4\n5\nY");
+        assert_eq!(d[0], Ctx("… 2 unchanged lines …".into()));
+        assert_eq!(
+            &d[1..],
+            &[
+                Ctx("3".into()),
+                Ctx("4".into()),
+                Ctx("5".into()),
+                Del("X".into()),
+                Add("Y".into())
+            ]
+        );
+        // Identical input ⇒ nothing changed (all context, no Del/Add).
+        let d = line_diff("same\ntext", "same\ntext");
+        assert!(d.iter().all(|l| matches!(l, Ctx(_))));
     }
 
     #[test]
