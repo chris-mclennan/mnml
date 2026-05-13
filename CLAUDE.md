@@ -134,7 +134,10 @@ row opens a per-row context menu (`open_git_rail_context_menu`) — branch: Chec
 Delete <name>… (the current branch only gets "New branch from here…"); worktree: Open shell here / Reveal in Finder /
 Copy path / Remove worktree… (the current worktree is non-removable). Delete + remove go through a "type the name to
 confirm" prompt (`PromptKind::GitDeleteBranch` / `GitWorktreeRemove`, the rail's confirm idiom); on confirm,
-`branch::delete_branch` / `branch::worktree_remove` shell out to `git branch -D` / `git worktree remove`. Section expand
+`branch::delete_branch` / `branch::worktree_remove` shell out to `git branch -D` / `git worktree remove`. "New branch
+from here…" captures the source ref via `App.pending_branch_source` and the prompt title shows
+`New branch name (off <source>)`; on accept `branch::create_from` shells out to `git checkout -b <new> <source>`
+(the bare `git.new_branch` command still branches off HEAD). Section expand
 state (`git_section_expanded`) persisted in `session.json`. Click on the `> GIT` header toggles it
 (`toggle_git_section_expanded`) and parks the rail's keyboard on the git section.
 **Drag-to-resize the rail** — the rail's right-edge cell is a draggable handle: mouse-down + drag adjusts

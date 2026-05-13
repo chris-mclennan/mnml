@@ -696,6 +696,10 @@ pub struct App {
     /// it; `find.toggle_regex` flips it AND updates any open find state on
     /// the active buffer.
     pub find_regex_default: bool,
+    /// Branch / ref to branch off of when the NewBranch prompt's accept lands.
+    /// `None` ⇒ branch from HEAD (the bare `git.new_branch` command); `Some` ⇒
+    /// branch from this ref (the git-rail's "New branch from here…" menu).
+    pending_branch_source: Option<String>,
     /// Branch name awaiting the "type the name to confirm" prompt that the
     /// git-rail's branch right-click menu opens (→ `git branch -D`).
     pending_delete_branch: Option<String>,
@@ -823,6 +827,7 @@ impl App {
             pending_code_action_path: None,
             pending_outline: false,
             find_regex_default: false,
+            pending_branch_source: None,
             pending_delete_branch: None,
             pending_worktree_remove: None,
             pending_fs_action: None,
@@ -4742,6 +4747,7 @@ impl App {
         self.pending_fs_action = None;
         self.pending_delete_branch = None;
         self.pending_worktree_remove = None;
+        self.pending_branch_source = None;
     }
     pub fn prompt_accept(&mut self) {
         let Some(p) = self.prompt.take() else { return };
@@ -5767,6 +5773,8 @@ impl App {
     }
     /// Open the "new branch name" prompt; accept ⇒ `git checkout -b <name>`.
     pub fn open_new_branch_prompt(&mut self) {
+        // Bare `git.new_branch` — no source, off HEAD.
+        self.pending_branch_source = None;
         self.prompt = Some(crate::prompt::Prompt::new(
             crate::prompt::PromptKind::NewBranch,
             "New branch name (off current HEAD)",
@@ -5776,10 +5784,21 @@ impl App {
         let name = name.trim();
         if name.is_empty() {
             self.toast("branch creation cancelled (empty name)");
+            self.pending_branch_source = None;
             return;
         }
-        match crate::git::branch::create(&self.workspace, name) {
-            Ok(()) => self.after_checkout(name),
+        let source = self.pending_branch_source.take();
+        let result = match &source {
+            Some(s) => crate::git::branch::create_from(&self.workspace, name, s),
+            None => crate::git::branch::create(&self.workspace, name),
+        };
+        match result {
+            Ok(()) => {
+                if let Some(s) = source {
+                    self.toast(format!("created {name} off {s}"));
+                }
+                self.after_checkout(name);
+            }
             Err(e) => self.toast(format!("git checkout -b: {e}")),
         }
     }
@@ -6831,11 +6850,12 @@ impl App {
     /// [`Self::open_new_branch_prompt`] already does this off `HEAD`; here we
     /// just stash the source branch and reuse that prompt — the user can
     /// switch first if they want a different base.
-    pub fn git_new_branch_from(&mut self, _source: String) {
-        // First cut: same as `git.new_branch` — `git checkout -b` from `HEAD`.
-        // Branching from an arbitrary ref is a `git branch <new> <source>` +
-        // checkout — leave that for a follow-up so this commit stays bounded.
-        self.open_new_branch_prompt();
+    pub fn git_new_branch_from(&mut self, source: String) {
+        self.pending_branch_source = Some(source.clone());
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::NewBranch,
+            format!("New branch name (off {source})"),
+        ));
     }
     /// Right-click context-menu action: prompt to confirm, then `git branch -D`.
     pub fn git_delete_branch_prompt(&mut self, name: String) {

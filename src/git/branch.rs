@@ -139,6 +139,13 @@ pub fn checkout_track(workspace: &Path, remote: &str) -> Result<(), String> {
 pub fn create(workspace: &Path, name: &str) -> Result<(), String> {
     run(workspace, &["checkout", "-b", name])
 }
+/// `git checkout -b <name> <source>` — create + switch to a new branch off the
+/// named source ref (a branch, tag, or commit). Used by the git-rail's
+/// "New branch from here…" so the user can pick a base without first checking
+/// it out.
+pub fn create_from(workspace: &Path, name: &str, source: &str) -> Result<(), String> {
+    run(workspace, &["checkout", "-b", name, source])
+}
 /// `git branch -D <name>` — force-delete a local branch (the rail's confirm
 /// prompt already gated this on a name match; soft-delete would refuse
 /// unmerged branches and surface as a generic git error).
@@ -154,6 +161,24 @@ pub fn worktree_remove(workspace: &Path, path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
+
+    fn init_repo() -> tempfile::TempDir {
+        let d = tempfile::tempdir().unwrap();
+        for args in [
+            &["init", "-q"][..],
+            &["config", "user.email", "t@example.com"][..],
+            &["config", "user.name", "Test"][..],
+            &["config", "commit.gpgsign", "false"][..],
+            &["config", "init.defaultBranch", "main"][..],
+        ] {
+            let _ = Command::new("git")
+                .args(args)
+                .current_dir(d.path())
+                .output();
+        }
+        d
+    }
 
     #[test]
     fn empty_on_non_repo() {
@@ -162,5 +187,35 @@ mod tests {
         assert!(remote_branches(d.path()).is_empty());
         assert!(worktrees(d.path()).is_empty());
         assert!(current(d.path()).is_none());
+    }
+
+    #[test]
+    fn create_from_branches_off_named_source() {
+        let d = init_repo();
+        // Seed an initial commit on `main`.
+        std::fs::write(d.path().join("a.txt"), "alpha").unwrap();
+        let _ = Command::new("git")
+            .args(["add", "."])
+            .current_dir(d.path())
+            .output();
+        let _ = Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(d.path())
+            .output();
+        // Branch `feature/x` off of HEAD via `create`.
+        assert!(create(d.path(), "feature/x").is_ok());
+        // Add a commit on feature/x.
+        std::fs::write(d.path().join("a.txt"), "alpha2").unwrap();
+        let _ = Command::new("git")
+            .args(["commit", "-am", "feat"])
+            .current_dir(d.path())
+            .output();
+        // Now branch off `main` via `create_from`.
+        let _ = Command::new("git")
+            .args(["checkout", "main"])
+            .current_dir(d.path())
+            .output();
+        assert!(create_from(d.path(), "hotfix/y", "main").is_ok());
+        assert_eq!(current(d.path()).as_deref(), Some("hotfix/y"));
     }
 }
