@@ -5,7 +5,70 @@
 
 use std::path::PathBuf;
 
-use super::trace::TraceEvent;
+use super::trace::{EventKind, TraceEvent};
+
+/// Per-kind visibility mask for the trace timeline. Every bit defaults to
+/// `true` (show all rows); `a` / `c` / `e` / `s` keys flip individual bits;
+/// `E` is the legacy "errors only" preset (everything off but `errors`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TraceKindFilter {
+    pub actions: bool,
+    pub console: bool,
+    pub errors: bool,
+    pub stdio: bool,
+}
+
+impl Default for TraceKindFilter {
+    fn default() -> Self {
+        TraceKindFilter {
+            actions: true,
+            console: true,
+            errors: true,
+            stdio: true,
+        }
+    }
+}
+
+impl TraceKindFilter {
+    pub fn shows(&self, kind: EventKind) -> bool {
+        match kind {
+            EventKind::Action => self.actions,
+            EventKind::Console => self.console,
+            EventKind::Error => self.errors,
+            EventKind::Stdio => self.stdio,
+        }
+    }
+    pub fn toggle(&mut self, kind: EventKind) {
+        match kind {
+            EventKind::Action => self.actions = !self.actions,
+            EventKind::Console => self.console = !self.console,
+            EventKind::Error => self.errors = !self.errors,
+            EventKind::Stdio => self.stdio = !self.stdio,
+        }
+    }
+    /// `E` in the pane — preset: hide everything except errors.
+    pub fn errors_only(&mut self) {
+        *self = TraceKindFilter {
+            actions: false,
+            console: false,
+            errors: true,
+            stdio: false,
+        };
+    }
+    pub fn show_all(&mut self) {
+        *self = TraceKindFilter::default();
+    }
+    /// One-line header summary — `actions·console·errors·stdio` with the
+    /// hidden ones dim. (Caller styles them; this is just the wire text.)
+    pub fn header_chips(&self) -> [(&'static str, bool); 4] {
+        [
+            ("actions", self.actions),
+            ("console", self.console),
+            ("errors", self.errors),
+            ("stdio", self.stdio),
+        ]
+    }
+}
 
 pub struct TracePane {
     /// The test this trace belongs to (for the tab / header).
@@ -17,10 +80,10 @@ pub struct TracePane {
     pub selected: usize,
     /// Top visible row.
     pub scroll: usize,
-    /// If `true`, the renderer hides rows whose `error` is `None`. Toggled
-    /// with `e` in the pane. The selection still indexes the raw `events`
-    /// vector — `visible_indices` is the filtered mapping.
-    pub errors_only: bool,
+    /// Per-kind visibility filter. Toggle bits with `a` / `c` / `e` / `s`;
+    /// preset "errors only" with `E`. The selection still indexes the raw
+    /// `events` vector — `visible_indices` is the filtered mapping.
+    pub filter: TraceKindFilter,
 }
 
 impl TracePane {
@@ -31,42 +94,55 @@ impl TracePane {
             events,
             selected: 0,
             scroll: 0,
-            errors_only: false,
+            filter: TraceKindFilter::default(),
         }
     }
 
-    /// Indices into `events` that the renderer should draw, in order. When
-    /// `errors_only` is on, only rows with `error.is_some()`. Otherwise all.
+    /// Indices into `events` that the renderer should draw, in order. Walks
+    /// the events and keeps only those whose `kind` is enabled in `filter`.
     pub fn visible_indices(&self) -> Vec<usize> {
-        if self.errors_only {
-            self.events
-                .iter()
-                .enumerate()
-                .filter(|(_, e)| e.error.is_some())
-                .map(|(i, _)| i)
-                .collect()
-        } else {
-            (0..self.events.len()).collect()
-        }
+        self.events
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| self.filter.shows(e.kind))
+            .map(|(i, _)| i)
+            .collect()
     }
 
-    /// `e` in the pane — flip the filter. If turning it on hides the current
-    /// selection, snap to the first error (or to 0 if none).
-    pub fn toggle_errors_only(&mut self) {
-        self.errors_only = !self.errors_only;
-        if self.errors_only
-            && self
-                .events
-                .get(self.selected)
-                .is_none_or(|e| e.error.is_none())
-        {
-            self.selected = self
-                .events
-                .iter()
-                .position(|e| e.error.is_some())
-                .unwrap_or(0);
-        }
+    /// Toggle one kind on/off in the filter. If the current selection falls
+    /// out of view, snap to the first still-visible row.
+    pub fn toggle_kind(&mut self, kind: EventKind) {
+        self.filter.toggle(kind);
+        self.snap_selection_to_visible();
         self.scroll = 0;
+    }
+
+    /// `E` — preset: hide everything except errors. Same selection-snap rules.
+    pub fn errors_only_preset(&mut self) {
+        self.filter.errors_only();
+        self.snap_selection_to_visible();
+        self.scroll = 0;
+    }
+
+    /// `A` (uppercase) — preset: show everything again.
+    pub fn show_all_kinds(&mut self) {
+        self.filter.show_all();
+        self.scroll = 0;
+    }
+
+    fn snap_selection_to_visible(&mut self) {
+        if self
+            .events
+            .get(self.selected)
+            .is_some_and(|e| self.filter.shows(e.kind))
+        {
+            return;
+        }
+        self.selected = self
+            .events
+            .iter()
+            .position(|e| self.filter.shows(e.kind))
+            .unwrap_or(0);
     }
 
     pub fn tab_title(&self) -> String {
@@ -173,7 +249,7 @@ mod tests {
     }
 
     #[test]
-    fn errors_only_filters_and_clamps_selection() {
+    fn errors_only_preset_filters_and_clamps_selection() {
         let mut p = TracePane::new(
             "t",
             PathBuf::from("/tmp/trace.zip"),
@@ -184,24 +260,47 @@ mod tests {
                 ev(30.0, EventKind::Action, "page.fill", "", None),
             ],
         );
-        // selection starts on row 0 (an action).
         assert_eq!(p.selected, 0);
-        p.toggle_errors_only();
-        assert!(p.errors_only);
+        p.errors_only_preset();
+        assert!(!p.filter.actions);
+        assert!(p.filter.errors);
         // Selection snapped to the only error row (index 2).
         assert_eq!(p.selected, 2);
-        // visible_indices is just [2] now.
         assert_eq!(p.visible_indices(), vec![2]);
-        // Moving down in errors-only mode stays put (only one visible row).
+        // Moving down in errors-only stays put (only one visible row).
         p.move_selection(1);
         assert_eq!(p.selected, 2);
-        // Flip the filter off — selection persists.
-        p.toggle_errors_only();
-        assert!(!p.errors_only);
+        // Flip everything back on.
+        p.show_all_kinds();
         assert_eq!(p.selected, 2);
-        // And moving forward goes to row 3.
         p.move_selection(1);
         assert_eq!(p.selected, 3);
+    }
+
+    #[test]
+    fn toggle_kind_hides_individual_kinds() {
+        let mut p = TracePane::new(
+            "t",
+            PathBuf::from("/tmp/trace.zip"),
+            vec![
+                ev(0.0, EventKind::Action, "a", "", None),
+                ev(1.0, EventKind::Console, "log: hello", "", None),
+                ev(2.0, EventKind::Stdio, "stderr: x", "", None),
+                ev(3.0, EventKind::Error, "boom", "", Some("e")),
+            ],
+        );
+        // Hide actions.
+        p.toggle_kind(EventKind::Action);
+        assert_eq!(p.visible_indices(), vec![1, 2, 3]);
+        // Hide stdio + console too.
+        p.toggle_kind(EventKind::Stdio);
+        p.toggle_kind(EventKind::Console);
+        assert_eq!(p.visible_indices(), vec![3]);
+        // Flip them all back on.
+        p.toggle_kind(EventKind::Action);
+        p.toggle_kind(EventKind::Stdio);
+        p.toggle_kind(EventKind::Console);
+        assert_eq!(p.visible_indices(), vec![0, 1, 2, 3]);
     }
 
     #[test]

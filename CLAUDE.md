@@ -370,7 +370,9 @@ collects `console` / `error` / `stdio` events, re-bases times → a time-ordered
 selected row highlit, the selected event's params/error stack in a panel below). `Pane::Trace`; in the pane ↑↓/jk select, PgUp/PgDn/g/G jump,
 `h` heal-from-trace (`TracePane::timeline_text` renders the timeline → `App::heal_from_active_trace` → `claude -p` via `ask_ai`, opening a
 `Pane::Ai` — Claude sees the *runtime* trace and uses its tools to read the spec/code; `c` in the answer pane promotes to interactive Claude Code),
-`r` re-parses, Esc → tree.
+`r` re-parses, Esc → tree. **Per-kind filter** — `TraceKindFilter{actions,console,errors,stdio}` (all on by default); `a`/`c`/`e`/`s` toggle one
+kind, `E` is the errors-only preset, `A` shows everything; header chips dim out hidden kinds; the selection snaps to the next visible row when
+it would otherwise be hidden.
 **Sort mode** (`s` in the pane) — `TestsSort` (`FileLine` = the default, natural Playwright order grouped under per-file
 headers; `DurationDesc` = slowest first, flat list with a `file:line` chip on each row). `TestsPane::sorted_indices(&run)`
 yields indices into `r.tests` in the current sort order; the renderer walks that, the selection is still a raw `r.tests`

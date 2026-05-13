@@ -563,9 +563,35 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('h') => app.heal_from_active_trace(),
             KeyCode::Char('r') => app.refresh_active_trace(),
+            // Per-kind filter toggles + presets (errors-only / show-all).
+            KeyCode::Char('a') => {
+                if let Some(Pane::Trace(tr)) = app.panes.get_mut(i) {
+                    tr.toggle_kind(crate::playwright::trace::EventKind::Action);
+                }
+            }
+            KeyCode::Char('c') => {
+                if let Some(Pane::Trace(tr)) = app.panes.get_mut(i) {
+                    tr.toggle_kind(crate::playwright::trace::EventKind::Console);
+                }
+            }
             KeyCode::Char('e') => {
                 if let Some(Pane::Trace(tr)) = app.panes.get_mut(i) {
-                    tr.toggle_errors_only();
+                    tr.toggle_kind(crate::playwright::trace::EventKind::Error);
+                }
+            }
+            KeyCode::Char('s') => {
+                if let Some(Pane::Trace(tr)) = app.panes.get_mut(i) {
+                    tr.toggle_kind(crate::playwright::trace::EventKind::Stdio);
+                }
+            }
+            KeyCode::Char('E') => {
+                if let Some(Pane::Trace(tr)) = app.panes.get_mut(i) {
+                    tr.errors_only_preset();
+                }
+            }
+            KeyCode::Char('A') => {
+                if let Some(Pane::Trace(tr)) = app.panes.get_mut(i) {
+                    tr.show_all_kinds();
                 }
             }
             KeyCode::Esc => app.focus_tree(),

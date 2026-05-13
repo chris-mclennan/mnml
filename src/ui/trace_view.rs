@@ -103,12 +103,30 @@ pub fn draw(
         ),
     ]));
     lines.push(Line::from(Span::styled(
-        format!(
-            "  ↑↓ select   h heal with Claude   r re-parse   e errors-only [{}]   esc back",
-            if tr.errors_only { "on" } else { "off" },
-        ),
+        "  ↑↓ select   h heal with Claude   r re-parse   E errors-only · A all   esc back",
         Style::default().fg(t.comment).bg(t.bg_dark),
     )));
+    // Filter chips: actions · console · errors · stdio (dim when off).
+    let mut chip_spans: Vec<Span> = Vec::new();
+    chip_spans.push(Span::styled(
+        "  filter [a/c/e/s]: ".to_string(),
+        Style::default().fg(t.comment).bg(t.bg_dark),
+    ));
+    for (label, on) in tr.filter.header_chips() {
+        let style = if on {
+            Style::default()
+                .fg(t.fg)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(t.comment)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::DIM)
+        };
+        chip_spans.push(Span::styled(format!("{label}  "), style));
+    }
+    lines.push(Line::from(chip_spans));
     lines.push(Line::from(Span::styled(
         " ",
         Style::default().bg(t.bg_dark),
