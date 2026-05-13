@@ -13,9 +13,40 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use std::collections::HashMap;
+
 use crate::app::App;
 use crate::pane::Pane;
 use crate::ui::{icons, theme};
+
+/// One label per pane in `app.panes`, in order. For editor panes whose bare
+/// filename is shared with another open editor (e.g. five `mod.rs`), prepend
+/// the immediate parent dir (`git/mod.rs`, `ai/mod.rs`) so the tabs are
+/// distinguishable. Non-editor panes keep their original title.
+fn tab_labels(panes: &[Pane]) -> Vec<String> {
+    let mut name_counts: HashMap<String, usize> = HashMap::new();
+    let mut titles: Vec<String> = Vec::with_capacity(panes.len());
+    for p in panes {
+        let t = p.title();
+        titles.push(t.clone());
+        if matches!(p, Pane::Editor(_)) {
+            *name_counts.entry(t).or_default() += 1;
+        }
+    }
+    for (i, p) in panes.iter().enumerate() {
+        if let Pane::Editor(b) = p
+            && let Some(path) = &b.path
+            && name_counts.get(&titles[i]).copied().unwrap_or(0) > 1
+            && let Some(parent) = path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+        {
+            titles[i] = format!("{parent}/{}", titles[i]);
+        }
+    }
+    titles
+}
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(
@@ -32,14 +63,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let cap_w = cap_label.chars().count() as u16;
     let tabs_max_x = area.x + area.width.saturating_sub(cap_w);
 
+    // Disambiguated labels — when two open editors share a filename, prepend
+    // the parent dir to both (`git/mod.rs` vs `ai/mod.rs`).
+    let labels = tab_labels(&app.panes);
     // Pre-compute each tab's display width so we can scroll the bufferline to
     // keep the active tab on screen (and show `‹`/`›` overflow indicators).
     // Each tab is ` <icon> <name> <badge> ` (4 cells of chrome + name); a 1-cell
     // separator goes between tabs.
-    let widths: Vec<u16> = app
-        .panes
+    let widths: Vec<u16> = labels
         .iter()
-        .map(|p| 4u16 + p.title().chars().count() as u16 + 1u16)
+        .map(|name| 4u16 + name.chars().count() as u16 + 1u16)
         .collect();
     let sep = 1u16; // cell between tabs (rendered as the bg color)
     // Reserve 2 cells on each side of the tab strip for the overflow chevrons
@@ -104,7 +137,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut overflow_right = false;
     for (i, pane) in app.panes.iter().enumerate().skip(first_visible) {
         let active = app.active == Some(i);
-        let name = pane.title();
+        let name = labels[i].clone();
         let (glyph, icon_color) = match pane {
             Pane::Editor(b) => {
                 let p = b.path.clone().unwrap_or_else(|| name.clone().into());
@@ -237,4 +270,38 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     ));
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::buffer::Buffer;
+    use crate::config::Config;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn ed(path: PathBuf) -> Pane {
+        let b = Buffer::open(&path, &Config::default()).unwrap();
+        Pane::Editor(b)
+    }
+
+    #[test]
+    fn disambiguates_only_when_colliding() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path();
+        fs::create_dir(ws.join("git")).unwrap();
+        fs::create_dir(ws.join("ai")).unwrap();
+        fs::write(ws.join("git").join("mod.rs"), "// git\n").unwrap();
+        fs::write(ws.join("ai").join("mod.rs"), "// ai\n").unwrap();
+        fs::write(ws.join("lib.rs"), "// lib\n").unwrap();
+        let panes = vec![
+            ed(ws.join("git").join("mod.rs")),
+            ed(ws.join("ai").join("mod.rs")),
+            ed(ws.join("lib.rs")),
+        ];
+        let labels = tab_labels(&panes);
+        assert_eq!(labels[0], "git/mod.rs");
+        assert_eq!(labels[1], "ai/mod.rs");
+        assert_eq!(labels[2], "lib.rs");
+    }
 }
