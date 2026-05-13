@@ -38,6 +38,46 @@ fn rel_path(workspace: &Path, p: &Path) -> String {
         .into_owned()
 }
 
+/// A short text rendering of a CDP `RemoteObject` (console args, eval results).
+fn cdp_remote_object_str(o: &serde_json::Value) -> String {
+    if let Some(v) = o.get("value") {
+        return match v {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+    }
+    if let Some(u) = o
+        .get("unserializableValue")
+        .and_then(serde_json::Value::as_str)
+    {
+        return u.to_string();
+    }
+    if let Some(d) = o.get("description").and_then(serde_json::Value::as_str) {
+        return d.to_string();
+    }
+    o.get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("?")
+        .to_string()
+}
+
+/// Render a `Runtime.evaluate` reply (`{result:{result:<RemoteObject>, exceptionDetails?}}`) to text.
+fn cdp_eval_result_text(v: &serde_json::Value) -> String {
+    let res = v.get("result");
+    if let Some(ex) = res.and_then(|r| r.get("exceptionDetails")) {
+        let msg = ex
+            .get("exception")
+            .and_then(|e| e.get("description"))
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| ex.get("text").and_then(serde_json::Value::as_str))
+            .unwrap_or("exception");
+        return format!("⚠ {}", msg.lines().next().unwrap_or(msg));
+    }
+    res.and_then(|r| r.get("result"))
+        .map(cdp_remote_object_str)
+        .unwrap_or_else(|| "undefined".to_string())
+}
+
 /// Turn a file's `(range, new_text)` LSP edits into `EditOp::ReplaceRange`s with
 /// byte offsets resolved against `text`, sorted *descending* by start so applying
 /// them in order keeps the earlier offsets valid. Edits with unresolvable
@@ -166,6 +206,10 @@ pub struct App {
         std::sync::mpsc::Sender<TestsJobDone>,
         std::sync::mpsc::Receiver<TestsJobDone>,
     )>,
+    /// Receiver for the (single) CDP browser session's worker — events stream in,
+    /// [`Self::tick`] drains them into the `Pane::Browser`. `None` when no browser
+    /// pane is open (only one at a time in the first cut).
+    cdp_chan: Option<std::sync::mpsc::Receiver<crate::cdp::CdpEvent>>,
     /// Job id of an in-flight "AI: write me a commit message" run (it shares
     /// `ai_chan`; when it lands, the commit prompt opens pre-seeded instead of an
     /// answer landing in a `Pane::Ai`).
@@ -224,6 +268,7 @@ impl App {
             http_chan: None,
             ai_chan: None,
             tests_chan: None,
+            cdp_chan: None,
             pending_commit_msg_job: None,
             next_job_id: 1,
             dynamic_commands: Vec::new(),
@@ -1191,6 +1236,7 @@ impl App {
             | Some(Pane::Ai(_))
             | Some(Pane::Tests(_))
             | Some(Pane::Trace(_))
+            | Some(Pane::Browser(_))
             | Some(Pane::Diagnostics(_))
             | None => None,
         };
@@ -1244,6 +1290,7 @@ impl App {
             | Some(Pane::Ai(_))
             | Some(Pane::Tests(_))
             | Some(Pane::Trace(_))
+            | Some(Pane::Browser(_))
             | Some(Pane::Diagnostics(_)) => {
                 self.toast("not a markdown file");
                 return;
@@ -2086,6 +2133,242 @@ impl App {
         }
     }
 
+    // ─── CDP browser pane ───────────────────────────────────────────
+    /// `browser.open` — prompt for a URL, then launch Chrome on it. (One browser
+    /// pane at a time.)
+    pub fn open_browser_prompt(&mut self) {
+        if self.panes.iter().any(|p| matches!(p, Pane::Browser(_))) {
+            self.toast("a browser pane is already open — close it first");
+            return;
+        }
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::BrowserUrl,
+            "Open URL in Chrome",
+            "https://",
+        ));
+    }
+
+    /// Launch Chrome on `url` over CDP and open a `Pane::Browser` (split below).
+    pub fn open_browser(&mut self, url: &str) {
+        if self.panes.iter().any(|p| matches!(p, Pane::Browser(_))) {
+            self.toast("a browser pane is already open — close it first");
+            return;
+        }
+        let url = url.trim().to_string();
+        let (ev_tx, ev_rx) = std::sync::mpsc::channel::<crate::cdp::CdpEvent>();
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<crate::cdp::CdpCommand>();
+        let profile_dir = self.workspace.join(".mnml").join("chrome-profile");
+        let _ = std::fs::create_dir_all(&profile_dir);
+        let (worker_url, worker_dir) = (url.clone(), profile_dir);
+        std::thread::spawn(move || {
+            crate::cdp::run_session(&worker_url, &worker_dir, &ev_tx, &cmd_rx);
+        });
+        self.cdp_chan = Some(ev_rx);
+        let pane = Pane::Browser(crate::browser_pane::BrowserPane::new(url, cmd_tx));
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// `g` in a browser pane — prompt for a URL to navigate to (seeded with the
+    /// current URL).
+    pub fn browser_navigate_prompt(&mut self) {
+        let url = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Browser(b)) => b.url.clone(),
+            _ => return,
+        };
+        let seed = if url.trim().is_empty() {
+            "https://".to_string()
+        } else {
+            url
+        };
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::BrowserNavigate,
+            "Navigate to",
+            seed,
+        ));
+    }
+
+    /// `e` in a browser pane — prompt for JS to evaluate in the page.
+    pub fn browser_eval_prompt(&mut self) {
+        if !matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Browser(_))
+        ) {
+            return;
+        }
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::BrowserEval,
+            "Eval JS in the page",
+        ));
+    }
+
+    /// `r` in a browser pane — reload the page.
+    pub fn browser_reload(&mut self) {
+        if let Some(Pane::Browser(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            b.reload();
+        }
+    }
+
+    /// Drain the CDP worker's event channel into the (single) `Pane::Browser`.
+    fn drain_cdp_events(&mut self) {
+        let Some(rx) = &self.cdp_chan else { return };
+        let mut events = Vec::new();
+        let mut disconnected = false;
+        loop {
+            match rx.try_recv() {
+                Ok(ev) => events.push(ev),
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
+            }
+        }
+        if events.is_empty() && !disconnected {
+            return;
+        }
+        let Some(idx) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Browser(_)))
+        else {
+            if disconnected {
+                self.cdp_chan = None;
+            }
+            return;
+        };
+        for ev in events {
+            match ev {
+                crate::cdp::CdpEvent::Connected { .. } => {
+                    if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                        b.push(crate::browser_pane::LogKind::System, "connected to Chrome");
+                    }
+                }
+                crate::cdp::CdpEvent::Message(v) => self.apply_cdp_message(idx, v),
+                crate::cdp::CdpEvent::Closed(reason) => {
+                    if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                        b.closed = true;
+                        b.push(
+                            crate::browser_pane::LogKind::System,
+                            format!("session ended: {reason}"),
+                        );
+                    }
+                }
+            }
+        }
+        if disconnected {
+            self.cdp_chan = None;
+        }
+    }
+
+    /// Apply one raw CDP message (an event, or a reply to one of our requests) to
+    /// the browser pane at `idx`.
+    fn apply_cdp_message(&mut self, idx: usize, v: serde_json::Value) {
+        use crate::browser_pane::LogKind;
+        // A reply to a request we issued?
+        if let Some(id) = v.get("id").and_then(serde_json::Value::as_i64) {
+            let waiting =
+                matches!(self.panes.get(idx), Some(Pane::Browser(b)) if b.pending_eval == Some(id));
+            if waiting {
+                let text = cdp_eval_result_text(&v);
+                if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                    b.pending_eval = None;
+                    b.push(LogKind::Eval, format!("= {text}"));
+                }
+            }
+            return;
+        }
+        let method = v
+            .get("method")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let params = v.get("params");
+        let Some(Pane::Browser(b)) = self.panes.get_mut(idx) else {
+            return;
+        };
+        match method {
+            "Runtime.consoleAPICalled" => {
+                let typ = params
+                    .and_then(|p| p.get("type"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("log");
+                let text = params
+                    .and_then(|p| p.get("args"))
+                    .and_then(serde_json::Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .map(cdp_remote_object_str)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .unwrap_or_default();
+                let kind = if matches!(typ, "error" | "assert") {
+                    LogKind::ConsoleErr
+                } else {
+                    LogKind::Console
+                };
+                b.push(kind, format!("console.{typ}: {text}"));
+            }
+            "Log.entryAdded" => {
+                let entry = params.and_then(|p| p.get("entry"));
+                let level = entry
+                    .and_then(|e| e.get("level"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("info");
+                let text = entry
+                    .and_then(|e| e.get("text"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let kind = if level == "error" {
+                    LogKind::ConsoleErr
+                } else {
+                    LogKind::Console
+                };
+                b.push(kind, format!("[{level}] {text}"));
+            }
+            "Runtime.exceptionThrown" => {
+                let det = params.and_then(|p| p.get("exceptionDetails"));
+                let msg = det
+                    .and_then(|d| d.get("exception"))
+                    .and_then(|e| e.get("description"))
+                    .and_then(serde_json::Value::as_str)
+                    .or_else(|| {
+                        det.and_then(|d| d.get("text"))
+                            .and_then(serde_json::Value::as_str)
+                    })
+                    .unwrap_or("exception");
+                b.push(
+                    LogKind::ConsoleErr,
+                    format!("⚠ {}", msg.lines().next().unwrap_or(msg)),
+                );
+            }
+            "Page.frameNavigated" => {
+                let frame = params.and_then(|p| p.get("frame"));
+                let is_main = frame.map(|f| f.get("parentId").is_none()).unwrap_or(false);
+                if is_main
+                    && let Some(url) = frame
+                        .and_then(|f| f.get("url"))
+                        .and_then(serde_json::Value::as_str)
+                {
+                    b.url = url.to_string();
+                    b.push(LogKind::Nav, format!("→ {url}"));
+                }
+            }
+            _ => {} // loadEventFired, etc. — too noisy / not useful here yet
+        }
+    }
+
     // ─── HTTP: request pane ─────────────────────────────────────────
     /// `rqst.send` — parse the active `.http`/`.rest`/`.curl` editor (the block
     /// under the cursor for multi-block `.http` files), expand `{{vars}}` against
@@ -2535,6 +2818,19 @@ impl App {
                 }
                 if !self.lsp.rename(&path, line, ch, &new_name) {
                     self.toast("no language server for this file (rename)");
+                }
+            }
+            crate::prompt::PromptKind::BrowserUrl => self.open_browser(p.input.trim()),
+            crate::prompt::PromptKind::BrowserNavigate => {
+                let url = p.input.clone();
+                if let Some(Pane::Browser(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+                    b.navigate(&url);
+                }
+            }
+            crate::prompt::PromptKind::BrowserEval => {
+                let expr = p.input.clone();
+                if let Some(Pane::Browser(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+                    b.eval(&expr);
                 }
             }
         }
@@ -3018,6 +3314,7 @@ impl App {
             | Pane::Ai(_)
             | Pane::Tests(_)
             | Pane::Trace(_)
+            | Pane::Browser(_)
             | Pane::Diagnostics(_) => (None, None),
         };
         if self.layout.contains(id) {
@@ -3106,6 +3403,7 @@ impl App {
             Pane::Ai(a) => Some((a.tab_title(), false)),
             Pane::Tests(t) => Some((t.tab_title(), false)),
             Pane::Trace(t) => Some((t.tab_title(), false)),
+            Pane::Browser(b) => Some((b.tab_title(), false)),
             Pane::Diagnostics(d) => Some((d.tab_title(), false)),
         }
     }
@@ -3417,6 +3715,7 @@ impl App {
         self.drain_ai_jobs();
         self.drain_tests_jobs();
         self.drain_lsp_events();
+        self.drain_cdp_events();
         self.refresh_live_ai_panes();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL

@@ -77,7 +77,7 @@ user might be mid-edit *inside mnml* on something untouched.
 - The user is happy to have Claude pick which track/feature to do next ("keep going,
   you decide the order — we'll do them all eventually") — choose the most valuable;
   don't ask which. Lean toward *bounded* items when starting a fresh session; save the
-  big tracks (CDP, the `private` feature, LSP completion) for when there's room.
+  big tracks (the `private` feature, CDP follow-ups, Git GUI phase 4) for when there's room.
   After each landed feature: update this Status block + commit + `./run.sh restart`.
 
 ## Status
@@ -241,6 +241,22 @@ collects `console` / `error` / `stdio` events, re-bases times → a time-ordered
 selected row highlit, the selected event's params/error stack in a panel below). `Pane::Trace`; in the pane ↑↓/jk select, PgUp/PgDn/g/G jump, `r` re-parses, Esc → tree.
 *Follow-ups (per `.local/PLAN.md`):* heal-from-trace (feed a failed trace to `claude -p`), wrap long detail lines, the `[feature: private]` DocDB live
 `Pane::TestExecutions` (dev+staging+prod in one panel) + CodeBuild, a flaky-test dashboard.
+**CDP / browser track — first cut done:** `src/cdp/mod.rs` launches Chrome/Chromium (first of a known list) with
+`--remote-debugging-port=0 --user-data-dir=<ws>/.mnml/chrome-profile <url>`, reads the chosen port off Chrome's
+stderr, hits `http://127.0.0.1:PORT/json` for the first page target's `webSocketDebuggerUrl`, connects via
+`tungstenite` (sync, no TLS — DevTools is plaintext localhost), enables `Page`/`Runtime`/`Log`; then a worker
+thread pumps the WebSocket ↔ a command channel (`CdpCommand::Send(json)`/`Close`) in one loop (short socket read
+timeout makes it cooperative — same shape as the pty/AI workers) and forwards every protocol message up over
+`App.cdp_chan` as `CdpEvent::{Connected,Message(json),Closed}`. `Pane::Browser(BrowserPane)` (`src/browser_pane.rs`:
+`{url, cmd_tx, log:Vec<LogLine{kind,text}>, next_id, pending_eval, scroll, closed}`; `Drop` sends `Close` → kills Chrome)
+shows a header (current URL) + a live colour-coded log — console output (`Runtime.consoleAPICalled`/`Log.entryAdded`/
+`Runtime.exceptionThrown`), main-frame navigations (`Page.frameNavigated`), and `eval` request/result lines —
+rendered by `src/ui/browser_view.rs`. `App::drain_cdp_events`/`apply_cdp_message` route events to the pane;
+`browser.open` (`<leader>B`, palette) prompts for a URL (`PromptKind::BrowserUrl`) and launches; in the pane `g`
+navigates (`PromptKind::BrowserNavigate` → `Page.navigate`), `e` evals JS (`PromptKind::BrowserEval` → `Runtime.evaluate`,
+`returnByValue`; the reply is matched by id → a `= …` line), `r` reloads, k/j/PgUp/PgDn/Home/End scroll, Esc → tree,
+`Ctrl+W` closes (kills Chrome). One browser pane at a time. *Follow-ups:* network capture (`Network.*`) + a network
+panel + export-as-curl, DOM inspection, screenshots, multiple pages/targets, headless mode.
 **Right-click context menus — done:** `src/context_menu.rs` (`ContextMenu{title,items:Vec<MenuItem{label,
 action: MenuAction}>,anchor,selected}`) + `src/ui/context_menu.rs` (a bordered floating list at the click,
 clamped to screen, selected row highlighted). Right-click a tree file → Open / Open in split / Reveal in
@@ -312,10 +328,10 @@ filtered against the *live* prefix. In the popup: ↑↓/Ctrl-N·P move, PgUp/Pg
 dismisses + is handled normally, a click dismisses it. `lsp.completion` (`Ctrl+Space` / `<leader>l c`) is the
 manual trigger (requests regardless of prefix; same popup). Known simplifications (in `src/lsp/mod.rs`):
 full-text doc sync, char-offset columns, `initialize` not awaited before `didOpen`; completion list is
-filtered locally after the first reply (no re-request as the prefix grows). Then: CDP,
-more `.test` coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native launcher
-actions), Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus queued
-polish (editable request-pane field tabs). See `.local/PLAN.md`.
+filtered locally after the first reply (no re-request as the prefix grows). Then: CDP follow-ups (network
+capture → curl, DOM, screenshots, headless), more `.test` coverage, the `private` Cargo feature (DocDB
+`TestExecutions` + CodeBuild + native launcher actions), Git GUI phase 4 (branch rail UI, commit-with-Codex,
+recompose-with-AI, multi-repo); plus queued polish (editable request-pane field tabs). See `.local/PLAN.md`.
 Highlight follow-ups: more grammars; incremental tree-sitter parsing (needs dropping
 `tree-sitter-highlight` for raw `Parser`/`Query` so an old `Tree` can be reused — not bounded);
 markdown's `markdown_inline` injection (the callback fires but emphasis/inline-code spans don't

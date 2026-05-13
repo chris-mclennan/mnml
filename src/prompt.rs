@@ -13,6 +13,12 @@ pub enum PromptKind {
     NewBranch,
     /// Accept ⇒ `textDocument/rename` with the typed name (LSP).
     LspRename,
+    /// Accept ⇒ launch Chrome on the typed URL in a `Pane::Browser` (CDP).
+    BrowserUrl,
+    /// Accept ⇒ `Page.navigate` the active browser pane to the typed URL.
+    BrowserNavigate,
+    /// Accept ⇒ `Runtime.evaluate` the typed JS in the active browser pane.
+    BrowserEval,
 }
 
 #[derive(Debug)]

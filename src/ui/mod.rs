@@ -20,6 +20,7 @@
 //! palette / which-key / popups) draw on top.
 
 pub mod ai_view;
+pub mod browser_view;
 pub mod bufferline;
 pub mod close_prompt;
 pub mod completion;
@@ -192,6 +193,7 @@ fn render_layout(
                 Some(crate::pane::Pane::GitStatus(_)) => 8,
                 Some(crate::pane::Pane::Diagnostics(_)) => 9,
                 Some(crate::pane::Pane::Trace(_)) => 10,
+                Some(crate::pane::Pane::Browser(_)) => 11,
                 _ => 0,
             };
             match kind {
@@ -205,6 +207,7 @@ fn render_layout(
                 8 => git_status_view::draw(frame, app, *id, area, focused),
                 9 => diagnostics_view::draw(frame, app, *id, area, focused),
                 10 => trace_view::draw(frame, app, *id, area, focused),
+                11 => browser_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

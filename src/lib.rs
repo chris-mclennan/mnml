@@ -13,7 +13,9 @@
 
 pub mod ai;
 pub mod app;
+pub mod browser_pane;
 pub mod buffer;
+pub mod cdp;
 pub mod clipboard;
 pub mod command;
 pub mod completion;

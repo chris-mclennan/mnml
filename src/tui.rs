@@ -469,6 +469,48 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // A browser pane (Chrome driven over CDP): scroll the console log, `g` navigate,
+    // `e` eval JS, `r` reload, Esc → tree. `Ctrl+W` closes it (which kills Chrome).
+    if matches!(app.panes.get(i), Some(Pane::Browser(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.scroll = b.scroll.saturating_sub(1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.scroll += 1;
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.scroll = b.scroll.saturating_sub(viewport);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.scroll += viewport;
+                }
+            }
+            KeyCode::Home => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.scroll = 0;
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.scroll = usize::MAX; // pinned to the tail
+                }
+            }
+            KeyCode::Char('g') => app.browser_navigate_prompt(),
+            KeyCode::Char('e') => app.browser_eval_prompt(),
+            KeyCode::Char('r') => app.browser_reload(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // A diagnostics ("Problems") list: ↑↓ select, Enter → jump to the location,
     // r refresh, Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::Diagnostics(_))) {
@@ -1014,6 +1056,14 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 } else {
                     delta.unsigned_abs() as isize
                 });
+            }
+            Some(Pane::Browser(b)) => {
+                let n = delta.unsigned_abs() as usize;
+                b.scroll = if delta < 0 {
+                    b.scroll.saturating_sub(n)
+                } else {
+                    b.scroll.saturating_add(n)
+                };
             }
             None => {}
         }

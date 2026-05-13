@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use crate::ai::AiPane;
+use crate::browser_pane::BrowserPane;
 use crate::buffer::Buffer;
 use crate::git::diff::Hunk;
 use crate::git::graph::GitGraphPane;
@@ -42,6 +43,8 @@ pub enum Pane {
     Tests(TestsPane),
     /// A parsed Playwright `trace.zip` shown as a text timeline.
     Trace(TracePane),
+    /// A Chrome the IDE is driving over CDP — a console / nav / eval log.
+    Browser(BrowserPane),
     /// A workspace-wide LSP-diagnostics ("Problems") list.
     Diagnostics(DiagnosticsPane),
 }
@@ -121,6 +124,7 @@ impl Pane {
             Pane::Ai(a) => a.tab_title(),
             Pane::Tests(t) => t.tab_title(),
             Pane::Trace(t) => t.tab_title(),
+            Pane::Browser(b) => b.tab_title(),
             Pane::Diagnostics(d) => d.tab_title(),
         }
     }
@@ -138,6 +142,7 @@ impl Pane {
             | Pane::Ai(_)
             | Pane::Tests(_)
             | Pane::Trace(_)
+            | Pane::Browser(_)
             | Pane::Diagnostics(_) => false,
         }
     }

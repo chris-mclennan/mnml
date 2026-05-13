@@ -178,6 +178,7 @@ pub fn root() -> &'static Leader {
                     ),
                 ),
                 ('w', cmd("file.save", "write/save")),
+                ('B', cmd("browser.open", "open browser (Chrome/CDP)")),
                 ('q', cmd("buffer.close", "close buffer")),
                 ('e', cmd("view.toggle_tree", "explorer")),
                 ('m', cmd("markdown.preview", "markdown preview")),

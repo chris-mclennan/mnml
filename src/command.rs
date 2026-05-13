@@ -403,6 +403,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_codex(),
         },
         Command {
+            id: "browser.open",
+            title: "Browser: open Chrome (CDP) — console / nav / eval",
+            group: "browser",
+            keys: &[],
+            run: |app| app.open_browser_prompt(),
+        },
+        Command {
             id: "ai.ask",
             title: "AI: ask Claude a question (claude -p)",
             group: "ai",
