@@ -3307,6 +3307,10 @@ impl App {
                 let q = p.input.clone();
                 self.accept_find(q);
             }
+            crate::prompt::PromptKind::Replace => {
+                let r = p.input.clone();
+                self.accept_replace(r);
+            }
         }
     }
 
@@ -3419,6 +3423,69 @@ impl App {
             }
             Out::Toast(s) => self.toast(s),
         }
+    }
+
+    /// `find.replace` (`Ctrl+H`) — prompt for replacement text (requires a
+    /// non-empty find state on the active buffer). Enter ⇒ `accept_replace`
+    /// splices the replacement over every match.
+    pub fn open_replace_prompt(&mut self) {
+        let Some(cur) = self.active else { return };
+        let q = match self.panes.get(cur) {
+            Some(Pane::Editor(b)) => b.find.as_ref().map(|f| (f.query.clone(), f.matches.len())),
+            _ => None,
+        };
+        match q {
+            Some((query, n)) if n > 0 => {
+                let title = format!("Replace {n}× {query:?} with");
+                self.prompt = Some(crate::prompt::Prompt::new(
+                    crate::prompt::PromptKind::Replace,
+                    title,
+                ));
+            }
+            Some(_) => self.toast("no matches to replace — refine the find query"),
+            None => self.toast("find first (Ctrl+F)"),
+        }
+    }
+
+    /// Splice `replacement` over every find match in the active buffer (in
+    /// reverse order, so earlier offsets stay valid). Toasts the count.
+    pub fn accept_replace(&mut self, replacement: String) {
+        let Some(cur) = self.active else { return };
+        let ops: Vec<crate::edit_op::EditOp> = match self.panes.get(cur) {
+            Some(Pane::Editor(b)) => match &b.find {
+                Some(f) if !f.matches.is_empty() => f
+                    .matches
+                    .iter()
+                    .rev()
+                    .map(|(s, e)| crate::edit_op::EditOp::ReplaceRange {
+                        start: *s,
+                        end: *e,
+                        text: replacement.clone(),
+                    })
+                    .collect(),
+                _ => {
+                    self.toast("no matches to replace");
+                    return;
+                }
+            },
+            _ => return,
+        };
+        let n = ops.len();
+        let clip = &mut self.clipboard;
+        let path = if let Some(Pane::Editor(b)) = self.panes.get_mut(cur) {
+            b.apply_edit_ops(ops, clip, 0);
+            b.path.clone()
+        } else {
+            None
+        };
+        if let Some(p) = path {
+            // Same as a normal edit — push the change to the LSP server.
+            if let Some(Pane::Editor(b)) = self.panes.get(cur) {
+                let t = b.editor.text().to_string();
+                self.lsp.did_change(&p, &t);
+            }
+        }
+        self.toast(format!("replaced {n}"));
     }
 
     /// `find.clear` (Esc when find is the only active overlay) — drop the matches.

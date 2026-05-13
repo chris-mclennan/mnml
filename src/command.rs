@@ -146,6 +146,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.find_prev(),
         },
         Command {
+            id: "find.replace",
+            title: "Replace every match of the active find",
+            group: "find",
+            keys: &["ctrl+h"],
+            run: |app| app.open_replace_prompt(),
+        },
+        Command {
             id: "find.clear",
             title: "Find: clear highlights",
             group: "find",

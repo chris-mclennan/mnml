@@ -122,6 +122,10 @@ match at-or-after the cursor (wraps), and toasts `match N/M`. `find.next` (`F3`)
 `find.clear` empties the state. `editor_view` paints a `t.bg2` background on every visible match and a `t.yellow` bg on the
 current one (with `t.bg_dark` fg for readability). The find state is recomputed on every text-changing edit
 (`Buffer::refresh_find_matches`, hooked into `feed_key` + `apply_edit_ops`) so highlights stay in sync as you type.
+**Replace** — `find.replace` (`Ctrl+H`) opens a `PromptKind::Replace` (requires a non-empty find state; titled
+`Replace N× "<query>" with`). Accept ⇒ `App::accept_replace` builds `EditOp::ReplaceRange` for every match in
+*descending* offset order so earlier byte offsets stay valid, hands them to `Buffer::apply_edit_ops` (which also
+refreshes the find matches + bumps LSP `didChange`), toasts `replaced N`.
 **Theme engine** (`src/ui/theme.rs`): a `Theme`
 struct (named UI colours + `base16[16]`) behind an `RwLock`; `theme::cur()` reads it,
 `theme::set(name)` swaps it. Themes are all of NvChad's base46 schemes (~90), converted

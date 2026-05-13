@@ -22,6 +22,9 @@ pub enum PromptKind {
     /// Accept ⇒ find the typed string in the active editor (case-insensitive
     /// ASCII), highlight matches, jump to the nearest one.
     Find,
+    /// Accept ⇒ replace every match of the active find with the typed text.
+    /// Requires a non-empty find state already on the active buffer.
+    Replace,
 }
 
 #[derive(Debug)]
