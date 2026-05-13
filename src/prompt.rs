@@ -35,6 +35,12 @@ pub enum PromptKind {
     /// Accept ⇒ jump the active editor's cursor to the typed 1-based line
     /// number. (`Ctrl+G` — standard-mode equivalent of vim's `:N`.)
     GotoLine,
+    /// Accept ⇒ create an empty file at `<parent>/<input>`, then open it.
+    NewFile,
+    /// Accept ⇒ `mkdir -p <parent>/<input>`. No buffer opened.
+    NewFolder,
+    /// Accept ⇒ rename the held path to `<dir>/<input>` (same parent).
+    Rename,
 }
 
 #[derive(Debug)]

@@ -25,6 +25,12 @@ pub enum MenuAction {
     CloseTab(PaneId),
     CloseOtherTabs(PaneId),
     CloseAllTabs,
+    /// Prompt for a name and create an empty file in `parent_dir`.
+    NewFile(PathBuf),
+    /// Prompt for a name and create an empty directory in `parent_dir`.
+    NewFolder(PathBuf),
+    /// Prompt for a new name and rename `path` (kept in the same dir).
+    Rename(PathBuf),
 }
 
 #[derive(Debug, Clone)]

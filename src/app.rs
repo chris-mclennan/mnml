@@ -297,6 +297,16 @@ fn open_path_external(path: &std::path::Path) {
         .spawn();
 }
 
+/// A pending file-system mutation awaiting its name prompt — set when the
+/// tree's right-click menu fires a New/Rename action, consumed when the
+/// `PromptKind::NewFile` / `NewFolder` / `Rename` accept handler runs.
+#[derive(Debug, Clone)]
+pub enum FsAction {
+    NewFile { parent: PathBuf },
+    NewFolder { parent: PathBuf },
+    Rename { path: PathBuf },
+}
+
 /// Screen regions captured during render, consumed for mouse routing on the next event.
 #[derive(Debug, Default, Clone)]
 pub struct PaneRects {
@@ -403,6 +413,9 @@ pub struct App {
     /// `(path, line, character)` of an in-flight LSP rename — captured when the
     /// rename prompt opens so the accept handler sends the request for that spot.
     pending_rename: Option<(PathBuf, u32, u32)>,
+    /// The file-system action waiting on its name prompt — captured when the
+    /// `NewFile` / `NewFolder` / `Rename` context-menu items open the prompt.
+    pending_fs_action: Option<FsAction>,
     /// The as-you-type LSP completion popup, when open. Populated from a
     /// `textDocument/completion` reply (auto-triggered as you type, or via
     /// `lsp.completion`); re-filtered locally as you keep typing.
@@ -496,6 +509,7 @@ impl App {
             context_menu: None,
             hover: None,
             pending_rename: None,
+            pending_fs_action: None,
             completion: None,
             http_chan: None,
             ai_chan: None,
@@ -549,8 +563,20 @@ impl App {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
         let rel = rel_path(&self.workspace, &path);
+        // `parent` for new-file/new-folder: the dir itself when right-clicked
+        // on a directory, the file's parent dir when right-clicked on a file.
+        let parent = if is_dir {
+            path.clone()
+        } else {
+            path.parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| self.workspace.clone())
+        };
         let items = if is_dir {
             vec![
+                MenuItem::new("New file…", MenuAction::NewFile(parent.clone())),
+                MenuItem::new("New folder…", MenuAction::NewFolder(parent)),
+                MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
                 MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
                 MenuItem::new("Open externally", MenuAction::OpenExternally(path.clone())),
                 MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
@@ -560,6 +586,9 @@ impl App {
             vec![
                 MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
                 MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
+                MenuItem::new("New file…", MenuAction::NewFile(parent.clone())),
+                MenuItem::new("New folder…", MenuAction::NewFolder(parent)),
+                MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
                 MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
                 MenuItem::new("Open externally", MenuAction::OpenExternally(path.clone())),
                 MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
@@ -639,7 +668,161 @@ impl App {
             CloseTab(id) => self.close_pane(id),
             CloseOtherTabs(id) => self.close_panes_except(Some(id)),
             CloseAllTabs => self.close_panes_except(None),
+            NewFile(parent) => self.open_new_file_prompt(parent),
+            NewFolder(parent) => self.open_new_folder_prompt(parent),
+            Rename(path) => self.open_fs_rename_prompt(path),
         }
+    }
+
+    /// Open the "New file…" prompt — captures `parent` so the accept handler
+    /// knows where to put it.
+    pub fn open_new_file_prompt(&mut self, parent: PathBuf) {
+        self.pending_fs_action = Some(FsAction::NewFile {
+            parent: parent.clone(),
+        });
+        let title = format!("New file in {}/", rel_path(&self.workspace, &parent));
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::NewFile,
+            title,
+        ));
+    }
+
+    /// Open the "New folder…" prompt — captures `parent`.
+    pub fn open_new_folder_prompt(&mut self, parent: PathBuf) {
+        self.pending_fs_action = Some(FsAction::NewFolder {
+            parent: parent.clone(),
+        });
+        let title = format!("New folder in {}/", rel_path(&self.workspace, &parent));
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::NewFolder,
+            title,
+        ));
+    }
+
+    /// Open the FS rename prompt — captures `path`, seeds with its filename.
+    pub fn open_fs_rename_prompt(&mut self, path: PathBuf) {
+        let seed = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.pending_fs_action = Some(FsAction::Rename { path: path.clone() });
+        let title = format!("Rename {}", rel_path(&self.workspace, &path));
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::Rename,
+            title,
+            seed,
+        ));
+    }
+
+    /// Create an empty file at `parent / name` and open it. Refuses an empty
+    /// name, an existing file, or a name with a path separator (use `New
+    /// folder` for nesting, then `New file` inside it).
+    pub fn create_new_file(&mut self, parent: &Path, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        let target = parent.join(name);
+        if target.exists() {
+            self.toast(format!(
+                "already exists: {}",
+                rel_path(&self.workspace, &target)
+            ));
+            return;
+        }
+        if let Some(p) = target.parent()
+            && let Err(e) = std::fs::create_dir_all(p)
+        {
+            self.toast(format!("cannot create dirs for {}: {e}", p.display()));
+            return;
+        }
+        if let Err(e) = std::fs::write(&target, "") {
+            self.toast(format!("create failed: {e}"));
+            return;
+        }
+        self.tree.refresh();
+        self.toast(format!("created {}", rel_path(&self.workspace, &target)));
+        self.open_path(&target);
+    }
+
+    /// `mkdir -p parent/name` (then refresh the tree).
+    pub fn create_new_folder(&mut self, parent: &Path, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        let target = parent.join(name);
+        if target.exists() {
+            self.toast(format!(
+                "already exists: {}",
+                rel_path(&self.workspace, &target)
+            ));
+            return;
+        }
+        if let Err(e) = std::fs::create_dir_all(&target) {
+            self.toast(format!("mkdir failed: {e}"));
+            return;
+        }
+        self.tree.refresh();
+        self.toast(format!("created {}/", rel_path(&self.workspace, &target)));
+    }
+
+    /// Rename `from` → `<from.parent()>/new_name`. If `from` is open as an
+    /// editor buffer, the buffer is repointed at the new path (LSP gets a
+    /// close/open pair). Refuses an existing target.
+    pub fn rename_fs_entry(&mut self, from: &Path, new_name: &str) {
+        let new_name = new_name.trim();
+        if new_name.is_empty() {
+            return;
+        }
+        let Some(parent) = from.parent() else {
+            self.toast("can't rename — no parent dir");
+            return;
+        };
+        let to = parent.join(new_name);
+        if to == from {
+            return;
+        }
+        if to.exists() {
+            self.toast(format!(
+                "already exists: {}",
+                rel_path(&self.workspace, &to)
+            ));
+            return;
+        }
+        if let Err(e) = std::fs::rename(from, &to) {
+            self.toast(format!("rename failed: {e}"));
+            return;
+        }
+        // Repoint any open buffer for `from` at `to`.
+        for pane in &mut self.panes {
+            if let Pane::Editor(b) = pane
+                && b.path.as_deref() == Some(from)
+            {
+                b.path = Some(to.clone());
+            }
+        }
+        self.lsp.did_close(from);
+        // If still open as an editor, notify the LSP about the new path.
+        let new_text = self.panes.iter().find_map(|p| match p {
+            Pane::Editor(b) if b.is_at(&to) => Some(b.editor.text().to_string()),
+            _ => None,
+        });
+        if let Some(t) = new_text {
+            self.lsp.did_open(&to, &t);
+        }
+        // Update recent_files too.
+        for p in &mut self.recent_files {
+            if p == from {
+                *p = to.clone();
+            }
+        }
+        self.tree.refresh();
+        self.toast(format!(
+            "renamed {} → {}",
+            rel_path(&self.workspace, from),
+            rel_path(&self.workspace, &to),
+        ));
     }
 
     /// Close every pane (optionally keeping `keep`), skipping dirty editors so
@@ -3437,6 +3620,7 @@ impl App {
     pub fn prompt_cancel(&mut self) {
         self.prompt = None;
         self.pending_rename = None;
+        self.pending_fs_action = None;
     }
     pub fn prompt_accept(&mut self) {
         let Some(p) = self.prompt.take() else { return };
@@ -3522,6 +3706,24 @@ impl App {
             crate::prompt::PromptKind::GotoLine => {
                 let s = p.input.trim().to_string();
                 self.goto_line_str(&s);
+            }
+            crate::prompt::PromptKind::NewFile => {
+                let name = p.input.clone();
+                if let Some(FsAction::NewFile { parent }) = self.pending_fs_action.take() {
+                    self.create_new_file(&parent, &name);
+                }
+            }
+            crate::prompt::PromptKind::NewFolder => {
+                let name = p.input.clone();
+                if let Some(FsAction::NewFolder { parent }) = self.pending_fs_action.take() {
+                    self.create_new_folder(&parent, &name);
+                }
+            }
+            crate::prompt::PromptKind::Rename => {
+                let name = p.input.clone();
+                if let Some(FsAction::Rename { path }) = self.pending_fs_action.take() {
+                    self.rename_fs_entry(&path, &name);
+                }
             }
         }
     }
@@ -5351,6 +5553,32 @@ mod tests {
         assert!(names2.contains(&"a.txt".to_string()));
         assert!(names2.contains(&"b.txt".to_string()));
         assert!(app2.recent_files.len() <= RECENT_FILES_MAX);
+    }
+
+    #[test]
+    fn fs_actions_create_and_rename() {
+        let (_d, mut app) = app_with_files();
+        let ws = app.workspace.clone();
+        // New file.
+        app.create_new_file(&ws, "fresh.rs");
+        assert!(ws.join("fresh.rs").exists());
+        // New folder.
+        app.create_new_folder(&ws, "newdir");
+        assert!(ws.join("newdir").is_dir());
+        // Rename — `a.txt` is open as an editor; the rename should repoint it.
+        app.open_path(&ws.join("a.txt"));
+        app.rename_fs_entry(&ws.join("a.txt"), "renamed.txt");
+        assert!(!ws.join("a.txt").exists());
+        assert!(ws.join("renamed.txt").exists());
+        // The buffer that *was* `a.txt` should now point at `renamed.txt`.
+        let renamed = ws.join("renamed.txt");
+        assert!(app.panes.iter().any(|p| matches!(
+            p,
+            Pane::Editor(b) if b.path.as_deref() == Some(renamed.as_path()),
+        )));
+        // Refusing collisions.
+        app.create_new_file(&ws, "fresh.rs");
+        assert!(ws.join("fresh.rs").exists());
     }
 
     #[test]
