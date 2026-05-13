@@ -61,6 +61,44 @@ fn cdp_remote_object_str(o: &serde_json::Value) -> String {
         .to_string()
 }
 
+/// True if a CDP `Network.*` event's resource `type` is worth showing in the
+/// browser pane (the page + its data calls — not the asset firehose). `None`
+/// (type absent) is treated as interesting (it's usually the main document).
+fn cdp_resource_type_is_interesting(rtype: Option<&str>) -> bool {
+    !matches!(
+        rtype,
+        Some(
+            "Image"
+                | "Media"
+                | "Font"
+                | "Stylesheet"
+                | "Script"
+                | "TextTrack"
+                | "Manifest"
+                | "Other"
+                | "Prefetch"
+                | "SignedExchange"
+        )
+    )
+}
+
+/// Shorten a URL for a log line: drop the scheme, keep `host/path` (no query),
+/// truncate. (Cross-origin hosts are kept so it's clear; same-origin still shows
+/// the host — fine for a one-line log.)
+fn cdp_short_url(url: &str) -> String {
+    let body = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    let body = body.split(['?', '#']).next().unwrap_or(body);
+    if body.chars().count() <= 70 {
+        body.to_string()
+    } else {
+        let keep: String = body.chars().take(69).collect();
+        format!("{keep}…")
+    }
+}
+
 /// Render a `Runtime.evaluate` reply (`{result:{result:<RemoteObject>, exceptionDetails?}}`) to text.
 fn cdp_eval_result_text(v: &serde_json::Value) -> String {
     let res = v.get("result");
@@ -2365,7 +2403,53 @@ impl App {
                     b.push(LogKind::Nav, format!("→ {url}"));
                 }
             }
-            _ => {} // loadEventFired, etc. — too noisy / not useful here yet
+            "Network.requestWillBeSent" => {
+                let rtype = params
+                    .and_then(|p| p.get("type"))
+                    .and_then(serde_json::Value::as_str);
+                if cdp_resource_type_is_interesting(rtype) {
+                    let req = params.and_then(|p| p.get("request"));
+                    let method = req
+                        .and_then(|r| r.get("method"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("GET");
+                    let url = req
+                        .and_then(|r| r.get("url"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("");
+                    b.push(LogKind::Net, format!("→ {method} {}", cdp_short_url(url)));
+                }
+            }
+            "Network.responseReceived" => {
+                let rtype = params
+                    .and_then(|p| p.get("type"))
+                    .and_then(serde_json::Value::as_str);
+                if cdp_resource_type_is_interesting(rtype) {
+                    let resp = params.and_then(|p| p.get("response"));
+                    let status = resp
+                        .and_then(|r| r.get("status"))
+                        .and_then(serde_json::Value::as_i64)
+                        .unwrap_or(0);
+                    let url = resp
+                        .and_then(|r| r.get("url"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("");
+                    b.push(LogKind::Net, format!("← {status} {}", cdp_short_url(url)));
+                }
+            }
+            "Network.loadingFailed" => {
+                let rtype = params
+                    .and_then(|p| p.get("type"))
+                    .and_then(serde_json::Value::as_str);
+                if cdp_resource_type_is_interesting(rtype) {
+                    let why = params
+                        .and_then(|p| p.get("errorText"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("failed");
+                    b.push(LogKind::ConsoleErr, format!("✗ request failed: {why}"));
+                }
+            }
+            _ => {} // loadEventFired, snapshots, etc. — not mirrored here
         }
     }
 

@@ -2,15 +2,16 @@
 //! free port, connect to its first page over the DevTools WebSocket, and drive it
 //! from a [`Pane::Browser`](crate::pane::Pane::Browser): a live log of console
 //! output + page navigations, `g` to navigate, `e` to eval JS in the page, `r` to
-//! reload. Closing the pane kills Chrome.
+//! reload, a filtered network log. Closing the pane kills Chrome.
 //!
 //! A worker thread owns the WebSocket (tungstenite, sync): it pumps incoming
 //! protocol messages out over an mpsc channel (`App.cdp_chan`) and services an
 //! incoming command channel ([`CdpCommand`]) in the same loop (a short socket read
 //! timeout makes this cooperative). Same shape as the pty / HTTP / AI workers.
 //!
-//! First cut: console + navigations + eval only — no network capture / DOM /
-//! screenshots yet (those are follow-ups). One browser pane at a time.
+//! Mirrors: console + navigations + eval + a filtered request log (Document / XHR /
+//! Fetch — the noisy asset traffic is dropped). No DOM / screenshots / curl export
+//! yet (follow-ups). One browser pane at a time.
 
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -111,7 +112,12 @@ pub fn run_session(
     }
     // Enable the domains we mirror. (Requests the pane issues use ids ≥ 100, a
     // distinct range from these.)
-    for (id, method) in (1i64..).zip(["Page.enable", "Runtime.enable", "Log.enable"]) {
+    for (id, method) in (1i64..).zip([
+        "Page.enable",
+        "Runtime.enable",
+        "Log.enable",
+        "Network.enable",
+    ]) {
         let _ = ws.send(tungstenite::Message::text(rpc(
             id,
             method,

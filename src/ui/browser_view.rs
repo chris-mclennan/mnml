@@ -72,22 +72,19 @@ pub fn draw(
         Style::default().bg(t.bg_dark),
     )));
 
-    // ── log ────────────────────────────────────────────────────────
+    // ── log (the line text carries its own marker — `→`, `←`, `»`, `= ` — so the
+    // kind only drives colour, not a prefix glyph) ─────────────────
     for l in &b.log {
-        let (prefix, color) = match l.kind {
-            LogKind::System => ("·  ", t.comment),
-            LogKind::Console => ("   ", t.fg),
-            LogKind::ConsoleErr => ("✗  ", t.red),
-            LogKind::Nav => ("→  ", t.blue),
-            LogKind::Eval => ("=  ", t.green),
+        let color = match l.kind {
+            LogKind::System => t.comment,
+            LogKind::Console => t.fg,
+            LogKind::ConsoleErr => t.red,
+            LogKind::Nav => t.blue,
+            LogKind::Net => t.teal,
+            LogKind::Eval => t.green,
         };
-        // Eval *request* lines (start with "» ") are dim; results ("= ") are green;
-        // we keep it simple — colour by kind, request lines just look like Eval too.
         lines.push(Line::from(vec![
-            Span::styled(
-                format!("  {prefix}"),
-                Style::default().fg(color).bg(t.bg_dark),
-            ),
+            Span::styled("    ", Style::default().bg(t.bg_dark)),
             Span::styled(l.text.clone(), Style::default().fg(color).bg(t.bg_dark)),
         ]));
     }

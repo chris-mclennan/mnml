@@ -18,6 +18,8 @@ pub enum LogKind {
     ConsoleErr,
     /// A page navigation.
     Nav,
+    /// A network request / response (filtered to Document / XHR / Fetch).
+    Net,
     /// An `eval` request line (`» expr`) or its result (`= value`).
     Eval,
 }
