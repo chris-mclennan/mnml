@@ -13,6 +13,7 @@
 //! type  <text>                   # type literal text, char by char ("\n" → Enter)
 //! command <id>                   # run a registered command by id
 //! wait  <ms>                     # sleep + tick (for async/pty steps)
+//! snippet <scope> <trig> <expansion>  # seed a [snippets.<scope>] entry on app.config
 //! expect screen contains <text>  # the rendered virtual screen contains the substring
 //! expect screen lacks <text>     # …does not
 //! expect dirty <true|false>      # the active editor's dirty flag
@@ -36,12 +37,20 @@ const SCREEN_H: u16 = 40;
 
 #[derive(Debug, Clone)]
 enum Step {
-    Write { rel: String, content: String },
+    Write {
+        rel: String,
+        content: String,
+    },
     Open(String),
     Key(KeyEvent),
     Type(String),
     Command(String),
     Wait(u64),
+    Snippet {
+        scope: String,
+        trigger: String,
+        expansion: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -115,6 +124,20 @@ fn parse(text: &str) -> Result<Vec<Line>, String> {
                     .parse::<u64>()
                     .map_err(|_| format!("line {ln}: `wait` needs a millisecond count"))?;
                 Stmt::Step(Step::Wait(ms))
+            }
+            "snippet" => {
+                let (scope, rest1) = split1(rest);
+                let (trigger, expansion) = split1(rest1);
+                if scope.is_empty() || trigger.is_empty() {
+                    return Err(format!(
+                        "line {ln}: `snippet` needs <scope> <trigger> <expansion>"
+                    ));
+                }
+                Stmt::Step(Step::Snippet {
+                    scope: scope.to_string(),
+                    trigger: trigger.to_string(),
+                    expansion: unescape(expansion),
+                })
             }
             "expect" => parse_expect(ln, rest)?,
             other => return Err(format!("line {ln}: unknown statement `{other}`")),
@@ -291,6 +314,18 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
         }
         Step::Wait(ms) => {
             std::thread::sleep(Duration::from_millis(*ms));
+            Ok(())
+        }
+        Step::Snippet {
+            scope,
+            trigger,
+            expansion,
+        } => {
+            app.config
+                .snippets
+                .entry(scope.clone())
+                .or_default()
+                .insert(trigger.clone(), expansion.clone());
             Ok(())
         }
     }

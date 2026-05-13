@@ -692,6 +692,10 @@ pub struct App {
     /// open outline pane instead of opening the symbols picker. Set by
     /// `open_outline_pane` / `refresh_outline_pane`; cleared after one reply.
     pending_outline: bool,
+    /// Snippets backing the open `PickerKind::Snippets` picker — items index
+    /// into this list. Populated by [`Self::snippet_pick`], consumed by
+    /// [`Self::picker_accept`].
+    pending_snippets: Vec<crate::snippets::Snippet>,
     /// Sticky toggle for `find.find`'s regex mode. New find states inherit
     /// it; `find.toggle_regex` flips it AND updates any open find state on
     /// the active buffer.
@@ -826,6 +830,7 @@ impl App {
             pending_code_actions: Vec::new(),
             pending_code_action_path: None,
             pending_outline: false,
+            pending_snippets: Vec::new(),
             find_regex_default: false,
             pending_branch_source: None,
             pending_delete_branch: None,
@@ -1464,6 +1469,11 @@ impl App {
             PickerKind::BrowserTargets => {
                 if let Ok(idx) = item.id.parse::<usize>() {
                     self.switch_browser_target(idx);
+                }
+            }
+            PickerKind::Snippets => {
+                if let Ok(idx) = item.id.parse::<usize>() {
+                    self.snippet_insert_at_cursor(idx);
                 }
             }
         }
@@ -2226,6 +2236,118 @@ impl App {
             self.toast("no language server for this file (completion)");
         }
     }
+    // ─── snippets ───────────────────────────────────────────────────
+    /// `snippet.expand` (`Ctrl+J`) — look at the identifier prefix immediately
+    /// left of the active editor's cursor; if it matches a snippet trigger for
+    /// the file's extension (or `global`), replace the prefix with the
+    /// expansion. Cursor lands at the `$0` marker (or at end if absent).
+    /// No match ⇒ toast.
+    pub fn snippet_expand_at_cursor(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let ext = b.language_ext.clone();
+        let text = b.editor.text();
+        let cursor = b.editor.cursor();
+        let (prefix_start, word) = crate::snippets::word_before_cursor(text, cursor);
+        if word.is_empty() {
+            self.toast("snippet: no trigger word before cursor");
+            return;
+        }
+        let snippets = crate::snippets::snippets_for(&self.config.snippets, ext.as_deref());
+        let Some(snip) = crate::snippets::find_by_trigger(&snippets, &word) else {
+            self.toast(format!("no snippet matches '{word}'"));
+            return;
+        };
+        let text = snip.text.clone();
+        let cursor_offset = snip.cursor_offset;
+        self.apply_snippet_edit(prefix_start, cursor, text, cursor_offset);
+    }
+
+    /// `snippet.pick` — open a fuzzy picker of every snippet available for the
+    /// active buffer (extension + global). Accept inserts the expansion at the
+    /// cursor without consuming a trigger word.
+    pub fn snippet_pick(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let ext = b.language_ext.clone();
+        let snippets = crate::snippets::snippets_for(&self.config.snippets, ext.as_deref());
+        if snippets.is_empty() {
+            self.toast("no snippets configured (see [snippets.*] in config.toml)");
+            return;
+        }
+        use crate::picker::PickerItem;
+        let items: Vec<PickerItem> = snippets
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                // First line of the expansion as the preview detail.
+                let preview = s.text.lines().next().unwrap_or("").to_string();
+                PickerItem::new(
+                    i.to_string(),
+                    format!("{}  →  {}", s.trigger, preview),
+                    s.scope.clone(),
+                )
+            })
+            .collect();
+        let n = items.len();
+        self.pending_snippets = snippets;
+        self.open_picker(Picker::new(
+            PickerKind::Snippets,
+            format!("Snippets ({n})"),
+            items,
+        ));
+    }
+
+    /// Picker-accept side: insert the chosen snippet's expansion at the cursor
+    /// (no trigger word to consume).
+    fn snippet_insert_at_cursor(&mut self, idx: usize) {
+        let Some(snip) = self.pending_snippets.get(idx).cloned() else {
+            return;
+        };
+        let Some(b) = self.active_editor() else {
+            return;
+        };
+        let cursor = b.editor.cursor();
+        self.apply_snippet_edit(cursor, cursor, snip.text, snip.cursor_offset);
+    }
+
+    /// Shared edit path: replace `[start, end)` with `text`, then place the
+    /// cursor at `start + cursor_offset` so `$0` lands where the user expects.
+    fn apply_snippet_edit(&mut self, start: usize, end: usize, text: String, cursor_offset: usize) {
+        let Some(b) = self.active_editor_mut() else {
+            return;
+        };
+        let inserted_len = text.len();
+        let ops = vec![crate::edit_op::EditOp::ReplaceRange { start, end, text }];
+        let mut clip = crate::clipboard::Clipboard::new();
+        let changed = b.apply_edit_ops(ops, &mut clip, 0);
+        if !changed {
+            return;
+        }
+        // After ReplaceRange the cursor sits at `start + inserted_len` (the end
+        // of the inserted text). Walk it back to the `$0` marker spot.
+        if cursor_offset < inserted_len {
+            let back = inserted_len - cursor_offset;
+            for _ in 0..back {
+                let _ = b.editor.apply(
+                    crate::edit_op::EditOp::MoveLeft,
+                    0,
+                    &mut crate::clipboard::Clipboard::new(),
+                );
+            }
+        }
+        // Keep LSP in sync (a snippet may contain identifiers the server cares
+        // about) — same shape as buffer-edit paths elsewhere.
+        if let Some(path) = b.path.clone() {
+            let new_text = b.editor.text().to_string();
+            self.lsp.did_change(&path, &new_text);
+        }
+    }
+
     fn lsp_request_at_cursor(
         &mut self,
         send: impl FnOnce(&mut crate::lsp::LspManager, &Path, u32, u32) -> bool,

@@ -1,0 +1,33 @@
+# Snippets — type a trigger word, run `snippet.expand`, the trigger is
+# replaced by the expansion (with `$0` picking the cursor landing spot).
+
+# Seed a snippet for `.rs` files.
+snippet rs fn "fn name() {\n    $0\n}"
+
+# Open an empty .rs file (the language_ext picks up the snippet).
+write code.rs ""
+open code.rs
+
+# Type the trigger.
+type fn
+
+# Expand. The trigger word "fn" gets replaced.
+command snippet.expand
+
+# The expansion lands on screen (the rendered editor body shows the new lines).
+expect screen contains "fn name()"
+expect screen lacks "    fn"
+expect dirty true
+
+# A trigger that isn't configured ⇒ a toast, no edit.
+type "todo"
+command snippet.expand
+expect screen contains "no snippet matches"
+
+# `global` scope works for any extension.
+snippet global ts 2026
+write notes.md ""
+open notes.md
+type ts
+command snippet.expand
+expect screen contains "2026"

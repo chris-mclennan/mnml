@@ -559,6 +559,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_goto_diagnostic(false),
         },
         Command {
+            id: "snippet.expand",
+            title: "Snippet: expand trigger word at cursor",
+            group: "edit",
+            keys: &["ctrl+j"],
+            run: |app| app.snippet_expand_at_cursor(),
+        },
+        Command {
+            id: "snippet.pick",
+            title: "Snippet: insert from picker",
+            group: "edit",
+            keys: &[],
+            run: |app| app.snippet_pick(),
+        },
+        Command {
             id: "rqst.send",
             title: "HTTP: send request (.http/.curl) — or re-fire a request pane",
             group: "http",

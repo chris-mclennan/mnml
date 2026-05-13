@@ -530,6 +530,19 @@ the request, Esc → tree. The header shows the target's filename + symbol count
 module/namespace green). **Auto-track on focus change** — `reveal_pane` calls `retarget_outline_to_active`,
 which retargets an open outline pane to the newly-active editor's path + re-fires `documentSymbol` (no-op
 when nothing changed or the active pane isn't a saved editor).
+**Snippets** — `src/snippets.rs` + `[snippets.<scope>]` config table (where `<scope>` is a file extension like `rs`/`py`/`ts` or
+the literal `global`; each entry is `<trigger> = "<expansion>"`). Two ways in: `snippet.expand` (`Ctrl+J`) replaces the
+identifier prefix immediately left of the active editor's cursor with the matching trigger's expansion (toasts if no match);
+`snippet.pick` (`<leader>i s`, `PickerKind::Snippets`) opens a fuzzy picker over every snippet available for the active buffer
+and inserts the chosen one at the cursor without consuming a trigger word. A single literal `$0` in the expansion picks where
+the cursor lands after insertion (absent ⇒ cursor at the end of the inserted text); further `$0`s are left in the text as
+literals. Extension-scoped triggers shadow same-named `global` ones. `snippets::snippets_for(table, ext)` returns the sorted
+list (ext first, then global), `snippets::find_by_trigger` does exact-match lookup, `snippets::word_before_cursor` extracts
+the `[A-Za-z0-9_]*` prefix left of a cursor offset. `App::snippet_expand_at_cursor` / `App::snippet_pick` /
+`App::snippet_insert_at_cursor` / `App::apply_snippet_edit` (shared edit path: `EditOp::ReplaceRange` then walk the cursor
+back to the `$0` spot, plus an LSP `did_change`). The e2e harness has a new `snippet <scope> <trigger> <expansion>` step
+that seeds an entry on `app.config.snippets`; `tests/e2e/snippets.test` exercises both expansion + the toast + the
+`global`-scope fallthrough.
 **completion — as-you-type popup**: `src/completion.rs`
 (`CompletionPopup{path, all, filtered, selected, scroll, prefix}` — one `textDocument/completion` reply
 populates `all`; `refilter(prefix)` narrows `filtered` locally via `crate::fuzzy` as you keep typing, no

@@ -1,9 +1,9 @@
 //! Configuration. Merged from (lowest → highest precedence): built-in defaults,
 //! `~/.config/mnml/config.toml`, `<workspace>/.mnml/config.toml`, then `--config PATH`.
 //!
-//! `[editor]`, `[ui]`, `[keys.*]`, `[tasks.*]` and `[startup]` are live. `[lsp.*]`,
-//! `[ai]`, `[tools]` are parsed-and-kept (so existing config files keep working)
-//! but unused until their tracks land.
+//! `[editor]`, `[ui]`, `[keys.*]`, `[tasks.*]`, `[startup]`, and `[snippets.*]`
+//! are live. `[lsp.*]`, `[ai]`, `[tools]` are parsed-and-kept (so existing
+//! config files keep working) but unused until their tracks land.
 //!
 //! `[tasks.<name>]` defines a shell command (`cmd = "..."`, optional `cwd`)
 //! openable in a pty pane via the `task.run` command; `[startup] tasks = [...]`
@@ -37,6 +37,11 @@ pub struct Config {
     pub tasks: BTreeMap<String, TaskDef>,
     /// `[startup] tasks = [...]` — task names auto-run in pty panes on workspace open.
     pub startup_tasks: Vec<String>,
+    /// `[snippets.<scope>]` — `<scope>` is a file extension (`"rs"`, `"py"`, …)
+    /// or the literal `"global"`. Each entry is `<trigger> = "<expansion>"`;
+    /// a single `$0` in the expansion picks the cursor landing spot. Resolved
+    /// + expanded by [`crate::snippets`].
+    pub snippets: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +132,7 @@ impl Default for Config {
             tools: toml::Value::Table(Default::default()),
             tasks: BTreeMap::new(),
             startup_tasks: Vec::new(),
+            snippets: BTreeMap::new(),
         }
     }
 }
@@ -151,6 +157,8 @@ struct RawConfig {
     startup: RawStartup,
     #[serde(default)]
     session: RawSession,
+    #[serde(default)]
+    snippets: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -285,6 +293,9 @@ impl Config {
             );
         }
         self.startup_tasks.extend(raw.startup.tasks);
+        for (scope, map) in raw.snippets {
+            self.snippets.entry(scope).or_default().extend(map);
+        }
     }
 }
 

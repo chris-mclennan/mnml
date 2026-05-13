@@ -182,6 +182,16 @@ pub fn root() -> &'static Leader {
                         ],
                     ),
                 ),
+                (
+                    'i',
+                    group(
+                        "+insert",
+                        vec![
+                            ('s', cmd("snippet.pick", "snippet…")),
+                            ('x', cmd("snippet.expand", "expand snippet at cursor")),
+                        ],
+                    ),
+                ),
                 ('w', cmd("file.save", "write/save")),
                 ('B', cmd("browser.open", "open browser (Chrome/CDP)")),
                 ('q', cmd("buffer.close", "close buffer")),
