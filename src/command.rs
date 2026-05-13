@@ -281,6 +281,21 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.bracket_match_jump(),
         },
         Command {
+            id: "editor.delete_line",
+            title: "Delete the current line (VSCode `Ctrl+Shift+K`)",
+            group: "editor",
+            keys: &["ctrl+shift+k"],
+            run: |app| {
+                if let Some(b) = app.active_editor_mut() {
+                    let _ = b.apply_edit_ops(
+                        vec![crate::edit_op::EditOp::DeleteLine],
+                        &mut crate::clipboard::Clipboard::new(),
+                        0,
+                    );
+                }
+            },
+        },
+        Command {
             id: "editor.open_at_cursor",
             title: "Open path under cursor (supports `:line:col`)",
             group: "editor",
