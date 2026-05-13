@@ -433,17 +433,33 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 KeyCode::Right => rp.move_right(),
                 KeyCode::Home => rp.move_home(),
                 KeyCode::End => rp.move_end(),
-                KeyCode::Up if rp.focus == crate::request_pane::EditField::Body => {
-                    // Cross-line motion for Body (the URL field is one line).
+                KeyCode::Up
+                    if matches!(
+                        rp.focus,
+                        crate::request_pane::EditField::Body
+                            | crate::request_pane::EditField::Headers
+                    ) =>
+                {
+                    // Cross-line motion for multi-line fields (URL is one line).
                     rp.move_left();
                     rp.move_home();
                 }
-                KeyCode::Down if rp.focus == crate::request_pane::EditField::Body => {
+                KeyCode::Down
+                    if matches!(
+                        rp.focus,
+                        crate::request_pane::EditField::Body
+                            | crate::request_pane::EditField::Headers
+                    ) =>
+                {
                     rp.move_end();
                     rp.move_right();
                 }
                 KeyCode::Enter => {
-                    if rp.focus == crate::request_pane::EditField::Body {
+                    if matches!(
+                        rp.focus,
+                        crate::request_pane::EditField::Body
+                            | crate::request_pane::EditField::Headers
+                    ) {
                         rp.type_char('\n');
                     } else {
                         // Enter on URL/Method = fire (Postman-style "send").
@@ -451,10 +467,14 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     }
                 }
                 KeyCode::Char(c) if !ctrl => {
-                    if c == 'r' && rp.focus != crate::request_pane::EditField::Body {
-                        // `r` from URL/Method fires; r inside Body is a literal.
-                        // (Trade-off — typing "r" inside a URL works because URL
-                        // is a separate field; if Method, Space is the cycle key.)
+                    // `r` from URL / Method fires; `r` inside multi-line fields
+                    // is a literal char (so typing "Authorization" etc. works).
+                    let multi_line = matches!(
+                        rp.focus,
+                        crate::request_pane::EditField::Body
+                            | crate::request_pane::EditField::Headers
+                    );
+                    if c == 'r' && !multi_line {
                         app.send_request_from_active();
                     } else {
                         rp.type_char(c);

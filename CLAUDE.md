@@ -308,10 +308,13 @@ dropped), `Space` on Method cycles `GET → POST → PUT → PATCH → DELETE �
 (`request_pane::cycle_method`), `Enter` on URL or Method fires (`Enter` in Body inserts a newline). `r` always
 re-fires the request using the current field values (so tweaking a URL and re-sending doesn't require flipping
 back to the source file). Edit-view tab bar at the top shows `[Edit] [Response]` with the active one bolded +
-underlined. `src/request_pane.rs` = `RequestPane{view:ViewMode::{Response,Edit}, focus:EditField::{Url,Method,Body},
-url_cursor, body_cursor, …}` mutates `request.url` / `request.method` / `request.body` directly. Headers list
-stays read-only in this first cut — the list-of-pairs UI is heavier and lands in a follow-up; saving the
-edited request back to the source `.http`/`.curl` file is also deferred.
+underlined. `src/request_pane.rs` = `RequestPane{view:ViewMode::{Response,Edit},
+focus:EditField::{Url,Method,Headers,Body}, url_cursor, body_cursor, headers_buffer, headers_cursor, …}` mutates
+`request.url` / `request.method` / `request.body` directly. **Headers** are edited as a multi-line `Key: Value`
+text buffer (`headers_to_text` serialises from `request.headers`; `parse_headers_text` parses back, dropping
+blank lines + lines without `:`); `RequestPane::commit_headers` (called from `App::refire_request` before each
+send) writes the parsed list onto `request.headers`. Saving the edited request back to the source `.http`/`.curl`
+file is deferred.
 **Pty / AI-CLI panes — first cut done:** `src/pty_pane.rs` (`portable-pty` +
 `vt100`) — `PtySession` = a live pty + child + a `Mutex<vt100::Parser>` a reader thread pumps;
 `BinaryProfile::shell()/claude_code(ws)/codex(ws)` (claude injects `.mnml/CLAUDE.md` via

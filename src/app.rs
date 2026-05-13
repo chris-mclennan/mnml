@@ -4397,6 +4397,11 @@ impl App {
 
     /// Re-send the request a `Pane::Request` already holds (its `r` key / re-`rqst.send`).
     fn refire_request(&mut self, pane_id: PaneId) {
+        // Apply edits from the Headers field (the editable buffer is the
+        // source of truth in Edit mode — parse it back before sending).
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(pane_id) {
+            rp.commit_headers();
+        }
         let (request, script) = match self.panes.get(pane_id) {
             Some(Pane::Request(rp)) => (rp.request.clone(), rp.script.clone()),
             _ => return,

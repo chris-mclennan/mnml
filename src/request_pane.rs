@@ -44,6 +44,12 @@ pub struct RequestPane {
     /// Byte-offset caret for the Body field. `request.body` is created on
     /// first body keystroke if it was `None`.
     pub body_cursor: usize,
+    /// Editable text representation of the headers — `Key: Value` per line.
+    /// Source of truth in Edit mode; parsed back into `request.headers` via
+    /// [`Self::commit_headers`] before each send.
+    pub headers_buffer: String,
+    /// Byte-offset caret for the Headers field.
+    pub headers_cursor: usize,
 }
 
 /// Which face of the request pane is shown.
@@ -60,6 +66,7 @@ pub enum ViewMode {
 pub enum EditField {
     Url,
     Method,
+    Headers,
     Body,
 }
 
@@ -67,7 +74,8 @@ impl EditField {
     pub fn next(self) -> Self {
         match self {
             EditField::Url => EditField::Method,
-            EditField::Method => EditField::Body,
+            EditField::Method => EditField::Headers,
+            EditField::Headers => EditField::Body,
             EditField::Body => EditField::Url,
         }
     }
@@ -75,16 +83,50 @@ impl EditField {
         match self {
             EditField::Url => EditField::Body,
             EditField::Method => EditField::Url,
-            EditField::Body => EditField::Method,
+            EditField::Headers => EditField::Method,
+            EditField::Body => EditField::Headers,
         }
     }
     pub fn label(self) -> &'static str {
         match self {
             EditField::Url => "URL",
             EditField::Method => "Method",
+            EditField::Headers => "Headers",
             EditField::Body => "Body",
         }
     }
+}
+
+/// Serialise headers as `Key: Value\n…` for the editable text buffer.
+pub fn headers_to_text(headers: &[(String, String)]) -> String {
+    headers
+        .iter()
+        .map(|(k, v)| format!("{k}: {v}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Parse the editable headers buffer back into `Vec<(name, value)>`. Lines
+/// without a `:` are dropped; whitespace around the name and value is
+/// trimmed. Blank lines are skipped. Header *names* are lower-cased? No —
+/// preserved as typed, like rqst's other parsers.
+pub fn parse_headers_text(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            if l.is_empty() || l.starts_with('#') {
+                return None;
+            }
+            let (k, v) = l.split_once(':')?;
+            let k = k.trim();
+            let v = v.trim();
+            if k.is_empty() {
+                None
+            } else {
+                Some((k.to_string(), v.to_string()))
+            }
+        })
+        .collect()
 }
 
 /// The standard HTTP verbs the Method field cycles through. `Space` advances
@@ -129,6 +171,8 @@ impl RequestPane {
     ) -> Self {
         let url_cursor = request.url.len();
         let body_cursor = request.body.as_deref().map(str::len).unwrap_or(0);
+        let headers_buffer = headers_to_text(&request.headers);
+        let headers_cursor = headers_buffer.len();
         RequestPane {
             source_path,
             request,
@@ -140,7 +184,17 @@ impl RequestPane {
             focus: EditField::Url,
             url_cursor,
             body_cursor,
+            headers_buffer,
+            headers_cursor,
         }
+    }
+
+    /// Parse the editable `headers_buffer` back into `request.headers`. Called
+    /// before each send so the in-flight request reflects the user's edits.
+    /// In Response mode (where `headers_buffer` is still tracking the original
+    /// list) this is a no-op as long as the buffer matches.
+    pub fn commit_headers(&mut self) {
+        self.request.headers = parse_headers_text(&self.headers_buffer);
     }
 
     /// Flip between the read-only Response view and the editable form. Resets
@@ -168,6 +222,7 @@ impl RequestPane {
         match self.focus {
             EditField::Url => Some((&mut self.request.url, &mut self.url_cursor)),
             EditField::Method => None,
+            EditField::Headers => Some((&mut self.headers_buffer, &mut self.headers_cursor)),
             EditField::Body => {
                 // Lazily create an empty body on first edit.
                 let body = self.request.body.get_or_insert_with(String::new);
@@ -177,7 +232,7 @@ impl RequestPane {
     }
 
     /// Insert one character at the focused field's cursor. URL strips newlines
-    /// (single-line field); Body accepts them.
+    /// (single-line field); Headers + Body accept them.
     pub fn type_char(&mut self, c: char) {
         if self.focus == EditField::Method {
             if c == ' ' {
@@ -244,6 +299,13 @@ impl RequestPane {
     pub fn move_home(&mut self) {
         match self.focus {
             EditField::Url => self.url_cursor = 0,
+            EditField::Headers => {
+                let cur = self.headers_cursor.min(self.headers_buffer.len());
+                self.headers_cursor = self.headers_buffer[..cur]
+                    .rfind('\n')
+                    .map(|i| i + 1)
+                    .unwrap_or(0);
+            }
             EditField::Body => {
                 let s = self.request.body.as_deref().unwrap_or("");
                 // Home goes to the start of the current line in Body.
@@ -256,6 +318,13 @@ impl RequestPane {
     pub fn move_end(&mut self) {
         match self.focus {
             EditField::Url => self.url_cursor = self.request.url.len(),
+            EditField::Headers => {
+                let cur = self.headers_cursor.min(self.headers_buffer.len());
+                let to_eol = self.headers_buffer[cur..]
+                    .find('\n')
+                    .unwrap_or(self.headers_buffer.len() - cur);
+                self.headers_cursor = cur + to_eol;
+            }
             EditField::Body => {
                 let s = self.request.body.as_deref().unwrap_or("");
                 let cur = self.body_cursor.min(s.len());
@@ -338,18 +407,64 @@ mod tests {
     }
 
     #[test]
-    fn focus_cycles_url_method_body() {
+    fn focus_cycles_url_method_headers_body() {
         let mut p = pane();
         p.toggle_view();
         assert_eq!(p.focus, EditField::Url);
         p.focus_next_field();
         assert_eq!(p.focus, EditField::Method);
         p.focus_next_field();
+        assert_eq!(p.focus, EditField::Headers);
+        p.focus_next_field();
         assert_eq!(p.focus, EditField::Body);
         p.focus_next_field();
         assert_eq!(p.focus, EditField::Url);
         p.focus_prev_field();
         assert_eq!(p.focus, EditField::Body);
+        p.focus_prev_field();
+        assert_eq!(p.focus, EditField::Headers);
+    }
+
+    #[test]
+    fn headers_round_trip_through_buffer() {
+        // Build a request with two headers, drive the pane to edit them, then
+        // commit + verify the parsed result.
+        let req = Request {
+            method: "GET".into(),
+            url: "https://x/".into(),
+            headers: vec![
+                ("Accept".into(), "application/json".into()),
+                ("Authorization".into(), "Bearer xyz".into()),
+            ],
+            body: None,
+        };
+        let mut p = RequestPane::new(None, req, Script::default(), 1);
+        assert_eq!(
+            p.headers_buffer,
+            "Accept: application/json\nAuthorization: Bearer xyz"
+        );
+
+        // Edit: focus Headers, append a new line `X-Trace: abc`.
+        p.toggle_view();
+        p.focus = EditField::Headers;
+        p.move_end();
+        p.type_char('\n');
+        for c in "X-Trace: abc".chars() {
+            p.type_char(c);
+        }
+        p.commit_headers();
+        assert_eq!(p.request.headers.len(), 3);
+        assert_eq!(p.request.headers[2], ("X-Trace".into(), "abc".into()));
+
+        // Delete a line — empty the header line entirely; commit drops it.
+        p.headers_buffer = "Accept: application/json\n\nAuthorization: Bearer xyz".into();
+        p.commit_headers();
+        assert_eq!(p.request.headers.len(), 2);
+
+        // Lines without `:` are dropped.
+        p.headers_buffer = "Accept: application/json\nthis-is-not-a-header".into();
+        p.commit_headers();
+        assert_eq!(p.request.headers.len(), 1);
     }
 
     #[test]

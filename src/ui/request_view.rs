@@ -154,22 +154,44 @@ fn draw_edit(
         *caret = Some((area.x + caret_col.min(area.width.saturating_sub(1)), y));
     }
 
-    // Headers (read-only block for now)
+    // Headers (editable as `Key: Value` text; one line per entry)
+    let h_focus = rp.focus == EditField::Headers;
     rows.push(Line::from(vec![Span::styled(
-        "  Headers".to_string(),
-        dim.add_modifier(Modifier::DIM),
+        format!("{}Headers", prefix(h_focus)),
+        label_style(h_focus),
     )]));
-    for (k, v) in &rp.request.headers {
+    let hb = &rp.headers_buffer;
+    if hb.is_empty() {
         rows.push(Line::from(vec![Span::styled(
-            format!("    {k}: {v}"),
-            Style::default().fg(t.comment).bg(t.bg_dark),
-        )]));
-    }
-    if rp.request.headers.is_empty() {
-        rows.push(Line::from(vec![Span::styled(
-            "    (none)".to_string(),
+            "    (none — type `Name: value` to add)".to_string(),
             dim,
         )]));
+        if h_focus && focused && caret.is_none() {
+            let y = (rows.len() - 1) as u16;
+            *caret = Some((area.x + 4, y));
+        }
+    } else {
+        for (i, line) in hb.lines().enumerate() {
+            rows.push(Line::from(vec![Span::styled(
+                format!("    {line}"),
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            )]));
+            if h_focus && focused && caret.is_none() {
+                let start = nth_line_start(hb, i);
+                let end = nth_line_end(hb, i);
+                if rp.headers_cursor >= start && rp.headers_cursor <= end {
+                    let col_in_line =
+                        hb[start..rp.headers_cursor.min(hb.len())].chars().count() as u16;
+                    let y = (rows.len() - 1) as u16;
+                    *caret = Some((area.x + 4 + col_in_line, y));
+                }
+            }
+        }
+        if h_focus && focused && caret.is_none() && hb.ends_with('\n') {
+            let y = rows.len() as u16;
+            rows.push(plain(String::new(), body_style));
+            *caret = Some((area.x + 4, y));
+        }
     }
 
     // Body
