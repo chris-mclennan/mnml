@@ -244,7 +244,7 @@ run against the same `App` + `ui::draw` the terminal/headless paths use — with
 and synthesized key events (no real event loop, no file-IPC; deterministic + fast). `<text>` may be
 `"…"`-wrapped (`\n \t \\ \"` unescaped). `mnml test [path…]` runs files/dirs of `.test` (default
 `tests/e2e/`), non-zero exit on failure; `tests/e2e.rs` runs `tests/e2e/**/*.test` under `cargo test`
-(`edit_and_save`, `command_palette`, `splits`, `markdown_preview`, `vim_mode`). **Plugins — done (first cut):** out-of-process
+(`edit_and_save`, `command_palette`, `splits`, `markdown_preview`, `vim_mode`, `whichkey`, `close_prompt`). **Plugins — done (first cut):** out-of-process
 helpers over the `.mnml/ipc/` channel — IPC commands `register-command {id,title,group,keys}` /
 `run-command <id>` / `type <text>`; a `register`ed command (`crate::command::DynCommand` on `App`) shows
 up in the palette + resolves as a keybinding (`Keymap::bind`), and invoking it (palette / key / `run-command`)

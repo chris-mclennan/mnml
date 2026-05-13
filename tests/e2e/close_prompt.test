@@ -1,0 +1,29 @@
+# Closing a dirty buffer pops the Save / Discard / Cancel overlay; Cancel keeps
+# the buffer (still dirty), Discard drops it (falling back to the other buffer).
+# (The overlay's text is "<name> has unsaved changes." — distinct from the
+# "discarded unsaved changes" toast Discard leaves behind.)
+write keep.txt the keeper
+open keep.txt
+write notes.txt first line
+open notes.txt
+expect pane "notes.txt"
+expect dirty false
+
+type  more text
+expect dirty true
+
+# Cancel: the overlay shows, `c` dismisses it, the buffer stays dirty.
+command buffer.close
+expect screen contains "has unsaved changes"
+key c
+expect screen lacks "has unsaved changes"
+expect dirty true
+expect pane "notes.txt"
+
+# Discard: `d` drops the buffer and we land back on keep.txt.
+command buffer.close
+expect screen contains "has unsaved changes"
+key d
+expect pane "keep.txt"
+expect screen contains "the keeper"
+expect screen lacks "has unsaved changes"
