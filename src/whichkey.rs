@@ -93,6 +93,7 @@ pub fn root() -> &'static Leader {
                         vec![
                             ('d', cmd("git.diff_file", "diff file")),
                             ('D', cmd("git.diff", "diff worktree")),
+                            ('p', cmd("git.peek_change", "peek change at cursor")),
                             ('b', cmd("git.blame_toggle", "blame toggle")),
                             ('c', cmd("git.commit", "commit")),
                             ('l', cmd("git.graph", "commit graph")),

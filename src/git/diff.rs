@@ -141,6 +141,42 @@ impl Hunk {
     pub fn patch(&self) -> String {
         format!("--- a/{0}\n+++ b/{0}\n{1}", self.file_rel, self.body)
     }
+
+    /// Count of new-side lines this hunk covers (i.e. its row span in the
+    /// edited file). Pure-deletion hunks return 0 — they sit *between* two
+    /// rows. Context and Added contribute, Removed and NoNewline don't.
+    pub fn new_line_count(&self) -> usize {
+        self.lines
+            .iter()
+            .filter(|l| matches!(l, HunkLine::Context(_) | HunkLine::Added(_)))
+            .count()
+    }
+
+    /// True when `line_0based` (in the new file's coordinates) sits inside
+    /// this hunk's new-side range. Pure-deletion hunks (new_line_count == 0)
+    /// match the line *immediately above* the deletion point, mirroring the
+    /// gutter sign placement (`SignKind::Removed`).
+    pub fn contains_new_line(&self, line_0based: usize) -> bool {
+        let start = self.new_start.saturating_sub(1);
+        let count = self.new_line_count();
+        if count == 0 {
+            // Pure deletion: stick the marker on the row above.
+            // `new_start` for `+0,0` lands at the deletion's row anchor;
+            // diff machinery already biases it to the line above when count
+            // is zero (see `line_signs`).
+            return line_0based == start;
+        }
+        line_0based >= start && line_0based < start + count
+    }
+}
+
+/// Find the hunk in `git diff HEAD -- <rel>` whose new-side range contains
+/// `line_0based`. `None` when nothing changed at that line.
+pub fn peek_hunk_at(workspace: &Path, rel: &str, line_0based: usize) -> Option<Hunk> {
+    let hunks = run_diff(workspace, &["diff", "HEAD", "--no-color", "--", rel]);
+    hunks
+        .into_iter()
+        .find(|h| h.contains_new_line(line_0based))
 }
 
 /// `git diff` for a single path (worktree vs index — i.e. unstaged changes).
@@ -366,5 +402,48 @@ diff --git a/b.txt b/b.txt
         assert!(patch.contains("+    new();\n"));
         assert_eq!(hs[1].file_rel, "b.txt");
         assert_eq!(hs[1].new_start, 5);
+    }
+
+    #[test]
+    fn contains_new_line_modified() {
+        let ws = Path::new("/repo");
+        let diff = "\
+diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -10,2 +10,3 @@
+ ctx
+-old
++new
++extra
+";
+        let hs = parse_hunks(diff, ws);
+        let h = &hs[0];
+        // new-side range is lines 10..=12 (1-based) ⇒ 9..=11 (0-based).
+        assert_eq!(h.new_line_count(), 3);
+        assert!(!h.contains_new_line(8));
+        assert!(h.contains_new_line(9));
+        assert!(h.contains_new_line(11));
+        assert!(!h.contains_new_line(12));
+    }
+
+    #[test]
+    fn contains_new_line_pure_deletion_sticks_to_anchor() {
+        let ws = Path::new("/repo");
+        let diff = "\
+diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -20,2 +19,0 @@
+-gone a
+-gone b
+";
+        let hs = parse_hunks(diff, ws);
+        let h = &hs[0];
+        assert_eq!(h.new_line_count(), 0);
+        // new_start = 19 (1-based) ⇒ 0-based 18 — the row right above the deletion.
+        assert!(h.contains_new_line(18));
+        assert!(!h.contains_new_line(17));
+        assert!(!h.contains_new_line(19));
     }
 }

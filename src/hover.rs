@@ -61,6 +61,25 @@ impl HoverPopup {
         Some(HoverPopup { lines, scroll: 0 })
     }
 
+    /// Build a popup directly from plain-text lines — no markdown cleanup,
+    /// no header stripping. Used by [`crate::app::App::peek_git_change_at_cursor`]
+    /// where the content is a diff hunk and the leading `+` / `-` / ` ` are
+    /// load-bearing. Long lines word-wrap to [`MAX_WIDTH`].
+    pub fn from_lines(input: Vec<String>) -> Option<HoverPopup> {
+        if input.is_empty() {
+            return None;
+        }
+        let mut lines: Vec<String> = Vec::new();
+        for line in input {
+            if line.chars().count() <= MAX_WIDTH {
+                lines.push(line);
+            } else {
+                lines.extend(wrap(&line, MAX_WIDTH));
+            }
+        }
+        Some(HoverPopup { lines, scroll: 0 })
+    }
+
     /// Width of the widest line (capped at [`MAX_WIDTH`]).
     pub fn width(&self) -> usize {
         self.lines

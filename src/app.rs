@@ -4770,6 +4770,48 @@ impl App {
         self.active = Some(new_id);
         self.focus = Focus::Pane;
     }
+    /// `git.peek_change` (`<leader>g p`) — show the hunk under the cursor as
+    /// a floating popup (uses the same hover widget as LSP). Toasts if the
+    /// cursor isn't on a changed line.
+    pub fn peek_git_change_at_cursor(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("git peek needs a saved file");
+            return;
+        };
+        let (line_0, _) = b.editor.row_col();
+        let rel = match path.strip_prefix(&self.workspace) {
+            Ok(r) => r.to_string_lossy().to_string(),
+            Err(_) => {
+                self.toast("file is outside the workspace");
+                return;
+            }
+        };
+        let Some(hunk) = crate::git::diff::peek_hunk_at(&self.workspace, &rel, line_0) else {
+            self.toast("no change at cursor");
+            return;
+        };
+        // Format as: header line, then the hunk's lines with their `+`/`-`/` ` prefix.
+        let mut out: Vec<String> = Vec::with_capacity(hunk.lines.len() + 1);
+        out.push(hunk.header.clone());
+        for hl in &hunk.lines {
+            use crate::git::diff::HunkLine;
+            match hl {
+                HunkLine::Context(t) => out.push(format!(" {t}")),
+                HunkLine::Added(t) => out.push(format!("+{t}")),
+                HunkLine::Removed(t) => out.push(format!("-{t}")),
+                HunkLine::NoNewline => out.push("\\ No newline at end of file".to_string()),
+            }
+        }
+        match crate::hover::HoverPopup::from_lines(out) {
+            Some(h) => self.hover = Some(h),
+            None => self.toast("peek: (empty)"),
+        }
+    }
+
     /// Open a `git diff` view of the whole worktree, in the focused leaf.
     pub fn open_diff_worktree(&mut self) {
         let scope = crate::pane::DiffScope::Unstaged(None);

@@ -234,7 +234,12 @@ refreshed when the source is saved.
 Git: branch + change counts in the statusline + tree tint (P0); **gutter line-signs** —
 `src/git/diff.rs` parses `git diff HEAD --unified=0` into per-file added/modified/removed
 line marks (kept in `GitStatus`'s ~3s-cached `Snapshot.line_changes`), drawn as a coloured
-`▎` in the editor gutter; **diff pane** — `Pane::Diff` (`src/ui/diff_view.rs`) shows parsed
+`▎` in the editor gutter; **peek change at cursor** — `git.peek_change` (`<leader>g p`) shells out to
+`git diff HEAD --unified=3 -- <rel>` (via `crate::git::diff::peek_hunk_at`), finds the hunk whose new-side
+range contains the cursor's line (`Hunk::contains_new_line`, with pure-deletion hunks anchoring to the row
+above), and opens the result as a `HoverPopup` (new `HoverPopup::from_lines` ctor skips the markdown
+cleanup so leading `+`/`-`/` ` markers survive). Toasts "no change at cursor" when off a modified line.
+**diff pane** — `Pane::Diff` (`src/ui/diff_view.rs`) shows parsed
 hunks (header + context/`+`/`-` lines), `n`/`p` move the cursor hunk, `s`/`u` stage/unstage
 it (`git apply --cached [--reverse]`), `r` refreshes, Enter jumps to the hunk's line in the
 source editor; `git.diff_file` (`<leader>g d`, opens in a split next to the source) /

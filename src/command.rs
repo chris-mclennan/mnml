@@ -405,6 +405,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_diff_worktree(),
         },
         Command {
+            id: "git.peek_change",
+            title: "Git: peek change at cursor (popup of HEAD diff)",
+            group: "git",
+            keys: &[],
+            run: |app| app.peek_git_change_at_cursor(),
+        },
+        Command {
             id: "git.blame_toggle",
             title: "Git: toggle blame gutter",
             group: "git",
