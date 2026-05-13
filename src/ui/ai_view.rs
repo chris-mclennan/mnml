@@ -52,7 +52,7 @@ pub fn draw(
     }
     let hint: String = if ai.is_live() {
         "  live mirror · c open interactive pane · G follow · esc → tree".into()
-    } else if matches!(ai.state, AiState::Asking) {
+    } else if matches!(ai.state, AiState::Asking | AiState::Streaming(_)) {
         "  x cancel · esc → tree".into()
     } else if ai.target.is_some() && matches!(ai.state, AiState::Done(_)) {
         "  r re-ask · a apply suggestion · c continue in Claude Code · esc → tree".into()
@@ -80,6 +80,16 @@ pub fn draw(
                 .bg(t.bg_dark)
                 .add_modifier(Modifier::BOLD),
         ))),
+        AiState::Streaming(text) => {
+            rows.extend(md_preview::render_markdown(text));
+            rows.push(Line::from(Span::styled(
+                "  ▌ …",
+                Style::default()
+                    .fg(t.yellow)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        }
         AiState::Done(text) => rows.extend(md_preview::render_markdown(text)),
         AiState::Live { turns, .. } => {
             if turns.is_empty() {
@@ -94,6 +104,11 @@ pub fn draw(
     let rows = md_preview::wrap_lines(rows, area.width as usize);
     let h = area.height as usize;
     let max_scroll = rows.len().saturating_sub(h.min(rows.len()));
+    // Follow the tail while streaming (you want the newest text); the user can
+    // scroll once it settles.
+    if matches!(ai.state, AiState::Streaming(_)) {
+        ai.scroll = max_scroll;
+    }
     ai.scroll = ai.scroll.min(max_scroll);
     let view: Vec<Line> = rows.into_iter().skip(ai.scroll).take(h).collect();
     frame.render_widget(

@@ -21,10 +21,15 @@
 //! range (left dirty for review).
 //!
 //! An in-flight `-p` run can be cancelled (`x` in the pane): the worker uses
-//! [`one_shot_cancellable`] which polls an `AtomicBool` and kills the child.
+//! [`stream_to_channel`] / [`one_shot_cancellable`], which poll an `AtomicBool`
+//! and kill the child.
 //!
-//! Follow-ups: stream `claude -p` output incrementally instead of waiting for
-//! completion; show the applied suggestion as a reviewable diff before committing it.
+//! Output is streamed: [`stream_to_channel`] forwards stdout chunks as
+//! [`AiMsg::Delta`]s while the run is in flight (the pane shows them as they
+//! arrive — [`AiState::Streaming`]), then a final [`AiMsg::Done`] with the clean
+//! trimmed answer (or [`AiMsg::Failed`]).
+//!
+//! Follow-ups: show the applied suggestion as a reviewable diff before committing it.
 
 pub mod transcript;
 
@@ -95,8 +100,10 @@ pub struct AiPane {
 }
 
 pub enum AiState {
-    /// A `claude -p` run is in flight.
+    /// A `claude -p` run is in flight; no output yet.
     Asking,
+    /// A `claude -p` run is in flight and streaming — the text so far.
+    Streaming(String),
     /// `claude -p` finished — its (markdown) answer.
     Done(String),
     /// `claude -p` failed — the error.
@@ -157,7 +164,7 @@ impl AiPane {
 
     pub fn tab_title(&self) -> String {
         let marker = match self.state {
-            AiState::Asking => "…",
+            AiState::Asking | AiState::Streaming(_) => "…",
             AiState::Failed(_) => "✗",
             AiState::Done(_) => "✦",
             AiState::Live { .. } => "●",
@@ -168,6 +175,123 @@ impl AiPane {
 
 /// The binary used for one-shot prompts. (`codex exec` could be wired similarly.)
 const CLI: &str = "claude";
+
+/// A message a streaming `claude -p` worker sends back over `App.ai_chan`.
+#[derive(Debug, Clone)]
+pub enum AiMsg {
+    /// More stdout text (append it to the pane's running buffer).
+    Delta(String),
+    /// The run finished — the full, trimmed answer (replaces the buffer).
+    Done(String),
+    /// The run failed (or was cancelled) — the reason.
+    Failed(String),
+}
+
+/// Run `claude -p --session-id <session_id> <prompt>`, forwarding stdout chunks
+/// to `sink` as [`AiMsg::Delta`]s as they arrive, then a final [`AiMsg::Done`]
+/// (trimmed stdout) or [`AiMsg::Failed`]. Checks `cancel` while the child runs
+/// (kills it + reports `"cancelled"` if it goes true). Blocking — call from a
+/// worker thread; every message is tagged with `job_id`.
+pub fn stream_to_channel(
+    prompt: &str,
+    session_id: &str,
+    cancel: &AtomicBool,
+    sink: std::sync::mpsc::Sender<(u64, AiMsg)>,
+    job_id: u64,
+) {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = match Command::new(CLI)
+        .args(["-p", "--session-id", session_id])
+        .arg(prompt)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = sink.send((
+                job_id,
+                AiMsg::Failed(format!(
+                    "running `{CLI} -p`: {e} — is the Claude Code CLI on PATH?"
+                )),
+            ));
+            return;
+        }
+    };
+    let mut so = child.stdout.take().expect("piped stdout");
+    let mut se = child.stderr.take().expect("piped stderr");
+    // Reader thread: pump stdout chunks straight to `sink` (lossy UTF-8 per
+    // chunk — a split multibyte char is transient; the final `Done` is clean),
+    // accumulating the raw bytes to return on join.
+    let chunk_sink = sink.clone();
+    let so_h = std::thread::spawn(move || {
+        let mut acc = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            match so.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    acc.extend_from_slice(&buf[..n]);
+                    let _ = chunk_sink.send((
+                        job_id,
+                        AiMsg::Delta(String::from_utf8_lossy(&buf[..n]).into_owned()),
+                    ));
+                }
+            }
+        }
+        acc
+    });
+    let se_h = std::thread::spawn(move || {
+        let mut v = Vec::new();
+        let _ = se.read_to_end(&mut v);
+        v
+    });
+    let mut killed = false;
+    loop {
+        if !killed && cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            killed = true;
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let out = so_h.join().unwrap_or_default();
+                let err = se_h.join().unwrap_or_default();
+                let _ = sink.send((job_id, settle(killed, status.success(), &out, &err)));
+                return;
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(40)),
+            Err(e) => {
+                let _ = sink.send((job_id, AiMsg::Failed(format!("waiting on `{CLI} -p`: {e}"))));
+                return;
+            }
+        }
+    }
+}
+
+/// Decide the final [`AiMsg`] for a finished `claude -p` from `(was it killed,
+/// exited 0, stdout, stderr)`.
+fn settle(killed: bool, success: bool, stdout: &[u8], stderr: &[u8]) -> AiMsg {
+    if killed {
+        return AiMsg::Failed("cancelled".to_string());
+    }
+    let out = String::from_utf8_lossy(stdout);
+    if success {
+        let s = out.trim();
+        return if s.is_empty() {
+            AiMsg::Failed("(empty response)".to_string())
+        } else {
+            AiMsg::Done(s.to_string())
+        };
+    }
+    let err = String::from_utf8_lossy(stderr);
+    let m = [err.trim(), out.trim()]
+        .into_iter()
+        .find(|s| !s.is_empty())
+        .unwrap_or("`claude -p` failed");
+    AiMsg::Failed(m.lines().next().unwrap_or(m).to_string())
+}
 
 /// Run `claude -p --session-id <session_id> <prompt>` to completion and return
 /// its stdout (trimmed), or a one-line error. Blocking — call from a worker
@@ -331,6 +455,25 @@ mod tests {
         assert_eq!(
             first_code_block("```\nfirst\n```\n```\nsecond\n```").as_deref(),
             Some("first")
+        );
+    }
+
+    #[test]
+    fn settle_picks_the_right_outcome() {
+        assert!(matches!(settle(true, false, b"x", b""), AiMsg::Failed(m) if m == "cancelled"));
+        assert!(matches!(settle(false, true, b"  hello  \n", b""), AiMsg::Done(m) if m == "hello"));
+        assert!(
+            matches!(settle(false, true, b"   \n  ", b""), AiMsg::Failed(m) if m == "(empty response)")
+        );
+        // failure → first non-empty of stderr / stdout, first line only.
+        assert!(
+            matches!(settle(false, false, b"", b"boom: bad\nmore"), AiMsg::Failed(m) if m == "boom: bad")
+        );
+        assert!(
+            matches!(settle(false, false, b"stdout err", b""), AiMsg::Failed(m) if m == "stdout err")
+        );
+        assert!(
+            matches!(settle(false, false, b"", b""), AiMsg::Failed(m) if m == "`claude -p` failed")
         );
     }
 

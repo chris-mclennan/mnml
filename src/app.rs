@@ -234,10 +234,11 @@ pub struct App {
         std::sync::mpsc::Receiver<HttpJobDone>,
     )>,
     /// Channel for background `claude -p` runs (lazily created); worker threads
-    /// send `(job_id, result)`, [`Self::tick`] drains it into the matching `Pane::Ai`.
+    /// stream `(job_id, AiMsg)` (deltas then a final Done/Failed), [`Self::tick`]
+    /// drains it into the matching `Pane::Ai`.
     ai_chan: Option<(
-        std::sync::mpsc::Sender<AiJobDone>,
-        std::sync::mpsc::Receiver<AiJobDone>,
+        std::sync::mpsc::Sender<AiJobMsg>,
+        std::sync::mpsc::Receiver<AiJobMsg>,
     )>,
     /// Channel for background `npx playwright test` runs → the matching `Pane::Tests`.
     tests_chan: Option<(
@@ -265,7 +266,7 @@ pub struct App {
 }
 
 type HttpJobDone = (u64, Result<crate::request_pane::ResponseView, String>);
-type AiJobDone = (u64, Result<String, String>);
+type AiJobMsg = (u64, crate::ai::AiMsg);
 type TestsJobDone = (u64, Result<crate::playwright::TestRun, String>);
 
 impl App {
@@ -1431,6 +1432,16 @@ impl App {
         self.panes.iter().any(|p| matches!(p, Pane::Pty(_)))
     }
 
+    /// True while a `claude -p` run is in flight (so the event loop polls faster
+    /// and streamed deltas render promptly).
+    pub fn has_pending_ai(&self) -> bool {
+        self.pending_commit_msg_job.is_some()
+            || self.panes.iter().any(|p| {
+                matches!(p, Pane::Ai(a)
+                    if matches!(a.state, crate::ai::AiState::Asking | crate::ai::AiState::Streaming(_)))
+            })
+    }
+
     // ─── AI: `claude -p` one-shots ──────────────────────────────────
     /// Allocate a job id + fresh session id and spawn `claude -p --session-id …`
     /// on a worker thread. Returns `(job_id, session_id, cancel_flag)` — set the
@@ -1451,10 +1462,7 @@ impl App {
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_cancel = cancel.clone();
         std::thread::spawn(move || {
-            let _ = tx.send((
-                job_id,
-                crate::ai::one_shot_cancellable(&prompt, &sid, &worker_cancel),
-            ));
+            crate::ai::stream_to_channel(&prompt, &sid, &worker_cancel, tx, job_id);
         });
         (job_id, session_id, cancel)
     }
@@ -1507,7 +1515,10 @@ impl App {
     pub fn cancel_active_ai(&mut self) {
         let Some(cur) = self.active else { return };
         if let Some(Pane::Ai(a)) = self.panes.get(cur)
-            && matches!(a.state, crate::ai::AiState::Asking)
+            && matches!(
+                a.state,
+                crate::ai::AiState::Asking | crate::ai::AiState::Streaming(_)
+            )
         {
             a.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
             self.toast("cancelling…");
@@ -1520,7 +1531,12 @@ impl App {
     pub fn continue_active_ai(&mut self) {
         let Some(cur) = self.active else { return };
         let sid = match self.panes.get(cur) {
-            Some(Pane::Ai(a)) if matches!(a.state, crate::ai::AiState::Asking) => {
+            Some(Pane::Ai(a))
+                if matches!(
+                    a.state,
+                    crate::ai::AiState::Asking | crate::ai::AiState::Streaming(_)
+                ) =>
+            {
                 self.toast("wait for the answer first");
                 return;
             }
@@ -1690,7 +1706,9 @@ impl App {
             match self.panes.get(cur) {
                 Some(Pane::Ai(a)) => match (&a.target, &a.state) {
                     (None, _) => Err("nothing to apply here (use AI `fix`/`refactor` on a buffer)"),
-                    (Some(_), crate::ai::AiState::Asking) => Err("wait for the answer first"),
+                    (Some(_), crate::ai::AiState::Asking | crate::ai::AiState::Streaming(_)) => {
+                        Err("wait for the answer first")
+                    }
                     (Some(t), crate::ai::AiState::Done(text)) => {
                         match crate::ai::first_code_block(text) {
                             Some(code) => Ok((t.clone(), code)),
@@ -1810,17 +1828,25 @@ impl App {
         ));
     }
 
-    /// Deliver any completed `claude -p` runs to their `Pane::Ai`.
+    /// Drain the streamed `claude -p` messages into their `Pane::Ai` (deltas
+    /// accumulate; a final Done/Failed settles the pane). The commit-message job
+    /// shares this channel — it ignores deltas and acts on the final text.
     fn drain_ai_jobs(&mut self) {
-        use crate::ai::AiState;
+        use crate::ai::{AiMsg, AiState};
         let Some((_, rx)) = &self.ai_chan else {
             return;
         };
-        let done: Vec<AiJobDone> = rx.try_iter().collect();
+        let msgs: Vec<AiJobMsg> = rx.try_iter().collect();
         let mut toasts: Vec<String> = Vec::new();
-        for (job_id, result) in done {
-            // An "AI: write me a commit message" job? Route it to the commit prompt.
+        for (job_id, msg) in msgs {
+            // An "AI: write me a commit message" job? Route the final text to the
+            // commit prompt; deltas are noise here.
             if self.pending_commit_msg_job == Some(job_id) {
+                let result = match msg {
+                    AiMsg::Delta(_) => continue,
+                    AiMsg::Done(text) => Ok(text),
+                    AiMsg::Failed(e) => Err(e),
+                };
                 self.pending_commit_msg_job = None;
                 for pane in &mut self.panes {
                     if let Pane::GitStatus(g) = pane
@@ -1853,17 +1879,23 @@ impl App {
                 }
                 continue;
             }
-            let Some(Pane::Ai(a)) = self.panes.iter_mut().find(
-                |p| matches!(p, Pane::Ai(a) if a.job_id == job_id && matches!(a.state, AiState::Asking)),
-            ) else {
+            let Some(Pane::Ai(a)) = self.panes.iter_mut().find(|p| {
+                matches!(p, Pane::Ai(a)
+                    if a.job_id == job_id
+                    && matches!(a.state, AiState::Asking | AiState::Streaming(_)))
+            }) else {
                 continue;
             };
-            match result {
-                Ok(text) => {
+            match msg {
+                AiMsg::Delta(s) => match &mut a.state {
+                    AiState::Streaming(buf) => buf.push_str(&s),
+                    _ => a.state = AiState::Streaming(s),
+                },
+                AiMsg::Done(text) => {
                     toasts.push(format!("{} — done", a.title));
                     a.state = AiState::Done(text);
                 }
-                Err(e) => {
+                AiMsg::Failed(e) => {
                     toasts.push(format!("AI: {e}"));
                     a.state = AiState::Failed(e);
                 }

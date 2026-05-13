@@ -198,15 +198,20 @@ xterm-ish) — the global chords (esp. `Ctrl+E` cycle-focus, `Ctrl+B` tree) are 
 since they resolve before pane dispatch; `Ctrl+W` closes the pane (kills child, joins reader).
 The event loop polls at 40 ms while a pty is open. **AI on-selection actions — done:** `src/ai/mod.rs`
 runs `claude -p --session-id <uuid> "<prompt>"` (the CLI in print mode — tool use, returns text,
-user's auth) on a worker thread (`ai::one_shot_cancellable` — spawns the child, drains stdout/stderr
-on threads, polls `try_wait` + an `AtomicBool` cancel flag, kills the child if it goes true);
-`Pane::Ai(AiPane{title,prompt,session_id,job_id,state:Asking|Done|Failed,scroll,target,cancel})`
-shows the answer rendered as markdown (via `md_preview::render_markdown`) —
-`src/ui/ai_view.rs`. Commands `ai.explain` / `ai.fix` / `ai.refactor` / `ai.write_tests`
+user's auth) on a worker thread (`ai::stream_to_channel` — spawns the child, a reader thread pumps
+stdout chunks straight to `App.ai_chan` as `AiMsg::Delta`s while it runs, then `settle()` sends a
+final `AiMsg::Done`/`Failed`; polls `try_wait` + an `AtomicBool` cancel flag, kills the child if it
+goes true; `one_shot_cancellable` is the kept non-streaming variant);
+`Pane::Ai(AiPane{title,prompt,session_id,job_id,state:Asking|Streaming(buf)|Done|Failed,scroll,target,cancel})`
+shows the answer (the streaming buffer, then the final text) rendered as markdown (via
+`md_preview::render_markdown`, with a `▌ …` cursor while `Streaming`) — `src/ui/ai_view.rs` (which
+pins the scroll to the tail while streaming). Commands `ai.explain` / `ai.fix` / `ai.refactor` / `ai.write_tests`
 (`<leader>a e/f/r/w`) feed the active editor's selection (or the whole buffer if nothing's
 selected) + a task prompt; `ai.ask` (`<leader>a a`) takes a free-text question via the prompt
-overlay (`PromptKind::AiAsk`). Results land via `App.ai_chan` / `App::tick` (same pattern as the
-request pane). In the AI pane: `r` re-asks (fresh session), `x` cancels an in-flight run
+overlay (`PromptKind::AiAsk`). Results stream in via `App.ai_chan` / `App::tick` → `drain_ai_jobs`
+(the commit-message job shares the channel — it ignores deltas, acts on the final text); the event
+loop polls at 40 ms while a `claude -p` run is in flight (`App::has_pending_ai`). In the AI pane:
+`r` re-asks (fresh session), `x` cancels an in-flight run
 (`App::cancel_active_ai` → `cancel` flag → worker kills `claude -p`, replies `Failed("cancelled")`),
 Esc → tree, **`a` applies the suggested code** — for a `fix`/`refactor` action the source range is
 recorded as the pane's `crate::ai::ApplyTarget{path,start,end}`; `App::apply_ai_suggestion` extracts
@@ -224,8 +229,7 @@ known `--session-id` (`BinaryProfile.session_id`), so `ai.session_view` (`<leade
 mirror for the active `claude`/Ai pane; `c`-promoting a `Pane::Ai` also flips that pane into a
 live mirror of the (now-interactive) session. `G` follows the bottom. *Follow-ups:* show the
 applied suggestion as a reviewable diff (vs the current straight-replace); request-debug (`Ctrl+.`
-on a failing request → `claude -p`); pty scrollback; incremental JSONL parse from `last_len`;
-stream `claude -p` output instead of waiting for completion.
+on a failing request → `claude -p`).
 **Playwright track — runner + results tree + trace pane done:** `src/playwright/mod.rs` runs `npx playwright test
 --reporter=json --trace=retain-on-failure [args]` on a worker thread (`App.tests_chan` / `App::tick`), parses the JSON report
 into a flat `TestRun{tests: Vec<TestCase{title,suite_path,file,line,status,duration_ms,error,trace_path}>}` (ANSI
