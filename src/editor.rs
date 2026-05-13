@@ -92,6 +92,10 @@ pub struct Editor {
     /// Toggled by `[editor] auto_pair`; off in `Editor::new` so unit tests have
     /// vanilla behavior.
     pub auto_pair: bool,
+    /// On `Enter`, carry forward the previous line's leading whitespace
+    /// (`auto_indent`). Off in `Editor::new` so unit tests get vanilla
+    /// newlines; on by default for real buffers via `[editor] auto_indent`.
+    pub auto_indent: bool,
 }
 
 impl Editor {
@@ -107,6 +111,7 @@ impl Editor {
             redo: Vec::new(),
             in_insert_run: false,
             auto_pair: false,
+            auto_indent: false,
         }
     }
 
@@ -249,6 +254,39 @@ impl Editor {
     /// an already-auto-paired close char).
     fn cursor_on_char(&self, c: char) -> bool {
         self.text[self.cursor..].starts_with(c)
+    }
+
+    /// The leading whitespace (' ' / '\t') of the current line, up to the
+    /// cursor — what `auto_indent` carries forward when Enter is pressed mid-
+    /// line. (If the cursor sits inside the indent, only the chars before it
+    /// are copied — typing Enter doesn't *expand* the indent.)
+    fn leading_indent_of_line_to_cursor(&self) -> String {
+        let line = self.current_line();
+        let bol = self.line_start(line);
+        let mut out = String::new();
+        for ch in self.text[bol..self.cursor].chars() {
+            if ch == ' ' || ch == '\t' {
+                out.push(ch);
+            } else {
+                break;
+            }
+        }
+        out
+    }
+
+    /// The leading whitespace of `line`, irrespective of the cursor — used by
+    /// `InsertNewlineBelow` (vim `o`), which opens a fresh line *below* the
+    /// current one and wants its full indent.
+    fn leading_indent_of_line(&self, line: usize) -> String {
+        let mut out = String::new();
+        for ch in self.line_str(line).chars() {
+            if ch == ' ' || ch == '\t' {
+                out.push(ch);
+            } else {
+                break;
+            }
+        }
+        out
     }
     fn prev_char_boundary(&self, byte: usize) -> usize {
         if byte == 0 {
@@ -455,8 +493,17 @@ impl Editor {
             InsertNewline => {
                 self.delete_selection_if_any(out);
                 self.checkpoint();
+                let indent = if self.auto_indent {
+                    self.leading_indent_of_line_to_cursor()
+                } else {
+                    String::new()
+                };
                 self.text.insert(self.cursor, '\n');
                 self.cursor += 1;
+                if !indent.is_empty() {
+                    self.text.insert_str(self.cursor, &indent);
+                    self.cursor += indent.len();
+                }
                 out.buffer_changed = true;
             }
             InsertNewlineBelow => {
@@ -464,8 +511,17 @@ impl Editor {
                 self.checkpoint();
                 let line = self.current_line();
                 let eol = self.line_end(line);
+                let indent = if self.auto_indent {
+                    self.leading_indent_of_line(line)
+                } else {
+                    String::new()
+                };
                 self.text.insert(eol, '\n');
                 self.cursor = eol + 1;
+                if !indent.is_empty() {
+                    self.text.insert_str(self.cursor, &indent);
+                    self.cursor += indent.len();
+                }
                 out.buffer_changed = true;
             }
             InsertNewlineAbove => {
@@ -1310,6 +1366,39 @@ mod tests {
         e.apply(InsertChar('('), 10, &mut c);
         assert_eq!(e.text(), "(name");
         assert_eq!(e.cursor(), 1);
+    }
+
+    #[test]
+    fn auto_indent_carries_leading_whitespace() {
+        let (mut e, mut c) = ed("    let x = 1;");
+        e.auto_indent = true;
+        // Cursor at end of line.
+        e.apply(MoveLineEnd, 10, &mut c);
+        e.apply(InsertNewline, 10, &mut c);
+        // The new line starts with the same 4-space indent.
+        assert_eq!(e.text(), "    let x = 1;\n    ");
+    }
+
+    #[test]
+    fn auto_indent_only_copies_chars_before_cursor() {
+        // Mid-line Enter shouldn't *expand* the indent — only the indent chars
+        // before the split point carry forward.
+        let (mut e, mut c) = ed("    abc");
+        e.auto_indent = true;
+        // Place cursor between the two leading spaces.
+        e.place_cursor(0, 2);
+        e.apply(InsertNewline, 10, &mut c);
+        // The split leaves "  " on line 0, "  abc" on line 1; line 1's leading
+        // indent (copied from line 0 prefix) is two spaces.
+        assert_eq!(e.text(), "  \n    abc");
+    }
+
+    #[test]
+    fn auto_indent_off_by_default() {
+        let (mut e, mut c) = ed("    hi");
+        e.apply(MoveLineEnd, 10, &mut c);
+        e.apply(InsertNewline, 10, &mut c);
+        assert_eq!(e.text(), "    hi\n");
     }
 
     #[test]

@@ -66,6 +66,9 @@ pub struct EditorConfig {
     /// char (cursor between). Off by default — surprises users who haven't
     /// opted in. `[editor] auto_pair = true` to enable.
     pub auto_pair: bool,
+    /// On Enter, carry forward the previous line's leading whitespace. On by
+    /// default — most users expect this from a modern editor.
+    pub auto_indent: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +98,7 @@ impl Default for Config {
                 trim_trailing_ws_on_save: false,
                 breadcrumb: true,
                 auto_pair: false,
+                auto_indent: true,
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),
@@ -160,6 +164,7 @@ struct RawEditor {
     trim_trailing_ws_on_save: Option<bool>,
     breadcrumb: Option<bool>,
     auto_pair: Option<bool>,
+    auto_indent: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -213,6 +218,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.auto_pair {
             self.editor.auto_pair = v;
+        }
+        if let Some(v) = raw.editor.auto_indent {
+            self.editor.auto_indent = v;
         }
         if let Some(v) = raw.ui.theme {
             self.ui.theme = v;
