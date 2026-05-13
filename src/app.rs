@@ -470,6 +470,11 @@ pub struct App {
     /// Browser-style navigation forward-stack — only populated after Alt+Left.
     /// Cleared on any fresh jump (you can't go forward after taking a new turn).
     pub nav_forward: Vec<NavPoint>,
+    /// Last mouse left-click for double/triple-click detection — `(when, x,
+    /// y, count)`. Reset to count=1 when a click lands too late or in a
+    /// different cell. Read by `dispatch_mouse` to upgrade count==2 → word
+    /// select, count==3 → line select.
+    pub last_click: Option<(std::time::Instant, u16, u16, u8)>,
     /// Is the workspace "section" inside the rail expanded? When `false` the
     /// rail shows just the `> WORKSPACE-NAME` header (clickable to expand);
     /// when `true` it shows the header (`v WORKSPACE-NAME`) + the file list.
@@ -593,6 +598,7 @@ impl App {
             file_cursors: std::collections::HashMap::new(),
             nav_back: Vec::new(),
             nav_forward: Vec::new(),
+            last_click: None,
             // VS-Code-style: the rail is shown with its workspace section
             // expanded by default. The last session's choice overrides this
             // in `try_restore_session`.

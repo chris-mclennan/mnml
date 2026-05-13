@@ -1041,6 +1041,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             // Editor text in some split leaf? Focus that leaf and place the cursor.
+            // Track multi-click: 2 = select word, 3 = select line. The threshold
+            // (450 ms, same cell) matches what most OSes use.
             if let Some(&(tr, pid)) = app
                 .rects
                 .editor_panes
@@ -1049,10 +1051,33 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             {
                 app.active = Some(pid);
                 app.focus_pane();
+                let now = std::time::Instant::now();
+                let count = match app.last_click {
+                    Some((prev, px, py, c))
+                        if px == x
+                            && py == y
+                            && now.duration_since(prev) < std::time::Duration::from_millis(450) =>
+                    {
+                        (c + 1).min(3)
+                    }
+                    _ => 1,
+                };
+                app.last_click = Some((now, x, y, count));
                 if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
                     let row = b.scroll + (y - tr.y) as usize;
                     let col = b.h_scroll + (x - tr.x) as usize;
                     b.editor.place_cursor(row, col);
+                    if count >= 2 {
+                        let clip = &mut app.clipboard;
+                        if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+                            let op = if count == 2 {
+                                crate::edit_op::EditOp::SelectWord
+                            } else {
+                                crate::edit_op::EditOp::SelectLine
+                            };
+                            b.apply_edit_ops(vec![op], clip, 0);
+                        }
+                    }
                 }
             }
         }
