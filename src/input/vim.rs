@@ -59,6 +59,10 @@ enum Prefix {
     TextObjectInner,
     /// Operator-pending + `a` — "around" variant; same expected next char.
     TextObjectAround,
+    /// `f` / `F` / `t` / `T` — the next typed char is the find target.
+    /// `(forward, before)` — `f`=(true, false), `F`=(false, false),
+    /// `t`=(true, true), `T`=(false, true).
+    FindChar(bool, bool),
 }
 
 #[derive(Debug)]
@@ -291,6 +295,51 @@ impl VimInputHandler {
                     _ => InputResult::Consumed,
                 };
             }
+            Prefix::FindChar(forward, before) => {
+                let op = self.op;
+                self.reset_pending();
+                let KeyCode::Char(c) = key.code else {
+                    return InputResult::Consumed;
+                };
+                // Operator-pending find ⇒ inclusive (vim's `df<c>` / `cf<c>`
+                // delete *up to and including* the target; `dt<c>` stops on
+                // the target). Standalone find is just a motion.
+                let inclusive = op.is_some();
+                let motion = FindCharOnLine {
+                    ch: c,
+                    forward,
+                    before,
+                    inclusive,
+                };
+                // Standalone find — just move the cursor.
+                let Some(op) = op else {
+                    return InputResult::Ops(vec![motion]);
+                };
+                // Operator + find ("df<c>", "ct<c>", …) — select from cursor
+                // to the find target, then apply the operator. The selection
+                // is cleared at the end (or insert mode entered for Change).
+                let mut ops = vec![SelectStart, motion];
+                match op {
+                    PendingOp::Delete => ops.push(DeleteSelection),
+                    PendingOp::Yank => {
+                        ops.push(YankSelection);
+                        ops.push(SelectClear);
+                    }
+                    PendingOp::Change => {
+                        ops.push(ReplaceSelection(String::new()));
+                        self.mode = VimMode::Insert;
+                    }
+                    PendingOp::Indent => {
+                        ops.push(Indent);
+                        ops.push(SelectClear);
+                    }
+                    PendingOp::Outdent => {
+                        ops.push(Outdent);
+                        ops.push(SelectClear);
+                    }
+                }
+                return InputResult::Ops(ops);
+            }
             Prefix::TextObjectInner | Prefix::TextObjectAround => {
                 let around = matches!(self.prefix, Prefix::TextObjectAround);
                 let op = self.op;
@@ -397,6 +446,17 @@ impl VimInputHandler {
             if matches!(key.code, KeyCode::Char('a')) {
                 self.op = Some(op);
                 self.prefix = Prefix::TextObjectAround;
+                return InputResult::Consumed;
+            }
+            // operator + f / F / t / T → find-char with operator applied.
+            if let KeyCode::Char(c @ ('f' | 'F' | 't' | 'T')) = key.code {
+                self.op = Some(op);
+                self.prefix = match c {
+                    'f' => Prefix::FindChar(true, false),
+                    'F' => Prefix::FindChar(false, false),
+                    't' => Prefix::FindChar(true, true),
+                    _ => Prefix::FindChar(false, true),
+                };
                 return InputResult::Consumed;
             }
             // operator + word for delete/change has a tighter form (`dw`, `cw`).
@@ -589,6 +649,24 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("editor.bracket_match".into()))
             }
+            // f / F / t / T — find char on the cursor's line. The next char
+            // typed is the target; the prefix dispatcher emits the EditOp.
+            KeyCode::Char('f') => {
+                self.prefix = Prefix::FindChar(true, false);
+                InputResult::Consumed
+            }
+            KeyCode::Char('F') => {
+                self.prefix = Prefix::FindChar(false, false);
+                InputResult::Consumed
+            }
+            KeyCode::Char('t') => {
+                self.prefix = Prefix::FindChar(true, true);
+                InputResult::Consumed
+            }
+            KeyCode::Char('T') => {
+                self.prefix = Prefix::FindChar(false, true);
+                InputResult::Consumed
+            }
             // marks
             KeyCode::Char('m') => {
                 self.prefix = Prefix::MarkSet;
@@ -776,6 +854,15 @@ impl InputHandler for VimInputHandler {
             Prefix::MarkJumpExact => s.push('`'),
             Prefix::TextObjectInner => s.push('i'),
             Prefix::TextObjectAround => s.push('a'),
+            Prefix::FindChar(forward, before) => {
+                let c = match (forward, before) {
+                    (true, false) => 'f',
+                    (false, false) => 'F',
+                    (true, true) => 't',
+                    (false, true) => 'T',
+                };
+                s.push(c);
+            }
             Prefix::None => {}
         }
         if self.mode == VimMode::VisualLine {

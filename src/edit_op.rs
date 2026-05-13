@@ -60,6 +60,20 @@ pub enum EditOp {
     /// vim visual `o` — swap the anchor and cursor of the current selection
     /// (move the "active end" to the other side). No-op without a selection.
     SwapAnchorCursor,
+    /// vim `f`/`F`/`t`/`T` — find char on the cursor's line. `forward=true`
+    /// scans rightward, `forward=false` scans leftward. `before=true` (`t`/`T`)
+    /// stops one cell before the match instead of on it. When `inclusive=true`
+    /// (used as a motion after an operator — `df<c>` / `cf<c>`), the cursor
+    /// lands on the cell *after* the target's natural stop so the operator's
+    /// range covers the find char in the `f`/`F` case and ends at the find
+    /// char in the `t`/`T` case (the vim conventions). No-op when the char
+    /// isn't present on the line in that direction.
+    FindCharOnLine {
+        ch: char,
+        forward: bool,
+        before: bool,
+        inclusive: bool,
+    },
     /// Multi-cursor — stubbed; a no-op until that "later" lands.
     AddCursorBelow,
     AddCursorAbove,
@@ -162,6 +176,7 @@ impl EditOp {
             | SelectAroundBracket(_)
             | RestoreLastSelection
             | SwapAnchorCursor
+            | FindCharOnLine { .. }
             | AddCursorBelow
             | AddCursorAbove
             | YankLine

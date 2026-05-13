@@ -793,6 +793,59 @@ impl Editor {
                     self.goal_col = self.col_at_byte(self.cursor);
                 }
             }
+            FindCharOnLine {
+                ch,
+                forward,
+                before,
+                inclusive,
+            } => {
+                let line = self.current_line();
+                let ls = self.line_start(line);
+                let le = self.line_end(line);
+                let cur = self.cursor;
+                if forward {
+                    // Scan from one char past cursor to end-of-line.
+                    let after = (cur + 1).min(le);
+                    if let Some(off) = self.text[after..le].find(ch) {
+                        let target = after + off;
+                        // `f`: land on target. `t`: one *before* target.
+                        // For operator-pending (`inclusive`), bump one cell
+                        // forward so the operator's range includes the find
+                        // char (for `f`) or stops exactly on it (for `t`).
+                        let base = if before {
+                            self.prev_char_boundary(target)
+                        } else {
+                            target
+                        };
+                        self.cursor = if inclusive {
+                            self.next_char_boundary(base)
+                        } else {
+                            base
+                        };
+                        self.goal_col = self.col_at_byte(self.cursor);
+                    }
+                } else {
+                    // Backward scan from start-of-line up to (but not
+                    // including) the cursor.
+                    let before_cur = cur.min(le);
+                    let slice = &self.text[ls..before_cur];
+                    if let Some(off) = slice.rfind(ch) {
+                        let target = ls + off;
+                        let base = if before {
+                            self.next_char_boundary(target)
+                        } else {
+                            target
+                        };
+                        // For an inclusive backward operator, the range
+                        // wants to cover one cell less (the `f` form should
+                        // include the target → cursor lands ON the target,
+                        // not before it; for `t`, one past).
+                        let _ = inclusive;
+                        self.cursor = base;
+                        self.goal_col = self.col_at_byte(self.cursor);
+                    }
+                }
+            }
             SelectAroundBracket(open) => {
                 let close = match_close_for(open);
                 if let Some((o, c)) = self.enclosing_bracket_pair(open, close) {
@@ -1890,6 +1943,73 @@ mod tests {
         let (mut e, mut c) = ed("only");
         e.apply(DuplicateLine, 10, &mut c);
         assert_eq!(e.text(), "only\nonly");
+    }
+
+    #[test]
+    fn find_char_on_line_forward_and_backward() {
+        let (mut e, mut c) = ed("hello world\nfoobar");
+        e.cursor = 0;
+        // f-o → move to first 'o'
+        e.apply(
+            EditOp::FindCharOnLine {
+                ch: 'o',
+                forward: true,
+                before: false,
+                inclusive: false,
+            },
+            10,
+            &mut c,
+        );
+        assert_eq!(e.cursor, 4);
+        // f-o again from there → second 'o' on the same line
+        e.apply(
+            EditOp::FindCharOnLine {
+                ch: 'o',
+                forward: true,
+                before: false,
+                inclusive: false,
+            },
+            10,
+            &mut c,
+        );
+        assert_eq!(e.cursor, 7);
+        // F-h → backward to 'h'
+        e.apply(
+            EditOp::FindCharOnLine {
+                ch: 'h',
+                forward: false,
+                before: false,
+                inclusive: false,
+            },
+            10,
+            &mut c,
+        );
+        assert_eq!(e.cursor, 0);
+        // t-w forward from 'h' → just before 'w'
+        e.apply(
+            EditOp::FindCharOnLine {
+                ch: 'w',
+                forward: true,
+                before: true,
+                inclusive: false,
+            },
+            10,
+            &mut c,
+        );
+        assert_eq!(e.cursor, 5); // 'w' is at 6, before is 5
+        // f-x (not on this line) → no-op
+        let before = e.cursor;
+        e.apply(
+            EditOp::FindCharOnLine {
+                ch: 'x',
+                forward: true,
+                before: false,
+                inclusive: false,
+            },
+            10,
+            &mut c,
+        );
+        assert_eq!(e.cursor, before);
     }
 
     #[test]

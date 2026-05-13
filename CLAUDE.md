@@ -101,6 +101,12 @@ to the exact stored `(row, col)` (`Prefix::MarkJumpExact` → `AppCommand::JumpT
 jumps `open_path` the marked file first when it isn't the active buffer. Toasts on set / jump / miss;
 jumps push the current position onto the nav-back stack so `Alt+Left` returns. `tests/e2e/marks.test`
 covers the chord flow.
+**Vim find-char** — `f<c>` / `F<c>` jump to next/prev `<c>` on the cursor's line; `t<c>` / `T<c>` stop
+one cell before. Operator-pending forms work too: `df<c>` deletes up to and including the target,
+`dt<c>` stops on the target (vim convention). New `Prefix::FindChar(forward, before)` + new
+`EditOp::FindCharOnLine{ ch, forward, before, inclusive }`; the handler sets `inclusive` based on whether
+an operator is pending so the deleted/changed range matches vim's exclusive vs inclusive semantics.
+`tests/e2e/vim_find_char.test` covers `f` + `dt`.
 **Vim Visual `o`** — swap which end of the selection the cursor sits on (so you can extend the *other*
 side without redoing the selection). New `EditOp::SwapAnchorCursor`.
 **Vim `gv`** — re-select the last visual selection. The editor remembers `(anchor, cursor)` whenever a
