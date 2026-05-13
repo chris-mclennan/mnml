@@ -68,6 +68,14 @@ pub enum AppCommand {
     ExCommand(String),
     /// Bridge into the command registry by id (e.g. vim `gd` → `"lsp.goto_definition"`).
     RunCommand(String),
+    /// vim `m<letter>` — remember the cursor as a buffer-local mark named
+    /// `letter` (`a`-`z`). Subsequent jumps via `'<letter>` / `` `<letter>``.
+    SetMark(char),
+    /// vim `'<letter>` — jump to the mark's *line*, cursor at the first
+    /// non-whitespace character (vim convention). Toasts if unset.
+    JumpToMarkLine(char),
+    /// vim `` `<letter>`` — jump to the mark's exact `(row, col)`.
+    JumpToMarkExact(char),
 }
 
 /// Result of feeding one key to a handler.

@@ -92,6 +92,14 @@ splits on unescaped `/` (`\/`/`\\`/`\n`/`\t` understood inside the fields), `g` 
 always), `i` makes the match case-insensitive (`buffer::find_all_ci_ascii` vs `app::find_all_case_sensitive`),
 no-replacement form `:%s/foo/` deletes; one undo step + an `:%s — N replacement(s)` toast. Literal-string
 match for now — no regex.
+**Vim marks** — buffer-local lowercase `a`-`z` marks (`Buffer.marks: HashMap<char, (row, col)>`). Vim
+normal-mode chords: `m<letter>` sets the mark at the cursor (`Prefix::MarkSet` → `AppCommand::SetMark(c)`
+→ `App::set_mark_at_cursor`); `'<letter>` jumps to the mark's row at col 0 (`Prefix::MarkJumpLine` →
+`AppCommand::JumpToMarkLine`); `` `<letter>`` jumps to the exact stored `(row, col)`
+(`Prefix::MarkJumpExact` → `AppCommand::JumpToMarkExact`). Toasts on set / jump / miss; jumps push the
+current position onto the nav-back stack so `Alt+Left` returns. Lost on buffer close (no persistence yet —
+uppercase / global marks would live on `App` and round-trip via session.json). `tests/e2e/marks.test`
+covers the chord flow.
 selection/undo/clipboard; fuzzy file finder (`Ctrl+P`) + command palette
 (`Ctrl+Shift+P` where the terminal supports the kitty protocol, else `F1`) + buffer
 switcher (`src/picker.rs` / `src/fuzzy.rs`); config-driven keymap — app-level chords

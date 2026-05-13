@@ -1,0 +1,28 @@
+# Vim marks — `m<letter>` sets a buffer-local mark; `'<letter>` jumps to its
+# line, `` `<letter>`` to its exact (row, col). Toasts surface the result.
+write notes.txt "alpha\nbeta\ngamma\ndelta\nepsilon"
+open notes.txt
+
+# Make sure we're in vim mode (the default standard-mode handler ignores `m`,
+# `'`, and `` ` `` so the toasts wouldn't appear).
+command editor.use_vim
+
+# Move to line 3 ("gamma") and set mark a there.
+key down
+key down
+key m
+key a
+expect screen contains "mark 'a set"
+
+# Move away.
+key down
+key down
+# Jump back to mark a (line jump).
+key '
+key a
+expect screen contains "→ 'a 3:1"
+
+# Unset mark ⇒ toast.
+key '
+key z
+expect screen contains "no mark 'z"

@@ -47,6 +47,12 @@ enum Prefix {
     Z,
     /// Saw `r` — replace the char under the cursor with the next typed char.
     Replace,
+    /// Saw `m` — expecting a letter to **set** a buffer-local mark.
+    MarkSet,
+    /// Saw `'` — expecting a letter to jump to a mark's **line**.
+    MarkJumpLine,
+    /// Saw `` ` `` — expecting a letter to jump to a mark's **exact position**.
+    MarkJumpExact,
 }
 
 #[derive(Debug)]
@@ -243,6 +249,33 @@ impl VimInputHandler {
                         InputResult::Ops(vec![SelectStart, m, ToggleLineComment, SelectClear])
                     }
                     None => InputResult::Consumed,
+                };
+            }
+            Prefix::MarkSet => {
+                self.reset_pending();
+                return match key.code {
+                    KeyCode::Char(c) if c.is_ascii_lowercase() => {
+                        InputResult::App(AppCommand::SetMark(c))
+                    }
+                    _ => InputResult::Consumed,
+                };
+            }
+            Prefix::MarkJumpLine => {
+                self.reset_pending();
+                return match key.code {
+                    KeyCode::Char(c) if c.is_ascii_lowercase() => {
+                        InputResult::App(AppCommand::JumpToMarkLine(c))
+                    }
+                    _ => InputResult::Consumed,
+                };
+            }
+            Prefix::MarkJumpExact => {
+                self.reset_pending();
+                return match key.code {
+                    KeyCode::Char(c) if c.is_ascii_lowercase() => {
+                        InputResult::App(AppCommand::JumpToMarkExact(c))
+                    }
+                    _ => InputResult::Consumed,
                 };
             }
             Prefix::None => {}
@@ -451,6 +484,19 @@ impl VimInputHandler {
                 self.prefix = Prefix::Z;
                 InputResult::Consumed
             }
+            // marks
+            KeyCode::Char('m') => {
+                self.prefix = Prefix::MarkSet;
+                InputResult::Consumed
+            }
+            KeyCode::Char('\'') => {
+                self.prefix = Prefix::MarkJumpLine;
+                InputResult::Consumed
+            }
+            KeyCode::Char('`') => {
+                self.prefix = Prefix::MarkJumpExact;
+                InputResult::Consumed
+            }
             // visual modes
             KeyCode::Char('v') => {
                 self.mode = VimMode::Visual;
@@ -616,6 +662,9 @@ impl InputHandler for VimInputHandler {
             Prefix::Gc => s.push_str("gc"),
             Prefix::Z => s.push('Z'),
             Prefix::Replace => s.push('r'),
+            Prefix::MarkSet => s.push('m'),
+            Prefix::MarkJumpLine => s.push('\''),
+            Prefix::MarkJumpExact => s.push('`'),
             Prefix::None => {}
         }
         if self.mode == VimMode::VisualLine {
@@ -912,5 +961,58 @@ mod tests {
     fn unknown_normal_key_is_ignored() {
         let mut v = h();
         assert!(matches!(v.handle_key(k('Q'), &ctx()), InputResult::Ignored));
+    }
+
+    #[test]
+    fn marks_set_and_jump_via_app_command() {
+        let mut v = h();
+        // m a — set mark 'a'
+        assert!(matches!(
+            v.handle_key(k('m'), &ctx()),
+            InputResult::Consumed
+        ));
+        assert_eq!(v.pending_display().as_deref(), Some("m"));
+        assert!(matches!(
+            v.handle_key(k('a'), &ctx()),
+            InputResult::App(AppCommand::SetMark('a'))
+        ));
+        assert_eq!(v.pending_display(), None);
+
+        // ' a — line jump to mark 'a'
+        assert!(matches!(
+            v.handle_key(k('\''), &ctx()),
+            InputResult::Consumed
+        ));
+        assert!(matches!(
+            v.handle_key(k('a'), &ctx()),
+            InputResult::App(AppCommand::JumpToMarkLine('a'))
+        ));
+
+        // ` a — exact jump
+        assert!(matches!(
+            v.handle_key(k('`'), &ctx()),
+            InputResult::Consumed
+        ));
+        assert!(matches!(
+            v.handle_key(k('a'), &ctx()),
+            InputResult::App(AppCommand::JumpToMarkExact('a'))
+        ));
+    }
+
+    #[test]
+    fn marks_ignore_non_lowercase() {
+        let mut v = h();
+        // m followed by a digit ⇒ consumed but not a SetMark
+        v.handle_key(k('m'), &ctx());
+        assert!(matches!(
+            v.handle_key(k('1'), &ctx()),
+            InputResult::Consumed
+        ));
+        // m followed by capital is also not lowercase ⇒ no SetMark yet
+        v.handle_key(k('m'), &ctx());
+        assert!(matches!(
+            v.handle_key(k('A'), &ctx()),
+            InputResult::Consumed
+        ));
     }
 }

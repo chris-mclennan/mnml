@@ -140,6 +140,11 @@ pub struct Buffer {
     /// Strip trailing whitespace from each line before writing. Honored by
     /// [`Self::save_to_disk`] + [`Self::save_as`]. Read from config at open.
     pub trim_trailing_ws_on_save: bool,
+    /// Vim-style local marks (lowercase `a`-`z`), keyed by letter and stored as
+    /// `(row, col)`. Set by `m<letter>`, jumped by `'<letter>` (line) or
+    /// `` `<letter>`` (exact). Lost on buffer close (no persistence yet;
+    /// uppercase / global marks would live on `App` and persist in session.json).
+    pub marks: std::collections::HashMap<char, (usize, usize)>,
 }
 
 impl Buffer {
@@ -170,6 +175,7 @@ impl Buffer {
             last_edited: None,
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
+            marks: std::collections::HashMap::new(),
         };
         b.refresh_highlights();
         Ok(b)
@@ -202,6 +208,7 @@ impl Buffer {
             last_edited: None,
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
+            marks: std::collections::HashMap::new(),
         }
     }
 

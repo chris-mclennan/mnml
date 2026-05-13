@@ -2305,6 +2305,44 @@ impl App {
             self.toast("no language server for this file (completion)");
         }
     }
+    // ─── vim marks (buffer-local, lowercase a-z) ────────────────────
+    /// Set mark `letter` to the active editor's cursor `(row, col)`. Bound
+    /// to vim normal-mode `m<letter>` (via [`AppCommand::SetMark`]).
+    pub fn set_mark_at_cursor(&mut self, letter: char) {
+        let Some(b) = self.active_editor_mut() else {
+            self.toast("no active editor");
+            return;
+        };
+        let (row, col) = b.editor.row_col();
+        b.marks.insert(letter, (row, col));
+        self.toast(format!("mark '{letter} set"));
+    }
+
+    /// Jump the active editor's cursor to mark `letter`. When `exact` is
+    /// false (`'<letter>` — line jump), the cursor lands on the mark's row,
+    /// column 0; when true (`` `<letter>`` — exact jump), it lands on the
+    /// stored `(row, col)`. Toasts if the mark isn't set. Pushes the current
+    /// position onto the nav-back stack so `Alt+Left` returns.
+    pub fn jump_to_mark(&mut self, letter: char, exact: bool) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(&(row, col)) = b.marks.get(&letter) else {
+            self.toast(format!("no mark '{letter}"));
+            return;
+        };
+        if let Some(here) = self.current_nav_point() {
+            self.push_nav_back(here);
+        }
+        let Some(b) = self.active_editor_mut() else {
+            return;
+        };
+        let target_col = if exact { col } else { 0 };
+        b.editor.place_cursor(row, target_col);
+        self.toast(format!("→ '{letter} {}:{}", row + 1, target_col + 1));
+    }
+
     // ─── snippets ───────────────────────────────────────────────────
     /// `snippet.expand` (`Ctrl+J`) — look at the identifier prefix immediately
     /// left of the active editor's cursor; if it matches a snippet trigger for
