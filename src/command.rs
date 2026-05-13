@@ -195,6 +195,16 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_goto_line_prompt(),
         },
         Command {
+            id: "file.new",
+            title: "New file… (workspace-relative path)",
+            group: "file",
+            keys: &["ctrl+n"],
+            run: |app| {
+                let ws = app.workspace.clone();
+                app.open_new_file_prompt(ws);
+            },
+        },
+        Command {
             id: "focus.cycle",
             title: "Cycle focus (tree ⇄ editor)",
             group: "view",

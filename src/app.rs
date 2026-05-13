@@ -714,9 +714,9 @@ impl App {
         ));
     }
 
-    /// Create an empty file at `parent / name` and open it. Refuses an empty
-    /// name, an existing file, or a name with a path separator (use `New
-    /// folder` for nesting, then `New file` inside it).
+    /// Create an empty file at `parent / name` and open it. `name` may include
+    /// `/` separators — any missing intermediate dirs are created. Empty name
+    /// is a no-op; an existing target toasts and bails.
     pub fn create_new_file(&mut self, parent: &Path, name: &str) {
         let name = name.trim();
         if name.is_empty() {
