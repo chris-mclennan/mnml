@@ -773,6 +773,15 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // Esc on an editor with active find highlights clears them (the user is
+    // "done with this search"). Still let the input handler see the Esc — vim
+    // uses it to leave Insert/Visual, standard mode treats it as a no-op.
+    if key.code == KeyCode::Esc
+        && let Some(Pane::Editor(b)) = app.panes.get_mut(i)
+        && b.find.is_some()
+    {
+        b.find = None;
+    }
     // The plain character this key inserts (if any) — for the completion popup's
     // auto-trigger; captured before `feed_key` consumes `key`.
     let typed_char = match key.code {
