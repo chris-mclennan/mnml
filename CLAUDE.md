@@ -110,11 +110,13 @@ languages so fenced code blocks in markdown / embedded HTML·CSS·JS get highlig
 markdown `text.*` captures are in `HIGHLIGHT_NAMES`) + indent guides; hybrid relative line numbers (`[ui] relative_line_numbers`,
 `:set [no]relativenumber`, `view.toggle_relative_numbers` — cursor line absolute, others = distance).
 **Session restore** — `[session] restore = true` (default; flip off to disable). On quit (`save_session_on_quit`, called
-from both the `tui` and `headless` loops just before exit) the open editor buffers + their cursors are written to
-`<workspace>/.mnml/session.json` (`SavedSession{workspace, open:[{path,cursor_byte,scroll}], active}`). On launch
-(`main.rs` → `try_restore_session` right after `App::new`) the buffers re-open in tab order (skipping any that no longer
-exist) and the previously-active one gets focus. Workspace mismatch / corrupt json ⇒ silently skip. Layout (splits) isn't
-restored yet — just the buffer list and per-buffer cursor; restoring the split tree is a follow-up.
+from both the `tui` and `headless` loops just before exit) the open editor buffers + their cursors + the **split tree**
+(serialized via `SavedLayout`, leaves keyed by index into `open`) are written to `<workspace>/.mnml/session.json`. On
+launch (`main.rs` → `try_restore_session` right after `App::new`) the buffers re-open in tab order (skipping any that no
+longer exist), then `layout_from_saved` rebuilds `App.layout` from the saved tree (or skips it if any leaf can't be mapped
+to a re-opened buffer). The previously-active one gets focus. Workspace mismatch / corrupt json ⇒ silently skip. Layouts
+with non-editor leaves (transient pty / browser / etc.) drop the layout part — `saved_layout_from` returns `None` and the
+buffer list alone is saved.
 **Find-in-buffer** — `find.find` (`Ctrl+F`, palette) prompts for a query (seeded with the active selection or last query),
 `accept_find` populates the active buffer's `FindState{query, matches:Vec<(byte_start,byte_end)>, current}`
 (`buffer::find_all_ci_ascii` — ASCII case-insensitive, non-overlapping, char-boundary safe), jumps the cursor to the nearest

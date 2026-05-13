@@ -139,8 +139,10 @@ fn build_replace_ops(
         .collect()
 }
 
-/// Persisted session: list of open editor buffers (paths + cursors). Round-trips
-/// through `<workspace>/.mnml/session.json` if `[session] restore = true`.
+/// Persisted session: list of open editor buffers (paths + cursors) and — when
+/// every visible leaf is an editor — the split tree, with leaf ids translated to
+/// indices into `open`. Round-trips through `<workspace>/.mnml/session.json` if
+/// `[session] restore = true`.
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 struct SavedSession {
     /// The workspace this session belongs to (cross-check on restore).
@@ -149,6 +151,11 @@ struct SavedSession {
     open: Vec<SavedBuffer>,
     /// Which entry was active.
     active: Option<usize>,
+    /// The split tree, with leaves keyed by index into `open`. `None` ⇒ restore
+    /// opens the buffers serially (the previously-active one ends up in a single
+    /// leaf, the others remain as background tabs).
+    #[serde(default)]
+    layout: Option<SavedLayout>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -156,6 +163,43 @@ struct SavedBuffer {
     path: String,
     cursor_byte: usize,
     scroll: usize,
+}
+
+/// A serializable mirror of [`Layout`] where leaves carry indices into
+/// `SavedSession.open` instead of `PaneId`s.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+enum SavedLayout {
+    Empty,
+    Leaf(usize),
+    Split {
+        dir: SavedSplitDir,
+        ratio: u16,
+        first: Box<SavedLayout>,
+        second: Box<SavedLayout>,
+    },
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy)]
+enum SavedSplitDir {
+    Horizontal,
+    Vertical,
+}
+
+impl From<crate::layout::SplitDir> for SavedSplitDir {
+    fn from(d: crate::layout::SplitDir) -> Self {
+        match d {
+            crate::layout::SplitDir::Horizontal => SavedSplitDir::Horizontal,
+            crate::layout::SplitDir::Vertical => SavedSplitDir::Vertical,
+        }
+    }
+}
+impl From<SavedSplitDir> for crate::layout::SplitDir {
+    fn from(d: SavedSplitDir) -> Self {
+        match d {
+            SavedSplitDir::Horizontal => crate::layout::SplitDir::Horizontal,
+            SavedSplitDir::Vertical => crate::layout::SplitDir::Vertical,
+        }
+    }
 }
 
 /// `(row, col)` (0-based, col in chars) for a byte offset into `text`. Used by
@@ -4436,12 +4480,16 @@ impl App {
         if !self.config.session.restore {
             return;
         }
+        // Save editor buffers in tab order, with PaneId → saved-index lookup
+        // for the layout pass.
         let mut open: Vec<SavedBuffer> = Vec::new();
+        let mut pane_to_idx: Vec<Option<usize>> = vec![None; self.panes.len()];
         let mut active: Option<usize> = None;
         for (i, p) in self.panes.iter().enumerate() {
             if let Pane::Editor(b) = p
                 && let Some(path) = &b.path
             {
+                pane_to_idx[i] = Some(open.len());
                 if self.active == Some(i) {
                     active = Some(open.len());
                 }
@@ -4457,10 +4505,15 @@ impl App {
             let _ = std::fs::remove_file(self.workspace.join(".mnml").join("session.json"));
             return;
         }
+        // Try to mirror the split tree. If any leaf isn't an editor we can save
+        // (e.g. a transient pty / diff / browser pane), drop layout — the buffer
+        // list alone is enough for the most common case.
+        let layout = saved_layout_from(&self.layout, &pane_to_idx);
         let saved = SavedSession {
             workspace: self.workspace.to_string_lossy().into_owned(),
             open,
             active,
+            layout,
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -4487,7 +4540,8 @@ impl App {
         if saved.workspace != self.workspace.to_string_lossy() {
             return;
         }
-        let mut last_pane: Option<PaneId> = None;
+        // saved-index → restored PaneId (None if the file was missing on disk).
+        let mut idx_to_pane: Vec<Option<PaneId>> = vec![None; saved.open.len()];
         let mut active_pane: Option<PaneId> = None;
         for (i, b) in saved.open.iter().enumerate() {
             let p = std::path::Path::new(&b.path);
@@ -4496,7 +4550,7 @@ impl App {
             }
             self.open_path(p);
             if let Some(pid) = self.active {
-                last_pane = Some(pid);
+                idx_to_pane[i] = Some(pid);
                 if saved.active == Some(i) {
                     active_pane = Some(pid);
                 }
@@ -4507,8 +4561,69 @@ impl App {
                 }
             }
         }
-        if let Some(p) = active_pane.or(last_pane) {
+        // If the saved layout maps cleanly, rebuild the split tree from it.
+        if let Some(sl) = saved.layout.as_ref()
+            && let Some(restored) = layout_from_saved(sl, &idx_to_pane)
+        {
+            self.layout = restored;
+        }
+        let fallback = idx_to_pane.iter().rev().flatten().next().copied();
+        if let Some(p) = active_pane.or(fallback) {
             self.reveal_pane(p);
+        }
+    }
+}
+
+/// Build the serializable mirror of `layout`. Returns `None` if any leaf isn't
+/// in `pane_to_idx` (i.e. it's a non-editor pane we didn't save) — when that
+/// happens we drop layout entirely rather than save half a tree.
+fn saved_layout_from(layout: &Layout, pane_to_idx: &[Option<usize>]) -> Option<SavedLayout> {
+    match layout {
+        Layout::Empty => Some(SavedLayout::Empty),
+        Layout::Leaf(id) => pane_to_idx
+            .get(*id)
+            .copied()
+            .flatten()
+            .map(SavedLayout::Leaf),
+        Layout::Split {
+            dir,
+            ratio,
+            first,
+            second,
+        } => {
+            let f = saved_layout_from(first, pane_to_idx)?;
+            let s = saved_layout_from(second, pane_to_idx)?;
+            Some(SavedLayout::Split {
+                dir: (*dir).into(),
+                ratio: *ratio,
+                first: Box::new(f),
+                second: Box::new(s),
+            })
+        }
+    }
+}
+
+/// Rebuild a `Layout` from `SavedLayout`, looking each leaf's saved-index up in
+/// `idx_to_pane`. Returns `None` if any leaf points at a file that didn't
+/// re-open — we'd rather skip layout restore than show a stale id.
+fn layout_from_saved(saved: &SavedLayout, idx_to_pane: &[Option<PaneId>]) -> Option<Layout> {
+    match saved {
+        SavedLayout::Empty => Some(Layout::Empty),
+        SavedLayout::Leaf(i) => idx_to_pane.get(*i).copied().flatten().map(Layout::Leaf),
+        SavedLayout::Split {
+            dir,
+            ratio,
+            first,
+            second,
+        } => {
+            let f = layout_from_saved(first, idx_to_pane)?;
+            let s = layout_from_saved(second, idx_to_pane)?;
+            Some(Layout::Split {
+                dir: (*dir).into(),
+                ratio: *ratio,
+                first: Box::new(f),
+                second: Box::new(s),
+            })
         }
     }
 }
@@ -4579,6 +4694,38 @@ mod tests {
             assert_eq!(b.editor.row_col(), (0, 2));
         } else {
             panic!("expected an editor at index 1");
+        }
+    }
+
+    #[test]
+    fn session_round_trips_split_layout() {
+        let (d, mut app) = app_with_files();
+        let a_path = d.path().join("a.txt").canonicalize().unwrap();
+        let b_path = d.path().join("b.txt").canonicalize().unwrap();
+        app.open_path(&a_path);
+        app.split_active(crate::layout::SplitDir::Horizontal);
+        app.open_path(&b_path);
+        assert!(matches!(app.layout, Layout::Split { .. }));
+        app.save_session_on_quit();
+
+        let mut app2 = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app2.try_restore_session();
+        match &app2.layout {
+            Layout::Split { first, second, .. } => {
+                let a = app2
+                    .panes
+                    .iter()
+                    .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&a_path)))
+                    .expect("a.txt should be re-opened");
+                let b = app2
+                    .panes
+                    .iter()
+                    .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&b_path)))
+                    .expect("b.txt should be re-opened");
+                assert!(matches!(**first, Layout::Leaf(id) if id == a));
+                assert!(matches!(**second, Layout::Leaf(id) if id == b));
+            }
+            other => panic!("expected a Split, got {other:?}"),
         }
     }
 
