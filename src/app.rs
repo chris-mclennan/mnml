@@ -4510,6 +4510,51 @@ impl App {
             self.notify_lsp_saved(&p);
         }
     }
+    /// `:w <path>` — save the active editor to a new path (relative paths are
+    /// resolved against the workspace). Repoints the buffer at the new path so
+    /// subsequent `:w` writes there. Refreshes git/tree/LSP. Toasts the result.
+    pub fn save_active_as(&mut self, raw_path: &str) {
+        let path = std::path::PathBuf::from(raw_path);
+        let abs = if path.is_absolute() {
+            path
+        } else {
+            self.workspace.join(&path)
+        };
+        // Make sure the parent dir exists (`:w newdir/foo.rs` shouldn't fail
+        // with ENOENT — it's an explicit save, not an accidental write).
+        if let Some(parent) = abs.parent()
+            && !parent.as_os_str().is_empty()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            self.toast(format!("save-as: cannot create {}: {e}", parent.display()));
+            return;
+        }
+        let Some(buf) = self.active_editor_mut() else {
+            self.toast("no active editor");
+            return;
+        };
+        let prev_path = buf.path.clone();
+        if let Err(e) = buf.save_as(abs.clone()) {
+            self.toast(format!("save-as failed: {e}"));
+            return;
+        }
+        // Best-effort: refresh subsystems that care about file paths.
+        self.git.refresh();
+        self.tree.refresh();
+        self.refresh_md_previews(&abs);
+        self.refresh_blame_for(&abs);
+        // LSP: close the old `path` (if any) and open the new one with the
+        // current text — the new extension might mean a different server.
+        if let Some(p) = prev_path {
+            self.lsp.did_close(&p);
+        }
+        if let Some(b) = self.active_editor() {
+            let t = b.editor.text().to_string();
+            self.lsp.did_open(&abs, &t);
+        }
+        self.toast(format!("saved to {}", rel_path(&self.workspace, &abs)));
+    }
+
     pub fn save_all(&mut self) {
         let mut n = 0;
         let mut saved: Vec<std::path::PathBuf> = Vec::new();
@@ -4621,7 +4666,14 @@ impl App {
                 if rest.is_empty() {
                     self.save_active();
                 } else {
-                    self.toast(":w <path> not supported yet");
+                    self.save_active_as(rest);
+                }
+            }
+            "saveas" => {
+                if rest.is_empty() {
+                    self.toast(":saveas <path> — path required");
+                } else {
+                    self.save_active_as(rest);
                 }
             }
             "q" | "quit" => {
@@ -5115,6 +5167,31 @@ mod tests {
         app.open_path(&d.path().join("a.txt"));
         app.save_session_on_quit();
         assert!(!d.path().join(".mnml/session.json").exists());
+    }
+
+    #[test]
+    fn save_active_as_writes_repoints_creates_dirs() {
+        let (d, mut app) = app_with_files();
+        app.open_path(&d.path().join("a.txt"));
+        if let Some(b) = app.active_editor_mut() {
+            b.editor.place_cursor(0, 5);
+            b.apply_edit_ops(
+                vec![crate::edit_op::EditOp::InsertStr("!!".into())],
+                &mut Clipboard::new(),
+                0,
+            );
+        }
+        // Relative path with a non-existent subdir — should be created.
+        app.save_active_as("subdir/renamed.txt");
+        let new_abs = app.workspace.join("subdir").join("renamed.txt");
+        assert!(new_abs.exists());
+        assert_eq!(fs::read_to_string(&new_abs).unwrap(), "alpha!!");
+        let buf = app.active_editor().unwrap();
+        assert_eq!(buf.path.as_deref(), Some(new_abs.as_path()));
+        assert!(!buf.dirty);
+        // The original file is untouched.
+        let orig = app.workspace.join("a.txt");
+        assert_eq!(fs::read_to_string(&orig).unwrap(), "alpha");
     }
 
     #[test]

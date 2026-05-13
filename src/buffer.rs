@@ -215,6 +215,17 @@ impl Buffer {
         Ok(())
     }
 
+    /// `:w <path>` — write the current text to `path`, then repoint the buffer
+    /// at it (subsequent `:w` writes there). Errors propagate as `Err`.
+    pub fn save_as(&mut self, path: PathBuf) -> std::io::Result<()> {
+        std::fs::write(&path, self.editor.text())?;
+        self.path = Some(path);
+        self.saved_text = self.editor.text().to_string();
+        self.dirty = false;
+        self.last_edited = None;
+        Ok(())
+    }
+
     pub fn editing_mode(&self) -> EditingMode {
         self.input.mode()
     }
