@@ -113,12 +113,36 @@ markdown `text.*` captures are in `HIGHLIGHT_NAMES`) + indent guides; hybrid rel
 `-dirty` suffix) and emits it as `cargo:rustc-env=MNML_GIT_SHA=…`; the statusline reads `env!("MNML_GIT_SHA")` and renders
 it as a small chip at the right edge so the user can tell at a glance which build is running (the `./run.sh restart`
 "is it actually picking up my changes?" question). Falls back to `build-<unix-seconds>` if git isn't available.
-**Tree section header** — VS-Code Explorer style: the rail starts with a `> WORKSPACE-NAME` row that's clickable; when the
-section is collapsed (default) only that header is shown, when expanded the file list appears below (`v WORKSPACE-NAME`).
-Two independent state bits — `tree_visible` (rail in/out, `Ctrl+B` / `view.toggle_tree`) and `tree_root_expanded` (the
-section's collapse, `view.toggle_tree_section` / click on the header). Both persisted in `.mnml/session.json` so the user's
-choice survives a relaunch. Designed to grow sibling sections (OUTLINE / TIMELINE-like) under the workspace one without
-restructuring.
+**Tree section header** — VS-Code Explorer style: the rail starts with a `> WORKSPACE-NAME` row that's clickable; default
+expanded (`v WORKSPACE-NAME` + file list). Two independent state bits — `tree_visible` (rail in/out, `Ctrl+B` /
+`view.toggle_tree`) and `tree_root_expanded` (the section's collapse, `view.toggle_tree_section` / click on the header).
+Both persisted in `.mnml/session.json`. **Tree FS actions** — right-click a file or dir in the tree → "New file…", "New
+folder…", "Rename…", "Delete…" (the delete prompt requires you to type the entry's filename to confirm). The "New file"
+flow is also wired to `Ctrl+N` (`file.new`) for workspace-relative paths from anywhere; missing intermediate dirs are
+auto-created. Rename / delete repoint or close any open editor buffer for the affected paths (LSP `did_close` / `did_open`
+follow). `Tree::expanded_dirs()` / `set_expanded_dirs` persist the per-directory expand state in `tree_expanded_dirs` so
+a relaunch keeps whatever the user had open.
+**Bufferline polish** — horizontal scroll (`bufferline_first_visible`) keeps the active tab on screen no matter how many
+buffers are open, with `‹` / `›` overflow chevrons at the edges. Same-name tabs get parent-dir disambiguation (`git/mod.rs`
+vs `ai/mod.rs`) via `tab_labels(&panes)`. **Statusline polish** — `Ln 12/580` (current of total) + a yellow `Sel N` chip
+when there's a selection (chars selected).
+**Zen mode** — `view.zen` (`Ctrl+Shift+Z`) hides tree + bufferline + statusline; the editor takes the full window.
+Overlays (picker, prompt, hover, completion) still work. Not persisted — fresh launch is a normal IDE view.
+**Recent files** — `App::recent_files` (last 20 paths opened, de-duped, newest-first) updated in `open_path` and persisted
+in `session.json`. `picker.recent` (`Ctrl+R`) opens a fuzzy picker over them.
+**Persisted theme** — `theme.pick` writes the picked theme name to session.json; restore calls a silent `set_theme_silent`
+so a "theme: …" toast doesn't pop on every launch. Unknown theme names ⇒ launch default. **`Ctrl+G` go to line** —
+standard-mode equivalent of vim's `:N`. **Esc clears find highlights** — Esc on an editor with active find drops the find
+state before the input handler sees the Esc (vim's normal-mode transitions still work). **`:w <path>` save-as** — also
+`:saveas <path>`. Repoints the buffer, creates parent dirs, refreshes git / tree / LSP / md preview / blame.
+**`:e` / `file.reload` reload from disk** — re-read the active buffer, preserving cursor + scroll. `:e!` to force-discard
+dirty changes. **Optional editor extras** — `[editor] trim_trailing_ws_on_save` (off by default; strips trailing
+space/tab per line on `save_to_disk` via `EditOp::ReplaceRange` so undo restores them; cursor preserved + clamped),
+`[editor] breadcrumb` (default on; a dim workspace-relative path row above each editor body — middle-truncates with `…`),
+`[editor] auto_pair` (off by default; typing `(` `[` `{` `"` `'` `` ` `` inserts the matching close char when the next
+char is "empty space" — whitespace, EOF, closer, or punctuator. Typing a close char on top of an auto-inserted one
+skips over it). **Bracket-match highlight** — when the cursor sits on a bracket, paint both the bracket and its match
+with `bg3`; nested correctly via a forward/backward depth-counting scan (capped at 50k chars/side).
 **Session restore** — `[session] restore = true` (default; flip off to disable). On quit (`save_session_on_quit`, called
 from both the `tui` and `headless` loops just before exit) the open editor buffers + their cursors + the **split tree**
 (serialized via `SavedLayout`, leaves keyed by index into `open`) are written to `<workspace>/.mnml/session.json`. On
