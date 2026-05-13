@@ -103,8 +103,9 @@ allowed (bufferline shows all), `App.active` = focused pane = uniquely the focus
 `view.focus_next_split`, `view.close_split` commands, surfaced in the which-key `+split`
 submenu (`<leader>s …` / `Ctrl+K s …`); click a leaf to focus it, drag a divider to
 resize it; closing a dirty buffer pops a Save/Discard/Cancel overlay (`src/ui/close_prompt.rs`).
-tree-sitter syntax highlight (`src/highlight.rs`, 12 grammars: rs/js/jsx/ts/tsx/py/json/go/
-toml/css/bash/html/md) + indent guides; hybrid relative line numbers (`[ui] relative_line_numbers`,
+tree-sitter syntax highlight (`src/highlight.rs`, 19 grammars: rs/js/jsx/ts/tsx/py/json/go/
+toml/css/bash/html/md/c/cpp/rb/java/cs/lua/yaml — `build_config` maps file extensions →
+`(language, highlights, injections, locals)` query set) + indent guides; hybrid relative line numbers (`[ui] relative_line_numbers`,
 `:set [no]relativenumber`, `view.toggle_relative_numbers` — cursor line absolute, others = distance).
 **Theme engine** (`src/ui/theme.rs`): a `Theme`
 struct (named UI colours + `base16[16]`) behind an `RwLock`; `theme::cur()` reads it,

@@ -273,6 +273,55 @@ fn build_config(ext: &str) -> Option<HighlightConfiguration> {
             tree_sitter_md::INJECTION_QUERY_BLOCK,
             "",
         ),
+        "c" | "h" => (
+            tree_sitter_c::LANGUAGE.into(),
+            "c",
+            tree_sitter_c::HIGHLIGHT_QUERY,
+            "",
+            "",
+        ),
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => (
+            tree_sitter_cpp::LANGUAGE.into(),
+            "cpp",
+            tree_sitter_cpp::HIGHLIGHT_QUERY,
+            "",
+            "",
+        ),
+        "rb" | "rake" | "gemspec" => (
+            tree_sitter_ruby::LANGUAGE.into(),
+            "ruby",
+            tree_sitter_ruby::HIGHLIGHTS_QUERY,
+            "",
+            tree_sitter_ruby::LOCALS_QUERY,
+        ),
+        "java" => (
+            tree_sitter_java::LANGUAGE.into(),
+            "java",
+            tree_sitter_java::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ),
+        "cs" => (
+            tree_sitter_c_sharp::LANGUAGE.into(),
+            "c_sharp",
+            tree_sitter_c_sharp::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ),
+        "lua" => (
+            tree_sitter_lua::LANGUAGE.into(),
+            "lua",
+            tree_sitter_lua::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ),
+        "yaml" | "yml" => (
+            tree_sitter_yaml::LANGUAGE.into(),
+            "yaml",
+            tree_sitter_yaml::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ),
         _ => return None,
     };
     let mut cfg = HighlightConfiguration::new(lang, name, hl_q, inj_q, loc_q).ok()?;
@@ -340,6 +389,13 @@ mod tests {
             ("sh", "echo \"hi\" && ls -la\n"),
             ("html", "<div class=\"x\">hi</div>\n"),
             ("md", "# Heading\n\n- item\n"),
+            ("c", "int main(void) { return 0; }\n"),
+            ("cpp", "auto f() -> int { return 42; }\n"),
+            ("rb", "def hi(name) = puts \"hi #{name}\"\n"),
+            ("java", "class A { void f() { return; } }\n"),
+            ("cs", "class A { void F() { return; } }\n"),
+            ("lua", "local function f(x) return x + 1 end\n"),
+            ("yaml", "name: value\nlist:\n  - one\n"),
         ];
         for &(ext, src) in cases {
             let lines = highlight_lines(src, ext);

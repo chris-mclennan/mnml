@@ -50,6 +50,13 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # (0.8.1 / 0.15.2 is the known-good combo from mnml1 / rqst.)
 portable-pty = "0.8"
 vt100 = "0.15"
+tree-sitter-c = "0.24.2"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-ruby = "0.23.1"
+tree-sitter-java = "0.23.5"
+tree-sitter-yaml = "0.7.2"
+tree-sitter-c-sharp = "0.23.5"
+tree-sitter-lua = "0.5.0"
 
 # Added per-track later (kept out for now to keep build fast / resolution simple):
 #   nucleo             — fuzzy matcher (picker/palette) — hand-rolled in src/fuzzy.rs for now
