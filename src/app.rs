@@ -163,6 +163,10 @@ struct SavedSession {
     /// Was the workspace section inside the rail expanded?
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tree_root_expanded: Option<bool>,
+    /// Directories the user had expanded in the file tree. `None` (an older
+    /// session.json without the field) ⇒ keep the default first-level expand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tree_expanded_dirs: Option<Vec<String>>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -4862,6 +4866,13 @@ impl App {
             layout,
             tree_visible: Some(self.tree_visible),
             tree_root_expanded: Some(self.tree_root_expanded),
+            tree_expanded_dirs: Some(
+                self.tree
+                    .expanded_dirs()
+                    .into_iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect(),
+            ),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -4922,6 +4933,10 @@ impl App {
         }
         if let Some(v) = saved.tree_root_expanded {
             self.tree_root_expanded = v;
+        }
+        if let Some(dirs) = saved.tree_expanded_dirs {
+            self.tree
+                .set_expanded_dirs(dirs.into_iter().map(PathBuf::from));
         }
         let fallback = idx_to_pane.iter().rev().flatten().next().copied();
         if let Some(p) = active_pane.or(fallback) {
@@ -5095,6 +5110,39 @@ mod tests {
         app.open_path(&d.path().join("a.txt"));
         app.save_session_on_quit();
         assert!(!d.path().join(".mnml/session.json").exists());
+    }
+
+    #[test]
+    fn session_round_trips_tree_state() {
+        let d = tempfile::tempdir().unwrap();
+        // Need a sub-directory so the tree has something to expand/collapse.
+        fs::create_dir(d.path().join("sub")).unwrap();
+        fs::write(d.path().join("sub").join("c.txt"), "c").unwrap();
+        fs::write(d.path().join("a.txt"), "a").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // Default after `Tree::open`: depth-0 dirs are expanded. Collapse `sub`.
+        let sub = app.workspace.join("sub");
+        let mut dirs: Vec<PathBuf> = app
+            .tree
+            .expanded_dirs()
+            .into_iter()
+            .filter(|p| p != &sub)
+            .collect();
+        dirs.sort();
+        let collapsed_snapshot = dirs.clone();
+        app.tree.set_expanded_dirs(dirs);
+        // Also flip the section header (independent state) so we exercise both.
+        app.tree_root_expanded = false;
+        app.save_session_on_quit();
+
+        let mut app2 = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // Pre-restore, the default expansion is whatever Tree::open chose.
+        // After restore, it should match what we saved.
+        app2.try_restore_session();
+        let mut got = app2.tree.expanded_dirs();
+        got.sort();
+        assert_eq!(got, collapsed_snapshot);
+        assert!(!app2.tree_root_expanded);
     }
 
     #[test]

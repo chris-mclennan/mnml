@@ -66,6 +66,30 @@ impl Tree {
         &self.root
     }
 
+    /// Snapshot of the currently-expanded directories — for session persistence.
+    /// Returns absolute paths; the caller can store them as strings.
+    pub fn expanded_dirs(&self) -> Vec<PathBuf> {
+        self.expanded.iter().cloned().collect()
+    }
+
+    /// Replace the expansion set with `dirs` (paths previously returned by
+    /// [`Self::expanded_dirs`]). Paths that no longer point at directories are
+    /// silently dropped. Resets the cursor + scroll to the top.
+    pub fn set_expanded_dirs<I: IntoIterator<Item = PathBuf>>(&mut self, dirs: I) {
+        let present: BTreeSet<PathBuf> = self
+            .entries
+            .iter()
+            .filter(|e| e.is_dir)
+            .map(|e| e.path.clone())
+            .collect();
+        self.expanded = dirs
+            .into_iter()
+            .filter(|p| present.contains(p))
+            .collect::<BTreeSet<_>>();
+        self.cursor = 0;
+        self.scroll = 0;
+    }
+
     /// Every (non-directory) file under the workspace, in display order — for the file picker.
     pub fn all_files(&self) -> Vec<PathBuf> {
         self.entries
