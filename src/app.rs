@@ -174,6 +174,10 @@ struct SavedSession {
     /// Most-recently-opened files, newest first (capped on save).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     recent_files: Vec<String>,
+    /// The active theme name when we quit. `None` ⇒ launch picks the default
+    /// (or whatever `[ui] theme` in the config file says).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    theme: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -800,21 +804,26 @@ impl App {
     }
     /// Switch the active theme by name, re-highlight open buffers, and remember it.
     pub fn set_theme(&mut self, name: &str) {
-        match crate::ui::theme::set(name) {
-            Some(t) => {
-                self.config.ui.theme = t.name.to_string();
-                for pane in &mut self.panes {
-                    if let Some(b) = pane.as_editor_mut() {
-                        b.refresh_highlights();
-                    }
-                }
-                self.toast(format!("theme: {}", t.name));
-            }
+        match self.set_theme_silent(name) {
+            Some(name) => self.toast(format!("theme: {name}")),
             None => self.toast(format!(
                 "unknown theme: {name} (have: {})",
                 crate::ui::theme::names().join(", ")
             )),
         }
+    }
+
+    /// Like [`Self::set_theme`] but no toast — used at session restore so a
+    /// "theme: onedark" doesn't pop on every launch.
+    fn set_theme_silent(&mut self, name: &str) -> Option<String> {
+        let t = crate::ui::theme::set(name)?;
+        self.config.ui.theme = t.name.to_string();
+        for pane in &mut self.panes {
+            if let Some(b) = pane.as_editor_mut() {
+                b.refresh_highlights();
+            }
+        }
+        Some(t.name.to_string())
     }
     /// Act on the picker's current selection, then close it.
     pub fn picker_accept(&mut self) {
@@ -5057,6 +5066,7 @@ impl App {
                 .iter()
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect(),
+            theme: Some(crate::ui::theme::cur().name.to_string()),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -5131,6 +5141,12 @@ impl App {
                 .map(PathBuf::from)
                 .take(RECENT_FILES_MAX)
                 .collect();
+        }
+        if let Some(name) = saved.theme.as_deref() {
+            // Best-effort — unknown theme names (e.g. someone deleted a theme
+            // file) just leave the launch-default in place. Silent so the
+            // restore doesn't toast on every cold start.
+            let _ = self.set_theme_silent(name);
         }
         let fallback = idx_to_pane.iter().rev().flatten().next().copied();
         if let Some(p) = active_pane.or(fallback) {
