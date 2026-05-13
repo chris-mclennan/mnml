@@ -2038,16 +2038,29 @@ impl App {
     }
 
     /// After a `.md` buffer is saved, refresh any open previews of that file.
+    /// Reads `path` fresh from disk. Preserves preview scroll position.
     fn refresh_md_previews(&mut self, path: &Path) {
         let fresh = std::fs::read_to_string(path).ok();
         for pane in &mut self.panes {
             if let Pane::MdPreview(p) = pane
                 && p.path == path
+                && let Some(s) = &fresh
             {
-                if let Some(s) = &fresh {
-                    p.source = s.clone();
-                }
-                p.scroll = 0;
+                p.source = s.clone();
+            }
+        }
+    }
+
+    /// Live update: push the in-memory text of the active markdown buffer to
+    /// any open preview of that file. Called from the editor key handler on
+    /// every edit so previews track keystrokes (rather than only on save).
+    /// Preserves preview scroll.
+    pub fn refresh_md_previews_from_text(&mut self, path: &Path, text: &str) {
+        for pane in &mut self.panes {
+            if let Pane::MdPreview(p) = pane
+                && p.path == path
+            {
+                p.source = text.to_string();
             }
         }
     }

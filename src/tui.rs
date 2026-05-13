@@ -802,6 +802,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             };
             if let Some((p, text)) = upd {
                 app.lsp.did_change(&p, &text);
+                // Live markdown preview: push the in-memory text to any open
+                // `Pane::MdPreview` of this file so the preview tracks edits
+                // instead of waiting for save.
+                if p.extension().and_then(|e| e.to_str()) == Some("md") {
+                    app.refresh_md_previews_from_text(&p, &text);
+                }
             }
             // Drive the as-you-type completion popup off the fresh buffer state.
             app.completion_on_edit(typed_char);
