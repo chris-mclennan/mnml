@@ -65,7 +65,7 @@ pub fn draw(
         ),
     ]));
     lines.push(Line::from(Span::styled(
-        "  ⏎ jump   r re-run   R replace-all   esc back",
+        "  ⏎ jump   r re-run   R replace-all   y copy path:line   esc back",
         Style::default().fg(t.comment).bg(t.bg_dark),
     )));
 

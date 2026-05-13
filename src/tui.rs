@@ -611,6 +611,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter => app.jump_to_selected_grep_hit(),
             KeyCode::Char('r') => app.rerun_active_grep(),
             KeyCode::Char('R') => app.open_grep_replace_prompt(),
+            KeyCode::Char('y') => app.copy_selected_grep_hit(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }

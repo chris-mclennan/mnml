@@ -3702,6 +3702,21 @@ impl App {
         }
     }
 
+    /// `y` in a grep pane — copy the selected hit's `path:line` (1-based) to
+    /// the system clipboard so the user can paste it into a commit message,
+    /// chat, etc.
+    pub fn copy_selected_grep_hit(&mut self) {
+        let s = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Grep(g)) => g
+                .selected_hit()
+                .map(|h| format!("{}:{}", h.rel, h.line + 1)),
+            _ => None,
+        };
+        let Some(s) = s else { return };
+        self.clipboard.set(s.clone(), false);
+        self.toast(format!("copied {s}"));
+    }
+
     /// Open the highlighted grep hit's file and place the cursor there.
     pub fn jump_to_selected_grep_hit(&mut self) {
         let target = match self.active.and_then(|i| self.panes.get(i)) {
