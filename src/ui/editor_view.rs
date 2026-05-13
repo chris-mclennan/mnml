@@ -30,6 +30,33 @@ pub fn draw_pane(
         area,
     );
 
+    // Optional breadcrumb row at the top — the workspace-relative file path,
+    // dim, on its own row. Especially useful with splits (you can tell which
+    // pane is which without scanning the bufferline). Off ⇒ the editor uses
+    // the whole `area`.
+    let want_breadcrumb = app.config.editor.breadcrumb && area.height >= 3;
+    let (crumb_area, area) = if want_breadcrumb {
+        (
+            Some(Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: 1,
+            }),
+            Rect {
+                x: area.x,
+                y: area.y + 1,
+                width: area.width,
+                height: area.height - 1,
+            },
+        )
+    } else {
+        (None, area)
+    };
+    if let Some(ca) = crumb_area {
+        draw_breadcrumb(frame, app, pane_id, ca);
+    }
+
     let tab_w = app.config.editor.tab_width.max(1);
     let relnum = app.config.ui.relative_line_numbers;
     // Git gutter signs for this file (added/modified/removed lines), from the
@@ -293,4 +320,50 @@ fn syntax_color(spans: &[crate::highlight::ColoredSpan], c: usize) -> Option<Col
         .rev()
         .find(|&&(s, e, _)| c >= s && c < e)
         .map(|&(_, _, color)| color)
+}
+
+/// One-row workspace-relative path header (dim) above the editor body. Drawn
+/// when `[editor] breadcrumb = true` and the pane has enough room. Truncates
+/// the middle with `…` if the path is wider than the pane.
+fn draw_breadcrumb(frame: &mut Frame, app: &App, pane_id: PaneId, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let t = theme::cur();
+    frame.render_widget(
+        Paragraph::new("").style(Style::default().bg(t.bg_darker)),
+        area,
+    );
+    let label = match app.panes.get(pane_id) {
+        Some(Pane::Editor(b)) => match &b.path {
+            Some(p) => p
+                .strip_prefix(&app.workspace)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .into_owned(),
+            None => b.display_name(),
+        },
+        _ => return,
+    };
+    let max = area.width.saturating_sub(2) as usize;
+    let display = if label.chars().count() <= max {
+        label
+    } else if max > 3 {
+        // `start…end` — keep the leading "domain" + the trailing filename.
+        let half = (max - 1) / 2;
+        let chars: Vec<char> = label.chars().collect();
+        let head: String = chars.iter().take(half).collect();
+        let tail: String = chars.iter().rev().take(max - 1 - half).collect();
+        let tail: String = tail.chars().rev().collect();
+        format!("{head}…{tail}")
+    } else {
+        label.chars().take(max).collect()
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" ", Style::default().bg(t.bg_darker)),
+            Span::styled(display, Style::default().fg(t.comment).bg(t.bg_darker)),
+        ])),
+        area,
+    );
 }

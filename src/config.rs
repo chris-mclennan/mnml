@@ -58,6 +58,10 @@ pub struct EditorConfig {
     /// line before writing. Off by default (a non-destructive default —
     /// trailing-ws diff noise can be useful on someone else's repo).
     pub trim_trailing_ws_on_save: bool,
+    /// When true, each editor pane shows the file's workspace-relative path
+    /// as a dim one-row header above its body. Especially useful with splits
+    /// (you can tell which pane is which without looking at the bufferline).
+    pub breadcrumb: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +89,7 @@ impl Default for Config {
                 tab_width: 4,
                 autosave_secs: 0,
                 trim_trailing_ws_on_save: false,
+                breadcrumb: true,
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),
@@ -148,6 +153,7 @@ struct RawEditor {
     tab_width: Option<usize>,
     autosave_secs: Option<u64>,
     trim_trailing_ws_on_save: Option<bool>,
+    breadcrumb: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -195,6 +201,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.trim_trailing_ws_on_save {
             self.editor.trim_trailing_ws_on_save = v;
+        }
+        if let Some(v) = raw.editor.breadcrumb {
+            self.editor.breadcrumb = v;
         }
         if let Some(v) = raw.ui.theme {
             self.ui.theme = v;
