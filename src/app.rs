@@ -5745,16 +5745,35 @@ impl App {
         use crate::picker::PickerItem;
         let cur = crate::git::branch::current(&self.workspace);
         let mut items: Vec<PickerItem> = Vec::new();
-        for b in crate::git::branch::local_branches(&self.workspace) {
-            let detail = if Some(&b) == cur.as_ref() {
-                "current"
-            } else {
-                "local"
-            };
-            items.push(PickerItem::new(format!("local:{b}"), b, detail));
+        // Surface the current branch first + marked with a `●` glyph; rest in
+        // for-each-ref order. The picker's fuzzy match still narrows from any
+        // position, so the ordering is just a visual default.
+        let locals = crate::git::branch::local_branches(&self.workspace);
+        if let Some(c) = cur.as_ref()
+            && locals.iter().any(|b| b == c)
+        {
+            items.push(PickerItem::new(
+                format!("local:{c}"),
+                format!("● {c}"),
+                "current",
+            ));
+        }
+        for b in locals {
+            if Some(&b) == cur.as_ref() {
+                continue;
+            }
+            items.push(PickerItem::new(
+                format!("local:{b}"),
+                format!("  {b}"),
+                "local",
+            ));
         }
         for b in crate::git::branch::remote_branches(&self.workspace) {
-            items.push(PickerItem::new(format!("remote:{b}"), b.clone(), "remote"));
+            items.push(PickerItem::new(
+                format!("remote:{b}"),
+                format!("  {b}"),
+                "remote",
+            ));
         }
         if items.is_empty() {
             self.toast("no branches (not a git repo?)");
