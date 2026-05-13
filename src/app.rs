@@ -340,6 +340,11 @@ pub struct App {
     /// adjusts on every render to keep the active tab visible (the user never
     /// has to scroll it manually). Reset when the pane count drops past it.
     pub bufferline_first_visible: usize,
+    /// "Zen" focus mode (`view.zen`): hide the tree rail, bufferline, and
+    /// statusline; the editor takes the full window. Independent of the other
+    /// visibility flags, which are remembered separately. Not persisted —
+    /// always starts off so a fresh launch is a normal IDE view.
+    pub zen_mode: bool,
     /// Is the workspace "section" inside the rail expanded? When `false` the
     /// rail shows just the `> WORKSPACE-NAME` header (clickable to expand);
     /// when `true` it shows the header (`v WORKSPACE-NAME`) + the file list.
@@ -455,6 +460,7 @@ impl App {
             tree,
             tree_visible: true,
             bufferline_first_visible: 0,
+            zen_mode: false,
             // VS-Code-style: the rail is shown with its workspace section
             // expanded by default. The last session's choice overrides this
             // in `try_restore_session`.
@@ -4843,6 +4849,16 @@ impl App {
         self.tree_root_expanded = !self.tree_root_expanded;
         if self.tree_root_expanded {
             self.focus = Focus::Tree;
+        }
+    }
+
+    /// Toggle "zen" focus mode — hide everything but the editor (tree rail,
+    /// bufferline, statusline gone). Always lands focus on the active pane
+    /// when entering so the user can start typing immediately.
+    pub fn toggle_zen_mode(&mut self) {
+        self.zen_mode = !self.zen_mode;
+        if self.zen_mode && self.active.is_some() {
+            self.focus = Focus::Pane;
         }
     }
 

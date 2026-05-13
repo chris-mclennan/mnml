@@ -63,6 +63,53 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         area,
     );
 
+    // Zen mode: skip the tree, bufferline, and statusline — the editor takes
+    // the full window. Returning early keeps the toggle a flat opt-out from
+    // the rest of the layout pipeline.
+    if app.zen_mode {
+        app.rects.tree = None;
+        app.rects.tree_toggle = None;
+        app.rects.bufferline = None;
+        app.rects.bufferline_tabs.clear();
+        app.rects.bufferline_tab_close.clear();
+        app.rects.statusline = None;
+        app.rects.body = Some(area);
+        app.rects.editor_panes.clear();
+        app.rects.split_dividers.clear();
+        let layout = app.layout.clone();
+        let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {
+            welcome::draw(frame, app, area);
+            None
+        } else {
+            let mut path = Vec::new();
+            render_layout(frame, app, &layout, area, &mut path)
+        };
+        // Overlays still work in zen — picker, prompt, which-key, popups.
+        if app.picker.is_some() {
+            picker::draw(frame, app, area);
+        }
+        if app.whichkey.is_some() {
+            whichkey::draw(frame, app, area);
+        }
+        if app.prompt.is_some() {
+            prompt::draw(frame, app, area);
+        }
+        if app.hover.is_some() {
+            hover::draw(frame, app, area, cursor_pos);
+        }
+        if app.completion.is_some() {
+            completion::draw(frame, app, area, cursor_pos);
+        }
+        if let Some((x, y)) = app.rects.prompt_caret.or(app.rects.picker_caret) {
+            frame.set_cursor_position((x, y));
+        } else if app.focus == Focus::Pane
+            && let Some((x, y)) = cursor_pos
+        {
+            frame.set_cursor_position((x, y));
+        }
+        return;
+    }
+
     // Split off the bottom statusline (full width).
     let v = RLayout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
     let (upper, statusline_area) = (v[0], v[1]);

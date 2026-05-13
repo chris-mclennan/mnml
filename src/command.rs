@@ -125,6 +125,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_tree_root_expanded(),
         },
         Command {
+            id: "view.zen",
+            title: "Zen mode (hide tree + bufferline + statusline)",
+            group: "view",
+            keys: &["ctrl+shift+z"],
+            run: |app| app.toggle_zen_mode(),
+        },
+        Command {
             id: "view.toggle_relative_numbers",
             title: "Toggle relative line numbers",
             group: "view",
