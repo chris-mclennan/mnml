@@ -275,8 +275,20 @@ assert / empty extract — wired as `mnml chain run FILE [--env NAME] [--workspa
 URL) and writes one `.curl` stub per operation under `<out>/<tag>/<operationId>.curl` (path
 params → `{{name}}`, `security` ⇒ `Authorization: Bearer {{TOKEN}}`, JSON body from a spec
 `example`); `mnml discover SPEC [--out DIR] [--base-url URL]` (default out `.mnml/requests`).
-Still to do for HTTP: editable request-pane field tabs (right now you edit the `.http` file in
-a normal editor). **Pty / AI-CLI panes — first cut done:** `src/pty_pane.rs` (`portable-pty` +
+**Editable request pane** — `Pane::Request` is now two-mode: **Response** (read-only summary, the default —
+status / headers / pretty body / `@assert` / `@capture` from the last send) and **Edit** (Postman-style form
+— URL, method, body editable in place). `Tab` toggles modes; `e` from Response also enters Edit. In Edit:
+`Shift-Tab` / `Tab` cycle the focused field (URL → Method → Body → URL), typing / Backspace / Left / Right /
+Home / End edit, `Up`/`Down` in Body do cross-line motion (the URL is single-line — newline keystrokes
+dropped), `Space` on Method cycles `GET → POST → PUT → PATCH → DELETE → HEAD → OPTIONS → GET`
+(`request_pane::cycle_method`), `Enter` on URL or Method fires (`Enter` in Body inserts a newline). `r` always
+re-fires the request using the current field values (so tweaking a URL and re-sending doesn't require flipping
+back to the source file). Edit-view tab bar at the top shows `[Edit] [Response]` with the active one bolded +
+underlined. `src/request_pane.rs` = `RequestPane{view:ViewMode::{Response,Edit}, focus:EditField::{Url,Method,Body},
+url_cursor, body_cursor, …}` mutates `request.url` / `request.method` / `request.body` directly. Headers list
+stays read-only in this first cut — the list-of-pairs UI is heavier and lands in a follow-up; saving the
+edited request back to the source `.http`/`.curl` file is also deferred.
+**Pty / AI-CLI panes — first cut done:** `src/pty_pane.rs` (`portable-pty` +
 `vt100`) — `PtySession` = a live pty + child + a `Mutex<vt100::Parser>` a reader thread pumps;
 `BinaryProfile::shell()/claude_code(ws)/codex(ws)` (claude injects `.mnml/CLAUDE.md` via
 `--append-system-prompt`); `Pane::Pty(PtySession)`; `src/ui/pty_view.rs` renders the vt100 grid

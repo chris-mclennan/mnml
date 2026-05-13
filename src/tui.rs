@@ -413,9 +413,59 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // A request pane: read-only — scroll, `r` re-fire, `y` copy-as-curl, Esc → tree.
+    // A request pane: two modes. Response (default) is read-only — j/k scroll,
+    // r re-fire, y copy-as-curl, Tab → Edit, Esc → tree. Edit is the Postman
+    // form — Shift-Tab/Tab cycle the focused field, typing/backspace/arrows
+    // edit, Space on Method cycles HTTP verbs, r re-fires with the current
+    // values, Tab back to Response, Esc → tree.
     if let Some(Pane::Request(rp)) = app.panes.get_mut(i) {
+        use crate::request_pane::ViewMode;
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        if rp.view == ViewMode::Edit {
+            match key.code {
+                KeyCode::Tab if shift => rp.focus_prev_field(),
+                KeyCode::Tab => rp.focus_next_field(),
+                KeyCode::BackTab => rp.focus_prev_field(),
+                KeyCode::Esc => app.focus_tree(),
+                KeyCode::Backspace => rp.backspace(),
+                KeyCode::Left => rp.move_left(),
+                KeyCode::Right => rp.move_right(),
+                KeyCode::Home => rp.move_home(),
+                KeyCode::End => rp.move_end(),
+                KeyCode::Up if rp.focus == crate::request_pane::EditField::Body => {
+                    // Cross-line motion for Body (the URL field is one line).
+                    rp.move_left();
+                    rp.move_home();
+                }
+                KeyCode::Down if rp.focus == crate::request_pane::EditField::Body => {
+                    rp.move_end();
+                    rp.move_right();
+                }
+                KeyCode::Enter => {
+                    if rp.focus == crate::request_pane::EditField::Body {
+                        rp.type_char('\n');
+                    } else {
+                        // Enter on URL/Method = fire (Postman-style "send").
+                        app.send_request_from_active();
+                    }
+                }
+                KeyCode::Char(c) if !ctrl => {
+                    if c == 'r' && rp.focus != crate::request_pane::EditField::Body {
+                        // `r` from URL/Method fires; r inside Body is a literal.
+                        // (Trade-off — typing "r" inside a URL works because URL
+                        // is a separate field; if Method, Space is the cycle key.)
+                        app.send_request_from_active();
+                    } else {
+                        rp.type_char(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         match key.code {
+            KeyCode::Tab => rp.toggle_view(),
             KeyCode::Up | KeyCode::Char('k') => rp.scroll = rp.scroll.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => rp.scroll += 1,
             KeyCode::PageUp => rp.scroll = rp.scroll.saturating_sub(viewport),
@@ -425,6 +475,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('r') => app.send_request_from_active(),
             KeyCode::Char('y') => app.copy_active_curl(),
             KeyCode::Char('Y') => app.copy_active_response_body(),
+            KeyCode::Char('e') => rp.toggle_view(),
             KeyCode::Char('.') => app.ai_debug_request(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}

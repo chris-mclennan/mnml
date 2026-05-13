@@ -1,7 +1,13 @@
-//! The `Pane::Request` view — the request fired from a `.http`/`.curl` editor
-//! and (once the background send returns) its response: status line, headers,
-//! pretty body, `@assert` results, `@capture`s. Read-only + scrollable; `r`
-//! re-fires the request (handled in `tui.rs`). Long lines clip (no wrap yet).
+//! The `Pane::Request` view — two modes:
+//!
+//! * **Response (default)** — read-only summary of the last send: status,
+//!   headers, pretty body, `@assert` results, `@capture`s. `r` re-fires.
+//! * **Edit** — Postman-style form: URL, method, body editable in place. Tab
+//!   toggles modes; in Edit, Shift-Tab / Tab cycle the focused field; typing /
+//!   backspace / arrows / Home / End edit; Space on Method cycles HTTP verbs;
+//!   `r` re-fires with the edited values.
+//!
+//! Long lines clip (no wrap yet).
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -12,7 +18,7 @@ use ratatui::widgets::Paragraph;
 use crate::app::App;
 use crate::layout::PaneId;
 use crate::pane::Pane;
-use crate::request_pane::RunState;
+use crate::request_pane::{EditField, RunState, ViewMode};
 use crate::ui::theme;
 
 pub fn draw(
@@ -20,7 +26,7 @@ pub fn draw(
     app: &mut App,
     pane_id: PaneId,
     area: Rect,
-    _focused: bool,
+    focused: bool,
 ) -> Option<(u16, u16)> {
     if area.width == 0 || area.height == 0 {
         return None;
@@ -39,7 +45,225 @@ pub fn draw(
     let mut rows: Vec<Line> = Vec::new();
     let plain = |s: String, st: Style| Line::from(Span::styled(s, st));
 
-    // ── request ──
+    // ── tab bar — [Edit] [Response] ──
+    let active_edit = rp.view == ViewMode::Edit;
+    let tab = |label: &str, active: bool| {
+        let mut st = Style::default().fg(t.fg).bg(t.bg_dark);
+        if active {
+            st = st
+                .fg(t.yellow)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+        } else {
+            st = st.fg(t.comment);
+        }
+        Span::styled(format!("  {label}  "), st)
+    };
+    rows.push(Line::from(vec![
+        Span::styled(" ", body_style),
+        tab("Edit", active_edit),
+        tab("Response", !active_edit),
+        Span::styled(
+            "       (Tab toggles · r send · y copy curl · esc tree)",
+            dim,
+        ),
+    ]));
+    rows.push(plain(String::new(), body_style));
+
+    // ── caret position to return (set when Edit-mode draws the focused field) ──
+    let mut caret: Option<(u16, u16)> = None;
+
+    if active_edit {
+        draw_edit(rp, t, &mut rows, area, &mut caret, focused);
+    } else {
+        draw_response(rp, t, &mut rows);
+    }
+
+    // scroll — Response can be long; Edit is short
+    let h = area.height as usize;
+    let max_scroll = rows.len().saturating_sub(h.min(rows.len()));
+    rp.scroll = rp.scroll.min(max_scroll);
+    let scroll = rp.scroll;
+    let view: Vec<Line> = rows.into_iter().skip(scroll).take(h).collect();
+    frame.render_widget(
+        Paragraph::new(view).style(Style::default().bg(t.bg_dark)),
+        area,
+    );
+    app.rects.editor_panes.push((area, pane_id));
+
+    // Adjust the caret for scroll + return it so the terminal cursor sits there.
+    caret.and_then(|(x, y)| {
+        let y_off = y.checked_sub(scroll as u16)?;
+        if y_off < area.height {
+            Some((x, area.y + y_off))
+        } else {
+            None
+        }
+    })
+}
+
+fn draw_edit(
+    rp: &crate::request_pane::RequestPane,
+    t: theme::Theme,
+    rows: &mut Vec<Line<'static>>,
+    area: Rect,
+    caret: &mut Option<(u16, u16)>,
+    focused: bool,
+) {
+    let body_style = Style::default().fg(t.fg).bg(t.bg_dark);
+    let plain = |s: String, st: Style| Line::from(Span::styled(s, st));
+    let dim = Style::default().fg(t.comment).bg(t.bg_dark);
+    let label_style = |is_focus: bool| {
+        let mut st = Style::default().bg(t.bg_dark);
+        if is_focus {
+            st = st.fg(t.yellow).add_modifier(Modifier::BOLD);
+        } else {
+            st = st.fg(t.comment);
+        }
+        st
+    };
+    let prefix = |is_focus: bool| if is_focus { "▸ " } else { "  " };
+
+    // Method
+    let m_focus = rp.focus == EditField::Method;
+    rows.push(Line::from(vec![
+        Span::styled(prefix(m_focus).to_string(), label_style(m_focus)),
+        Span::styled("Method  ", label_style(m_focus)),
+        Span::styled(
+            rp.request.method.clone(),
+            Style::default()
+                .fg(t.green)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("   (space → cycle)".to_string(), dim),
+    ]));
+
+    // URL (field — caret rendered when focused)
+    let u_focus = rp.focus == EditField::Url;
+    let url_text = rp.request.url.clone();
+    let label_url = format!("{}URL     ", prefix(u_focus));
+    let label_len = label_url.chars().count() as u16;
+    rows.push(Line::from(vec![
+        Span::styled(label_url, label_style(u_focus)),
+        Span::styled(url_text.clone(), Style::default().fg(t.blue).bg(t.bg_dark)),
+    ]));
+    if u_focus && focused {
+        // y = index of the row we just pushed (0-based from rows[0])
+        let y = (rows.len() - 1) as u16;
+        let caret_col = label_len + url_chars_before_cursor(&url_text, rp.url_cursor) as u16;
+        *caret = Some((area.x + caret_col.min(area.width.saturating_sub(1)), y));
+    }
+
+    // Headers (read-only block for now)
+    rows.push(Line::from(vec![Span::styled(
+        "  Headers".to_string(),
+        dim.add_modifier(Modifier::DIM),
+    )]));
+    for (k, v) in &rp.request.headers {
+        rows.push(Line::from(vec![Span::styled(
+            format!("    {k}: {v}"),
+            Style::default().fg(t.comment).bg(t.bg_dark),
+        )]));
+    }
+    if rp.request.headers.is_empty() {
+        rows.push(Line::from(vec![Span::styled(
+            "    (none)".to_string(),
+            dim,
+        )]));
+    }
+
+    // Body
+    let b_focus = rp.focus == EditField::Body;
+    rows.push(Line::from(vec![Span::styled(
+        format!("{}Body", prefix(b_focus)),
+        label_style(b_focus),
+    )]));
+    let body = rp.request.body.as_deref().unwrap_or("");
+    if body.is_empty() {
+        rows.push(Line::from(vec![Span::styled(
+            "    (empty)".to_string(),
+            dim,
+        )]));
+    } else {
+        for (i, line) in body.lines().enumerate() {
+            rows.push(Line::from(vec![Span::styled(
+                format!("    {line}"),
+                Style::default().fg(t.grey_fg).bg(t.bg_dark),
+            )]));
+            if b_focus && focused && caret.is_none() {
+                let body_offset_of_line_start = nth_line_start(body, i);
+                let body_offset_of_line_end = nth_line_end(body, i);
+                if rp.body_cursor >= body_offset_of_line_start
+                    && rp.body_cursor <= body_offset_of_line_end
+                {
+                    let col_in_line = body
+                        [body_offset_of_line_start..rp.body_cursor.min(body.len())]
+                        .chars()
+                        .count() as u16;
+                    let y = (rows.len() - 1) as u16;
+                    let prefix_cols = 4u16;
+                    *caret = Some((area.x + prefix_cols + col_in_line, y));
+                }
+            }
+        }
+        // Trailing newline ⇒ caret on an empty line at the end.
+        if b_focus && focused && caret.is_none() && body.ends_with('\n') {
+            let y = rows.len() as u16;
+            rows.push(plain(String::new(), body_style));
+            *caret = Some((area.x + 4, y));
+        }
+    }
+
+    // Sending/Done indicator (small).
+    rows.push(plain(String::new(), body_style));
+    match &rp.state {
+        RunState::Sending => rows.push(plain(
+            "  ⟳ sending…".to_string(),
+            Style::default().fg(t.yellow).bg(t.bg_dark),
+        )),
+        RunState::Failed(e) => rows.push(plain(
+            format!("  ✗ last send: {e}"),
+            Style::default().fg(t.red).bg(t.bg_dark),
+        )),
+        RunState::Done(r) => rows.push(plain(
+            format!("  ✓ last: {} ({} ms)", r.status, r.elapsed.as_millis()),
+            Style::default().fg(t.green).bg(t.bg_dark),
+        )),
+    }
+}
+
+fn url_chars_before_cursor(text: &str, byte_cursor: usize) -> usize {
+    text[..byte_cursor.min(text.len())].chars().count()
+}
+
+fn nth_line_start(text: &str, n: usize) -> usize {
+    let mut idx = 0usize;
+    for _ in 0..n {
+        match text[idx..].find('\n') {
+            Some(off) => idx += off + 1,
+            None => return text.len(),
+        }
+    }
+    idx
+}
+fn nth_line_end(text: &str, n: usize) -> usize {
+    let start = nth_line_start(text, n);
+    match text[start..].find('\n') {
+        Some(off) => start + off,
+        None => text.len(),
+    }
+}
+
+fn draw_response(
+    rp: &crate::request_pane::RequestPane,
+    t: theme::Theme,
+    rows: &mut Vec<Line<'static>>,
+) {
+    let body_style = Style::default().fg(t.fg).bg(t.bg_dark);
+    let dim = Style::default().fg(t.comment).bg(t.bg_dark);
+    let plain = |s: String, st: Style| Line::from(Span::styled(s, st));
+
+    // ── request line + headers + body (read-only summary) ──
     rows.push(Line::from(vec![
         Span::styled("▶ ", Style::default().fg(t.yellow).bg(t.bg_dark)),
         Span::styled(
@@ -151,18 +375,6 @@ pub fn draw(
             }
         }
     }
-
-    // scroll
-    let h = area.height as usize;
-    let max_scroll = rows.len().saturating_sub(h.min(rows.len()));
-    rp.scroll = rp.scroll.min(max_scroll);
-    let view: Vec<Line> = rows.into_iter().skip(rp.scroll).take(h).collect();
-    frame.render_widget(
-        Paragraph::new(view).style(Style::default().bg(t.bg_dark)),
-        area,
-    );
-    app.rects.editor_panes.push((area, pane_id));
-    None
 }
 
 /// Pretty-print a body if it looks like JSON; otherwise return it as-is.
