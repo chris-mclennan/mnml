@@ -1190,6 +1190,7 @@ impl App {
             | Some(Pane::Pty(_))
             | Some(Pane::Ai(_))
             | Some(Pane::Tests(_))
+            | Some(Pane::Trace(_))
             | Some(Pane::Diagnostics(_))
             | None => None,
         };
@@ -1242,6 +1243,7 @@ impl App {
             | Some(Pane::Pty(_))
             | Some(Pane::Ai(_))
             | Some(Pane::Tests(_))
+            | Some(Pane::Trace(_))
             | Some(Pane::Diagnostics(_)) => {
                 self.toast("not a markdown file");
                 return;
@@ -1878,6 +1880,66 @@ impl App {
             _ => return,
         };
         self.run_playwright(args);
+    }
+
+    /// `t` in a tests pane — parse the highlighted test's retained `trace.zip` (we
+    /// run with `--trace=retain-on-failure`, so failures have one) and open it as a
+    /// `Pane::Trace` timeline in a split below.
+    pub fn open_selected_test_trace(&mut self) {
+        let info = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Tests(t)) => match t.selected_test() {
+                Some(tc) => tc
+                    .trace_path
+                    .clone()
+                    .map(|p| (tc.title.clone(), p))
+                    .ok_or("no trace for that test (only failed tests retain one)"),
+                None => return,
+            },
+            _ => {
+                self.toast("select a test in the results pane first");
+                return;
+            }
+        };
+        let (title, path) = match info {
+            Ok(v) => v,
+            Err(msg) => {
+                self.toast(msg);
+                return;
+            }
+        };
+        let events = match crate::playwright::trace::parse_trace_zip(&path) {
+            Ok(e) => e,
+            Err(e) => {
+                self.toast(format!("trace: {e}"));
+                return;
+            }
+        };
+        let pane = Pane::Trace(crate::playwright::trace_pane::TracePane::new(
+            title, path, events,
+        ));
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// `r` in a trace pane — re-parse the `trace.zip`.
+    pub fn refresh_active_trace(&mut self) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Trace(tr)) = self.panes.get_mut(cur)
+            && let Err(e) = tr.refresh()
+        {
+            self.toast(format!("trace: {e}"));
+        }
     }
 
     /// `test.heal` (`h` in a tests pane) — hand the highlighted *failing* test (its
@@ -2955,6 +3017,7 @@ impl App {
             | Pane::Pty(_)
             | Pane::Ai(_)
             | Pane::Tests(_)
+            | Pane::Trace(_)
             | Pane::Diagnostics(_) => (None, None),
         };
         if self.layout.contains(id) {
@@ -3042,6 +3105,7 @@ impl App {
             Pane::Pty(s) => Some((s.title(), false)),
             Pane::Ai(a) => Some((a.tab_title(), false)),
             Pane::Tests(t) => Some((t.tab_title(), false)),
+            Pane::Trace(t) => Some((t.tab_title(), false)),
             Pane::Diagnostics(d) => Some((d.tab_title(), false)),
         }
     }

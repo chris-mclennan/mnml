@@ -390,8 +390,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // A tests pane: ↑↓ select, Enter → jump to the test's source, r re-run (same
-    // args), a/f run all/file, R re-run last-failed, Esc → tree.
+    // A tests pane: ↑↓ select, Enter → jump to the test's source, t → open the
+    // selected test's trace, r re-run (same args), a/f run all/file, R re-run
+    // last-failed, h heal-with-Claude, Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::Tests(_))) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => app.tests_move_selection(-1),
@@ -417,11 +418,52 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Enter => app.jump_to_selected_test(),
+            KeyCode::Char('t') => app.open_selected_test_trace(),
             KeyCode::Char('r') => app.rerun_active_tests(),
             KeyCode::Char('R') => app.rerun_failed_tests(),
             KeyCode::Char('a') => app.run_tests_all(),
             KeyCode::Char('f') => app.run_tests_file(),
             KeyCode::Char('h') => app.heal_selected_test(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
+    // A trace pane (parsed `trace.zip`): ↑↓/jk select, PgUp/PgDn/g/G jump, r
+    // re-parse, Esc → tree.
+    if matches!(app.panes.get(i), Some(Pane::Trace(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::Trace(tr)) = app.panes.get_mut(i) {
+                    tr.move_selection(-1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::Trace(tr)) = app.panes.get_mut(i) {
+                    tr.move_selection(1);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::Trace(tr)) = app.panes.get_mut(i) {
+                    tr.move_selection(-(viewport as isize));
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::Trace(tr)) = app.panes.get_mut(i) {
+                    tr.move_selection(viewport as isize);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::Trace(tr)) = app.panes.get_mut(i) {
+                    tr.move_selection(isize::MIN / 2);
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::Trace(tr)) = app.panes.get_mut(i) {
+                    tr.move_selection(isize::MAX / 2);
+                }
+            }
+            KeyCode::Char('r') => app.refresh_active_trace(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }
@@ -961,6 +1003,13 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             }
             Some(Pane::Diagnostics(d)) => {
                 d.move_selection(if delta < 0 {
+                    -(delta.unsigned_abs() as isize)
+                } else {
+                    delta.unsigned_abs() as isize
+                });
+            }
+            Some(Pane::Trace(tr)) => {
+                tr.move_selection(if delta < 0 {
                     -(delta.unsigned_abs() as isize)
                 } else {
                     delta.unsigned_abs() as isize

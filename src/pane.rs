@@ -12,6 +12,7 @@ use crate::git::graph::GitGraphPane;
 use crate::git::stage::GitStatusPane;
 use crate::lsp::diagnostics_pane::DiagnosticsPane;
 use crate::playwright::TestsPane;
+use crate::playwright::trace_pane::TracePane;
 use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
 
@@ -39,6 +40,8 @@ pub enum Pane {
     Ai(AiPane),
     /// A Playwright test run + its results tree.
     Tests(TestsPane),
+    /// A parsed Playwright `trace.zip` shown as a text timeline.
+    Trace(TracePane),
     /// A workspace-wide LSP-diagnostics ("Problems") list.
     Diagnostics(DiagnosticsPane),
 }
@@ -117,6 +120,7 @@ impl Pane {
             Pane::Pty(s) => s.title(),
             Pane::Ai(a) => a.tab_title(),
             Pane::Tests(t) => t.tab_title(),
+            Pane::Trace(t) => t.tab_title(),
             Pane::Diagnostics(d) => d.tab_title(),
         }
     }
@@ -133,6 +137,7 @@ impl Pane {
             | Pane::Pty(_)
             | Pane::Ai(_)
             | Pane::Tests(_)
+            | Pane::Trace(_)
             | Pane::Diagnostics(_) => false,
         }
     }

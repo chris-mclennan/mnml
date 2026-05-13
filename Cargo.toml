@@ -57,6 +57,7 @@ tree-sitter-java = "0.23.5"
 tree-sitter-yaml = "0.7.2"
 tree-sitter-c-sharp = "0.23.5"
 tree-sitter-lua = "0.5.0"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 # Added per-track later (kept out for now to keep build fast / resolution simple):
 #   nucleo             — fuzzy matcher (picker/palette) — hand-rolled in src/fuzzy.rs for now

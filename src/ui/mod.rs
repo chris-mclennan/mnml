@@ -39,6 +39,7 @@ pub mod request_view;
 pub mod statusline;
 pub mod tests_view;
 pub mod theme;
+pub mod trace_view;
 pub mod tree_view;
 pub mod welcome;
 pub mod whichkey;
@@ -190,6 +191,7 @@ fn render_layout(
                 Some(crate::pane::Pane::GitGraph(_)) => 7,
                 Some(crate::pane::Pane::GitStatus(_)) => 8,
                 Some(crate::pane::Pane::Diagnostics(_)) => 9,
+                Some(crate::pane::Pane::Trace(_)) => 10,
                 _ => 0,
             };
             match kind {
@@ -202,6 +204,7 @@ fn render_layout(
                 7 => git_graph_view::draw(frame, app, *id, area, focused),
                 8 => git_status_view::draw(frame, app, *id, area, focused),
                 9 => diagnostics_view::draw(frame, app, *id, area, focused),
+                10 => trace_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

@@ -226,16 +226,20 @@ live mirror of the (now-interactive) session. `G` follows the bottom. *Follow-up
 applied suggestion as a reviewable diff (vs the current straight-replace); request-debug (`Ctrl+.`
 on a failing request → `claude -p`); pty scrollback; incremental JSONL parse from `last_len`;
 stream `claude -p` output instead of waiting for completion.
-**Playwright track — runner + results tree done:** `src/playwright/mod.rs` runs `npx playwright test
---reporter=json [args]` on a worker thread (`App.tests_chan` / `App::tick`), parses the JSON report
-into a flat `TestRun{tests: Vec<TestCase{title,suite_path,file,line,status,duration_ms,error}>}` (ANSI
-stripped from error messages); `Pane::Tests(TestsPane{state:Running|Done|Failed,...})` shows the
+**Playwright track — runner + results tree + trace pane done:** `src/playwright/mod.rs` runs `npx playwright test
+--reporter=json --trace=retain-on-failure [args]` on a worker thread (`App.tests_chan` / `App::tick`), parses the JSON report
+into a flat `TestRun{tests: Vec<TestCase{title,suite_path,file,line,status,duration_ms,error,trace_path}>}` (ANSI
+stripped from error messages; `trace_path` = the retained `trace.zip` from a result's `attachments`); `Pane::Tests(TestsPane{state:Running|Done|Failed,...})` shows the
 command + a ✓/✗/≈/⊘ tally + the tests grouped by file (highlighted selection, failure error inline) —
 `src/ui/tests_view.rs`. Commands `test.run_all` / `test.run_file` / `test.run_at_cursor` (Playwright's
 `file:line` selector) / `test.rerun_failed` (`--last-failed`) under `<leader>T` (`+test` a/f/t/l); in
-the pane ↑↓ select, Enter jumps to the test's source, `r` re-runs (same args), `a`/`f` run all/file,
-`R` last-failed, Esc → tree. *Follow-ups (per `.local/PLAN.md`):* trace support (`show-trace` → a native
-text-timeline `Pane::Trace`), heal-with-Claude from a failed test, the `[feature: private]` DocDB live
+the pane ↑↓ select, Enter jumps to the test's source, `t` opens the selected test's **trace** (`App::open_selected_test_trace`),
+`h` heal-with-Claude, `r` re-runs (same args), `a`/`f` run all/file, `R` last-failed, Esc → tree. **Trace pane** — `src/playwright/trace.rs`
+(`parse_trace_zip` reads the `*.trace` NDJSON entries from a `trace.zip` via the `zip` crate, pairs `before`/`after` action records by `callId`,
+collects `console` / `error` / `stdio` events, re-bases times → a time-ordered `Vec<TraceEvent{at_ms,dur_ms,kind,title,detail,error}>`)
++ `src/playwright/trace_pane.rs` (`TracePane` state) + `src/ui/trace_view.rs` (a scrollable timeline — `+1.23s  ⏵ page.goto("…")  234ms`,
+selected row highlit, the selected event's params/error stack in a panel below). `Pane::Trace`; in the pane ↑↓/jk select, PgUp/PgDn/g/G jump, `r` re-parses, Esc → tree.
+*Follow-ups (per `.local/PLAN.md`):* heal-from-trace (feed a failed trace to `claude -p`), wrap long detail lines, the `[feature: private]` DocDB live
 `Pane::TestExecutions` (dev+staging+prod in one panel) + CodeBuild, a flaky-test dashboard.
 **Right-click context menus — done:** `src/context_menu.rs` (`ContextMenu{title,items:Vec<MenuItem{label,
 action: MenuAction}>,anchor,selected}`) + `src/ui/context_menu.rs` (a bordered floating list at the click,

@@ -8,9 +8,15 @@
 //! not there), like the git track shells out to `git`. The DocDB live-executions
 //! feed and CodeBuild bits land later behind a `private` Cargo feature.
 //!
+//! Trace pane — runs with `--trace=retain-on-failure`; `t` on a failed test opens
+//! its `trace.zip` parsed into a text timeline (see [`trace`] / [`trace_pane`]).
+//!
 //! Follow-ups: stream progress (the `line` reporter on stderr) instead of waiting
-//! for the JSON at the end; clickable stack frames in a failure; a trace pane;
-//! heal-with-Claude from a failed test; a flaky-test dashboard.
+//! for the JSON at the end; clickable stack frames in a failure; heal-from-trace
+//! (feed a failed trace to `claude -p`); a flaky-test dashboard.
+
+pub mod trace;
+pub mod trace_pane;
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -50,6 +56,9 @@ pub struct TestCase {
     pub duration_ms: u64,
     /// First error message (+ a few stack lines) for a failure, if any.
     pub error: Option<String>,
+    /// Absolute path to a retained `trace.zip`, if Playwright recorded one for
+    /// this test (we run with `--trace=retain-on-failure`, so failures get one).
+    pub trace_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -106,7 +115,12 @@ impl TestRun {
 /// falls back to the stderr text if Playwright errored before emitting one.
 pub fn run(workspace: &std::path::Path, extra_args: &[String]) -> Result<TestRun, String> {
     let mut cmd = Command::new("npx");
-    cmd.arg("playwright").arg("test").arg("--reporter=json");
+    cmd.arg("playwright")
+        .arg("test")
+        .arg("--reporter=json")
+        // Keep a trace for any test that fails — the trace pane (`t` in the tests
+        // pane) parses it. Overrides whatever `use.trace` the project config sets.
+        .arg("--trace=retain-on-failure");
     for a in extra_args {
         cmd.arg(a);
     }
@@ -114,7 +128,7 @@ pub fn run(workspace: &std::path::Path, extra_args: &[String]) -> Result<TestRun
     // Stop Playwright opening its HTML report in a browser when there are failures.
     cmd.env("PW_TEST_HTML_REPORT_OPEN", "never");
     let cmdline = format!(
-        "npx playwright test --reporter=json{}{}",
+        "npx playwright test --reporter=json --trace=retain-on-failure{}{}",
         if extra_args.is_empty() { "" } else { " " },
         extra_args.join(" ")
     );
@@ -218,7 +232,7 @@ fn push_spec(spec: &Value, suite_path: &str, out: &mut Vec<TestCase>) {
         .get("tests")
         .and_then(Value::as_array)
         .and_then(|a| a.first());
-    let (status, duration_ms, error) = match test0 {
+    let (status, duration_ms, error, trace_path) = match test0 {
         Some(t) => {
             let results = t.get("results").and_then(Value::as_array);
             let duration_ms = results
@@ -248,7 +262,8 @@ fn push_spec(spec: &Value, suite_path: &str, out: &mut Vec<TestCase>) {
             } else {
                 None
             };
-            (st, duration_ms, error)
+            let trace = results.and_then(|rs| rs.iter().rev().find_map(result_trace_path));
+            (st, duration_ms, error, trace)
         }
         None => {
             // No `tests` array — use the spec's `ok` flag.
@@ -260,6 +275,7 @@ fn push_spec(spec: &Value, suite_path: &str, out: &mut Vec<TestCase>) {
                     TestStatus::Failed
                 },
                 0,
+                None,
                 None,
             )
         }
@@ -273,7 +289,19 @@ fn push_spec(spec: &Value, suite_path: &str, out: &mut Vec<TestCase>) {
         status,
         duration_ms,
         error,
+        trace_path,
     });
+}
+
+/// The path of a `trace` attachment in one Playwright `result` object, if present.
+fn result_trace_path(result: &Value) -> Option<PathBuf> {
+    result
+        .get("attachments")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|a| a.get("name").and_then(Value::as_str) == Some("trace"))
+        .and_then(|a| a.get("path").and_then(Value::as_str))
+        .map(PathBuf::from)
 }
 
 /// Pull a short error string out of one Playwright `result` object.
