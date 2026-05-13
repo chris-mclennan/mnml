@@ -6172,6 +6172,16 @@ impl App {
     }
 
     pub fn save_active(&mut self) {
+        // Request-pane writeback: `Ctrl+S` over a `Pane::Request` serialises
+        // the edited request (URL / method / headers / body) back to its
+        // source file as a `curl` command.
+        if matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Request(_))
+        ) {
+            self.save_request_to_source();
+            return;
+        }
         // Format-on-save: ask the LSP to format first; the reply will land
         // async and chain into `save_active_now`. If the LSP isn't attached
         // (no server, or the format request is rejected) we fall through and
@@ -6190,6 +6200,34 @@ impl App {
             }
         }
         self.save_active_now();
+    }
+
+    /// `Ctrl+S` over the active `Pane::Request` — write the current request
+    /// (with the in-pane edits applied) back to its source file as a curl
+    /// command. Pane has no `source_path` ⇒ toast and bail.
+    pub fn save_request_to_source(&mut self) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.commit_headers();
+        }
+        let (path, text) = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => {
+                let Some(p) = rp.source_path.clone() else {
+                    self.toast("no source file to save to (re-fire is in-memory only)");
+                    return;
+                };
+                (p, rp.as_curl())
+            }
+            _ => return,
+        };
+        match std::fs::write(&path, format!("{text}\n")) {
+            Ok(()) => {
+                let rel = rel_path(&self.workspace, &path);
+                self.toast(format!("saved request → {rel}"));
+                self.git.refresh();
+            }
+            Err(e) => self.toast(format!("save failed: {e}")),
+        }
     }
 
     /// The actual write — extracted so the format-on-save flow can call it
@@ -7908,6 +7946,38 @@ mod tests {
         assert_eq!(app2.tree_width, initial); // pre-restore = config default
         app2.try_restore_session();
         assert_eq!(app2.tree_width, 42);
+    }
+
+    #[test]
+    fn request_pane_save_writes_curl_back_to_source() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("hello.curl");
+        std::fs::write(&src, "curl 'https://x/'\n").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // Build a Request pane manually (no real HTTP send — we just want to
+        // exercise the save-back path).
+        let (cmd_tx, _cmd_rx) = std::sync::mpsc::channel::<crate::cdp::CdpCommand>();
+        let _ = cmd_tx; // silence unused; we don't have a worker
+        let req = crate::http::Request {
+            method: "POST".into(),
+            url: "https://example.test/v1".into(),
+            headers: vec![("Accept".into(), "application/json".into())],
+            body: Some(r#"{"q":1}"#.into()),
+        };
+        let pane = Pane::Request(crate::request_pane::RequestPane::new(
+            Some(src.clone()),
+            req,
+            crate::http::script::Script::default(),
+            1,
+        ));
+        app.panes.push(pane);
+        app.active = Some(app.panes.len() - 1);
+        app.save_request_to_source();
+        let on_disk = std::fs::read_to_string(&src).unwrap();
+        assert!(on_disk.contains("curl 'https://example.test/v1'"));
+        // POST + --data-raw lets curl infer POST, so `-X POST` is omitted.
+        assert!(on_disk.contains("Accept: application/json"));
+        assert!(on_disk.contains(r#"--data-raw '{"q":1}'"#));
     }
 
     #[test]

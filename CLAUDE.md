@@ -313,8 +313,10 @@ focus:EditField::{Url,Method,Headers,Body}, url_cursor, body_cursor, headers_buf
 `request.url` / `request.method` / `request.body` directly. **Headers** are edited as a multi-line `Key: Value`
 text buffer (`headers_to_text` serialises from `request.headers`; `parse_headers_text` parses back, dropping
 blank lines + lines without `:`); `RequestPane::commit_headers` (called from `App::refire_request` before each
-send) writes the parsed list onto `request.headers`. Saving the edited request back to the source `.http`/`.curl`
-file is deferred.
+send) writes the parsed list onto `request.headers`. **`Ctrl+S` over a request pane** writes the edited request
+back to its source file as a curl command (`App::save_active` routes to `App::save_request_to_source` when the
+active pane is a Request); pane without a `source_path` ⇒ toast and bail. Multi-block `.http` files get rewritten
+as a single curl — multi-block-preserving writeback is a follow-up.
 **Pty / AI-CLI panes — first cut done:** `src/pty_pane.rs` (`portable-pty` +
 `vt100`) — `PtySession` = a live pty + child + a `Mutex<vt100::Parser>` a reader thread pumps;
 `BinaryProfile::shell()/claude_code(ws)/codex(ws)` (claude injects `.mnml/CLAUDE.md` via
