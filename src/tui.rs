@@ -1179,6 +1179,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
 
+    // Middle-click on a bufferline tab closes it (browser-tab pattern). Match
+    // this before the per-button branch so it's a one-liner regardless of what
+    // else the catch-all might do.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Middle))
+        && let Some(&(_, id)) = app
+            .rects
+            .bufferline_tabs
+            .iter()
+            .find(|(r, _)| contains(*r, x, y))
+    {
+        app.close_pane(id);
+        return;
+    }
+
     match m.kind {
         MouseEventKind::Down(MouseButton::Right) => {
             // Right-click → a context menu on the bufferline tab / tree row under it.
