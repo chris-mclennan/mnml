@@ -58,7 +58,8 @@ impl Buffer {
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
-            .map(|s| s.to_string());
+            .map(|s| s.to_string())
+            .or_else(|| ext_for_filename(path));
         let mut editor = Editor::new(text.clone(), cfg.editor.tab_width);
         editor.set_comment_token(comment_token_for(ext.as_deref()));
         let mut b = Buffer {
@@ -227,6 +228,19 @@ impl Buffer {
     }
 }
 
+/// Files conventionally named without an extension (`Makefile`, `Rakefile`, …)
+/// — pick the highlight/comment language from the filename instead.
+fn ext_for_filename(path: &Path) -> Option<String> {
+    let name = path.file_name().and_then(|n| n.to_str())?;
+    let ext = match name {
+        "Makefile" | "makefile" | "GNUmakefile" => "make",
+        "Rakefile" | "Gemfile" | "Vagrantfile" | "Brewfile" | "Podfile" | "Fastfile" => "rb",
+        ".env" | ".envrc" => "sh",
+        _ => return None,
+    };
+    Some(ext.to_string())
+}
+
 fn comment_token_for(ext: Option<&str>) -> &'static str {
     match ext {
         Some(
@@ -239,5 +253,31 @@ fn comment_token_for(ext: Option<&str>) -> &'static str {
         Some("lua" | "sql") => "-- ",
         Some("html" | "htm" | "xml" | "vue" | "svelte") => "<!-- ", // close token is wired with comment support later
         _ => "// ",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn filename_fallback_recognises_makefile_and_rakefile() {
+        assert_eq!(
+            ext_for_filename(Path::new("Makefile")).as_deref(),
+            Some("make")
+        );
+        assert_eq!(
+            ext_for_filename(Path::new("GNUmakefile")).as_deref(),
+            Some("make")
+        );
+        assert_eq!(
+            ext_for_filename(Path::new("/x/Rakefile")).as_deref(),
+            Some("rb")
+        );
+        assert_eq!(
+            ext_for_filename(Path::new("Gemfile")).as_deref(),
+            Some("rb")
+        );
+        assert_eq!(ext_for_filename(Path::new(".env")).as_deref(), Some("sh"));
+        assert_eq!(ext_for_filename(Path::new("not-special.txt")), None);
     }
 }
