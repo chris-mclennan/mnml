@@ -161,13 +161,52 @@ fn draw_workspace_files(
     if h == 0 {
         return start_y;
     }
-    let inner = Rect {
+    let mut inner = Rect {
         x: area.x,
         y: start_y,
         width: area.width,
         height: h as u16,
     };
+
+    // Filter line — when the tree's in filter mode or has a sticky filter,
+    // reserve the top row of the tree section for a `/ <query>` input.
+    let show_filter = app.tree.filter_mode || !app.tree.filter.is_empty();
+    if show_filter && inner.height >= 2 {
+        let t = theme::cur();
+        let cursor_glyph = if app.tree.filter_mode { "█" } else { "" };
+        let line = Line::from(vec![
+            Span::styled(" / ", Style::default().fg(t.yellow).bg(rail_bg)),
+            Span::styled(
+                app.tree.filter.clone(),
+                Style::default().fg(t.fg).bg(rail_bg),
+            ),
+            Span::styled(
+                cursor_glyph.to_string(),
+                Style::default().fg(t.yellow).bg(rail_bg),
+            ),
+        ]);
+        let filter_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(line).style(Style::default().bg(rail_bg)),
+            filter_rect,
+        );
+        inner = Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: inner.height - 1,
+        };
+    }
     app.rects.tree = Some(inner);
+    let h = inner.height as usize;
+    if h == 0 {
+        return start_y + inner.height + if show_filter { 1 } else { 0 };
+    }
 
     let rows = app.tree.visible_rows();
     let cursor = app.tree.cursor();

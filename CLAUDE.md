@@ -180,7 +180,13 @@ folder…", "Rename…", "Delete…" (the delete prompt requires you to type the
 flow is also wired to `Ctrl+N` (`file.new`) for workspace-relative paths from anywhere; missing intermediate dirs are
 auto-created. Rename / delete repoint or close any open editor buffer for the affected paths (LSP `did_close` / `did_open`
 follow). `Tree::expanded_dirs()` / `set_expanded_dirs` persist the per-directory expand state in `tree_expanded_dirs` so
-a relaunch keeps whatever the user had open.
+a relaunch keeps whatever the user had open. **Tree filter** — `/` in the focused tree enters
+filter mode (`Tree.filter_mode = true`); printable keys append to `Tree.filter`, Backspace pops,
+Enter exits filter mode (keeping the narrowed view), Esc clears + exits. `Tree::filter_visible_set`
+fuzzy-matches each entry's file name and walks ancestors so the matched paths' parent dirs stay
+visible (so `src/lsp/client.rs` matching also shows `src/` and `src/lsp/`). While filtering, every
+visible directory renders as expanded regardless of the user's expansion state. The tree-view
+reserves one row at the top for the `/ <query>` input line when active.
 **Bufferline polish** — horizontal scroll (`bufferline_first_visible`) keeps the active tab on screen no matter how many
 buffers are open, with `‹` / `›` overflow chevrons at the edges. Same-name tabs get parent-dir disambiguation (`git/mod.rs`
 vs `ai/mod.rs`) via `tab_labels(&panes)`. **Middle-click closes a tab** (browser-tab pattern, handled in

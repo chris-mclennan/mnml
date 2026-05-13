@@ -353,7 +353,24 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // Filter mode — printable chars build the query; Backspace pops; Enter
+    // exits filter mode (keeping the filter); Esc clears + exits.
+    if app.tree.filter_mode {
+        match key.code {
+            KeyCode::Esc => app.tree.filter_clear_and_exit(),
+            KeyCode::Enter => app.tree.filter_mode = false,
+            KeyCode::Backspace => app.tree.filter_pop(),
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.tree.filter_push(c);
+            }
+            _ => {}
+        }
+        return;
+    }
     match key.code {
+        KeyCode::Char('/') => {
+            app.tree.filter_mode = true;
+        }
         KeyCode::Up | KeyCode::Char('k') => app.tree.move_up(),
         KeyCode::Down | KeyCode::Char('j') => {
             // At the bottom of the workspace list, ↓ crosses into the GIT
@@ -373,6 +390,8 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('R') => app.tree.refresh(),
         KeyCode::Home | KeyCode::Char('g') => app.tree.set_cursor(0),
         KeyCode::End | KeyCode::Char('G') => app.tree.set_cursor(usize::MAX),
+        // When there's a sticky filter, Esc clears it before yielding focus.
+        KeyCode::Esc if !app.tree.filter.is_empty() => app.tree.filter_clear_and_exit(),
         _ => {}
     }
 }

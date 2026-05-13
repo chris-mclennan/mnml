@@ -36,6 +36,13 @@ pub struct Tree {
     /// First visible row to render (set by the view to keep the cursor on screen).
     pub scroll: usize,
     show_hidden: bool,
+    /// Optional fuzzy filter — when non-empty, [`Self::visible_rows`] returns
+    /// only entries whose `file_name` fuzzy-matches, plus every ancestor dir
+    /// on their path (so the hierarchy stays readable). Empty ⇒ no filter.
+    pub filter: String,
+    /// `true` while the tree is in type-to-filter mode (UI captures keystrokes
+    /// into `filter` instead of navigating). Driven by `tui.rs`.
+    pub filter_mode: bool,
 }
 
 impl Tree {
@@ -47,6 +54,8 @@ impl Tree {
             cursor: 0,
             scroll: 0,
             show_hidden: false,
+            filter: String::new(),
+            filter_mode: false,
         };
         t.rescan();
         // Auto-expand the first level so the tree isn't a wall of collapsed dirs.
@@ -155,6 +164,31 @@ impl Tree {
 
     /// The currently-visible rows, top to bottom.
     pub fn visible_rows(&self) -> Vec<VisibleRow> {
+        // When filtering, expand everything along matched paths so the
+        // ancestor dirs of a match are visible regardless of the user's
+        // expansion state. Otherwise the standard expansion-gate runs.
+        if !self.filter.is_empty() {
+            let keep = self.filter_visible_set();
+            return self
+                .entries
+                .iter()
+                .filter(|e| keep.contains(&e.path))
+                .map(|e| VisibleRow {
+                    path: e.path.clone(),
+                    is_dir: e.is_dir,
+                    // While filtering, render all kept dirs as "expanded"
+                    // (their matching descendants render below them).
+                    is_expanded: e.is_dir,
+                    depth: e.depth,
+                    name: e
+                        .path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("?")
+                        .to_string(),
+                })
+                .collect();
+        }
         self.entries
             .iter()
             .filter(|e| self.ancestors_all_expanded(&e.path))
@@ -171,6 +205,53 @@ impl Tree {
                     .to_string(),
             })
             .collect()
+    }
+
+    /// Set of entry paths that pass the current filter — entries whose
+    /// file name fuzzy-matches `self.filter`, plus every ancestor of a
+    /// match so the hierarchy is readable.
+    fn filter_visible_set(&self) -> BTreeSet<PathBuf> {
+        use crate::fuzzy::fuzzy_match;
+        let mut keep: BTreeSet<PathBuf> = BTreeSet::new();
+        for e in &self.entries {
+            let Some(name) = e.path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if fuzzy_match(&self.filter, name).is_some() {
+                keep.insert(e.path.clone());
+                let mut anc = e.path.parent().map(Path::to_path_buf);
+                while let Some(p) = anc {
+                    if p == self.root || !p.starts_with(&self.root) {
+                        break;
+                    }
+                    keep.insert(p.clone());
+                    anc = p.parent().map(Path::to_path_buf);
+                }
+            }
+        }
+        keep
+    }
+
+    /// Append `c` to the filter, snap the cursor back to the top.
+    pub fn filter_push(&mut self, c: char) {
+        self.filter.push(c);
+        self.cursor = 0;
+        self.scroll = 0;
+    }
+
+    /// Pop one char off the filter.
+    pub fn filter_pop(&mut self) {
+        self.filter.pop();
+        self.cursor = 0;
+        self.scroll = 0;
+    }
+
+    /// Clear the filter + exit filter mode.
+    pub fn filter_clear_and_exit(&mut self) {
+        self.filter.clear();
+        self.filter_mode = false;
+        self.cursor = 0;
+        self.scroll = 0;
     }
 
     pub fn cursor(&self) -> usize {
@@ -353,5 +434,26 @@ mod tests {
         let d = workspace();
         let t = Tree::open(d.path());
         assert!(t.selected_file().is_none()); // on `src` (a dir)
+    }
+
+    #[test]
+    fn filter_narrows_and_keeps_ancestors() {
+        let d = workspace();
+        let mut t = Tree::open(d.path());
+        // Filter for "main" — should match `main.rs` and keep `src/`.
+        t.filter_push('m');
+        t.filter_push('a');
+        t.filter_push('i');
+        t.filter_push('n');
+        let names: Vec<String> = t.visible_rows().iter().map(|r| r.name.clone()).collect();
+        assert!(names.contains(&"src".to_string()));
+        assert!(names.contains(&"main.rs".to_string()));
+        assert!(!names.contains(&"lib.rs".to_string()));
+        assert!(!names.contains(&"Cargo.toml".to_string()));
+        // Clear → everything visible again.
+        t.filter_clear_and_exit();
+        let names: Vec<String> = t.visible_rows().iter().map(|r| r.name.clone()).collect();
+        assert!(names.contains(&"lib.rs".to_string()));
+        assert!(names.contains(&"Cargo.toml".to_string()));
     }
 }
