@@ -132,6 +132,15 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_zen_mode(),
         },
         Command {
+            id: "view.redraw",
+            title: "Force a full redraw (clears the terminal)",
+            group: "view",
+            keys: &["ctrl+l"],
+            run: |app| {
+                app.redraw_requested = true;
+            },
+        },
+        Command {
             id: "view.toggle_relative_numbers",
             title: "Toggle relative line numbers",
             group: "view",

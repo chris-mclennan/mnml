@@ -494,6 +494,10 @@ pub struct App {
     /// Set alongside `should_quit` when the loop should exit *for a rebuild+relaunch*
     /// (the `run.sh` wrapper watches for the distinct exit code).
     pub restart_requested: bool,
+    /// `view.redraw` (`Ctrl+L`) — clear the terminal backing buffer before the
+    /// next paint so a scrambled terminal repaints cleanly. The crossterm loop
+    /// checks + clears this flag at the top of each iteration.
+    pub redraw_requested: bool,
     /// True after a quit was refused because of unsaved changes — a second
     /// `request_quit` then goes through. Cleared by saving.
     pub quit_armed: bool,
@@ -614,6 +618,7 @@ impl App {
             toast: None,
             should_quit: false,
             restart_requested: false,
+            redraw_requested: false,
             quit_armed: false,
             rects: PaneRects::default(),
             clipboard: Clipboard::new(),

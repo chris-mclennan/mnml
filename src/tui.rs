@@ -97,6 +97,12 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
 
     loop {
         app.tick();
+        if app.redraw_requested {
+            app.redraw_requested = false;
+            // Force a fresh paint over a cleared buffer (an external process
+            // can leave the terminal in any state).
+            term.clear()?;
+        }
         term.draw(|f| ui::draw(f, app))?;
         if let Some(ipc) = ipc.as_mut() {
             ipc::dump_screen_status(ipc, term.current_buffer_mut(), app);
