@@ -241,6 +241,10 @@ fn config_for_lang(name: &str) -> Option<&'static HighlightConfiguration> {
         "swift" => "swift",
         "zig" => "zig",
         "nix" => "nix",
+        "ocaml" | "ml" => "ocaml",
+        "ocaml_interface" | "mli" => "mli",
+        "dart" => "dart",
+        "sql" | "psql" | "mysql" => "sql",
         "make" | "makefile" => "make",
         _ => return None,
     };
@@ -443,6 +447,34 @@ fn build_config(ext: &str) -> Option<HighlightConfiguration> {
             tree_sitter_nix::INJECTIONS_QUERY,
             "",
         ),
+        "ocaml" | "ml" => (
+            tree_sitter_ocaml::LANGUAGE_OCAML.into(),
+            "ocaml",
+            tree_sitter_ocaml::HIGHLIGHTS_QUERY,
+            "",
+            tree_sitter_ocaml::LOCALS_QUERY,
+        ),
+        "mli" => (
+            tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
+            "ocaml_interface",
+            tree_sitter_ocaml::HIGHLIGHTS_QUERY,
+            "",
+            tree_sitter_ocaml::LOCALS_QUERY,
+        ),
+        "dart" => (
+            tree_sitter_dart::LANGUAGE.into(),
+            "dart",
+            tree_sitter_dart::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ),
+        "sql" | "psql" | "mysql" => (
+            tree_sitter_sequel::LANGUAGE.into(),
+            "sql",
+            tree_sitter_sequel::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ),
         // Makefiles: extension-less files named `Makefile` / `GNUmakefile` get
         // resolved by the caller via the filename when there's no extension; here
         // we map `mk` / `make` as a fallback.
@@ -564,6 +596,15 @@ mod tests {
                 "const std = @import(\"std\");\npub fn main() void {}\n",
             ),
             ("nix", "{ pkgs ? import <nixpkgs> {} }: pkgs.hello\n"),
+            ("ocaml", "let hi name = print_endline (\"hi \" ^ name)\n"),
+            (
+                "dart",
+                "void main() {\n  print('hi');\n  var x = 1 + 2;\n}\n",
+            ),
+            (
+                "sql",
+                "SELECT id, name FROM users WHERE active = TRUE LIMIT 10;\n",
+            ),
         ];
         for &(ext, src) in cases {
             let lines = highlight_lines(src, ext);
