@@ -139,6 +139,16 @@ fn build_replace_ops(
         .collect()
 }
 
+/// `(row, col)` (0-based, col in chars) for a byte offset into `text`. Used by
+/// the in-buffer find to position the editor cursor at a match.
+fn byte_to_row_col(text: &str, byte: usize) -> (usize, usize) {
+    let byte = byte.min(text.len());
+    let row = text[..byte].bytes().filter(|&b| b == b'\n').count();
+    let line_start = text[..byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let col = text[line_start..byte].chars().count();
+    (row, col)
+}
+
 /// Hand `path` to the OS's default app — `open <path>` on macOS, `xdg-open` on
 /// Linux, `cmd /C start` on Windows. Best-effort: errors are swallowed (so a
 /// headless / sandboxed env where none of those are available is fine).
@@ -3274,7 +3284,141 @@ impl App {
                     b.eval(&expr);
                 }
             }
+            crate::prompt::PromptKind::Find => {
+                let q = p.input.clone();
+                self.accept_find(q);
+            }
         }
+    }
+
+    // ─── find in buffer ─────────────────────────────────────────────
+    /// `find.find` (`Ctrl+F`) — prompt for a search string. Seeded with the
+    /// active editor's selection if any, else its current find query.
+    pub fn open_find_prompt(&mut self) {
+        let Some(cur) = self.active else { return };
+        let Some(Pane::Editor(b)) = self.panes.get(cur) else {
+            self.toast("find only works in editor panes");
+            return;
+        };
+        let seed = if b.editor.has_selection() {
+            b.editor.selected_text().to_string()
+        } else if let Some(f) = &b.find {
+            f.query.clone()
+        } else {
+            String::new()
+        };
+        // A multi-line selection isn't a useful default — keep the first line.
+        let seed = seed.lines().next().unwrap_or("").to_string();
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::Find,
+            "Find",
+            seed,
+        ));
+    }
+
+    /// Set the active editor's find state to `query` and jump to the nearest
+    /// match at-or-after the cursor (wraps).
+    pub fn accept_find(&mut self, query: String) {
+        let Some(cur) = self.active else { return };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(cur) else {
+            return;
+        };
+        if query.is_empty() {
+            b.find = None;
+            return;
+        }
+        let mut state = crate::buffer::FindState {
+            query: query.clone(),
+            ..Default::default()
+        };
+        state.recompute(b.editor.text());
+        if state.matches.is_empty() {
+            b.find = Some(state);
+            self.toast(format!("no matches for {query:?}"));
+            return;
+        }
+        // Jump to the first match at-or-after the cursor (wrap).
+        let cur_byte = b.editor.cursor();
+        let idx = state
+            .matches
+            .iter()
+            .position(|(s, _)| *s >= cur_byte)
+            .unwrap_or(0);
+        state.current = Some(idx);
+        let (start, _end) = state.matches[idx];
+        let total = state.matches.len();
+        b.find = Some(state);
+        self.place_cursor_at_byte(cur, start);
+        self.toast(format!("match {}/{total}", idx + 1));
+    }
+
+    /// `find.next` (`F3`) — advance to the next find match (wraps).
+    pub fn find_next(&mut self) {
+        self.step_find(1);
+    }
+    /// `find.prev` (`Shift+F3`) — step to the previous find match (wraps).
+    pub fn find_prev(&mut self) {
+        self.step_find(-1);
+    }
+    fn step_find(&mut self, delta: isize) {
+        let Some(cur) = self.active else { return };
+        // Decide outcome inside a scoped borrow, then act after (so we can also
+        // call self.toast / self.place_cursor_at_byte without a borrow clash).
+        enum Out {
+            Stepped {
+                byte: usize,
+                idx1: usize,
+                total: usize,
+            },
+            Toast(String),
+        }
+        let out = match self.panes.get_mut(cur) {
+            Some(Pane::Editor(b)) => match b.find.as_mut() {
+                None => Out::Toast("no active find — press Ctrl+F".into()),
+                Some(f) if f.matches.is_empty() => {
+                    Out::Toast(format!("no matches for {:?}", f.query))
+                }
+                Some(f) => {
+                    let n = f.matches.len() as isize;
+                    let cur_idx = f.current.map(|i| i as isize).unwrap_or(0);
+                    let new = ((cur_idx + delta) % n + n) % n;
+                    f.current = Some(new as usize);
+                    let (start, _) = f.matches[new as usize];
+                    Out::Stepped {
+                        byte: start,
+                        idx1: new as usize + 1,
+                        total: n as usize,
+                    }
+                }
+            },
+            _ => return,
+        };
+        match out {
+            Out::Stepped { byte, idx1, total } => {
+                self.place_cursor_at_byte(cur, byte);
+                self.toast(format!("match {idx1}/{total}"));
+            }
+            Out::Toast(s) => self.toast(s),
+        }
+    }
+
+    /// `find.clear` (Esc when find is the only active overlay) — drop the matches.
+    pub fn clear_find(&mut self) {
+        if let Some(Pane::Editor(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            b.find = None;
+        }
+    }
+
+    /// Move the editor's cursor to byte offset `byte`, scrolling so it's visible.
+    fn place_cursor_at_byte(&mut self, pane_id: PaneId, byte: usize) {
+        let (row, col) = match self.panes.get(pane_id) {
+            Some(Pane::Editor(b)) => byte_to_row_col(b.editor.text(), byte),
+            _ => return,
+        };
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(pane_id) {
+            b.editor.place_cursor(row, col);
+        }
+        self.reveal_pane(pane_id);
     }
 
     // ─── git graph (graphical-Git-GUI-style commit DAG) ─────────────────────

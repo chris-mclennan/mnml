@@ -1,0 +1,32 @@
+# Find-in-buffer: open the prompt, type a query, jump between matches.
+# The toast (and the bottom-of-screen prompt line) is what we can check on the
+# rendered screen.
+write notes.txt "alpha\nbeta\nalpha\ngamma\nalpha\n"
+open notes.txt
+
+# Ctrl+F opens the Find prompt.
+command find.find
+expect screen contains "Find"
+type alpha
+key enter
+
+# The accepted query toasts "match 1/3".
+expect screen contains "match 1/3"
+
+# F3 → match 2/3, then 3/3, then wrap to 1/3.
+command find.next
+expect screen contains "match 2/3"
+command find.next
+expect screen contains "match 3/3"
+command find.next
+expect screen contains "match 1/3"
+
+# Shift+F3 (find.prev) wraps the other way.
+command find.prev
+expect screen contains "match 3/3"
+
+# A query with no matches says so and leaves the state empty.
+command find.find
+type zzz
+key enter
+expect screen contains "no matches"

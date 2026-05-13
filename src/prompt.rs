@@ -19,6 +19,9 @@ pub enum PromptKind {
     BrowserNavigate,
     /// Accept ⇒ `Runtime.evaluate` the typed JS in the active browser pane.
     BrowserEval,
+    /// Accept ⇒ find the typed string in the active editor (case-insensitive
+    /// ASCII), highlight matches, jump to the nearest one.
+    Find,
 }
 
 #[derive(Debug)]

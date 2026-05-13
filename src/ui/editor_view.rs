@@ -84,6 +84,9 @@ pub fn draw_pane(
 
     let selection = buf.editor.selection();
     let sel_bg = theme::cur().base16[0x02];
+    let match_bg = theme::cur().bg2;
+    let cur_match_bg = theme::cur().yellow;
+    let cur_match_idx = buf.find.as_ref().and_then(|f| f.current);
     let guide_fg = theme::cur().base16[0x03];
     let sign_color = |k: SignKind| match k {
         SignKind::Added => theme::cur().green,
@@ -178,6 +181,27 @@ pub fn draw_pane(
             _ => (0, 0, false),
         };
 
+        // Find-match ranges (in char columns) on this line — assumes single-line
+        // matches (the find prompt is single-line, so queries can't contain '\n').
+        let line_matches: Vec<(usize, usize, bool)> = buf
+            .find
+            .as_ref()
+            .map(|f| {
+                f.matches
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (s, e))| *s >= ls && *e <= le)
+                    .map(|(i, (s, e))| {
+                        (
+                            buf.editor.byte_to_col(*s),
+                            buf.editor.byte_to_col(*e),
+                            cur_match_idx == Some(i),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let raw = buf.editor.line_str(line_no);
         let chars: Vec<char> = raw.chars().collect();
         let n = chars.len();
@@ -191,8 +215,20 @@ pub fn draw_pane(
             let c = buf.h_scroll + vc;
             let in_sel =
                 (sel_hi > sel_lo && c >= sel_lo && c < sel_hi) || (extend_eol && c >= sel_lo);
-            let bg = if in_sel { sel_bg } else { base_bg };
-            let (ch, fg) = if c < n {
+            let in_match = line_matches
+                .iter()
+                .find(|(s, e, _)| c >= *s && c < *e)
+                .map(|(_, _, cur)| *cur);
+            let bg = if in_sel {
+                sel_bg
+            } else {
+                match in_match {
+                    Some(true) => cur_match_bg,
+                    Some(false) => match_bg,
+                    None => base_bg,
+                }
+            };
+            let (ch, mut fg) = if c < n {
                 let raw_ch = chars[c];
                 if raw_ch == ' ' && has_content && c >= tab_w && c % tab_w == 0 && c < indent_cols {
                     ('│', guide_fg)
@@ -205,6 +241,11 @@ pub fn draw_pane(
             } else {
                 (' ', theme::cur().fg)
             };
+            // The "current" find match: force dark fg so it stays readable on
+            // the bright bg.
+            if matches!(in_match, Some(true)) {
+                fg = theme::cur().bg_dark;
+            }
             cells.push((ch, fg, bg));
         }
 

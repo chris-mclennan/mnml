@@ -109,6 +109,13 @@ toml/css/bash/html/md/c/cpp/rb/java/cs/lua/yaml/scala/ex/hs/php/swift/make — `
 languages so fenced code blocks in markdown / embedded HTML·CSS·JS get highlighted too, and the
 markdown `text.*` captures are in `HIGHLIGHT_NAMES`) + indent guides; hybrid relative line numbers (`[ui] relative_line_numbers`,
 `:set [no]relativenumber`, `view.toggle_relative_numbers` — cursor line absolute, others = distance).
+**Find-in-buffer** — `find.find` (`Ctrl+F`, palette) prompts for a query (seeded with the active selection or last query),
+`accept_find` populates the active buffer's `FindState{query, matches:Vec<(byte_start,byte_end)>, current}`
+(`buffer::find_all_ci_ascii` — ASCII case-insensitive, non-overlapping, char-boundary safe), jumps the cursor to the nearest
+match at-or-after the cursor (wraps), and toasts `match N/M`. `find.next` (`F3`) / `find.prev` (`Shift+F3`) step through (wrap);
+`find.clear` empties the state. `editor_view` paints a `t.bg2` background on every visible match and a `t.yellow` bg on the
+current one (with `t.bg_dark` fg for readability). The find state is recomputed on every text-changing edit
+(`Buffer::refresh_find_matches`, hooked into `feed_key` + `apply_edit_ops`) so highlights stay in sync as you type.
 **Theme engine** (`src/ui/theme.rs`): a `Theme`
 struct (named UI colours + `base16[16]`) behind an `RwLock`; `theme::cur()` reads it,
 `theme::set(name)` swaps it. Themes are all of NvChad's base46 schemes (~90), converted

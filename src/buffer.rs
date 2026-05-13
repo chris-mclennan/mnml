@@ -17,6 +17,60 @@ use crate::input::{self, AppCommand, EditCtx, EditingMode, InputHandler, InputRe
 /// would lag). Incremental parsing lifts this later.
 const HIGHLIGHT_BYTE_LIMIT: usize = 2 * 1024 * 1024;
 
+/// In-buffer find state — opened by `find.find` (`Ctrl+F`), advanced by `F3` /
+/// `Shift+F3`. Stores byte ranges; recomputed on every text-changing edit.
+#[derive(Debug, Clone, Default)]
+pub struct FindState {
+    pub query: String,
+    pub matches: Vec<(usize, usize)>,
+    /// Index into `matches` of the "current" match (the one the cursor is on).
+    pub current: Option<usize>,
+}
+
+impl FindState {
+    pub fn recompute(&mut self, text: &str) {
+        self.matches = find_all_ci_ascii(text, &self.query);
+        if self.matches.is_empty() {
+            self.current = None;
+        } else if let Some(c) = self.current {
+            self.current = Some(c.min(self.matches.len() - 1));
+        }
+    }
+}
+
+/// Locate every (byte-range) occurrence of `query` in `text`, ASCII-case-
+/// insensitive. Matches are non-overlapping (advance past each one). The
+/// byte-length is `query.len()`; UTF-8 byte boundaries are preserved.
+pub fn find_all_ci_ascii(text: &str, query: &str) -> Vec<(usize, usize)> {
+    if query.is_empty() || text.len() < query.len() {
+        return Vec::new();
+    }
+    let q = query.as_bytes();
+    let t = text.as_bytes();
+    let nlen = q.len();
+    let mut out = Vec::new();
+    let mut i = 0;
+    'outer: while i + nlen <= t.len() {
+        if !text.is_char_boundary(i) {
+            i += 1;
+            continue;
+        }
+        for j in 0..nlen {
+            if !t[i + j].eq_ignore_ascii_case(&q[j]) {
+                i += 1;
+                continue 'outer;
+            }
+        }
+        if text.is_char_boundary(i + nlen) {
+            out.push((i, i + nlen));
+            i += nlen;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
 /// What `Buffer::feed_key` reports back to the event loop.
 pub enum BufferEvent {
     /// The buffer text changed.
@@ -54,6 +108,8 @@ pub struct Buffer {
     /// Stamp of the last text-changing edit (used by `[editor] autosave_secs`).
     /// `None` until the first edit; cleared back to `None` on save.
     pub last_edited: Option<Instant>,
+    /// `Some` when an in-buffer find is active (matches recomputed on every edit).
+    pub find: Option<FindState>,
 }
 
 impl Buffer {
@@ -80,6 +136,7 @@ impl Buffer {
             blame: None,
             diagnostics: Vec::new(),
             last_edited: None,
+            find: None,
         };
         b.refresh_highlights();
         Ok(b)
@@ -107,6 +164,7 @@ impl Buffer {
             blame: None,
             diagnostics: Vec::new(),
             last_edited: None,
+            find: None,
         }
     }
 
@@ -197,6 +255,7 @@ impl Buffer {
                 if changed {
                     self.recompute_dirty();
                     self.refresh_highlights();
+                    self.refresh_find_matches();
                     self.last_edited = Some(Instant::now());
                     BufferEvent::Edited
                 } else {
@@ -231,9 +290,18 @@ impl Buffer {
         if changed {
             self.recompute_dirty();
             self.refresh_highlights();
+            self.refresh_find_matches();
             self.last_edited = Some(Instant::now());
         }
         changed
+    }
+
+    /// Re-run the find-state's matches against the current text (no-op when no
+    /// find is active). Cheap unless `query` is short on a huge file.
+    pub fn refresh_find_matches(&mut self) {
+        if let Some(f) = self.find.as_mut() {
+            f.recompute(self.editor.text());
+        }
     }
 }
 
@@ -288,5 +356,46 @@ mod tests {
         );
         assert_eq!(ext_for_filename(Path::new(".env")).as_deref(), Some("sh"));
         assert_eq!(ext_for_filename(Path::new("not-special.txt")), None);
+    }
+
+    #[test]
+    fn find_all_ci_ascii_finds_overlapping_at_non_overlapping_positions() {
+        // case-insensitive, non-overlapping (advance past each match).
+        assert_eq!(
+            find_all_ci_ascii("foo Foo fOO bar", "foo"),
+            vec![(0, 3), (4, 7), (8, 11)]
+        );
+        // empty query / text shorter than query.
+        assert!(find_all_ci_ascii("hello", "").is_empty());
+        assert!(find_all_ci_ascii("hi", "hello").is_empty());
+        // non-overlap: "aaaa" with query "aa" → (0,2) (2,4), not (0,2)(1,3)(2,4).
+        assert_eq!(find_all_ci_ascii("aaaa", "aa"), vec![(0, 2), (2, 4)]);
+        // UTF-8 boundary safety: text contains a multi-byte char, query is ASCII.
+        let t = "café fé";
+        let r = find_all_ci_ascii(t, "fé");
+        // both occurrences match — the function falls back to byte-exact for
+        // non-ASCII, so case is preserved.
+        assert_eq!(r.len(), 2);
+        for (s, e) in r {
+            assert!(t.is_char_boundary(s));
+            assert!(t.is_char_boundary(e));
+        }
+    }
+
+    #[test]
+    fn find_state_recompute_keeps_current_in_range() {
+        let mut f = FindState {
+            query: "abc".into(),
+            ..Default::default()
+        };
+        f.recompute("abc x abc y abc");
+        assert_eq!(f.matches.len(), 3);
+        f.current = Some(2);
+        f.recompute("abc x abc"); // shrunk: only 2 matches now
+        assert_eq!(f.matches.len(), 2);
+        assert_eq!(f.current, Some(1));
+        f.recompute(""); // no matches → current cleared
+        assert!(f.matches.is_empty());
+        assert!(f.current.is_none());
     }
 }
