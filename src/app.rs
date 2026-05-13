@@ -209,6 +209,9 @@ struct SavedSession {
     /// Was the workspace section inside the rail expanded?
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tree_root_expanded: Option<bool>,
+    /// Was the `> GIT` section in the rail expanded?
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    git_section_expanded: Option<bool>,
     /// Directories the user had expanded in the file tree. `None` (an older
     /// session.json without the field) ⇒ keep the default first-level expand.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -419,6 +422,18 @@ pub enum FsAction {
     Delete { path: PathBuf },
 }
 
+/// Which section of the left rail has the keyboard when `Focus::Tree` is
+/// active. The renderer paints the cursor on the focused section; the other
+/// section's selection is still drawn (with a dim "out-of-focus" highlight)
+/// so context is preserved when the user flips back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RailSection {
+    /// The `WORKSPACE` section (file tree); keys go to `app.tree`.
+    Workspace,
+    /// The `GIT` section (branches + worktrees); keys go to `app.git_rail`.
+    Git,
+}
+
 /// Screen regions captured during render, consumed for mouse routing on the next event.
 #[derive(Debug, Default, Clone)]
 pub struct PaneRects {
@@ -429,6 +444,12 @@ pub struct PaneRects {
     /// header row when the tree is expanded, or the whole activity-bar column
     /// when it's collapsed. Click → `App::toggle_tree`.
     pub tree_toggle: Option<Rect>,
+    /// The `> GIT` section header row in the rail (when the rail's visible).
+    /// Click → `App::toggle_git_section_expanded`.
+    pub git_section_toggle: Option<Rect>,
+    /// `(rect, hit)` per visible row in the GIT section. Click → focus + run
+    /// the row's default action; right-click → context menu.
+    pub git_rail_rows: Vec<(Rect, crate::git::rail::GitRailHit)>,
     pub bufferline: Option<Rect>,
     /// `(rect, pane_id)` for each tab in the bufferline (whole tab → activate).
     pub bufferline_tabs: Vec<(Rect, PaneId)>,
@@ -511,6 +532,16 @@ pub struct App {
     /// `Ctrl+B`). Future sibling sections (OUTLINE, TIMELINE, …) would each
     /// own their own expanded flag here.
     pub tree_root_expanded: bool,
+    /// The persistent `GIT` section in the rail — local branches + worktrees,
+    /// refreshed on every git-changing action via [`Self::after_git_change`].
+    pub git_rail: crate::git::rail::GitRail,
+    /// Is the `> GIT` rail section expanded? Sibling of [`Self::tree_root_expanded`].
+    /// Persisted in session.json. Default `true`.
+    pub git_section_expanded: bool,
+    /// Which rail section the keyboard is on when `focus == Focus::Tree`.
+    /// Switched by ↓ off the end of the workspace list / ↑ off the top of the
+    /// git list, or by clicking a row in the other section.
+    pub rail_section: RailSection,
     pub git: GitStatus,
     pub toast: Option<(String, Instant)>,
     pub should_quit: bool,
@@ -559,6 +590,12 @@ pub struct App {
     /// routing).
     pending_code_actions: Vec<crate::lsp::CodeAction>,
     pending_code_action_path: Option<PathBuf>,
+    /// Branch name awaiting the "type the name to confirm" prompt that the
+    /// git-rail's branch right-click menu opens (→ `git branch -D`).
+    pending_delete_branch: Option<String>,
+    /// `(path, basename)` of a worktree awaiting the same kind of confirm
+    /// prompt (→ `git worktree remove`).
+    pending_worktree_remove: Option<(PathBuf, String)>,
     /// The file-system action waiting on its name prompt — captured when the
     /// `NewFile` / `NewFolder` / `Rename` context-menu items open the prompt.
     pending_fs_action: Option<FsAction>,
@@ -623,6 +660,11 @@ impl App {
         let lsp = crate::lsp::LspManager::new(&workspace, &config);
         let test_history = crate::playwright::history::TestHistory::load(&workspace);
         let keymap = crate::input::keymap::Keymap::build(&config);
+        let git_rail = {
+            let mut r = crate::git::rail::GitRail::empty();
+            r.refresh(&workspace);
+            r
+        };
         Ok(App {
             workspace,
             config,
@@ -644,6 +686,9 @@ impl App {
             // expanded by default. The last session's choice overrides this
             // in `try_restore_session`.
             tree_root_expanded: true,
+            git_rail,
+            git_section_expanded: true,
+            rail_section: RailSection::Workspace,
             git,
             toast: None,
             should_quit: false,
@@ -663,6 +708,8 @@ impl App {
             pending_rename: None,
             pending_code_actions: Vec::new(),
             pending_code_action_path: None,
+            pending_delete_branch: None,
+            pending_worktree_remove: None,
             pending_fs_action: None,
             completion: None,
             http_chan: None,
@@ -828,6 +875,11 @@ impl App {
             NewFolder(parent) => self.open_new_folder_prompt(parent),
             Rename(path) => self.open_fs_rename_prompt(path),
             Delete(path) => self.open_fs_delete_prompt(path),
+            GitCheckoutBranch(name) => self.git_checkout_named(&name),
+            GitNewBranchFrom(name) => self.git_new_branch_from(name),
+            GitDeleteBranch(name) => self.git_delete_branch_prompt(name),
+            GitWorktreeShell(path) => self.open_worktree_shell(&path.to_string_lossy()),
+            GitWorktreeRemove(path) => self.git_worktree_remove_prompt(path),
         }
     }
 
@@ -4154,6 +4206,8 @@ impl App {
         self.prompt = None;
         self.pending_rename = None;
         self.pending_fs_action = None;
+        self.pending_delete_branch = None;
+        self.pending_worktree_remove = None;
     }
     pub fn prompt_accept(&mut self) {
         let Some(p) = self.prompt.take() else { return };
@@ -4263,6 +4317,12 @@ impl App {
                 if let Some(FsAction::Delete { path }) = self.pending_fs_action.take() {
                     self.confirm_delete_fs_entry(&path, &typed);
                 }
+            }
+            crate::prompt::PromptKind::GitDeleteBranch => {
+                self.confirm_delete_branch(p.input.clone());
+            }
+            crate::prompt::PromptKind::GitWorktreeRemove => {
+                self.confirm_worktree_remove(p.input.clone());
             }
         }
     }
@@ -4906,9 +4966,12 @@ impl App {
             }
         }
     }
-    /// After any staging/commit change: refresh the cached status + all git panes.
+    /// After any staging/commit change: refresh the cached status + all git
+    /// panes + the rail's `GIT` section (the current branch may have moved /
+    /// a branch may have been created).
     fn after_git_change(&mut self) {
         self.git.refresh();
+        self.git_rail.refresh(&self.workspace);
         self.refresh_git_status_panes();
         self.refresh_git_graph_panes();
     }
@@ -5876,6 +5939,220 @@ impl App {
         self.tree_root_expanded = !self.tree_root_expanded;
         if self.tree_root_expanded {
             self.focus = Focus::Tree;
+            self.rail_section = RailSection::Workspace;
+        }
+    }
+
+    /// Toggle the `> GIT` section in the rail (sibling of the workspace
+    /// section). Clicking the header expands/collapses it and parks the rail
+    /// keyboard on the git section.
+    pub fn toggle_git_section_expanded(&mut self) {
+        self.git_section_expanded = !self.git_section_expanded;
+        if self.git_section_expanded {
+            self.focus = Focus::Tree;
+            self.rail_section = RailSection::Git;
+        }
+    }
+
+    // ─── git rail (`GIT` section in the left rail) ──────────────────
+    /// Move the git rail's cursor. Crosses back into the workspace section
+    /// when the user goes up off the top of the git list.
+    pub fn git_rail_move_up(&mut self) {
+        if self.git_rail.cursor == 0 {
+            // At top of the git section already → flip back to workspace.
+            self.rail_section = RailSection::Workspace;
+        } else {
+            self.git_rail.move_up();
+        }
+    }
+    pub fn git_rail_move_down(&mut self) {
+        self.git_rail.move_down();
+    }
+    /// Enter on the cursor row: checkout the branch, or open a shell in the
+    /// worktree. (Both are also reachable via right-click context menu.)
+    pub fn git_rail_activate(&mut self) {
+        let Some(hit) = self.git_rail.selected() else {
+            return;
+        };
+        self.run_git_rail_hit(hit);
+    }
+    /// Click handler — focus the git section, set the cursor, run the row's
+    /// default action.
+    pub fn click_git_rail(&mut self, hit: crate::git::rail::GitRailHit) {
+        self.focus_tree();
+        self.rail_section = RailSection::Git;
+        self.git_rail.focus(hit);
+        self.run_git_rail_hit(hit);
+    }
+    /// Right-click on a git-rail row: open the appropriate context menu.
+    pub fn open_git_rail_context_menu(
+        &mut self,
+        hit: crate::git::rail::GitRailHit,
+        anchor: (u16, u16),
+    ) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        self.focus_tree();
+        self.rail_section = RailSection::Git;
+        self.git_rail.focus(hit);
+        let menu = match hit {
+            crate::git::rail::GitRailHit::Branch(i) => {
+                let Some(b) = self.git_rail.branches.get(i) else {
+                    return;
+                };
+                let name = b.name.clone();
+                let title = if b.is_current {
+                    Some(format!("● {name}"))
+                } else {
+                    Some(name.clone())
+                };
+                let items = if b.is_current {
+                    vec![MenuItem::new(
+                        "New branch from here…",
+                        MenuAction::GitNewBranchFrom(name),
+                    )]
+                } else {
+                    vec![
+                        MenuItem::new(
+                            format!("Checkout {name}"),
+                            MenuAction::GitCheckoutBranch(name.clone()),
+                        ),
+                        MenuItem::new(
+                            "New branch from here…",
+                            MenuAction::GitNewBranchFrom(name.clone()),
+                        ),
+                        MenuItem::new(format!("Delete {name}…"), MenuAction::GitDeleteBranch(name)),
+                    ]
+                };
+                ContextMenu::new(title, anchor, items)
+            }
+            crate::git::rail::GitRailHit::Worktree(i) => {
+                let Some(w) = self.git_rail.worktrees.get(i) else {
+                    return;
+                };
+                let path = w.path.clone();
+                let label = w.label.clone();
+                let is_cur = w.is_current;
+                let title = Some(format!("{label}  {}", path.display()));
+                let mut items = vec![
+                    MenuItem::new(
+                        "Open shell here",
+                        MenuAction::GitWorktreeShell(path.clone()),
+                    ),
+                    MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
+                    MenuItem::new(
+                        "Copy path",
+                        MenuAction::CopyPath(path.to_string_lossy().into_owned()),
+                    ),
+                ];
+                if !is_cur {
+                    items.push(MenuItem::new(
+                        "Remove worktree…",
+                        MenuAction::GitWorktreeRemove(path),
+                    ));
+                }
+                ContextMenu::new(title, anchor, items)
+            }
+        };
+        self.context_menu = Some(menu);
+    }
+    /// Common tail of click + Enter — run the action attached to `hit`.
+    fn run_git_rail_hit(&mut self, hit: crate::git::rail::GitRailHit) {
+        match hit {
+            crate::git::rail::GitRailHit::Branch(i) => {
+                let Some(b) = self.git_rail.branches.get(i) else {
+                    return;
+                };
+                if b.is_current {
+                    self.toast(format!("● {} (already checked out)", b.name));
+                } else {
+                    let name = b.name.clone();
+                    self.git_checkout_named(&name);
+                }
+            }
+            crate::git::rail::GitRailHit::Worktree(i) => {
+                let Some(w) = self.git_rail.worktrees.get(i) else {
+                    return;
+                };
+                let path = w.path.clone();
+                self.open_worktree_shell(&path.to_string_lossy());
+            }
+        }
+    }
+    /// Right-click context-menu action: checkout an existing local branch.
+    pub fn git_checkout_named(&mut self, name: &str) {
+        match crate::git::branch::checkout(&self.workspace, name) {
+            Ok(()) => self.after_checkout(name),
+            Err(e) => self.toast(format!("checkout: {e}")),
+        }
+    }
+    /// Right-click context-menu action: prompt for a new branch name (off the
+    /// named branch's tip) and create+checkout. The existing
+    /// [`Self::open_new_branch_prompt`] already does this off `HEAD`; here we
+    /// just stash the source branch and reuse that prompt — the user can
+    /// switch first if they want a different base.
+    pub fn git_new_branch_from(&mut self, _source: String) {
+        // First cut: same as `git.new_branch` — `git checkout -b` from `HEAD`.
+        // Branching from an arbitrary ref is a `git branch <new> <source>` +
+        // checkout — leave that for a follow-up so this commit stays bounded.
+        self.open_new_branch_prompt();
+    }
+    /// Right-click context-menu action: prompt to confirm, then `git branch -D`.
+    pub fn git_delete_branch_prompt(&mut self, name: String) {
+        use crate::prompt::{Prompt, PromptKind};
+        self.prompt = Some(Prompt::seeded(
+            PromptKind::GitDeleteBranch,
+            format!("Type {name:?} to delete this branch"),
+            "",
+        ));
+        self.pending_delete_branch = Some(name);
+    }
+    /// Accept handler for the `PromptKind::GitDeleteBranch` confirm prompt.
+    pub fn confirm_delete_branch(&mut self, typed: String) {
+        let Some(name) = self.pending_delete_branch.take() else {
+            return;
+        };
+        if typed.trim() != name {
+            self.toast("branch delete cancelled (name didn't match)");
+            return;
+        }
+        match crate::git::branch::delete_branch(&self.workspace, &name) {
+            Ok(()) => {
+                self.toast(format!("deleted branch {name}"));
+                self.after_git_change();
+            }
+            Err(e) => self.toast(format!("branch delete: {e}")),
+        }
+    }
+    /// Right-click context-menu action: confirm + `git worktree remove`.
+    pub fn git_worktree_remove_prompt(&mut self, path: PathBuf) {
+        use crate::prompt::{Prompt, PromptKind};
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        self.prompt = Some(Prompt::seeded(
+            PromptKind::GitWorktreeRemove,
+            format!("Type {name:?} to remove this worktree"),
+            "",
+        ));
+        self.pending_worktree_remove = Some((path, name));
+    }
+    /// Accept handler for `PromptKind::GitWorktreeRemove`.
+    pub fn confirm_worktree_remove(&mut self, typed: String) {
+        let Some((path, name)) = self.pending_worktree_remove.take() else {
+            return;
+        };
+        if typed.trim() != name {
+            self.toast("worktree remove cancelled (name didn't match)");
+            return;
+        }
+        match crate::git::branch::worktree_remove(&self.workspace, &path) {
+            Ok(()) => {
+                self.toast(format!("removed worktree {name}"));
+                self.after_git_change();
+            }
+            Err(e) => self.toast(format!("worktree remove: {e}")),
         }
     }
 
@@ -6022,6 +6299,7 @@ impl App {
             layout,
             tree_visible: Some(self.tree_visible),
             tree_root_expanded: Some(self.tree_root_expanded),
+            git_section_expanded: Some(self.git_section_expanded),
             tree_expanded_dirs: Some(
                 self.tree
                     .expanded_dirs()
@@ -6103,6 +6381,9 @@ impl App {
         }
         if let Some(v) = saved.tree_root_expanded {
             self.tree_root_expanded = v;
+        }
+        if let Some(v) = saved.git_section_expanded {
+            self.git_section_expanded = v;
         }
         if let Some(dirs) = saved.tree_expanded_dirs {
             self.tree
@@ -6733,6 +7014,104 @@ mod tests {
         assert!(ranges_overlap(r(2, 2, 2, 2), r(1, 0, 3, 1)));
         // Single-point cursor before a diag.
         assert!(!ranges_overlap(r(0, 0, 0, 0), r(1, 0, 1, 5)));
+    }
+
+    #[test]
+    fn git_rail_section_toggles_focus_rail() {
+        let (_d, mut app) = app_with_files();
+        // Both sections start expanded; collapse + re-expand each and
+        // verify the rail keyboard parks on the section just expanded.
+        assert!(app.tree_root_expanded);
+        assert!(app.git_section_expanded);
+        app.toggle_tree_root_expanded(); // collapse
+        assert!(!app.tree_root_expanded);
+        app.toggle_git_section_expanded(); // collapse
+        assert!(!app.git_section_expanded);
+        app.toggle_git_section_expanded(); // expand
+        assert!(app.git_section_expanded);
+        assert_eq!(app.rail_section, RailSection::Git);
+        assert_eq!(app.focus, Focus::Tree);
+        app.toggle_tree_root_expanded(); // expand
+        assert_eq!(app.rail_section, RailSection::Workspace);
+    }
+
+    #[test]
+    fn click_git_rail_branch_routes_to_checkout() {
+        // No `git` available in the sandbox is fine — we just seed the rail
+        // directly + verify the click handler routes to the checkout call.
+        let (_d, mut app) = app_with_files();
+        app.git_rail.branches = vec![
+            crate::git::rail::BranchRow {
+                name: "main".into(),
+                is_current: true,
+            },
+            crate::git::rail::BranchRow {
+                name: "feature/x".into(),
+                is_current: false,
+            },
+        ];
+        app.git_rail.current_branch = Some("main".into());
+
+        // Click the current branch → toasts "already checked out", no crash.
+        app.click_git_rail(crate::git::rail::GitRailHit::Branch(0));
+        assert_eq!(app.rail_section, RailSection::Git);
+        assert!(app.git_rail.selected() == Some(crate::git::rail::GitRailHit::Branch(0)));
+
+        // Click the other branch → would shell out to `git checkout`; the
+        // workspace isn't a repo so we just verify the cursor moved.
+        app.click_git_rail(crate::git::rail::GitRailHit::Branch(1));
+        assert_eq!(
+            app.git_rail.selected(),
+            Some(crate::git::rail::GitRailHit::Branch(1))
+        );
+    }
+
+    #[test]
+    fn right_click_git_rail_branch_opens_menu_with_actions() {
+        use crate::context_menu::MenuAction;
+        let (_d, mut app) = app_with_files();
+        app.git_rail.branches = vec![
+            crate::git::rail::BranchRow {
+                name: "main".into(),
+                is_current: true,
+            },
+            crate::git::rail::BranchRow {
+                name: "topic".into(),
+                is_current: false,
+            },
+        ];
+        app.git_rail.current_branch = Some("main".into());
+
+        // Right-click the *current* branch ⇒ only "New branch from here…".
+        app.open_git_rail_context_menu(crate::git::rail::GitRailHit::Branch(0), (0, 0));
+        let m = app.context_menu.as_ref().unwrap();
+        assert_eq!(m.items.len(), 1);
+        assert!(matches!(m.items[0].action, MenuAction::GitNewBranchFrom(_)));
+
+        // Right-click a non-current branch ⇒ Checkout / New / Delete.
+        app.open_git_rail_context_menu(crate::git::rail::GitRailHit::Branch(1), (0, 0));
+        let m = app.context_menu.as_ref().unwrap();
+        assert_eq!(m.items.len(), 3);
+        assert!(matches!(
+            m.items[0].action,
+            MenuAction::GitCheckoutBranch(ref n) if n == "topic"
+        ));
+        assert!(matches!(m.items[2].action, MenuAction::GitDeleteBranch(_)));
+    }
+
+    #[test]
+    fn session_round_trips_git_section_expanded() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("a.txt"), "a").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        assert!(app.git_section_expanded);
+        app.git_section_expanded = false;
+        app.save_session_on_quit();
+        let mut app2 = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // Pre-restore: runtime default is true.
+        assert!(app2.git_section_expanded);
+        app2.try_restore_session();
+        assert!(!app2.git_section_expanded);
     }
 
     #[test]

@@ -116,7 +116,22 @@ it as a small chip at the right edge so the user can tell at a glance which buil
 **Tree section header** — VS-Code Explorer style: the rail starts with a `> WORKSPACE-NAME` row that's clickable; default
 expanded (`v WORKSPACE-NAME` + file list). Two independent state bits — `tree_visible` (rail in/out, `Ctrl+B` /
 `view.toggle_tree`) and `tree_root_expanded` (the section's collapse, `view.toggle_tree_section` / click on the header).
-Both persisted in `.mnml/session.json`. **Tree FS actions** — right-click a file or dir in the tree → "New file…", "New
+Both persisted in `.mnml/session.json`. **`> GIT` rail section** — sibling of WORKSPACE: a collapsible section below the
+file list (`src/git/rail.rs` = `GitRail{branches:Vec<BranchRow{name,is_current}>, worktrees:Vec<Worktree>, current_branch,
+cursor, scroll}`, refreshed via `branch::local_branches` + `branch::worktrees` + `branch::current` on every
+`after_git_change()` and on startup); `src/ui/tree_view.rs` renders it after the workspace files (which cap their height
+to leave room for up to 8 git rows) — a dim `branches` sub-label, the branches (`●` = current, `○` = other), then
+`worktrees` (`⤿` = the worktree we're in, `·` = other; label shown as `branch (dirname)`). The rail's keyboard focus
+tracks which section it's on (`App::rail_section: RailSection::Workspace|Git`) — `↓` at the bottom of the workspace list
+flips to git, `Esc`/`h`/`←` in the git section flips back; the renderer paints the cursor on the focused section. Click a
+row to focus + run its default action (branch ⇒ `git_checkout_named`, worktree ⇒ `open_worktree_shell`). Right-click a
+row opens a per-row context menu (`open_git_rail_context_menu`) — branch: Checkout / New branch from here… /
+Delete <name>… (the current branch only gets "New branch from here…"); worktree: Open shell here / Reveal in Finder /
+Copy path / Remove worktree… (the current worktree is non-removable). Delete + remove go through a "type the name to
+confirm" prompt (`PromptKind::GitDeleteBranch` / `GitWorktreeRemove`, the rail's confirm idiom); on confirm,
+`branch::delete_branch` / `branch::worktree_remove` shell out to `git branch -D` / `git worktree remove`. Section expand
+state (`git_section_expanded`) persisted in `session.json`. Click on the `> GIT` header toggles it
+(`toggle_git_section_expanded`) and parks the rail's keyboard on the git section. **Tree FS actions** — right-click a file or dir in the tree → "New file…", "New
 folder…", "Rename…", "Delete…" (the delete prompt requires you to type the entry's filename to confirm). The "New file"
 flow is also wired to `Ctrl+N` (`file.new`) for workspace-relative paths from anywhere; missing intermediate dirs are
 auto-created. Rename / delete repoint or close any open editor buffer for the affected paths (LSP `did_close` / `did_open`

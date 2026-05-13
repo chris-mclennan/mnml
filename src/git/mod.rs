@@ -10,6 +10,7 @@ pub mod commit;
 pub mod diff;
 pub mod graph;
 pub mod log;
+pub mod rail;
 pub mod stage;
 pub mod status;
 

@@ -34,6 +34,17 @@ pub enum MenuAction {
     /// Prompt for the filename as a confirmation; on exact match, delete
     /// `path` (`rm` for a file, `rm -rf` for a directory).
     Delete(PathBuf),
+    /// Git rail — checkout an existing local branch.
+    GitCheckoutBranch(String),
+    /// Git rail — prompt for a new branch name (off the named base; first cut
+    /// just branches off `HEAD`).
+    GitNewBranchFrom(String),
+    /// Git rail — confirm + `git branch -D <name>`.
+    GitDeleteBranch(String),
+    /// Git rail — open a shell pane rooted in the worktree directory.
+    GitWorktreeShell(PathBuf),
+    /// Git rail — confirm + `git worktree remove <path>`.
+    GitWorktreeRemove(PathBuf),
 }
 
 #[derive(Debug, Clone)]

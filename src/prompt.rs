@@ -44,6 +44,13 @@ pub enum PromptKind {
     /// Accept ⇒ delete the held path *iff* the typed text matches its
     /// filename exactly (confirmation guard).
     DeleteConfirm,
+    /// Accept ⇒ `git branch -D <held name>` *iff* the typed text matches the
+    /// branch name exactly (confirmation guard). Comes from the git-rail's
+    /// branch right-click menu.
+    GitDeleteBranch,
+    /// Accept ⇒ `git worktree remove <held path>` *iff* the typed text
+    /// matches the worktree's basename exactly (confirmation guard).
+    GitWorktreeRemove,
 }
 
 #[derive(Debug)]

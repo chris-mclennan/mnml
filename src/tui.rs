@@ -328,9 +328,38 @@ fn handle_prompt_key(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_tree_key(app: &mut App, key: KeyEvent) {
+    // The rail has two sections (workspace + git). Route the key to the one
+    // the keyboard is parked on; the cursor crosses the boundary on ↓ off the
+    // bottom of workspace or ↑ off the top of git.
+    if app.rail_section == crate::app::RailSection::Git {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.git_rail_move_up(),
+            KeyCode::Down | KeyCode::Char('j') => app.git_rail_move_down(),
+            KeyCode::Enter | KeyCode::Char(' ') => app.git_rail_activate(),
+            KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => {
+                app.rail_section = crate::app::RailSection::Workspace;
+            }
+            KeyCode::Char('R') => app.git_rail.refresh(&app.workspace.clone()),
+            KeyCode::Home | KeyCode::Char('g') => app.git_rail.set_cursor(0),
+            KeyCode::End | KeyCode::Char('G') => app.git_rail.set_cursor(usize::MAX),
+            _ => {}
+        }
+        return;
+    }
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => app.tree.move_up(),
-        KeyCode::Down | KeyCode::Char('j') => app.tree.move_down(),
+        KeyCode::Down | KeyCode::Char('j') => {
+            // At the bottom of the workspace list, ↓ crosses into the GIT
+            // section (only when it's expanded + non-empty — otherwise it's
+            // a no-op so the user doesn't fall into an empty section).
+            let last = app.tree.visible_rows().len().saturating_sub(1);
+            if app.tree.cursor() == last && app.git_section_expanded && !app.git_rail.is_empty() {
+                app.rail_section = crate::app::RailSection::Git;
+                app.git_rail.set_cursor(0);
+            } else {
+                app.tree.move_down();
+            }
+        }
         KeyCode::Right | KeyCode::Char('l') => app.tree.expand_or_descend(),
         KeyCode::Left | KeyCode::Char('h') => app.tree.collapse_or_ascend(),
         KeyCode::Enter | KeyCode::Char(' ') => app.tree_activate(),
@@ -992,6 +1021,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         app.open_tree_context_menu(row.path.clone(), row.is_dir, (x, y));
                     }
                 }
+                return;
+            }
+            // Right-click on a GIT-section row → per-row context menu.
+            if let Some(&(_, hit)) = app
+                .rects
+                .git_rail_rows
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+            {
+                app.open_git_rail_context_menu(hit, (x, y));
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
@@ -1026,11 +1065,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.toggle_tree_root_expanded();
                 return;
             }
+            // The `> GIT` section header — same idea for the git rail.
+            if let Some(tr) = app.rects.git_section_toggle
+                && contains(tr, x, y)
+            {
+                app.toggle_git_section_expanded();
+                return;
+            }
             // Tree? (no header now — row 0 of the rail is the first entry)
             if let Some(tr) = app.rects.tree
                 && contains(tr, x, y)
             {
                 app.focus_tree();
+                app.rail_section = crate::app::RailSection::Workspace;
                 {
                     let idx = (y - tr.y) as usize + app.rects.tree_scroll;
                     if idx < app.tree.visible_rows().len() {
@@ -1044,6 +1091,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         }
                     }
                 }
+                return;
+            }
+            // A GIT-section row — focus the rail's git section + run the row's
+            // default action (checkout the branch / open shell in the worktree).
+            if let Some(&(_, hit)) = app
+                .rects
+                .git_rail_rows
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+            {
+                app.click_git_rail(hit);
                 return;
             }
             // Editor text in some split leaf? Focus that leaf and place the cursor.

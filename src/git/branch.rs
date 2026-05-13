@@ -139,6 +139,17 @@ pub fn checkout_track(workspace: &Path, remote: &str) -> Result<(), String> {
 pub fn create(workspace: &Path, name: &str) -> Result<(), String> {
     run(workspace, &["checkout", "-b", name])
 }
+/// `git branch -D <name>` — force-delete a local branch (the rail's confirm
+/// prompt already gated this on a name match; soft-delete would refuse
+/// unmerged branches and surface as a generic git error).
+pub fn delete_branch(workspace: &Path, name: &str) -> Result<(), String> {
+    run(workspace, &["branch", "-D", name])
+}
+/// `git worktree remove <path>` — drop a linked worktree. Same confirm-gating
+/// principle as branch delete.
+pub fn worktree_remove(workspace: &Path, path: &Path) -> Result<(), String> {
+    run(workspace, &["worktree", "remove", &path.to_string_lossy()])
+}
 
 #[cfg(test)]
 mod tests {

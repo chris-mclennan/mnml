@@ -142,6 +142,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         tree_view::draw(frame, app, ta);
     } else {
         app.rects.tree = None;
+        app.rects.tree_toggle = None;
+        app.rects.git_section_toggle = None;
+        app.rects.git_rail_rows.clear();
     }
 
     // ── bufferline ──
