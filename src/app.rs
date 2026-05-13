@@ -475,6 +475,12 @@ pub struct App {
     /// different cell. Read by `dispatch_mouse` to upgrade count==2 → word
     /// select, count==3 → line select.
     pub last_click: Option<(std::time::Instant, u16, u16, u8)>,
+    /// When `[editor] format_on_save = true`, `save_active` fires
+    /// `lsp.format` and stashes `(path, deadline)` here. The next
+    /// `LspEvent::Formatting` matching `path` applies + chains a save; if
+    /// the deadline passes without a reply, `tick` saves anyway (misbehaving
+    /// LSPs can't gate save).
+    pub pending_format_save: Option<(PathBuf, std::time::Instant)>,
     /// Is the workspace "section" inside the rail expanded? When `false` the
     /// rail shows just the `> WORKSPACE-NAME` header (clickable to expand);
     /// when `true` it shows the header (`v WORKSPACE-NAME`) + the file list.
@@ -599,6 +605,7 @@ impl App {
             nav_back: Vec::new(),
             nav_forward: Vec::new(),
             last_click: None,
+            pending_format_save: None,
             // VS-Code-style: the rail is shown with its workspace section
             // expanded by default. The last session's choice overrides this
             // in `try_restore_session`.
@@ -1819,10 +1826,9 @@ impl App {
     }
 
     /// Apply a `TextEdit[]` from `textDocument/formatting` to the matching open
-    /// buffer (a single file). Re-uses `op_replace_edits_for_file` for the
-    /// byte-offset translation, then applies through `apply_edit_ops` so undo
-    /// stacks one entry per format. Refuses if the file isn't open (the LSP
-    /// shouldn't have replied for an unopened file, but be safe).
+    /// buffer (single file). Reuses `build_replace_ops` for the Range → byte
+    /// translation, applies through `apply_edit_ops` (one undo step). If a
+    /// format-on-save is pending for this file, chains the actual save.
     fn apply_formatting_edits(&mut self, path: PathBuf, edits: Vec<(crate::lsp::Range, String)>) {
         let Some(idx) = self
             .panes
@@ -1831,23 +1837,44 @@ impl App {
         else {
             return;
         };
-        // Use the same Range → byte conversion the rename path uses.
         let ops = match self.panes.get(idx) {
             Some(Pane::Editor(b)) => build_replace_ops(b.editor.text(), &edits),
             _ => Vec::new(),
         };
-        if ops.is_empty() {
-            return;
+        let was_format_then_save = matches!(
+            &self.pending_format_save,
+            Some((p, _)) if p == &path,
+        );
+        if !ops.is_empty() {
+            let clip = &mut self.clipboard;
+            if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                b.apply_edit_ops(ops, clip, 0);
+            }
+            if let Some(Pane::Editor(b)) = self.panes.get(idx) {
+                let t = b.editor.text().to_string();
+                self.lsp.did_change(&path, &t);
+            }
+            if !was_format_then_save {
+                self.toast(format!("formatted {}", rel_path(&self.workspace, &path)));
+            }
         }
-        let clip = &mut self.clipboard;
-        if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
-            b.apply_edit_ops(ops, clip, 0);
+        if was_format_then_save {
+            self.pending_format_save = None;
+            self.save_active_now();
         }
-        if let Some(Pane::Editor(b)) = self.panes.get(idx) {
-            let t = b.editor.text().to_string();
-            self.lsp.did_change(&path, &t);
+    }
+
+    /// Called from `tick` — if a format-on-save deadline has passed without
+    /// the LSP replying, drop the pending state and save anyway.
+    pub fn check_format_save_deadline(&mut self) {
+        let expired = matches!(
+            &self.pending_format_save,
+            Some((_, deadline)) if std::time::Instant::now() > *deadline,
+        );
+        if expired {
+            self.pending_format_save = None;
+            self.save_active_now();
         }
-        self.toast(format!("formatted {}", rel_path(&self.workspace, &path)));
     }
 
     /// `lsp.format` (`Ctrl+Shift+I`) — ask the LSP to format the active
@@ -5244,6 +5271,29 @@ impl App {
     }
 
     pub fn save_active(&mut self) {
+        // Format-on-save: ask the LSP to format first; the reply will land
+        // async and chain into `save_active_now`. If the LSP isn't attached
+        // (no server, or the format request is rejected) we fall through and
+        // save immediately so the user isn't left holding a dirty buffer.
+        if self.config.editor.format_on_save
+            && let Some(b) = self.active_editor()
+            && let Some(path) = b.path.clone()
+        {
+            let tab_size = self.config.editor.tab_width as u32;
+            if self.lsp.formatting(&path, tab_size, true) {
+                self.pending_format_save = Some((
+                    path,
+                    std::time::Instant::now() + std::time::Duration::from_millis(2000),
+                ));
+                return;
+            }
+        }
+        self.save_active_now();
+    }
+
+    /// The actual write — extracted so the format-on-save flow can call it
+    /// after the LSP reply lands (or after the deadline times out).
+    pub fn save_active_now(&mut self) {
         let saved_path = match self.active_editor_mut() {
             Some(buf) if buf.path.is_some() => {
                 let name = buf.display_name();
@@ -5728,6 +5778,7 @@ impl App {
         self.drain_cdp_events();
         self.refresh_live_ai_panes();
         self.autosave_idle_buffers();
+        self.check_format_save_deadline();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL
         {

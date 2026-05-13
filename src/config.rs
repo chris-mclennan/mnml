@@ -69,6 +69,11 @@ pub struct EditorConfig {
     /// On Enter, carry forward the previous line's leading whitespace. On by
     /// default — most users expect this from a modern editor.
     pub auto_indent: bool,
+    /// Run `textDocument/formatting` before each save. Off by default — many
+    /// repos don't want their files re-formatted; you opt in per-config /
+    /// per-workspace when you do. If the LSP isn't attached (or doesn't
+    /// implement formatting), the save proceeds normally.
+    pub format_on_save: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +107,7 @@ impl Default for Config {
                 breadcrumb: true,
                 auto_pair: false,
                 auto_indent: true,
+                format_on_save: false,
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),
@@ -169,6 +175,7 @@ struct RawEditor {
     breadcrumb: Option<bool>,
     auto_pair: Option<bool>,
     auto_indent: Option<bool>,
+    format_on_save: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -226,6 +233,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.auto_indent {
             self.editor.auto_indent = v;
+        }
+        if let Some(v) = raw.editor.format_on_save {
+            self.editor.format_on_save = v;
         }
         if let Some(v) = raw.ui.theme {
             self.ui.theme = v;
