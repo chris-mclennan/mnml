@@ -37,6 +37,11 @@ pub enum EditOp {
     SelectAll,
     /// Select the word under the cursor.
     SelectWord,
+    /// vim text object: `iw` selects the identifier under the cursor. `aw`
+    /// extends the selection to include trailing whitespace (vim "around"
+    /// semantics). The cursor lands at the end of the selected range.
+    SelectInnerWord,
+    SelectAroundWord,
     /// Multi-cursor — stubbed; a no-op until that "later" lands.
     AddCursorBelow,
     AddCursorAbove,
@@ -112,8 +117,9 @@ impl EditOp {
             MoveLeft | MoveRight | MoveUp | MoveDown | MoveWordLeft | MoveWordRight
             | MoveWordEnd | MoveLineStart | MoveLineFirstNonWs | MoveLineEnd | MoveBufferStart
             | MoveBufferEnd | MoveToLine(_) | PageUp | PageDown | HalfPageUp | HalfPageDown
-            | SelectStart | SelectClear | SelectLine | SelectAll | SelectWord | AddCursorBelow
-            | AddCursorAbove | YankLine | YankSelection | Undo | Redo => false,
+            | SelectStart | SelectClear | SelectLine | SelectAll | SelectWord | SelectInnerWord
+            | SelectAroundWord | AddCursorBelow | AddCursorAbove | YankLine | YankSelection
+            | Undo | Redo => false,
             Repeat(_, inner) => inner.is_mutation(),
             _ => true,
         }

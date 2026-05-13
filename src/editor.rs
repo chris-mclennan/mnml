@@ -714,6 +714,34 @@ impl Editor {
                 self.anchor = Some(lo);
                 self.cursor = hi;
             }
+            SelectInnerWord => {
+                // vim `iw` — identifier run under the cursor. Reuses
+                // `word_bounds_at` which is what SelectWord already used.
+                let (lo, hi) = self.word_bounds_at(self.cursor);
+                self.anchor = Some(lo);
+                self.cursor = hi;
+            }
+            SelectAroundWord => {
+                // vim `aw` — `iw` extended to include trailing whitespace,
+                // or (when the word sits at end-of-line) leading whitespace
+                // back to the previous non-space (vim's "around" semantics).
+                let (lo, mut hi) = self.word_bounds_at(self.cursor);
+                let bytes = self.text.as_bytes();
+                let mut hi_extended = false;
+                while hi < self.text.len() && matches!(bytes[hi], b' ' | b'\t') {
+                    hi += 1;
+                    hi_extended = true;
+                }
+                let mut lo_new = lo;
+                if !hi_extended {
+                    // No trailing ws to grab — fall back to leading ws.
+                    while lo_new > 0 && matches!(bytes[lo_new - 1], b' ' | b'\t') {
+                        lo_new -= 1;
+                    }
+                }
+                self.anchor = Some(lo_new);
+                self.cursor = hi;
+            }
             AddCursorBelow | AddCursorAbove => { /* multi-cursor: not yet */ }
 
             // ── text mutation ──

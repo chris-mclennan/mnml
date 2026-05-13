@@ -53,6 +53,12 @@ enum Prefix {
     MarkJumpLine,
     /// Saw `` ` `` — expecting a letter to jump to a mark's **exact position**.
     MarkJumpExact,
+    /// In operator-pending state, the user typed `i` — expecting an object
+    /// char (`w` so far, more in follow-ups). Operator is held in
+    /// [`VimInputHandler::op`].
+    TextObjectInner,
+    /// Operator-pending + `a` — "around" variant; same expected next char.
+    TextObjectAround,
 }
 
 #[derive(Debug)]
@@ -278,6 +284,45 @@ impl VimInputHandler {
                     _ => InputResult::Consumed,
                 };
             }
+            Prefix::TextObjectInner | Prefix::TextObjectAround => {
+                let around = matches!(self.prefix, Prefix::TextObjectAround);
+                let op = self.op;
+                self.reset_pending();
+                let Some(op) = op else {
+                    return InputResult::Consumed;
+                };
+                let select_op = match key.code {
+                    KeyCode::Char('w') => {
+                        if around {
+                            SelectAroundWord
+                        } else {
+                            SelectInnerWord
+                        }
+                    }
+                    _ => return InputResult::Consumed,
+                };
+                let mut ops = vec![select_op];
+                match op {
+                    PendingOp::Delete => ops.push(DeleteSelection),
+                    PendingOp::Yank => {
+                        ops.push(YankSelection);
+                        ops.push(SelectClear);
+                    }
+                    PendingOp::Change => {
+                        ops.push(ReplaceSelection(String::new()));
+                        self.mode = VimMode::Insert;
+                    }
+                    PendingOp::Indent => {
+                        ops.push(Indent);
+                        ops.push(SelectClear);
+                    }
+                    PendingOp::Outdent => {
+                        ops.push(Outdent);
+                        ops.push(SelectClear);
+                    }
+                }
+                return InputResult::Ops(ops);
+            }
             Prefix::None => {}
         }
 
@@ -309,6 +354,19 @@ impl VimInputHandler {
                     PendingOp::Indent => InputResult::Ops(Self::repeated(Indent, n)),
                     PendingOp::Outdent => InputResult::Ops(Self::repeated(Outdent, n)),
                 };
+            }
+            // operator + `i` / `a` → text-object prefix (`diw`, `daw`, …).
+            // `reset_pending()` above cleared `self.op`; put it back so the
+            // prefix dispatcher knows which operator to apply.
+            if matches!(key.code, KeyCode::Char('i')) {
+                self.op = Some(op);
+                self.prefix = Prefix::TextObjectInner;
+                return InputResult::Consumed;
+            }
+            if matches!(key.code, KeyCode::Char('a')) {
+                self.op = Some(op);
+                self.prefix = Prefix::TextObjectAround;
+                return InputResult::Consumed;
             }
             // operator + word for delete/change has a tighter form (`dw`, `cw`).
             if let Some(m) = Self::motion(key.code) {
@@ -681,6 +739,8 @@ impl InputHandler for VimInputHandler {
             Prefix::MarkSet => s.push('m'),
             Prefix::MarkJumpLine => s.push('\''),
             Prefix::MarkJumpExact => s.push('`'),
+            Prefix::TextObjectInner => s.push('i'),
+            Prefix::TextObjectAround => s.push('a'),
             Prefix::None => {}
         }
         if self.mode == VimMode::VisualLine {
@@ -1030,6 +1090,42 @@ mod tests {
             v.handle_key(k('!'), &ctx()),
             InputResult::Consumed
         ));
+    }
+
+    #[test]
+    fn diw_dispatches_select_inner_word_then_delete() {
+        let mut v = h();
+        // d — operator pending
+        assert!(matches!(
+            v.handle_key(k('d'), &ctx()),
+            InputResult::Consumed
+        ));
+        // i — switch into TextObjectInner prefix
+        assert!(matches!(
+            v.handle_key(k('i'), &ctx()),
+            InputResult::Consumed
+        ));
+        assert_eq!(v.pending_display().as_deref(), Some("di"));
+        // w — emit the ops
+        let ops = ops(v.handle_key(k('w'), &ctx()));
+        assert_eq!(ops, vec![EditOp::SelectInnerWord, EditOp::DeleteSelection]);
+        assert_eq!(v.pending_display(), None);
+    }
+
+    #[test]
+    fn caw_dispatches_select_around_word_replace_and_enter_insert() {
+        let mut v = h();
+        v.handle_key(k('c'), &ctx());
+        v.handle_key(k('a'), &ctx());
+        let ops = ops(v.handle_key(k('w'), &ctx()));
+        assert_eq!(
+            ops,
+            vec![
+                EditOp::SelectAroundWord,
+                EditOp::ReplaceSelection(String::new())
+            ]
+        );
+        assert_eq!(v.mode(), EditingMode::Insert);
     }
 
     #[test]

@@ -103,6 +103,12 @@ jumps push the current position onto the nav-back stack so `Alt+Left` returns. `
 covers the chord flow.
 **Vim `%`** — jump between matched brackets in normal mode (bridges to `editor.bracket_match`, the same
 implementation Standard mode's `Ctrl+]` uses).
+**Vim text objects** — `iw` (inner word) and `aw` (around word, includes trailing whitespace) work after
+any operator: `diw` deletes, `ciw` deletes + enters Insert, `yiw` yanks, `>iw` indents, `<iw` outdents.
+Implemented via new `Prefix::TextObjectInner` / `Prefix::TextObjectAround` (set when `i` / `a` lands in
+operator-pending state) plus new `EditOp::SelectInnerWord` / `EditOp::SelectAroundWord` (computed in
+`editor.rs::apply` from `word_bounds_at`; "around" extends to trailing whitespace, or leading whitespace
+when at end-of-line). Quote / bracket variants (`i"`, `i(`, …) are a follow-up — same shape.
 **Half-page scroll** — new `EditOp::HalfPageUp` / `HalfPageDown` (interpreted in `editor.rs::apply` with
 `vp / 2`). Bound to `Ctrl+U` / `Ctrl+D` in vim normal mode (vim canonical).
 selection/undo/clipboard; fuzzy file finder (`Ctrl+P`) + command palette

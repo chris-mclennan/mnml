@@ -1,0 +1,30 @@
+# Vim text objects — `diw` deletes the inner word; `daw` includes trailing
+# whitespace; same shape for `ciw` / `caw`. Cursor doesn't need to be at the
+# start of the word.
+write code.txt "alpha beta gamma"
+open code.txt
+command editor.use_vim
+
+# Cursor sits on the 'b' of "beta" (col 6 = "alpha "). Use `f` is missing in
+# vim coverage; jump via `0` + word-motion `w`.
+key 0
+key w
+# Now cursor is at the start of "beta".
+key d
+key i
+key w
+expect screen contains "alpha  gamma"
+expect screen lacks "beta"
+
+# Set up "around word" — daw should leave just "alpha gamma" if we start on the
+# middle word + trailing space.
+write code2.txt "alpha beta gamma"
+open code2.txt
+command editor.use_vim
+key 0
+key w
+key d
+key a
+key w
+expect screen contains "alpha gamma"
+expect screen lacks "beta"
