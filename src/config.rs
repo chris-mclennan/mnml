@@ -280,6 +280,12 @@ impl Config {
     }
 }
 
+/// Public counterpart of [`home_config_path`] — exposed so `file.open_settings`
+/// can resolve the same path as [`Config::load`].
+pub fn user_config_path() -> Option<PathBuf> {
+    home_config_path()
+}
+
 fn home_config_path() -> Option<PathBuf> {
     // Respect $XDG_CONFIG_HOME, else ~/.config.
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")

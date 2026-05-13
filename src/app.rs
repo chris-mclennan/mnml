@@ -5376,6 +5376,27 @@ impl App {
         self.toast(format!("saved to {}", rel_path(&self.workspace, &abs)));
     }
 
+    /// `file.open_settings` (`Ctrl+,`) — open `~/.config/mnml/config.toml`
+    /// (or `$XDG_CONFIG_HOME/mnml/config.toml`) in an editor pane. Creates
+    /// the file (+ parent dirs) with a one-line `# mnml config` placeholder
+    /// if it doesn't exist yet so the buffer isn't blank.
+    pub fn open_settings(&mut self) {
+        let Some(path) = crate::config::user_config_path() else {
+            self.toast("can't resolve config path (no HOME / XDG_CONFIG_HOME)");
+            return;
+        };
+        if !path.exists() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = std::fs::write(&path, "# mnml config\n") {
+                self.toast(format!("can't create settings file: {e}"));
+                return;
+            }
+        }
+        self.open_path(&path);
+    }
+
     /// Re-read the active buffer from disk, preserving cursor + scroll. Refuses
     /// when the buffer is dirty unless `force=true` (`:e!` / a "discard then
     /// reload" prompt). Notifies LSP with the new text.

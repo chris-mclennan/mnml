@@ -242,6 +242,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.reload_active(false),
         },
         Command {
+            id: "file.open_settings",
+            title: "Open mnml config (creates the file if missing)",
+            group: "file",
+            keys: &["ctrl+,"],
+            run: |app| app.open_settings(),
+        },
+        Command {
             id: "nav.back",
             title: "Go back (previous cursor / file)",
             group: "go",
