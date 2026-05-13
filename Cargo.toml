@@ -67,6 +67,8 @@ tree-sitter-haskell = "0.23.1"
 tree-sitter-php = "0.24.2"
 tree-sitter-make = "1.1.1"
 tree-sitter-swift = "0.7.2"
+tree-sitter-zig = "1.1.2"
+tree-sitter-nix = "0.3.0"
 
 # Added per-track later (kept out for now to keep build fast / resolution simple):
 #   nucleo             — fuzzy matcher (picker/palette) — hand-rolled in src/fuzzy.rs for now

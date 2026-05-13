@@ -239,6 +239,8 @@ fn config_for_lang(name: &str) -> Option<&'static HighlightConfiguration> {
         "haskell" | "hs" => "hs",
         "php" | "php_only" => "php",
         "swift" => "swift",
+        "zig" => "zig",
+        "nix" => "nix",
         "make" | "makefile" => "make",
         _ => return None,
     };
@@ -427,6 +429,20 @@ fn build_config(ext: &str) -> Option<HighlightConfiguration> {
             tree_sitter_swift::INJECTIONS_QUERY,
             tree_sitter_swift::LOCALS_QUERY,
         ),
+        "zig" => (
+            tree_sitter_zig::LANGUAGE.into(),
+            "zig",
+            tree_sitter_zig::HIGHLIGHTS_QUERY,
+            tree_sitter_zig::INJECTIONS_QUERY,
+            "",
+        ),
+        "nix" => (
+            tree_sitter_nix::LANGUAGE.into(),
+            "nix",
+            tree_sitter_nix::HIGHLIGHTS_QUERY,
+            tree_sitter_nix::INJECTIONS_QUERY,
+            "",
+        ),
         // Makefiles: extension-less files named `Makefile` / `GNUmakefile` get
         // resolved by the caller via the filename when there's no extension; here
         // we map `mk` / `make` as a fallback.
@@ -543,6 +559,11 @@ mod tests {
                 "func hi(_ name: String) -> String { return \"hi \\(name)\" }\n",
             ),
             ("mk", "CC = clang\nall: build\nbuild:\n\t$(CC) main.c\n"),
+            (
+                "zig",
+                "const std = @import(\"std\");\npub fn main() void {}\n",
+            ),
+            ("nix", "{ pkgs ? import <nixpkgs> {} }: pkgs.hello\n"),
         ];
         for &(ext, src) in cases {
             let lines = highlight_lines(src, ext);
