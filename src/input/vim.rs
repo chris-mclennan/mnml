@@ -254,7 +254,7 @@ impl VimInputHandler {
             Prefix::MarkSet => {
                 self.reset_pending();
                 return match key.code {
-                    KeyCode::Char(c) if c.is_ascii_lowercase() => {
+                    KeyCode::Char(c) if c.is_ascii_alphabetic() => {
                         InputResult::App(AppCommand::SetMark(c))
                     }
                     _ => InputResult::Consumed,
@@ -263,7 +263,7 @@ impl VimInputHandler {
             Prefix::MarkJumpLine => {
                 self.reset_pending();
                 return match key.code {
-                    KeyCode::Char(c) if c.is_ascii_lowercase() => {
+                    KeyCode::Char(c) if c.is_ascii_alphabetic() => {
                         InputResult::App(AppCommand::JumpToMarkLine(c))
                     }
                     _ => InputResult::Consumed,
@@ -272,7 +272,7 @@ impl VimInputHandler {
             Prefix::MarkJumpExact => {
                 self.reset_pending();
                 return match key.code {
-                    KeyCode::Char(c) if c.is_ascii_lowercase() => {
+                    KeyCode::Char(c) if c.is_ascii_alphabetic() => {
                         InputResult::App(AppCommand::JumpToMarkExact(c))
                     }
                     _ => InputResult::Consumed,
@@ -1016,7 +1016,7 @@ mod tests {
     }
 
     #[test]
-    fn marks_ignore_non_lowercase() {
+    fn marks_ignore_non_letter() {
         let mut v = h();
         // m followed by a digit ⇒ consumed but not a SetMark
         v.handle_key(k('m'), &ctx());
@@ -1024,11 +1024,22 @@ mod tests {
             v.handle_key(k('1'), &ctx()),
             InputResult::Consumed
         ));
-        // m followed by capital is also not lowercase ⇒ no SetMark yet
+        // m followed by punctuation ⇒ also consumed-only
         v.handle_key(k('m'), &ctx());
         assert!(matches!(
-            v.handle_key(k('A'), &ctx()),
+            v.handle_key(k('!'), &ctx()),
             InputResult::Consumed
+        ));
+    }
+
+    #[test]
+    fn uppercase_marks_escalate_too() {
+        let mut v = h();
+        v.handle_key(k('m'), &ctx());
+        // M-uppercase is a global mark — also escalates.
+        assert!(matches!(
+            v.handle_key(k('A'), &ctx()),
+            InputResult::App(AppCommand::SetMark('A'))
         ));
     }
 }

@@ -92,13 +92,14 @@ splits on unescaped `/` (`\/`/`\\`/`\n`/`\t` understood inside the fields), `g` 
 always), `i` makes the match case-insensitive (`buffer::find_all_ci_ascii` vs `app::find_all_case_sensitive`),
 no-replacement form `:%s/foo/` deletes; one undo step + an `:%s — N replacement(s)` toast. Literal-string
 match for now — no regex.
-**Vim marks** — buffer-local lowercase `a`-`z` marks (`Buffer.marks: HashMap<char, (row, col)>`). Vim
-normal-mode chords: `m<letter>` sets the mark at the cursor (`Prefix::MarkSet` → `AppCommand::SetMark(c)`
-→ `App::set_mark_at_cursor`); `'<letter>` jumps to the mark's row at col 0 (`Prefix::MarkJumpLine` →
-`AppCommand::JumpToMarkLine`); `` `<letter>`` jumps to the exact stored `(row, col)`
-(`Prefix::MarkJumpExact` → `AppCommand::JumpToMarkExact`). Toasts on set / jump / miss; jumps push the
-current position onto the nav-back stack so `Alt+Left` returns. Lost on buffer close (no persistence yet —
-uppercase / global marks would live on `App` and round-trip via session.json). `tests/e2e/marks.test`
+**Vim marks** — lowercase `a`-`z` are buffer-local (`Buffer.marks: HashMap<char, (row, col)>`);
+uppercase `A`-`Z` are **global** (`App.global_marks: HashMap<char, (PathBuf, row, col)>`, persisted in
+`.mnml/session.json` so they survive a relaunch). Vim normal-mode chords: `m<letter>` sets the mark at
+the cursor (`Prefix::MarkSet` → `AppCommand::SetMark(c)` → `App::set_mark_at_cursor`); `'<letter>` jumps
+to the mark's row at col 0 (`Prefix::MarkJumpLine` → `AppCommand::JumpToMarkLine`); `` `<letter>`` jumps
+to the exact stored `(row, col)` (`Prefix::MarkJumpExact` → `AppCommand::JumpToMarkExact`). Uppercase
+jumps `open_path` the marked file first when it isn't the active buffer. Toasts on set / jump / miss;
+jumps push the current position onto the nav-back stack so `Alt+Left` returns. `tests/e2e/marks.test`
 covers the chord flow.
 **Vim `%`** — jump between matched brackets in normal mode (bridges to `editor.bracket_match`, the same
 implementation Standard mode's `Ctrl+]` uses).

@@ -315,6 +315,18 @@ struct SavedSession {
     /// just silently fail to restore; over-large positions clamp.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     file_cursors: Vec<SavedFileCursor>,
+    /// Vim uppercase / "global" marks — cross-file bookmarks the user set
+    /// with `m<Letter>`. Persisted so they survive a restart.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    global_marks: Vec<SavedGlobalMark>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct SavedGlobalMark {
+    letter: char,
+    path: String,
+    row: usize,
+    col: usize,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -604,6 +616,11 @@ pub struct App {
     /// or saved, restored when the file is re-opened later. Persisted in
     /// session.json so it survives restarts. Capped at `FILE_CURSORS_MAX`.
     pub file_cursors: std::collections::HashMap<PathBuf, (usize, usize)>,
+    /// Vim "global" marks (uppercase `A`-`Z`) — cross-file bookmarks. Keyed
+    /// by letter; value is `(path, row, col)`. Set by `m<Letter>` on any
+    /// buffer; jumped by `'<Letter>` / `` `<Letter>`` from anywhere (opens
+    /// the file if needed). Persisted in session.json.
+    pub global_marks: std::collections::HashMap<char, (PathBuf, usize, usize)>,
     /// Browser-style navigation back-stack: positions we've been at, oldest
     /// first. `nav_back` (Alt+Left) pops the top, pushes the current position
     /// onto `nav_forward`, and jumps. Pushed by `open_path` (and similar
@@ -807,6 +824,7 @@ impl App {
             zen_mode: false,
             recent_files: Vec::new(),
             file_cursors: std::collections::HashMap::new(),
+            global_marks: std::collections::HashMap::new(),
             nav_back: Vec::new(),
             nav_forward: Vec::new(),
             last_click: None,
@@ -2305,35 +2323,64 @@ impl App {
             self.toast("no language server for this file (completion)");
         }
     }
-    // ─── vim marks (buffer-local, lowercase a-z) ────────────────────
-    /// Set mark `letter` to the active editor's cursor `(row, col)`. Bound
-    /// to vim normal-mode `m<letter>` (via [`AppCommand::SetMark`]).
+    // ─── vim marks ──────────────────────────────────────────────────
+    /// Set mark `letter` to the active editor's cursor `(row, col)`.
+    /// Lowercase letters are buffer-local (`Buffer.marks`); uppercase
+    /// letters are global (`App.global_marks`, persisted in session.json).
+    /// Bound to vim normal-mode `m<letter>` (via [`AppCommand::SetMark`]).
     pub fn set_mark_at_cursor(&mut self, letter: char) {
-        let Some(b) = self.active_editor_mut() else {
-            self.toast("no active editor");
-            return;
-        };
-        let (row, col) = b.editor.row_col();
-        b.marks.insert(letter, (row, col));
-        self.toast(format!("mark '{letter} set"));
-    }
-
-    /// Jump the active editor's cursor to mark `letter`. When `exact` is
-    /// false (`'<letter>` — line jump), the cursor lands on the mark's row,
-    /// column 0; when true (`` `<letter>`` — exact jump), it lands on the
-    /// stored `(row, col)`. Toasts if the mark isn't set. Pushes the current
-    /// position onto the nav-back stack so `Alt+Left` returns.
-    pub fn jump_to_mark(&mut self, letter: char, exact: bool) {
         let Some(b) = self.active_editor() else {
             self.toast("no active editor");
             return;
         };
-        let Some(&(row, col)) = b.marks.get(&letter) else {
-            self.toast(format!("no mark '{letter}"));
-            return;
+        let (row, col) = b.editor.row_col();
+        if letter.is_ascii_uppercase() {
+            let Some(path) = b.path.clone() else {
+                self.toast("global marks need a saved file");
+                return;
+            };
+            self.global_marks.insert(letter, (path, row, col));
+            self.toast(format!("mark '{letter} set (global)"));
+        } else if let Some(b) = self.active_editor_mut() {
+            b.marks.insert(letter, (row, col));
+            self.toast(format!("mark '{letter} set"));
+        }
+    }
+
+    /// Jump to mark `letter`. Lowercase ⇒ within the active buffer.
+    /// Uppercase ⇒ open the buffer the mark points at (if needed) and jump
+    /// there. `exact` false (`'<letter>`) lands at column 0; `exact` true
+    /// (`` `<letter>``) lands at the stored `(row, col)`. Pushes the current
+    /// position onto the nav-back stack so `Alt+Left` returns.
+    pub fn jump_to_mark(&mut self, letter: char, exact: bool) {
+        let (target_path, row, col) = if letter.is_ascii_uppercase() {
+            let Some((path, row, col)) = self.global_marks.get(&letter).cloned() else {
+                self.toast(format!("no mark '{letter}"));
+                return;
+            };
+            (Some(path), row, col)
+        } else {
+            let Some(b) = self.active_editor() else {
+                self.toast("no active editor");
+                return;
+            };
+            let Some(&(row, col)) = b.marks.get(&letter) else {
+                self.toast(format!("no mark '{letter}"));
+                return;
+            };
+            (None, row, col)
         };
+
         if let Some(here) = self.current_nav_point() {
             self.push_nav_back(here);
+        }
+        if let Some(path) = target_path
+            && self
+                .active_editor()
+                .and_then(|b| b.path.clone())
+                .is_none_or(|p| p != path)
+        {
+            self.open_path(&path);
         }
         let Some(b) = self.active_editor_mut() else {
             return;
@@ -7461,6 +7508,16 @@ impl App {
                     scroll: s,
                 })
                 .collect(),
+            global_marks: self
+                .global_marks
+                .iter()
+                .map(|(&letter, (path, row, col))| SavedGlobalMark {
+                    letter,
+                    path: path.to_string_lossy().into_owned(),
+                    row: *row,
+                    col: *col,
+                })
+                .collect(),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -7551,6 +7608,13 @@ impl App {
         for fc in saved.file_cursors {
             self.file_cursors
                 .insert(PathBuf::from(fc.path), (fc.cursor_byte, fc.scroll));
+        }
+        for gm in saved.global_marks {
+            // Uppercase letters only — guard against malformed session files.
+            if gm.letter.is_ascii_uppercase() {
+                self.global_marks
+                    .insert(gm.letter, (PathBuf::from(gm.path), gm.row, gm.col));
+            }
         }
         let fallback = idx_to_pane.iter().rev().flatten().next().copied();
         if let Some(p) = active_pane.or(fallback) {
