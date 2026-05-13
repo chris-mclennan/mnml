@@ -8,7 +8,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::app::App;
 use crate::layout::PaneId;
@@ -158,7 +158,9 @@ pub fn draw(
             )));
         }
         frame.render_widget(
-            Paragraph::new(dlines).style(Style::default().bg(t.bg_dark)),
+            Paragraph::new(dlines)
+                .style(Style::default().bg(t.bg_dark))
+                .wrap(Wrap { trim: false }),
             dt_area,
         );
     }

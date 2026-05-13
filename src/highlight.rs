@@ -238,6 +238,8 @@ fn config_for_lang(name: &str) -> Option<&'static HighlightConfiguration> {
         "elixir" | "ex" | "exs" => "ex",
         "haskell" | "hs" => "hs",
         "php" | "php_only" => "php",
+        "swift" => "swift",
+        "make" | "makefile" => "make",
         _ => return None,
     };
     config_for_ext(ext)
@@ -418,6 +420,23 @@ fn build_config(ext: &str) -> Option<HighlightConfiguration> {
             tree_sitter_php::INJECTIONS_QUERY,
             "",
         ),
+        "swift" => (
+            tree_sitter_swift::LANGUAGE.into(),
+            "swift",
+            tree_sitter_swift::HIGHLIGHTS_QUERY,
+            tree_sitter_swift::INJECTIONS_QUERY,
+            tree_sitter_swift::LOCALS_QUERY,
+        ),
+        // Makefiles: extension-less files named `Makefile` / `GNUmakefile` get
+        // resolved by the caller via the filename when there's no extension; here
+        // we map `mk` / `make` as a fallback.
+        "mk" | "make" | "makefile" => (
+            tree_sitter_make::LANGUAGE.into(),
+            "make",
+            tree_sitter_make::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ),
         _ => return None,
     };
     let mut cfg = HighlightConfiguration::new(lang, name, hl_q, inj_q, loc_q).ok()?;
@@ -519,6 +538,11 @@ mod tests {
             ),
             ("hs", "main :: IO ()\nmain = putStrLn \"hi\"\n"),
             ("php", "<?php function hi($name) { echo \"hi $name\"; }\n"),
+            (
+                "swift",
+                "func hi(_ name: String) -> String { return \"hi \\(name)\" }\n",
+            ),
+            ("mk", "CC = clang\nall: build\nbuild:\n\t$(CC) main.c\n"),
         ];
         for &(ext, src) in cases {
             let lines = highlight_lines(src, ext);
