@@ -1,0 +1,14 @@
+# Splitting a leaf and closing it again leaves the same buffer focused (and
+# doesn't panic). After the split both halves show the file.
+write alpha.txt the alpha file
+open alpha.txt
+expect pane "alpha.txt"
+expect screen contains "the alpha file"
+
+command view.split_right
+expect pane "alpha.txt"
+expect screen contains "the alpha file"
+
+command view.close_split
+expect pane "alpha.txt"
+expect screen contains "the alpha file"

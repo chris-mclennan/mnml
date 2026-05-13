@@ -1,0 +1,13 @@
+# Switching to the vim keymap at runtime makes the buffer modal: `i` enters
+# insert, typed text goes in, `esc` returns to normal — and the edit marks the
+# buffer dirty just like the standard keymap would.
+write code.txt fn main
+open code.txt
+expect dirty false
+
+command editor.use_vim
+key i
+type "HELLO "
+key esc
+expect dirty true
+expect screen contains "HELLO fn main"

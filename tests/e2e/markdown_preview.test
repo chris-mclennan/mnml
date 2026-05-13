@@ -1,0 +1,12 @@
+# `markdown.preview` opens a rendered, read-only view of the active .md file in
+# a split next to it — the preview pane's title carries the source name, and the
+# rendered body shows the heading + prose with markdown markers unwrapped.
+write doc.md "# Title Line\n\nSome body prose."
+open doc.md
+expect pane "doc.md"
+expect screen contains "# Title Line"
+
+command markdown.preview
+expect pane "doc.md"
+expect screen contains "Title Line"
+expect screen contains "Some body prose."
