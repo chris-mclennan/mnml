@@ -234,6 +234,10 @@ fn config_for_lang(name: &str) -> Option<&'static HighlightConfiguration> {
         "csharp" | "c#" | "cs" | "c_sharp" => "cs",
         "lua" => "lua",
         "yaml" | "yml" => "yaml",
+        "scala" | "sbt" => "scala",
+        "elixir" | "ex" | "exs" => "ex",
+        "haskell" | "hs" => "hs",
+        "php" | "php_only" => "php",
         _ => return None,
     };
     config_for_ext(ext)
@@ -386,6 +390,34 @@ fn build_config(ext: &str) -> Option<HighlightConfiguration> {
             "",
             "",
         ),
+        "scala" | "sc" | "sbt" => (
+            tree_sitter_scala::LANGUAGE.into(),
+            "scala",
+            tree_sitter_scala::HIGHLIGHTS_QUERY,
+            "",
+            tree_sitter_scala::LOCALS_QUERY,
+        ),
+        "ex" | "exs" => (
+            tree_sitter_elixir::LANGUAGE.into(),
+            "elixir",
+            tree_sitter_elixir::HIGHLIGHTS_QUERY,
+            tree_sitter_elixir::INJECTIONS_QUERY,
+            "",
+        ),
+        "hs" => (
+            tree_sitter_haskell::LANGUAGE.into(),
+            "haskell",
+            tree_sitter_haskell::HIGHLIGHTS_QUERY,
+            tree_sitter_haskell::INJECTIONS_QUERY,
+            tree_sitter_haskell::LOCALS_QUERY,
+        ),
+        "php" | "php3" | "php4" | "php5" | "phtml" => (
+            tree_sitter_php::LANGUAGE_PHP.into(),
+            "php",
+            tree_sitter_php::HIGHLIGHTS_QUERY,
+            tree_sitter_php::INJECTIONS_QUERY,
+            "",
+        ),
         _ => return None,
     };
     let mut cfg = HighlightConfiguration::new(lang, name, hl_q, inj_q, loc_q).ok()?;
@@ -480,6 +512,13 @@ mod tests {
             ("cs", "class A { void F() { return; } }\n"),
             ("lua", "local function f(x) return x + 1 end\n"),
             ("yaml", "name: value\nlist:\n  - one\n"),
+            ("scala", "object A { def f(x: Int): Int = x + 1 }\n"),
+            (
+                "ex",
+                "defmodule A do\n  def hi(name), do: IO.puts(name)\nend\n",
+            ),
+            ("hs", "main :: IO ()\nmain = putStrLn \"hi\"\n"),
+            ("php", "<?php function hi($name) { echo \"hi $name\"; }\n"),
         ];
         for &(ext, src) in cases {
             let lines = highlight_lines(src, ext);

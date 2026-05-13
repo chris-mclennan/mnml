@@ -61,6 +61,10 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 tungstenite = { version = "0.29.0", default-features = false, features = ["handshake"] }
 # Decode `Page.captureScreenshot`'s base64 PNG payload (already in the tree via reqwest).
 base64 = "0.22"
+tree-sitter-scala = "0.26.0"
+tree-sitter-elixir = "0.3.5"
+tree-sitter-haskell = "0.23.1"
+tree-sitter-php = "0.24.2"
 
 # Added per-track later (kept out for now to keep build fast / resolution simple):
 #   nucleo             — fuzzy matcher (picker/palette) — hand-rolled in src/fuzzy.rs for now
