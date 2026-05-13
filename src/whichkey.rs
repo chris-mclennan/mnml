@@ -161,6 +161,7 @@ pub fn root() -> &'static Leader {
                             ('l', cmd("view.focus_right", "focus right")),
                             ('w', cmd("view.focus_next_split", "focus next")),
                             ('c', cmd("view.close_split", "close split")),
+                            ('o', cmd("view.close_others", "close others")),
                         ],
                     ),
                 ),

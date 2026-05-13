@@ -1275,6 +1275,19 @@ impl App {
         ));
     }
 
+    /// `view.close_others` — close every non-active pane (and respect the
+    /// dirty-editor guard from [`Self::close_panes_except`]). No-op when
+    /// there's only one pane open or no active.
+    pub fn close_other_panes(&mut self) {
+        let Some(active) = self.active else {
+            return;
+        };
+        if self.panes.len() <= 1 {
+            return;
+        }
+        self.close_panes_except(Some(active));
+    }
+
     /// Close every pane (optionally keeping `keep`), skipping dirty editors so
     /// nothing is lost silently — they're kept and counted.
     fn close_panes_except(&mut self, keep: Option<PaneId>) {

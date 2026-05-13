@@ -162,6 +162,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_bracket_rainbow(),
         },
         Command {
+            id: "view.close_others",
+            title: "Close all other panes (keep active; respects unsaved guards)",
+            group: "view",
+            keys: &[],
+            run: |app| app.close_other_panes(),
+        },
+        Command {
             id: "view.toggle_scrollbar",
             title: "Toggle the editor scrollbar (right-edge thumb)",
             group: "view",
