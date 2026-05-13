@@ -5298,6 +5298,16 @@ impl App {
         self.set_relative_line_numbers(!self.config.ui.relative_line_numbers);
     }
 
+    /// `:set tab_width=N` — set the global tab width. Affects new buffers,
+    /// indent-guide stride, and the `Tab` key in standard mode. Existing
+    /// buffers keep whatever width they were opened with (use `:e!` to reload
+    /// to the new setting).
+    pub fn set_tab_width(&mut self, n: usize) {
+        let n = n.clamp(1, 16);
+        self.config.editor.tab_width = n;
+        self.toast(format!("tab_width: {n} (re-open file to retake)"));
+    }
+
     /// Toggle visible whitespace markers (`:set list` / `:set nolist`).
     pub fn set_show_whitespace(&mut self, on: bool) {
         self.config.ui.show_whitespace = on;
@@ -5388,12 +5398,38 @@ impl App {
             }
             "e!" | "edit!" => self.reload_active(true),
             "set" => {
-                // `:set input=vim|standard` · `:set theme=…` · `:set [no]relativenumber`
+                // `:set` (bare) → list every option's current value as a toast.
+                // `:set input=vim|standard` · `:set theme=…` · `:set tab_width=N`
+                // · `:set [no]relativenumber` / `[no]list` (toggle suffix `!`).
                 let opt = rest.trim();
-                if let Some(v) = rest.strip_prefix("input=") {
+                if opt.is_empty() {
+                    let cfg = &self.config;
+                    let theme = crate::ui::theme::cur().name;
+                    self.toast(format!(
+                        "input={} · theme={theme} · tab_width={} · {} · {}",
+                        cfg.editor.input_style,
+                        cfg.editor.tab_width,
+                        if cfg.ui.relative_line_numbers {
+                            "relativenumber"
+                        } else {
+                            "norelativenumber"
+                        },
+                        if cfg.ui.show_whitespace {
+                            "list"
+                        } else {
+                            "nolist"
+                        },
+                    ));
+                } else if let Some(v) = rest.strip_prefix("input=") {
                     self.set_input_style(v.trim());
                 } else if let Some(v) = rest.strip_prefix("theme=") {
                     self.set_theme(v.trim());
+                } else if let Some(v) = rest.strip_prefix("tab_width=") {
+                    if let Ok(n) = v.trim().parse::<usize>() {
+                        self.set_tab_width(n);
+                    } else {
+                        self.toast(format!(":set tab_width={v} — not a number"));
+                    }
                 } else if matches!(opt, "relativenumber" | "rnu") {
                     self.set_relative_line_numbers(true);
                 } else if matches!(opt, "norelativenumber" | "nornu") {
