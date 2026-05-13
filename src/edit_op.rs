@@ -22,6 +22,10 @@ pub enum EditOp {
     MoveToLine(usize),
     PageUp,
     PageDown,
+    /// vim `Ctrl+U` — scroll the cursor up by half the visible page.
+    HalfPageUp,
+    /// vim `Ctrl+D` — scroll the cursor down by half the visible page.
+    HalfPageDown,
 
     // ── selection ──
     /// Drop the selection anchor at the cursor (start extending).
@@ -107,9 +111,9 @@ impl EditOp {
         match self {
             MoveLeft | MoveRight | MoveUp | MoveDown | MoveWordLeft | MoveWordRight
             | MoveWordEnd | MoveLineStart | MoveLineFirstNonWs | MoveLineEnd | MoveBufferStart
-            | MoveBufferEnd | MoveToLine(_) | PageUp | PageDown | SelectStart | SelectClear
-            | SelectLine | SelectAll | SelectWord | AddCursorBelow | AddCursorAbove | YankLine
-            | YankSelection | Undo | Redo => false,
+            | MoveBufferEnd | MoveToLine(_) | PageUp | PageDown | HalfPageUp | HalfPageDown
+            | SelectStart | SelectClear | SelectLine | SelectAll | SelectWord | AddCursorBelow
+            | AddCursorAbove | YankLine | YankSelection | Undo | Redo => false,
             Repeat(_, inner) => inner.is_mutation(),
             _ => true,
         }

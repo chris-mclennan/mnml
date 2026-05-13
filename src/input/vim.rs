@@ -425,6 +425,15 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::Ops(Self::repeated(Redo, n))
             }
+            // vim half-page scroll: Ctrl+D (down) / Ctrl+U (up).
+            KeyCode::Char('d') if ctrl => {
+                self.reset_pending();
+                InputResult::Ops(vec![HalfPageDown])
+            }
+            KeyCode::Char('u') if ctrl => {
+                self.reset_pending();
+                InputResult::Ops(vec![HalfPageUp])
+            }
             KeyCode::Char('r') => {
                 self.prefix = Prefix::Replace;
                 InputResult::Consumed
@@ -483,6 +492,13 @@ impl VimInputHandler {
             KeyCode::Char('Z') => {
                 self.prefix = Prefix::Z;
                 InputResult::Consumed
+            }
+            // % — jump to the matching bracket (uses the existing
+            // `editor.bracket_match` command so vim and standard share one
+            // implementation).
+            KeyCode::Char('%') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("editor.bracket_match".into()))
             }
             // marks
             KeyCode::Char('m') => {

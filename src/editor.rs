@@ -148,7 +148,7 @@ fn class_of(c: char) -> CharClass {
 fn op_preserves_goal_col(op: &EditOp) -> bool {
     use EditOp::*;
     match op {
-        MoveUp | MoveDown | PageUp | PageDown => true,
+        MoveUp | MoveDown | PageUp | PageDown | HalfPageUp | HalfPageDown => true,
         Repeat(_, inner) => op_preserves_goal_col(inner),
         _ => false,
     }
@@ -623,6 +623,16 @@ impl Editor {
             }
             PageDown => {
                 for _ in 0..vp.max(1) {
+                    self.move_vertical(1);
+                }
+            }
+            HalfPageUp => {
+                for _ in 0..(vp / 2).max(1) {
+                    self.move_vertical(-1);
+                }
+            }
+            HalfPageDown => {
+                for _ in 0..(vp / 2).max(1) {
                     self.move_vertical(1);
                 }
             }

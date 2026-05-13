@@ -100,6 +100,10 @@ normal-mode chords: `m<letter>` sets the mark at the cursor (`Prefix::MarkSet` �
 current position onto the nav-back stack so `Alt+Left` returns. Lost on buffer close (no persistence yet —
 uppercase / global marks would live on `App` and round-trip via session.json). `tests/e2e/marks.test`
 covers the chord flow.
+**Vim `%`** — jump between matched brackets in normal mode (bridges to `editor.bracket_match`, the same
+implementation Standard mode's `Ctrl+]` uses).
+**Half-page scroll** — new `EditOp::HalfPageUp` / `HalfPageDown` (interpreted in `editor.rs::apply` with
+`vp / 2`). Bound to `Ctrl+U` / `Ctrl+D` in vim normal mode (vim canonical).
 selection/undo/clipboard; fuzzy file finder (`Ctrl+P`) + command palette
 (`Ctrl+Shift+P` where the terminal supports the kitty protocol, else `F1`) + buffer
 switcher (`src/picker.rs` / `src/fuzzy.rs`); config-driven keymap — app-level chords
