@@ -139,6 +139,26 @@ fn build_replace_ops(
         .collect()
 }
 
+/// Hand `path` to the OS's default app — `open <path>` on macOS, `xdg-open` on
+/// Linux, `cmd /C start` on Windows. Best-effort: errors are swallowed (so a
+/// headless / sandboxed env where none of those are available is fine).
+fn open_path_external(path: &std::path::Path) {
+    let (cmd, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
+        ("open", &[])
+    } else if cfg!(target_os = "windows") {
+        ("cmd", &["/C", "start", ""])
+    } else {
+        ("xdg-open", &[])
+    };
+    let _ = std::process::Command::new(cmd)
+        .args(args)
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 /// Screen regions captured during render, consumed for mouse routing on the next event.
 #[derive(Debug, Default, Clone)]
 pub struct PaneRects {
@@ -2406,8 +2426,9 @@ impl App {
         }
     }
 
-    /// Decode a base64 PNG (from `Page.captureScreenshot`) and write it under
-    /// `<workspace>/.mnml/screenshots/shot-<millis>.png`. Returns the path.
+    /// Decode a base64 PNG (from `Page.captureScreenshot`), write it under
+    /// `<workspace>/.mnml/screenshots/shot-<millis>.png`, and hand it to the OS's
+    /// default image viewer (best-effort). Returns the path.
     fn save_screenshot_png(&self, b64: &str) -> Result<std::path::PathBuf, String> {
         use base64::Engine;
         let bytes = base64::engine::general_purpose::STANDARD
@@ -2421,6 +2442,9 @@ impl App {
             .unwrap_or(0);
         let path = dir.join(format!("shot-{millis}.png"));
         std::fs::write(&path, &bytes).map_err(|e| format!("writing {}: {e}", path.display()))?;
+        // Hand the PNG to the OS's default image viewer — best-effort, errors
+        // ignored (no viewer available is fine, the file is already on disk).
+        open_path_external(&path);
         Ok(path)
     }
 
