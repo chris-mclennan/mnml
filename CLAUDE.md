@@ -417,7 +417,20 @@ cursor; `App.pending_rename` holds the `(path,line,col)`) → `textDocument/rena
 (`changes` / `documentChanges`, file-ops skipped) is flattened to `LspEvent::Rename` and `App::apply_rename_edits`
 edits each file — through `Buffer::apply_edit_ops` + the new `EditOp::ReplaceRange{start,end,text}` if it's open
 (left dirty for review), else by splicing the file on disk; `crate::lsp::byte_at` resolves LSP positions →
-byte offsets, edits applied descending-by-offset. **completion — as-you-type popup**: `src/completion.rs`
+byte offsets, edits applied descending-by-offset. **code actions** — `lsp.code_action` (`Ctrl+.` / `<leader>l a`):
+`App::lsp_code_action` collects the active editor's cursor (or selection) as an LSP `Range`, picks the
+diagnostics overlapping that range (`ranges_overlap` is inclusive on the endpoint), and fires
+`textDocument/codeAction` with `{ textDocument, range, context: { diagnostics } }`. `initialize` advertises
+`codeActionLiteralSupport` (no `resolveSupport` — so servers return eager actions, not stubs that need a follow-up
+`codeAction/resolve`). The reply `(Command | CodeAction)[]` is parsed by `crate::lsp::client::parse_code_actions`
+into `Vec<CodeAction { title, kind, edit: Option<WorkspaceEdit>, command: Option<CodeCommand> }>` (legacy
+`Command` literals + nested CodeActions both supported; `disabled` actions skipped; resolve-only stubs kept with
+empty fields). The list lands on `App.pending_code_actions` and opens a `PickerKind::CodeActions` picker (items
+labelled by title, `kind` shown as the dim detail); the picker's `accept` indexes back into the stash and
+`App::apply_code_action` applies the workspace edit through the same `apply_rename_edits` path (open buffers ⇒
+`Buffer::apply_edit_ops`, others ⇒ splice on disk) then fires `workspace/executeCommand` via
+`LspManager::execute_command` (fire-and-forget — the server's effects come back as future `applyEdit` / diagnostics).
+**completion — as-you-type popup**: `src/completion.rs`
 (`CompletionPopup{path, all, filtered, selected, scroll, prefix}` — one `textDocument/completion` reply
 populates `all`; `refilter(prefix)` narrows `filtered` locally via `crate::fuzzy` as you keep typing, no
 re-request per keystroke) + `src/ui/completion.rs` (a small borderless list anchored just below the caret,

@@ -93,8 +93,39 @@ pub enum LspEvent {
         path: PathBuf,
         edits: Vec<(Range, String)>,
     },
+    /// Result of a `textDocument/codeAction` request — the available actions at
+    /// the requested range, in server order.
+    CodeAction(Vec<CodeAction>),
     /// A server-side message worth surfacing as a toast.
     Message(String),
+}
+
+/// Flattened `WorkspaceEdit` — `(path, [(range, new_text), …])` per affected
+/// file. Same shape `textDocument/rename` produces.
+pub type WorkspaceEdit = Vec<(PathBuf, Vec<(Range, String)>)>;
+
+/// One offered code action. The server may give us a fully-resolved action
+/// (with `edit` and/or `command` populated) or — for some servers / capabilities
+/// — a stub that needs a follow-up `codeAction/resolve`. We don't advertise
+/// resolveSupport in `initialize`, so in practice we get the eager shape.
+#[derive(Debug, Clone)]
+pub struct CodeAction {
+    pub title: String,
+    /// LSP `CodeActionKind` (`"quickfix"`, `"refactor.extract"`, …) when given.
+    pub kind: Option<String>,
+    /// Flattened `WorkspaceEdit` — `Some` ⇒ applying the action means applying
+    /// these edits.
+    pub edit: Option<WorkspaceEdit>,
+    /// LSP `Command` — `Some` ⇒ also (or instead) send `workspace/executeCommand`
+    /// when the action is accepted.
+    pub command: Option<CodeCommand>,
+}
+
+/// LSP `Command` — `workspace/executeCommand` payload.
+#[derive(Debug, Clone)]
+pub struct CodeCommand {
+    pub command: String,
+    pub arguments: Vec<serde_json::Value>,
 }
 
 /// One configured language server.
@@ -343,6 +374,31 @@ impl LspManager {
         for c in self.clients.values_mut() {
             if c.is_open(path) {
                 c.formatting(path, tab_size, insert_spaces);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send a `textDocument/codeAction` request — the reply arrives as
+    /// [`LspEvent::CodeAction`]. `diagnostics` are the ones overlapping the
+    /// requested range (the server uses them to decide which quickfixes apply).
+    pub fn code_action(&mut self, path: &Path, range: Range, diagnostics: &[Diagnostic]) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.code_action(path, range, diagnostics);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send a `workspace/executeCommand` request (no reply handling — fire and
+    /// forget; the server's effects come back as `applyEdit` / diagnostics).
+    pub fn execute_command(&mut self, path: &Path, cmd: &CodeCommand) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.execute_command(cmd);
                 sent = true;
             }
         }

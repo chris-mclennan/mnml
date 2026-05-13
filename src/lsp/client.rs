@@ -16,7 +16,10 @@ use std::thread::JoinHandle;
 
 use serde_json::json;
 
-use super::{LspEvent, Pos, Range, ServerConfig, parse_diagnostic, path_to_uri, uri_to_path};
+use super::{
+    CodeAction, CodeCommand, Diagnostic, LspEvent, Pos, Range, ServerConfig, Severity,
+    parse_diagnostic, path_to_uri, uri_to_path,
+};
 
 /// Tracks each in-flight request: the LSP method (so the reply parser
 /// knows what shape to expect) + an optional path (so methods whose reply
@@ -90,7 +93,18 @@ impl LspClient {
                         "definition": { "linkSupport": true },
                         "references": {},
                         "rename": {},
-                        "completion": { "completionItem": { "snippetSupport": false } }
+                        "completion": { "completionItem": { "snippetSupport": false } },
+                        "codeAction": {
+                            "codeActionLiteralSupport": {
+                                "codeActionKind": {
+                                    "valueSet": [
+                                        "", "quickfix", "refactor",
+                                        "refactor.extract", "refactor.inline", "refactor.rewrite",
+                                        "source", "source.organizeImports"
+                                    ]
+                                }
+                            }
+                        }
                     }
                 }
             }),
@@ -182,6 +196,56 @@ impl LspClient {
                 "textDocument": { "uri": path_to_uri(path) },
                 "position": { "line": line, "character": character },
                 "newName": new_name
+            }),
+        );
+    }
+
+    /// `textDocument/codeAction` — reply is `(Command | CodeAction)[]`.
+    pub fn code_action(&mut self, path: &Path, range: Range, diagnostics: &[Diagnostic]) {
+        let diags_json: Vec<serde_json::Value> = diagnostics
+            .iter()
+            .map(|d| {
+                let sev = match d.severity {
+                    Severity::Error => 1,
+                    Severity::Warning => 2,
+                    Severity::Info => 3,
+                    Severity::Hint => 4,
+                };
+                let mut v = json!({
+                    "range": {
+                        "start": { "line": d.range.start.line, "character": d.range.start.character },
+                        "end": { "line": d.range.end.line, "character": d.range.end.character }
+                    },
+                    "severity": sev,
+                    "message": d.message,
+                });
+                if let Some(src) = &d.source {
+                    v["source"] = json!(src);
+                }
+                v
+            })
+            .collect();
+        self.request(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "range": {
+                    "start": { "line": range.start.line, "character": range.start.character },
+                    "end": { "line": range.end.line, "character": range.end.character }
+                },
+                "context": { "diagnostics": diags_json }
+            }),
+        );
+    }
+
+    /// `workspace/executeCommand` — fire-and-forget. The server's effects show
+    /// up later as workspace edits / diagnostics through their own channels.
+    pub fn execute_command(&mut self, cmd: &CodeCommand) {
+        self.request(
+            "workspace/executeCommand",
+            json!({
+                "command": cmd.command,
+                "arguments": cmd.arguments,
             }),
         );
     }
@@ -385,6 +449,10 @@ fn handle_message(
                     let _ = tx.send(LspEvent::Formatting { path, edits });
                 }
             }
+            "textDocument/codeAction" => {
+                let actions = parse_code_actions(result);
+                let _ = tx.send(LspEvent::CodeAction(actions));
+            }
             _ => {}
         }
     }
@@ -525,6 +593,70 @@ fn parse_text_edit(v: &serde_json::Value) -> Option<(Range, String)> {
     ))
 }
 
+/// Parse a `textDocument/codeAction` result — `(Command | CodeAction)[]` — into
+/// our [`CodeAction`] list. Items missing both `edit` and `command` (the "needs
+/// resolve" shape) are kept with empty fields so callers can still display them
+/// but won't try to apply anything; in practice we don't advertise
+/// `resolveSupport` so servers return eager actions.
+fn parse_code_actions(result: &serde_json::Value) -> Vec<CodeAction> {
+    let arr = match result.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for it in arr {
+        // Legacy `Command` shape: `{ title, command, arguments? }` (no `edit`).
+        let title = match it.get("title").and_then(|t| t.as_str()) {
+            Some(t) => t.to_string(),
+            None => continue,
+        };
+        // Skip "disabled" actions (the server told us they don't apply).
+        if it.get("disabled").is_some() {
+            continue;
+        }
+        let kind = it.get("kind").and_then(|k| k.as_str()).map(str::to_string);
+        let edit = it.get("edit").map(parse_workspace_edit).and_then(|e| {
+            if e.is_empty() && it.get("edit").map(|j| j.is_null()).unwrap_or(true) {
+                None
+            } else {
+                Some(e)
+            }
+        });
+        // Two shapes: a CodeAction with nested `command: Command`, or a bare
+        // `Command` literal (the `command` field is itself a string).
+        let command = match it.get("command") {
+            Some(serde_json::Value::Object(o)) => {
+                o.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(|c| CodeCommand {
+                        command: c.to_string(),
+                        arguments: o
+                            .get("arguments")
+                            .and_then(|a| a.as_array())
+                            .cloned()
+                            .unwrap_or_default(),
+                    })
+            }
+            Some(serde_json::Value::String(s)) => Some(CodeCommand {
+                command: s.clone(),
+                arguments: it
+                    .get("arguments")
+                    .and_then(|a| a.as_array())
+                    .cloned()
+                    .unwrap_or_default(),
+            }),
+            _ => None,
+        };
+        out.push(CodeAction {
+            title,
+            kind,
+            edit,
+            command,
+        });
+    }
+    out
+}
+
 /// Flatten a `Hover.contents` (string | MarkedString | MarkedString[] | MarkupContent).
 fn hover_text(result: &serde_json::Value) -> Option<String> {
     let c = result.get("contents")?;
@@ -614,6 +746,45 @@ mod tests {
         let arr = json!([{"label": "x", "textEdit": {"newText": "x_edited"}}]);
         assert_eq!(parse_completion(&arr)[0].1, "x_edited");
         assert!(parse_completion(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn parse_code_actions_handles_both_shapes() {
+        let we = json!({"changes": {"file:///x.rs": [
+            {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}}, "newText": "foo"}
+        ]}});
+        // (a) Nested CodeAction with edit + command + kind.
+        // (b) CodeAction with only a command.
+        // (c) Legacy Command literal.
+        // (d) Disabled action — skipped.
+        // (e) Resolve-only stub (no edit/command — kept with empty fields).
+        let r = json!([
+            {"title": "Quick fix", "kind": "quickfix", "edit": we, "command": {"title": "c", "command": "do.fix", "arguments": [1, 2]}},
+            {"title": "Only cmd",  "command": {"title": "c", "command": "do.run"}},
+            {"title": "Legacy",    "command": "old.cmd",  "arguments": ["a"]},
+            {"title": "Disabled",  "disabled": {"reason": "nope"}, "command": {"command": "x"}},
+            {"title": "Stub"}
+        ]);
+        let got = parse_code_actions(&r);
+        assert_eq!(got.len(), 4);
+        // (a)
+        assert_eq!(got[0].title, "Quick fix");
+        assert_eq!(got[0].kind.as_deref(), Some("quickfix"));
+        assert!(got[0].edit.is_some());
+        assert_eq!(got[0].command.as_ref().unwrap().command, "do.fix");
+        assert_eq!(got[0].command.as_ref().unwrap().arguments.len(), 2);
+        // (b)
+        assert!(got[1].edit.is_none());
+        assert_eq!(got[1].command.as_ref().unwrap().command, "do.run");
+        // (c)
+        assert_eq!(got[2].command.as_ref().unwrap().command, "old.cmd");
+        assert_eq!(got[2].command.as_ref().unwrap().arguments[0], json!("a"));
+        // (d) skipped, (e) stub kept
+        assert_eq!(got[3].title, "Stub");
+        assert!(got[3].edit.is_none() && got[3].command.is_none());
+        // null/non-array ⇒ empty
+        assert!(parse_code_actions(&json!(null)).is_empty());
+        assert!(parse_code_actions(&json!({})).is_empty());
     }
 
     #[test]

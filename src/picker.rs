@@ -28,6 +28,9 @@ pub enum PickerKind {
     /// `id` = an absolute filesystem path. Accept ⇒ open it. Same as `Files`
     /// at accept time; separate kind keeps the title + ordering distinct.
     Recent,
+    /// `id` = the index (as a string) into [`crate::app::App::pending_code_actions`].
+    /// Accept ⇒ apply that action (workspace edit + / or `executeCommand`).
+    CodeActions,
 }
 
 #[derive(Debug, Clone)]

@@ -162,6 +162,29 @@ fn build_replace_ops(
         .collect()
 }
 
+/// `(line, character)` of `byte` in `text` — the inverse of [`crate::lsp::byte_at`].
+/// Both 0-based; `character` is a char count (matches how we feed positions to
+/// the LSP elsewhere). A byte past the end clamps to the last line's end.
+fn byte_to_line_col(text: &str, byte: usize) -> (usize, usize) {
+    let cap = byte.min(text.len());
+    let line = text[..cap].bytes().filter(|&b| b == b'\n').count();
+    let line_start = text[..cap].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let col = text[line_start..cap].chars().count();
+    (line, col)
+}
+
+/// Do two LSP-space ranges overlap (or touch)? Used to decide which diagnostics
+/// to send along with a `textDocument/codeAction` request. Inclusive at both
+/// ends — a diagnostic that ends exactly at the cursor should still be offered
+/// quickfixes for.
+fn ranges_overlap(a: crate::lsp::Range, b: crate::lsp::Range) -> bool {
+    let cmp = |p: crate::lsp::Pos, q: crate::lsp::Pos| {
+        p.line.cmp(&q.line).then(p.character.cmp(&q.character))
+    };
+    cmp(a.start, b.end) != std::cmp::Ordering::Greater
+        && cmp(b.start, a.end) != std::cmp::Ordering::Greater
+}
+
 /// Persisted session: list of open editor buffers (paths + cursors) and — when
 /// every visible leaf is an editor — the split tree, with leaf ids translated to
 /// indices into `open`. Round-trips through `<workspace>/.mnml/session.json` if
@@ -529,6 +552,13 @@ pub struct App {
     /// `(path, line, character)` of an in-flight LSP rename — captured when the
     /// rename prompt opens so the accept handler sends the request for that spot.
     pending_rename: Option<(PathBuf, u32, u32)>,
+    /// Code actions returned by the most recent `textDocument/codeAction` reply.
+    /// The picker (`PickerKind::CodeActions`) stores indices into this list and
+    /// looks them up here to apply the chosen action. Together with `path` (the
+    /// buffer the request was fired against — needed for `workspace/executeCommand`
+    /// routing).
+    pending_code_actions: Vec<crate::lsp::CodeAction>,
+    pending_code_action_path: Option<PathBuf>,
     /// The file-system action waiting on its name prompt — captured when the
     /// `NewFile` / `NewFolder` / `Rename` context-menu items open the prompt.
     pending_fs_action: Option<FsAction>,
@@ -631,6 +661,8 @@ impl App {
             context_menu: None,
             hover: None,
             pending_rename: None,
+            pending_code_actions: Vec::new(),
+            pending_code_action_path: None,
             pending_fs_action: None,
             completion: None,
             http_chan: None,
@@ -1241,6 +1273,11 @@ impl App {
                     }
                 }
             }
+            PickerKind::CodeActions => {
+                if let Ok(idx) = item.id.parse::<usize>() {
+                    self.apply_code_action(idx);
+                }
+            }
         }
     }
 
@@ -1705,6 +1742,103 @@ impl App {
         }
         (start < end).then(|| chars[start..end].iter().collect())
     }
+    /// `lsp.code_action` (`Ctrl+.`) — ask the server what actions apply at the
+    /// cursor (or across the active selection), passing along the diagnostics
+    /// that overlap so quickfixes are offered. The reply lands async in
+    /// [`Self::tick`] → `apply_code_action_reply`.
+    pub fn lsp_code_action(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("LSP needs a saved file");
+            return;
+        };
+        let text = b.editor.text().to_string();
+        let (start, end) = if let Some((s, e)) = b.editor.selection() {
+            let (sl, sc) = byte_to_line_col(&text, s);
+            let (el, ec) = byte_to_line_col(&text, e);
+            (
+                crate::lsp::Pos {
+                    line: sl as u32,
+                    character: sc as u32,
+                },
+                crate::lsp::Pos {
+                    line: el as u32,
+                    character: ec as u32,
+                },
+            )
+        } else {
+            let (row, col) = b.editor.row_col();
+            let p = crate::lsp::Pos {
+                line: row as u32,
+                character: col as u32,
+            };
+            (p, p)
+        };
+        let range = crate::lsp::Range { start, end };
+        let diagnostics: Vec<crate::lsp::Diagnostic> = b
+            .diagnostics
+            .iter()
+            .filter(|d| ranges_overlap(d.range, range))
+            .cloned()
+            .collect();
+        self.pending_code_action_path = Some(path.clone());
+        self.lsp.did_change(&path, &text);
+        if !self.lsp.code_action(&path, range, &diagnostics) {
+            self.pending_code_action_path = None;
+            self.toast("no language server for this file (code action)");
+        }
+    }
+
+    /// Handle a `textDocument/codeAction` reply: empty ⇒ toast, otherwise stash
+    /// the actions and open a picker. The picker's `accept` calls
+    /// [`Self::apply_code_action`].
+    fn apply_code_action_reply(&mut self, actions: Vec<crate::lsp::CodeAction>) {
+        if actions.is_empty() {
+            self.toast("no code actions");
+            return;
+        }
+        use crate::picker::PickerItem;
+        let items: Vec<PickerItem> = actions
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let detail = a.kind.clone().unwrap_or_default();
+                PickerItem::new(i.to_string(), a.title.clone(), detail)
+            })
+            .collect();
+        let n = items.len();
+        self.pending_code_actions = actions;
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::CodeActions,
+            format!("Code actions ({n})"),
+            items,
+        ));
+    }
+
+    /// Apply the chosen code action: edit (if any) — through the same workspace-
+    /// edit code path as rename — then `workspace/executeCommand` (if any).
+    pub fn apply_code_action(&mut self, idx: usize) {
+        let Some(action) = self.pending_code_actions.get(idx).cloned() else {
+            return;
+        };
+        let path = self.pending_code_action_path.clone();
+        if action.edit.is_none() && action.command.is_none() {
+            self.toast(format!("code action: '{}' has no edit", action.title));
+            return;
+        }
+        if let Some(edits) = action.edit {
+            self.apply_rename_edits(edits);
+        }
+        if let (Some(cmd), Some(p)) = (action.command, path)
+            && !self.lsp.execute_command(&p, &cmd)
+        {
+            self.toast(format!("code action: couldn't run '{}'", cmd.command));
+        }
+    }
+
     /// `lsp.completion` (`Ctrl+Space`) — manually ask the server for completions
     /// at the cursor; the reply (`tick` → `apply_lsp_event`) opens the popup
     /// ([`Self::completion_on_edit`] auto-triggers it as you type otherwise).
@@ -1826,6 +1960,7 @@ impl App {
                 }
             }
             LspEvent::Formatting { path, edits } => self.apply_formatting_edits(path, edits),
+            LspEvent::CodeAction(actions) => self.apply_code_action_reply(actions),
             LspEvent::Message(m) => self.toast(m),
         }
     }
@@ -6558,5 +6693,89 @@ mod tests {
 
         // Disk is untouched (the dirty buffer was skipped).
         assert_eq!(fs::read_to_string(&a).unwrap(), "foo");
+    }
+
+    #[test]
+    fn byte_to_line_col_round_trips_with_byte_at() {
+        let t = "ab\ncde\nf";
+        // bytes:  0,1, 2=\n, 3,4,5, 6=\n, 7
+        assert_eq!(byte_to_line_col(t, 0), (0, 0));
+        assert_eq!(byte_to_line_col(t, 2), (0, 2));
+        assert_eq!(byte_to_line_col(t, 3), (1, 0));
+        assert_eq!(byte_to_line_col(t, 5), (1, 2));
+        assert_eq!(byte_to_line_col(t, 7), (2, 0));
+        // Round-trip against the lsp::byte_at inverse.
+        for &b in &[0usize, 1, 2, 3, 4, 5, 7] {
+            let (l, c) = byte_to_line_col(t, b);
+            assert_eq!(crate::lsp::byte_at(t, l as u32, c as u32), Some(b));
+        }
+    }
+
+    #[test]
+    fn ranges_overlap_covers_touch_and_disjoint() {
+        let r = |l1, c1, l2, c2| crate::lsp::Range {
+            start: crate::lsp::Pos {
+                line: l1,
+                character: c1,
+            },
+            end: crate::lsp::Pos {
+                line: l2,
+                character: c2,
+            },
+        };
+        // Same-line overlap.
+        assert!(ranges_overlap(r(1, 0, 1, 5), r(1, 3, 1, 7)));
+        // Touch at endpoint counts (inclusive).
+        assert!(ranges_overlap(r(1, 0, 1, 3), r(1, 3, 1, 5)));
+        // Disjoint on different lines.
+        assert!(!ranges_overlap(r(1, 0, 1, 5), r(2, 0, 2, 5)));
+        // Single-point cursor inside a multi-line diag.
+        assert!(ranges_overlap(r(2, 2, 2, 2), r(1, 0, 3, 1)));
+        // Single-point cursor before a diag.
+        assert!(!ranges_overlap(r(0, 0, 0, 0), r(1, 0, 1, 5)));
+    }
+
+    #[test]
+    fn code_action_reply_opens_picker_and_apply_runs_edits() {
+        // No LSP server needed — we drive `apply_code_action_reply` directly
+        // with synthesized actions, then walk the picker → `apply_code_action`
+        // path to confirm the edit is applied to an open buffer.
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("x.rs"), "let x = 1;\n").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let path = app.workspace.join("x.rs");
+        app.open_path(&path);
+
+        // Build a fake code-action reply: a single quickfix that replaces
+        // "let x = 1;" with "let y = 1;".
+        let edit_range = crate::lsp::Range {
+            start: crate::lsp::Pos {
+                line: 0,
+                character: 4,
+            },
+            end: crate::lsp::Pos {
+                line: 0,
+                character: 5,
+            },
+        };
+        let action = crate::lsp::CodeAction {
+            title: "rename x → y".into(),
+            kind: Some("quickfix".into()),
+            edit: Some(vec![(path.clone(), vec![(edit_range, "y".into())])]),
+            command: None,
+        };
+        app.apply_code_action_reply(vec![action]);
+
+        // The picker should be open + populated.
+        let pk = app.picker.as_ref().expect("picker opened");
+        assert_eq!(pk.kind, crate::picker::PickerKind::CodeActions);
+        assert_eq!(pk.len(), 1);
+        // No items selected matter (only one) — accept it.
+        app.picker_accept();
+
+        // The open editor should reflect the edit (left dirty for review).
+        let b = app.active_editor().unwrap();
+        assert_eq!(b.editor.text(), "let y = 1;\n");
+        assert!(b.dirty);
     }
 }

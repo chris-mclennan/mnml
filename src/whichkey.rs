@@ -166,6 +166,7 @@ pub fn root() -> &'static Leader {
                     group(
                         "+lsp",
                         vec![
+                            ('a', cmd("lsp.code_action", "code actions")),
                             ('c', cmd("lsp.completion", "complete at cursor")),
                             ('d', cmd("lsp.goto_definition", "go to definition")),
                             ('h', cmd("lsp.hover", "hover docs")),

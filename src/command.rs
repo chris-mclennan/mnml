@@ -496,6 +496,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_format(),
         },
         Command {
+            id: "lsp.code_action",
+            title: "LSP: code actions at cursor (→ picker)",
+            group: "lsp",
+            keys: &["ctrl+."],
+            run: |app| app.lsp_code_action(),
+        },
+        Command {
             id: "lsp.next_diagnostic",
             title: "LSP: next diagnostic",
             group: "lsp",
