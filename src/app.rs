@@ -630,6 +630,10 @@ pub struct App {
     /// `ai_chan`; when it lands, the commit prompt opens pre-seeded instead of an
     /// answer landing in a `Pane::Ai`).
     pending_commit_msg_job: Option<u64>,
+    /// Same as `pending_commit_msg_job`, but for `git.ai_recompose` (rewrite
+    /// HEAD's message). The reply lands as a [`PromptKind::GitCommitAmend`]
+    /// prompt that calls `git commit --amend -m` on accept.
+    pending_amend_msg_job: Option<u64>,
     next_job_id: u64,
     /// Commands registered at runtime by IPC plugins (`register-command`). They
     /// show up in the palette/which-key + keymap; invoking one queues its id in
@@ -717,6 +721,7 @@ impl App {
             tests_chan: None,
             cdp_chan: None,
             pending_commit_msg_job: None,
+            pending_amend_msg_job: None,
             next_job_id: 1,
             dynamic_commands: Vec::new(),
             pending_plugin_invocations: Vec::new(),
@@ -2895,6 +2900,39 @@ impl App {
         let msgs: Vec<AiJobMsg> = rx.try_iter().collect();
         let mut toasts: Vec<String> = Vec::new();
         for (job_id, msg) in msgs {
+            // An "AI: rewrite HEAD's message" job? Route the final text to a
+            // GitCommitAmend prompt (same shape as the GitCommit case below).
+            if self.pending_amend_msg_job == Some(job_id) {
+                let result = match msg {
+                    AiMsg::Delta(_) => continue,
+                    AiMsg::Done(text) => Ok(text),
+                    AiMsg::Failed(e) => Err(e),
+                };
+                self.pending_amend_msg_job = None;
+                match result {
+                    Ok(text) => {
+                        let summary = text
+                            .lines()
+                            .map(str::trim)
+                            .find(|l| !l.is_empty())
+                            .unwrap_or("")
+                            .trim_matches('`')
+                            .trim()
+                            .to_string();
+                        if summary.is_empty() {
+                            toasts.push("AI returned an empty commit message".to_string());
+                        } else {
+                            self.prompt = Some(crate::prompt::Prompt::seeded(
+                                crate::prompt::PromptKind::GitCommitAmend,
+                                "Rewrite HEAD's message (AI draft — edit & Enter)",
+                                summary,
+                            ));
+                        }
+                    }
+                    Err(e) => toasts.push(format!("AI recompose: {e}")),
+                }
+                continue;
+            }
             // An "AI: write me a commit message" job? Route the final text to the
             // commit prompt; deltas are noise here.
             if self.pending_commit_msg_job == Some(job_id) {
@@ -4227,6 +4265,21 @@ impl App {
                     Err(e) => self.toast(format!("git commit: {e}")),
                 }
             }
+            crate::prompt::PromptKind::GitCommitAmend => {
+                let msg = p.input.trim();
+                if msg.is_empty() {
+                    self.toast("amend cancelled (empty message)");
+                    return;
+                }
+                match crate::git::commit::amend(&self.workspace, msg) {
+                    Ok(summary) => {
+                        self.toast(format!("amended: {summary}"));
+                        self.after_git_change();
+                        self.refresh_active_diff();
+                    }
+                    Err(e) => self.toast(format!("git commit --amend: {e}")),
+                }
+            }
             crate::prompt::PromptKind::AiAsk => {
                 let q = p.input.trim();
                 if q.is_empty() {
@@ -5104,6 +5157,47 @@ impl App {
             g.ai_msg_job = Some(job_id);
         }
         self.toast("asking Claude for a commit message…");
+    }
+
+    /// `git.ai_recompose` — ask Claude to rewrite HEAD's commit message based
+    /// on its diff. The reply lands as a `PromptKind::GitCommitAmend` prompt;
+    /// accept ⇒ `git commit --amend -m <new>`. Limited to HEAD for now —
+    /// rewriting older commits would require interactive rebase machinery.
+    pub fn request_ai_recompose_message(&mut self) {
+        let diff = match crate::git::commit::show_head(&self.workspace) {
+            Ok(d) if d.trim().is_empty() => {
+                self.toast("HEAD has no patch to summarise");
+                return;
+            }
+            Ok(d) => d,
+            Err(e) => {
+                self.toast(format!("AI recompose: {e}"));
+                return;
+            }
+        };
+        let diff = if diff.len() > 24_000 {
+            format!("{}\n…(diff truncated)…", &diff[..24_000])
+        } else {
+            diff
+        };
+        let existing = crate::git::commit::head_message(&self.workspace);
+        let existing_block = if existing.is_empty() {
+            String::new()
+        } else {
+            format!("Current message:\n```\n{existing}\n```\n\n")
+        };
+        let prompt = format!(
+            "Rewrite this commit's message based on what actually changed. \
+             First line: imperative mood, ≤72 chars, no trailing period. \
+             Then a blank line and a short body ONLY if it adds something the \
+             subject doesn't. Output ONLY the new message — no preamble, no \
+             code fences.\n\n\
+             {existing_block}\
+             ```diff\n{diff}\n```"
+        );
+        let (job_id, _sid, _cancel) = self.spawn_ai_job(prompt);
+        self.pending_amend_msg_job = Some(job_id);
+        self.toast("asking Claude to rewrite HEAD's message…");
     }
 
     // ─── branches / worktrees ───────────────────────────────────────

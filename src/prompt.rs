@@ -7,6 +7,9 @@
 pub enum PromptKind {
     /// Accept ⇒ `git commit -m <input>`.
     GitCommit,
+    /// Accept ⇒ `git commit --amend -m <input>` (rewrite HEAD's message in
+    /// place). Opened by `git.ai_recompose` after the AI returns a new message.
+    GitCommitAmend,
     /// Accept ⇒ `claude -p <input>`, answer in a `Pane::Ai`.
     AiAsk,
     /// Accept ⇒ `git checkout -b <input>`.

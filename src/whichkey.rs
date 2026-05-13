@@ -98,6 +98,7 @@ pub fn root() -> &'static Leader {
                             ('l', cmd("git.graph", "commit graph")),
                             ('s', cmd("git.status_pane", "status / staging")),
                             ('m', cmd("git.ai_commit", "ai commit message")),
+                            ('M', cmd("git.ai_recompose", "ai rewrite HEAD msg")),
                             ('o', cmd("git.checkout", "checkout branch")),
                             ('n', cmd("git.new_branch", "new branch")),
                             ('w', cmd("git.worktrees", "worktrees → shell")),

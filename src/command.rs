@@ -426,6 +426,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.request_ai_commit_message(),
         },
         Command {
+            id: "git.ai_recompose",
+            title: "Git: rewrite HEAD's message with Claude (--amend)",
+            group: "git",
+            keys: &[],
+            run: |app| app.request_ai_recompose_message(),
+        },
+        Command {
             id: "git.checkout",
             title: "Git: checkout a branch (local or remote)",
             group: "git",

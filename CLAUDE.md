@@ -230,7 +230,12 @@ commits refresh open graph panes. **staging view** — `Pane::GitStatus` (`src/g
 `a`/`A` all, Enter → that file's diff, `c` commit prompt, `C` ai-commit, `r` refresh, Esc → tree.
 **AI commit message** — `git.ai_commit` (`<leader>g m`, also `C` in the staging pane): `claude -p`
 summarises `git diff --cached`; the result lands (via `App.pending_commit_msg_job`, sharing `ai_chan`)
-in the commit prompt pre-seeded with its first line (`Prompt::seeded`). Per-hunk staging (diff pane),
+in the commit prompt pre-seeded with its first line (`Prompt::seeded`).
+**AI recompose HEAD's message** — `git.ai_recompose` (`<leader>g M`): same shape, but the prompt
+context is `git show HEAD --stat -p` + the current message (`commit::show_head` / `commit::head_message`),
+the job is routed via `App.pending_amend_msg_job`, and the resulting `PromptKind::GitCommitAmend`
+prompt's accept calls `commit::amend` (`git commit --amend -m`) instead of a fresh `git commit`.
+Limited to HEAD for now — rewriting older commits would need interactive rebase machinery. Per-hunk staging (diff pane),
 commit, and staging-pane ops all run through `App::after_git_change()` (refreshes the cached status +
 every open `GitGraph`/`GitStatus` pane). **branches / worktrees** — `src/git/branch.rs` (local/remote
 branch lists, `git worktree list --porcelain`, `checkout` / `checkout --track` / `checkout -b`):
