@@ -45,6 +45,11 @@ pub fn draw(
     } else {
         b.url.trim()
     };
+    let target_chip = if b.targets.len() > 1 {
+        format!("   [target: {} · T to switch]", b.current_target_label())
+    } else {
+        String::new()
+    };
     lines.push(Line::from(vec![
         Span::styled("  ", Style::default().bg(t.bg_dark)),
         Span::styled(
@@ -60,6 +65,7 @@ pub fn draw(
                 .bg(t.bg_dark)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::styled(target_chip, Style::default().fg(t.yellow).bg(t.bg_dark)),
         Span::styled(
             if b.closed { "   (session ended)" } else { "" },
             Style::default().fg(t.comment).bg(t.bg_dark),

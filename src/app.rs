@@ -1456,6 +1456,11 @@ impl App {
                     }
                 }
             }
+            PickerKind::BrowserTargets => {
+                if let Ok(idx) = item.id.parse::<usize>() {
+                    self.switch_browser_target(idx);
+                }
+            }
         }
     }
 
@@ -3827,6 +3832,58 @@ impl App {
         }
     }
 
+    /// `T` in the browser pane — open a picker over discovered CDP targets
+    /// (main page + auto-attached popups / new tabs / iframes). Accept ⇒
+    /// `browser.switch_target` routes subsequent commands there.
+    pub fn open_browser_target_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let Some(Pane::Browser(b)) = self.panes.iter().find(|p| matches!(p, Pane::Browser(_)))
+        else {
+            self.toast("no browser pane open");
+            return;
+        };
+        if b.targets.len() <= 1 {
+            self.toast("only one target (no popups / iframes attached)");
+            return;
+        }
+        let items: Vec<PickerItem> = b
+            .targets
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let star = if i == b.current_target { "● " } else { "  " };
+                let label = if t.session_id.is_empty() {
+                    format!("{star}main · {}", t.url)
+                } else {
+                    let title = if t.title.is_empty() {
+                        "(no title)"
+                    } else {
+                        &t.title
+                    };
+                    format!("{star}{} · {title}", t.kind)
+                };
+                PickerItem::new(i.to_string(), label, t.url.clone())
+            })
+            .collect();
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::BrowserTargets,
+            format!("Browser targets ({})", b.targets.len()),
+            items,
+        ));
+    }
+
+    /// Accept handler for `PickerKind::BrowserTargets` — `idx` is parsed from
+    /// `PickerItem.id`. Switches the active browser pane's current target.
+    pub fn switch_browser_target(&mut self, idx: usize) {
+        if let Some(Pane::Browser(b)) = self
+            .panes
+            .iter_mut()
+            .find(|p| matches!(p, Pane::Browser(_)))
+        {
+            b.switch_target(idx);
+        }
+    }
+
     /// `D` in a browser pane (or `browser.dom`) — fetch `DOM.getDocument` if we
     /// haven't yet, and toggle into the DOM panel. (`R` in the panel re-fetches.)
     pub fn browser_open_dom(&mut self) {
@@ -4141,6 +4198,47 @@ impl App {
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or("about:blank");
                     b.push(LogKind::Nav, format!("⤴ new tab → {url}"));
+                }
+            }
+            "Target.attachedToTarget" => {
+                // Multi-page: a popup / new tab / iframe auto-attached. Add
+                // it to the pane's target list so the user can `T` to it.
+                let session_id = params
+                    .and_then(|p| p.get("sessionId"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let ti = params.and_then(|p| p.get("targetInfo"));
+                if !session_id.is_empty()
+                    && let Some(ti) = ti
+                {
+                    b.note_attached_target(session_id, ti);
+                    let label = b
+                        .targets
+                        .last()
+                        .map(|t| {
+                            if t.title.is_empty() {
+                                t.url.clone()
+                            } else {
+                                t.title.clone()
+                            }
+                        })
+                        .unwrap_or_default();
+                    b.push(LogKind::System, format!("attached → {label}"));
+                }
+            }
+            "Target.targetInfoChanged" => {
+                if let Some(ti) = params.and_then(|p| p.get("targetInfo")) {
+                    b.note_target_info_changed(ti);
+                }
+            }
+            "Target.detachedFromTarget" => {
+                let session_id = params
+                    .and_then(|p| p.get("sessionId"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                if !session_id.is_empty() {
+                    b.note_detached_target(session_id);
+                    b.push(LogKind::System, "detached target".to_string());
                 }
             }
             "Network.requestWillBeSent" => {

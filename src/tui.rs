@@ -675,6 +675,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('e') => app.browser_eval_prompt(),
             KeyCode::Char('r') => app.browser_reload(),
             KeyCode::Char('s') => app.browser_screenshot(),
+            KeyCode::Char('T') => app.open_browser_target_picker(),
             KeyCode::Esc => {
                 if any_panel {
                     if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {

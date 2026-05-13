@@ -35,6 +35,9 @@ pub enum PickerKind {
     /// time. Accept ⇒ jump the cursor to that line/col. Used for the LSP
     /// "Go to Symbol in file" (`textDocument/documentSymbol`) picker.
     Symbols,
+    /// `id` = index (as a string) into [`crate::browser_pane::BrowserPane::targets`].
+    /// Accept ⇒ switch which CDP target the active browser pane drives.
+    BrowserTargets,
 }
 
 #[derive(Debug, Clone)]

@@ -54,6 +54,25 @@ pub fn rpc(id: i64, method: &str, params: serde_json::Value) -> String {
     serde_json::json!({ "id": id, "method": method, "params": params }).to_string()
 }
 
+/// Wrap a JSON-RPC request with a `sessionId` top-level field — flatten-mode
+/// routing for attached sub-targets (popups, new tabs, iframes). When the
+/// pane's current target is the main page, callers pass the raw `rpc` string
+/// straight through; for an attached target, they wrap it via this. Returns
+/// the original on parse failure (worst case: the message goes to the main
+/// session, which is the existing behaviour).
+pub fn with_session(message: String, session_id: &str) -> String {
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&message) else {
+        return message;
+    };
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert(
+            "sessionId".into(),
+            serde_json::Value::String(session_id.to_string()),
+        );
+    }
+    v.to_string()
+}
+
 pub fn navigate(id: i64, url: &str) -> String {
     rpc(id, "Page.navigate", serde_json::json!({ "url": url }))
 }
@@ -173,6 +192,19 @@ pub fn run_session(
         99,
         "Target.setDiscoverTargets",
         serde_json::json!({ "discover": true }),
+    )));
+    // `Target.setAutoAttach {autoAttach:true, flatten:true}` — Chrome auto-
+    // attaches to new targets (popups, iframes, OAuth windows) and tags their
+    // messages with `sessionId`. With `flatten:true`, sub-session messages
+    // ride the same WebSocket; we pass `sessionId` on outbound to route there.
+    let _ = ws.send(tungstenite::Message::text(rpc(
+        98,
+        "Target.setAutoAttach",
+        serde_json::json!({
+            "autoAttach": true,
+            "waitForDebuggerOnStart": false,
+            "flatten": true,
+        }),
     )));
     let _ = out.send(CdpEvent::Connected { ws_url });
 
@@ -319,6 +351,19 @@ fn page_ws_url(port: u16) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_session_adds_session_id_to_top_level() {
+        let raw = rpc(42, "Page.navigate", serde_json::json!({"url": "https://x"}));
+        let wrapped = with_session(raw, "sess-7");
+        let v: serde_json::Value = serde_json::from_str(&wrapped).unwrap();
+        assert_eq!(v["id"], 42);
+        assert_eq!(v["sessionId"], "sess-7");
+        assert_eq!(v["method"], "Page.navigate");
+        assert_eq!(v["params"]["url"], "https://x");
+        // Malformed input is returned as-is rather than panicking.
+        assert_eq!(with_session("nope".into(), "s"), "nope");
+    }
 
     #[test]
     fn rpc_helpers_shape_json() {

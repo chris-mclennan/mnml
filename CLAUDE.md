@@ -425,7 +425,17 @@ in the initial domain-enable set), `R` re-fetches, `D` (or Esc) leave the panel 
 `Overlay.hideHighlight`). After `s` writes the PNG, `open_path_external` hands it to the OS default app (`open` on macOS,
 `xdg-open` on Linux, `cmd /C start` on Windows; best-effort, errors swallowed). `Target.setDiscoverTargets {discover:true}`
 is also sent on connect so popups / new-tabs show up as `⤴ new tab → url` log lines (`Target.targetCreated` with
-`attached:false`). One browser pane at a time. *Follow-ups:* attach to a picked target (multiple pages), headless mode.
+`attached:false`). **Multi-page (`Target.attachToTarget`)** — the connect sequence also sends
+`Target.setAutoAttach {autoAttach:true, waitForDebuggerOnStart:false, flatten:true}`. Auto-attached popups / new
+tabs / iframes flow into `BrowserPane.targets: Vec<BrowserTarget{session_id,target_id,title,url,kind}>` via
+`Target.attachedToTarget` events; `Target.targetInfoChanged` updates title/url; `Target.detachedFromTarget`
+removes them (the main entry — index 0, empty session_id — is sticky). `T` opens a fuzzy picker
+(`PickerKind::BrowserTargets`) over the discovered targets; accept sets `current_target`. Outbound CDP messages
+get wrapped with `sessionId` via `cdp::with_session(message, session_id)` (flatten-mode routing) when the
+current target isn't the main page, so subsequent `Page.navigate` / `Runtime.evaluate` / `Page.reload` /
+`Page.captureScreenshot` / `DOM.getDocument` drive the picked target. The pane header shows
+`[target: <kind>: <title> · T to switch]` when more than one target is attached. One browser pane at a time.
+*Follow-ups:* headless mode.
 **Right-click context menus — done:** `src/context_menu.rs` (`ContextMenu{title,items:Vec<MenuItem{label,
 action: MenuAction}>,anchor,selected}`) + `src/ui/context_menu.rs` (a bordered floating list at the click,
 clamped to screen, selected row highlighted). Right-click a tree file → Open / Open in split / Reveal in

@@ -276,11 +276,32 @@ pub fn parse_dom(root: &serde_json::Value) -> Vec<DomRow> {
     out
 }
 
+/// One attached CDP target — the main page, an iframe, a popup / OAuth window.
+/// Tracked in [`BrowserPane::targets`]; the user switches between them with
+/// `T` and subsequent navigate / eval / reload route through that target's
+/// session via the flatten-mode `sessionId` wire field.
+#[derive(Debug, Clone)]
+pub struct BrowserTarget {
+    /// Empty for the main page (no sessionId needed); CDP `sessionId` otherwise.
+    pub session_id: String,
+    /// CDP `Target.targetId` (stable across navigations within the target).
+    pub target_id: String,
+    pub title: String,
+    pub url: String,
+    /// `"page"`, `"iframe"`, `"service_worker"`, `"shared_worker"`, …
+    pub kind: String,
+}
+
 pub struct BrowserPane {
     /// The page's current URL (updated on `Page.frameNavigated`).
     pub url: String,
     /// Down-channel to the CDP worker (commands; `Drop` sends `Close`).
     pub cmd_tx: Sender<CdpCommand>,
+    /// Attached targets — index 0 is the main page (always present); index 1+
+    /// are popups / new tabs / iframes auto-attached via `Target.setAutoAttach`.
+    pub targets: Vec<BrowserTarget>,
+    /// Index into `targets` — which target subsequent commands route through.
+    pub current_target: usize,
     pub log: Vec<LogLine>,
     /// Network requests (Document / XHR / Fetch), in arrival order.
     pub net: Vec<NetEntry>,
@@ -315,6 +336,14 @@ impl BrowserPane {
         let mut p = BrowserPane {
             url: url.clone(),
             cmd_tx,
+            targets: vec![BrowserTarget {
+                session_id: String::new(),
+                target_id: String::new(),
+                title: "main".into(),
+                url: url.clone(),
+                kind: "page".into(),
+            }],
+            current_target: 0,
             log: Vec::new(),
             net: Vec::new(),
             net_focus: false,
@@ -477,10 +506,126 @@ impl BrowserPane {
     }
 
     /// Build + send a JSON-RPC request with a fresh id; returns that id.
+    /// When the user has switched to a non-main target via `T`, the message
+    /// is wrapped with the target's `sessionId` so Chrome routes it there
+    /// (flatten mode — same WebSocket, message-level routing).
     fn send(&mut self, build: impl FnOnce(i64) -> String) -> i64 {
         let id = self.fresh_id();
-        let _ = self.cmd_tx.send(CdpCommand::Send(build(id)));
+        let mut msg = build(id);
+        if let Some(session) = self.current_session()
+            && !session.is_empty()
+        {
+            msg = crate::cdp::with_session(msg, &session);
+        }
+        let _ = self.cmd_tx.send(CdpCommand::Send(msg));
         id
+    }
+
+    /// Session id for the currently-targeted entry, or `None` for the main
+    /// page (which doesn't need a `sessionId` field).
+    pub fn current_session(&self) -> Option<String> {
+        self.targets.get(self.current_target).and_then(|t| {
+            if t.session_id.is_empty() {
+                None
+            } else {
+                Some(t.session_id.clone())
+            }
+        })
+    }
+
+    pub fn current_target_label(&self) -> String {
+        match self.targets.get(self.current_target) {
+            Some(t) if t.session_id.is_empty() => "main".to_string(),
+            Some(t) => {
+                let title = if t.title.is_empty() {
+                    "(no title)"
+                } else {
+                    &t.title
+                };
+                format!("{}: {}", t.kind, title)
+            }
+            None => "(no target)".to_string(),
+        }
+    }
+
+    /// Record a `Target.attachedToTarget` event from the protocol — pushes a
+    /// new entry on `targets`. Idempotent on `session_id`.
+    pub fn note_attached_target(&mut self, session_id: &str, target_info: &serde_json::Value) {
+        if self
+            .targets
+            .iter()
+            .any(|t| t.session_id == session_id && !session_id.is_empty())
+        {
+            return;
+        }
+        let target_id = target_info
+            .get("targetId")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let kind = target_info
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("page")
+            .to_string();
+        let url = target_info
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let title = target_info
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        self.targets.push(BrowserTarget {
+            session_id: session_id.to_string(),
+            target_id,
+            title,
+            url,
+            kind,
+        });
+    }
+
+    /// `Target.targetInfoChanged` — update title/url for the matching target.
+    pub fn note_target_info_changed(&mut self, target_info: &serde_json::Value) {
+        let target_id = match target_info.get("targetId").and_then(|v| v.as_str()) {
+            Some(t) => t,
+            None => return,
+        };
+        for t in &mut self.targets {
+            if t.target_id == target_id {
+                if let Some(s) = target_info.get("title").and_then(|v| v.as_str()) {
+                    t.title = s.to_string();
+                }
+                if let Some(s) = target_info.get("url").and_then(|v| v.as_str()) {
+                    t.url = s.to_string();
+                }
+            }
+        }
+    }
+
+    /// `Target.detachedFromTarget` — drop the matching target. If it was the
+    /// current selection, snap back to the main page (index 0).
+    pub fn note_detached_target(&mut self, session_id: &str) {
+        let idx = self.targets.iter().position(|t| t.session_id == session_id);
+        let Some(idx) = idx else { return };
+        if idx == 0 {
+            return; // never drop the main entry
+        }
+        self.targets.remove(idx);
+        if self.current_target >= idx {
+            self.current_target = self.current_target.saturating_sub(1);
+        }
+    }
+
+    /// Switch which target subsequent commands route through.
+    pub fn switch_target(&mut self, idx: usize) {
+        if idx < self.targets.len() {
+            self.current_target = idx;
+            let label = self.current_target_label();
+            self.push(LogKind::System, format!("→ target: {label}"));
+        }
     }
 
     /// `Page.navigate` — bare hostnames get an `https://` prefix.
@@ -776,5 +921,58 @@ mod tests {
         assert_eq!(p.net_sel, 1);
         p.move_net_sel(-9);
         assert_eq!(p.net_sel, 0);
+    }
+
+    #[test]
+    fn target_attach_detach_and_switch() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("https://example.test".into(), tx);
+        // Starts with the main target only.
+        assert_eq!(p.targets.len(), 1);
+        assert_eq!(p.current_target, 0);
+        assert!(p.current_session().is_none());
+
+        // Attach a popup.
+        p.note_attached_target(
+            "sess-1",
+            &serde_json::json!({
+                "targetId": "T-abc",
+                "type": "page",
+                "title": "Login - Provider",
+                "url": "https://idp.test/login"
+            }),
+        );
+        assert_eq!(p.targets.len(), 2);
+        assert_eq!(p.targets[1].session_id, "sess-1");
+        assert_eq!(p.targets[1].title, "Login - Provider");
+
+        // Idempotent on session id — a duplicate attached event does nothing.
+        p.note_attached_target(
+            "sess-1",
+            &serde_json::json!({"targetId": "T-abc", "type": "page"}),
+        );
+        assert_eq!(p.targets.len(), 2);
+
+        // Switch to it.
+        p.switch_target(1);
+        assert_eq!(p.current_target, 1);
+        assert_eq!(p.current_session().as_deref(), Some("sess-1"));
+
+        // Title update.
+        p.note_target_info_changed(&serde_json::json!({
+            "targetId": "T-abc",
+            "title": "Login (renamed)",
+            "url": "https://idp.test/login?step=2"
+        }));
+        assert_eq!(p.targets[1].title, "Login (renamed)");
+        assert_eq!(p.targets[1].url, "https://idp.test/login?step=2");
+
+        // Detach — current snaps back to main.
+        p.note_detached_target("sess-1");
+        assert_eq!(p.targets.len(), 1);
+        assert_eq!(p.current_target, 0);
+        // Detaching the main is a no-op (the main entry's session_id is "").
+        p.note_detached_target("");
+        assert_eq!(p.targets.len(), 1);
     }
 }
