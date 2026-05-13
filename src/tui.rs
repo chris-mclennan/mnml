@@ -666,6 +666,23 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // The outline pane: ↑↓ select, Enter → jump to the symbol in target editor,
+    // r → refire documentSymbol for the target, Esc → tree.
+    if matches!(app.panes.get(i), Some(Pane::Outline(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.move_outline_selection(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.move_outline_selection(1),
+            KeyCode::PageUp => app.move_outline_selection(-(viewport as isize)),
+            KeyCode::PageDown => app.move_outline_selection(viewport as isize),
+            KeyCode::Home | KeyCode::Char('g') => app.move_outline_selection(isize::MIN / 2),
+            KeyCode::End | KeyCode::Char('G') => app.move_outline_selection(isize::MAX / 2),
+            KeyCode::Enter => app.jump_to_selected_outline(),
+            KeyCode::Char('r') => app.refresh_outline_pane(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // The flaky-test dashboard: ↑↓ select, Enter → jump to the test in source,
     // r refresh (rebuild from the latest history), Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::Flaky(_))) {
@@ -1378,6 +1395,13 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             }
             Some(Pane::Flaky(f)) => {
                 f.move_selection(if delta < 0 {
+                    -(delta.unsigned_abs() as isize)
+                } else {
+                    delta.unsigned_abs() as isize
+                });
+            }
+            Some(Pane::Outline(o)) => {
+                o.move_selection(if delta < 0 {
                     -(delta.unsigned_abs() as isize)
                 } else {
                     delta.unsigned_abs() as isize

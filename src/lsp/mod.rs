@@ -16,6 +16,7 @@
 
 pub mod client;
 pub mod diagnostics_pane;
+pub mod outline_pane;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

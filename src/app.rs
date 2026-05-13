@@ -688,6 +688,10 @@ pub struct App {
     /// routing).
     pending_code_actions: Vec<crate::lsp::CodeAction>,
     pending_code_action_path: Option<PathBuf>,
+    /// When true, the next `LspEvent::DocumentSymbols` reply routes to the
+    /// open outline pane instead of opening the symbols picker. Set by
+    /// `open_outline_pane` / `refresh_outline_pane`; cleared after one reply.
+    pending_outline: bool,
     /// Branch name awaiting the "type the name to confirm" prompt that the
     /// git-rail's branch right-click menu opens (→ `git branch -D`).
     pending_delete_branch: Option<String>,
@@ -813,6 +817,7 @@ impl App {
             pending_rename: None,
             pending_code_actions: Vec::new(),
             pending_code_action_path: None,
+            pending_outline: false,
             pending_delete_branch: None,
             pending_worktree_remove: None,
             pending_fs_action: None,
@@ -1935,6 +1940,105 @@ impl App {
         }
     }
 
+    /// `outline.show` — open (or refocus) a persistent symbol outline for the
+    /// active editor. Fires `documentSymbol`; the reply lands async and
+    /// populates the outline pane (instead of opening a picker — the
+    /// `pending_outline` flag routes the next reply to the pane).
+    pub fn open_outline_pane(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("LSP needs a saved file");
+            return;
+        };
+        // Already open ⇒ retarget + refresh.
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Outline(_)))
+        {
+            if let Some(Pane::Outline(o)) = self.panes.get_mut(id) {
+                o.target = path.clone();
+                o.items.clear();
+                o.clamp();
+            }
+            self.reveal_pane(id);
+        } else {
+            let pane = Pane::Outline(crate::lsp::outline_pane::OutlinePane::new(
+                path.clone(),
+                Vec::new(),
+            ));
+            match self.active {
+                Some(cur) => {
+                    let new_id =
+                        self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                    self.active = Some(new_id);
+                }
+                None => {
+                    self.panes.push(pane);
+                    let id = self.panes.len() - 1;
+                    self.layout = Layout::Leaf(id);
+                    self.active = Some(id);
+                }
+            }
+            self.focus = Focus::Pane;
+        }
+        // Ask for symbols; the reply routes to the outline.
+        let text = self
+            .panes
+            .iter()
+            .find_map(|p| match p {
+                Pane::Editor(b) if b.is_at(&path) => Some(b.editor.text().to_string()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        self.lsp.did_change(&path, &text);
+        self.pending_outline = true;
+        if !self.lsp.document_symbol(&path) {
+            self.pending_outline = false;
+            self.toast("no language server for this file (outline)");
+        }
+    }
+
+    /// `r` in the outline pane — refire the request for its current target.
+    pub fn refresh_outline_pane(&mut self) {
+        let Some(Pane::Outline(o)) = self.active.and_then(|i| self.panes.get(i)) else {
+            return;
+        };
+        let path = o.target.clone();
+        self.pending_outline = true;
+        if !self.lsp.document_symbol(&path) {
+            self.pending_outline = false;
+            self.toast("no language server for this file (outline)");
+        }
+    }
+
+    pub fn move_outline_selection(&mut self, delta: isize) {
+        if let Some(Pane::Outline(o)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            o.move_selection(delta);
+        }
+    }
+
+    /// `Enter` in the outline pane: open the target file (refocusing if
+    /// already open) and place the cursor at the selected symbol.
+    pub fn jump_to_selected_outline(&mut self) {
+        let (target, line, col) = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Outline(o)) => {
+                let Some(sym) = o.selected_item() else {
+                    return;
+                };
+                (o.target.clone(), sym.line, sym.character)
+            }
+            _ => return,
+        };
+        self.open_path(&target);
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(line as usize, col as usize);
+        }
+    }
+
     /// Apply a `textDocument/documentSymbol` reply: open a fuzzy picker over
     /// the symbols, indented by depth. Empty list ⇒ toast.
     fn open_symbols_picker(&mut self, symbols: Vec<crate::lsp::DocumentSymbol>) {
@@ -2179,7 +2283,20 @@ impl App {
             }
             LspEvent::Formatting { path, edits } => self.apply_formatting_edits(path, edits),
             LspEvent::CodeAction(actions) => self.apply_code_action_reply(actions),
-            LspEvent::DocumentSymbols(symbols) => self.open_symbols_picker(symbols),
+            LspEvent::DocumentSymbols(symbols) => {
+                if self.pending_outline {
+                    self.pending_outline = false;
+                    if let Some(o) = self.panes.iter_mut().find_map(|p| match p {
+                        Pane::Outline(o) => Some(o),
+                        _ => None,
+                    }) {
+                        o.items = symbols;
+                        o.clamp();
+                    }
+                } else {
+                    self.open_symbols_picker(symbols);
+                }
+            }
             LspEvent::Message(m) => self.toast(m),
         }
     }
@@ -2520,6 +2637,7 @@ impl App {
             | Some(Pane::Diagnostics(_))
             | Some(Pane::Grep(_))
             | Some(Pane::Flaky(_))
+            | Some(Pane::Outline(_))
             | None => None,
         };
         let new_buf = match path {
@@ -2575,7 +2693,8 @@ impl App {
             | Some(Pane::Browser(_))
             | Some(Pane::Diagnostics(_))
             | Some(Pane::Grep(_))
-            | Some(Pane::Flaky(_)) => {
+            | Some(Pane::Flaky(_))
+            | Some(Pane::Outline(_)) => {
                 self.toast("not a markdown file");
                 return;
             }
@@ -5729,7 +5848,8 @@ impl App {
             | Pane::Browser(_)
             | Pane::Diagnostics(_)
             | Pane::Grep(_)
-            | Pane::Flaky(_) => (None, None),
+            | Pane::Flaky(_)
+            | Pane::Outline(_) => (None, None),
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -5821,6 +5941,7 @@ impl App {
             Pane::Diagnostics(d) => Some((d.tab_title(), false)),
             Pane::Grep(g) => Some((g.tab_title(), false)),
             Pane::Flaky(f) => Some((f.tab_title(), false)),
+            Pane::Outline(o) => Some((o.tab_title(), false)),
         }
     }
 

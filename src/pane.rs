@@ -13,6 +13,7 @@ use crate::git::graph::GitGraphPane;
 use crate::git::stage::GitStatusPane;
 use crate::grep_pane::GrepPane;
 use crate::lsp::diagnostics_pane::DiagnosticsPane;
+use crate::lsp::outline_pane::OutlinePane;
 use crate::playwright::TestsPane;
 use crate::playwright::flaky_pane::FlakyPane;
 use crate::playwright::trace_pane::TracePane;
@@ -47,6 +48,9 @@ pub enum Pane {
     Trace(TracePane),
     /// The flaky-test dashboard — every wobbly test in the workspace's history.
     Flaky(FlakyPane),
+    /// A persistent symbol outline for one editor — the `documentSymbol` reply,
+    /// rendered as an indented list with click/Enter-to-jump.
+    Outline(OutlinePane),
     /// A Chrome the IDE is driving over CDP — a console / nav / eval log.
     Browser(BrowserPane),
     /// A workspace-wide LSP-diagnostics ("Problems") list.
@@ -131,6 +135,7 @@ impl Pane {
             Pane::Tests(t) => t.tab_title(),
             Pane::Trace(t) => t.tab_title(),
             Pane::Flaky(f) => f.tab_title(),
+            Pane::Outline(o) => o.tab_title(),
             Pane::Browser(b) => b.tab_title(),
             Pane::Diagnostics(d) => d.tab_title(),
             Pane::Grep(g) => g.tab_title(),
@@ -151,6 +156,7 @@ impl Pane {
             | Pane::Tests(_)
             | Pane::Trace(_)
             | Pane::Flaky(_)
+            | Pane::Outline(_)
             | Pane::Browser(_)
             | Pane::Diagnostics(_)
             | Pane::Grep(_) => false,

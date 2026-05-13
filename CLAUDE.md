@@ -491,6 +491,14 @@ parses both reply shapes (`DocumentSymbol[]` hierarchical + legacy `SymbolInform
 LSP `SymbolKind` enum → short label like "fn"/"struct"/"class"); opens a `PickerKind::Symbols` fuzzy
 picker with the symbol list indented by `depth`, kind as the dim detail; accept ⇒ jump the active editor
 to the symbol's `(line, char)`.
+**Outline pane** — `outline.show` (`<leader>l o`): a persistent sibling to the symbol picker. Opens a
+horizontal split next to the active editor as `Pane::Outline(OutlinePane{target,items,selected,scroll})`,
+captures the editor's path as the target, and asks the LSP for symbols. The reply routes to the open
+outline (via `App.pending_outline` flag — same `documentSymbol` plumbing, different sink). ↑↓/jk select,
+Enter jumps to the symbol's location in the target editor (opens if not already in a pane), `r` re-fires
+the request, Esc → tree. The header shows the target's filename + symbol count; each row is `<kind>
+<indent><name>:<line>` with kind color-coded (fn/method blue, struct/class yellow, const/var cyan,
+module/namespace green). Auto-tracking when the focused editor changes is a follow-up.
 **completion — as-you-type popup**: `src/completion.rs`
 (`CompletionPopup{path, all, filtered, selected, scroll, prefix}` — one `textDocument/completion` reply
 populates `all`; `refilter(prefix)` narrows `filtered` locally via `crate::fuzzy` as you keep typing, no

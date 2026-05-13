@@ -524,6 +524,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_symbols(),
         },
         Command {
+            id: "outline.show",
+            title: "LSP: outline pane (symbols sidebar for this file)",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.open_outline_pane(),
+        },
+        Command {
             id: "lsp.next_diagnostic",
             title: "LSP: next diagnostic",
             group: "lsp",

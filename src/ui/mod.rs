@@ -35,6 +35,7 @@ pub mod grep_view;
 pub mod hover;
 pub mod icons;
 pub mod md_preview;
+pub mod outline_view;
 pub mod picker;
 pub mod prompt;
 pub mod pty_view;
@@ -254,6 +255,7 @@ fn render_layout(
                 Some(crate::pane::Pane::Browser(_)) => 11,
                 Some(crate::pane::Pane::Grep(_)) => 12,
                 Some(crate::pane::Pane::Flaky(_)) => 13,
+                Some(crate::pane::Pane::Outline(_)) => 14,
                 _ => 0,
             };
             match kind {
@@ -270,6 +272,7 @@ fn render_layout(
                 11 => browser_view::draw(frame, app, *id, area, focused),
                 12 => grep_view::draw(frame, app, *id, area, focused),
                 13 => flaky_view::draw(frame, app, *id, area, focused),
+                14 => outline_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }
