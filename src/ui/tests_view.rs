@@ -31,6 +31,9 @@ pub fn draw(
         Paragraph::new("").style(Style::default().bg(t.bg_dark)),
         area,
     );
+    // Take a peek at the test history first — we'll need it (mutable borrow of
+    // `tp` below blocks reading other fields of `app`).
+    let history = app.test_history.clone();
     let Some(Pane::Tests(tp)) = app.panes.get_mut(pane_id) else {
         return None;
     };
@@ -106,6 +109,13 @@ pub fn draw(
             if r.skipped() > 0 {
                 tally.push(Span::styled(format!("⊘ {} ", r.skipped()), dim));
             }
+            let wobbly = history.wobbly_count(r);
+            if wobbly > 0 {
+                tally.push(Span::styled(
+                    format!("≋ {wobbly} "),
+                    Style::default().fg(t.purple).bg(t.bg_dark),
+                ));
+            }
             if r.tests.is_empty() {
                 tally.push(Span::styled("(no tests)", dim));
             }
@@ -157,6 +167,15 @@ pub fn draw(
                         Style::default().fg(glyph_color).bg(row_bg),
                     ),
                 ];
+                if history.is_wobbly(&tc.file, &tc.suite_path, &tc.title) {
+                    spans.push(Span::styled(
+                        "≋ ",
+                        Style::default()
+                            .fg(t.purple)
+                            .bg(row_bg)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
                 if !tc.suite_path.is_empty() {
                     spans.push(Span::styled(
                         format!("{} › ", tc.suite_path),

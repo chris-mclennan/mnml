@@ -399,6 +399,10 @@ pub struct App {
     /// LSP client subsystem — one server subprocess per (project-root, language),
     /// feeding diagnostics + go-to-def/hover results back through `tick`.
     pub lsp: crate::lsp::LspManager,
+    /// Per-workspace history of test outcomes (last 10 per test) — drives the
+    /// "wobbly" glyph in the tests pane. Loaded once at startup, updated +
+    /// saved after each completed Playwright run.
+    pub test_history: crate::playwright::history::TestHistory,
 }
 
 type HttpJobDone = (u64, Result<crate::request_pane::ResponseView, String>);
@@ -413,6 +417,7 @@ impl App {
         let tree = Tree::open(&workspace);
         let git = GitStatus::new(&workspace);
         let lsp = crate::lsp::LspManager::new(&workspace, &config);
+        let test_history = crate::playwright::history::TestHistory::load(&workspace);
         let keymap = crate::input::keymap::Keymap::build(&config);
         Ok(App {
             workspace,
@@ -449,6 +454,7 @@ impl App {
             dynamic_commands: Vec::new(),
             pending_plugin_invocations: Vec::new(),
             lsp,
+            test_history,
         })
     }
 
@@ -2396,6 +2402,10 @@ impl App {
                         .iter()
                         .position(|tc| tc.status == crate::playwright::TestStatus::Failed)
                         .unwrap_or(0);
+                    // Update the workspace's persistent test-outcome history so
+                    // run-to-run wobbly tests light up with a `≋` glyph.
+                    self.test_history.record_run(&run);
+                    self.test_history.save(&self.workspace);
                     t.state = TestsState::Done(Box::new(run));
                 }
                 Err(e) => {
