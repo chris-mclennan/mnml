@@ -28,3 +28,19 @@ key a
 key w
 expect screen contains "alpha gamma"
 expect screen lacks "beta"
+
+# Quote text objects — di" deletes the contents of a double-quoted string.
+write quoted.txt "let s = \"hello world\";"
+open quoted.txt
+command editor.use_vim
+# Move into the string. After `0` cursor is at start; jump to col 10 with `l`s.
+key 0
+key w
+key w
+key w
+# Cursor is now near the string. Run di".
+key d
+key i
+key "
+expect screen contains "let s = \"\";"
+expect screen lacks "hello"

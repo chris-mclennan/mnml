@@ -42,6 +42,12 @@ pub enum EditOp {
     /// semantics). The cursor lands at the end of the selected range.
     SelectInnerWord,
     SelectAroundWord,
+    /// vim quote text object: `i"`, `i'`, `` i` `` (inner — between the
+    /// quotes), `a"` etc (around — including the quote chars). Scans the
+    /// current line for the surrounding pair; no-op when the cursor isn't
+    /// between two matching quote chars on the same line.
+    SelectInnerQuote(char),
+    SelectAroundQuote(char),
     /// Multi-cursor — stubbed; a no-op until that "later" lands.
     AddCursorBelow,
     AddCursorAbove,
@@ -118,8 +124,8 @@ impl EditOp {
             | MoveWordEnd | MoveLineStart | MoveLineFirstNonWs | MoveLineEnd | MoveBufferStart
             | MoveBufferEnd | MoveToLine(_) | PageUp | PageDown | HalfPageUp | HalfPageDown
             | SelectStart | SelectClear | SelectLine | SelectAll | SelectWord | SelectInnerWord
-            | SelectAroundWord | AddCursorBelow | AddCursorAbove | YankLine | YankSelection
-            | Undo | Redo => false,
+            | SelectAroundWord | SelectInnerQuote(_) | SelectAroundQuote(_) | AddCursorBelow
+            | AddCursorAbove | YankLine | YankSelection | Undo | Redo => false,
             Repeat(_, inner) => inner.is_mutation(),
             _ => true,
         }

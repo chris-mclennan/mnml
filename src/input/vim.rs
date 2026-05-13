@@ -299,6 +299,13 @@ impl VimInputHandler {
                             SelectInnerWord
                         }
                     }
+                    KeyCode::Char(q @ ('"' | '\'' | '`')) => {
+                        if around {
+                            SelectAroundQuote(q)
+                        } else {
+                            SelectInnerQuote(q)
+                        }
+                    }
                     _ => return InputResult::Consumed,
                 };
                 let mut ops = vec![select_op];

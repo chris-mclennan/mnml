@@ -721,6 +721,19 @@ impl Editor {
                 self.anchor = Some(lo);
                 self.cursor = hi;
             }
+            SelectInnerQuote(q) => {
+                if let Some((open, close)) = self.enclosing_quote_pair_on_line(q) {
+                    // Inner range: between the two quotes.
+                    self.anchor = Some(open + q.len_utf8());
+                    self.cursor = close;
+                }
+            }
+            SelectAroundQuote(q) => {
+                if let Some((open, close)) = self.enclosing_quote_pair_on_line(q) {
+                    self.anchor = Some(open);
+                    self.cursor = close + q.len_utf8();
+                }
+            }
             SelectAroundWord => {
                 // vim `aw` — `iw` extended to include trailing whitespace,
                 // or (when the word sits at end-of-line) leading whitespace
@@ -1395,6 +1408,47 @@ impl Editor {
         (lo, hi)
     }
 
+    /// Find the surrounding pair of `q` characters on the cursor's line.
+    /// Returns `(open_byte, close_byte)` (both pointing at the quote chars),
+    /// or `None` when there isn't a matching pair flanking the cursor. Used
+    /// by the `i"` / `a"` family of text objects — restricted to a single
+    /// line so a multi-line string elsewhere in the buffer can't fool the
+    /// scan. Treats backslash-escaped quotes as literal.
+    fn enclosing_quote_pair_on_line(&self, q: char) -> Option<(usize, usize)> {
+        let line = self.current_line();
+        let ls = self.line_start(line);
+        let le = self.line_end(line);
+        let line_text = &self.text[ls..le];
+        // Find every unescaped occurrence of `q` on this line.
+        let mut quotes: Vec<usize> = Vec::new();
+        let bytes = line_text.as_bytes();
+        let qb = q as u8;
+        let mut i = 0;
+        while i < line_text.len() {
+            if bytes[i] == qb {
+                let escaped = i > 0 && bytes[i - 1] == b'\\';
+                if !escaped {
+                    quotes.push(ls + i);
+                }
+            }
+            i += 1;
+        }
+        if quotes.len() < 2 {
+            return None;
+        }
+        // Pair up consecutively: (quotes[0], quotes[1]), (quotes[2], quotes[3]), …
+        // Then find the pair whose range contains the cursor (or the cursor
+        // exactly on a quote — vim picks the pair you're on).
+        let cur = self.cursor;
+        for pair in quotes.chunks_exact(2) {
+            let (a, b) = (pair[0], pair[1]);
+            if cur >= a && cur <= b {
+                return Some((a, b));
+            }
+        }
+        None
+    }
+
     /// Run `f(self, byte_of_line_start)` for each line touched by the selection
     /// (or just the current line if there's no selection). `f` returns the byte
     /// delta it applied at that line so subsequent line starts shift correctly.
@@ -1711,6 +1765,23 @@ mod tests {
         let (mut e, mut c) = ed("only");
         e.apply(DuplicateLine, 10, &mut c);
         assert_eq!(e.text(), "only\nonly");
+    }
+
+    #[test]
+    fn enclosing_quote_pair_on_line_finds_inner_range() {
+        let (mut e, _) = ed("let s = \"hello world\";\nother line");
+        // Cursor inside the string (col 12 = inside "hello world")
+        e.place_cursor(0, 12);
+        let pair = e.enclosing_quote_pair_on_line('"').unwrap();
+        // Open quote at col 8, close at col 20 (chars)
+        // Convert by re-deriving from text
+        let text = e.text();
+        let open = text.find('"').unwrap();
+        let close = text[open + 1..].find('"').unwrap() + open + 1;
+        assert_eq!(pair, (open, close));
+        // Cursor outside any string → None.
+        e.place_cursor(0, 3);
+        assert_eq!(e.enclosing_quote_pair_on_line('"'), None);
     }
 
     #[test]
