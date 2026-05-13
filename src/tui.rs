@@ -522,6 +522,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('g') => app.browser_navigate_prompt(),
             KeyCode::Char('e') => app.browser_eval_prompt(),
             KeyCode::Char('r') => app.browser_reload(),
+            KeyCode::Char('s') => app.browser_screenshot(),
             KeyCode::Esc => {
                 if net_focus {
                     if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {

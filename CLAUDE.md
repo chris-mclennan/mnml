@@ -261,13 +261,14 @@ as `NetEntry{request_id,method,url,headers,post_data,status,mime,failed}` record
 matched by `requestId`). `App::drain_cdp_events`/`apply_cdp_message` route events to the pane;
 `browser.open` (`<leader>B`, palette) prompts for a URL (`PromptKind::BrowserUrl`) and launches; in the pane `g`
 navigates (`PromptKind::BrowserNavigate` → `Page.navigate`), `e` evals JS (`PromptKind::BrowserEval` → `Runtime.evaluate`,
-`returnByValue`; the reply is matched by id → a `= …` line), `r` reloads, k/j/PgUp/PgDn/Home/End scroll, Esc → tree,
-`Ctrl+W` closes (kills Chrome). **`n` toggles a network panel** — the `net` records as selectable rows (`METHOD status
-host/path [mime]`, status colour-coded); ↑↓/jk/PgUp/PgDn/g/G/Home/End move the selection, `y` copies the selected request
-as a curl command (`NetEntry::as_curl` — pseudo-headers `:method`/… skipped), `Enter` opens it in a `Pane::Request` split
-(`NetEntry::to_request` → `spawn_http_job`, re-sends), `n`/Esc leave the panel (then Esc → tree); the wheel moves the
-selection too. One browser pane at a time. *Follow-ups:* fetch `Network.getRequestPostData` when `postData` is absent,
-DOM inspection, screenshots, multiple pages/targets, headless mode.
+`returnByValue`; the reply is matched by id → a `= …` line), `r` reloads, `s` screenshots (`browser.screenshot` →
+`Page.captureScreenshot` → base64 PNG decoded + written to `<ws>/.mnml/screenshots/shot-<ms>.png` via `App::save_screenshot_png`),
+k/j/PgUp/PgDn/Home/End scroll, Esc → tree, `Ctrl+W` closes (kills Chrome). **`n` toggles a network panel** — the `net` records
+as selectable rows (`METHOD status host/path [mime]`, status colour-coded); ↑↓/jk/PgUp/PgDn/g/G/Home/End move the selection,
+`y` copies the selected request as a curl command (`NetEntry::as_curl` — pseudo-headers `:method`/… skipped), `Enter` opens it
+in a `Pane::Request` split (`NetEntry::to_request` → `spawn_http_job`, re-sends), `n`/Esc leave the panel (then Esc → tree);
+the wheel moves the selection too. One browser pane at a time. *Follow-ups:* fetch `Network.getRequestPostData` when
+`postData` is absent, DOM inspection, render/open the screenshot, multiple pages/targets, headless mode.
 **Right-click context menus — done:** `src/context_menu.rs` (`ContextMenu{title,items:Vec<MenuItem{label,
 action: MenuAction}>,anchor,selected}`) + `src/ui/context_menu.rs` (a bordered floating list at the click,
 clamped to screen, selected row highlighted). Right-click a tree file → Open / Open in split / Reveal in

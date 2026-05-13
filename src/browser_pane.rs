@@ -130,6 +130,8 @@ pub struct BrowserPane {
     next_id: i64,
     /// The id of an in-flight `Runtime.evaluate`, so its reply can be matched.
     pub pending_eval: Option<i64>,
+    /// The id of an in-flight `Page.captureScreenshot`, so its reply can be matched.
+    pub pending_screenshot: Option<i64>,
     /// Top visible log row (`usize::MAX` ⇒ pinned to the bottom).
     pub scroll: usize,
     /// True once the worker reported the session ended.
@@ -147,6 +149,7 @@ impl BrowserPane {
             net_sel: 0,
             next_id: 100,
             pending_eval: None,
+            pending_screenshot: None,
             scroll: usize::MAX, // follow the tail
             closed: false,
         };
@@ -297,6 +300,17 @@ impl BrowserPane {
         let e = expr.to_string();
         let id = self.send(|id| crate::cdp::evaluate(id, &e));
         self.pending_eval = Some(id);
+    }
+
+    /// `s` — `Page.captureScreenshot`; the PNG lands later (matched by id) and is
+    /// written to `.mnml/screenshots/` (see `App::apply_cdp_message`).
+    pub fn screenshot(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.push(LogKind::System, "capturing screenshot…");
+        let id = self.send(crate::cdp::capture_screenshot);
+        self.pending_screenshot = Some(id);
     }
 
     pub fn tab_title(&self) -> String {

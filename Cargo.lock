@@ -1090,6 +1090,7 @@ name = "mnml"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "base64",
  "ignore",
  "portable-pty",
  "ratatui",

@@ -410,6 +410,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_browser_prompt(),
         },
         Command {
+            id: "browser.screenshot",
+            title: "Browser: screenshot the page → .mnml/screenshots/",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_screenshot(),
+        },
+        Command {
             id: "ai.ask",
             title: "AI: ask Claude a question (claude -p)",
             group: "ai",

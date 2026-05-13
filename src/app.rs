@@ -2286,6 +2286,37 @@ impl App {
         }
     }
 
+    /// `s` in a browser pane (or `browser.screenshot`) — capture the viewport;
+    /// the PNG is written to `.mnml/screenshots/` when the reply arrives.
+    pub fn browser_screenshot(&mut self) {
+        match self
+            .panes
+            .iter_mut()
+            .find(|p| matches!(p, Pane::Browser(_)))
+        {
+            Some(Pane::Browser(b)) => b.screenshot(),
+            _ => self.toast("no browser pane open"),
+        }
+    }
+
+    /// Decode a base64 PNG (from `Page.captureScreenshot`) and write it under
+    /// `<workspace>/.mnml/screenshots/shot-<millis>.png`. Returns the path.
+    fn save_screenshot_png(&self, b64: &str) -> Result<std::path::PathBuf, String> {
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64.trim())
+            .map_err(|e| format!("base64 decode: {e}"))?;
+        let dir = self.workspace.join(".mnml").join("screenshots");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let path = dir.join(format!("shot-{millis}.png"));
+        std::fs::write(&path, &bytes).map_err(|e| format!("writing {}: {e}", path.display()))?;
+        Ok(path)
+    }
+
     /// `y` in the browser pane's network panel — copy the selected request as a
     /// curl command to the clipboard.
     pub fn copy_net_entry_curl(&mut self) {
@@ -2384,14 +2415,44 @@ impl App {
         use crate::browser_pane::LogKind;
         // A reply to a request we issued?
         if let Some(id) = v.get("id").and_then(serde_json::Value::as_i64) {
-            let waiting =
-                matches!(self.panes.get(idx), Some(Pane::Browser(b)) if b.pending_eval == Some(id));
-            if waiting {
+            if matches!(self.panes.get(idx), Some(Pane::Browser(b)) if b.pending_eval == Some(id)) {
                 let text = cdp_eval_result_text(&v);
                 if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
                     b.pending_eval = None;
                     b.push(LogKind::Eval, format!("= {text}"));
                 }
+                return;
+            }
+            if matches!(self.panes.get(idx), Some(Pane::Browser(b)) if b.pending_screenshot == Some(id))
+            {
+                if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                    b.pending_screenshot = None;
+                }
+                let data = v
+                    .get("result")
+                    .and_then(|r| r.get("data"))
+                    .and_then(serde_json::Value::as_str);
+                match data.map(|d| self.save_screenshot_png(d)) {
+                    Some(Ok(path)) => {
+                        let p = path.display().to_string();
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.push(LogKind::System, format!("screenshot → {p}"));
+                        }
+                        self.toast(format!("screenshot saved: {p}"));
+                    }
+                    Some(Err(e)) => {
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.push(LogKind::ConsoleErr, format!("screenshot failed: {e}"));
+                        }
+                        self.toast(format!("screenshot failed: {e}"));
+                    }
+                    None => {
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.push(LogKind::ConsoleErr, "screenshot: empty reply from Chrome");
+                        }
+                    }
+                }
+                return;
             }
             return;
         }

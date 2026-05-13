@@ -71,7 +71,7 @@ pub fn draw(
             b.net.len()
         )
     } else {
-        "  g navigate · e eval JS · r reload · n network · esc → tree".to_string()
+        "  g navigate · e eval JS · r reload · s screenshot · n network · esc → tree".to_string()
     };
     lines.push(Line::from(Span::styled(
         hint,

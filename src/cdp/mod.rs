@@ -67,6 +67,13 @@ pub fn evaluate(id: i64, expr: &str) -> String {
         serde_json::json!({ "expression": expr, "returnByValue": true, "userGesture": true }),
     )
 }
+pub fn capture_screenshot(id: i64) -> String {
+    rpc(
+        id,
+        "Page.captureScreenshot",
+        serde_json::json!({ "format": "png", "captureBeyondViewport": false }),
+    )
+}
 
 /// Spawn Chrome (the first of [`CHROME_BINS`] that runs) with remote debugging on a
 /// free port, in a throwaway `profile_dir`, open `url` (`about:blank` if empty),
