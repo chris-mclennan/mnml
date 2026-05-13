@@ -15,13 +15,56 @@
 //! deeper — the quick answer isn't a dead end. A promoted (or any) session can
 //! also be mirrored as a rendered transcript ([`transcript`], [`AiState::Live`]).
 //!
+//! An on-selection `fix`/`refactor` answer carries an [`ApplyTarget`] (the source
+//! file + byte range it was asked about); `a` in the pane extracts the answer's
+//! first fenced code block ([`first_code_block`]) and writes it back over that
+//! range (left dirty for review).
+//!
 //! Follow-ups: stream `claude -p` output incrementally instead of waiting for
-//! completion; parse a returned patch into a `Pane::Diff` with accept/reject.
+//! completion; show the applied suggestion as a reviewable diff before committing it.
 
 pub mod transcript;
 
 use std::path::PathBuf;
 use std::process::Command;
+
+/// Where an on-selection AI action's suggested code can be applied back: the
+/// source file + the byte range that was sent (a selection, or the whole
+/// buffer). Captured at ask-time; on `a` in the answer pane the first fenced
+/// code block replaces this range (left dirty for review). Offsets are clamped
+/// to the buffer's current length on apply, so a since-then edit can't corrupt.
+#[derive(Debug, Clone)]
+pub struct ApplyTarget {
+    pub path: PathBuf,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// The contents of the first fenced code block (```… or ~~~…) in markdown `md`,
+/// with the trailing newline trimmed. `None` if there's no fence. An unterminated
+/// block returns whatever followed the opening fence.
+pub fn first_code_block(md: &str) -> Option<String> {
+    let mut in_block = false;
+    let mut out = String::new();
+    for line in md.lines() {
+        let is_fence = {
+            let t = line.trim_start();
+            t.starts_with("```") || t.starts_with("~~~")
+        };
+        if !in_block {
+            if is_fence {
+                in_block = true;
+            }
+            continue;
+        }
+        if is_fence {
+            return Some(out.trim_end_matches('\n').to_string());
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    in_block.then(|| out.trim_end_matches('\n').to_string())
+}
 
 /// The `Pane::Ai` payload — either a `claude -p` one-shot (+ its answer) or a
 /// live mirror of a Claude Code session transcript.
@@ -38,6 +81,9 @@ pub struct AiPane {
     pub state: AiState,
     /// Top rendered row.
     pub scroll: usize,
+    /// For an on-selection `fix`/`refactor`: where the suggested code can be
+    /// applied back (`a` in the pane). `None` for explain / free-text asks / etc.
+    pub target: Option<ApplyTarget>,
 }
 
 pub enum AiState {
@@ -65,6 +111,7 @@ impl AiPane {
             job_id,
             state: AiState::Asking,
             scroll: 0,
+            target: None,
         }
     }
 
@@ -84,6 +131,7 @@ impl AiPane {
                 turns,
             },
             scroll: usize::MAX, // start at the bottom (newest)
+            target: None,
         }
     }
 
@@ -209,6 +257,20 @@ pub fn action_prompt(what: &str, code: &str, lang: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_code_block_extracts_the_fence() {
+        let md = "Here's the fix:\n\n```rust\nfn x() -> i32 { 1 }\n```\n\n- changed the return\n";
+        assert_eq!(first_code_block(md).as_deref(), Some("fn x() -> i32 { 1 }"));
+        assert_eq!(first_code_block("no code here").as_deref(), None);
+        // unterminated → whatever followed the opener
+        assert_eq!(first_code_block("```\na\nb\n").as_deref(), Some("a\nb"));
+        // only the *first* block
+        assert_eq!(
+            first_code_block("```\nfirst\n```\n```\nsecond\n```").as_deref(),
+            Some("first")
+        );
+    }
 
     #[test]
     fn action_prompt_includes_code_and_lang() {

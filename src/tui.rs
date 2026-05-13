@@ -543,7 +543,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         return;
     }
     // An AI pane: read-only — scroll, `r` re-ask, `c` continue in interactive
-    // Claude Code (resumes the session), Esc → tree.
+    // Claude Code (resumes the session), `a` apply the suggested code, Esc → tree.
     if let Some(Pane::Ai(a)) = app.panes.get_mut(i) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => a.scroll = a.scroll.saturating_sub(1),
@@ -554,6 +554,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::End | KeyCode::Char('G') => a.scroll = usize::MAX, // clamped on draw
             KeyCode::Char('r') => app.resend_active_ai(),
             KeyCode::Char('c') => app.continue_active_ai(),
+            KeyCode::Char('a') => app.apply_ai_suggestion(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }

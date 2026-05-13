@@ -50,10 +50,12 @@ pub fn draw(
     if !prompt_first.is_empty() {
         rows.push(Line::from(Span::styled(format!("  {prompt_first}"), dim)));
     }
-    let hint = if ai.is_live() {
-        "  live mirror · c open interactive pane · G follow · esc → tree"
+    let hint: String = if ai.is_live() {
+        "  live mirror · c open interactive pane · G follow · esc → tree".into()
+    } else if ai.target.is_some() && matches!(ai.state, AiState::Done(_)) {
+        "  r re-ask · a apply suggestion · c continue in Claude Code · esc → tree".into()
     } else {
-        "  r re-ask · c continue in Claude Code · esc → tree"
+        "  r re-ask · c continue in Claude Code · esc → tree".into()
     };
     rows.push(Line::from(Span::styled(hint, dim)));
     rows.push(Line::from(Span::styled(

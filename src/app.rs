@@ -1490,16 +1490,29 @@ impl App {
 
     /// `ai.explain` / `ai.fix` / `ai.refactor` / `ai.write_tests` — feed the active
     /// editor's selection (or the whole buffer) + a task prompt to `claude -p`.
+    /// For `fix`/`refactor` the source range is remembered as the answer pane's
+    /// [`ApplyTarget`](crate::ai::ApplyTarget) so `a` can apply the suggested code.
     pub fn ai_action(&mut self, what: &str) {
-        let (code, lang) = match self.active.and_then(|i| self.panes.get(i)) {
+        let (code, lang, target) = match self.active.and_then(|i| self.panes.get(i)) {
             Some(Pane::Editor(b)) => {
                 let sel = b.editor.selected_text();
-                let code = if sel.trim().is_empty() {
-                    b.editor.text().to_string()
+                let (code, range) = if sel.trim().is_empty() {
+                    let t = b.editor.text();
+                    (t.to_string(), (0usize, t.len()))
                 } else {
-                    sel
+                    let r = b.editor.selection().unwrap_or((0, 0));
+                    (sel, r)
                 };
-                (code, b.language_ext.clone().unwrap_or_default())
+                let target = if matches!(what, "fix" | "refactor") {
+                    b.path.clone().map(|path| crate::ai::ApplyTarget {
+                        path,
+                        start: range.0.min(range.1),
+                        end: range.0.max(range.1),
+                    })
+                } else {
+                    None
+                };
+                (code, b.language_ext.clone().unwrap_or_default(), target)
             }
             // Re-fire from an existing AI pane.
             Some(Pane::Ai(_)) => {
@@ -1519,6 +1532,79 @@ impl App {
         }
         let title = format!("AI: {}", what.replace('_', " "));
         self.ask_ai(title, crate::ai::action_prompt(what, &code, &lang));
+        if target.is_some()
+            && let Some(Pane::Ai(a)) = self.active.and_then(|i| self.panes.get_mut(i))
+        {
+            a.target = target;
+        }
+    }
+
+    /// `a` in a Done `Pane::Ai` — apply the first fenced code block from the
+    /// answer over the range the AI was asked about (offsets clamped to the
+    /// buffer's current length). The edit is left dirty: review it, undo to
+    /// revert. No-op without a recorded target / a code block in the answer.
+    pub fn apply_ai_suggestion(&mut self) {
+        let Some(cur) = self.active else { return };
+        let parsed: Result<(crate::ai::ApplyTarget, String), &'static str> =
+            match self.panes.get(cur) {
+                Some(Pane::Ai(a)) => match (&a.target, &a.state) {
+                    (None, _) => Err("nothing to apply here (use AI `fix`/`refactor` on a buffer)"),
+                    (Some(_), crate::ai::AiState::Asking) => Err("wait for the answer first"),
+                    (Some(t), crate::ai::AiState::Done(text)) => {
+                        match crate::ai::first_code_block(text) {
+                            Some(code) => Ok((t.clone(), code)),
+                            None => Err("no code block in the answer to apply"),
+                        }
+                    }
+                    (Some(_), _) => Err("nothing to apply (the run didn't finish ok)"),
+                },
+                _ => return,
+            };
+        let (target, code) = match parsed {
+            Ok(v) => v,
+            Err(msg) => {
+                self.toast(msg);
+                return;
+            }
+        };
+        if !self
+            .panes
+            .iter()
+            .any(|p| matches!(p, Pane::Editor(b) if b.is_at(&target.path)))
+        {
+            self.open_path(&target.path);
+        }
+        let Some(idx) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&target.path)))
+        else {
+            self.toast("couldn't open the source file");
+            return;
+        };
+        let clip = &mut self.clipboard;
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+            let len = b.editor.text().len();
+            let start = target.start.min(len);
+            let end = target.end.min(len).max(start);
+            b.apply_edit_ops(
+                vec![crate::edit_op::EditOp::ReplaceRange {
+                    start,
+                    end,
+                    text: code,
+                }],
+                clip,
+                0,
+            );
+        }
+        if let Some(Pane::Editor(b)) = self.panes.get(idx)
+            && let Some(p) = b.path.clone()
+        {
+            let t = b.editor.text().to_string();
+            self.lsp.did_change(&p, &t);
+        }
+        self.reveal_pane(idx);
+        self.toast("applied — review it; undo to revert");
     }
 
     /// `rqst.ai_debug` (`.` in a request pane) — hand the request + its response
