@@ -266,6 +266,12 @@ toasts `match N/M`. **`find.toggle_regex`** (`Alt+R`) flips between modes — st
 `find.clear` empties the state. `editor_view` paints a `t.bg2` background on every visible match and a `t.yellow` bg on the
 current one (with `t.bg_dark` fg for readability). The find state is recomputed on every text-changing edit
 (`Buffer::refresh_find_matches`, hooked into `feed_key` + `apply_edit_ops`) so highlights stay in sync as you type.
+**Incremental find** — every keystroke on the open `PromptKind::Find` prompt fires
+`App::update_live_find_preview` which rebuilds the buffer's find state from the partial query (no cursor
+move — just the highlight set + match index). The cursor doesn't jump until Enter; Esc restores the prior
+find state from `App.find_preview_snapshot` so cancelling a search doesn't leak match highlights. Accept
+commits the live state (snapshot dropped). `tests/e2e/find_incremental.test` covers the type → highlight
+→ Esc-restore flow.
 **Replace** — `find.replace` (`Ctrl+H`) opens a `PromptKind::Replace` (requires a non-empty find state; titled
 `Replace N× "<query>" with`). Accept ⇒ `App::accept_replace` builds `EditOp::ReplaceRange` for every match in
 *descending* offset order so earlier byte offsets stay valid, hands them to `Buffer::apply_edit_ops` (which also

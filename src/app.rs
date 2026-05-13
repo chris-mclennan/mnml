@@ -739,6 +739,14 @@ pub struct App {
     /// it; `find.toggle_regex` flips it AND updates any open find state on
     /// the active buffer.
     pub find_regex_default: bool,
+    /// Snapshot of the active buffer's find state when the Find prompt
+    /// opened — restored on Esc-cancel so incremental find doesn't leak
+    /// matches when the user bails. `Some(None)` ⇒ "previously cleared";
+    /// `None` ⇒ no Find prompt in flight.
+    pub find_preview_snapshot: Option<Option<crate::buffer::FindState>>,
+    /// Cursor position when the Find prompt opened — kept around in case
+    /// future incremental UX wants to bring the cursor back on cancel.
+    pub find_preview_cursor: usize,
     /// Branch / ref to branch off of when the NewBranch prompt's accept lands.
     /// `None` ⇒ branch from HEAD (the bare `git.new_branch` command); `Some` ⇒
     /// branch from this ref (the git-rail's "New branch from here…" menu).
@@ -875,6 +883,8 @@ impl App {
             pending_workspace_symbols: Vec::new(),
             pending_workspace_symbol_query: None,
             find_regex_default: false,
+            find_preview_snapshot: None,
+            find_preview_cursor: 0,
             pending_branch_source: None,
             pending_delete_branch: None,
             pending_worktree_remove: None,
@@ -5158,12 +5168,21 @@ impl App {
         ));
     }
     pub fn prompt_cancel(&mut self) {
+        // Esc-cancel on a Find prompt restores the editor's prior find state
+        // (incremental preview is dropped).
+        let was_find = matches!(
+            self.prompt.as_ref().map(|p| p.kind),
+            Some(crate::prompt::PromptKind::Find)
+        );
         self.prompt = None;
         self.pending_rename = None;
         self.pending_fs_action = None;
         self.pending_delete_branch = None;
         self.pending_worktree_remove = None;
         self.pending_branch_source = None;
+        if was_find {
+            self.restore_find_preview_snapshot();
+        }
     }
     pub fn prompt_accept(&mut self) {
         let Some(p) = self.prompt.take() else { return };
@@ -5247,6 +5266,8 @@ impl App {
             }
             crate::prompt::PromptKind::Find => {
                 let q = p.input.clone();
+                // Live-preview is the new find state already; commit it.
+                self.find_preview_snapshot = None;
                 self.accept_find(q);
             }
             crate::prompt::PromptKind::Replace => {
@@ -5320,11 +5341,64 @@ impl App {
         };
         // A multi-line selection isn't a useful default — keep the first line.
         let seed = seed.lines().next().unwrap_or("").to_string();
+        // Remember the editor's current find state so Esc on the prompt
+        // restores it (we replace it live as the user types).
+        self.find_preview_snapshot = Some(b.find.clone());
+        self.find_preview_cursor = b.editor.cursor();
         self.prompt = Some(crate::prompt::Prompt::seeded(
             crate::prompt::PromptKind::Find,
             "Find",
             seed,
         ));
+    }
+
+    /// Update the active editor's find state to reflect the in-flight find
+    /// prompt's query so the user sees matches as they type. Cursor isn't
+    /// moved — just the highlight set + match index. Empty query clears.
+    pub fn update_live_find_preview(&mut self, query: String) {
+        let regex_default = self.find_regex_default;
+        let Some(cur) = self.active else { return };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(cur) else {
+            return;
+        };
+        if query.is_empty() {
+            b.find = None;
+            return;
+        }
+        let regex = b.find.as_ref().map(|f| f.regex).unwrap_or(regex_default);
+        let mut state = crate::buffer::FindState {
+            query,
+            regex,
+            ..Default::default()
+        };
+        state.recompute(b.editor.text());
+        // Pick the nearest match at or after the cursor (or 0 if none — UI
+        // will just show no current).
+        if !state.matches.is_empty() {
+            let cur_byte = b.editor.cursor();
+            let idx = state
+                .matches
+                .iter()
+                .position(|(s, _)| *s >= cur_byte)
+                .unwrap_or(0);
+            state.current = Some(idx);
+        }
+        b.find = Some(state);
+    }
+
+    /// Discard the live preview and restore the prior find state (from
+    /// [`Self::open_find_prompt`]'s snapshot). Called on Esc-cancel of the
+    /// Find prompt; Enter-accept leaves the live state in place + the
+    /// snapshot is dropped.
+    pub fn restore_find_preview_snapshot(&mut self) {
+        let snap = self.find_preview_snapshot.take();
+        self.find_preview_cursor = 0;
+        let Some(prior) = snap else { return };
+        let Some(cur) = self.active else { return };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(cur) else {
+            return;
+        };
+        b.find = prior;
     }
 
     /// Set the active editor's find state to `query` and jump to the nearest

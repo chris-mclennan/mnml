@@ -1,0 +1,25 @@
+# Incremental find — matches highlight (and the find-state populates) as
+# the user types, before pressing Enter.
+write notes.txt "alpha\nbeta\ngamma\nalpha\ngamma\nalpha"
+open notes.txt
+
+# Open the find prompt and start typing.
+command find.find
+expect screen contains "Find"
+
+# Type "alp" — three matches should now be live in the buffer's find state.
+type alp
+
+# Accept — the toast confirms the match count.
+key enter
+expect screen contains "match 1/3"
+
+# Esc on a fresh non-matching find restores the prior state (alpha matches).
+command find.find
+type betafoo
+key esc
+
+# After Esc, the prior "alp" find state is back. A find.next jump should
+# still navigate among the alpha matches.
+command find.next
+expect screen contains "match 2/3"

@@ -310,9 +310,16 @@ fn handle_picker_key(app: &mut App, key: KeyEvent) {
 fn handle_prompt_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let Some(p) = app.prompt.as_mut() else { return };
+    let was_find = matches!(p.kind, crate::prompt::PromptKind::Find);
     match key.code {
-        KeyCode::Esc => app.prompt_cancel(),
-        KeyCode::Enter => app.prompt_accept(),
+        KeyCode::Esc => {
+            app.prompt_cancel();
+            return;
+        }
+        KeyCode::Enter => {
+            app.prompt_accept();
+            return;
+        }
         KeyCode::Backspace => {
             if ctrl {
                 p.delete_word();
@@ -331,6 +338,12 @@ fn handle_prompt_key(app: &mut App, key: KeyEvent) {
         KeyCode::End => p.move_end(),
         KeyCode::Char(c) if !ctrl => p.insert_char(c),
         _ => {}
+    }
+    // Incremental find — live-update the editor's find state as the query
+    // grows / shrinks so the user can see matches before Enter.
+    if was_find && let Some(p) = app.prompt.as_ref() {
+        let q = p.input.clone();
+        app.update_live_find_preview(q);
     }
 }
 
