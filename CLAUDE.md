@@ -564,7 +564,12 @@ the request, Esc → tree. The header shows the target's filename + symbol count
 <indent><name>:<line>` with kind color-coded (fn/method blue, struct/class yellow, const/var cyan,
 module/namespace green). **Auto-track on focus change** — `reveal_pane` calls `retarget_outline_to_active`,
 which retargets an open outline pane to the newly-active editor's path + re-fires `documentSymbol` (no-op
-when nothing changed or the active pane isn't a saved editor).
+when nothing changed or the active pane isn't a saved editor). **Type-to-filter** — `/` in the pane
+enters filter mode (`OutlinePane.filter_mode = true`); subsequent printable keys append to
+`OutlinePane.query`, Backspace pops, Enter exits filter mode but keeps the narrowed list, Esc clears the
+filter + exits. `visible_indices()` is a fuzzy match against `name` (uses `crate::fuzzy`) — preserves
+nesting order so depth-indent stays readable. `selected` indexes into the filtered view; the count chip
+shows `M/N symbol(s)` when narrowed; "(no matches)" placeholder when the filter zeros the list.
 **Snippets** — `src/snippets.rs` + `[snippets.<scope>]` config table (where `<scope>` is a file extension like `rs`/`py`/`ts` or
 the literal `global`; each entry is `<trigger> = "<expansion>"`). Two ways in: `snippet.expand` (`Ctrl+J`) replaces the
 identifier prefix immediately left of the active editor's cursor with the matching trigger's expansion (toasts if no match);

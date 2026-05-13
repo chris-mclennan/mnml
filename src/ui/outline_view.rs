@@ -36,6 +36,9 @@ pub fn draw(
         return None;
     };
     o.clamp();
+    let visible = o.visible_indices();
+    let total_items = o.items.len();
+    let visible_count = visible.len();
 
     let mut lines: Vec<Line> = Vec::new();
     let name = o
@@ -43,6 +46,14 @@ pub fn draw(
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("outline");
+    let count_label = if !o.query.is_empty() {
+        format!("   {visible_count}/{total_items} symbol(s)")
+    } else {
+        format!(
+            "   {total_items} symbol{}",
+            if total_items == 1 { "" } else { "s" }
+        )
+    };
     lines.push(Line::from(vec![
         Span::styled("  ⌥ ", Style::default().fg(t.purple).bg(t.bg_dark)),
         Span::styled(
@@ -52,27 +63,53 @@ pub fn draw(
                 .bg(t.bg_dark)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            format!(
-                "   {} symbol{}",
-                o.items.len(),
-                if o.items.len() == 1 { "" } else { "s" }
-            ),
-            Style::default().fg(t.comment).bg(t.bg_dark),
-        ),
+        Span::styled(count_label, Style::default().fg(t.comment).bg(t.bg_dark)),
     ]));
+    let hint = if o.filter_mode {
+        "  filter — type to narrow, ⏎ apply, esc clear"
+    } else {
+        "  ⏎ jump   r refresh   / filter   esc back"
+    };
     lines.push(Line::from(Span::styled(
-        "  ⏎ jump   r refresh   esc back",
+        hint,
         Style::default().fg(t.comment).bg(t.bg_dark),
     )));
+    // Filter input line — shown whenever a query is present or filter mode
+    // is on (so the user can see what's narrowing the list).
+    if o.filter_mode || !o.query.is_empty() {
+        let cursor = if o.filter_mode { "█" } else { "" };
+        lines.push(Line::from(vec![
+            Span::styled("  / ", Style::default().fg(t.yellow).bg(t.bg_dark)),
+            Span::styled(o.query.clone(), Style::default().fg(t.fg).bg(t.bg_dark)),
+            Span::styled(
+                cursor.to_string(),
+                Style::default().fg(t.yellow).bg(t.bg_dark),
+            ),
+        ]));
+    }
 
-    if o.items.is_empty() {
+    if total_items == 0 {
         lines.push(Line::from(Span::styled(
             " ",
             Style::default().bg(t.bg_dark),
         )));
         lines.push(Line::from(Span::styled(
             "  (no symbols)",
+            Style::default().fg(t.comment).bg(t.bg_dark),
+        )));
+        frame.render_widget(
+            Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),
+            area,
+        );
+        return None;
+    }
+    if visible_count == 0 {
+        lines.push(Line::from(Span::styled(
+            " ",
+            Style::default().bg(t.bg_dark),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  (no matches)",
             Style::default().fg(t.comment).bg(t.bg_dark),
         )));
         frame.render_widget(
@@ -88,8 +125,9 @@ pub fn draw(
     )));
 
     let mut selected_row = lines.len();
-    for (idx, sym) in o.items.iter().enumerate() {
-        let sel = idx == o.selected;
+    for (vi, &idx) in visible.iter().enumerate() {
+        let sym = &o.items[idx];
+        let sel = vi == o.selected;
         if sel {
             selected_row = lines.len();
         }

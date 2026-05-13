@@ -716,6 +716,35 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // The outline pane: ↑↓ select, Enter → jump to the symbol in target editor,
     // r → refire documentSymbol for the target, Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::Outline(_))) {
+        // Filter mode — type-to-narrow takes priority over navigation chords.
+        if matches!(app.panes.get(i), Some(Pane::Outline(o)) if o.filter_mode) {
+            match key.code {
+                KeyCode::Esc => {
+                    if let Some(Pane::Outline(o)) = app.panes.get_mut(i) {
+                        o.filter_clear_and_exit();
+                    }
+                }
+                KeyCode::Enter => {
+                    // Exit filter mode but keep the filter; Enter doesn't jump
+                    // (use `Enter` again outside filter mode to do that).
+                    if let Some(Pane::Outline(o)) = app.panes.get_mut(i) {
+                        o.filter_mode = false;
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(Pane::Outline(o)) = app.panes.get_mut(i) {
+                        o.filter_pop();
+                    }
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(Pane::Outline(o)) = app.panes.get_mut(i) {
+                        o.filter_push(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => app.move_outline_selection(-1),
             KeyCode::Down | KeyCode::Char('j') => app.move_outline_selection(1),
@@ -725,7 +754,24 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::End | KeyCode::Char('G') => app.move_outline_selection(isize::MAX / 2),
             KeyCode::Enter => app.jump_to_selected_outline(),
             KeyCode::Char('r') => app.refresh_outline_pane(),
-            KeyCode::Esc => app.focus_tree(),
+            KeyCode::Char('/') => {
+                if let Some(Pane::Outline(o)) = app.panes.get_mut(i) {
+                    o.filter_mode = true;
+                }
+            }
+            KeyCode::Esc => {
+                // Esc when an inactive filter is held clears it first; a second
+                // Esc returns focus to the tree (the standard "narrow → exit").
+                let had_filter =
+                    matches!(app.panes.get(i), Some(Pane::Outline(o)) if !o.query.is_empty());
+                if had_filter {
+                    if let Some(Pane::Outline(o)) = app.panes.get_mut(i) {
+                        o.filter_clear_and_exit();
+                    }
+                } else {
+                    app.focus_tree();
+                }
+            }
             _ => {}
         }
         return;
