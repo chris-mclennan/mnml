@@ -473,6 +473,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_rename(),
         },
         Command {
+            id: "lsp.format",
+            title: "LSP: format document",
+            group: "lsp",
+            keys: &["ctrl+shift+i"],
+            run: |app| app.lsp_format(),
+        },
+        Command {
             id: "lsp.next_diagnostic",
             title: "LSP: next diagnostic",
             group: "lsp",

@@ -18,7 +18,11 @@ use serde_json::json;
 
 use super::{LspEvent, Pos, Range, ServerConfig, parse_diagnostic, path_to_uri, uri_to_path};
 
-type Pending = Arc<Mutex<HashMap<i64, String>>>;
+/// Tracks each in-flight request: the LSP method (so the reply parser
+/// knows what shape to expect) + an optional path (so methods whose reply
+/// doesn't include the file — like `textDocument/formatting` — can be
+/// routed back to the right buffer).
+type Pending = Arc<Mutex<HashMap<i64, (String, Option<PathBuf>)>>>;
 type Sink = Arc<Mutex<ChildStdin>>;
 
 pub struct LspClient {
@@ -182,11 +186,32 @@ impl LspClient {
         );
     }
 
+    /// `textDocument/formatting` — reply is a `TextEdit[]` (possibly null).
+    /// The path is stashed so we can route the reply to the right buffer.
+    pub fn formatting(&mut self, path: &Path, tab_size: u32, insert_spaces: bool) {
+        self.request_with_path(
+            "textDocument/formatting",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "options": {
+                    "tabSize": tab_size,
+                    "insertSpaces": insert_spaces,
+                    "trimTrailingWhitespace": true,
+                    "insertFinalNewline": true,
+                }
+            }),
+            Some(path),
+        );
+    }
+
     fn request(&mut self, method: &str, params: serde_json::Value) {
+        self.request_with_path(method, params, None);
+    }
+    fn request_with_path(&mut self, method: &str, params: serde_json::Value, path: Option<&Path>) {
         let id = self.next_id;
         self.next_id += 1;
         if let Ok(mut p) = self.pending.lock() {
-            p.insert(id, method.to_string());
+            p.insert(id, (method.to_string(), path.map(|p| p.to_path_buf())));
         }
         self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
     }
@@ -309,8 +334,10 @@ fn handle_message(
 
     // A response to one of our requests.
     if let Some(id) = v.get("id").and_then(|i| i.as_i64()) {
-        let method = pending.lock().ok().and_then(|mut p| p.remove(&id));
-        let Some(method) = method else { return };
+        let pend = pending.lock().ok().and_then(|mut p| p.remove(&id));
+        let Some((method, req_path)) = pend else {
+            return;
+        };
         let Some(result) = v.get("result") else {
             return;
         }; // error / null → nothing to do
@@ -350,6 +377,12 @@ fn handle_message(
                 let items = parse_completion(result);
                 if !items.is_empty() {
                     let _ = tx.send(LspEvent::Completion(items));
+                }
+            }
+            "textDocument/formatting" => {
+                let edits = parse_text_edits(result);
+                if let (false, Some(path)) = (edits.is_empty(), req_path) {
+                    let _ = tx.send(LspEvent::Formatting { path, edits });
                 }
             }
             _ => {}
@@ -463,6 +496,14 @@ fn parse_completion(result: &serde_json::Value) -> Vec<(String, String, Option<S
         out.push((label.to_string(), insert, detail));
     }
     out
+}
+
+/// Parse a `TextEdit[]` (the shape `textDocument/formatting` returns).
+fn parse_text_edits(result: &serde_json::Value) -> Vec<(Range, String)> {
+    result
+        .as_array()
+        .map(|a| a.iter().filter_map(parse_text_edit).collect())
+        .unwrap_or_default()
 }
 
 fn parse_text_edit(v: &serde_json::Value) -> Option<(Range, String)> {

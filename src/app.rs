@@ -1813,7 +1813,57 @@ impl App {
                     self.completion = Some(popup);
                 }
             }
+            LspEvent::Formatting { path, edits } => self.apply_formatting_edits(path, edits),
             LspEvent::Message(m) => self.toast(m),
+        }
+    }
+
+    /// Apply a `TextEdit[]` from `textDocument/formatting` to the matching open
+    /// buffer (a single file). Re-uses `op_replace_edits_for_file` for the
+    /// byte-offset translation, then applies through `apply_edit_ops` so undo
+    /// stacks one entry per format. Refuses if the file isn't open (the LSP
+    /// shouldn't have replied for an unopened file, but be safe).
+    fn apply_formatting_edits(&mut self, path: PathBuf, edits: Vec<(crate::lsp::Range, String)>) {
+        let Some(idx) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&path)))
+        else {
+            return;
+        };
+        // Use the same Range → byte conversion the rename path uses.
+        let ops = match self.panes.get(idx) {
+            Some(Pane::Editor(b)) => build_replace_ops(b.editor.text(), &edits),
+            _ => Vec::new(),
+        };
+        if ops.is_empty() {
+            return;
+        }
+        let clip = &mut self.clipboard;
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+            b.apply_edit_ops(ops, clip, 0);
+        }
+        if let Some(Pane::Editor(b)) = self.panes.get(idx) {
+            let t = b.editor.text().to_string();
+            self.lsp.did_change(&path, &t);
+        }
+        self.toast(format!("formatted {}", rel_path(&self.workspace, &path)));
+    }
+
+    /// `lsp.format` (`Ctrl+Shift+I`) — ask the LSP to format the active
+    /// buffer. The reply lands async in [`Self::tick`] → `apply_formatting_edits`.
+    pub fn lsp_format(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("nothing to format (scratch buffer)");
+            return;
+        };
+        let tab_size = self.config.editor.tab_width as u32;
+        if !self.lsp.formatting(&path, tab_size, true) {
+            self.toast("no LSP server attached to this file");
         }
     }
 

@@ -88,6 +88,11 @@ pub enum LspEvent {
     /// Result of a `textDocument/completion` request — `(label, insert_text, detail)`
     /// per candidate.
     Completion(Vec<(String, String, Option<String>)>),
+    /// Result of a `textDocument/formatting` request — the `TextEdit[]` for `path`.
+    Formatting {
+        path: PathBuf,
+        edits: Vec<(Range, String)>,
+    },
     /// A server-side message worth surfacing as a toast.
     Message(String),
 }
@@ -331,6 +336,17 @@ impl LspManager {
     /// Send a `textDocument/completion` request — the reply arrives as [`LspEvent::Completion`].
     pub fn completion(&mut self, path: &Path, line: u32, character: u32) -> bool {
         self.request_at("textDocument/completion", path, line, character)
+    }
+    /// Send a `textDocument/formatting` request — the reply arrives as [`LspEvent::Formatting`].
+    pub fn formatting(&mut self, path: &Path, tab_size: u32, insert_spaces: bool) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.formatting(path, tab_size, insert_spaces);
+                sent = true;
+            }
+        }
+        sent
     }
     fn request_at(&mut self, method: &str, path: &Path, line: u32, character: u32) -> bool {
         let mut sent = false;
