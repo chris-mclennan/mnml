@@ -116,6 +116,12 @@ pub struct UiConfig {
     /// pane (track + proportional thumb). `:set [no]scrollbar`. On by default
     /// — costs one column of usable text width.
     pub scrollbar: bool,
+    /// Paint trailing whitespace cells with a red background so they're
+    /// impossible to miss. `:set [no]trailing`. Off by default — many
+    /// codebases intentionally use trailing whitespace (markdown line
+    /// breaks, fixtures). Pair with `[editor] trim_trailing_ws_on_save`
+    /// for the full "see and strip" loop.
+    pub highlight_trailing_ws: bool,
 }
 
 impl Default for Config {
@@ -139,6 +145,7 @@ impl Default for Config {
                 show_whitespace: false,
                 bracket_rainbow: false,
                 scrollbar: true,
+                highlight_trailing_ws: false,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -222,6 +229,7 @@ struct RawUi {
     show_whitespace: Option<bool>,
     bracket_rainbow: Option<bool>,
     scrollbar: Option<bool>,
+    highlight_trailing_ws: Option<bool>,
 }
 
 impl Config {
@@ -294,6 +302,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.scrollbar {
             self.ui.scrollbar = v;
+        }
+        if let Some(v) = raw.ui.highlight_trailing_ws {
+            self.ui.highlight_trailing_ws = v;
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;

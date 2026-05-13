@@ -169,6 +169,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_scrollbar(),
         },
         Command {
+            id: "view.toggle_highlight_trailing_ws",
+            title: "Toggle trailing-whitespace highlight (red bg on trailing space/tab)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_highlight_trailing_ws(),
+        },
+        Command {
             id: "browser.toggle_headless",
             title: "Toggle CDP headless launch (takes effect on next browser.open)",
             group: "browser",

@@ -186,6 +186,11 @@ space/tab per line on `save_to_disk` via `EditOp::ReplaceRange` so undo restores
 char is "empty space" — whitespace, EOF, closer, or punctuator. Typing a close char on top of an auto-inserted one
 skips over it). **Bracket-match highlight** — when the cursor sits on a bracket, paint both the bracket and its match
 with `bg3`; nested correctly via a forward/backward depth-counting scan (capped at 50k chars/side).
+**Trailing-whitespace highlight** — `[ui] highlight_trailing_ws` (default off; `:set [no]trailing` /
+`:set trailing!` / `view.toggle_highlight_trailing_ws`). Paints the trailing space/tab run on each line
+with a red background so stray whitespace is impossible to miss. Pure-whitespace lines aren't flagged
+(no real "trailing" to fix); selection / find-match bg colors still win over the trailing tint when they
+overlap. Pair with `[editor] trim_trailing_ws_on_save = true` for see-and-strip.
 **Editor scrollbar** — `[ui] scrollbar` (default on; `:set [no]scrollbar` / `:set scrollbar!` /
 `view.toggle_scrollbar`). When on, `ui/editor_view.rs` reserves the right-edge column of each editor pane
 for a 1-cell vertical scrollbar: dim `bg_dark` track over the full body height, plus a `bg3` thumb whose

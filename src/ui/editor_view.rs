@@ -266,6 +266,19 @@ pub fn draw_pane(
         let indent_cols = chars.iter().take_while(|c| **c == ' ').count();
         let has_content = indent_cols < n;
         let spans_for_line = buf.line_spans(line_no);
+        // When `highlight_trailing_ws` is on, find where the trailing-ws run
+        // begins. `None` ⇒ no trailing ws on this line (or a blank line —
+        // we don't highlight pure-whitespace lines since the user isn't
+        // looking at "stray" trailing space, just intentional indentation).
+        let trailing_start = if app.config.ui.highlight_trailing_ws && has_content {
+            let mut idx = n;
+            while idx > 0 && matches!(chars.get(idx - 1), Some(' ') | Some('\t')) {
+                idx -= 1;
+            }
+            if idx < n { Some(idx) } else { None }
+        } else {
+            None
+        };
 
         // Per-visible-cell (char, fg, bg), then coalesce into spans.
         let mut cells: Vec<(char, Color, Color)> = Vec::with_capacity(tw);
@@ -281,10 +294,16 @@ pub fn draw_pane(
                 .as_ref()
                 .map(|pair| pair.iter().any(|&(l, k)| l == line_no && k == c))
                 .unwrap_or(false);
+            let is_trailing = trailing_start.is_some_and(|s| c >= s && c < n);
             let bg = if in_sel {
                 sel_bg
             } else if is_bracket {
                 bracket_bg
+            } else if is_trailing {
+                // Strong red bg so the user can't miss it. Selection / find
+                // matches still win above so a selection over trailing ws
+                // doesn't look broken.
+                theme::cur().red
             } else {
                 match in_match {
                     Some(true) => cur_match_bg,

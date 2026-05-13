@@ -6850,6 +6850,19 @@ impl App {
         self.set_scrollbar(!self.config.ui.scrollbar);
     }
 
+    /// Toggle trailing-whitespace highlight (`:set [no]trailing`).
+    pub fn set_highlight_trailing_ws(&mut self, on: bool) {
+        self.config.ui.highlight_trailing_ws = on;
+        self.toast(if on {
+            "trailing ws: highlighted"
+        } else {
+            "trailing ws: off"
+        });
+    }
+    pub fn toggle_highlight_trailing_ws(&mut self) {
+        self.set_highlight_trailing_ws(!self.config.ui.highlight_trailing_ws);
+    }
+
     /// Toggle CDP headless launch (`:set [no]headless`). Takes effect on the
     /// **next** `browser.open` — an in-flight browser pane is unaffected.
     pub fn set_browser_headless(&mut self, on: bool) {
@@ -7063,6 +7076,12 @@ impl App {
                     self.set_browser_headless(false);
                 } else if matches!(opt, "headless!" | "invheadless") {
                     self.toggle_browser_headless();
+                } else if matches!(opt, "trailing") {
+                    self.set_highlight_trailing_ws(true);
+                } else if matches!(opt, "notrailing") {
+                    self.set_highlight_trailing_ws(false);
+                } else if matches!(opt, "trailing!" | "invtrailing") {
+                    self.toggle_highlight_trailing_ws();
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }
