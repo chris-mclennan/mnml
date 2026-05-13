@@ -184,9 +184,12 @@ history is silently discarded (the offsets in old snapshots would no longer map 
 `editor::undo_path_for(workspace, file)`, `editor::save_history_to(editor, path)`, `editor::load_history_from
 (editor, path)`. I/O errors are swallowed end-to-end — persistent undo is a UX nicety, not load-bearing.
 **Find-in-buffer** — `find.find` (`Ctrl+F`, palette) prompts for a query (seeded with the active selection or last query),
-`accept_find` populates the active buffer's `FindState{query, matches:Vec<(byte_start,byte_end)>, current}`
-(`buffer::find_all_ci_ascii` — ASCII case-insensitive, non-overlapping, char-boundary safe), jumps the cursor to the nearest
-match at-or-after the cursor (wraps), and toasts `match N/M`. `find.next` (`F3`) / `find.prev` (`Shift+F3`) step through (wrap);
+`accept_find` populates the active buffer's `FindState{query, matches:Vec<(byte_start,byte_end)>, current, regex}`
+(`buffer::find_all_ci_ascii` for literal mode — ASCII case-insensitive, non-overlapping, char-boundary safe — or
+`buffer::find_all_regex` for regex mode — auto-prefixed with `(?i)` for case-insensitivity, zero-width matches
+skipped, invalid patterns → empty), jumps the cursor to the nearest match at-or-after the cursor (wraps), and
+toasts `match N/M`. **`find.toggle_regex`** (`Alt+R`) flips between modes — sticky across the session (sets
+`App.find_regex_default`) and immediately rebuilds the active find's match list. `find.next` (`F3`) / `find.prev` (`Shift+F3`) step through (wrap);
 `find.clear` empties the state. `editor_view` paints a `t.bg2` background on every visible match and a `t.yellow` bg on the
 current one (with `t.bg_dark` fg for readability). The find state is recomputed on every text-changing edit
 (`Buffer::refresh_find_matches`, hooked into `feed_key` + `apply_edit_ops`) so highlights stay in sync as you type.

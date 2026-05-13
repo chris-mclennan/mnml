@@ -176,6 +176,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.find_prev(),
         },
         Command {
+            id: "find.toggle_regex",
+            title: "Find: toggle regex mode (sticky)",
+            group: "find",
+            keys: &["alt+r"],
+            run: |app| app.toggle_find_regex(),
+        },
+        Command {
             id: "find.replace",
             title: "Replace every match of the active find",
             group: "find",

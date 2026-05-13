@@ -26,6 +26,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # System clipboard (best-effort; falls back to an internal register if unavailable).
 arboard = "3"
+# Regex for `find.find`'s regex toggle (Ctrl+F → re-mode). Default features —
+# Unicode + perf — keep accented-char matching sane for source code.
+regex = "1"
 # Syntax highlighting. Grammar crates' query-constant names vary (HIGHLIGHTS_QUERY vs
 # HIGHLIGHT_QUERY, presence of INJECTIONS_QUERY / LOCALS_QUERY) — quirks are isolated in
 # highlight.rs::build_config. Start with a handful; more (typescript/css/html/c/bash/md) come later.

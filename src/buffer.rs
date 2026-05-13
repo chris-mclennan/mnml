@@ -25,17 +25,44 @@ pub struct FindState {
     pub matches: Vec<(usize, usize)>,
     /// Index into `matches` of the "current" match (the one the cursor is on).
     pub current: Option<usize>,
+    /// When `true`, `query` is compiled as a regex (case-insensitive by default
+    /// for parity with the literal mode); when `false`, the existing
+    /// [`find_all_ci_ascii`] literal scan is used. Toggled by `find.toggle_regex`.
+    pub regex: bool,
 }
 
 impl FindState {
     pub fn recompute(&mut self, text: &str) {
-        self.matches = find_all_ci_ascii(text, &self.query);
+        self.matches = if self.regex {
+            find_all_regex(text, &self.query)
+        } else {
+            find_all_ci_ascii(text, &self.query)
+        };
         if self.matches.is_empty() {
             self.current = None;
         } else if let Some(c) = self.current {
             self.current = Some(c.min(self.matches.len() - 1));
         }
     }
+}
+
+/// Regex-based version of [`find_all_ci_ascii`] — same `(byte_start, byte_end)`
+/// shape, non-overlapping, char-boundary safe. The pattern is automatically
+/// flagged case-insensitive (matching the literal mode's behavior). Invalid
+/// patterns return an empty list (caller handles "no matches" gracefully).
+pub fn find_all_regex(text: &str, pattern: &str) -> Vec<(usize, usize)> {
+    if pattern.is_empty() {
+        return Vec::new();
+    }
+    // `(?i)` inline flag keeps the build dependency-free of regex-builder API.
+    let prefixed = format!("(?i){pattern}");
+    let Ok(re) = regex::Regex::new(&prefixed) else {
+        return Vec::new();
+    };
+    re.find_iter(text)
+        .filter(|m| m.start() != m.end()) // skip zero-width matches (would loop forever in `next`)
+        .map(|m| (m.start(), m.end()))
+        .collect()
 }
 
 /// Locate every (byte-range) occurrence of `query` in `text`, ASCII-case-
@@ -499,5 +526,35 @@ mod tests {
         let mut b = Buffer::open(&path, &cfg).unwrap();
         b.save_to_disk().unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "hi   \n");
+    }
+
+    #[test]
+    fn find_all_regex_basic_patterns() {
+        // Literal-like.
+        assert_eq!(find_all_regex("foo bar foo", "foo"), vec![(0, 3), (8, 11)]);
+        // Character class.
+        let t = "abc 123 def 45";
+        assert_eq!(find_all_regex(t, r"\d+"), vec![(4, 7), (12, 14)]);
+        // Anchors + case-insensitive default.
+        assert_eq!(find_all_regex("FOO foo", r"^foo"), vec![(0, 3)]);
+        // Empty / invalid ⇒ empty.
+        assert!(find_all_regex("anything", "").is_empty());
+        assert!(find_all_regex("anything", r"[").is_empty());
+    }
+
+    #[test]
+    fn find_state_recompute_honors_regex_flag() {
+        let t = "x1 y22 z333";
+        let mut s = FindState {
+            query: r"\w\d+".into(),
+            regex: false,
+            ..Default::default()
+        };
+        s.recompute(t);
+        // Literal mode treats `\w\d+` as a literal string ⇒ no matches.
+        assert!(s.matches.is_empty());
+        s.regex = true;
+        s.recompute(t);
+        assert_eq!(s.matches, vec![(0, 2), (3, 6), (7, 11)]);
     }
 }

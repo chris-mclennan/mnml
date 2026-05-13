@@ -692,6 +692,10 @@ pub struct App {
     /// open outline pane instead of opening the symbols picker. Set by
     /// `open_outline_pane` / `refresh_outline_pane`; cleared after one reply.
     pending_outline: bool,
+    /// Sticky toggle for `find.find`'s regex mode. New find states inherit
+    /// it; `find.toggle_regex` flips it AND updates any open find state on
+    /// the active buffer.
+    pub find_regex_default: bool,
     /// Branch name awaiting the "type the name to confirm" prompt that the
     /// git-rail's branch right-click menu opens (→ `git branch -D`).
     pending_delete_branch: Option<String>,
@@ -818,6 +822,7 @@ impl App {
             pending_code_actions: Vec::new(),
             pending_code_action_path: None,
             pending_outline: false,
+            find_regex_default: false,
             pending_delete_branch: None,
             pending_worktree_remove: None,
             pending_fs_action: None,
@@ -4801,6 +4806,7 @@ impl App {
     /// Set the active editor's find state to `query` and jump to the nearest
     /// match at-or-after the cursor (wraps).
     pub fn accept_find(&mut self, query: String) {
+        let regex_default = self.find_regex_default;
         let Some(cur) = self.active else { return };
         let Some(Pane::Editor(b)) = self.panes.get_mut(cur) else {
             return;
@@ -4809,14 +4815,21 @@ impl App {
             b.find = None;
             return;
         }
+        // Preserve the existing find's regex flag if any, else use the App
+        // default so the toggle is sticky.
+        let regex = b.find.as_ref().map(|f| f.regex).unwrap_or(regex_default);
         let mut state = crate::buffer::FindState {
             query: query.clone(),
+            regex,
             ..Default::default()
         };
         state.recompute(b.editor.text());
         if state.matches.is_empty() {
             b.find = Some(state);
-            self.toast(format!("no matches for {query:?}"));
+            self.toast(format!(
+                "no {}matches for {query:?}",
+                if regex { "regex " } else { "" }
+            ));
             return;
         }
         // Jump to the first match at-or-after the cursor (wrap).
@@ -4832,6 +4845,30 @@ impl App {
         b.find = Some(state);
         self.place_cursor_at_byte(cur, start);
         self.toast(format!("match {}/{total}", idx + 1));
+    }
+
+    /// `find.toggle_regex` — flip the regex mode. Affects future find prompts
+    /// (sticky across the session) AND any open find on the active buffer
+    /// (recomputed). Toasts the new mode.
+    pub fn toggle_find_regex(&mut self) {
+        self.find_regex_default = !self.find_regex_default;
+        let mode = if self.find_regex_default {
+            "regex"
+        } else {
+            "literal"
+        };
+        let active = self.active;
+        if let Some(Pane::Editor(b)) = active.and_then(|i| self.panes.get_mut(i))
+            && let Some(state) = &mut b.find
+        {
+            state.regex = self.find_regex_default;
+            let text = b.editor.text().to_string();
+            state.recompute(&text);
+            let n = state.matches.len();
+            self.toast(format!("find: {mode} mode — {n} matches"));
+            return;
+        }
+        self.toast(format!("find: {mode} mode"));
     }
 
     /// `find.next` (`F3`) — advance to the next find match (wraps).

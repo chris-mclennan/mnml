@@ -1094,6 +1094,7 @@ dependencies = [
  "ignore",
  "portable-pty",
  "ratatui",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
