@@ -30,8 +30,11 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         .fg(theme::cur().yellow)
         .bg(theme::cur().bg_dark)
         .add_modifier(Modifier::BOLD);
+    let path_style = Style::default()
+        .fg(theme::cur().fg)
+        .bg(theme::cur().bg_dark);
 
-    let body = vec![
+    let mut body: Vec<Line> = vec![
         Line::from(Span::styled(
             "mnml",
             Style::default()
@@ -42,23 +45,46 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(Span::styled(format!("workspace · {ws}"), dim)),
         Line::from(""),
         Line::from(vec![
-            Span::styled("↑/↓  ", key),
+            Span::styled("↑/↓     ", key),
             Span::styled("navigate the tree", dim),
         ]),
         Line::from(vec![
-            Span::styled("⏎    ", key),
+            Span::styled("⏎       ", key),
             Span::styled("open file / toggle folder", dim),
         ]),
         Line::from(vec![
-            Span::styled("^E   ", key),
-            Span::styled("cycle focus (tree ⇄ editor)", dim),
+            Span::styled("^P / ^R ", key),
+            Span::styled("file picker / recent files", dim),
         ]),
         Line::from(vec![
-            Span::styled("^B   ", key),
-            Span::styled("toggle the file tree", dim),
+            Span::styled("^N      ", key),
+            Span::styled("new file (workspace-relative)", dim),
         ]),
-        Line::from(vec![Span::styled("^Q   ", key), Span::styled("quit", dim)]),
+        Line::from(vec![
+            Span::styled("^E / ^B ", key),
+            Span::styled("cycle focus / toggle tree", dim),
+        ]),
+        Line::from(vec![
+            Span::styled("^Q      ", key),
+            Span::styled("quit", dim),
+        ]),
     ];
+
+    // Recent files — up to 6 newest, with workspace-relative paths. Only if
+    // there's room (the splash should still center cleanly on small windows).
+    if !app.recent_files.is_empty() && area.height >= 16 {
+        body.push(Line::from(""));
+        body.push(Line::from(Span::styled("recent files", dim)));
+        for p in app.recent_files.iter().take(6) {
+            let rel = p
+                .strip_prefix(&app.workspace)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .into_owned();
+            body.push(Line::from(Span::styled(rel, path_style)));
+        }
+    }
+
     let n = body.len() as u16;
     let top = area.y + area.height.saturating_sub(n) / 2;
     let inner = Rect {
