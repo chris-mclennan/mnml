@@ -164,7 +164,9 @@ follow). `Tree::expanded_dirs()` / `set_expanded_dirs` persist the per-directory
 a relaunch keeps whatever the user had open.
 **Bufferline polish** — horizontal scroll (`bufferline_first_visible`) keeps the active tab on screen no matter how many
 buffers are open, with `‹` / `›` overflow chevrons at the edges. Same-name tabs get parent-dir disambiguation (`git/mod.rs`
-vs `ai/mod.rs`) via `tab_labels(&panes)`. **Statusline polish** — `Ln 12/580` (current of total) + a yellow `Sel N` chip
+vs `ai/mod.rs`) via `tab_labels(&panes)`. Per-tab **diagnostic chip** (`bufferline::diag_chip_for`) — editor
+tabs whose buffer has LSP diagnostics render `✗N` (errors, red) or `⚠N` (warnings, yellow) between the name
+and the dirty badge; errors win over warnings. Widths recompute so the strip layout stays tight. **Statusline polish** — `Ln 12/580` (current of total) + a yellow `Sel N` chip
 when there's a selection (chars selected).
 **Zen mode** — `view.zen` (`Ctrl+Shift+Z`) hides tree + bufferline + statusline; the editor takes the full window.
 Overlays (picker, prompt, hover, completion) still work. Not persisted — fresh launch is a normal IDE view.

@@ -19,6 +19,30 @@ use crate::app::App;
 use crate::pane::Pane;
 use crate::ui::{icons, theme};
 
+/// `✗N` (errors) / `⚠N` (warnings) / `""` for editor panes; `""` for everything
+/// else. Surfaced in the bufferline so broken buffers are visible without
+/// switching to them.
+fn diag_chip_for(p: &Pane) -> String {
+    if let Pane::Editor(b) = p {
+        let mut err = 0usize;
+        let mut warn = 0usize;
+        for d in &b.diagnostics {
+            match d.severity {
+                crate::lsp::Severity::Error => err += 1,
+                crate::lsp::Severity::Warning => warn += 1,
+                _ => {}
+            }
+        }
+        if err > 0 {
+            return format!("\u{2717}{err}");
+        }
+        if warn > 0 {
+            return format!("\u{26A0}{warn}");
+        }
+    }
+    String::new()
+}
+
 /// One label per pane in `app.panes`, in order. For editor panes whose bare
 /// filename is shared with another open editor (e.g. five `mod.rs`), prepend
 /// the immediate parent dir (`git/mod.rs`, `ai/mod.rs`) so the tabs are
@@ -66,13 +90,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Disambiguated labels — when two open editors share a filename, prepend
     // the parent dir to both (`git/mod.rs` vs `ai/mod.rs`).
     let labels = tab_labels(&app.panes);
+    // Per-tab diagnostic chip — `✗N` for any errors, else `⚠N` for warnings,
+    // else empty. Surfaced so the user sees broken buffers without opening
+    // them. The chip sits between the name and the dirty badge.
+    let diag_chips: Vec<String> = app.panes.iter().map(diag_chip_for).collect();
     // Pre-compute each tab's display width so we can scroll the bufferline to
     // keep the active tab on screen (and show `‹`/`›` overflow indicators).
-    // Each tab is ` <icon> <name> <badge> ` (4 cells of chrome + name); a 1-cell
-    // separator goes between tabs.
+    // Each tab is ` <icon> <name>[ <diag>] <badge> ` — base chrome is 4 cells
+    // + name; diag chip (if any) adds its own char count + a leading space.
     let widths: Vec<u16> = labels
         .iter()
-        .map(|name| 4u16 + name.chars().count() as u16 + 1u16)
+        .zip(&diag_chips)
+        .map(|(name, diag)| {
+            let mut w = 4u16 + name.chars().count() as u16 + 1u16;
+            if !diag.is_empty() {
+                w += diag.chars().count() as u16 + 1; // leading space
+            }
+            w
+        })
         .collect();
     let sep = 1u16; // cell between tabs (rendered as the bg color)
     // Reserve 2 cells on each side of the tab strip for the overflow chevrons
@@ -159,8 +194,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Outline(_) => (if nerd { "\u{f01bd}" } else { "⌥" }, theme::cur().purple),
         };
         let badge = if pane.is_dirty() { "●" } else { "×" };
-        // ` <icon> <name> <badge> `
-        let label = format!(" {glyph} {name} {badge} ");
+        let diag = &diag_chips[i];
+        // ` <icon> <name>[ <diag>] <badge> `
+        let label = if diag.is_empty() {
+            format!(" {glyph} {name} {badge} ")
+        } else {
+            format!(" {glyph} {name} {diag} {badge} ")
+        };
         let cells = label.chars().count() as u16;
         if x + cells > inner_right {
             overflow_right = true;
@@ -199,6 +239,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 .bg(bg),
         ));
         spans.push(Span::styled(format!("{name} "), name_style));
+        if !diag.is_empty() {
+            let diag_fg = if diag.starts_with('\u{2717}') {
+                // `✗` chip — errors → red regardless of active state.
+                theme::cur().red
+            } else {
+                // `⚠` chip — warnings → yellow.
+                theme::cur().yellow
+            };
+            spans.push(Span::styled(
+                format!("{diag} "),
+                Style::default().fg(diag_fg).bg(bg),
+            ));
+        }
         spans.push(Span::styled(
             format!("{badge} "),
             Style::default().fg(badge_fg).bg(bg),
@@ -285,6 +338,47 @@ mod tests {
     fn ed(path: PathBuf) -> Pane {
         let b = Buffer::open(&path, &Config::default()).unwrap();
         Pane::Editor(b)
+    }
+
+    #[test]
+    fn diag_chip_prefers_errors_then_warnings_then_empty() {
+        use crate::lsp::{Diagnostic, Pos, Range, Severity};
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("a.rs"), "").unwrap();
+        let path = d.path().join("a.rs");
+        let r = Range {
+            start: Pos {
+                line: 0,
+                character: 0,
+            },
+            end: Pos {
+                line: 0,
+                character: 0,
+            },
+        };
+        let mk = |diags: Vec<Diagnostic>| {
+            let mut b = Buffer::open(&path, &Config::default()).unwrap();
+            b.diagnostics = diags;
+            Pane::Editor(b)
+        };
+        // clean
+        assert_eq!(diag_chip_for(&mk(vec![])), "");
+        // 2 warnings → ⚠2
+        let warn = || Diagnostic {
+            range: r,
+            severity: Severity::Warning,
+            message: "w".into(),
+            source: None,
+        };
+        assert_eq!(diag_chip_for(&mk(vec![warn(), warn()])), "\u{26A0}2");
+        // mix → errors win
+        let err = Diagnostic {
+            range: r,
+            severity: Severity::Error,
+            message: "e".into(),
+            source: None,
+        };
+        assert_eq!(diag_chip_for(&mk(vec![warn(), warn(), err])), "\u{2717}1");
     }
 
     #[test]
