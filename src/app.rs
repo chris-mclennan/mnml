@@ -156,6 +156,13 @@ struct SavedSession {
     /// leaf, the others remain as background tabs).
     #[serde(default)]
     layout: Option<SavedLayout>,
+    /// Was the file-tree rail visible? `None` (missing field, e.g. an old
+    /// session.json) ⇒ keep whatever the runtime default is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tree_visible: Option<bool>,
+    /// Was the workspace section inside the rail expanded?
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tree_root_expanded: Option<bool>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -281,6 +288,10 @@ pub struct PaneRects {
     pub tree: Option<Rect>,
     /// Tree scroll offset at render time (so a click maps to the right row).
     pub tree_scroll: usize,
+    /// The clickable rect for "toggle tree visibility" — the workspace-name
+    /// header row when the tree is expanded, or the whole activity-bar column
+    /// when it's collapsed. Click → `App::toggle_tree`.
+    pub tree_toggle: Option<Rect>,
     pub bufferline: Option<Rect>,
     /// `(rect, pane_id)` for each tab in the bufferline (whole tab → activate).
     pub bufferline_tabs: Vec<(Rect, PaneId)>,
@@ -321,6 +332,13 @@ pub struct App {
     pub focus: Focus,
     pub tree: Tree,
     pub tree_visible: bool,
+    /// Is the workspace "section" inside the rail expanded? When `false` the
+    /// rail shows just the `> WORKSPACE-NAME` header (clickable to expand);
+    /// when `true` it shows the header (`v WORKSPACE-NAME`) + the file list.
+    /// Independent of [`Self::tree_visible`] (which controls the rail itself,
+    /// `Ctrl+B`). Future sibling sections (OUTLINE, TIMELINE, …) would each
+    /// own their own expanded flag here.
+    pub tree_root_expanded: bool,
     pub git: GitStatus,
     pub toast: Option<(String, Instant)>,
     pub should_quit: bool,
@@ -428,6 +446,10 @@ impl App {
             focus: Focus::Tree,
             tree,
             tree_visible: true,
+            // VS-Code-style: the rail is shown, but its workspace "section"
+            // starts collapsed (just the `> NAME` header). The last session's
+            // choice overrides this in `try_restore_session`.
+            tree_root_expanded: false,
             git,
             toast: None,
             should_quit: false,
@@ -4689,6 +4711,29 @@ impl App {
         }
     }
 
+    /// Toggle the file-tree rail in/out entirely (`Ctrl+B`). When the user
+    /// hides it while focused there, focus snaps to the active pane.
+    pub fn toggle_tree_visibility(&mut self) {
+        self.tree_visible = !self.tree_visible;
+        if !self.tree_visible && self.focus == Focus::Tree {
+            self.focus = if self.active.is_some() {
+                Focus::Pane
+            } else {
+                Focus::Tree
+            };
+        }
+    }
+
+    /// Toggle the workspace "section" inside the rail (the click on the
+    /// `> WORKSPACE-NAME` header — VS-Code Explorer style). When expanded,
+    /// focus moves into the tree so keyboard nav picks up where it should.
+    pub fn toggle_tree_root_expanded(&mut self) {
+        self.tree_root_expanded = !self.tree_root_expanded;
+        if self.tree_root_expanded {
+            self.focus = Focus::Tree;
+        }
+    }
+
     // ─── tree ───────────────────────────────────────────────────────
     /// Enter/click on the row under the tree cursor: open a file, or expand/collapse a dir.
     pub fn tree_activate(&mut self) {
@@ -4806,11 +4851,6 @@ impl App {
                 });
             }
         }
-        if open.is_empty() {
-            // Don't leave a stale file around if the user closed everything.
-            let _ = std::fs::remove_file(self.workspace.join(".mnml").join("session.json"));
-            return;
-        }
         // Try to mirror the split tree. If any leaf isn't an editor we can save
         // (e.g. a transient pty / diff / browser pane), drop layout — the buffer
         // list alone is enough for the most common case.
@@ -4820,6 +4860,8 @@ impl App {
             open,
             active,
             layout,
+            tree_visible: Some(self.tree_visible),
+            tree_root_expanded: Some(self.tree_root_expanded),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -4872,6 +4914,14 @@ impl App {
             && let Some(restored) = layout_from_saved(sl, &idx_to_pane)
         {
             self.layout = restored;
+        }
+        // Restore the file-tree visibility flag too (`None` ⇒ leave the
+        // launch-time default alone — an older session.json without the field).
+        if let Some(v) = saved.tree_visible {
+            self.tree_visible = v;
+        }
+        if let Some(v) = saved.tree_root_expanded {
+            self.tree_root_expanded = v;
         }
         let fallback = idx_to_pane.iter().rev().flatten().next().copied();
         if let Some(p) = active_pane.or(fallback) {

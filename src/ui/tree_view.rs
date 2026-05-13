@@ -1,7 +1,11 @@
-//! The file-tree rail. Background matches the editor; folders show a collapse
-//! chevron + a blue folder icon + a blue name (NvChad-style); git-touched files
-//! take a status tint. (The workspace name lives in the statusline now, not a
-//! header here — the rail just starts with the first entry.)
+//! The file-tree rail. VS-Code Explorer style: a `> WORKSPACE-NAME` section
+//! header sits at the top of the rail; when the section is collapsed (the
+//! `>` chevron form), only the header shows and the file list is hidden;
+//! when expanded (`v` chevron), the file list appears below. The whole rail
+//! itself is independently toggled by `Ctrl+B` (`tree_visible`). Folders
+//! show a collapse chevron + a blue folder icon + a blue name (NvChad-style);
+//! git-touched files take a status tint. (Future sibling sections — OUTLINE,
+//! TIMELINE-like — would render under the workspace one with their own header.)
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -18,16 +22,57 @@ const CHEVRON_OPEN: &str = "\u{f107}"; //  (angle-down)
 const CHEVRON_CLOSED: &str = "\u{f105}"; //  (angle-right)
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
-    // The rail bg — NvChad's `darker_black`, a touch darker than the editor body
-    // (`black`) so the panels read as distinct.
     let rail_bg = theme::cur().bg_darker;
     frame.render_widget(Paragraph::new("").style(Style::default().bg(rail_bg)), area);
     app.rects.tree = None;
-    if area.height < 2 || area.width == 0 {
+    app.rects.tree_toggle = None;
+    if area.height == 0 || area.width == 0 {
         return;
     }
-    // A blank line above the first entry (NvChad leaves the tree a little breathing
-    // room at the top). Everything below — and the mouse hitbox — uses `inner`.
+
+    // ── workspace section header (always visible, click-to-toggle) ─
+    let nerd = !app.config.ui.ascii_icons;
+    let width = area.width as usize;
+    let ws_name = app
+        .workspace
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_uppercase())
+        .unwrap_or_else(|| "WORKSPACE".to_string());
+    let chev = if app.tree_root_expanded {
+        if nerd { CHEVRON_OPEN } else { "▾" }
+    } else if nerd {
+        CHEVRON_CLOSED
+    } else {
+        "▸"
+    };
+    let header_label = format!(" {chev} {ws_name}");
+    let header_pad = width.saturating_sub(header_label.chars().count());
+    let header_rect = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                header_label,
+                Style::default()
+                    .fg(theme::cur().fg)
+                    .bg(rail_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ".repeat(header_pad), Style::default().bg(rail_bg)),
+        ])),
+        header_rect,
+    );
+    app.rects.tree_toggle = Some(header_rect);
+
+    // ── file list (only when the section is expanded) ──────────────
+    if !app.tree_root_expanded || area.height < 2 {
+        return;
+    }
     let inner = Rect {
         x: area.x,
         y: area.y + 1,
@@ -35,13 +80,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         height: area.height - 1,
     };
     app.rects.tree = Some(inner);
-    let area = inner;
-    let width = area.width as usize;
+
     let rows = app.tree.visible_rows();
     let cursor = app.tree.cursor();
-    let h = area.height as usize;
+    let h = inner.height as usize;
 
-    // Keep the cursor on screen.
     if cursor < app.tree.scroll {
         app.tree.scroll = cursor;
     } else if cursor >= app.tree.scroll + h {
@@ -51,7 +94,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.tree.scroll = app.tree.scroll.min(max_scroll);
     app.rects.tree_scroll = app.tree.scroll;
 
-    let nerd = !app.config.ui.ascii_icons;
     let git_files = &app.git.snapshot().files;
     let focused = app.focus == Focus::Tree;
 
@@ -61,9 +103,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let (glyph, icon_color) = icons::for_path(&row.path, row.is_dir, row.is_expanded, nerd);
         let indent = "  ".repeat(row.depth);
 
-        // In Nerd-Font mode, folders get an explicit collapse chevron; files get a
-        // blank placeholder so their icons line up under folders' icons. In ASCII
-        // mode the ▶/▼ folder glyph already conveys state, so no separate chevron.
         let prefix = if nerd {
             let chev = if row.is_dir {
                 if row.is_expanded {
@@ -79,7 +118,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             format!("{indent}{glyph} ")
         };
 
-        // Folders are blue (chevron + icon + name). Files: git tint, else default fg.
         let name_color = if row.is_dir {
             theme::cur().blue
         } else {
@@ -103,7 +141,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         if row.is_dir || (is_cursor && focused) {
             name_style = name_style.add_modifier(Modifier::BOLD);
         }
-        // The chevron+icon prefix is blue for folders, the devicon color for files.
         let prefix_color = if row.is_dir {
             theme::cur().blue
         } else {
@@ -118,5 +155,5 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(" ".repeat(pad), Style::default().bg(bg)),
         ]));
     }
-    frame.render_widget(Paragraph::new(lines), area);
+    frame.render_widget(Paragraph::new(lines), inner);
 }

@@ -991,6 +991,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.reveal_pane(id);
                 return;
             }
+            // The `> WORKSPACE-NAME` section header — clicking it toggles the
+            // workspace section's expand/collapse state (VS-Code Explorer-style).
+            if let Some(tr) = app.rects.tree_toggle
+                && contains(tr, x, y)
+            {
+                app.toggle_tree_root_expanded();
+                return;
+            }
             // Tree? (no header now — row 0 of the rail is the first entry)
             if let Some(tr) = app.rects.tree
                 && contains(tr, x, y)

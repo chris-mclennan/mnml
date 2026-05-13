@@ -112,10 +112,17 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.toggle_tree",
-            title: "Toggle file tree",
+            title: "Toggle file tree (rail on/off)",
             group: "view",
             keys: &["ctrl+b"],
-            run: |app| app.tree_visible = !app.tree_visible,
+            run: |app| app.toggle_tree_visibility(),
+        },
+        Command {
+            id: "view.toggle_tree_section",
+            title: "Toggle workspace section (collapse/expand the file list)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_tree_root_expanded(),
         },
         Command {
             id: "view.toggle_relative_numbers",

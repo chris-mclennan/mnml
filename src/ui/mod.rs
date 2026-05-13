@@ -67,7 +67,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let v = RLayout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
     let (upper, statusline_area) = (v[0], v[1]);
 
-    // tree rail | right column
+    // tree rail | right column. `tree_visible` here means "the rail itself is
+    // showing" (toggled by `Ctrl+B`); a separate `tree_root_expanded` flag,
+    // read by `tree_view::draw`, controls whether the file list under the
+    // workspace-name header is shown (the VS-Code-style section collapse).
     let (tree_area, right) = if app.tree_visible {
         let w = app
             .config
