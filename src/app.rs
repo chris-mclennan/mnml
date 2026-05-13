@@ -4960,6 +4960,57 @@ impl App {
         self.toast(format!("saved to {}", rel_path(&self.workspace, &abs)));
     }
 
+    /// Re-read the active buffer from disk, preserving cursor + scroll. Refuses
+    /// when the buffer is dirty unless `force=true` (`:e!` / a "discard then
+    /// reload" prompt). Notifies LSP with the new text.
+    pub fn reload_active(&mut self, force: bool) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("nothing to reload (scratch buffer)");
+            return;
+        };
+        if b.dirty && !force {
+            self.toast("unsaved changes — use :e! to discard");
+            return;
+        }
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                self.toast(format!("reload failed: {e}"));
+                return;
+            }
+        };
+        let (row, col, scroll) = match self.active_editor() {
+            Some(b) => (b.editor.row_col().0, b.editor.row_col().1, b.scroll),
+            None => return,
+        };
+        let clip = &mut self.clipboard;
+        if let Some(b) = self.active.and_then(|i| self.panes.get_mut(i))
+            && let Pane::Editor(b) = b
+        {
+            let end = b.editor.text().len();
+            b.apply_edit_ops(
+                vec![crate::edit_op::EditOp::ReplaceRange {
+                    start: 0,
+                    end,
+                    text,
+                }],
+                clip,
+                0,
+            );
+            b.editor.place_cursor(row, col);
+            b.scroll = scroll;
+        }
+        if let Some(b) = self.active_editor() {
+            let t = b.editor.text().to_string();
+            self.lsp.did_change(&path, &t);
+        }
+        self.toast(format!("reloaded {}", rel_path(&self.workspace, &path)));
+    }
+
     pub fn save_all(&mut self) {
         let mut n = 0;
         let mut saved: Vec<std::path::PathBuf> = Vec::new();
@@ -5117,12 +5168,13 @@ impl App {
             "bp" | "bprev" | "bprevious" => self.prev_buffer(),
             "e" | "edit" => {
                 if rest.is_empty() {
-                    self.toast(":e needs a path");
+                    self.reload_active(false);
                 } else {
                     let p = self.workspace.join(rest);
                     self.open_path(&p);
                 }
             }
+            "e!" | "edit!" => self.reload_active(true),
             "set" => {
                 // `:set input=vim|standard` · `:set theme=…` · `:set [no]relativenumber`
                 let opt = rest.trim();
@@ -5635,6 +5687,35 @@ mod tests {
         assert!(names2.contains(&"a.txt".to_string()));
         assert!(names2.contains(&"b.txt".to_string()));
         assert!(app2.recent_files.len() <= RECENT_FILES_MAX);
+    }
+
+    #[test]
+    fn reload_active_picks_up_external_changes() {
+        let (_d, mut app) = app_with_files();
+        let a = app.workspace.join("a.txt");
+        app.open_path(&a);
+        // Touch the file externally.
+        fs::write(&a, "REPLACED").unwrap();
+        // Without reload, the buffer still has the old text.
+        assert_eq!(app.active_editor().unwrap().editor.text(), "alpha");
+        app.reload_active(false);
+        assert_eq!(app.active_editor().unwrap().editor.text(), "REPLACED");
+        // Dirty buffer + force=false ⇒ refuse.
+        if let Some(b) = app.active_editor_mut() {
+            b.editor.place_cursor(0, 0);
+            b.apply_edit_ops(
+                vec![crate::edit_op::EditOp::InsertStr("!".into())],
+                &mut Clipboard::new(),
+                0,
+            );
+        }
+        fs::write(&a, "AGAIN").unwrap();
+        app.reload_active(false);
+        // Still the dirty in-memory text (reload refused).
+        assert!(app.active_editor().unwrap().editor.text().contains('!'));
+        // force=true discards.
+        app.reload_active(true);
+        assert_eq!(app.active_editor().unwrap().editor.text(), "AGAIN");
     }
 
     #[test]

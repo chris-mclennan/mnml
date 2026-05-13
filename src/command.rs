@@ -205,6 +205,13 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "file.reload",
+            title: "Reload active buffer from disk (refuses if dirty)",
+            group: "file",
+            keys: &[],
+            run: |app| app.reload_active(false),
+        },
+        Command {
             id: "focus.cycle",
             title: "Cycle focus (tree ⇄ editor)",
             group: "view",
