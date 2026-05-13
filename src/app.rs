@@ -1306,6 +1306,29 @@ impl App {
         ));
     }
 
+    /// vim `*` / `#` — search forward / backward for the identifier under
+    /// the cursor. Sets the find state to that word and jumps. Toasts if
+    /// the cursor isn't on an identifier.
+    pub fn find_word_under_cursor(&mut self, forward: bool) {
+        let Some(cur) = self.active else {
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get(cur) else {
+            return;
+        };
+        let word = b.editor.word_under_cursor().to_string();
+        if word.is_empty() {
+            self.toast("no word under cursor");
+            return;
+        }
+        // `accept_find` sets the state + jumps to the first match at-or-after
+        // the cursor; for `#` we then step back once.
+        self.accept_find(word);
+        if !forward {
+            self.find_prev();
+        }
+    }
+
     /// `buffer.reopen` — pop the most-recently-closed buffer off
     /// [`Self::closed_buffers`] and re-open it at its captured position.
     /// No-op when the stack is empty.

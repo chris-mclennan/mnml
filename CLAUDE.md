@@ -101,6 +101,9 @@ to the exact stored `(row, col)` (`Prefix::MarkJumpExact` → `AppCommand::JumpT
 jumps `open_path` the marked file first when it isn't the active buffer. Toasts on set / jump / miss;
 jumps push the current position onto the nav-back stack so `Alt+Left` returns. `tests/e2e/marks.test`
 covers the chord flow.
+**Vim `*` / `#`** — find next / prev occurrence of the word under the cursor. Sets the buffer's find
+state to that identifier and jumps. Uses `editor::word_under_cursor` for extraction and `accept_find`
++ `find_prev` for the navigation.
 **Vim find-char** — `f<c>` / `F<c>` jump to next/prev `<c>` on the cursor's line; `t<c>` / `T<c>` stop
 one cell before. Operator-pending forms work too: `df<c>` deletes up to and including the target,
 `dt<c>` stops on the target (vim convention). New `Prefix::FindChar(forward, before)` + new

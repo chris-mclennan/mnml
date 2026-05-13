@@ -225,6 +225,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_find_regex(),
         },
         Command {
+            id: "find.word_forward",
+            title: "Find: word under cursor (forward) — vim `*`",
+            group: "find",
+            keys: &[],
+            run: |app| app.find_word_under_cursor(true),
+        },
+        Command {
+            id: "find.word_backward",
+            title: "Find: word under cursor (backward) — vim `#`",
+            group: "find",
+            keys: &[],
+            run: |app| app.find_word_under_cursor(false),
+        },
+        Command {
             id: "find.replace",
             title: "Replace every match of the active find",
             group: "find",

@@ -649,6 +649,16 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("editor.bracket_match".into()))
             }
+            // `*` / `#` — find next / prev occurrence of the word under the
+            // cursor. Sets the buffer's find state and jumps.
+            KeyCode::Char('*') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("find.word_forward".into()))
+            }
+            KeyCode::Char('#') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("find.word_backward".into()))
+            }
             // f / F / t / T — find char on the cursor's line. The next char
             // typed is the target; the prefix dispatcher emits the EditOp.
             KeyCode::Char('f') => {
