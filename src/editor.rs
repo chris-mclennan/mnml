@@ -156,6 +156,19 @@ fn op_preserves_goal_col(op: &EditOp) -> bool {
 
 /// Matching closing char for an auto-pair open char, or `None` if `c` isn't a
 /// configured open. Single-char pairs only.
+/// Closing char for a bracket-pair text object opener (`(` → `)`, `[` → `]`,
+/// `{` → `}`). For any non-bracket the close is the same char (so `match_close_for`
+/// composes safely with quotes if you ever call it on one).
+fn match_close_for(open: char) -> char {
+    match open {
+        '(' => ')',
+        '[' => ']',
+        '{' => '}',
+        '<' => '>',
+        c => c,
+    }
+}
+
 fn auto_pair_close(c: char) -> Option<char> {
     match c {
         '(' => Some(')'),
@@ -732,6 +745,20 @@ impl Editor {
                 if let Some((open, close)) = self.enclosing_quote_pair_on_line(q) {
                     self.anchor = Some(open);
                     self.cursor = close + q.len_utf8();
+                }
+            }
+            SelectInnerBracket(open) => {
+                let close = match_close_for(open);
+                if let Some((o, c)) = self.enclosing_bracket_pair(open, close) {
+                    self.anchor = Some(o + open.len_utf8());
+                    self.cursor = c;
+                }
+            }
+            SelectAroundBracket(open) => {
+                let close = match_close_for(open);
+                if let Some((o, c)) = self.enclosing_bracket_pair(open, close) {
+                    self.anchor = Some(o);
+                    self.cursor = c + close.len_utf8();
                 }
             }
             SelectAroundWord => {
@@ -1408,6 +1435,63 @@ impl Editor {
         (lo, hi)
     }
 
+    /// Find the smallest bracket pair surrounding the cursor. `open` /
+    /// `close` are the matching delimiter chars (e.g. `(` and `)`).
+    /// Returns `(open_byte, close_byte)` (pointing at the bracket chars
+    /// themselves), or `None` when the cursor isn't inside a pair.
+    /// Walks the buffer with a depth counter so nested pairs are handled.
+    /// Capped at 50k chars per side so a malformed file doesn't hang.
+    fn enclosing_bracket_pair(&self, open: char, close: char) -> Option<(usize, usize)> {
+        const BUDGET: usize = 50_000;
+        // Walk backward to find the unmatched open.
+        let mut depth: usize = 0;
+        let mut i = self.cursor;
+        let mut steps = 0;
+        let open_byte = loop {
+            if i == 0 {
+                return None;
+            }
+            i = self.prev_char_boundary(i);
+            let ch = self.text[i..].chars().next()?;
+            if ch == close {
+                depth += 1;
+            } else if ch == open {
+                if depth == 0 {
+                    break i;
+                }
+                depth -= 1;
+            }
+            steps += 1;
+            if steps > BUDGET {
+                return None;
+            }
+        };
+        // Walk forward to find the matching close.
+        let mut depth: usize = 0;
+        let mut j = self.cursor;
+        let mut steps = 0;
+        let close_byte = loop {
+            if j >= self.text.len() {
+                return None;
+            }
+            let ch = self.text[j..].chars().next()?;
+            if ch == open {
+                depth += 1;
+            } else if ch == close {
+                if depth == 0 {
+                    break j;
+                }
+                depth -= 1;
+            }
+            j += ch.len_utf8();
+            steps += 1;
+            if steps > BUDGET {
+                return None;
+            }
+        };
+        Some((open_byte, close_byte))
+    }
+
     /// Find the surrounding pair of `q` characters on the cursor's line.
     /// Returns `(open_byte, close_byte)` (both pointing at the quote chars),
     /// or `None` when there isn't a matching pair flanking the cursor. Used
@@ -1765,6 +1849,26 @@ mod tests {
         let (mut e, mut c) = ed("only");
         e.apply(DuplicateLine, 10, &mut c);
         assert_eq!(e.text(), "only\nonly");
+    }
+
+    #[test]
+    fn enclosing_bracket_pair_finds_nested() {
+        let (mut e, _) = ed("fn f() { let x = (1 + (2 * 3)) }");
+        // Cursor inside the inner (2 * 3)
+        let inner = e.text().find("2 * 3").unwrap() + 1;
+        e.cursor = inner;
+        let pair = e.enclosing_bracket_pair('(', ')').unwrap();
+        // Should be the inner ( and matching )
+        let open = e.text().find("(2").unwrap();
+        let close = e.text()[open..].find(')').unwrap() + open;
+        assert_eq!(pair, (open, close));
+        // Cursor inside braces — bracket-pair for `{` `}`
+        let bi = e.text().find("let").unwrap();
+        e.cursor = bi;
+        let pair = e.enclosing_bracket_pair('{', '}').unwrap();
+        let bo = e.text().find('{').unwrap();
+        let bc = e.text().rfind('}').unwrap();
+        assert_eq!(pair, (bo, bc));
     }
 
     #[test]

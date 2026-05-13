@@ -44,3 +44,20 @@ key i
 key "
 expect screen contains "let s = \"\";"
 expect screen lacks "hello"
+
+# Bracket text objects — di( deletes inside parens.
+write parens.txt "call(arg1, arg2)"
+open parens.txt
+command editor.use_vim
+# Move past "call(" — `l` five times places the cursor at 'a' of "arg1".
+key 0
+key l
+key l
+key l
+key l
+key l
+key d
+key i
+key (
+expect screen contains "call()"
+expect screen lacks "arg1"

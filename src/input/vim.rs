@@ -306,6 +306,23 @@ impl VimInputHandler {
                             SelectInnerQuote(q)
                         }
                     }
+                    // Brackets — vim accepts the open *or* the close as the
+                    // text-object char; both mean "the surrounding pair".
+                    // (`ib` / `iB` shorthands aren't wired yet — same shape.)
+                    KeyCode::Char(c @ ('(' | ')' | '[' | ']' | '{' | '}' | '<' | '>')) => {
+                        let open = match c {
+                            ')' => '(',
+                            ']' => '[',
+                            '}' => '{',
+                            '>' => '<',
+                            other => other,
+                        };
+                        if around {
+                            SelectAroundBracket(open)
+                        } else {
+                            SelectInnerBracket(open)
+                        }
+                    }
                     _ => return InputResult::Consumed,
                 };
                 let mut ops = vec![select_op];

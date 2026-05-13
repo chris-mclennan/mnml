@@ -111,8 +111,11 @@ operator-pending state) plus new `EditOp::SelectInnerWord` / `EditOp::SelectArou
 when at end-of-line). **Quote variants** — `i"`, `a"`, `i'`, `a'`, `` i` ``, `` a` `` work too:
 `SelectInnerQuote(char)` / `SelectAroundQuote(char)` ops, with `editor::enclosing_quote_pair_on_line`
 scanning the cursor's line for unescaped quote pairs and choosing the one that flanks the cursor.
-Restricted to a single line so a multi-line string elsewhere can't fool the scan. Bracket variants
-(`i(`, `i[`, `i{`) are still a follow-up.
+Restricted to a single line so a multi-line string elsewhere can't fool the scan. **Bracket variants** —
+`i(`, `a(`, `i[`, `a[`, `i{`, `a{`, `i<`, `a<` (close-bracket alias accepted too: `i)` ≡ `i(`).
+`SelectInnerBracket(open)` / `SelectAroundBracket(open)` ops; `editor::enclosing_bracket_pair` walks
+back from the cursor for an unmatched open, then forward for the matching close (depth-counted,
+50k-char budget per side). Spans multiple lines unlike the quote variants.
 **Half-page scroll** — new `EditOp::HalfPageUp` / `HalfPageDown` (interpreted in `editor.rs::apply` with
 `vp / 2`). Bound to `Ctrl+U` / `Ctrl+D` in vim normal mode (vim canonical).
 selection/undo/clipboard; fuzzy file finder (`Ctrl+P`) + command palette

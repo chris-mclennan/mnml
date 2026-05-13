@@ -48,6 +48,12 @@ pub enum EditOp {
     /// between two matching quote chars on the same line.
     SelectInnerQuote(char),
     SelectAroundQuote(char),
+    /// vim bracket text object: `i(`, `i[`, `i{` / `a(`, `a[`, `a{`. The
+    /// `char` is the open bracket (the editor derives the matching close).
+    /// Spans multiple lines — finds the enclosing pair by depth-counting
+    /// from the cursor outward.
+    SelectInnerBracket(char),
+    SelectAroundBracket(char),
     /// Multi-cursor — stubbed; a no-op until that "later" lands.
     AddCursorBelow,
     AddCursorAbove,
@@ -120,12 +126,40 @@ impl EditOp {
     pub fn is_mutation(&self) -> bool {
         use EditOp::*;
         match self {
-            MoveLeft | MoveRight | MoveUp | MoveDown | MoveWordLeft | MoveWordRight
-            | MoveWordEnd | MoveLineStart | MoveLineFirstNonWs | MoveLineEnd | MoveBufferStart
-            | MoveBufferEnd | MoveToLine(_) | PageUp | PageDown | HalfPageUp | HalfPageDown
-            | SelectStart | SelectClear | SelectLine | SelectAll | SelectWord | SelectInnerWord
-            | SelectAroundWord | SelectInnerQuote(_) | SelectAroundQuote(_) | AddCursorBelow
-            | AddCursorAbove | YankLine | YankSelection | Undo | Redo => false,
+            MoveLeft
+            | MoveRight
+            | MoveUp
+            | MoveDown
+            | MoveWordLeft
+            | MoveWordRight
+            | MoveWordEnd
+            | MoveLineStart
+            | MoveLineFirstNonWs
+            | MoveLineEnd
+            | MoveBufferStart
+            | MoveBufferEnd
+            | MoveToLine(_)
+            | PageUp
+            | PageDown
+            | HalfPageUp
+            | HalfPageDown
+            | SelectStart
+            | SelectClear
+            | SelectLine
+            | SelectAll
+            | SelectWord
+            | SelectInnerWord
+            | SelectAroundWord
+            | SelectInnerQuote(_)
+            | SelectAroundQuote(_)
+            | SelectInnerBracket(_)
+            | SelectAroundBracket(_)
+            | AddCursorBelow
+            | AddCursorAbove
+            | YankLine
+            | YankSelection
+            | Undo
+            | Redo => false,
             Repeat(_, inner) => inner.is_mutation(),
             _ => true,
         }
