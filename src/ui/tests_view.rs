@@ -13,7 +13,7 @@ use ratatui::widgets::Paragraph;
 use crate::app::App;
 use crate::layout::PaneId;
 use crate::pane::Pane;
-use crate::playwright::{TestStatus, TestsState};
+use crate::playwright::{TestStatus, TestsSort, TestsState};
 use crate::ui::theme;
 
 pub fn draw(
@@ -121,7 +121,10 @@ pub fn draw(
             }
             rows.push(Line::from(tally));
             rows.push(Line::from(Span::styled(
-                "  ↵ open · t trace · ↑↓ select · h heal (Claude) · r re-run · a all · f file · R last-failed · esc → tree",
+                format!(
+                    "  ↵ open · t trace · h heal (Claude) · r re-run · a all · f file · R last-failed · s sort [{}] · esc → tree",
+                    tp.sort.label(),
+                ),
                 dim,
             )));
             rows.push(Line::from(Span::styled(
@@ -135,9 +138,16 @@ pub fn draw(
                 )));
             }
 
+            let order = tp.sorted_indices(r);
+            let group_by_file = tp.sort == TestsSort::FileLine;
+            // `test_row` must align with `r.tests` indices, not with the
+            // rendered order — the selection is still a raw `r.tests` index.
+            test_row.resize(r.tests.len(), 0);
             let mut last_file = String::new();
-            for (i, tc) in r.tests.iter().enumerate() {
-                if tc.file != last_file {
+            for i in &order {
+                let i = *i;
+                let tc = &r.tests[i];
+                if group_by_file && tc.file != last_file {
                     rows.push(Line::from(Span::styled(String::new(), body)));
                     rows.push(Line::from(Span::styled(
                         tc.file.clone(),
@@ -149,7 +159,7 @@ pub fn draw(
                     last_file = tc.file.clone();
                 }
                 let selected = i == tp.selected;
-                test_row.push(rows.len());
+                test_row[i] = rows.len();
                 let (glyph_color, name_style) = match tc.status {
                     TestStatus::Passed => (t.green, body),
                     TestStatus::Failed => (t.red, body.add_modifier(Modifier::BOLD)),
@@ -186,6 +196,14 @@ pub fn draw(
                 if tc.duration_ms > 0 {
                     spans.push(Span::styled(
                         format!("  {} ms", tc.duration_ms),
+                        Style::default().fg(t.comment).bg(row_bg),
+                    ));
+                }
+                // When the file grouping is off (duration sort), show where the
+                // test lives — otherwise the file column is implicit in the header.
+                if !group_by_file {
+                    spans.push(Span::styled(
+                        format!("  {}:{}", tc.file, tc.line),
                         Style::default().fg(t.comment).bg(row_bg),
                     ));
                 }

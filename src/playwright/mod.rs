@@ -348,6 +348,31 @@ fn strip_ansi(s: &str) -> String {
 
 // ── the pane ────────────────────────────────────────────────────────
 
+/// How the tests pane is sorting its rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TestsSort {
+    /// Playwright's natural order (file, then line) — grouped under per-file headers.
+    #[default]
+    FileLine,
+    /// Slowest test first — flat list (file headers dropped). Find the long pole.
+    DurationDesc,
+}
+
+impl TestsSort {
+    pub fn next(self) -> Self {
+        match self {
+            TestsSort::FileLine => TestsSort::DurationDesc,
+            TestsSort::DurationDesc => TestsSort::FileLine,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            TestsSort::FileLine => "file:line",
+            TestsSort::DurationDesc => "slowest ↓",
+        }
+    }
+}
+
 /// The `Pane::Tests` payload.
 pub struct TestsPane {
     pub workspace: PathBuf,
@@ -359,6 +384,8 @@ pub struct TestsPane {
     pub scroll: usize,
     /// Index into `TestRun::tests` of the highlighted row (when `Done`).
     pub selected: usize,
+    /// How rows are ordered in the renderer (`s` to cycle).
+    pub sort: TestsSort,
 }
 
 pub enum TestsState {
@@ -376,7 +403,26 @@ impl TestsPane {
             job_id,
             scroll: 0,
             selected: 0,
+            sort: TestsSort::default(),
         }
+    }
+    /// Indices into `TestRun::tests` in the *current* sort order. Renderers
+    /// walk this rather than the raw `r.tests` so the selection follows.
+    pub fn sorted_indices(&self, r: &TestRun) -> Vec<usize> {
+        let n = r.tests.len();
+        let mut idx: Vec<usize> = (0..n).collect();
+        match self.sort {
+            TestsSort::FileLine => {}
+            TestsSort::DurationDesc => {
+                idx.sort_by(|&a, &b| {
+                    r.tests[b]
+                        .duration_ms
+                        .cmp(&r.tests[a].duration_ms)
+                        .then(a.cmp(&b))
+                });
+            }
+        }
+        idx
     }
     pub fn tab_title(&self) -> String {
         match &self.state {
@@ -456,5 +502,40 @@ mod tests {
         assert!(fail.error.as_deref().unwrap().contains("expect(received)"));
         assert!(!fail.error.as_deref().unwrap().contains('\u{1b}'));
         assert_eq!(run.failed_files(), vec!["login.spec.ts".to_string()]);
+    }
+
+    #[test]
+    fn tests_sort_modes() {
+        let pane = TestsPane::new(PathBuf::from("/"), Vec::new(), 1);
+        let mk = |file: &str, line: u32, dur: u64| TestCase {
+            title: format!("{file}:{line}"),
+            suite_path: String::new(),
+            file: file.into(),
+            line,
+            status: TestStatus::Passed,
+            duration_ms: dur,
+            error: None,
+            trace_path: None,
+        };
+        let run = TestRun {
+            command: String::new(),
+            global_errors: Vec::new(),
+            // a (50 + 200), b (10 + 100) — natural order is file:line.
+            tests: vec![
+                mk("a.spec.ts", 1, 50),
+                mk("a.spec.ts", 2, 200),
+                mk("b.spec.ts", 1, 10),
+                mk("b.spec.ts", 2, 100),
+            ],
+        };
+        // FileLine (default) ⇒ natural order.
+        assert_eq!(pane.sorted_indices(&run), vec![0, 1, 2, 3]);
+        // DurationDesc ⇒ slowest first: 200, 100, 50, 10.
+        let mut pane = pane;
+        pane.sort = TestsSort::DurationDesc;
+        assert_eq!(pane.sorted_indices(&run), vec![1, 3, 0, 2]);
+        // Cycle wraps back.
+        assert_eq!(TestsSort::FileLine.next(), TestsSort::DurationDesc);
+        assert_eq!(TestsSort::DurationDesc.next(), TestsSort::FileLine);
     }
 }

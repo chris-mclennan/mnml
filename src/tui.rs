@@ -430,6 +430,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('a') => app.run_tests_all(),
             KeyCode::Char('f') => app.run_tests_file(),
             KeyCode::Char('h') => app.heal_selected_test(),
+            KeyCode::Char('s') => {
+                if let Some(Pane::Tests(t)) = app.panes.get_mut(i) {
+                    t.sort = t.sort.next();
+                    t.scroll = 0; // sort changed — start from the top
+                }
+            }
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }
