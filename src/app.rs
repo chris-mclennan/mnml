@@ -3404,6 +3404,10 @@ impl App {
                 let q = p.input.clone();
                 self.run_workspace_grep(q);
             }
+            crate::prompt::PromptKind::GrepReplace => {
+                let r = p.input.clone();
+                self.run_grep_replace(r);
+            }
         }
     }
 
@@ -3672,6 +3676,154 @@ impl App {
         if let Some(b) = self.active_editor_mut() {
             b.editor.place_cursor(line as usize, col as usize);
         }
+    }
+
+    /// `find.grep_replace` (the `R` key in a `Pane::Grep`) — prompt for a
+    /// replacement string. The grep pane's query is the seed, but the input
+    /// starts empty so the user can type the replacement without first deleting
+    /// the seed. Requires an active grep pane with at least one hit.
+    pub fn open_grep_replace_prompt(&mut self) {
+        let (query, n) = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Grep(g)) if !g.hits.is_empty() => (g.query.clone(), g.hits.len()),
+            Some(Pane::Grep(_)) => {
+                self.toast("no grep hits to replace");
+                return;
+            }
+            _ => return,
+        };
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::GrepReplace,
+            format!("Replace {n}× \"{query}\" with"),
+        ));
+    }
+
+    /// Replace every hit in the active `Pane::Grep` across every file it
+    /// matched. For each unique file:
+    /// - **Open + clean** ⇒ apply `EditOp::ReplaceRange`s through the buffer
+    ///   (so undo works + LSP `didChange` fires).
+    /// - **Not open** ⇒ read the file from disk, splice in reverse, write back.
+    /// - **Open + dirty** ⇒ skip + toast (refuse to clobber unsaved edits).
+    ///
+    /// The match positions are re-derived from each file's live text via
+    /// `crate::buffer::find_all_ci_ascii` (rather than trusting the grep tool's
+    /// line/col, which might be stale by now). After replacing, the grep query
+    /// is re-run so the pane reflects the new state.
+    pub fn run_grep_replace(&mut self, replacement: String) {
+        // Snapshot the (query, unique-file-paths) from the active grep pane.
+        let (query, files) = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Grep(g)) => {
+                let mut files: Vec<PathBuf> = Vec::new();
+                for h in &g.hits {
+                    if !files.iter().any(|p| p == &h.path) {
+                        files.push(h.path.clone());
+                    }
+                }
+                (g.query.clone(), files)
+            }
+            _ => return,
+        };
+        if query.is_empty() {
+            return;
+        }
+        let mut total_replacements = 0usize;
+        let mut files_changed = 0usize;
+        let mut files_skipped: Vec<String> = Vec::new();
+        let mut io_errors: Vec<String> = Vec::new();
+        for path in &files {
+            // Is this file open as an editor pane? (Take the first such pane.)
+            let open_idx = self.panes.iter().position(
+                |p| matches!(p, Pane::Editor(b) if b.path.as_deref() == Some(path.as_path())),
+            );
+            if let Some(idx) = open_idx {
+                let is_dirty = matches!(self.panes.get(idx), Some(Pane::Editor(b)) if b.dirty);
+                if is_dirty {
+                    files_skipped.push(rel_path(&self.workspace, path));
+                    continue;
+                }
+                let text = match self.panes.get(idx) {
+                    Some(Pane::Editor(b)) => b.editor.text().to_string(),
+                    _ => continue,
+                };
+                let matches = crate::buffer::find_all_ci_ascii(&text, &query);
+                if matches.is_empty() {
+                    continue;
+                }
+                let ops: Vec<crate::edit_op::EditOp> = matches
+                    .iter()
+                    .rev()
+                    .map(|(s, e)| crate::edit_op::EditOp::ReplaceRange {
+                        start: *s,
+                        end: *e,
+                        text: replacement.clone(),
+                    })
+                    .collect();
+                let n = ops.len();
+                let clip = &mut self.clipboard;
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    b.apply_edit_ops(ops, clip, 0);
+                    // Persist the change to disk so the grep re-run reflects
+                    // it (and so the user doesn't have to save N files by hand).
+                    match b.save_to_disk() {
+                        Ok(()) => {}
+                        Err(e) => {
+                            io_errors.push(format!("{}: {e}", rel_path(&self.workspace, path)));
+                            continue;
+                        }
+                    }
+                }
+                // Push the new text through LSP just like a normal save.
+                if let Some(Pane::Editor(b)) = self.panes.get(idx) {
+                    let t = b.editor.text().to_string();
+                    self.lsp.did_change(path, &t);
+                }
+                total_replacements += n;
+                files_changed += 1;
+            } else {
+                // Not open — splice on disk.
+                let text = match std::fs::read_to_string(path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        io_errors.push(format!("{}: {e}", rel_path(&self.workspace, path)));
+                        continue;
+                    }
+                };
+                let matches = crate::buffer::find_all_ci_ascii(&text, &query);
+                if matches.is_empty() {
+                    continue;
+                }
+                let mut out = String::with_capacity(text.len());
+                let mut cursor = 0usize;
+                for (s, e) in &matches {
+                    out.push_str(&text[cursor..*s]);
+                    out.push_str(&replacement);
+                    cursor = *e;
+                }
+                out.push_str(&text[cursor..]);
+                if let Err(e) = std::fs::write(path, &out) {
+                    io_errors.push(format!("{}: {e}", rel_path(&self.workspace, path)));
+                    continue;
+                }
+                total_replacements += matches.len();
+                files_changed += 1;
+            }
+        }
+        // Toast a summary.
+        let mut parts = vec![format!(
+            "replaced {total_replacements} in {files_changed} files"
+        )];
+        if !files_skipped.is_empty() {
+            parts.push(format!(
+                "skipped {} (unsaved): {}",
+                files_skipped.len(),
+                files_skipped.join(", ")
+            ));
+        }
+        if !io_errors.is_empty() {
+            parts.push(format!("{} errored", io_errors.len()));
+        }
+        self.toast(parts.join(" · "));
+        // Refresh the grep pane against the new state.
+        self.rerun_active_grep();
     }
 
     /// `find.clear` (Esc when find is the only active overlay) — drop the matches.
@@ -4921,5 +5073,100 @@ mod tests {
         ));
         let buf = app.active_editor().unwrap();
         assert_eq!(buf.editor.row_col(), (0, 2));
+    }
+
+    #[test]
+    fn grep_replace_writes_open_buffer_and_disk() {
+        // Two files, both contain `foo`. Open one as an editor (clean), leave
+        // the other on disk only. `run_grep_replace("BAR")` should rewrite
+        // both, replacing every match.
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("a.txt"), "foo bar foo").unwrap();
+        fs::write(d.path().join("b.txt"), "say foo loud").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let a = app.workspace.join("a.txt");
+        let b = app.workspace.join("b.txt");
+        app.open_path(&a); // a.txt now open as a clean editor
+
+        // Seed a Pane::Grep with hits for both files (positions don't need to
+        // be real — `run_grep_replace` re-derives matches via find_all_ci_ascii).
+        let mk_hit = |path: &Path, rel: &str| crate::grep_pane::GrepHit {
+            path: path.to_path_buf(),
+            rel: rel.into(),
+            line: 0,
+            col: 0,
+            text: "".into(),
+        };
+        let pane = Pane::Grep(crate::grep_pane::GrepPane::new(
+            "foo".into(),
+            "rg",
+            vec![mk_hit(&a, "a.txt"), mk_hit(&b, "b.txt")],
+        ));
+        app.panes.push(pane);
+        let grep_id = app.panes.len() - 1;
+        // Make the grep pane the active one (so run_grep_replace targets it).
+        app.layout = Layout::Leaf(grep_id);
+        app.active = Some(grep_id);
+
+        app.run_grep_replace("BAR".into());
+
+        // a.txt was open + clean ⇒ the buffer + disk both updated.
+        let a_buf = app
+            .panes
+            .iter()
+            .find_map(|p| match p {
+                Pane::Editor(b) if b.is_at(&a) => Some(b),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(a_buf.editor.text(), "BAR bar BAR");
+        assert!(!a_buf.dirty); // saved through to disk
+        assert_eq!(fs::read_to_string(&a).unwrap(), "BAR bar BAR");
+
+        // b.txt was disk-only ⇒ just the disk got rewritten.
+        assert_eq!(fs::read_to_string(&b).unwrap(), "say BAR loud");
+    }
+
+    #[test]
+    fn grep_replace_skips_dirty_open_buffer() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("a.txt"), "foo").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let a = app.workspace.join("a.txt");
+        app.open_path(&a);
+        // Make the buffer dirty (without changing the matched text).
+        if let Some(Pane::Editor(b)) = app
+            .panes
+            .iter_mut()
+            .find(|p| matches!(p, Pane::Editor(b) if b.is_at(&a)))
+        {
+            b.editor.place_cursor(0, 3);
+            b.apply_edit_ops(
+                vec![crate::edit_op::EditOp::InsertStr("!".into())],
+                &mut Clipboard::new(),
+                0,
+            );
+        }
+
+        let pane = Pane::Grep(crate::grep_pane::GrepPane::new(
+            "foo".into(),
+            "rg",
+            vec![crate::grep_pane::GrepHit {
+                path: a.clone(),
+                rel: "a.txt".into(),
+                line: 0,
+                col: 0,
+                text: "".into(),
+            }],
+        ));
+        app.panes.push(pane);
+        let grep_id = app.panes.len() - 1;
+        app.layout = Layout::Leaf(grep_id);
+        app.active = Some(grep_id);
+
+        app.run_grep_replace("BAR".into());
+
+        // Disk is untouched (the dirty buffer was skipped).
+        assert_eq!(fs::read_to_string(&a).unwrap(), "foo");
     }
 }

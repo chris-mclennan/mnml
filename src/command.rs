@@ -154,10 +154,17 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "find.grep",
-            title: "Grep workspace (rg / git grep) → results picker",
+            title: "Grep workspace (rg / git grep) → results pane",
             group: "find",
             keys: &["ctrl+shift+f"],
             run: |app| app.open_grep_prompt(),
+        },
+        Command {
+            id: "find.grep_replace",
+            title: "Replace every grep hit across every file (active grep pane)",
+            group: "find",
+            keys: &[],
+            run: |app| app.open_grep_replace_prompt(),
         },
         Command {
             id: "find.clear",

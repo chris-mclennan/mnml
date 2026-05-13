@@ -587,7 +587,8 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         return;
     }
     // A workspace-grep results list: ↑↓ select, Enter → jump to the file at
-    // the matched line, r re-runs the same query, Esc → tree.
+    // the matched line, r re-runs the same query, R replaces every hit across
+    // every file, Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::Grep(_))) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => app.move_grep_selection(-1),
@@ -598,6 +599,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::End | KeyCode::Char('G') => app.move_grep_selection(isize::MAX / 2),
             KeyCode::Enter => app.jump_to_selected_grep_hit(),
             KeyCode::Char('r') => app.rerun_active_grep(),
+            KeyCode::Char('R') => app.open_grep_replace_prompt(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }

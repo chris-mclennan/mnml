@@ -135,8 +135,11 @@ char-boundary safe, capped at 2000) into `GrepHit{path,rel,line,col,text}`. Resu
 split below the focused leaf — `src/grep_pane.rs` = `GrepPane{query,used,hits,selected,scroll}`, `src/ui/grep_view.rs`
 renders a header (`N matches · rg: query`) over the hits grouped by per-file `▸ rel  (N)` headers. ↑↓/jk/PgUp/PgDn/g/G
 select, Enter jumps to the file + line (and the pane stays open — "jump and keep the list"), `r` re-runs the same query
-(swapping in the fresh hits, refreshing the header), Esc → tree; wheel moves the selection too. Only one grep pane open
-at a time — a fresh query into an existing pane refills it in place.
+(swapping in the fresh hits, refreshing the header), `R` replaces every hit across every file (`find.grep_replace` →
+`PromptKind::GrepReplace` titled `Replace N× "<query>" with`; per file: if it's open as a clean editor pane apply
+`EditOp::ReplaceRange`s through `apply_edit_ops` + `save_to_disk` + LSP `didChange`, else read+splice+write directly,
+skipping dirty open buffers with a toast), Esc → tree; wheel moves the selection too. Only one grep pane open at a time
+— a fresh query into an existing pane refills it in place.
 **Theme engine** (`src/ui/theme.rs`): a `Theme`
 struct (named UI colours + `base16[16]`) behind an `RwLock`; `theme::cur()` reads it,
 `theme::set(name)` swaps it. Themes are all of NvChad's base46 schemes (~90), converted

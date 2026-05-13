@@ -26,8 +26,12 @@ pub enum PromptKind {
     /// Requires a non-empty find state already on the active buffer.
     Replace,
     /// Accept ⇒ grep the workspace (ripgrep; falls back to `git grep`), open
-    /// the results in a Locations picker.
+    /// the results in a `Pane::Grep`.
     Grep,
+    /// Accept ⇒ replace every hit in the active `Pane::Grep` (across every
+    /// file it matched) with the typed text. ASCII case-insensitive, like the
+    /// in-buffer find/replace.
+    GrepReplace,
 }
 
 #[derive(Debug)]
