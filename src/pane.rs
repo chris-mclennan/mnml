@@ -14,6 +14,7 @@ use crate::git::stage::GitStatusPane;
 use crate::grep_pane::GrepPane;
 use crate::lsp::diagnostics_pane::DiagnosticsPane;
 use crate::playwright::TestsPane;
+use crate::playwright::flaky_pane::FlakyPane;
 use crate::playwright::trace_pane::TracePane;
 use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
@@ -44,6 +45,8 @@ pub enum Pane {
     Tests(TestsPane),
     /// A parsed Playwright `trace.zip` shown as a text timeline.
     Trace(TracePane),
+    /// The flaky-test dashboard — every wobbly test in the workspace's history.
+    Flaky(FlakyPane),
     /// A Chrome the IDE is driving over CDP — a console / nav / eval log.
     Browser(BrowserPane),
     /// A workspace-wide LSP-diagnostics ("Problems") list.
@@ -127,6 +130,7 @@ impl Pane {
             Pane::Ai(a) => a.tab_title(),
             Pane::Tests(t) => t.tab_title(),
             Pane::Trace(t) => t.tab_title(),
+            Pane::Flaky(f) => f.tab_title(),
             Pane::Browser(b) => b.tab_title(),
             Pane::Diagnostics(d) => d.tab_title(),
             Pane::Grep(g) => g.tab_title(),
@@ -146,6 +150,7 @@ impl Pane {
             | Pane::Ai(_)
             | Pane::Tests(_)
             | Pane::Trace(_)
+            | Pane::Flaky(_)
             | Pane::Browser(_)
             | Pane::Diagnostics(_)
             | Pane::Grep(_) => false,

@@ -34,6 +34,26 @@ const KEEP: usize = 10;
 pub struct TestHistory {
     /// `(file\tsuite_path\ttitle)` → most-recent-last queue of outcomes.
     by_test: HashMap<String, Vec<HistOutcome>>,
+    /// Same key as `by_test`, value = the last `tc.line` we recorded — so the
+    /// flaky-dashboard can jump to source without re-running Playwright just
+    /// to discover line numbers. `#[serde(default)]` keeps old test-history
+    /// files (without this field) loadable; tests without a recorded line
+    /// open at the top of their file.
+    #[serde(default)]
+    last_line: HashMap<String, u32>,
+}
+
+/// One row in the flaky-dashboard pane.
+#[derive(Debug, Clone)]
+pub struct WobblyRow {
+    pub file: String,
+    pub suite_path: String,
+    pub title: String,
+    /// Most-recent-last outcomes (use the same `[Pass, Fail, Flaky]` semantics
+    /// the gutter glyph does).
+    pub outcomes: Vec<HistOutcome>,
+    /// 0-based line in `file`, or `0` if we never recorded one.
+    pub line: u32,
 }
 
 impl TestHistory {
@@ -75,13 +95,44 @@ impl TestHistory {
                 TestStatus::Skipped => continue,
             };
             let key = Self::key(&tc.file, &tc.suite_path, &tc.title);
-            let v = self.by_test.entry(key).or_default();
+            let v = self.by_test.entry(key.clone()).or_default();
             v.push(outcome);
             if v.len() > KEEP {
                 let drop_n = v.len() - KEEP;
                 v.drain(..drop_n);
             }
+            self.last_line.insert(key, tc.line);
         }
+    }
+
+    /// Every wobbly test, grouped first by file (alphabetical), then by
+    /// title. Used by the flaky-dashboard pane.
+    pub fn wobbly_tests(&self) -> Vec<WobblyRow> {
+        let mut rows: Vec<WobblyRow> = self
+            .by_test
+            .iter()
+            .filter_map(|(k, outcomes)| {
+                let mut parts = k.splitn(3, '\t');
+                let file = parts.next()?.to_string();
+                let suite_path = parts.next()?.to_string();
+                let title = parts.next()?.to_string();
+                let pass = outcomes.contains(&HistOutcome::Pass);
+                let other = outcomes.iter().any(|o| *o != HistOutcome::Pass);
+                if !(pass && other) {
+                    return None;
+                }
+                let line = self.last_line.get(k).copied().unwrap_or(0);
+                Some(WobblyRow {
+                    file,
+                    suite_path,
+                    title,
+                    outcomes: outcomes.clone(),
+                    line,
+                })
+            })
+            .collect();
+        rows.sort_by(|a, b| a.file.cmp(&b.file).then(a.title.cmp(&b.title)));
+        rows
     }
 
     /// "Wobbly" = at least one pass and at least one non-pass (fail or

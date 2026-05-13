@@ -433,6 +433,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.request_ai_recompose_message(),
         },
         Command {
+            id: "flaky.show",
+            title: "Test: flaky-test dashboard (wobbly tests from history)",
+            group: "test",
+            keys: &[],
+            run: |app| app.open_flaky_pane(),
+        },
+        Command {
             id: "git.checkout",
             title: "Git: checkout a branch (local or remote)",
             group: "git",

@@ -2386,6 +2386,79 @@ impl App {
         }
     }
 
+    // ─── flaky-test dashboard pane (`Pane::Flaky`) ──────────────────
+    /// Build a fresh [`crate::playwright::flaky_pane::FlakyPane`] from the
+    /// current [`crate::playwright::history::TestHistory`].
+    fn build_flaky_pane(&self) -> crate::playwright::flaky_pane::FlakyPane {
+        let ws = self.workspace.clone();
+        let rows = self.test_history.wobbly_tests();
+        crate::playwright::flaky_pane::FlakyPane::build(rows, move |rel| ws.join(rel))
+    }
+
+    /// `flaky.show` — open the flaky-test dashboard (or refocus + refresh
+    /// the one that's already open) in a split below the focused leaf.
+    pub fn open_flaky_pane(&mut self) {
+        if let Some(id) = self.panes.iter().position(|p| matches!(p, Pane::Flaky(_))) {
+            let fresh = self.build_flaky_pane();
+            if let Some(Pane::Flaky(f)) = self.panes.get_mut(id) {
+                f.items = fresh.items;
+                f.clamp();
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::Flaky(self.build_flaky_pane());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// Rebuild the item list of any open flaky panes (called after each test
+    /// run, or on the pane's `r` key).
+    pub fn refresh_flaky_panes(&mut self) {
+        if !self.panes.iter().any(|p| matches!(p, Pane::Flaky(_))) {
+            return;
+        }
+        let fresh = self.build_flaky_pane();
+        for pane in &mut self.panes {
+            if let Pane::Flaky(f) = pane {
+                f.items = fresh.items.clone();
+                f.clamp();
+            }
+        }
+    }
+
+    pub fn move_flaky_selection(&mut self, delta: isize) {
+        if let Some(Pane::Flaky(f)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            f.move_selection(delta);
+        }
+    }
+
+    /// Open the highlighted test's file and place the cursor on its line.
+    pub fn jump_to_selected_flaky(&mut self) {
+        let target = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Flaky(f)) => f.selected_item().map(|it| (it.path.clone(), it.line)),
+            _ => None,
+        };
+        let Some((path, line)) = target else {
+            return;
+        };
+        self.open_path(&path);
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(line as usize, 0);
+        }
+    }
+
     /// Drop `app.panes[removed]` and re-index every higher reference (the layout's
     /// leaves, `active`). Caller must have already detached `removed` from the
     /// layout if it was in a leaf.
@@ -2423,6 +2496,7 @@ impl App {
             | Some(Pane::Browser(_))
             | Some(Pane::Diagnostics(_))
             | Some(Pane::Grep(_))
+            | Some(Pane::Flaky(_))
             | None => None,
         };
         let new_buf = match path {
@@ -2477,7 +2551,8 @@ impl App {
             | Some(Pane::Trace(_))
             | Some(Pane::Browser(_))
             | Some(Pane::Diagnostics(_))
-            | Some(Pane::Grep(_)) => {
+            | Some(Pane::Grep(_))
+            | Some(Pane::Flaky(_)) => {
                 self.toast("not a markdown file");
                 return;
             }
@@ -3415,6 +3490,7 @@ impl App {
         };
         let done: Vec<TestsJobDone> = rx.try_iter().collect();
         let mut toasts: Vec<String> = Vec::new();
+        let mut refresh_flaky = false;
         for (job_id, result) in done {
             let Some(Pane::Tests(t)) = self.panes.iter_mut().find(
                 |p| matches!(p, Pane::Tests(t) if t.job_id == job_id && matches!(t.state, TestsState::Running)),
@@ -3453,6 +3529,8 @@ impl App {
                     self.test_history.record_run(&run);
                     self.test_history.save(&self.workspace);
                     t.state = TestsState::Done(Box::new(run));
+                    // History changed ⇒ any open flaky pane should reflect it.
+                    refresh_flaky = true;
                 }
                 Err(e) => {
                     toasts.push(format!(
@@ -3465,6 +3543,9 @@ impl App {
         }
         for tt in toasts {
             self.toast(tt);
+        }
+        if refresh_flaky {
+            self.refresh_flaky_panes();
         }
     }
 
@@ -5595,7 +5676,8 @@ impl App {
             | Pane::Trace(_)
             | Pane::Browser(_)
             | Pane::Diagnostics(_)
-            | Pane::Grep(_) => (None, None),
+            | Pane::Grep(_)
+            | Pane::Flaky(_) => (None, None),
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -5686,6 +5768,7 @@ impl App {
             Pane::Browser(b) => Some((b.tab_title(), false)),
             Pane::Diagnostics(d) => Some((d.tab_title(), false)),
             Pane::Grep(g) => Some((g.tab_title(), false)),
+            Pane::Flaky(f) => Some((f.tab_title(), false)),
         }
     }
 

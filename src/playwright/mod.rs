@@ -15,6 +15,7 @@
 //! for the JSON at the end; clickable stack frames in a failure; heal-from-trace
 //! (feed a failed trace to `claude -p`); a flaky-test dashboard.
 
+pub mod flaky_pane;
 pub mod history;
 pub mod trace;
 pub mod trace_pane;

@@ -348,8 +348,14 @@ write failures swallowed — UX nicety, not load-bearing). Loaded once in `App::
 at least one non-pass; `src/ui/tests_view.rs` shows a `≋` glyph (purple, bold) next to wobbly test rows + a `≋ N` chip
 in the tally next to the ✓/✗/≈ counts. Skipped runs aren't recorded (no info). A brand-new failing test isn't wobbly
 yet — let it run a few times.
-*Follow-ups (per `.local/PLAN.md`):* wrap long detail lines, the `[feature: private]` DocDB live
-`Pane::TestExecutions` (dev+staging+prod in one panel) + CodeBuild, a flaky-test dashboard.
+**Flaky-test dashboard** — `Pane::Flaky` (`flaky.show` / `<leader>T w`): a workspace-wide list of every wobbly test
+across recent runs. `src/playwright/flaky_pane.rs` = `FlakyPane{items:Vec<FlakyItem{path,rel,title,line,outcomes}>,
+selected,scroll}`; `src/ui/flaky_view.rs` renders a `≋ N wobbly tests` header + per-file group labels with a row per test
+that shows the compact outcome bar (`✓✗~✓✗`, last 10 runs) + the title + `:line`. ↑↓/jk select, PgUp/PgDn/g/G jump,
+Enter jumps to the test in source (line 0 = "we never recorded a line, opens at top"), `r` rebuilds, Esc → tree.
+`TestHistory` now also stores `last_line: HashMap<key, u32>` (`#[serde(default)]` keeps old `test-history.json` files
+loadable) so the dashboard has a line for each test without re-running Playwright; `App::drain_tests_jobs` calls
+`refresh_flaky_panes` after each test run so open flaky panes update live.
 **CDP / browser track — first cut done:** `src/cdp/mod.rs` launches Chrome/Chromium (first of a known list) with
 `--remote-debugging-port=0 --user-data-dir=<ws>/.mnml/chrome-profile <url>`, reads the chosen port off Chrome's
 stderr, hits `http://127.0.0.1:PORT/json` for the first page target's `webSocketDebuggerUrl`, connects via

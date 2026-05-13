@@ -28,6 +28,7 @@ pub mod context_menu;
 pub mod diagnostics_view;
 pub mod diff_view;
 pub mod editor_view;
+pub mod flaky_view;
 pub mod git_graph_view;
 pub mod git_status_view;
 pub mod grep_view;
@@ -249,6 +250,7 @@ fn render_layout(
                 Some(crate::pane::Pane::Trace(_)) => 10,
                 Some(crate::pane::Pane::Browser(_)) => 11,
                 Some(crate::pane::Pane::Grep(_)) => 12,
+                Some(crate::pane::Pane::Flaky(_)) => 13,
                 _ => 0,
             };
             match kind {
@@ -264,6 +266,7 @@ fn render_layout(
                 10 => trace_view::draw(frame, app, *id, area, focused),
                 11 => browser_view::draw(frame, app, *id, area, focused),
                 12 => grep_view::draw(frame, app, *id, area, focused),
+                13 => flaky_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

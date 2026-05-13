@@ -615,6 +615,23 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // The flaky-test dashboard: ↑↓ select, Enter → jump to the test in source,
+    // r refresh (rebuild from the latest history), Esc → tree.
+    if matches!(app.panes.get(i), Some(Pane::Flaky(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.move_flaky_selection(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.move_flaky_selection(1),
+            KeyCode::PageUp => app.move_flaky_selection(-(viewport as isize)),
+            KeyCode::PageDown => app.move_flaky_selection(viewport as isize),
+            KeyCode::Home | KeyCode::Char('g') => app.move_flaky_selection(isize::MIN / 2),
+            KeyCode::End | KeyCode::Char('G') => app.move_flaky_selection(isize::MAX / 2),
+            KeyCode::Enter => app.jump_to_selected_flaky(),
+            KeyCode::Char('r') => app.refresh_flaky_panes(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // A diagnostics ("Problems") list: ↑↓ select, Enter → jump to the location,
     // r refresh, Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::Diagnostics(_))) {
@@ -1286,6 +1303,13 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                         b.scroll.saturating_add(n)
                     };
                 }
+            }
+            Some(Pane::Flaky(f)) => {
+                f.move_selection(if delta < 0 {
+                    -(delta.unsigned_abs() as isize)
+                } else {
+                    delta.unsigned_abs() as isize
+                });
             }
             None => {}
         }
