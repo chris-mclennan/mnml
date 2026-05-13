@@ -11,6 +11,7 @@ use crate::buffer::Buffer;
 use crate::git::diff::Hunk;
 use crate::git::graph::GitGraphPane;
 use crate::git::stage::GitStatusPane;
+use crate::grep_pane::GrepPane;
 use crate::lsp::diagnostics_pane::DiagnosticsPane;
 use crate::playwright::TestsPane;
 use crate::playwright::trace_pane::TracePane;
@@ -47,6 +48,8 @@ pub enum Pane {
     Browser(BrowserPane),
     /// A workspace-wide LSP-diagnostics ("Problems") list.
     Diagnostics(DiagnosticsPane),
+    /// A workspace-grep results list — browsable, jump-and-stay.
+    Grep(GrepPane),
 }
 
 pub struct MdPreview {
@@ -126,6 +129,7 @@ impl Pane {
             Pane::Trace(t) => t.tab_title(),
             Pane::Browser(b) => b.tab_title(),
             Pane::Diagnostics(d) => d.tab_title(),
+            Pane::Grep(g) => g.tab_title(),
         }
     }
 
@@ -143,7 +147,8 @@ impl Pane {
             | Pane::Tests(_)
             | Pane::Trace(_)
             | Pane::Browser(_)
-            | Pane::Diagnostics(_) => false,
+            | Pane::Diagnostics(_)
+            | Pane::Grep(_) => false,
         }
     }
 

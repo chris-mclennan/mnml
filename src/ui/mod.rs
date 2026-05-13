@@ -30,6 +30,7 @@ pub mod diff_view;
 pub mod editor_view;
 pub mod git_graph_view;
 pub mod git_status_view;
+pub mod grep_view;
 pub mod hover;
 pub mod icons;
 pub mod md_preview;
@@ -194,6 +195,7 @@ fn render_layout(
                 Some(crate::pane::Pane::Diagnostics(_)) => 9,
                 Some(crate::pane::Pane::Trace(_)) => 10,
                 Some(crate::pane::Pane::Browser(_)) => 11,
+                Some(crate::pane::Pane::Grep(_)) => 12,
                 _ => 0,
             };
             match kind {
@@ -208,6 +210,7 @@ fn render_layout(
                 9 => diagnostics_view::draw(frame, app, *id, area, focused),
                 10 => trace_view::draw(frame, app, *id, area, focused),
                 11 => browser_view::draw(frame, app, *id, area, focused),
+                12 => grep_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

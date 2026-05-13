@@ -27,6 +27,7 @@ pub mod editor;
 pub mod focus;
 pub mod fuzzy;
 pub mod git;
+pub mod grep_pane;
 pub mod headless;
 pub mod highlight;
 pub mod hover;

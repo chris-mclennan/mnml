@@ -53,6 +53,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Trace(_) => (if nerd { "\u{f0e62}" } else { "⏱" }, theme::cur().teal),
             Pane::Browser(_) => (if nerd { "\u{f059f}" } else { "◉" }, theme::cur().blue),
             Pane::Diagnostics(_) => (if nerd { "\u{f0026}" } else { "⚠" }, theme::cur().red),
+            Pane::Grep(_) => (if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().yellow),
         };
         let badge = if pane.is_dirty() { "●" } else { "×" };
         // ` <icon> <name> <badge> `

@@ -213,44 +213,15 @@ fn byte_to_row_col(text: &str, byte: usize) -> (usize, usize) {
 }
 
 /// Workspace grep — try `rg --vimgrep` first (fast, gitignore-aware), fall back
-/// to `git grep -n --column` if `rg` isn't on PATH. Returns picker-ready items
-/// (each `id = "<abs-path>\t<line>\t<col>"` so the existing `Locations` accept
-/// handler jumps the editor cursor) and the tool name that was used (for the
-/// picker title's "rg: …" / "git grep: …" prefix).
+/// to `git grep -n --column` if `rg` isn't on PATH. Returns parsed hits + which
+/// tool produced them (used for the `Pane::Grep` title's "rg: …" / "git grep: …"
+/// prefix).
 fn grep_workspace(
     workspace: &std::path::Path,
     query: &str,
-) -> (Vec<crate::picker::PickerItem>, &'static str) {
-    use crate::picker::PickerItem;
+) -> (Vec<crate::grep_pane::GrepHit>, &'static str) {
+    use crate::grep_pane::parse_rg_vimgrep;
     use std::process::Command;
-    let parse_rg = |stdout: &str| -> Vec<PickerItem> {
-        let mut out = Vec::new();
-        for line in stdout.lines().take(2000) {
-            // path:line:col:text
-            let mut it = line.splitn(4, ':');
-            let (Some(path), Some(ln), Some(col), Some(text)) =
-                (it.next(), it.next(), it.next(), it.next())
-            else {
-                continue;
-            };
-            let (Ok(ln), Ok(col)) = (ln.parse::<usize>(), col.parse::<usize>()) else {
-                continue;
-            };
-            // 1-based on the wire; Locations stores 0-based.
-            let abs = workspace.join(path);
-            out.push(PickerItem::new(
-                format!(
-                    "{}\t{}\t{}",
-                    abs.display(),
-                    ln.saturating_sub(1),
-                    col.saturating_sub(1)
-                ),
-                format!("{path}:{ln}  {}", text.trim_start()),
-                String::new(),
-            ));
-        }
-        out
-    };
     if let Ok(o) = Command::new("rg")
         .arg("--vimgrep")
         .arg("--no-heading")
@@ -262,7 +233,10 @@ fn grep_workspace(
         && o.status.success()
         && !o.stdout.is_empty()
     {
-        return (parse_rg(&String::from_utf8_lossy(&o.stdout)), "rg");
+        return (
+            parse_rg_vimgrep(&String::from_utf8_lossy(&o.stdout), workspace),
+            "rg",
+        );
     }
     // git grep fallback (works in any repo even without rg installed).
     if let Ok(o) = Command::new("git")
@@ -273,7 +247,10 @@ fn grep_workspace(
         && o.status.success()
         && !o.stdout.is_empty()
     {
-        return (parse_rg(&String::from_utf8_lossy(&o.stdout)), "git grep");
+        return (
+            parse_rg_vimgrep(&String::from_utf8_lossy(&o.stdout), workspace),
+            "git grep",
+        );
     }
     (Vec::new(), "rg")
 }
@@ -1439,6 +1416,7 @@ impl App {
             | Some(Pane::Trace(_))
             | Some(Pane::Browser(_))
             | Some(Pane::Diagnostics(_))
+            | Some(Pane::Grep(_))
             | None => None,
         };
         let new_buf = match path {
@@ -1492,7 +1470,8 @@ impl App {
             | Some(Pane::Tests(_))
             | Some(Pane::Trace(_))
             | Some(Pane::Browser(_))
-            | Some(Pane::Diagnostics(_)) => {
+            | Some(Pane::Diagnostics(_))
+            | Some(Pane::Grep(_)) => {
                 self.toast("not a markdown file");
                 return;
             }
@@ -3622,25 +3601,77 @@ impl App {
     }
 
     /// Run `rg --vimgrep <q> .` in the workspace (falling back to `git grep`),
-    /// parse `path:line:col:text` lines, and open the results in a `Locations`
-    /// picker.
+    /// parse `path:line:col:text` lines, and open the results in a `Pane::Grep`
+    /// (split below the focused leaf). If a grep pane is already open for an
+    /// earlier query, *that* pane is refilled in place — only one grep pane at
+    /// a time.
     pub fn run_workspace_grep(&mut self, q: String) {
         let q = q.trim().to_string();
         if q.is_empty() {
             return;
         }
-        let (out, used) = grep_workspace(&self.workspace, &q);
-        let n = out.len();
-        if out.is_empty() {
+        let (hits, used) = grep_workspace(&self.workspace, &q);
+        if hits.is_empty() {
             self.toast(format!("{used}: no matches for {q:?}"));
             return;
         }
-        let title = format!("{used}: {q}  ({n} matches)");
-        self.open_picker(crate::picker::Picker::new(
-            crate::picker::PickerKind::Locations,
-            title,
-            out,
-        ));
+        // Already showing a grep pane somewhere? Refresh it in place.
+        if let Some(id) = self.panes.iter().position(|p| matches!(p, Pane::Grep(_))) {
+            if let Some(Pane::Grep(g)) = self.panes.get_mut(id) {
+                *g = crate::grep_pane::GrepPane::new(q, used, hits);
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::Grep(crate::grep_pane::GrepPane::new(q, used, hits));
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// Re-run the grep that produced the active `Pane::Grep` (the `r` key).
+    pub fn rerun_active_grep(&mut self) {
+        let q = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Grep(g)) => g.query.clone(),
+            _ => return,
+        };
+        let (hits, used) = grep_workspace(&self.workspace, &q);
+        if let Some(Pane::Grep(g)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            *g = crate::grep_pane::GrepPane::new(q, used, hits);
+        }
+    }
+
+    pub fn move_grep_selection(&mut self, delta: isize) {
+        if let Some(Pane::Grep(g)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            g.move_selection(delta);
+        }
+    }
+
+    /// Open the highlighted grep hit's file and place the cursor there.
+    pub fn jump_to_selected_grep_hit(&mut self) {
+        let target = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Grep(g)) => g
+                .selected_hit()
+                .map(|it| (it.path.clone(), it.line, it.col)),
+            _ => None,
+        };
+        let Some((path, line, col)) = target else {
+            return;
+        };
+        self.open_path(&path);
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(line as usize, col as usize);
+        }
     }
 
     /// `find.clear` (Esc when find is the only active overlay) — drop the matches.
@@ -4141,7 +4172,8 @@ impl App {
             | Pane::Tests(_)
             | Pane::Trace(_)
             | Pane::Browser(_)
-            | Pane::Diagnostics(_) => (None, None),
+            | Pane::Diagnostics(_)
+            | Pane::Grep(_) => (None, None),
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -4231,6 +4263,7 @@ impl App {
             Pane::Trace(t) => Some((t.tab_title(), false)),
             Pane::Browser(b) => Some((b.tab_title(), false)),
             Pane::Diagnostics(d) => Some((d.tab_title(), false)),
+            Pane::Grep(g) => Some((g.tab_title(), false)),
         }
     }
 
@@ -4850,5 +4883,43 @@ mod tests {
         app.open_path(&d.path().join("a.txt"));
         app.save_session_on_quit();
         assert!(!d.path().join(".mnml/session.json").exists());
+    }
+
+    #[test]
+    fn grep_pane_jump_opens_file_and_places_cursor() {
+        // Manually seed a Pane::Grep — the grep tool itself (rg / git grep)
+        // isn't reliably available in test sandboxes, but the rest of the flow
+        // (jump-to-hit) is the part we want to cover end-to-end.
+        let (_d, mut app) = app_with_files();
+        // `app.workspace` is the *canonicalized* tmp dir; the buffer the editor
+        // opens will hold the same canonical form, so compare against it.
+        let abs = app.workspace.join("a.txt");
+        // a.txt is `alpha`; pretend a tool matched at line 0, col 2.
+        let pane = Pane::Grep(crate::grep_pane::GrepPane::new(
+            "alpha".into(),
+            "rg",
+            vec![crate::grep_pane::GrepHit {
+                path: abs.clone(),
+                rel: "a.txt".into(),
+                line: 0,
+                col: 2,
+                text: "alpha".into(),
+            }],
+        ));
+        app.panes.push(pane);
+        let id = app.panes.len() - 1;
+        app.layout = Layout::Leaf(id);
+        app.active = Some(id);
+        app.focus = Focus::Pane;
+
+        app.jump_to_selected_grep_hit();
+
+        // Opening the file added an editor pane and focused it.
+        assert!(matches!(
+            app.active.and_then(|i| app.panes.get(i)),
+            Some(Pane::Editor(b)) if b.is_at(&abs)
+        ));
+        let buf = app.active_editor().unwrap();
+        assert_eq!(buf.editor.row_col(), (0, 2));
     }
 }

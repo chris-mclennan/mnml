@@ -130,8 +130,13 @@ current one (with `t.bg_dark` fg for readability). The find state is recomputed 
 refreshes the find matches + bumps LSP `didChange`), toasts `replaced N`.
 **Workspace grep** — `find.grep` (`Ctrl+Shift+F`) opens a `PromptKind::Grep` prompt (seeded with the selection),
 shells out to `rg --vimgrep --no-heading --smart-case <q> .` (or `git grep -n --column -I -e <q>` if `rg` isn't on
-PATH), parses `path:line:col:text`, and opens the results in the existing `Locations` picker (Enter jumps to the file at
-the matched line). Up to 2000 matches per query.
+PATH); `crate::grep_pane::parse_rg_vimgrep` parses `path:line:col:text` lines (1-based on the wire → 0-based hits,
+char-boundary safe, capped at 2000) into `GrepHit{path,rel,line,col,text}`. Results open as a **`Pane::Grep`** in a
+split below the focused leaf — `src/grep_pane.rs` = `GrepPane{query,used,hits,selected,scroll}`, `src/ui/grep_view.rs`
+renders a header (`N matches · rg: query`) over the hits grouped by per-file `▸ rel  (N)` headers. ↑↓/jk/PgUp/PgDn/g/G
+select, Enter jumps to the file + line (and the pane stays open — "jump and keep the list"), `r` re-runs the same query
+(swapping in the fresh hits, refreshing the header), Esc → tree; wheel moves the selection too. Only one grep pane open
+at a time — a fresh query into an existing pane refills it in place.
 **Theme engine** (`src/ui/theme.rs`): a `Theme`
 struct (named UI colours + `base16[16]`) behind an `RwLock`; `theme::cur()` reads it,
 `theme::set(name)` swaps it. Themes are all of NvChad's base46 schemes (~90), converted
