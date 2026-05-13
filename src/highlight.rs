@@ -59,6 +59,14 @@ const HIGHLIGHT_NAMES: &[&str] = &[
     "string.regexp",
     "string.special",
     "tag",
+    // markdown (block + inline) captures
+    "text",
+    "text.emphasis",
+    "text.literal",
+    "text.reference",
+    "text.strong",
+    "text.title",
+    "text.uri",
     "type",
     "type.builtin",
     "variable",
@@ -83,6 +91,12 @@ fn color_for(idx: usize) -> Color {
         "number" | "boolean" | "constant" | "escape" => theme::cur().base16[0x09],
         "attribute" | "tag" | "label" => theme::cur().base16[0x0a],
         "module" | "namespace" => theme::cur().base16[0x0a],
+        "text" => match name {
+            "text.title" => theme::cur().base16[0x0d],
+            "text.literal" => theme::cur().base16[0x0b],
+            "text.uri" | "text.reference" => theme::cur().base16[0x0c],
+            _ => theme::cur().base16[0x05],
+        },
         "property" => theme::cur().base16[0x08],
         "variable" => match name {
             "variable.builtin" | "variable.parameter" | "variable.member" => {
@@ -105,10 +119,16 @@ pub fn highlight_lines(text: &str, ext: &str) -> Vec<Vec<ColoredSpan>> {
         return out;
     };
     let mut hl = Highlighter::new();
-    let events: Vec<HighlightEvent> = match hl.highlight(cfg, text.as_bytes(), None, |_| None) {
-        Ok(it) => it.filter_map(Result::ok).collect(),
-        Err(_) => return out,
-    };
+    // Resolve injected languages (fenced code blocks in markdown, markdown's own
+    // inline grammar, embedded HTML/CSS/JS, …) so they get highlighted too.
+    // (The closure is load-bearing: passing `config_for_lang` directly would pin
+    // the callback's lifetime to `'static` and force `text` to be `'static` too.)
+    #[allow(clippy::redundant_closure)]
+    let events: Vec<HighlightEvent> =
+        match hl.highlight(cfg, text.as_bytes(), None, |name| config_for_lang(name)) {
+            Ok(it) => it.filter_map(Result::ok).collect(),
+            Err(_) => return out,
+        };
 
     // byte → line index, via the line-start offsets.
     let line_starts: Vec<usize> = std::iter::once(0)
@@ -182,6 +202,41 @@ fn config_for_ext(ext: &str) -> Option<&'static HighlightConfiguration> {
         build_config(ext).map(|c| &*Box::leak(Box::new(c)));
     g.insert(ext.to_string(), built);
     built
+}
+
+/// Resolve an *injection language name* (a code-fence info string like `rust`,
+/// or a literal from an `injections.scm` such as `markdown_inline` / `html`) to
+/// a highlight config — by mapping it onto an extension `build_config` knows.
+fn config_for_lang(name: &str) -> Option<&'static HighlightConfiguration> {
+    let name = name.trim().to_ascii_lowercase();
+    // `markdown_inline` is the inline half of tree-sitter-md (no real extension).
+    if name == "markdown_inline" || name == "markdown-inline" {
+        return config_for_ext("markdown_inline");
+    }
+    let ext = match name.as_str() {
+        "rust" | "rs" => "rs",
+        "javascript" | "js" | "node" => "js",
+        "jsx" => "jsx",
+        "typescript" | "ts" => "ts",
+        "tsx" => "tsx",
+        "python" | "py" => "py",
+        "json" | "jsonc" | "json5" => "json",
+        "go" | "golang" => "go",
+        "toml" => "toml",
+        "css" | "scss" => "css",
+        "bash" | "sh" | "shell" | "shellscript" | "zsh" | "console" => "sh",
+        "html" | "htm" | "xml" => "html",
+        "markdown" | "md" => "md",
+        "c" => "c",
+        "cpp" | "c++" | "cxx" | "cc" => "cpp",
+        "ruby" | "rb" => "rb",
+        "java" => "java",
+        "csharp" | "c#" | "cs" | "c_sharp" => "cs",
+        "lua" => "lua",
+        "yaml" | "yml" => "yaml",
+        _ => return None,
+    };
+    config_for_ext(ext)
 }
 
 fn build_config(ext: &str) -> Option<HighlightConfiguration> {
@@ -264,13 +319,22 @@ fn build_config(ext: &str) -> Option<HighlightConfiguration> {
             "",
             "",
         ),
-        // Markdown's inline grammar lives behind injections, which we don't resolve
-        // yet — so this colors block structure (headings, fences, lists, quotes).
+        // Markdown is two grammars: the block structure (headings/fences/lists/quotes)
+        // and an *inline* grammar (emphasis, inline code, links) injected via
+        // `INJECTION_QUERY_BLOCK` — `config_for_lang("markdown_inline")` resolves to
+        // the arm below. Fenced code blocks inject their own language the same way.
         "md" | "markdown" => (
             tree_sitter_md::LANGUAGE.into(),
             "markdown",
             tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
             tree_sitter_md::INJECTION_QUERY_BLOCK,
+            "",
+        ),
+        "markdown_inline" => (
+            tree_sitter_md::INLINE_LANGUAGE.into(),
+            "markdown_inline",
+            tree_sitter_md::HIGHLIGHT_QUERY_INLINE,
+            tree_sitter_md::INJECTION_QUERY_INLINE,
             "",
         ),
         "c" | "h" => (
@@ -375,6 +439,26 @@ mod tests {
             lines[1].iter().any(|&(s, e, _)| s <= 7 && e >= 8),
             "expected a span over the number: {:?}",
             lines[1]
+        );
+    }
+
+    #[test]
+    fn markdown_injects_fenced_code() {
+        // A ```rust fence's body should be highlighted by the Rust grammar via the
+        // injection callback (the `fn` keyword on line 3); the heading text gets a
+        // `text.title` span.
+        let src = "# Title\n\n```rust\nfn x() {}\n```\n";
+        let lines = highlight_lines(src, "md");
+        assert_eq!(lines.len(), 6);
+        assert!(
+            lines[0].iter().any(|&(s, e, _)| s <= 2 && e >= 4),
+            "expected the heading text to be colored: {:?}",
+            lines[0]
+        );
+        assert!(
+            lines[3].iter().any(|&(s, e, _)| s == 0 && e >= 2),
+            "expected the fenced Rust code to be highlighted: {:?}",
+            lines[3]
         );
     }
 

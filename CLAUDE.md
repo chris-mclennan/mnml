@@ -105,7 +105,9 @@ submenu (`<leader>s …` / `Ctrl+K s …`); click a leaf to focus it, drag a div
 resize it; closing a dirty buffer pops a Save/Discard/Cancel overlay (`src/ui/close_prompt.rs`).
 tree-sitter syntax highlight (`src/highlight.rs`, 19 grammars: rs/js/jsx/ts/tsx/py/json/go/
 toml/css/bash/html/md/c/cpp/rb/java/cs/lua/yaml — `build_config` maps file extensions →
-`(language, highlights, injections, locals)` query set) + indent guides; hybrid relative line numbers (`[ui] relative_line_numbers`,
+`(language, highlights, injections, locals)` query set; `config_for_lang` resolves *injected*
+languages so fenced code blocks in markdown / embedded HTML·CSS·JS get highlighted too, and the
+markdown `text.*` captures are in `HIGHLIGHT_NAMES`) + indent guides; hybrid relative line numbers (`[ui] relative_line_numbers`,
 `:set [no]relativenumber`, `view.toggle_relative_numbers` — cursor line absolute, others = distance).
 **Theme engine** (`src/ui/theme.rs`): a `Theme`
 struct (named UI colours + `base16[16]`) behind an `RwLock`; `theme::cur()` reads it,
@@ -305,7 +307,10 @@ filtered locally after the first reply (no re-request as the prefix grows). Then
 more `.test` coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native launcher
 actions), Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus queued
 polish (editable request-pane field tabs). See `.local/PLAN.md`.
-Highlight follow-ups: more grammars, incremental tree-sitter parsing.
+Highlight follow-ups: more grammars; incremental tree-sitter parsing (needs dropping
+`tree-sitter-highlight` for raw `Parser`/`Query` so an old `Tree` can be reused — not bounded);
+markdown's `markdown_inline` injection (the callback fires but emphasis/inline-code spans don't
+land — some `tree-sitter-md` split-grammar quirk; fenced code blocks DO highlight).
 
 ## Not set up yet (could add later)
 
