@@ -101,6 +101,8 @@ to the exact stored `(row, col)` (`Prefix::MarkJumpExact` → `AppCommand::JumpT
 jumps `open_path` the marked file first when it isn't the active buffer. Toasts on set / jump / miss;
 jumps push the current position onto the nav-back stack so `Alt+Left` returns. `tests/e2e/marks.test`
 covers the chord flow.
+**Vim Visual `o`** — swap which end of the selection the cursor sits on (so you can extend the *other*
+side without redoing the selection). New `EditOp::SwapAnchorCursor`.
 **Vim `gv`** — re-select the last visual selection. The editor remembers `(anchor, cursor)` whenever a
 selection is closed (`SelectClear`, `YankSelection`, `DeleteSelection`); `gv` emits new
 `EditOp::RestoreLastSelection` to put it back and the handler flips into Visual mode.

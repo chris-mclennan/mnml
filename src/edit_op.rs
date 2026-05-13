@@ -57,6 +57,9 @@ pub enum EditOp {
     /// vim `gv` — restore the editor's last remembered selection (anchor +
     /// cursor). No-op when no selection has been made yet.
     RestoreLastSelection,
+    /// vim visual `o` — swap the anchor and cursor of the current selection
+    /// (move the "active end" to the other side). No-op without a selection.
+    SwapAnchorCursor,
     /// Multi-cursor — stubbed; a no-op until that "later" lands.
     AddCursorBelow,
     AddCursorAbove,
@@ -158,6 +161,7 @@ impl EditOp {
             | SelectInnerBracket(_)
             | SelectAroundBracket(_)
             | RestoreLastSelection
+            | SwapAnchorCursor
             | AddCursorBelow
             | AddCursorAbove
             | YankLine

@@ -700,6 +700,10 @@ impl VimInputHandler {
                 self.enter_normal();
                 InputResult::Ops(vec![YankSelection, SelectClear])
             }
+            KeyCode::Char('o') => {
+                // Swap which end of the selection the cursor sits on.
+                InputResult::Ops(vec![SwapAnchorCursor])
+            }
             KeyCode::Char('>') => {
                 self.enter_normal();
                 InputResult::Ops(vec![Indent, SelectClear])

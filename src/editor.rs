@@ -786,6 +786,13 @@ impl Editor {
                     self.cursor = hi;
                 }
             }
+            SwapAnchorCursor => {
+                if let Some(a) = self.anchor {
+                    self.anchor = Some(self.cursor);
+                    self.cursor = a;
+                    self.goal_col = self.col_at_byte(self.cursor);
+                }
+            }
             SelectAroundBracket(open) => {
                 let close = match_close_for(open);
                 if let Some((o, c)) = self.enclosing_bracket_pair(open, close) {
