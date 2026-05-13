@@ -102,6 +102,10 @@ pub enum LspEvent {
     /// children; depth = nesting level). Both the hierarchical `DocumentSymbol[]`
     /// reply shape and the legacy flat `SymbolInformation[]` shape feed in here.
     DocumentSymbols(Vec<DocumentSymbol>),
+    /// Result of a `workspace/symbol` request — `(name, kind, path, line,
+    /// character)` per hit across the whole project. Multiple servers may
+    /// each contribute; events are emitted per server reply (the app merges).
+    WorkspaceSymbols(Vec<WorkspaceSymbol>),
     /// A server-side message worth surfacing as a toast.
     Message(String),
 }
@@ -118,6 +122,20 @@ pub struct DocumentSymbol {
     pub line: u32,
     pub character: u32,
     pub depth: u32,
+}
+
+/// A single entry in a `workspace/symbol` reply — like [`DocumentSymbol`] but
+/// project-wide (and so includes the file path). `container` is the owning
+/// scope (`"impl Foo"`, `"mod inner"`, …) when the server supplies one — used
+/// as a dim detail in the picker.
+#[derive(Debug, Clone)]
+pub struct WorkspaceSymbol {
+    pub name: String,
+    pub kind: &'static str,
+    pub path: PathBuf,
+    pub line: u32,
+    pub character: u32,
+    pub container: Option<String>,
 }
 
 /// Flattened `WorkspaceEdit` — `(path, [(range, new_text), …])` per affected
@@ -296,6 +314,12 @@ impl LspManager {
         }
     }
 
+    /// True when no language server is currently running. Used as a guard
+    /// before workspace-wide requests (`workspace/symbol`).
+    pub fn is_empty(&self) -> bool {
+        self.clients.is_empty()
+    }
+
     fn server_for_ext(&self, ext: &str) -> Option<ServerConfig> {
         self.servers
             .iter()
@@ -408,6 +432,17 @@ impl LspManager {
                 c.document_symbol(path);
                 sent = true;
             }
+        }
+        sent
+    }
+    /// Send `workspace/symbol` to **every** running server (each may host its
+    /// own project; merging on the app side). Reply arrives per server as
+    /// [`LspEvent::WorkspaceSymbols`].
+    pub fn workspace_symbol(&mut self, query: &str) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            c.workspace_symbol(query);
+            sent = true;
         }
         sent
     }

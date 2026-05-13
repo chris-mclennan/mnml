@@ -532,6 +532,13 @@ parses both reply shapes (`DocumentSymbol[]` hierarchical + legacy `SymbolInform
 LSP `SymbolKind` enum → short label like "fn"/"struct"/"class"); opens a `PickerKind::Symbols` fuzzy
 picker with the symbol list indented by `depth`, kind as the dim detail; accept ⇒ jump the active editor
 to the symbol's `(line, char)`.
+**Workspace symbols** — `lsp.workspace_symbols` (`<leader>l S`, capital): prompt
+(`PromptKind::LspWorkspaceSymbol`) for a query, fire `workspace/symbol` against every running language
+server. Each reply lands as `LspEvent::WorkspaceSymbols(Vec<WorkspaceSymbol{name,kind,path,line,character,
+container}>)` and merges into `App.pending_workspace_symbols`; the picker (re-)opens after every reply so
+hits appear as servers respond. `client::parse_workspace_symbols` handles both reply shapes — legacy
+`SymbolInformation[]` (full `location.range`) and the newer lazy `WorkspaceSymbol[]` (uri only, defaults to
+(0, 0)). Reuses `PickerKind::Locations` for the accept path.
 **Outline pane** — `outline.show` (`<leader>l o`): a persistent sibling to the symbol picker. Opens a
 horizontal split next to the active editor as `Pane::Outline(OutlinePane{target,items,selected,scroll})`,
 captures the editor's path as the target, and asks the LSP for symbols. The reply routes to the open

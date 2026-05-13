@@ -54,6 +54,9 @@ pub enum PromptKind {
     /// Accept ⇒ `git worktree remove <held path>` *iff* the typed text
     /// matches the worktree's basename exactly (confirmation guard).
     GitWorktreeRemove,
+    /// Accept ⇒ `workspace/symbol` with the typed query; the reply lands as
+    /// `LspEvent::WorkspaceSymbols` and opens a `Locations` picker.
+    LspWorkspaceSymbol,
 }
 
 #[derive(Debug)]

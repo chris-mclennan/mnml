@@ -172,6 +172,7 @@ pub fn root() -> &'static Leader {
                             ('a', cmd("lsp.code_action", "code actions")),
                             ('c', cmd("lsp.completion", "complete at cursor")),
                             ('s', cmd("lsp.symbols", "symbols in this file")),
+                            ('S', cmd("lsp.workspace_symbols", "workspace symbols…")),
                             ('o', cmd("outline.show", "outline pane")),
                             ('d', cmd("lsp.goto_definition", "go to definition")),
                             ('h', cmd("lsp.hover", "hover docs")),

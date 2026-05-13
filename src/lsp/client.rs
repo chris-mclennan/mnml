@@ -220,6 +220,13 @@ impl LspClient {
         );
     }
 
+    /// `workspace/symbol` — reply is `SymbolInformation[]` (or the newer
+    /// `WorkspaceSymbol[]`). Empty `query` means "all symbols" — servers
+    /// typically cap the result count.
+    pub fn workspace_symbol(&mut self, query: &str) {
+        self.request("workspace/symbol", json!({ "query": query }));
+    }
+
     /// `textDocument/codeAction` — reply is `(Command | CodeAction)[]`.
     pub fn code_action(&mut self, path: &Path, range: Range, diagnostics: &[Diagnostic]) {
         let diags_json: Vec<serde_json::Value> = diagnostics
@@ -476,6 +483,12 @@ fn handle_message(
             "textDocument/documentSymbol" => {
                 let symbols = parse_document_symbols(result);
                 let _ = tx.send(LspEvent::DocumentSymbols(symbols));
+            }
+            "workspace/symbol" => {
+                let symbols = parse_workspace_symbols(result);
+                if !symbols.is_empty() {
+                    let _ = tx.send(LspEvent::WorkspaceSymbols(symbols));
+                }
             }
             _ => {}
         }
@@ -740,6 +753,58 @@ fn walk_doc_symbol(v: &serde_json::Value, depth: u32, out: &mut Vec<DocumentSymb
     }
 }
 
+/// Parse a `workspace/symbol` reply — `SymbolInformation[]` or (in newer LSP)
+/// `WorkspaceSymbol[]`. Both shapes carry `name`, `kind`, and a `location`
+/// (either eager `{ uri, range }` or lazy `{ uri }`). Lazy locations land at
+/// (0, 0). `containerName` becomes a dim picker detail.
+fn parse_workspace_symbols(result: &serde_json::Value) -> Vec<crate::lsp::WorkspaceSymbol> {
+    let Some(arr) = result.as_array() else {
+        return Vec::new();
+    };
+    let mut out: Vec<crate::lsp::WorkspaceSymbol> = Vec::new();
+    for v in arr {
+        let Some(name) = v.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        let kind = symbol_kind_label(v.get("kind").and_then(|k| k.as_u64()).unwrap_or(0));
+        let container = v
+            .get("containerName")
+            .and_then(|c| c.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        // location is either { uri, range } (SymbolInformation) or a bare uri
+        // wrapped in { uri } (lazy WorkspaceSymbol). Try both.
+        let loc = v.get("location");
+        let uri = loc
+            .and_then(|l| l.get("uri"))
+            .and_then(|u| u.as_str())
+            .or_else(|| v.get("uri").and_then(|u| u.as_str()));
+        let Some(uri) = uri else { continue };
+        let Some(path) = uri_to_path(uri) else {
+            continue;
+        };
+        let (line, character) = loc
+            .and_then(|l| l.get("range"))
+            .and_then(|r| r.get("start"))
+            .and_then(|s| {
+                Some((
+                    s.get("line")?.as_u64()? as u32,
+                    s.get("character")?.as_u64()? as u32,
+                ))
+            })
+            .unwrap_or((0, 0));
+        out.push(crate::lsp::WorkspaceSymbol {
+            name: name.to_string(),
+            kind,
+            path,
+            line,
+            character,
+            container,
+        });
+    }
+    out
+}
+
 fn parse_symbol_information(v: &serde_json::Value) -> Option<DocumentSymbol> {
     let name = v.get("name").and_then(|n| n.as_str())?;
     let kind = symbol_kind_label(v.get("kind").and_then(|k| k.as_u64()).unwrap_or(0));
@@ -963,6 +1028,36 @@ mod tests {
         // null / empty.
         assert!(parse_document_symbols(&json!(null)).is_empty());
         assert!(parse_document_symbols(&json!([])).is_empty());
+    }
+
+    #[test]
+    fn parse_workspace_symbols_handles_both_shapes() {
+        // Legacy SymbolInformation[] (with full location).
+        let r = json!([
+            {"name": "foo", "kind": 12, // 12 == function
+             "containerName": "mod_a",
+             "location": {
+                "uri": "file:///proj/src/lib.rs",
+                "range": {"start": {"line": 10, "character": 4},
+                          "end":   {"line": 10, "character": 7}}
+             }},
+            // Newer WorkspaceSymbol — uri at the top level, range omitted.
+            {"name": "Bar", "kind": 5, "location": {"uri": "file:///proj/src/types.rs"}}
+        ]);
+        let got = parse_workspace_symbols(&r);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].name, "foo");
+        assert_eq!(got[0].kind, "fn");
+        assert_eq!(got[0].line, 10);
+        assert_eq!(got[0].character, 4);
+        assert_eq!(got[0].container.as_deref(), Some("mod_a"));
+        assert_eq!(got[1].name, "Bar");
+        assert_eq!(got[1].kind, "class");
+        assert_eq!((got[1].line, got[1].character), (0, 0));
+        assert!(got[1].container.is_none());
+
+        assert!(parse_workspace_symbols(&json!(null)).is_empty());
+        assert!(parse_workspace_symbols(&json!([])).is_empty());
     }
 
     #[test]

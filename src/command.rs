@@ -552,6 +552,14 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_symbols(),
         },
         Command {
+            id: "lsp.workspace_symbols",
+            title: "LSP: workspace symbols — search across the project",
+            group: "lsp",
+            // No global default key — `Ctrl+T` is `term.shell`. Use `<leader>l S`.
+            keys: &[],
+            run: |app| app.lsp_workspace_symbols(),
+        },
+        Command {
             id: "outline.show",
             title: "LSP: outline pane (symbols sidebar for this file)",
             group: "lsp",

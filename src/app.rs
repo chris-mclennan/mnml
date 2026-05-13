@@ -696,6 +696,14 @@ pub struct App {
     /// into this list. Populated by [`Self::snippet_pick`], consumed by
     /// [`Self::picker_accept`].
     pending_snippets: Vec<crate::snippets::Snippet>,
+    /// Hits accumulated from one or more `workspace/symbol` replies for the
+    /// most recent query — multiple servers may each contribute. Cleared on
+    /// every new query in [`Self::run_workspace_symbol_query`]; consumed by
+    /// [`Self::apply_workspace_symbols`].
+    pending_workspace_symbols: Vec<crate::lsp::WorkspaceSymbol>,
+    /// The query string for the in-flight workspace-symbol run (used in the
+    /// picker title). Cleared with the stash.
+    pending_workspace_symbol_query: Option<String>,
     /// Sticky toggle for `find.find`'s regex mode. New find states inherit
     /// it; `find.toggle_regex` flips it AND updates any open find state on
     /// the active buffer.
@@ -831,6 +839,8 @@ impl App {
             pending_code_action_path: None,
             pending_outline: false,
             pending_snippets: Vec::new(),
+            pending_workspace_symbols: Vec::new(),
+            pending_workspace_symbol_query: None,
             find_regex_default: false,
             pending_branch_source: None,
             pending_delete_branch: None,
@@ -1996,6 +2006,65 @@ impl App {
         }
     }
 
+    /// `lsp.workspace_symbols` — prompt for a query, then fire
+    /// `workspace/symbol` against every running language server. Replies
+    /// (`LspEvent::WorkspaceSymbols`) land async and feed
+    /// [`Self::apply_workspace_symbols`] which routes the hits to a
+    /// `PickerKind::Locations` picker.
+    pub fn lsp_workspace_symbols(&mut self) {
+        if self.lsp.is_empty() {
+            self.toast("no language server running");
+            return;
+        }
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::LspWorkspaceSymbol,
+            "Workspace symbols (query)",
+        ));
+    }
+
+    /// Fire `workspace/symbol` after the prompt is accepted. Resets the picker
+    /// stash so partial replies from previous queries don't bleed in.
+    pub fn run_workspace_symbol_query(&mut self, query: &str) {
+        self.pending_workspace_symbols.clear();
+        self.pending_workspace_symbol_query = Some(query.to_string());
+        if !self.lsp.workspace_symbol(query) {
+            self.toast("no language server (workspace symbols)");
+        }
+    }
+
+    /// Apply a `workspace/symbol` reply: merge hits into a Locations picker.
+    /// Multiple servers may each reply — we collect them in a stash and
+    /// (re-)open the picker after every reply so the user sees results as
+    /// they arrive.
+    fn apply_workspace_symbols(&mut self, syms: Vec<crate::lsp::WorkspaceSymbol>) {
+        if syms.is_empty() {
+            return;
+        }
+        self.pending_workspace_symbols.extend(syms);
+        let stash = self.pending_workspace_symbols.clone();
+        use crate::picker::PickerItem;
+        let items: Vec<PickerItem> = stash
+            .iter()
+            .map(|s| {
+                let rel = rel_path(&self.workspace, &s.path);
+                let detail = match &s.container {
+                    Some(c) if !c.is_empty() => format!("{}  {}", s.kind, c),
+                    _ => s.kind.to_string(),
+                };
+                PickerItem::new(
+                    format!("{}\t{}\t{}", s.path.display(), s.line, s.character),
+                    format!("{}  {}:{}", s.name, rel, s.line + 1),
+                    detail,
+                )
+            })
+            .collect();
+        let title = match &self.pending_workspace_symbol_query {
+            Some(q) if !q.is_empty() => format!("Workspace symbols ({})  '{q}'", items.len()),
+            _ => format!("Workspace symbols ({})", items.len()),
+        };
+        self.open_picker(Picker::new(PickerKind::Locations, title, items));
+    }
+
     /// `outline.show` — open (or refocus) a persistent symbol outline for the
     /// active editor. Fires `documentSymbol`; the reply lands async and
     /// populates the outline pane (instead of opening a picker — the
@@ -2465,6 +2534,7 @@ impl App {
                     self.open_symbols_picker(symbols);
                 }
             }
+            LspEvent::WorkspaceSymbols(syms) => self.apply_workspace_symbols(syms),
             LspEvent::Message(m) => self.toast(m),
         }
     }
@@ -5047,6 +5117,10 @@ impl App {
             }
             crate::prompt::PromptKind::GitWorktreeRemove => {
                 self.confirm_worktree_remove(p.input.clone());
+            }
+            crate::prompt::PromptKind::LspWorkspaceSymbol => {
+                let q = p.input.clone();
+                self.run_workspace_symbol_query(&q);
             }
         }
     }
