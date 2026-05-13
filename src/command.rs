@@ -216,6 +216,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.save_all(),
         },
         Command {
+            id: "picker.recent",
+            title: "Recent files",
+            group: "picker",
+            keys: &["ctrl+r"],
+            run: |app| app.open_recent_files_picker(),
+        },
+        Command {
             id: "picker.files",
             title: "Open file…",
             group: "go",

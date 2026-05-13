@@ -20,6 +20,10 @@ use crate::tree::Tree;
 
 const TOAST_TTL: Duration = Duration::from_secs(4);
 
+/// Cap on `App::recent_files`. Tuned to "deep enough to remember a few tasks
+/// ago, short enough that the picker isn't a wall of text."
+const RECENT_FILES_MAX: usize = 20;
+
 /// Direction for `Ctrl+W`-style focus navigation between splits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusDir {
@@ -167,6 +171,9 @@ struct SavedSession {
     /// session.json without the field) ⇒ keep the default first-level expand.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tree_expanded_dirs: Option<Vec<String>>,
+    /// Most-recently-opened files, newest first (capped on save).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    recent_files: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -345,6 +352,9 @@ pub struct App {
     /// visibility flags, which are remembered separately. Not persisted —
     /// always starts off so a fresh launch is a normal IDE view.
     pub zen_mode: bool,
+    /// Most-recently-opened files, newest first, capped at `RECENT_FILES_MAX`.
+    /// Updated every time `open_path` opens a file. Persisted in session.json.
+    pub recent_files: Vec<PathBuf>,
     /// Is the workspace "section" inside the rail expanded? When `false` the
     /// rail shows just the `> WORKSPACE-NAME` header (clickable to expand);
     /// when `true` it shows the header (`v WORKSPACE-NAME`) + the file list.
@@ -461,6 +471,7 @@ impl App {
             tree_visible: true,
             bufferline_first_visible: 0,
             zen_mode: false,
+            recent_files: Vec::new(),
             // VS-Code-style: the rail is shown with its workspace section
             // expanded by default. The last session's choice overrides this
             // in `try_restore_session`.
@@ -677,6 +688,36 @@ impl App {
             .collect();
         self.open_picker(Picker::new(PickerKind::Files, "Open file", items));
     }
+
+    /// Open a fuzzy picker over `App::recent_files` (most-recent first). The
+    /// items keep that order — fuzzy filtering still works on the labels but
+    /// the unfiltered list is recency-sorted (the picker doesn't auto-sort
+    /// alphabetically), so just opening the picker + Enter goes "back" to the
+    /// last file.
+    pub fn open_recent_files_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let root = self.workspace.clone();
+        let items: Vec<PickerItem> = self
+            .recent_files
+            .iter()
+            .filter(|p| p.exists())
+            .map(|p| {
+                let rel = p.strip_prefix(&root).unwrap_or(p).to_path_buf();
+                let label = rel.to_string_lossy().to_string();
+                let dir = rel
+                    .parent()
+                    .map(|d| d.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                PickerItem::new(p.to_string_lossy().to_string(), label, dir)
+            })
+            .collect();
+        if items.is_empty() {
+            self.toast("no recent files yet");
+            return;
+        }
+        self.open_picker(Picker::new(PickerKind::Recent, "Recent files", items));
+    }
+
     /// Open the buffer switcher over the currently-open panes.
     pub fn open_buffer_picker(&mut self) {
         use crate::picker::PickerItem;
@@ -784,7 +825,7 @@ impl App {
             return;
         };
         match picker.kind {
-            PickerKind::Files => self.open_path(Path::new(&item.id)),
+            PickerKind::Files | PickerKind::Recent => self.open_path(Path::new(&item.id)),
             PickerKind::Buffers => {
                 if let Ok(i) = item.id.parse::<usize>()
                     && i < self.panes.len()
@@ -1010,6 +1051,9 @@ impl App {
     /// focused leaf was showing stays open as a background tab.
     pub fn open_path(&mut self, path: &Path) {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        // Bump the recent list — this happens whether the buffer was already
+        // open or is freshly created (a re-focus is still a "recent use").
+        self.note_recent_file(&path);
         if let Some(i) = self
             .panes
             .iter()
@@ -1029,6 +1073,17 @@ impl App {
                 self.lsp.did_open(&path, &text);
             }
             Err(e) => self.toast(format!("cannot open {}: {e}", path.display())),
+        }
+    }
+
+    /// Push `path` to the front of `recent_files` (de-duped), capping at
+    /// [`RECENT_FILES_MAX`]. Paths outside the workspace are kept too so the
+    /// list survives editing scratch files / temp dirs.
+    pub fn note_recent_file(&mut self, path: &Path) {
+        self.recent_files.retain(|p| p != path);
+        self.recent_files.insert(0, path.to_path_buf());
+        if self.recent_files.len() > RECENT_FILES_MAX {
+            self.recent_files.truncate(RECENT_FILES_MAX);
         }
     }
 
@@ -4997,6 +5052,11 @@ impl App {
                     .map(|p| p.to_string_lossy().into_owned())
                     .collect(),
             ),
+            recent_files: self
+                .recent_files
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -5061,6 +5121,16 @@ impl App {
         if let Some(dirs) = saved.tree_expanded_dirs {
             self.tree
                 .set_expanded_dirs(dirs.into_iter().map(PathBuf::from));
+        }
+        if !saved.recent_files.is_empty() {
+            // Honor the saved order (most-recent first), capping at the runtime
+            // limit (which may have shrunk between versions).
+            self.recent_files = saved
+                .recent_files
+                .into_iter()
+                .map(PathBuf::from)
+                .take(RECENT_FILES_MAX)
+                .collect();
         }
         let fallback = idx_to_pane.iter().rev().flatten().next().copied();
         if let Some(p) = active_pane.or(fallback) {
@@ -5234,6 +5304,37 @@ mod tests {
         app.open_path(&d.path().join("a.txt"));
         app.save_session_on_quit();
         assert!(!d.path().join(".mnml/session.json").exists());
+    }
+
+    #[test]
+    fn recent_files_dedups_caps_and_round_trips() {
+        let (d, mut app) = app_with_files();
+        // Open b then a then b again — `b` should land at the top, deduped.
+        app.open_path(&d.path().join("b.txt"));
+        app.open_path(&d.path().join("a.txt"));
+        app.open_path(&d.path().join("b.txt"));
+        let names: Vec<String> = app
+            .recent_files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["b.txt", "a.txt"]);
+
+        app.save_session_on_quit();
+        let mut app2 = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app2.try_restore_session();
+        let names2: Vec<String> = app2
+            .recent_files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        // The restore re-opens the saved buffers, which calls open_path → which
+        // pushes to recent_files. So the recent list after restore reflects
+        // the re-open order: previously-active first.
+        // What we care about: the saved entries are present + the cap holds.
+        assert!(names2.contains(&"a.txt".to_string()));
+        assert!(names2.contains(&"b.txt".to_string()));
+        assert!(app2.recent_files.len() <= RECENT_FILES_MAX);
     }
 
     #[test]

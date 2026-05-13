@@ -25,6 +25,9 @@ pub enum PickerKind {
     /// `id` = `"<abs-path>\t<line>\t<col>"` (0-based). Accept ⇒ open + jump there.
     /// Used for LSP references (and any future "list of source locations").
     Locations,
+    /// `id` = an absolute filesystem path. Accept ⇒ open it. Same as `Files`
+    /// at accept time; separate kind keeps the title + ordering distinct.
+    Recent,
 }
 
 #[derive(Debug, Clone)]
