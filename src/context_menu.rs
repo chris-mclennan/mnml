@@ -16,6 +16,8 @@ pub enum MenuAction {
     OpenInSplit(PathBuf),
     /// `open -R <path>` (macOS Finder reveal); a no-op elsewhere.
     RevealInFinder(PathBuf),
+    /// Hand `path` to the OS's default app — `open` / `xdg-open` / `start`.
+    OpenExternally(PathBuf),
     /// Copy `text` (a workspace-relative path) to the clipboard.
     CopyPath(String),
     /// Run a registered command by id (e.g. `tree.refresh`).

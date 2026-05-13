@@ -378,6 +378,7 @@ impl App {
         let items = if is_dir {
             vec![
                 MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
+                MenuItem::new("Open externally", MenuAction::OpenExternally(path.clone())),
                 MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
                 MenuItem::new("Refresh tree", MenuAction::Command("tree.refresh")),
             ]
@@ -386,6 +387,7 @@ impl App {
                 MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
                 MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
                 MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
+                MenuItem::new("Open externally", MenuAction::OpenExternally(path.clone())),
                 MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
             ]
         };
@@ -452,6 +454,7 @@ impl App {
                 // macOS; harmless no-op (an Err we ignore) elsewhere.
                 let _ = std::process::Command::new("open").arg("-R").arg(&p).spawn();
             }
+            OpenExternally(p) => open_path_external(&p),
             CopyPath(text) => {
                 self.clipboard.set(text.clone(), false);
                 self.toast(format!("copied {text}"));
