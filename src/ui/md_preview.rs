@@ -1,8 +1,9 @@
 //! The rendered-markdown preview pane (`Pane::MdPreview`). A line-oriented
 //! renderer: headings, lists, fenced code blocks, blockquotes, horizontal rules
 //! get block-level styling; inline `**bold**` / `*italic*` / `` `code` `` /
-//! `[label](url)` are rendered as styled spans. No wrapping yet — long lines
-//! clip. Read-only; scrolls.
+//! `[label](url)` are rendered as styled spans. Long lines are word-wrapped to
+//! the pane width ([`wrap_lines`], with a hanging indent for lists/quotes).
+//! Read-only; scrolls.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -31,12 +32,6 @@ pub fn draw(
     let Some(Pane::MdPreview(p)) = app.panes.get_mut(pane_id) else {
         return None;
     };
-    let lines = render_markdown(&p.source);
-    let h = area.height as usize;
-    let max_scroll = lines.len().saturating_sub(h.min(lines.len()));
-    p.scroll = p.scroll.min(max_scroll);
-    let scroll = p.scroll;
-
     // A one-cell left margin so the text isn't flush against the divider.
     let text_area = Rect {
         x: area.x + 1,
@@ -44,6 +39,12 @@ pub fn draw(
         width: area.width.saturating_sub(1),
         height: area.height,
     };
+    let lines = wrap_lines(render_markdown(&p.source), text_area.width as usize);
+    let h = area.height as usize;
+    let max_scroll = lines.len().saturating_sub(h.min(lines.len()));
+    p.scroll = p.scroll.min(max_scroll);
+    let scroll = p.scroll;
+
     let view: Vec<Line> = lines.into_iter().skip(scroll).take(h).collect();
     frame.render_widget(
         Paragraph::new(view).style(Style::default().bg(bg)),
@@ -269,6 +270,93 @@ pub fn render_markdown(src: &str) -> Vec<Line<'static>> {
     out
 }
 
+/// Word-wrap each rendered line to `width` columns, preserving span styles.
+/// Continuation rows are indented to match the original line's leading
+/// whitespace (so list items / blockquotes stay visually aligned, capped at
+/// half the width). A word longer than a row is hard-split. `width < 4` (or a
+/// line that already fits) is returned unchanged.
+pub fn wrap_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    if width < 4 {
+        return lines;
+    }
+    let mut out: Vec<Line<'static>> = Vec::with_capacity(lines.len());
+    for line in lines {
+        let chars: Vec<(char, Style)> = line
+            .spans
+            .iter()
+            .flat_map(|s| {
+                let st = s.style;
+                s.content.chars().map(move |c| (c, st))
+            })
+            .collect();
+        if chars.len() <= width {
+            out.push(line);
+            continue;
+        }
+        let lead = chars.iter().take_while(|(c, _)| *c == ' ').count();
+        let hang = lead.min(width / 2);
+        let lead_style = chars.first().map(|(_, s)| *s).unwrap_or_default();
+
+        let mut i = 0usize;
+        let mut first = true;
+        while i < chars.len() {
+            let avail = (if first {
+                width
+            } else {
+                width.saturating_sub(hang)
+            })
+            .max(1);
+            let remaining = chars.len() - i;
+            let take = if remaining <= avail {
+                remaining
+            } else {
+                match chars[i..i + avail].iter().rposition(|(c, _)| *c == ' ') {
+                    Some(p) if p > 0 => p, // wrap before that space (consumed below)
+                    _ => avail,            // no break point → hard split
+                }
+            };
+            let mut row: Vec<(char, Style)> = Vec::with_capacity(take + hang);
+            if !first {
+                row.extend(std::iter::repeat_n((' ', lead_style), hang));
+            }
+            row.extend_from_slice(&chars[i..i + take]);
+            i += take;
+            // Drop a single space sitting at the wrap point.
+            if i < chars.len() && chars[i].0 == ' ' && take < remaining {
+                i += 1;
+            }
+            while matches!(row.last(), Some((' ', _))) {
+                row.pop();
+            }
+            out.push(coalesce_chars(row));
+            first = false;
+        }
+    }
+    out
+}
+
+/// Collapse a `(char, style)` run into a [`Line`] of minimal same-style spans.
+fn coalesce_chars(chars: Vec<(char, Style)>) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut buf = String::new();
+    let mut cur: Option<Style> = None;
+    for (c, st) in chars {
+        if cur == Some(st) {
+            buf.push(c);
+        } else {
+            if let Some(s) = cur {
+                spans.push(Span::styled(std::mem::take(&mut buf), s));
+            }
+            buf.push(c);
+            cur = Some(st);
+        }
+    }
+    if let Some(s) = cur {
+        spans.push(Span::styled(buf, s));
+    }
+    Line::from(spans)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +387,42 @@ mod tests {
                 .iter()
                 .any(|s| s.content == "docs" && s.style.add_modifier.contains(Modifier::UNDERLINED))
         );
+    }
+
+    #[test]
+    fn wrap_lines_wraps_and_hangs() {
+        let st = Style::default();
+        // 3 leading spaces → hanging indent on continuations.
+        let src = Line::from(Span::styled("   alpha beta gamma delta", st));
+        let wrapped = wrap_lines(vec![src], 12);
+        let texts: Vec<String> = wrapped
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        assert!(texts.len() >= 2, "expected a wrap, got {texts:?}");
+        assert_eq!(texts[0], "   alpha", "first row keeps the indent");
+        for t in &texts {
+            assert!(t.chars().count() <= 12, "row over width: {t:?}");
+        }
+        assert!(
+            texts[1..].iter().all(|t| t.starts_with("   ")),
+            "continuations hang-indented: {texts:?}"
+        );
+        // A single short line is untouched.
+        let short = Line::from(Span::styled("hi", st));
+        assert_eq!(wrap_lines(vec![short.clone()], 12).len(), 1);
+    }
+
+    #[test]
+    fn wrap_lines_hard_splits_long_words() {
+        let st = Style::default();
+        let src = Line::from(Span::styled("abcdefghijklmnop", st));
+        let wrapped = wrap_lines(vec![src], 6);
+        assert!(wrapped.len() >= 3);
+        for l in &wrapped {
+            let n: usize = l.spans.iter().map(|s| s.content.chars().count()).sum();
+            assert!(n <= 6);
+        }
     }
 
     #[test]

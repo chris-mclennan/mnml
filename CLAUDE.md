@@ -115,8 +115,10 @@ kept hardcoded as the seed/fallback).
 `[ui] theme = "…"` at launch, `theme.pick` command / `:set theme=…` at runtime
 (re-highlights open buffers). Markdown preview — `Pane::MdPreview` (`src/ui/md_preview.rs`,
 a block-level renderer: headings/lists/fenced code/blockquotes/hrules styled, inline
-markers unwrapped); `markdown.preview` command (`<leader>m`) opens a rendered, read-only,
-scrollable view in a split next to the source, refreshed when the source is saved.
+markers unwrapped, long lines word-wrapped to the pane width via `md_preview::wrap_lines`
+[hanging indent for lists/quotes; also used by `ai_view`]); `markdown.preview` command
+(`<leader>m`) opens a rendered, read-only, scrollable view in a split next to the source,
+refreshed when the source is saved.
 Git: branch + change counts in the statusline + tree tint (P0); **gutter line-signs** —
 `src/git/diff.rs` parses `git diff HEAD --unified=0` into per-file added/modified/removed
 line marks (kept in `GitStatus`'s ~3s-cached `Snapshot.line_changes`), drawn as a coloured
@@ -296,7 +298,7 @@ full-text doc sync, char-offset columns, `initialize` not awaited before `didOpe
 filtered locally after the first reply (no re-request as the prefix grows). Then: CDP,
 more `.test` coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native launcher
 actions), Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus queued
-polish (line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.
+polish (editable request-pane field tabs). See `.local/PLAN.md`.
 Highlight follow-ups: more grammars, incremental tree-sitter parsing.
 
 ## Not set up yet (could add later)

@@ -87,6 +87,7 @@ pub fn draw(
         }
     }
 
+    let rows = md_preview::wrap_lines(rows, area.width as usize);
     let h = area.height as usize;
     let max_scroll = rows.len().saturating_sub(h.min(rows.len()));
     ai.scroll = ai.scroll.min(max_scroll);
