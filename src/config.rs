@@ -58,6 +58,9 @@ pub struct UiConfig {
     pub theme: String,
     pub ascii_icons: bool,
     pub tree_width: u16,
+    /// Hybrid relative line numbers — the cursor line shows its absolute number,
+    /// every other line the distance from the cursor. `:set relativenumber`.
+    pub relative_line_numbers: bool,
 }
 
 impl Default for Config {
@@ -71,6 +74,7 @@ impl Default for Config {
                 theme: "onedark".to_string(),
                 ascii_icons: false,
                 tree_width: 30,
+                relative_line_numbers: false,
             },
             keys: BTreeMap::new(),
             lsp: BTreeMap::new(),
@@ -125,6 +129,7 @@ struct RawUi {
     theme: Option<String>,
     ascii_icons: Option<bool>,
     tree_width: Option<u16>,
+    relative_line_numbers: Option<bool>,
 }
 
 impl Config {
@@ -167,6 +172,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.tree_width {
             self.ui.tree_width = v.clamp(10, 80);
+        }
+        if let Some(v) = raw.ui.relative_line_numbers {
+            self.ui.relative_line_numbers = v;
         }
         for (k, v) in raw.keys {
             self.keys.entry(k).or_default().extend(v);

@@ -31,6 +31,7 @@ pub fn draw_pane(
     );
 
     let tab_w = app.config.editor.tab_width.max(1);
+    let relnum = app.config.ui.relative_line_numbers;
     // Git gutter signs for this file (added/modified/removed lines), from the
     // ~3s-cached `git diff HEAD`. `app.git` / `app.panes` / `app.rects` are
     // disjoint fields, so this borrow coexists with the `&mut Buffer` below.
@@ -117,6 +118,8 @@ pub fn draw_pane(
                 Some(bl) => format!("{} ", bl.label(num_w)),
                 None => format!("{} ", " ".repeat(num_w)),
             }
+        } else if relnum && !is_cur {
+            format!("{:>num_w$} ", line_no.abs_diff(cur_row))
         } else {
             format!("{:>num_w$} ", line_no + 1)
         };

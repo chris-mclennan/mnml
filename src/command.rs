@@ -118,6 +118,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.tree_visible = !app.tree_visible,
         },
         Command {
+            id: "view.toggle_relative_numbers",
+            title: "Toggle relative line numbers",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_relative_line_numbers(),
+        },
+        Command {
             id: "focus.cycle",
             title: "Cycle focus (tree ⇄ editor)",
             group: "view",

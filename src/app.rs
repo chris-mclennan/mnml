@@ -2956,6 +2956,20 @@ impl App {
         self.set_input_style(next);
     }
 
+    /// Turn hybrid relative line numbers on/off (`:set [no]relativenumber`,
+    /// `view.toggle_relative_numbers`).
+    pub fn set_relative_line_numbers(&mut self, on: bool) {
+        self.config.ui.relative_line_numbers = on;
+        self.toast(if on {
+            "relative line numbers: on"
+        } else {
+            "relative line numbers: off"
+        });
+    }
+    pub fn toggle_relative_line_numbers(&mut self) {
+        self.set_relative_line_numbers(!self.config.ui.relative_line_numbers);
+    }
+
     /// Interpret a vim `:`-line (without the leading `:`). Anything we don't
     /// recognise is bridged to a registered command if one matches, else toasted.
     pub fn run_ex_command(&mut self, line: &str) {
@@ -3025,11 +3039,18 @@ impl App {
                 }
             }
             "set" => {
-                // `:set input=vim|standard` · `:set theme=onedark|gruvbox|catppuccin`
+                // `:set input=vim|standard` · `:set theme=…` · `:set [no]relativenumber`
+                let opt = rest.trim();
                 if let Some(v) = rest.strip_prefix("input=") {
                     self.set_input_style(v.trim());
                 } else if let Some(v) = rest.strip_prefix("theme=") {
                     self.set_theme(v.trim());
+                } else if matches!(opt, "relativenumber" | "rnu") {
+                    self.set_relative_line_numbers(true);
+                } else if matches!(opt, "norelativenumber" | "nornu") {
+                    self.set_relative_line_numbers(false);
+                } else if matches!(opt, "relativenumber!" | "rnu!" | "invrelativenumber") {
+                    self.set_relative_line_numbers(!self.config.ui.relative_line_numbers);
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }

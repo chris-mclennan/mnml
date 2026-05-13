@@ -104,7 +104,9 @@ allowed (bufferline shows all), `App.active` = focused pane = uniquely the focus
 submenu (`<leader>s …` / `Ctrl+K s …`); click a leaf to focus it, drag a divider to
 resize it; closing a dirty buffer pops a Save/Discard/Cancel overlay (`src/ui/close_prompt.rs`).
 tree-sitter syntax highlight (`src/highlight.rs`, 12 grammars: rs/js/jsx/ts/tsx/py/json/go/
-toml/css/bash/html/md) + indent guides. **Theme engine** (`src/ui/theme.rs`): a `Theme`
+toml/css/bash/html/md) + indent guides; hybrid relative line numbers (`[ui] relative_line_numbers`,
+`:set [no]relativenumber`, `view.toggle_relative_numbers` — cursor line absolute, others = distance).
+**Theme engine** (`src/ui/theme.rs`): a `Theme`
 struct (named UI colours + `base16[16]`) behind an `RwLock`; `theme::cur()` reads it,
 `theme::set(name)` swaps it. Themes are all of NvChad's base46 schemes (~90), converted
 to `themes/*.toml` (`[base_30]` + `[base_16]` colour tables), enumerated by `build.rs` →
@@ -287,7 +289,7 @@ before `didOpen`. Then: as-you-type completion popup (LSP follow-up), CDP,
 more `.test` coverage, the `private` Cargo feature (DocDB `TestExecutions` + CodeBuild + native launcher
 actions), Git GUI phase 4 (branch rail UI, commit-with-Codex, recompose-with-AI, multi-repo); plus queued
 polish (line-wrapped markdown preview, editable request-pane field tabs). See `.local/PLAN.md`.
-Highlight follow-ups: more grammars, incremental tree-sitter parsing, relative line numbers.
+Highlight follow-ups: more grammars, incremental tree-sitter parsing.
 
 ## Not set up yet (could add later)
 
