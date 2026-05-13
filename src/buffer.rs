@@ -110,6 +110,9 @@ pub struct Buffer {
     pub last_edited: Option<Instant>,
     /// `Some` when an in-buffer find is active (matches recomputed on every edit).
     pub find: Option<FindState>,
+    /// Strip trailing whitespace from each line before writing. Honored by
+    /// [`Self::save_to_disk`] + [`Self::save_as`]. Read from config at open.
+    pub trim_trailing_ws_on_save: bool,
 }
 
 impl Buffer {
@@ -137,6 +140,7 @@ impl Buffer {
             diagnostics: Vec::new(),
             last_edited: None,
             find: None,
+            trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
         };
         b.refresh_highlights();
         Ok(b)
@@ -165,6 +169,7 @@ impl Buffer {
             diagnostics: Vec::new(),
             last_edited: None,
             find: None,
+            trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
         }
     }
 
@@ -206,24 +211,77 @@ impl Buffer {
     }
 
     pub fn save_to_disk(&mut self) -> std::io::Result<()> {
-        if let Some(path) = &self.path {
-            std::fs::write(path, self.editor.text())?;
-            self.saved_text = self.editor.text().to_string();
-            self.dirty = false;
-            self.last_edited = None;
+        if self.path.is_none() {
+            return Ok(());
         }
+        if self.trim_trailing_ws_on_save {
+            self.apply_trim_trailing_ws();
+        }
+        let path = self.path.clone().unwrap();
+        std::fs::write(&path, self.editor.text())?;
+        self.saved_text = self.editor.text().to_string();
+        self.dirty = false;
+        self.last_edited = None;
         Ok(())
     }
 
     /// `:w <path>` — write the current text to `path`, then repoint the buffer
     /// at it (subsequent `:w` writes there). Errors propagate as `Err`.
     pub fn save_as(&mut self, path: PathBuf) -> std::io::Result<()> {
+        if self.trim_trailing_ws_on_save {
+            self.apply_trim_trailing_ws();
+        }
         std::fs::write(&path, self.editor.text())?;
         self.path = Some(path);
         self.saved_text = self.editor.text().to_string();
         self.dirty = false;
         self.last_edited = None;
         Ok(())
+    }
+
+    /// Strip trailing space/tab from every line in the buffer (called from the
+    /// save path when `[editor] trim_trailing_ws_on_save = true`). Preserves
+    /// the trailing newline, clamps the cursor onto the new end-of-line if it
+    /// was sitting in trimmed whitespace, and refreshes syntax highlights.
+    /// No-op when nothing needs trimming.
+    fn apply_trim_trailing_ws(&mut self) {
+        let original = self.editor.text();
+        let mut out = String::with_capacity(original.len());
+        let mut changed = false;
+        let trailing_nl = original.ends_with('\n');
+        let lines: Vec<&str> = if trailing_nl {
+            // Skip the final empty "line after the last newline" so we don't
+            // re-add a newline below.
+            let mut v: Vec<&str> = original.split('\n').collect();
+            v.pop();
+            v
+        } else {
+            original.split('\n').collect()
+        };
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_end_matches([' ', '\t']);
+            if trimmed.len() != line.len() {
+                changed = true;
+            }
+            out.push_str(trimmed);
+            if i + 1 < lines.len() || trailing_nl {
+                out.push('\n');
+            }
+        }
+        if !changed {
+            return;
+        }
+        let (row, col) = self.editor.row_col();
+        let end = self.editor.text().len();
+        let ops = vec![crate::edit_op::EditOp::ReplaceRange {
+            start: 0,
+            end,
+            text: out,
+        }];
+        self.apply_edit_ops(ops, &mut crate::clipboard::Clipboard::new(), 0);
+        // The replace landed the cursor at the end of the new text; put it
+        // back, clamped to the (possibly-shortened) line.
+        self.editor.place_cursor(row, col);
     }
 
     pub fn editing_mode(&self) -> EditingMode {
@@ -408,5 +466,33 @@ mod tests {
         f.recompute(""); // no matches → current cleared
         assert!(f.matches.is_empty());
         assert!(f.current.is_none());
+    }
+
+    #[test]
+    fn trim_trailing_ws_on_save_strips_and_preserves_cursor() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("x.txt");
+        std::fs::write(&path, "  hi   \n  there\t\nlast  ").unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.trim_trailing_ws_on_save = true;
+        let mut b = Buffer::open(&path, &cfg).unwrap();
+        b.editor.place_cursor(0, 4); // on `hi` (col 4 is inside the trailing ws)
+        b.save_to_disk().unwrap();
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        // Each line's trailing space/tab gone; final no-newline line trimmed too.
+        assert_eq!(on_disk, "  hi\n  there\nlast");
+        // Cursor was at col 4 (in the trimmed region) — clamp to new line end.
+        assert_eq!(b.editor.row_col(), (0, 4));
+    }
+
+    #[test]
+    fn trim_trailing_ws_off_leaves_file_alone() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("x.txt");
+        std::fs::write(&path, "hi   \n").unwrap();
+        let cfg = Config::default(); // trim_trailing_ws_on_save = false
+        let mut b = Buffer::open(&path, &cfg).unwrap();
+        b.save_to_disk().unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hi   \n");
     }
 }

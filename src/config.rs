@@ -54,6 +54,10 @@ pub struct EditorConfig {
     pub tab_width: usize,
     /// Auto-save a dirty buffer this many seconds after its last edit. `0` ⇒ off.
     pub autosave_secs: u64,
+    /// When true, `Buffer::save_to_disk` strips trailing whitespace from each
+    /// line before writing. Off by default (a non-destructive default —
+    /// trailing-ws diff noise can be useful on someone else's repo).
+    pub trim_trailing_ws_on_save: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +84,7 @@ impl Default for Config {
                 input_style: "standard".to_string(),
                 tab_width: 4,
                 autosave_secs: 0,
+                trim_trailing_ws_on_save: false,
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),
@@ -142,6 +147,7 @@ struct RawEditor {
     input_style: Option<String>,
     tab_width: Option<usize>,
     autosave_secs: Option<u64>,
+    trim_trailing_ws_on_save: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -186,6 +192,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.autosave_secs {
             self.editor.autosave_secs = v;
+        }
+        if let Some(v) = raw.editor.trim_trailing_ws_on_save {
+            self.editor.trim_trailing_ws_on_save = v;
         }
         if let Some(v) = raw.ui.theme {
             self.ui.theme = v;
