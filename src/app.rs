@@ -33,6 +33,9 @@ const FILE_CURSORS_MAX: usize = 200;
 /// shallow enough that the old end is never load-bearing.
 const NAV_STACK_MAX: usize = 50;
 
+/// Cap on recent find queries — newer entries push older ones off.
+const FIND_HISTORY_MAX: usize = 50;
+
 /// One entry on a navigation stack — a file + a `(row, col)` so we can jump
 /// back even if the buffer's text has shifted since (the precise byte offset
 /// would be stale; row/col is a more forgiving anchor).
@@ -747,6 +750,13 @@ pub struct App {
     /// Cursor position when the Find prompt opened — kept around in case
     /// future incremental UX wants to bring the cursor back on cancel.
     pub find_preview_cursor: usize,
+    /// Recently accepted find queries, oldest first. Up/Down arrows on
+    /// the Find prompt cycle through. Capped at `FIND_HISTORY_MAX`.
+    pub find_history: Vec<String>,
+    /// Index into [`Self::find_history`] for the current Up/Down position,
+    /// or `find_history.len()` for the live (typed) input — same shape as
+    /// most shells.
+    pub find_history_cursor: usize,
     /// Branch / ref to branch off of when the NewBranch prompt's accept lands.
     /// `None` ⇒ branch from HEAD (the bare `git.new_branch` command); `Some` ⇒
     /// branch from this ref (the git-rail's "New branch from here…" menu).
@@ -885,6 +895,8 @@ impl App {
             find_regex_default: false,
             find_preview_snapshot: None,
             find_preview_cursor: 0,
+            find_history: Vec::new(),
+            find_history_cursor: 0,
             pending_branch_source: None,
             pending_delete_branch: None,
             pending_worktree_remove: None,
@@ -5345,11 +5357,48 @@ impl App {
         // restores it (we replace it live as the user types).
         self.find_preview_snapshot = Some(b.find.clone());
         self.find_preview_cursor = b.editor.cursor();
+        // History cursor parks past the newest entry — Up walks back, Down
+        // walks forward toward the live input.
+        self.find_history_cursor = self.find_history.len();
         self.prompt = Some(crate::prompt::Prompt::seeded(
             crate::prompt::PromptKind::Find,
             "Find",
             seed,
         ));
+    }
+
+    /// Replace the Find prompt's input with the previous history entry
+    /// (Up arrow on the prompt). No-op when there's no older entry.
+    pub fn find_history_prev(&mut self) {
+        if self.find_history_cursor == 0 || self.find_history.is_empty() {
+            return;
+        }
+        self.find_history_cursor -= 1;
+        let q = self.find_history[self.find_history_cursor].clone();
+        if let Some(p) = self.prompt.as_mut() {
+            p.input = q.clone();
+            p.cursor = p.input.len();
+        }
+        self.update_live_find_preview(q);
+    }
+
+    /// Down arrow on the Find prompt — newer entry, or back to an empty
+    /// live input when past the newest.
+    pub fn find_history_next(&mut self) {
+        if self.find_history_cursor >= self.find_history.len() {
+            return;
+        }
+        self.find_history_cursor += 1;
+        let q = if self.find_history_cursor >= self.find_history.len() {
+            String::new()
+        } else {
+            self.find_history[self.find_history_cursor].clone()
+        };
+        if let Some(p) = self.prompt.as_mut() {
+            p.input = q.clone();
+            p.cursor = p.input.len();
+        }
+        self.update_live_find_preview(q);
     }
 
     /// Update the active editor's find state to reflect the in-flight find
@@ -5404,6 +5453,17 @@ impl App {
     /// Set the active editor's find state to `query` and jump to the nearest
     /// match at-or-after the cursor (wraps).
     pub fn accept_find(&mut self, query: String) {
+        // Remember the query in history (de-duped against the most recent
+        // entry, capped at FIND_HISTORY_MAX). Done first so even queries
+        // that miss are recallable via Up.
+        if !query.is_empty() && self.find_history.last() != Some(&query) {
+            self.find_history.push(query.clone());
+            if self.find_history.len() > FIND_HISTORY_MAX {
+                let drop = self.find_history.len() - FIND_HISTORY_MAX;
+                self.find_history.drain(..drop);
+            }
+        }
+        self.find_history_cursor = self.find_history.len();
         let regex_default = self.find_regex_default;
         let Some(cur) = self.active else { return };
         let Some(Pane::Editor(b)) = self.panes.get_mut(cur) else {

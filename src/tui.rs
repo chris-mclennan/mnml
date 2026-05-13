@@ -311,6 +311,15 @@ fn handle_prompt_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let Some(p) = app.prompt.as_mut() else { return };
     let was_find = matches!(p.kind, crate::prompt::PromptKind::Find);
+    // Up/Down on the Find prompt cycle through the find-history (shell-style).
+    if was_find && matches!(key.code, KeyCode::Up | KeyCode::Down) {
+        match key.code {
+            KeyCode::Up => app.find_history_prev(),
+            KeyCode::Down => app.find_history_next(),
+            _ => {}
+        }
+        return;
+    }
     match key.code {
         KeyCode::Esc => {
             app.prompt_cancel();
