@@ -5285,6 +5285,19 @@ impl App {
         self.set_relative_line_numbers(!self.config.ui.relative_line_numbers);
     }
 
+    /// Toggle visible whitespace markers (`:set list` / `:set nolist`).
+    pub fn set_show_whitespace(&mut self, on: bool) {
+        self.config.ui.show_whitespace = on;
+        self.toast(if on {
+            "whitespace: on"
+        } else {
+            "whitespace: off"
+        });
+    }
+    pub fn toggle_show_whitespace(&mut self) {
+        self.set_show_whitespace(!self.config.ui.show_whitespace);
+    }
+
     /// Interpret a vim `:`-line (without the leading `:`). Anything we don't
     /// recognise is bridged to a registered command if one matches, else toasted.
     pub fn run_ex_command(&mut self, line: &str) {
@@ -5374,6 +5387,12 @@ impl App {
                     self.set_relative_line_numbers(false);
                 } else if matches!(opt, "relativenumber!" | "rnu!" | "invrelativenumber") {
                     self.set_relative_line_numbers(!self.config.ui.relative_line_numbers);
+                } else if matches!(opt, "list") {
+                    self.set_show_whitespace(true);
+                } else if matches!(opt, "nolist") {
+                    self.set_show_whitespace(false);
+                } else if matches!(opt, "list!" | "invlist") {
+                    self.set_show_whitespace(!self.config.ui.show_whitespace);
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }

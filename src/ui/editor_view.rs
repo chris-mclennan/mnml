@@ -59,6 +59,7 @@ pub fn draw_pane(
 
     let tab_w = app.config.editor.tab_width.max(1);
     let relnum = app.config.ui.relative_line_numbers;
+    let show_ws = app.config.ui.show_whitespace;
     // Git gutter signs for this file (added/modified/removed lines), from the
     // ~3s-cached `git diff HEAD`. `app.git` / `app.panes` / `app.rects` are
     // disjoint fields, so this borrow coexists with the `&mut Buffer` below.
@@ -271,6 +272,10 @@ pub fn draw_pane(
                 let raw_ch = chars[c];
                 if raw_ch == ' ' && has_content && c >= tab_w && c % tab_w == 0 && c < indent_cols {
                     ('│', guide_fg)
+                } else if show_ws && raw_ch == ' ' {
+                    ('·', guide_fg)
+                } else if show_ws && raw_ch == '\t' {
+                    ('→', guide_fg)
                 } else {
                     (
                         raw_ch,

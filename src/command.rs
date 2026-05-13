@@ -139,6 +139,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_relative_line_numbers(),
         },
         Command {
+            id: "view.toggle_whitespace",
+            title: "Toggle visible whitespace markers (· / →)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_show_whitespace(),
+        },
+        Command {
             id: "find.find",
             title: "Find in buffer",
             group: "find",
