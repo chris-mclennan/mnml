@@ -209,6 +209,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.bracket_match_jump(),
         },
         Command {
+            id: "editor.open_at_cursor",
+            title: "Open path under cursor (supports `:line:col`)",
+            group: "editor",
+            keys: &["ctrl+shift+o"],
+            run: |app| app.open_path_at_cursor(),
+        },
+        Command {
             id: "file.new",
             title: "New file… (workspace-relative path)",
             group: "file",

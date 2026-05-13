@@ -307,6 +307,64 @@ fn grep_workspace(
     (Vec::new(), "rg")
 }
 
+/// Byte range `[s, e)` of the path-like token centered on `byte` in `text`.
+/// "Path-like" is a permissive class: alphanumerics + `/`, `\`, `.`, `_`, `-`,
+/// `:`, `~`. Stops at whitespace and other separators. Returns `None` if the
+/// cursor isn't sitting on a path-like char.
+fn path_token_around(text: &str, byte: usize) -> Option<(usize, usize)> {
+    fn is_path_ch(c: char) -> bool {
+        c.is_alphanumeric() || matches!(c, '/' | '\\' | '.' | '_' | '-' | ':' | '~')
+    }
+    let bytes = text.as_bytes();
+    if byte >= text.len() {
+        return None;
+    }
+    if !text[byte..].chars().next().is_some_and(is_path_ch) {
+        return None;
+    }
+    let mut s = byte;
+    while s > 0 {
+        let prev = text[..s].chars().next_back().unwrap();
+        if !is_path_ch(prev) {
+            break;
+        }
+        s -= prev.len_utf8();
+    }
+    let mut e = byte;
+    while e < bytes.len() {
+        let nx = text[e..].chars().next().unwrap();
+        if !is_path_ch(nx) {
+            break;
+        }
+        e += nx.len_utf8();
+    }
+    Some((s, e))
+}
+
+/// Parse `path[:line[:col]]` — the trailing pair is recognised only when both
+/// parts are numbers (otherwise `:` is part of the path). Returns `(path,
+/// line, col)`; defaults col to 1 when only `:line` is present.
+fn parse_path_with_position(token: &str) -> Option<(&str, usize, usize)> {
+    // Split right-to-left: try `path:N:M` first, then `path:N`.
+    if let Some(i) = token.rfind(':') {
+        let (head, tail) = token.split_at(i);
+        let tail = &tail[1..]; // drop the `:`
+        if let Ok(maybe_col) = tail.parse::<usize>()
+            && let Some(j) = head.rfind(':')
+        {
+            let (head2, mid) = head.split_at(j);
+            let mid = &mid[1..];
+            if let Ok(line) = mid.parse::<usize>() {
+                return Some((head2, line, maybe_col));
+            }
+        }
+        if let Ok(line) = tail.parse::<usize>() {
+            return Some((head, line, 1));
+        }
+    }
+    None
+}
+
 /// Hand `path` to the OS's default app — `open <path>` on macOS, `xdg-open` on
 /// Linux, `cmd /C start` on Windows. Best-effort: errors are swallowed (so a
 /// headless / sandboxed env where none of those are available is fine).
@@ -4416,6 +4474,54 @@ impl App {
         self.rerun_active_grep();
     }
 
+    /// `editor.open_at_cursor` (`Ctrl+Shift+O` / vim `gf`) — pull the
+    /// "path-like" token under the cursor (e.g. `src/foo.rs:42:7`), resolve
+    /// relative to the workspace, open + jump. Toasts when nothing path-like
+    /// is under the cursor or the path doesn't exist.
+    pub fn open_path_at_cursor(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let text = b.editor.text();
+        let cursor = b.editor.cursor();
+        let Some((s, e)) = path_token_around(text, cursor) else {
+            self.toast("no path under cursor");
+            return;
+        };
+        let token = &text[s..e];
+        // Strip trailing punctuation that often clings to a copied path
+        // (commas, periods, parens, quotes).
+        let token = token.trim_end_matches([',', '.', ')', ']', '\'', '"', ';', ':']);
+        let (path_str, line_col): (&str, Option<(usize, usize)>) =
+            match parse_path_with_position(token) {
+                Some((p, l, c)) => (p, Some((l, c))),
+                None => (token, None),
+            };
+        let path = std::path::Path::new(path_str);
+        let abs = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.workspace.join(path)
+        };
+        if !abs.exists() {
+            self.toast(format!("no such path: {path_str}"));
+            return;
+        }
+        if abs.is_dir() {
+            // We can't open a dir as a buffer; just toast it as a hint.
+            self.toast(format!("(directory) {}", rel_path(&self.workspace, &abs)));
+            return;
+        }
+        self.open_path(&abs);
+        if let Some((line, col)) = line_col
+            && let Some(b) = self.active_editor_mut()
+        {
+            b.editor
+                .place_cursor(line.saturating_sub(1), col.saturating_sub(1));
+        }
+    }
+
     /// `editor.bracket_match` (`Ctrl+]`) — when the cursor sits on a bracket
     /// (`()` / `[]` / `{}`), jump to its match. Toasts when there's none.
     pub fn bracket_match_jump(&mut self) {
@@ -5957,6 +6063,55 @@ mod tests {
         assert!(names2.contains(&"a.txt".to_string()));
         assert!(names2.contains(&"b.txt".to_string()));
         assert!(app2.recent_files.len() <= RECENT_FILES_MAX);
+    }
+
+    #[test]
+    fn path_token_extraction() {
+        // Cursor anywhere inside the token should yield the full span.
+        let s = "see src/app.rs:42:7 for details";
+        let i = s.find('p').unwrap();
+        let (a, b) = path_token_around(s, i).unwrap();
+        assert_eq!(&s[a..b], "src/app.rs:42:7");
+        // Cursor on whitespace → None.
+        assert!(path_token_around(s, s.find(' ').unwrap()).is_none());
+    }
+
+    #[test]
+    fn path_with_position_parsing() {
+        assert_eq!(
+            parse_path_with_position("src/app.rs:42:7"),
+            Some(("src/app.rs", 42, 7))
+        );
+        assert_eq!(
+            parse_path_with_position("src/app.rs:42"),
+            Some(("src/app.rs", 42, 1))
+        );
+        // No trailing numbers ⇒ no position.
+        assert_eq!(parse_path_with_position("src/app.rs"), None);
+    }
+
+    #[test]
+    fn open_path_at_cursor_jumps_to_position() {
+        let (_d, mut app) = app_with_files();
+        // Make a buffer whose text references another file with `:line:col`.
+        let stub = app.workspace.join("ref.txt");
+        std::fs::write(&stub, "see a.txt:1:3\n").unwrap();
+        app.open_path(&stub);
+        // Place the cursor inside the "a.txt:1:3" token.
+        if let Some(b) = app.active_editor_mut() {
+            // "see a.txt:1:3" — cursor at index of 'a' in "a.txt".
+            let pos = b.editor.text().find("a.txt").unwrap();
+            let (row, col) = byte_to_row_col(b.editor.text(), pos);
+            b.editor.place_cursor(row, col);
+        }
+        app.open_path_at_cursor();
+        // The active buffer is now `a.txt`, cursor at line 1, col 3 → (0, 2).
+        let a = app.workspace.join("a.txt");
+        assert_eq!(
+            app.active_editor().unwrap().path.as_deref(),
+            Some(a.as_path())
+        );
+        assert_eq!(app.active_editor().unwrap().editor.row_col(), (0, 2));
     }
 
     #[test]
