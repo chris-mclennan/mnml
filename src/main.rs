@@ -170,13 +170,15 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
         );
     }
 
-    let app = match App::new(args.workspace, config) {
+    let mut app = match App::new(args.workspace, config) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("mnml: {e}");
             return ExitCode::FAILURE;
         }
     };
+    // Re-open last session's buffers (no-op when [session] restore = false).
+    app.try_restore_session();
 
     let result = if args.headless {
         mnml::headless::run(app)

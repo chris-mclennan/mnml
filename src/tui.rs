@@ -104,6 +104,7 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
             ipc::drain_plugin_events(ipc, app);
         }
         if app.should_quit {
+            app.save_session_on_quit();
             break;
         }
         // Poll faster while a pty is open so streaming output stays smooth.

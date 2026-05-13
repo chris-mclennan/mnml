@@ -139,6 +139,25 @@ fn build_replace_ops(
         .collect()
 }
 
+/// Persisted session: list of open editor buffers (paths + cursors). Round-trips
+/// through `<workspace>/.mnml/session.json` if `[session] restore = true`.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
+struct SavedSession {
+    /// The workspace this session belongs to (cross-check on restore).
+    workspace: String,
+    /// Editor buffers, in tab order.
+    open: Vec<SavedBuffer>,
+    /// Which entry was active.
+    active: Option<usize>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct SavedBuffer {
+    path: String,
+    cursor_byte: usize,
+    scroll: usize,
+}
+
 /// `(row, col)` (0-based, col in chars) for a byte offset into `text`. Used by
 /// the in-buffer find to position the editor cursor at a match.
 fn byte_to_row_col(text: &str, byte: usize) -> (usize, usize) {
@@ -4341,6 +4360,90 @@ impl App {
             self.lsp.did_save(&p, &t);
         }
     }
+
+    /// `[session] restore = true` ⇒ on quit, write the open editor buffers +
+    /// their cursors to `<workspace>/.mnml/session.json` so the next launch can
+    /// re-open them. Best-effort (errors are swallowed). No-op when restore is
+    /// off, or when nothing is open.
+    pub fn save_session_on_quit(&self) {
+        if !self.config.session.restore {
+            return;
+        }
+        let mut open: Vec<SavedBuffer> = Vec::new();
+        let mut active: Option<usize> = None;
+        for (i, p) in self.panes.iter().enumerate() {
+            if let Pane::Editor(b) = p
+                && let Some(path) = &b.path
+            {
+                if self.active == Some(i) {
+                    active = Some(open.len());
+                }
+                open.push(SavedBuffer {
+                    path: path.to_string_lossy().into_owned(),
+                    cursor_byte: b.editor.cursor(),
+                    scroll: b.scroll,
+                });
+            }
+        }
+        if open.is_empty() {
+            // Don't leave a stale file around if the user closed everything.
+            let _ = std::fs::remove_file(self.workspace.join(".mnml").join("session.json"));
+            return;
+        }
+        let saved = SavedSession {
+            workspace: self.workspace.to_string_lossy().into_owned(),
+            open,
+            active,
+        };
+        let Ok(text) = serde_json::to_string_pretty(&saved) else {
+            return;
+        };
+        let dir = self.workspace.join(".mnml");
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("session.json"), text);
+    }
+
+    /// Read `.mnml/session.json` and re-open the buffers in it (if the saved
+    /// workspace matches). Called once from `main.rs` after `App::new` when
+    /// `[session] restore = true`. Missing / mismatched / corrupt file ⇒ no-op.
+    pub fn try_restore_session(&mut self) {
+        if !self.config.session.restore {
+            return;
+        }
+        let path = self.workspace.join(".mnml").join("session.json");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let Ok(saved) = serde_json::from_str::<SavedSession>(&text) else {
+            return;
+        };
+        if saved.workspace != self.workspace.to_string_lossy() {
+            return;
+        }
+        let mut last_pane: Option<PaneId> = None;
+        let mut active_pane: Option<PaneId> = None;
+        for (i, b) in saved.open.iter().enumerate() {
+            let p = std::path::Path::new(&b.path);
+            if !p.exists() {
+                continue;
+            }
+            self.open_path(p);
+            if let Some(pid) = self.active {
+                last_pane = Some(pid);
+                if saved.active == Some(i) {
+                    active_pane = Some(pid);
+                }
+                if let Some(Pane::Editor(buf)) = self.panes.get_mut(pid) {
+                    let (row, col) = byte_to_row_col(buf.editor.text(), b.cursor_byte);
+                    buf.editor.place_cursor(row, col);
+                    buf.scroll = b.scroll;
+                }
+            }
+        }
+        if let Some(p) = active_pane.or(last_pane) {
+            self.reveal_pane(p);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -4383,5 +4486,44 @@ mod tests {
     fn editing_mode_is_none_without_editor() {
         let (_d, app) = app_with_files();
         assert_eq!(app.editing_mode(), EditingMode::None);
+    }
+
+    #[test]
+    fn session_round_trips_open_buffers_and_active() {
+        let (d, mut app) = app_with_files();
+        app.open_path(&d.path().join("a.txt"));
+        app.open_path(&d.path().join("b.txt"));
+        // Move b.txt's cursor onto "beta"'s `t` (byte 2).
+        if let Some(Pane::Editor(b)) = app.panes.get_mut(1) {
+            b.editor.place_cursor(0, 2);
+            b.scroll = 0;
+        }
+        app.save_session_on_quit();
+        assert!(d.path().join(".mnml/session.json").exists());
+        // A fresh App on the same workspace + try_restore re-opens both.
+        let mut app2 = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        assert!(app2.panes.is_empty());
+        app2.try_restore_session();
+        assert_eq!(app2.panes.len(), 2);
+        // The previously-active (b.txt = index 1) should be focused.
+        assert_eq!(app2.active, Some(1));
+        // Cursor on b.txt was at (0, 2).
+        if let Some(Pane::Editor(b)) = app2.panes.get(1) {
+            assert_eq!(b.editor.row_col(), (0, 2));
+        } else {
+            panic!("expected an editor at index 1");
+        }
+    }
+
+    #[test]
+    fn session_skips_save_when_restore_off() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("a.txt"), "alpha").unwrap();
+        let mut cfg = Config::default();
+        cfg.session.restore = false;
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.open_path(&d.path().join("a.txt"));
+        app.save_session_on_quit();
+        assert!(!d.path().join(".mnml/session.json").exists());
     }
 }

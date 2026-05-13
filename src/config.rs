@@ -24,6 +24,7 @@ use serde::Deserialize;
 pub struct Config {
     pub editor: EditorConfig,
     pub ui: UiConfig,
+    pub session: SessionConfig,
     /// `[keys.<section>]` — key spec → command id. Sections: `global`, `vim`,
     /// `standard`. Resolved into an [`crate::input::keymap::Keymap`].
     pub keys: BTreeMap<String, BTreeMap<String, String>>,
@@ -56,6 +57,13 @@ pub struct EditorConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct SessionConfig {
+    /// On quit, save the open editor buffers + cursors to `.mnml/session.json`,
+    /// and re-open them on the next launch in the same workspace.
+    pub restore: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct UiConfig {
     pub theme: String,
     pub ascii_icons: bool,
@@ -79,6 +87,7 @@ impl Default for Config {
                 tree_width: 30,
                 relative_line_numbers: false,
             },
+            session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
             lsp: BTreeMap::new(),
             ai: toml::Value::Table(Default::default()),
@@ -107,6 +116,13 @@ struct RawConfig {
     tasks: BTreeMap<String, RawTask>,
     #[serde(default)]
     startup: RawStartup,
+    #[serde(default)]
+    session: RawSession,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawSession {
+    restore: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -182,6 +198,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.relative_line_numbers {
             self.ui.relative_line_numbers = v;
+        }
+        if let Some(v) = raw.session.restore {
+            self.session.restore = v;
         }
         for (k, v) in raw.keys {
             self.keys.entry(k).or_default().extend(v);

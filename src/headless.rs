@@ -34,6 +34,7 @@ pub fn run(mut app: App) -> Result<bool, String> {
             .map_err(|e| format!("render: {e}"))?;
         ipc::dump_screen_status(&ipc, terminal.backend().buffer(), &app);
         if app.should_quit {
+            app.save_session_on_quit();
             break;
         }
         let any = ipc::drain_commands(&mut ipc, &mut app);
