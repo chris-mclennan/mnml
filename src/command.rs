@@ -155,6 +155,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_show_whitespace(),
         },
         Command {
+            id: "view.toggle_bracket_rainbow",
+            title: "Toggle rainbow brackets (depth-cycling color on ()[]{})",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_bracket_rainbow(),
+        },
+        Command {
             id: "find.find",
             title: "Find in buffer",
             group: "find",

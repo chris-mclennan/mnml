@@ -94,6 +94,9 @@ pub struct UiConfig {
     /// Show visible markers for whitespace (`·` for space, `→` for tab) in the
     /// editor. `:set list` / `:set nolist`. Off by default.
     pub show_whitespace: bool,
+    /// Paint matched `()[]{}` brackets in cycling depth colors. `:set rainbow`
+    /// / `:set norainbow`. Off by default.
+    pub bracket_rainbow: bool,
 }
 
 impl Default for Config {
@@ -115,6 +118,7 @@ impl Default for Config {
                 tree_width: 30,
                 relative_line_numbers: false,
                 show_whitespace: false,
+                bracket_rainbow: false,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -185,6 +189,7 @@ struct RawUi {
     tree_width: Option<u16>,
     relative_line_numbers: Option<bool>,
     show_whitespace: Option<bool>,
+    bracket_rainbow: Option<bool>,
 }
 
 impl Config {
@@ -251,6 +256,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.show_whitespace {
             self.ui.show_whitespace = v;
+        }
+        if let Some(v) = raw.ui.bracket_rainbow {
+            self.ui.bracket_rainbow = v;
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;

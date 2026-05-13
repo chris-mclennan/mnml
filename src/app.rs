@@ -6321,6 +6321,19 @@ impl App {
         self.set_show_whitespace(!self.config.ui.show_whitespace);
     }
 
+    /// Toggle rainbow-brackets (`:set rainbow` / `:set norainbow`).
+    pub fn set_bracket_rainbow(&mut self, on: bool) {
+        self.config.ui.bracket_rainbow = on;
+        self.toast(if on {
+            "rainbow brackets: on"
+        } else {
+            "rainbow brackets: off"
+        });
+    }
+    pub fn toggle_bracket_rainbow(&mut self) {
+        self.set_bracket_rainbow(!self.config.ui.bracket_rainbow);
+    }
+
     /// Interpret a vim `:`-line (without the leading `:`). Anything we don't
     /// recognise is bridged to a registered command if one matches, else toasted.
     /// Apply a parsed `:%s/old/new/[flags]` to the active editor — buffer-wide
@@ -6461,7 +6474,7 @@ impl App {
                     let cfg = &self.config;
                     let theme = crate::ui::theme::cur().name;
                     self.toast(format!(
-                        "input={} · theme={theme} · tab_width={} · {} · {}",
+                        "input={} · theme={theme} · tab_width={} · {} · {} · {}",
                         cfg.editor.input_style,
                         cfg.editor.tab_width,
                         if cfg.ui.relative_line_numbers {
@@ -6473,6 +6486,11 @@ impl App {
                             "list"
                         } else {
                             "nolist"
+                        },
+                        if cfg.ui.bracket_rainbow {
+                            "rainbow"
+                        } else {
+                            "norainbow"
                         },
                     ));
                 } else if let Some(v) = rest.strip_prefix("input=") {
@@ -6497,6 +6515,12 @@ impl App {
                     self.set_show_whitespace(false);
                 } else if matches!(opt, "list!" | "invlist") {
                     self.set_show_whitespace(!self.config.ui.show_whitespace);
+                } else if matches!(opt, "rainbow") {
+                    self.set_bracket_rainbow(true);
+                } else if matches!(opt, "norainbow") {
+                    self.set_bracket_rainbow(false);
+                } else if matches!(opt, "rainbow!" | "invrainbow") {
+                    self.toggle_bracket_rainbow();
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }

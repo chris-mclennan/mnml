@@ -79,6 +79,40 @@ pub fn load_history_from(editor: &mut Editor, path: &Path) -> bool {
     editor.restore_history(h)
 }
 
+/// Per-line `(col, depth)` for every `()[]{}` bracket in `text`. Depth is the
+/// nesting level — `0` for the outermost pair, `1` for nested inside, etc. —
+/// shared across `(`, `[`, `{` (no kind-mismatch tracking; the renderer just
+/// wants a stable color cycle, not strict balance). Used by the editor's
+/// rainbow-brackets renderer.
+///
+/// Cheap to call (~one walk of the buffer); the editor view skips it when
+/// `[ui] bracket_rainbow` is off so files without rainbow pay nothing.
+pub fn bracket_depths_per_line(text: &str) -> Vec<Vec<(usize, u32)>> {
+    let mut out: Vec<Vec<(usize, u32)>> = vec![Vec::new()];
+    let mut depth: u32 = 0;
+    let mut col: usize = 0;
+    for c in text.chars() {
+        if c == '\n' {
+            out.push(Vec::new());
+            col = 0;
+            continue;
+        }
+        match c {
+            '(' | '[' | '{' => {
+                out.last_mut().unwrap().push((col, depth));
+                depth = depth.saturating_add(1);
+            }
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                out.last_mut().unwrap().push((col, depth));
+            }
+            _ => {}
+        }
+        col += 1;
+    }
+    out
+}
+
 /// FNV-1a 64-bit — a fast, dependency-free string hash. Stable across runs;
 /// not cryptographic. Good enough as a "did the file change?" guard.
 pub(crate) fn fnv1a_64(s: &str) -> u64 {
@@ -1741,6 +1775,22 @@ mod tests {
         let (mut e2, _c) = ed("totally different");
         assert!(!load_history_from(&mut e2, &undo_path));
         assert!(!e2.can_undo());
+    }
+
+    #[test]
+    fn bracket_depths_track_nesting() {
+        // ((a)) on one line — depths 0, 1, 1, 0.
+        let d = bracket_depths_per_line("((a))");
+        assert_eq!(d, vec![vec![(0, 0), (1, 1), (3, 1), (4, 0)]]);
+        // Multi-line + mixed brackets.
+        let t = "fn f(x) {\n  [y]\n}";
+        let d = bracket_depths_per_line(t);
+        // line 0: `(` depth 0 at col 4, `)` depth 0 at col 6, `{` depth 0 at col 8
+        assert_eq!(d[0], vec![(4, 0), (6, 0), (8, 0)]);
+        // line 1: `[` depth 1 at col 2, `]` depth 1 at col 4
+        assert_eq!(d[1], vec![(2, 1), (4, 1)]);
+        // line 2: `}` depth 0
+        assert_eq!(d[2], vec![(0, 0)]);
     }
 
     #[test]

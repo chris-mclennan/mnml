@@ -122,6 +122,23 @@ pub fn draw_pane(
     let bracket_pair: Option<[(usize, usize); 2]> =
         buf.editor.bracket_match().map(|m| [(cur_row, cur_col), m]);
     let bracket_bg = theme::cur().bg3;
+    // Optional rainbow brackets: precompute (col, depth) per line for the
+    // whole buffer when the config flag is on. Cheap — one walk of the text.
+    // The renderer looks up each visible bracket cell's depth and recolors.
+    let rainbow_depths: Option<Vec<Vec<(usize, u32)>>> = app
+        .config
+        .ui
+        .bracket_rainbow
+        .then(|| crate::editor::bracket_depths_per_line(buf.editor.text()));
+    // 6-step palette pulled from the theme. Cycles by `depth % 6`.
+    let rainbow_palette: [Color; 6] = [
+        theme::cur().yellow,
+        theme::cur().purple,
+        theme::cur().blue,
+        theme::cur().green,
+        theme::cur().cyan,
+        theme::cur().red,
+    ];
     let sign_color = |k: SignKind| match k {
         SignKind::Added => theme::cur().green,
         SignKind::Modified => theme::cur().blue,
@@ -285,6 +302,16 @@ pub fn draw_pane(
             } else {
                 (' ', theme::cur().fg)
             };
+            // Rainbow-brackets override: when enabled and this cell holds a
+            // `()[]{}`, recolor it from the depth-cycling palette. Beats the
+            // syntax-highlight color (the whole point is to see nesting).
+            if let Some(table) = rainbow_depths.as_ref()
+                && matches!(ch, '(' | ')' | '[' | ']' | '{' | '}')
+                && let Some(row_entries) = table.get(line_no)
+                && let Some(&(_, depth)) = row_entries.iter().find(|&&(col, _)| col == c)
+            {
+                fg = rainbow_palette[(depth as usize) % rainbow_palette.len()];
+            }
             // The "current" find match: force dark fg so it stays readable on
             // the bright bg.
             if matches!(in_match, Some(true)) {

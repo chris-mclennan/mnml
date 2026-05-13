@@ -168,6 +168,12 @@ space/tab per line on `save_to_disk` via `EditOp::ReplaceRange` so undo restores
 char is "empty space" — whitespace, EOF, closer, or punctuator. Typing a close char on top of an auto-inserted one
 skips over it). **Bracket-match highlight** — when the cursor sits on a bracket, paint both the bracket and its match
 with `bg3`; nested correctly via a forward/backward depth-counting scan (capped at 50k chars/side).
+**Rainbow brackets** — `[ui] bracket_rainbow` (default off; `:set rainbow` / `:set norainbow` /
+`view.toggle_bracket_rainbow`): paint every visible `()[]{}` in a depth-cycling 6-color palette (yellow,
+purple, blue, green, cyan, red — pulled from the theme). `editor::bracket_depths_per_line` walks the whole
+buffer once per render (cheap — single linear scan), returning per-line `(col, depth)`; the cells loop in
+`editor_view` looks each up and overrides the syntax color for that cell. Mismatched brackets are tolerated
+(`saturating_sub` on depth) — the goal is a stable depth indicator, not strict balance.
 **Session restore** — `[session] restore = true` (default; flip off to disable). On quit (`save_session_on_quit`, called
 from both the `tui` and `headless` loops just before exit) the open editor buffers + their cursors + the **split tree**
 (serialized via `SavedLayout`, leaves keyed by index into `open`) are written to `<workspace>/.mnml/session.json`. On
