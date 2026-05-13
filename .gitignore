@@ -1,5 +1,5 @@
 /target
-.mnml/ipc/
+.mnml/
 .claude/settings.local.json
 .claude/cache/
 .DS_Store
