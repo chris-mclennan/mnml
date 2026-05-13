@@ -1,0 +1,12 @@
+# theme.pick opens a fuzzy picker over the bundled colour schemes; typing
+# filters it; Esc dismisses without changing the theme.
+write x.txt hello
+open x.txt
+
+command theme.pick
+type onedark
+expect screen contains "onedark"
+expect screen lacks "gruvbox"
+key esc
+expect screen lacks "onedark"
+expect pane "x.txt"

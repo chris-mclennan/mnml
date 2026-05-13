@@ -1,0 +1,23 @@
+# buffer.next / buffer.prev cycle the open buffers; the buffer switcher
+# (picker.buffers) lists them.
+write a.txt the alpha file
+open a.txt
+write b.txt the bravo file
+open b.txt
+write c.txt the charlie file
+open c.txt
+expect pane "c.txt"
+
+command buffer.prev
+expect pane "b.txt"
+command buffer.prev
+expect pane "a.txt"
+command buffer.next
+expect pane "b.txt"
+
+# The fuzzy buffer switcher opens with all three; Esc closes it.
+command picker.buffers
+expect screen contains "a.txt"
+expect screen contains "c.txt"
+key esc
+expect pane "b.txt"
