@@ -274,6 +274,10 @@ toasts `match N/M`. **`find.toggle_regex`** (`Alt+R`) flips between modes — st
 `find.clear` empties the state. `editor_view` paints a `t.bg2` background on every visible match and a `t.yellow` bg on the
 current one (with `t.bg_dark` fg for readability). The find state is recomputed on every text-changing edit
 (`Buffer::refresh_find_matches`, hooked into `feed_key` + `apply_edit_ops`) so highlights stay in sync as you type.
+**Smart-case find** — literal-mode searches default to case-insensitive; any uppercase letter in the
+query flips them to case-sensitive (ripgrep / fzf convention). Implemented via new
+`FindState.case_sensitive` flag picked between `find_all_case_sensitive` (new in `buffer.rs`) and
+`find_all_ci_ascii`. Regex mode ignores this flag — its `(?i)` is fixed for now.
 **Find history** — `accept_find` pushes each non-empty query onto `App.find_history` (de-duped against
 the most-recent entry, capped at `FIND_HISTORY_MAX = 50`). Up / Down on the open Find prompt walk back
 and forth through history (`find_history_prev` / `find_history_next`); the live input is the entry past

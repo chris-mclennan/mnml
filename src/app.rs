@@ -180,19 +180,12 @@ fn build_replace_ops(
 /// Case-sensitive sibling of [`crate::buffer::find_all_ci_ascii`] — same shape,
 /// non-overlapping byte ranges where `needle` occurs in `haystack`. Empty
 /// needle ⇒ empty list (caller must reject empty `find` before getting here).
+/// Re-export of [`crate::buffer::find_all_case_sensitive`] under the historical
+/// local name; the `:%s` path used to own the impl before smart-case search
+/// pulled it down to `buffer.rs`. Kept as a thin shim so existing tests + call
+/// sites stay put.
 fn find_all_case_sensitive(haystack: &str, needle: &str) -> Vec<(usize, usize)> {
-    if needle.is_empty() {
-        return Vec::new();
-    }
-    let mut hits = Vec::new();
-    let mut start = 0;
-    while let Some(i) = haystack[start..].find(needle) {
-        let s = start + i;
-        let e = s + needle.len();
-        hits.push((s, e));
-        start = e;
-    }
-    hits
+    crate::buffer::find_all_case_sensitive(haystack, needle)
 }
 
 /// Parsed `:%s/<find>/<replace>/[flags]` ex-command. Returns `None` if `line`
@@ -5460,9 +5453,13 @@ impl App {
             return;
         }
         let regex = b.find.as_ref().map(|f| f.regex).unwrap_or(regex_default);
+        // Smart-case: any uppercase letter in the query ⇒ case-sensitive.
+        // Only meaningful for literal mode (regex carries its own `(?i)`).
+        let case_sensitive = !regex && query.chars().any(|c| c.is_uppercase());
         let mut state = crate::buffer::FindState {
             query,
             regex,
+            case_sensitive,
             ..Default::default()
         };
         state.recompute(b.editor.text());
@@ -5521,9 +5518,11 @@ impl App {
         // Preserve the existing find's regex flag if any, else use the App
         // default so the toggle is sticky.
         let regex = b.find.as_ref().map(|f| f.regex).unwrap_or(regex_default);
+        let case_sensitive = !regex && query.chars().any(|c| c.is_uppercase());
         let mut state = crate::buffer::FindState {
             query: query.clone(),
             regex,
+            case_sensitive,
             ..Default::default()
         };
         state.recompute(b.editor.text());

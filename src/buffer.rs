@@ -29,12 +29,19 @@ pub struct FindState {
     /// for parity with the literal mode); when `false`, the existing
     /// [`find_all_ci_ascii`] literal scan is used. Toggled by `find.toggle_regex`.
     pub regex: bool,
+    /// When `true`, the literal scan is case-sensitive — used by
+    /// "smart-case" find (any uppercase letter in the query implies a case-
+    /// sensitive search). Ignored when `regex` is true; the (?i) prefix on
+    /// the regex isn't applied either way once that flag's set.
+    pub case_sensitive: bool,
 }
 
 impl FindState {
     pub fn recompute(&mut self, text: &str) {
         self.matches = if self.regex {
             find_all_regex(text, &self.query)
+        } else if self.case_sensitive {
+            find_all_case_sensitive(text, &self.query)
         } else {
             find_all_ci_ascii(text, &self.query)
         };
@@ -44,6 +51,23 @@ impl FindState {
             self.current = Some(c.min(self.matches.len() - 1));
         }
     }
+}
+
+/// `find_all_ci_ascii`'s sibling — literal, case-*sensitive*, non-overlapping.
+/// Same `(byte_start, byte_end)` shape. Used by smart-case search.
+pub fn find_all_case_sensitive(text: &str, query: &str) -> Vec<(usize, usize)> {
+    if query.is_empty() || text.len() < query.len() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut start = 0;
+    while let Some(i) = text[start..].find(query) {
+        let s = start + i;
+        let e = s + query.len();
+        out.push((s, e));
+        start = e;
+    }
+    out
 }
 
 /// Regex-based version of [`find_all_ci_ascii`] — same `(byte_start, byte_end)`
@@ -488,6 +512,16 @@ mod tests {
             assert!(t.is_char_boundary(s));
             assert!(t.is_char_boundary(e));
         }
+    }
+
+    #[test]
+    fn find_all_case_sensitive_basic() {
+        assert_eq!(find_all_case_sensitive("foo Foo foO", "foo"), vec![(0, 3)]);
+        assert_eq!(
+            find_all_case_sensitive("Foo Foo Foo", "Foo"),
+            vec![(0, 3), (4, 7), (8, 11)]
+        );
+        assert!(find_all_case_sensitive("anything", "").is_empty());
     }
 
     #[test]
