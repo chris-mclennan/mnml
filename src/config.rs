@@ -102,6 +102,10 @@ pub struct UiConfig {
     /// Paint matched `()[]{}` brackets in cycling depth colors. `:set rainbow`
     /// / `:set norainbow`. Off by default.
     pub bracket_rainbow: bool,
+    /// Show a 1-column vertical scrollbar on the right edge of each editor
+    /// pane (track + proportional thumb). `:set [no]scrollbar`. On by default
+    /// — costs one column of usable text width.
+    pub scrollbar: bool,
 }
 
 impl Default for Config {
@@ -124,6 +128,7 @@ impl Default for Config {
                 relative_line_numbers: false,
                 show_whitespace: false,
                 bracket_rainbow: false,
+                scrollbar: true,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -198,6 +203,7 @@ struct RawUi {
     relative_line_numbers: Option<bool>,
     show_whitespace: Option<bool>,
     bracket_rainbow: Option<bool>,
+    scrollbar: Option<bool>,
 }
 
 impl Config {
@@ -267,6 +273,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.bracket_rainbow {
             self.ui.bracket_rainbow = v;
+        }
+        if let Some(v) = raw.ui.scrollbar {
+            self.ui.scrollbar = v;
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;

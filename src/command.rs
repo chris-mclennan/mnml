@@ -162,6 +162,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_bracket_rainbow(),
         },
         Command {
+            id: "view.toggle_scrollbar",
+            title: "Toggle the editor scrollbar (right-edge thumb)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_scrollbar(),
+        },
+        Command {
             id: "find.find",
             title: "Find in buffer",
             group: "find",

@@ -174,9 +174,7 @@ impl Hunk {
 /// `line_0based`. `None` when nothing changed at that line.
 pub fn peek_hunk_at(workspace: &Path, rel: &str, line_0based: usize) -> Option<Hunk> {
     let hunks = run_diff(workspace, &["diff", "HEAD", "--no-color", "--", rel]);
-    hunks
-        .into_iter()
-        .find(|h| h.contains_new_line(line_0based))
+    hunks.into_iter().find(|h| h.contains_new_line(line_0based))
 }
 
 /// `git diff` for a single path (worktree vs index — i.e. unstaged changes).

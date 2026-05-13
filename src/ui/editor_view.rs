@@ -86,7 +86,14 @@ pub fn draw_pane(
     };
     let gutter_w = (num_w + 2) as u16;
     let text_x = area.x + gutter_w;
-    let text_w = area.width.saturating_sub(gutter_w);
+    // Reserve the last column for the scrollbar when enabled (and the pane is
+    // wide enough to spare it). Rendered after the body paragraph.
+    let want_scrollbar = app.config.ui.scrollbar && area.width >= gutter_w + 2;
+    let scrollbar_w: u16 = if want_scrollbar { 1 } else { 0 };
+    let text_w = area
+        .width
+        .saturating_sub(gutter_w)
+        .saturating_sub(scrollbar_w);
     let tw = text_w as usize;
     let text_h = area.height as usize;
     let (cur_row, cur_col) = buf.editor.row_col();
@@ -370,6 +377,44 @@ pub fn draw_pane(
         lines.push(Line::from(spans));
     }
     frame.render_widget(Paragraph::new(lines), area);
+
+    if want_scrollbar && text_h > 0 {
+        let bar_x = area.x + area.width - 1;
+        let t = theme::cur();
+        // Track first — paints every cell with the dim track color.
+        for r in 0..text_h {
+            frame.render_widget(
+                Paragraph::new(" ").style(Style::default().bg(t.bg_dark)),
+                Rect {
+                    x: bar_x,
+                    y: area.y + r as u16,
+                    width: 1,
+                    height: 1,
+                },
+            );
+        }
+        // Thumb — height proportional to (visible / total), top proportional
+        // to (scroll / max_scroll). Both bounded so it's always visible.
+        if line_count > text_h {
+            let thumb_h = ((text_h * text_h) / line_count).max(1);
+            let max_scroll = line_count - text_h;
+            let max_thumb_top = text_h.saturating_sub(thumb_h);
+            let thumb_top = (buf.scroll * max_thumb_top)
+                .checked_div(max_scroll)
+                .unwrap_or(0);
+            for r in thumb_top..(thumb_top + thumb_h).min(text_h) {
+                frame.render_widget(
+                    Paragraph::new(" ").style(Style::default().bg(t.bg3)),
+                    Rect {
+                        x: bar_x,
+                        y: area.y + r as u16,
+                        width: 1,
+                        height: 1,
+                    },
+                );
+            }
+        }
+    }
 
     app.rects.editor_panes.push((
         Rect {

@@ -6677,6 +6677,19 @@ impl App {
         self.set_bracket_rainbow(!self.config.ui.bracket_rainbow);
     }
 
+    /// Toggle the editor scrollbar (`:set scrollbar` / `:set noscrollbar`).
+    pub fn set_scrollbar(&mut self, on: bool) {
+        self.config.ui.scrollbar = on;
+        self.toast(if on {
+            "scrollbar: on"
+        } else {
+            "scrollbar: off"
+        });
+    }
+    pub fn toggle_scrollbar(&mut self) {
+        self.set_scrollbar(!self.config.ui.scrollbar);
+    }
+
     /// Interpret a vim `:`-line (without the leading `:`). Anything we don't
     /// recognise is bridged to a registered command if one matches, else toasted.
     /// Apply a parsed `:%s/old/new/[flags]` to the active editor — buffer-wide
@@ -6864,6 +6877,12 @@ impl App {
                     self.set_bracket_rainbow(false);
                 } else if matches!(opt, "rainbow!" | "invrainbow") {
                     self.toggle_bracket_rainbow();
+                } else if matches!(opt, "scrollbar") {
+                    self.set_scrollbar(true);
+                } else if matches!(opt, "noscrollbar") {
+                    self.set_scrollbar(false);
+                } else if matches!(opt, "scrollbar!" | "invscrollbar") {
+                    self.toggle_scrollbar();
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }
