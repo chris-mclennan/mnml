@@ -31,6 +31,9 @@ pub enum MenuAction {
     NewFolder(PathBuf),
     /// Prompt for a new name and rename `path` (kept in the same dir).
     Rename(PathBuf),
+    /// Prompt for the filename as a confirmation; on exact match, delete
+    /// `path` (`rm` for a file, `rm -rf` for a directory).
+    Delete(PathBuf),
 }
 
 #[derive(Debug, Clone)]

@@ -305,6 +305,7 @@ pub enum FsAction {
     NewFile { parent: PathBuf },
     NewFolder { parent: PathBuf },
     Rename { path: PathBuf },
+    Delete { path: PathBuf },
 }
 
 /// Screen regions captured during render, consumed for mouse routing on the next event.
@@ -577,6 +578,7 @@ impl App {
                 MenuItem::new("New file…", MenuAction::NewFile(parent.clone())),
                 MenuItem::new("New folder…", MenuAction::NewFolder(parent)),
                 MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
+                MenuItem::new("Delete…", MenuAction::Delete(path.clone())),
                 MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
                 MenuItem::new("Open externally", MenuAction::OpenExternally(path.clone())),
                 MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
@@ -589,6 +591,7 @@ impl App {
                 MenuItem::new("New file…", MenuAction::NewFile(parent.clone())),
                 MenuItem::new("New folder…", MenuAction::NewFolder(parent)),
                 MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
+                MenuItem::new("Delete…", MenuAction::Delete(path.clone())),
                 MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
                 MenuItem::new("Open externally", MenuAction::OpenExternally(path.clone())),
                 MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
@@ -671,6 +674,7 @@ impl App {
             NewFile(parent) => self.open_new_file_prompt(parent),
             NewFolder(parent) => self.open_new_folder_prompt(parent),
             Rename(path) => self.open_fs_rename_prompt(path),
+            Delete(path) => self.open_fs_delete_prompt(path),
         }
     }
 
@@ -765,6 +769,78 @@ impl App {
         }
         self.tree.refresh();
         self.toast(format!("created {}/", rel_path(&self.workspace, &target)));
+    }
+
+    /// Open the FS delete prompt — captures `path`. The user must type the
+    /// entry's filename to confirm; anything else is a no-op (the prompt just
+    /// closes). Cheap two-step guard rather than a yes/no modal.
+    pub fn open_fs_delete_prompt(&mut self, path: PathBuf) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.pending_fs_action = Some(FsAction::Delete { path: path.clone() });
+        let title = format!(
+            "Delete {} — type '{name}' to confirm",
+            rel_path(&self.workspace, &path)
+        );
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::DeleteConfirm,
+            title,
+        ));
+    }
+
+    /// Execute the delete *iff* `typed` matches `path`'s filename exactly.
+    /// Removes any open editor buffer for the file; for a directory, removes
+    /// every editor buffer under it. `rm` for a file, `rm -rf` for a dir.
+    pub fn confirm_delete_fs_entry(&mut self, path: &Path, typed: &str) {
+        let want = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if typed.trim() != want {
+            self.toast("delete cancelled (name didn't match)");
+            return;
+        }
+        let is_dir = path.is_dir();
+        let res = if is_dir {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        };
+        if let Err(e) = res {
+            self.toast(format!("delete failed: {e}"));
+            return;
+        }
+        // Force-close any editor buffer for the deleted file (or dir contents).
+        let affected: Vec<usize> = self
+            .panes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| match p {
+                Pane::Editor(b) => b.path.as_deref().and_then(|bp| {
+                    if bp == path || (is_dir && bp.starts_with(path)) {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                }),
+                _ => None,
+            })
+            .collect();
+        for i in affected.into_iter().rev() {
+            self.force_close_pane(i);
+        }
+        self.lsp.did_close(path);
+        // Trim out of recent_files.
+        self.recent_files
+            .retain(|p| p != path && !(is_dir && p.starts_with(path)));
+        self.tree.refresh();
+        self.toast(format!(
+            "deleted {}{}",
+            rel_path(&self.workspace, path),
+            if is_dir { "/" } else { "" }
+        ));
     }
 
     /// Rename `from` → `<from.parent()>/new_name`. If `from` is open as an
@@ -3725,6 +3801,12 @@ impl App {
                     self.rename_fs_entry(&path, &name);
                 }
             }
+            crate::prompt::PromptKind::DeleteConfirm => {
+                let typed = p.input.clone();
+                if let Some(FsAction::Delete { path }) = self.pending_fs_action.take() {
+                    self.confirm_delete_fs_entry(&path, &typed);
+                }
+            }
         }
     }
 
@@ -5553,6 +5635,25 @@ mod tests {
         assert!(names2.contains(&"a.txt".to_string()));
         assert!(names2.contains(&"b.txt".to_string()));
         assert!(app2.recent_files.len() <= RECENT_FILES_MAX);
+    }
+
+    #[test]
+    fn fs_delete_requires_exact_filename_match() {
+        let (_d, mut app) = app_with_files();
+        let p = app.workspace.join("a.txt");
+        // Wrong typed name ⇒ file untouched.
+        app.confirm_delete_fs_entry(&p, "b.txt");
+        assert!(p.exists());
+        // Correct ⇒ deleted, recent_files cleaned up.
+        app.open_path(&p);
+        app.confirm_delete_fs_entry(&p, "a.txt");
+        assert!(!p.exists());
+        assert!(!app.recent_files.iter().any(|q| q == &p));
+        // Pane for the deleted file is gone.
+        assert!(!app.panes.iter().any(|pane| matches!(
+            pane,
+            Pane::Editor(b) if b.is_at(&p)
+        )));
     }
 
     #[test]

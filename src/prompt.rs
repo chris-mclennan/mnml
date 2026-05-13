@@ -41,6 +41,9 @@ pub enum PromptKind {
     NewFolder,
     /// Accept ⇒ rename the held path to `<dir>/<input>` (same parent).
     Rename,
+    /// Accept ⇒ delete the held path *iff* the typed text matches its
+    /// filename exactly (confirmation guard).
+    DeleteConfirm,
 }
 
 #[derive(Debug)]
