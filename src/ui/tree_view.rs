@@ -204,10 +204,15 @@ fn draw_workspace_files(
         } else {
             format!("{indent}{glyph} ")
         };
+        let git_state = if row.is_dir {
+            None
+        } else {
+            git_files.get(&row.path).copied()
+        };
         let name_color = if row.is_dir {
             theme::cur().blue
         } else {
-            match git_files.get(&row.path).copied() {
+            match git_state {
                 Some(FileState::Modified) => theme::cur().yellow,
                 Some(FileState::Staged | FileState::Untracked) => theme::cur().green,
                 Some(FileState::Conflicted) => theme::cur().red,
@@ -224,13 +229,30 @@ fn draw_workspace_files(
         } else {
             icon_color
         };
-        let used = prefix.chars().count() + row.name.chars().count();
+        // Right-aligned 1-char git-state badge (vim-fugitive style): M / A / ? / !.
+        // Reserves 2 trailing cells (`<letter> `) when there's a state to show.
+        let (badge, badge_color) = match git_state {
+            Some(FileState::Modified) => ("M", theme::cur().yellow),
+            Some(FileState::Staged) => ("A", theme::cur().green),
+            Some(FileState::Untracked) => ("?", theme::cur().green),
+            Some(FileState::Conflicted) => ("!", theme::cur().red),
+            None => ("", theme::cur().fg),
+        };
+        let badge_width = if badge.is_empty() { 0 } else { 2 };
+        let used = prefix.chars().count() + row.name.chars().count() + badge_width;
         let pad = width.saturating_sub(used);
-        lines.push(Line::from(vec![
+        let mut spans = vec![
             Span::styled(prefix, Style::default().fg(prefix_color).bg(bg)),
             Span::styled(row.name.clone(), name_style),
             Span::styled(" ".repeat(pad), Style::default().bg(bg)),
-        ]));
+        ];
+        if !badge.is_empty() {
+            spans.push(Span::styled(
+                format!("{badge} "),
+                Style::default().fg(badge_color).bg(bg),
+            ));
+        }
+        lines.push(Line::from(spans));
     }
     let drew = lines.len() as u16;
     frame.render_widget(Paragraph::new(lines), inner);

@@ -252,7 +252,9 @@ markers unwrapped, long lines word-wrapped to the pane width via `md_preview::wr
 [hanging indent for lists/quotes; also used by `ai_view`]); `markdown.preview` command
 (`<leader>m`) opens a rendered, read-only, scrollable view in a split next to the source,
 refreshed when the source is saved.
-Git: branch + change counts in the statusline + tree tint (P0); **gutter line-signs** —
+Git: branch + change counts in the statusline + tree tint + per-row git-state badge in the
+tree (`M`/`A`/`?`/`!` right-aligned, colour-matched to the existing tint — modified/staged/
+untracked/conflicted; rendered by `ui/tree_view.rs`); **gutter line-signs** —
 `src/git/diff.rs` parses `git diff HEAD --unified=0` into per-file added/modified/removed
 line marks (kept in `GitStatus`'s ~3s-cached `Snapshot.line_changes`), drawn as a coloured
 `▎` in the editor gutter; **peek change at cursor** — `git.peek_change` (`<leader>g p`) shells out to
