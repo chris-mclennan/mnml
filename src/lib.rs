@@ -36,6 +36,7 @@ pub mod input;
 pub mod ipc;
 pub mod layout;
 pub mod lsp;
+pub mod markdown_outline;
 pub mod pane;
 pub mod picker;
 pub mod playwright;

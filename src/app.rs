@@ -52,6 +52,15 @@ pub enum FocusDir {
     Down,
 }
 
+/// True when `path`'s extension marks it as Markdown — used by the outline
+/// pane to extract headings directly instead of going through the LSP.
+fn is_markdown_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("md" | "markdown" | "mdx" | "mkd")
+    )
+}
+
 /// `p` made relative to `workspace` (for `git` arguments). Falls back to `p` if
 /// it isn't under `workspace`.
 fn rel_path(workspace: &Path, p: &Path) -> String {
@@ -1723,6 +1732,10 @@ impl App {
             o.items.clear();
             o.clamp();
         }
+        if is_markdown_path(&path) {
+            self.populate_markdown_outline(&path);
+            return;
+        }
         self.pending_outline = true;
         if !self.lsp.document_symbol(&path) {
             self.pending_outline = false;
@@ -2128,6 +2141,12 @@ impl App {
             }
             self.focus = Focus::Pane;
         }
+        // Markdown buffers don't need a language server — extract headings
+        // directly from the text and populate the pane synchronously.
+        if is_markdown_path(&path) {
+            self.populate_markdown_outline(&path);
+            return;
+        }
         // Ask for symbols; the reply routes to the outline.
         let text = self
             .panes
@@ -2145,12 +2164,38 @@ impl App {
         }
     }
 
+    /// Read the active markdown editor's text, extract ATX headings, and
+    /// drop them onto the open outline pane. Synchronous — markdown headings
+    /// don't need a language server.
+    fn populate_markdown_outline(&mut self, path: &Path) {
+        let text = self
+            .panes
+            .iter()
+            .find_map(|p| match p {
+                Pane::Editor(b) if b.is_at(path) => Some(b.editor.text().to_string()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let items = crate::markdown_outline::extract_headings(&text);
+        if let Some(o) = self.panes.iter_mut().find_map(|p| match p {
+            Pane::Outline(o) => Some(o),
+            _ => None,
+        }) {
+            o.items = items;
+            o.clamp();
+        }
+    }
+
     /// `r` in the outline pane — refire the request for its current target.
     pub fn refresh_outline_pane(&mut self) {
         let Some(Pane::Outline(o)) = self.active.and_then(|i| self.panes.get(i)) else {
             return;
         };
         let path = o.target.clone();
+        if is_markdown_path(&path) {
+            self.populate_markdown_outline(&path);
+            return;
+        }
         self.pending_outline = true;
         if !self.lsp.document_symbol(&path) {
             self.pending_outline = false;

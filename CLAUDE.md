@@ -569,6 +569,12 @@ container}>)` and merges into `App.pending_workspace_symbols`; the picker (re-)o
 hits appear as servers respond. `client::parse_workspace_symbols` handles both reply shapes — legacy
 `SymbolInformation[]` (full `location.range`) and the newer lazy `WorkspaceSymbol[]` (uri only, defaults to
 (0, 0)). Reuses `PickerKind::Locations` for the accept path.
+**Markdown outline** — when the outline pane's target is a `.md` / `.markdown` / `.mdx` / `.mkd` file,
+`open_outline_pane` / `refresh_outline_pane` / `retarget_outline_to_active` skip the LSP and call
+`crate::markdown_outline::extract_headings(text)` directly. ATX-style headings (`#` through `######`)
+parsed at line start, `depth = level - 1` so the outline indents `##` under `#`; ATX closing `#`s stripped;
+headings inside fenced code blocks (``` … ``` / `~~~ … ~~~`) skipped so example code doesn't pollute the
+list. Same pane, same key handling (`/` filter, j/k navigate, Enter jumps).
 **Outline pane** — `outline.show` (`<leader>l o`): a persistent sibling to the symbol picker. Opens a
 horizontal split next to the active editor as `Pane::Outline(OutlinePane{target,items,selected,scroll})`,
 captures the editor's path as the target, and asks the LSP for symbols. The reply routes to the open
