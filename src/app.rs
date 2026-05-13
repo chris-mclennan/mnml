@@ -1346,8 +1346,12 @@ impl App {
 
     // ─── AI: `claude -p` one-shots ──────────────────────────────────
     /// Allocate a job id + fresh session id and spawn `claude -p --session-id …`
-    /// on a worker thread. Returns `(job_id, session_id)` for the `Pane::Ai`.
-    fn spawn_ai_job(&mut self, prompt: String) -> (u64, String) {
+    /// on a worker thread. Returns `(job_id, session_id, cancel_flag)` — set the
+    /// flag to ask the worker to kill its child and bail.
+    fn spawn_ai_job(
+        &mut self,
+        prompt: String,
+    ) -> (u64, String, std::sync::Arc<std::sync::atomic::AtomicBool>) {
         let job_id = self.next_job_id;
         self.next_job_id += 1;
         let session_id = crate::ai::gen_session_id();
@@ -1357,17 +1361,24 @@ impl App {
             .0
             .clone();
         let sid = session_id.clone();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
         std::thread::spawn(move || {
-            let _ = tx.send((job_id, crate::ai::one_shot(&prompt, &sid)));
+            let _ = tx.send((
+                job_id,
+                crate::ai::one_shot_cancellable(&prompt, &sid, &worker_cancel),
+            ));
         });
-        (job_id, session_id)
+        (job_id, session_id, cancel)
     }
 
     /// Open a `Pane::Ai` showing `title` and the answer to `prompt`, and kick off
     /// `claude -p <prompt>` on a background thread (`tick` delivers the answer).
     pub fn ask_ai(&mut self, title: impl Into<String>, prompt: String) {
-        let (job_id, session_id) = self.spawn_ai_job(prompt.clone());
-        let pane = Pane::Ai(crate::ai::AiPane::new(title, prompt, session_id, job_id));
+        let (job_id, session_id, cancel) = self.spawn_ai_job(prompt.clone());
+        let pane = Pane::Ai(crate::ai::AiPane::new(
+            title, prompt, session_id, job_id, cancel,
+        ));
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
@@ -1384,18 +1395,35 @@ impl App {
     }
 
     /// Re-send the prompt an existing `Pane::Ai` holds (with a fresh session id).
-    /// No-op for a live transcript mirror (it has no `-p` prompt).
+    /// No-op for a live transcript mirror (it has no `-p` prompt). Signals any
+    /// still-running worker for this pane to bail first.
     fn reask_ai(&mut self, pane_id: PaneId) {
         let prompt = match self.panes.get(pane_id) {
-            Some(Pane::Ai(a)) if !a.is_live() => a.prompt.clone(),
+            Some(Pane::Ai(a)) if !a.is_live() => {
+                a.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                a.prompt.clone()
+            }
             _ => return,
         };
-        let (job_id, session_id) = self.spawn_ai_job(prompt);
+        let (job_id, session_id, cancel) = self.spawn_ai_job(prompt);
         if let Some(Pane::Ai(a)) = self.panes.get_mut(pane_id) {
             a.job_id = job_id;
             a.session_id = session_id;
             a.state = crate::ai::AiState::Asking;
             a.scroll = 0;
+            a.cancel = cancel;
+        }
+    }
+
+    /// `x` in an `Asking` `Pane::Ai` — ask the worker to kill `claude -p` and bail
+    /// (the reply lands as `Failed("cancelled")`).
+    pub fn cancel_active_ai(&mut self) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Ai(a)) = self.panes.get(cur)
+            && matches!(a.state, crate::ai::AiState::Asking)
+        {
+            a.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.toast("cancelling…");
         }
     }
 
@@ -2650,7 +2678,7 @@ impl App {
              Output ONLY the commit message — no preamble, no code fences.\n\n\
              ```diff\n{diff}\n```"
         );
-        let (job_id, _sid) = self.spawn_ai_job(prompt);
+        let (job_id, _sid, _cancel) = self.spawn_ai_job(prompt);
         self.pending_commit_msg_job = Some(job_id);
         if let Some(Pane::GitStatus(g)) = self.active.and_then(|i| self.panes.get_mut(i)) {
             g.ai_msg_job = Some(job_id);

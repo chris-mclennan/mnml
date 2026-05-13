@@ -52,6 +52,8 @@ pub fn draw(
     }
     let hint: String = if ai.is_live() {
         "  live mirror · c open interactive pane · G follow · esc → tree".into()
+    } else if matches!(ai.state, AiState::Asking) {
+        "  x cancel · esc → tree".into()
     } else if ai.target.is_some() && matches!(ai.state, AiState::Done(_)) {
         "  r re-ask · a apply suggestion · c continue in Claude Code · esc → tree".into()
     } else {

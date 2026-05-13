@@ -198,18 +198,21 @@ xterm-ish) — the global chords (esp. `Ctrl+E` cycle-focus, `Ctrl+B` tree) are 
 since they resolve before pane dispatch; `Ctrl+W` closes the pane (kills child, joins reader).
 The event loop polls at 40 ms while a pty is open. **AI on-selection actions — done:** `src/ai/mod.rs`
 runs `claude -p --session-id <uuid> "<prompt>"` (the CLI in print mode — tool use, returns text,
-user's auth) on a worker thread; `Pane::Ai(AiPane{title,prompt,session_id,job_id,state:Asking|Done|
-Failed,scroll,target})` shows the answer rendered as markdown (via `md_preview::render_markdown`) —
+user's auth) on a worker thread (`ai::one_shot_cancellable` — spawns the child, drains stdout/stderr
+on threads, polls `try_wait` + an `AtomicBool` cancel flag, kills the child if it goes true);
+`Pane::Ai(AiPane{title,prompt,session_id,job_id,state:Asking|Done|Failed,scroll,target,cancel})`
+shows the answer rendered as markdown (via `md_preview::render_markdown`) —
 `src/ui/ai_view.rs`. Commands `ai.explain` / `ai.fix` / `ai.refactor` / `ai.write_tests`
 (`<leader>a e/f/r/w`) feed the active editor's selection (or the whole buffer if nothing's
 selected) + a task prompt; `ai.ask` (`<leader>a a`) takes a free-text question via the prompt
 overlay (`PromptKind::AiAsk`). Results land via `App.ai_chan` / `App::tick` (same pattern as the
-request pane). In the AI pane: `r` re-asks (fresh session), Esc → tree, **`a` applies the
-suggested code** — for a `fix`/`refactor` action the source range is recorded as the pane's
-`crate::ai::ApplyTarget{path,start,end}`; `App::apply_ai_suggestion` extracts the first fenced code
-block (`crate::ai::first_code_block`) and `ReplaceRange`s it over that range (offsets clamped to the
-buffer's current len, edit left dirty — review & undo to revert), and **`c` promotes it to
-an interactive Claude Code pane** — `claude --resume <session_id>` in a `Pane::Pty` below, with
+request pane). In the AI pane: `r` re-asks (fresh session), `x` cancels an in-flight run
+(`App::cancel_active_ai` → `cancel` flag → worker kills `claude -p`, replies `Failed("cancelled")`),
+Esc → tree, **`a` applies the suggested code** — for a `fix`/`refactor` action the source range is
+recorded as the pane's `crate::ai::ApplyTarget{path,start,end}`; `App::apply_ai_suggestion` extracts
+the first fenced code block (`crate::ai::first_code_block`) and `ReplaceRange`s it over that range
+(offsets clamped to the buffer's current len, edit left dirty — review & undo to revert), and
+**`c` promotes it to an interactive Claude Code pane** — `claude --resume <session_id>` in a `Pane::Pty` below, with
 the conversation already loaded (so a quick `-p` answer isn't a dead end — you can drill in /
 let it apply edits). **JSONL session tail — done:** `src/ai/transcript.rs` reads
 `~/.claude/projects/<dashed-cwd>/<session-id>.jsonl` into `Vec<Turn>` (user / assistant / thinking
@@ -220,8 +223,8 @@ known `--session-id` (`BinaryProfile.session_id`), so `ai.session_view` (`<leade
 mirror for the active `claude`/Ai pane; `c`-promoting a `Pane::Ai` also flips that pane into a
 live mirror of the (now-interactive) session. `G` follows the bottom. *Follow-ups:* show the
 applied suggestion as a reviewable diff (vs the current straight-replace); request-debug (`Ctrl+.`
-on a failing request → `claude -p`); pty scrollback; cancel a running one-shot; incremental JSONL
-parse from `last_len`.
+on a failing request → `claude -p`); pty scrollback; incremental JSONL parse from `last_len`;
+stream `claude -p` output instead of waiting for completion.
 **Playwright track — runner + results tree done:** `src/playwright/mod.rs` runs `npx playwright test
 --reporter=json [args]` on a worker thread (`App.tests_chan` / `App::tick`), parses the JSON report
 into a flat `TestRun{tests: Vec<TestCase{title,suite_path,file,line,status,duration_ms,error}>}` (ANSI

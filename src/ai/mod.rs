@@ -20,6 +20,9 @@
 //! first fenced code block ([`first_code_block`]) and writes it back over that
 //! range (left dirty for review).
 //!
+//! An in-flight `-p` run can be cancelled (`x` in the pane): the worker uses
+//! [`one_shot_cancellable`] which polls an `AtomicBool` and kills the child.
+//!
 //! Follow-ups: stream `claude -p` output incrementally instead of waiting for
 //! completion; show the applied suggestion as a reviewable diff before committing it.
 
@@ -27,6 +30,8 @@ pub mod transcript;
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Where an on-selection AI action's suggested code can be applied back: the
 /// source file + the byte range that was sent (a selection, or the whole
@@ -84,6 +89,9 @@ pub struct AiPane {
     /// For an on-selection `fix`/`refactor`: where the suggested code can be
     /// applied back (`a` in the pane). `None` for explain / free-text asks / etc.
     pub target: Option<ApplyTarget>,
+    /// Set this to ask an in-flight `claude -p` worker to kill its child and
+    /// bail (`x` in the pane while `Asking`). Replaced on each re-ask.
+    pub cancel: Arc<AtomicBool>,
 }
 
 pub enum AiState {
@@ -103,7 +111,13 @@ pub enum AiState {
 }
 
 impl AiPane {
-    pub fn new(title: impl Into<String>, prompt: String, session_id: String, job_id: u64) -> Self {
+    pub fn new(
+        title: impl Into<String>,
+        prompt: String,
+        session_id: String,
+        job_id: u64,
+        cancel: Arc<AtomicBool>,
+    ) -> Self {
         AiPane {
             title: title.into(),
             prompt,
@@ -112,6 +126,7 @@ impl AiPane {
             state: AiState::Asking,
             scroll: 0,
             target: None,
+            cancel,
         }
     }
 
@@ -132,6 +147,7 @@ impl AiPane {
             },
             scroll: usize::MAX, // start at the bottom (newest)
             target: None,
+            cancel: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -157,26 +173,72 @@ const CLI: &str = "claude";
 /// its stdout (trimmed), or a one-line error. Blocking — call from a worker
 /// thread. The session id lets the answer be resumed interactively later.
 pub fn one_shot(prompt: &str, session_id: &str) -> Result<String, String> {
-    let out = Command::new(CLI)
+    one_shot_cancellable(prompt, session_id, &AtomicBool::new(false))
+}
+
+/// Like [`one_shot`], but checks `cancel` while the child runs: if it goes true,
+/// the child is killed and `Err("cancelled")` returned. (Polls every ~40 ms;
+/// stdout/stderr are drained on threads so a large answer can't deadlock the
+/// pipes.) Blocking — call from a worker thread.
+pub fn one_shot_cancellable(
+    prompt: &str,
+    session_id: &str,
+    cancel: &AtomicBool,
+) -> Result<String, String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = Command::new(CLI)
         .args(["-p", "--session-id", session_id])
         .arg(prompt)
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("running `{CLI} -p`: {e} — is the Claude Code CLI on PATH?"))?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    if out.status.success() {
-        let s = stdout.trim();
-        if s.is_empty() {
-            Err("(empty response)".to_string())
-        } else {
-            Ok(s.to_string())
+    let mut so = child.stdout.take().expect("piped stdout");
+    let mut se = child.stderr.take().expect("piped stderr");
+    let so_h = std::thread::spawn(move || {
+        let mut v = Vec::new();
+        let _ = so.read_to_end(&mut v);
+        v
+    });
+    let se_h = std::thread::spawn(move || {
+        let mut v = Vec::new();
+        let _ = se.read_to_end(&mut v);
+        v
+    });
+    let mut killed = false;
+    loop {
+        if !killed && cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            killed = true;
         }
-    } else {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let msg = [stderr.trim(), stdout.trim()]
-            .into_iter()
-            .find(|s| !s.is_empty())
-            .unwrap_or("`claude -p` failed");
-        Err(msg.lines().next().unwrap_or(msg).to_string())
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let out = so_h.join().unwrap_or_default();
+                let err = se_h.join().unwrap_or_default();
+                if killed {
+                    return Err("cancelled".to_string());
+                }
+                let stdout = String::from_utf8_lossy(&out);
+                if status.success() {
+                    let s = stdout.trim();
+                    return if s.is_empty() {
+                        Err("(empty response)".to_string())
+                    } else {
+                        Ok(s.to_string())
+                    };
+                }
+                let stderr = String::from_utf8_lossy(&err);
+                let msg = [stderr.trim(), stdout.trim()]
+                    .into_iter()
+                    .find(|s| !s.is_empty())
+                    .unwrap_or("`claude -p` failed");
+                return Err(msg.lines().next().unwrap_or(msg).to_string());
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(40)),
+            Err(e) => return Err(format!("waiting on `{CLI} -p`: {e}")),
+        }
     }
 }
 
