@@ -169,6 +169,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_scrollbar(),
         },
         Command {
+            id: "browser.toggle_headless",
+            title: "Toggle CDP headless launch (takes effect on next browser.open)",
+            group: "browser",
+            keys: &[],
+            run: |app| app.toggle_browser_headless(),
+        },
+        Command {
             id: "find.find",
             title: "Find in buffer",
             group: "find",

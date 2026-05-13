@@ -455,7 +455,11 @@ get wrapped with `sessionId` via `cdp::with_session(message, session_id)` (flatt
 current target isn't the main page, so subsequent `Page.navigate` / `Runtime.evaluate` / `Page.reload` /
 `Page.captureScreenshot` / `DOM.getDocument` drive the picked target. The pane header shows
 `[target: <kind>: <title> · T to switch]` when more than one target is attached. One browser pane at a time.
-*Follow-ups:* headless mode.
+**Headless mode** — `[browser] headless` config (default off; `:set [no]headless` / `:set headless!` /
+`browser.toggle_headless`) — when on, `cdp::run_session` passes `headless: true` to `spawn_chrome` which
+appends `--headless=new --no-sandbox --disable-gpu` to Chrome's flags. The pane still receives network /
+console / DOM / target events and can be driven by `g` / `e` / `s` / `D` / etc; the only difference is no
+visible window. Takes effect on the *next* `browser.open` — in-flight panes are unaffected.
 **Right-click context menus — done:** `src/context_menu.rs` (`ContextMenu{title,items:Vec<MenuItem{label,
 action: MenuAction}>,anchor,selected}`) + `src/ui/context_menu.rs` (a bordered floating list at the click,
 clamped to screen, selected row highlighted). Right-click a tree file → Open / Open in split / Reveal in

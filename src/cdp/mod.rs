@@ -134,6 +134,7 @@ pub fn hide_highlight(id: i64) -> String {
 pub fn run_session(
     url: &str,
     profile_dir: &Path,
+    headless: bool,
     out: &Sender<CdpEvent>,
     cmds: &Receiver<CdpCommand>,
 ) {
@@ -147,7 +148,7 @@ pub fn run_session(
         }};
     }
 
-    let mut child = match spawn_chrome(url, profile_dir) {
+    let mut child = match spawn_chrome(url, profile_dir, headless) {
         Ok(c) => Some(c),
         Err(e) => bail!(None::<Child>, e),
     };
@@ -248,7 +249,7 @@ pub fn run_session(
     }
 }
 
-fn spawn_chrome(url: &str, profile_dir: &Path) -> Result<Child, String> {
+fn spawn_chrome(url: &str, profile_dir: &Path, headless: bool) -> Result<Child, String> {
     let url = if url.trim().is_empty() {
         "about:blank"
     } else {
@@ -262,8 +263,16 @@ fn spawn_chrome(url: &str, profile_dir: &Path) -> Result<Child, String> {
             .arg("--no-default-browser-check")
             .arg("--disable-background-networking")
             .arg("--disable-component-update")
-            .arg("--disable-default-apps")
-            .arg(url)
+            .arg("--disable-default-apps");
+        if headless {
+            // `--headless=new` is the modern path (Chrome 109+) — same DevTools
+            // protocol surface as the headed mode but no window. `--no-sandbox`
+            // and `--disable-gpu` keep CI / restricted environments happy.
+            cmd.arg("--headless=new")
+                .arg("--no-sandbox")
+                .arg("--disable-gpu");
+        }
+        cmd.arg(url)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());

@@ -3955,9 +3955,10 @@ impl App {
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<crate::cdp::CdpCommand>();
         let profile_dir = self.workspace.join(".mnml").join("chrome-profile");
         let _ = std::fs::create_dir_all(&profile_dir);
+        let headless = self.config.browser.headless;
         let (worker_url, worker_dir) = (url.clone(), profile_dir);
         std::thread::spawn(move || {
-            crate::cdp::run_session(&worker_url, &worker_dir, &ev_tx, &cmd_rx);
+            crate::cdp::run_session(&worker_url, &worker_dir, headless, &ev_tx, &cmd_rx);
         });
         self.cdp_chan = Some(ev_rx);
         let pane = Pane::Browser(crate::browser_pane::BrowserPane::new(url, cmd_tx));
@@ -6764,6 +6765,20 @@ impl App {
         self.set_scrollbar(!self.config.ui.scrollbar);
     }
 
+    /// Toggle CDP headless launch (`:set [no]headless`). Takes effect on the
+    /// **next** `browser.open` — an in-flight browser pane is unaffected.
+    pub fn set_browser_headless(&mut self, on: bool) {
+        self.config.browser.headless = on;
+        self.toast(if on {
+            "browser: headless on (next open)"
+        } else {
+            "browser: headless off (next open)"
+        });
+    }
+    pub fn toggle_browser_headless(&mut self) {
+        self.set_browser_headless(!self.config.browser.headless);
+    }
+
     /// Interpret a vim `:`-line (without the leading `:`). Anything we don't
     /// recognise is bridged to a registered command if one matches, else toasted.
     /// Apply a parsed `:%s/old/new/[flags]` to the active editor — buffer-wide
@@ -6957,6 +6972,12 @@ impl App {
                     self.set_scrollbar(false);
                 } else if matches!(opt, "scrollbar!" | "invscrollbar") {
                     self.toggle_scrollbar();
+                } else if matches!(opt, "headless") {
+                    self.set_browser_headless(true);
+                } else if matches!(opt, "noheadless") {
+                    self.set_browser_headless(false);
+                } else if matches!(opt, "headless!" | "invheadless") {
+                    self.toggle_browser_headless();
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }

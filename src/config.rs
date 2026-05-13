@@ -42,6 +42,16 @@ pub struct Config {
     /// a single `$0` in the expansion picks the cursor landing spot. Resolved
     /// + expanded by [`crate::snippets`].
     pub snippets: BTreeMap<String, BTreeMap<String, String>>,
+    pub browser: BrowserConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct BrowserConfig {
+    /// Launch Chrome with `--headless=new` (no window). The pane still
+    /// receives network / console / DOM events; the user drives via `g`
+    /// (navigate), `e` (eval), `s` (screenshot), etc. Default off — the
+    /// visible window is what most users expect from `browser.open`.
+    pub headless: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +148,7 @@ impl Default for Config {
             tasks: BTreeMap::new(),
             startup_tasks: Vec::new(),
             snippets: BTreeMap::new(),
+            browser: BrowserConfig { headless: false },
         }
     }
 }
@@ -164,6 +175,13 @@ struct RawConfig {
     session: RawSession,
     #[serde(default)]
     snippets: BTreeMap<String, BTreeMap<String, String>>,
+    #[serde(default)]
+    browser: RawBrowser,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawBrowser {
+    headless: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -304,6 +322,9 @@ impl Config {
         self.startup_tasks.extend(raw.startup.tasks);
         for (scope, map) in raw.snippets {
             self.snippets.entry(scope).or_default().extend(map);
+        }
+        if let Some(v) = raw.browser.headless {
+            self.browser.headless = v;
         }
     }
 }
