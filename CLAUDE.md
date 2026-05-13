@@ -136,7 +136,12 @@ Copy path / Remove worktree… (the current worktree is non-removable). Delete +
 confirm" prompt (`PromptKind::GitDeleteBranch` / `GitWorktreeRemove`, the rail's confirm idiom); on confirm,
 `branch::delete_branch` / `branch::worktree_remove` shell out to `git branch -D` / `git worktree remove`. Section expand
 state (`git_section_expanded`) persisted in `session.json`. Click on the `> GIT` header toggles it
-(`toggle_git_section_expanded`) and parks the rail's keyboard on the git section. **Tree FS actions** — right-click a file or dir in the tree → "New file…", "New
+(`toggle_git_section_expanded`) and parks the rail's keyboard on the git section.
+**Drag-to-resize the rail** — the rail's right-edge cell is a draggable handle: mouse-down + drag adjusts
+`App.tree_width` live (clamped to `[8, screen_width - 20]`); the new width persists in `session.json` so a
+relaunch keeps your preferred rail size. `begin_tree_edge_drag` / `drag_tree_edge_to` / `end_tree_edge_drag`
+on `App`; the rect is recorded as `app.rects.tree_edge` in `ui::draw`. The `[ui] tree_width` config still
+seeds the initial width on a fresh workspace. **Tree FS actions** — right-click a file or dir in the tree → "New file…", "New
 folder…", "Rename…", "Delete…" (the delete prompt requires you to type the entry's filename to confirm). The "New file"
 flow is also wired to `Ctrl+N` (`file.new`) for workspace-relative paths from anywhere; missing intermediate dirs are
 auto-created. Rename / delete repoint or close any open editor buffer for the affected paths (LSP `did_close` / `did_open`

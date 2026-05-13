@@ -293,6 +293,10 @@ struct SavedSession {
     /// Was the workspace section inside the rail expanded?
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tree_root_expanded: Option<bool>,
+    /// Last rail width (mouse-drag adjusted). `None` ⇒ runtime default
+    /// (the `[ui] tree_width` config).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tree_width: Option<u16>,
     /// Was the `> GIT` section in the rail expanded?
     #[serde(default, skip_serializing_if = "Option::is_none")]
     git_section_expanded: Option<bool>,
@@ -528,6 +532,9 @@ pub struct PaneRects {
     /// header row when the tree is expanded, or the whole activity-bar column
     /// when it's collapsed. Click → `App::toggle_tree`.
     pub tree_toggle: Option<Rect>,
+    /// The 1-cell-wide draggable "right edge" of the rail. Click+drag adjusts
+    /// `App::tree_width` so the rail resizes live.
+    pub tree_edge: Option<Rect>,
     /// The `> GIT` section header row in the rail (when the rail's visible).
     /// Click → `App::toggle_git_section_expanded`.
     pub git_section_toggle: Option<Rect>,
@@ -574,6 +581,13 @@ pub struct App {
     pub focus: Focus,
     pub tree: Tree,
     pub tree_visible: bool,
+    /// Current rail width (cells). Initialized from `[ui] tree_width` and
+    /// then mutable via mouse-drag on the rail's right edge. Persisted in
+    /// `session.json`.
+    pub tree_width: u16,
+    /// True while the user is mid-drag on the rail's right-edge handle.
+    /// Cleared on mouse-up; clamps `tree_width` to a sane range during drag.
+    pub dragging_tree_edge: bool,
     /// Bufferline horizontal scroll — index of the leftmost rendered tab. Auto
     /// adjusts on every render to keep the active tab visible (the user never
     /// has to scroll it manually). Reset when the pane count drops past it.
@@ -753,6 +767,7 @@ impl App {
             r.refresh(&workspace);
             r
         };
+        let tree_width = config.ui.tree_width;
         Ok(App {
             workspace,
             config,
@@ -762,6 +777,8 @@ impl App {
             focus: Focus::Tree,
             tree,
             tree_visible: true,
+            tree_width,
+            dragging_tree_edge: false,
             bufferline_first_visible: 0,
             zen_mode: false,
             recent_files: Vec::new(),
@@ -5635,6 +5652,35 @@ impl App {
         self.dragging = None;
     }
 
+    /// If `(x, y)` is on the rail's right-edge handle, start a tree-width drag.
+    /// Returns true if so. (The drag continues with [`Self::drag_tree_edge_to`]
+    /// + ends with [`Self::end_tree_edge_drag`].)
+    pub fn begin_tree_edge_drag(&mut self, x: u16, y: u16) -> bool {
+        if let Some(r) = self.rects.tree_edge
+            && x >= r.x
+            && x < r.x + r.width
+            && y >= r.y
+            && y < r.y + r.height
+        {
+            self.dragging_tree_edge = true;
+            return true;
+        }
+        false
+    }
+    /// Continue a tree-width drag: set the rail's width to the column under
+    /// the pointer, clamped to `[8, screen_width - 20]`.
+    pub fn drag_tree_edge_to(&mut self, x: u16, screen_width: u16) {
+        if !self.dragging_tree_edge {
+            return;
+        }
+        let max = screen_width.saturating_sub(20).max(8);
+        let new = x.clamp(8, max);
+        self.tree_width = new;
+    }
+    pub fn end_tree_edge_drag(&mut self) {
+        self.dragging_tree_edge = false;
+    }
+
     /// Close the buffer at `id`. If it's a dirty editor, this opens the
     /// Save/Discard/Cancel confirm overlay instead and returns; otherwise it
     /// closes immediately. Use [`Self::force_close_pane`] to skip the prompt.
@@ -6683,6 +6729,7 @@ impl App {
             layout,
             tree_visible: Some(self.tree_visible),
             tree_root_expanded: Some(self.tree_root_expanded),
+            tree_width: Some(self.tree_width),
             git_section_expanded: Some(self.git_section_expanded),
             tree_expanded_dirs: Some(
                 self.tree
@@ -6765,6 +6812,9 @@ impl App {
         }
         if let Some(v) = saved.tree_root_expanded {
             self.tree_root_expanded = v;
+        }
+        if let Some(v) = saved.tree_width {
+            self.tree_width = v.clamp(8, 200);
         }
         if let Some(v) = saved.git_section_expanded {
             self.git_section_expanded = v;
@@ -7473,6 +7523,36 @@ mod tests {
         assert!(ranges_overlap(r(2, 2, 2, 2), r(1, 0, 3, 1)));
         // Single-point cursor before a diag.
         assert!(!ranges_overlap(r(0, 0, 0, 0), r(1, 0, 1, 5)));
+    }
+
+    #[test]
+    fn tree_width_drag_clamps_and_persists() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("a.txt"), "a").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let initial = app.tree_width;
+        // No drag in progress ⇒ drag_to is a no-op.
+        app.drag_tree_edge_to(50, 200);
+        assert_eq!(app.tree_width, initial);
+
+        // Simulate a drag — clamps to [8, 180].
+        app.dragging_tree_edge = true;
+        app.drag_tree_edge_to(50, 200);
+        assert_eq!(app.tree_width, 50);
+        app.drag_tree_edge_to(2, 200);
+        assert_eq!(app.tree_width, 8);
+        app.drag_tree_edge_to(220, 200);
+        assert_eq!(app.tree_width, 180);
+        app.end_tree_edge_drag();
+        assert!(!app.dragging_tree_edge);
+
+        // Round-trip through session.json.
+        app.tree_width = 42;
+        app.save_session_on_quit();
+        let mut app2 = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        assert_eq!(app2.tree_width, initial); // pre-restore = config default
+        app2.try_restore_session();
+        assert_eq!(app2.tree_width, 42);
     }
 
     #[test]

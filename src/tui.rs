@@ -1102,6 +1102,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            // Grab the rail's right-edge handle? (cheaper / more specific
+            // than a split divider — try this first.)
+            if app.begin_tree_edge_drag(x, y) {
+                return;
+            }
             // Grab a split divider? (do this first — it sits between two pane rects)
             if app.begin_divider_drag(x, y) {
                 return;
@@ -1213,8 +1218,24 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
             }
         }
-        MouseEventKind::Drag(MouseButton::Left) => app.drag_divider_to(x, y),
-        MouseEventKind::Up(MouseButton::Left) => app.end_divider_drag(),
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if app.dragging_tree_edge {
+                // Hand the full screen width to the clamp logic.
+                let screen_w = app
+                    .rects
+                    .body
+                    .map(|r| r.x + r.width)
+                    .or_else(|| app.rects.statusline.map(|r| r.x + r.width))
+                    .unwrap_or(120);
+                app.drag_tree_edge_to(x, screen_w);
+            } else {
+                app.drag_divider_to(x, y);
+            }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            app.end_tree_edge_drag();
+            app.end_divider_drag();
+        }
         MouseEventKind::ScrollUp => scroll_under(app, x, y, -3),
         MouseEventKind::ScrollDown => scroll_under(app, x, y, 3),
         _ => {}

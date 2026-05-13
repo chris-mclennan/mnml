@@ -120,15 +120,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // read by `tree_view::draw`, controls whether the file list under the
     // workspace-name header is shown (the VS-Code-style section collapse).
     let (tree_area, right) = if app.tree_visible {
-        let w = app
-            .config
-            .ui
-            .tree_width
-            .min(upper.width.saturating_sub(20))
-            .max(8);
+        let w = app.tree_width.min(upper.width.saturating_sub(20)).max(8);
         let cols = RLayout::horizontal([Constraint::Length(w), Constraint::Min(1)]).split(upper);
+        // The rail's rightmost cell column is the resize handle.
+        app.rects.tree_edge = Some(Rect {
+            x: cols[0].x + cols[0].width.saturating_sub(1),
+            y: cols[0].y,
+            width: 1,
+            height: cols[0].height,
+        });
         (Some(cols[0]), cols[1])
     } else {
+        app.rects.tree_edge = None;
         (None, upper)
     };
 
