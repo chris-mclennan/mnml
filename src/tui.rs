@@ -477,6 +477,11 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('h') => app.heal_from_active_trace(),
             KeyCode::Char('r') => app.refresh_active_trace(),
+            KeyCode::Char('e') => {
+                if let Some(Pane::Trace(tr)) = app.panes.get_mut(i) {
+                    tr.toggle_errors_only();
+                }
+            }
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }

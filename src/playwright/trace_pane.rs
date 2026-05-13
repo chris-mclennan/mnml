@@ -17,6 +17,10 @@ pub struct TracePane {
     pub selected: usize,
     /// Top visible row.
     pub scroll: usize,
+    /// If `true`, the renderer hides rows whose `error` is `None`. Toggled
+    /// with `e` in the pane. The selection still indexes the raw `events`
+    /// vector — `visible_indices` is the filtered mapping.
+    pub errors_only: bool,
 }
 
 impl TracePane {
@@ -27,7 +31,42 @@ impl TracePane {
             events,
             selected: 0,
             scroll: 0,
+            errors_only: false,
         }
+    }
+
+    /// Indices into `events` that the renderer should draw, in order. When
+    /// `errors_only` is on, only rows with `error.is_some()`. Otherwise all.
+    pub fn visible_indices(&self) -> Vec<usize> {
+        if self.errors_only {
+            self.events
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| e.error.is_some())
+                .map(|(i, _)| i)
+                .collect()
+        } else {
+            (0..self.events.len()).collect()
+        }
+    }
+
+    /// `e` in the pane — flip the filter. If turning it on hides the current
+    /// selection, snap to the first error (or to 0 if none).
+    pub fn toggle_errors_only(&mut self) {
+        self.errors_only = !self.errors_only;
+        if self.errors_only
+            && self
+                .events
+                .get(self.selected)
+                .is_none_or(|e| e.error.is_none())
+        {
+            self.selected = self
+                .events
+                .iter()
+                .position(|e| e.error.is_some())
+                .unwrap_or(0);
+        }
+        self.scroll = 0;
     }
 
     pub fn tab_title(&self) -> String {
@@ -43,14 +82,22 @@ impl TracePane {
             .fold(0.0_f64, f64::max)
     }
 
-    /// Move the selection by `delta` rows, clamped.
+    /// Move the selection by `delta` rows, clamped. Walks the *visible* row
+    /// list — when `errors_only` is on, skipping over filtered-out events.
     pub fn move_selection(&mut self, delta: isize) {
-        if self.events.is_empty() {
+        let visible = self.visible_indices();
+        if visible.is_empty() {
             self.selected = 0;
             return;
         }
-        let max = self.events.len() as isize - 1;
-        self.selected = (self.selected as isize + delta).clamp(0, max) as usize;
+        // Find the visible row that's currently at-or-past the selection.
+        let cur_pos = visible
+            .iter()
+            .position(|&i| i >= self.selected)
+            .unwrap_or(visible.len() - 1);
+        let max = visible.len() as isize - 1;
+        let new_pos = (cur_pos as isize + delta).clamp(0, max) as usize;
+        self.selected = visible[new_pos];
     }
 
     /// Render the timeline as plain text — for handing to `claude -p` (heal). One
@@ -123,6 +170,38 @@ mod tests {
             detail: detail.into(),
             error: error.map(str::to_string),
         }
+    }
+
+    #[test]
+    fn errors_only_filters_and_clamps_selection() {
+        let mut p = TracePane::new(
+            "t",
+            PathBuf::from("/tmp/trace.zip"),
+            vec![
+                ev(0.0, EventKind::Action, "page.goto", "", None),
+                ev(10.0, EventKind::Action, "page.click", "", None),
+                ev(20.0, EventKind::Error, "boom", "", Some("err")),
+                ev(30.0, EventKind::Action, "page.fill", "", None),
+            ],
+        );
+        // selection starts on row 0 (an action).
+        assert_eq!(p.selected, 0);
+        p.toggle_errors_only();
+        assert!(p.errors_only);
+        // Selection snapped to the only error row (index 2).
+        assert_eq!(p.selected, 2);
+        // visible_indices is just [2] now.
+        assert_eq!(p.visible_indices(), vec![2]);
+        // Moving down in errors-only mode stays put (only one visible row).
+        p.move_selection(1);
+        assert_eq!(p.selected, 2);
+        // Flip the filter off — selection persists.
+        p.toggle_errors_only();
+        assert!(!p.errors_only);
+        assert_eq!(p.selected, 2);
+        // And moving forward goes to row 3.
+        p.move_selection(1);
+        assert_eq!(p.selected, 3);
     }
 
     #[test]

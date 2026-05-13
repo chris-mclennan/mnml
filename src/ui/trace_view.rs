@@ -103,7 +103,10 @@ pub fn draw(
         ),
     ]));
     lines.push(Line::from(Span::styled(
-        "  ↑↓ select   h heal with Claude   r re-parse   esc back",
+        format!(
+            "  ↑↓ select   h heal with Claude   r re-parse   e errors-only [{}]   esc back",
+            if tr.errors_only { "on" } else { "off" },
+        ),
         Style::default().fg(t.comment).bg(t.bg_dark),
     )));
     lines.push(Line::from(Span::styled(
@@ -113,11 +116,19 @@ pub fn draw(
 
     let header_rows = lines.len();
     let mut sel_row = header_rows;
-    for (i, e) in tr.events.iter().enumerate() {
+    let visible = tr.visible_indices();
+    for &i in &visible {
+        let e = &tr.events[i];
         if i == tr.selected {
             sel_row = lines.len();
         }
         lines.push(event_line(&t, e, i == tr.selected));
+    }
+    if visible.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  · no errors in this trace",
+            Style::default().fg(t.comment).bg(t.bg_dark),
+        )));
     }
 
     // scroll to keep the selected row visible within the list area
