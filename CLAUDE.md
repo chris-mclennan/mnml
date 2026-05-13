@@ -171,6 +171,13 @@ longer exist), then `layout_from_saved` rebuilds `App.layout` from the saved tre
 to a re-opened buffer). The previously-active one gets focus. Workspace mismatch / corrupt json ⇒ silently skip. Layouts
 with non-editor leaves (transient pty / browser / etc.) drop the layout part — `saved_layout_from` returns `None` and the
 buffer list alone is saved.
+**Persistent undo** — every file save writes the editor's undo+redo stacks to `<workspace>/.mnml/undo/<hash>.json`
+(FNV-1a 64 of the absolute path, capped at 100 most-recent snapshots per file via `PERSISTED_UNDO_LIMIT`); every
+`Buffer::open` calls `editor::load_history_from` to restore them. The file pins the text it's valid against via
+a `text_hash` field — if the file was edited outside mnml between sessions the load returns `false` and the
+history is silently discarded (the offsets in old snapshots would no longer map onto the new text). Helpers:
+`editor::undo_path_for(workspace, file)`, `editor::save_history_to(editor, path)`, `editor::load_history_from
+(editor, path)`. I/O errors are swallowed end-to-end — persistent undo is a UX nicety, not load-bearing.
 **Find-in-buffer** — `find.find` (`Ctrl+F`, palette) prompts for a query (seeded with the active selection or last query),
 `accept_find` populates the active buffer's `FindState{query, matches:Vec<(byte_start,byte_end)>, current}`
 (`buffer::find_all_ci_ascii` — ASCII case-insensitive, non-overlapping, char-boundary safe), jumps the cursor to the nearest

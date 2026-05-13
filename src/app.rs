@@ -1661,6 +1661,12 @@ impl App {
                     buf.editor.place_cursor(row, col);
                     buf.scroll = scroll;
                 }
+                // Persistent undo — restore the editor's undo+redo stacks if
+                // a matching `<workspace>/.mnml/undo/<hash>.json` exists. The
+                // helper bails when the file's hash has drifted (file changed
+                // outside mnml), so the worst case is "no history."
+                let undo_path = crate::editor::undo_path_for(&self.workspace, &path);
+                crate::editor::load_history_from(&mut buf.editor, &undo_path);
                 let text = buf.editor.text().to_string();
                 self.panes.push(Pane::Editor(buf));
                 let new_id = self.panes.len() - 1;
@@ -5813,12 +5819,19 @@ impl App {
     /// The actual write — extracted so the format-on-save flow can call it
     /// after the LSP reply lands (or after the deadline times out).
     pub fn save_active_now(&mut self) {
+        let workspace = self.workspace.clone();
         let saved_path = match self.active_editor_mut() {
             Some(buf) if buf.path.is_some() => {
                 let name = buf.display_name();
                 match buf.save_to_disk() {
                     Ok(()) => {
                         let p = buf.path.clone();
+                        // Persist the undo/redo stack alongside the file so a
+                        // close-and-reopen keeps your history.
+                        if let Some(ref fp) = p {
+                            let undo_path = crate::editor::undo_path_for(&workspace, fp);
+                            crate::editor::save_history_to(&buf.editor, &undo_path);
+                        }
                         self.toast(format!("saved {name}"));
                         self.git.refresh();
                         self.disarm_quit();
