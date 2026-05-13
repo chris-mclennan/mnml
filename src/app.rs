@@ -24,6 +24,11 @@ const TOAST_TTL: Duration = Duration::from_secs(4);
 /// ago, short enough that the picker isn't a wall of text."
 const RECENT_FILES_MAX: usize = 20;
 
+/// Cap on `App::file_cursors`. Per-file last-position state isn't tied to the
+/// recent-files cap because the user may legitimately revisit files long after
+/// they've dropped off `recent_files`.
+const FILE_CURSORS_MAX: usize = 200;
+
 /// Direction for `Ctrl+W`-style focus navigation between splits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusDir {
@@ -178,6 +183,17 @@ struct SavedSession {
     /// (or whatever `[ui] theme` in the config file says).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     theme: Option<String>,
+    /// Per-file last `(cursor_byte, scroll)`. Files dropped from the worktree
+    /// just silently fail to restore; over-large positions clamp.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    file_cursors: Vec<SavedFileCursor>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct SavedFileCursor {
+    path: String,
+    cursor_byte: usize,
+    scroll: usize,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -370,6 +386,10 @@ pub struct App {
     /// Most-recently-opened files, newest first, capped at `RECENT_FILES_MAX`.
     /// Updated every time `open_path` opens a file. Persisted in session.json.
     pub recent_files: Vec<PathBuf>,
+    /// Per-file last `(cursor_byte, scroll)`, captured when a buffer is closed
+    /// or saved, restored when the file is re-opened later. Persisted in
+    /// session.json so it survives restarts. Capped at `FILE_CURSORS_MAX`.
+    pub file_cursors: std::collections::HashMap<PathBuf, (usize, usize)>,
     /// Is the workspace "section" inside the rail expanded? When `false` the
     /// rail shows just the `> WORKSPACE-NAME` header (clickable to expand);
     /// when `true` it shows the header (`v WORKSPACE-NAME`) + the file list.
@@ -490,6 +510,7 @@ impl App {
             bufferline_first_visible: 0,
             zen_mode: false,
             recent_files: Vec::new(),
+            file_cursors: std::collections::HashMap::new(),
             // VS-Code-style: the rail is shown with its workspace section
             // expanded by default. The last session's choice overrides this
             // in `try_restore_session`.
@@ -1333,7 +1354,15 @@ impl App {
         // (Pane kind is picked by extension — only `Editor` exists in P0; `.http`
         // etc. route to `Pane::Request` once that track lands.)
         match Buffer::open(&path, &self.config) {
-            Ok(buf) => {
+            Ok(mut buf) => {
+                // Restore the cursor + scroll from the last time we had this
+                // file open (if anywhere in `file_cursors`); harmless when the
+                // saved cursor doesn't fit the new file text.
+                if let Some(&(cursor_byte, scroll)) = self.file_cursors.get(&path) {
+                    let (row, col) = byte_to_row_col(buf.editor.text(), cursor_byte);
+                    buf.editor.place_cursor(row, col);
+                    buf.scroll = scroll;
+                }
                 let text = buf.editor.text().to_string();
                 self.panes.push(Pane::Editor(buf));
                 let new_id = self.panes.len() - 1;
@@ -1341,6 +1370,22 @@ impl App {
                 self.lsp.did_open(&path, &text);
             }
             Err(e) => self.toast(format!("cannot open {}: {e}", path.display())),
+        }
+    }
+
+    /// Remember `path`'s `(cursor_byte, scroll)` so the next `open_path` can
+    /// restore the position. Drops the oldest entries when the map exceeds
+    /// `FILE_CURSORS_MAX` (insertion order isn't tracked precisely — when full
+    /// we shrink by removing one arbitrary entry, which is fine for a soft cap).
+    fn note_file_cursor(&mut self, path: &Path, cursor_byte: usize, scroll: usize) {
+        self.file_cursors
+            .insert(path.to_path_buf(), (cursor_byte, scroll));
+        while self.file_cursors.len() > FILE_CURSORS_MAX {
+            if let Some(k) = self.file_cursors.keys().next().cloned() {
+                self.file_cursors.remove(&k);
+            } else {
+                break;
+            }
         }
     }
 
@@ -4758,6 +4803,16 @@ impl App {
         if id >= self.panes.len() {
             return;
         }
+        // Capture the cursor + scroll so a future `open_path` for this file
+        // jumps back to where the user was. Done *before* the pane is removed
+        // (and only for editor panes — other variants don't have a "position").
+        if let Pane::Editor(b) = &self.panes[id]
+            && let Some(p) = b.path.clone()
+        {
+            let cur = b.editor.cursor();
+            let scroll = b.scroll;
+            self.note_file_cursor(&p, cur, scroll);
+        }
         let (discarded, closed_path) = match &self.panes[id] {
             Pane::Editor(b) => (b.dirty.then(|| b.display_name()), b.path.clone()),
             Pane::MdPreview(_)
@@ -5360,10 +5415,13 @@ impl App {
             return;
         }
         // Save editor buffers in tab order, with PaneId → saved-index lookup
-        // for the layout pass.
+        // for the layout pass. Also fold the currently-open buffers' cursors
+        // into `file_cursors` so per-file restore covers them even if the user
+        // closes them after relaunch.
         let mut open: Vec<SavedBuffer> = Vec::new();
         let mut pane_to_idx: Vec<Option<usize>> = vec![None; self.panes.len()];
         let mut active: Option<usize> = None;
+        let mut merged_cursors = self.file_cursors.clone();
         for (i, p) in self.panes.iter().enumerate() {
             if let Pane::Editor(b) = p
                 && let Some(path) = &b.path
@@ -5377,6 +5435,7 @@ impl App {
                     cursor_byte: b.editor.cursor(),
                     scroll: b.scroll,
                 });
+                merged_cursors.insert(path.clone(), (b.editor.cursor(), b.scroll));
             }
         }
         // Try to mirror the split tree. If any leaf isn't an editor we can save
@@ -5403,6 +5462,14 @@ impl App {
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect(),
             theme: Some(crate::ui::theme::cur().name.to_string()),
+            file_cursors: merged_cursors
+                .iter()
+                .map(|(p, &(c, s))| SavedFileCursor {
+                    path: p.to_string_lossy().into_owned(),
+                    cursor_byte: c,
+                    scroll: s,
+                })
+                .collect(),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -5483,6 +5550,10 @@ impl App {
             // file) just leave the launch-default in place. Silent so the
             // restore doesn't toast on every cold start.
             let _ = self.set_theme_silent(name);
+        }
+        for fc in saved.file_cursors {
+            self.file_cursors
+                .insert(PathBuf::from(fc.path), (fc.cursor_byte, fc.scroll));
         }
         let fallback = idx_to_pane.iter().rev().flatten().next().copied();
         if let Some(p) = active_pane.or(fallback) {
@@ -5687,6 +5758,23 @@ mod tests {
         assert!(names2.contains(&"a.txt".to_string()));
         assert!(names2.contains(&"b.txt".to_string()));
         assert!(app2.recent_files.len() <= RECENT_FILES_MAX);
+    }
+
+    #[test]
+    fn per_file_cursor_restores_on_reopen() {
+        let (_d, mut app) = app_with_files();
+        let a = app.workspace.join("a.txt");
+        // Open `a` and put the cursor mid-word.
+        app.open_path(&a);
+        if let Some(b) = app.active_editor_mut() {
+            b.editor.place_cursor(0, 3);
+        }
+        // Close → file_cursors records position; the buffer goes away.
+        app.close_active_pane();
+        assert!(app.file_cursors.contains_key(&a));
+        // Re-open → the cursor lands back at (0, 3) instead of (0, 0).
+        app.open_path(&a);
+        assert_eq!(app.active_editor().unwrap().editor.row_col(), (0, 3));
     }
 
     #[test]
