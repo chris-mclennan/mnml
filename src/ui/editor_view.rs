@@ -293,6 +293,42 @@ pub fn draw_pane(
             cells.push((ch, fg, bg));
         }
 
+        // Inline diagnostic: when this line has an LSP error/warning, overlay
+        // the first non-empty message line in dim severity color starting two
+        // cells past the line's content. Only paints into trailing space
+        // cells (won't clobber actual code or selection bg).
+        if let Some(sev) = diag_sev
+            && let Some(msg) = buf
+                .diagnostics
+                .iter()
+                .find(|d| (d.range.start.line as usize) == line_no)
+                .and_then(|d| {
+                    d.message
+                        .lines()
+                        .map(str::trim)
+                        .find(|l| !l.is_empty())
+                        .map(str::to_string)
+                })
+        {
+            let start_c = n + 2;
+            let dcolor = diag_color(sev);
+            for (i, mc) in msg.chars().enumerate() {
+                let c = start_c + i;
+                if c < buf.h_scroll {
+                    continue;
+                }
+                let vc = c - buf.h_scroll;
+                if vc >= cells.len() {
+                    break;
+                }
+                // Only paint where the line's natural content ended (a space
+                // cell with the line bg) — never over selection / find-match.
+                if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
+                    cells[vc] = (mc, dcolor, base_bg);
+                }
+            }
+        }
+
         let mut spans: Vec<Span> = vec![sign_span, Span::styled(num_gutter, num_style)];
         let mut i = 0;
         while i < cells.len() {
