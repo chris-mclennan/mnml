@@ -44,6 +44,26 @@ fn op_preserves_goal_col(op: &EditOp) -> bool {
     }
 }
 
+/// Matching closing char for an auto-pair open char, or `None` if `c` isn't a
+/// configured open. Single-char pairs only.
+fn auto_pair_close(c: char) -> Option<char> {
+    match c {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        '"' => Some('"'),
+        '\'' => Some('\''),
+        '`' => Some('`'),
+        _ => None,
+    }
+}
+
+/// True if `c` is one of the close chars our auto-pair would have inserted.
+/// (Used for the "skip over an auto-inserted close" shortcut.)
+fn is_auto_pair_close(c: char) -> bool {
+    matches!(c, ')' | ']' | '}' | '"' | '\'' | '`')
+}
+
 /// Whether an op is (a chain of) typed characters — used to decide whether to
 /// keep the coalescing undo run alive.
 fn op_is_insert_char(op: &EditOp) -> bool {
@@ -68,6 +88,10 @@ pub struct Editor {
     redo: Vec<Snapshot>,
     /// True while a coalescing run of `InsertChar` is in progress.
     in_insert_run: bool,
+    /// Auto-insert the matching close char after `(`/`[`/`{`/`"`/`'`/`` ` ``.
+    /// Toggled by `[editor] auto_pair`; off in `Editor::new` so unit tests have
+    /// vanilla behavior.
+    pub auto_pair: bool,
 }
 
 impl Editor {
@@ -82,6 +106,7 @@ impl Editor {
             undo: Vec::new(),
             redo: Vec::new(),
             in_insert_run: false,
+            auto_pair: false,
         }
     }
 
@@ -206,6 +231,24 @@ impl Editor {
     fn col_at_byte(&self, byte: usize) -> usize {
         let line = self.text[..byte].bytes().filter(|&b| b == b'\n').count();
         self.text[self.line_start(line)..byte].chars().count()
+    }
+
+    /// True when auto-pair should fire — i.e. the next char is "empty space"
+    /// (newline, whitespace, end-of-buffer, or a closing bracket / quote). If
+    /// the next char is a word char we'd be wrapping live code, so don't.
+    fn next_char_allows_pair(&self) -> bool {
+        match self.text[self.cursor..].chars().next() {
+            None => true,
+            Some(c) if c.is_whitespace() => true,
+            Some(')' | ']' | '}' | '>' | ',' | ';' | ':') => true,
+            _ => false,
+        }
+    }
+
+    /// True if the next char in the buffer is exactly `c` (used to skip over
+    /// an already-auto-paired close char).
+    fn cursor_on_char(&self, c: char) -> bool {
+        self.text[self.cursor..].starts_with(c)
     }
     fn prev_char_boundary(&self, byte: usize) -> usize {
         if byte == 0 {
@@ -374,9 +417,30 @@ impl Editor {
             InsertChar(c) => {
                 self.delete_selection_if_any(out);
                 self.checkpoint_insert_run();
-                self.text.insert(self.cursor, c);
-                self.cursor += c.len_utf8();
-                out.buffer_changed = true;
+                // Auto-pair: typing `(` / `[` / `{` / `"` / `'` / `` ` `` inserts
+                // the close char after the cursor when it makes sense (the next
+                // char is end-of-line, whitespace, or another closer). When the
+                // user types the same close char while the cursor sits *on*
+                // an auto-inserted close, we skip over it instead of doubling
+                // it up (`""` → type `"` → still `""`, cursor moved past).
+                let close = auto_pair_close(c);
+                if self.auto_pair
+                    && let Some(closer) = close
+                    && self.next_char_allows_pair()
+                {
+                    self.text.insert(self.cursor, c);
+                    self.cursor += c.len_utf8();
+                    self.text.insert(self.cursor, closer);
+                    // Leave the cursor between the pair.
+                    out.buffer_changed = true;
+                } else if self.auto_pair && is_auto_pair_close(c) && self.cursor_on_char(c) {
+                    // Skip over the auto-inserted close: just move past it.
+                    self.cursor += c.len_utf8();
+                } else {
+                    self.text.insert(self.cursor, c);
+                    self.cursor += c.len_utf8();
+                    out.buffer_changed = true;
+                }
             }
             InsertStr(s) => {
                 if s.is_empty() {
@@ -1216,5 +1280,43 @@ mod tests {
         e.apply(InsertNewlineAbove, 10, &mut c);
         assert_eq!(e.text(), "\na\n\nb");
         assert_eq!(e.row_col(), (0, 0));
+    }
+
+    #[test]
+    fn auto_pair_inserts_close_and_keeps_cursor_between() {
+        let (mut e, mut c) = ed("");
+        e.auto_pair = true;
+        e.apply(InsertChar('('), 10, &mut c);
+        assert_eq!(e.text(), "()");
+        assert_eq!(e.cursor(), 1);
+    }
+
+    #[test]
+    fn auto_pair_skips_over_existing_close() {
+        let (mut e, mut c) = ed("");
+        e.auto_pair = true;
+        e.apply(InsertChar('('), 10, &mut c); // → "()" with cursor at 1
+        // Typing the close char while sitting on it: just step over.
+        e.apply(InsertChar(')'), 10, &mut c);
+        assert_eq!(e.text(), "()");
+        assert_eq!(e.cursor(), 2);
+    }
+
+    #[test]
+    fn auto_pair_skipped_when_next_char_is_word() {
+        // Typing `(` right before a word — we'd be wrapping live code, so don't.
+        let (mut e, mut c) = ed("name");
+        e.auto_pair = true;
+        e.apply(InsertChar('('), 10, &mut c);
+        assert_eq!(e.text(), "(name");
+        assert_eq!(e.cursor(), 1);
+    }
+
+    #[test]
+    fn auto_pair_off_by_default() {
+        let (mut e, mut c) = ed("");
+        e.apply(InsertChar('('), 10, &mut c);
+        assert_eq!(e.text(), "(");
+        assert_eq!(e.cursor(), 1);
     }
 }

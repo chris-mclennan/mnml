@@ -125,6 +125,7 @@ impl Buffer {
             .or_else(|| ext_for_filename(path));
         let mut editor = Editor::new(text.clone(), cfg.editor.tab_width);
         editor.set_comment_token(comment_token_for(ext.as_deref()));
+        editor.auto_pair = cfg.editor.auto_pair;
         let mut b = Buffer {
             path: Some(path.to_path_buf()),
             editor,
@@ -154,9 +155,11 @@ impl Buffer {
     }
 
     pub fn scratch(cfg: &Config) -> Buffer {
+        let mut editor = Editor::new(String::new(), cfg.editor.tab_width);
+        editor.auto_pair = cfg.editor.auto_pair;
         Buffer {
             path: None,
-            editor: Editor::new(String::new(), cfg.editor.tab_width),
+            editor,
             scroll: 0,
             h_scroll: 0,
             dirty: false,

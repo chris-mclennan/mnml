@@ -62,6 +62,10 @@ pub struct EditorConfig {
     /// as a dim one-row header above its body. Especially useful with splits
     /// (you can tell which pane is which without looking at the bufferline).
     pub breadcrumb: bool,
+    /// Typing `(` `[` `{` `"` `'` `` ` `` also inserts the matching close
+    /// char (cursor between). Off by default — surprises users who haven't
+    /// opted in. `[editor] auto_pair = true` to enable.
+    pub auto_pair: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +94,7 @@ impl Default for Config {
                 autosave_secs: 0,
                 trim_trailing_ws_on_save: false,
                 breadcrumb: true,
+                auto_pair: false,
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),
@@ -154,6 +159,7 @@ struct RawEditor {
     autosave_secs: Option<u64>,
     trim_trailing_ws_on_save: Option<bool>,
     breadcrumb: Option<bool>,
+    auto_pair: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -204,6 +210,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.breadcrumb {
             self.editor.breadcrumb = v;
+        }
+        if let Some(v) = raw.editor.auto_pair {
+            self.editor.auto_pair = v;
         }
         if let Some(v) = raw.ui.theme {
             self.ui.theme = v;
