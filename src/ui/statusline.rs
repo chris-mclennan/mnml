@@ -141,11 +141,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut right: Vec<Seg> = Vec::new();
     if let Some(b) = app.active_editor() {
         let (row, col) = b.editor.row_col();
+        // `Ln 12/580` (current of total) — the "/580" lets the user gauge
+        // where they are in the file without scanning the scroll bar.
         right.push(Seg::new(
-            format!(" Ln {} Col {} ", row + 1, col + 1),
+            format!(" Ln {}/{} Col {} ", row + 1, b.editor.line_count(), col + 1,),
             theme::cur().fg,
             theme::cur().bg2,
         ));
+        // Selection size chip — only when there's an active selection. Shows
+        // the number of selected *characters* (multi-line selections include
+        // their newlines).
+        if b.editor.has_selection() {
+            let n = b.editor.selected_text().chars().count();
+            right.push(Seg::new(
+                format!(" Sel {n} "),
+                theme::cur().bg_darker,
+                theme::cur().yellow,
+            ));
+        }
     }
     // workspace / cwd block (the name that used to sit atop the file tree).
     let ws_name = app
