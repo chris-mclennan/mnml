@@ -238,8 +238,11 @@ the pane ↑↓ select, Enter jumps to the test's source, `t` opens the selected
 (`parse_trace_zip` reads the `*.trace` NDJSON entries from a `trace.zip` via the `zip` crate, pairs `before`/`after` action records by `callId`,
 collects `console` / `error` / `stdio` events, re-bases times → a time-ordered `Vec<TraceEvent{at_ms,dur_ms,kind,title,detail,error}>`)
 + `src/playwright/trace_pane.rs` (`TracePane` state) + `src/ui/trace_view.rs` (a scrollable timeline — `+1.23s  ⏵ page.goto("…")  234ms`,
-selected row highlit, the selected event's params/error stack in a panel below). `Pane::Trace`; in the pane ↑↓/jk select, PgUp/PgDn/g/G jump, `r` re-parses, Esc → tree.
-*Follow-ups (per `.local/PLAN.md`):* heal-from-trace (feed a failed trace to `claude -p`), wrap long detail lines, the `[feature: private]` DocDB live
+selected row highlit, the selected event's params/error stack in a panel below). `Pane::Trace`; in the pane ↑↓/jk select, PgUp/PgDn/g/G jump,
+`h` heal-from-trace (`TracePane::timeline_text` renders the timeline → `App::heal_from_active_trace` → `claude -p` via `ask_ai`, opening a
+`Pane::Ai` — Claude sees the *runtime* trace and uses its tools to read the spec/code; `c` in the answer pane promotes to interactive Claude Code),
+`r` re-parses, Esc → tree.
+*Follow-ups (per `.local/PLAN.md`):* wrap long detail lines, the `[feature: private]` DocDB live
 `Pane::TestExecutions` (dev+staging+prod in one panel) + CodeBuild, a flaky-test dashboard.
 **CDP / browser track — first cut done:** `src/cdp/mod.rs` launches Chrome/Chromium (first of a known list) with
 `--remote-debugging-port=0 --user-data-dir=<ws>/.mnml/chrome-profile <url>`, reads the chosen port off Chrome's

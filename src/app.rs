@@ -2070,6 +2070,34 @@ impl App {
         self.ask_ai(format!("AI: heal {title}"), prompt);
     }
 
+    /// `h` in a `Pane::Trace` — hand the failed test's *execution trace* (the
+    /// timeline of actions / console output / errors) to `claude -p` and ask for a
+    /// fix. Complements [`Self::heal_selected_test`] (which feeds the spec source):
+    /// here Claude sees what actually happened at runtime and uses its tools to read
+    /// the spec / code itself. `c` in the resulting `Pane::Ai` promotes it to an
+    /// interactive Claude Code session.
+    pub fn heal_from_active_trace(&mut self) {
+        let (title, timeline) = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Trace(tr)) => (tr.test_title.clone(), tr.timeline_text()),
+            _ => {
+                self.toast("open a trace pane first (`t` on a failed test)");
+                return;
+            }
+        };
+        if timeline.trim().is_empty() {
+            self.toast("this trace has no events to heal from");
+            return;
+        }
+        let prompt = format!(
+            "A Playwright test failed. Below is its execution trace — the actions it \
+             ran, console output, and errors, in order. Work out why it failed and \
+             propose a fix; use your tools to read the spec and the code under test as \
+             needed. Be concise: reply with the patch in a fenced block plus a short \
+             note.\n\n## Failed test\n{title}\n\n## Execution trace\n```\n{timeline}\n```"
+        );
+        self.ask_ai(format!("AI: heal from trace · {title}"), prompt);
+    }
+
     /// Jump the editor to the source of the highlighted test in a `Pane::Tests`.
     pub fn jump_to_selected_test(&mut self) {
         let Some(cur) = self.active else { return };

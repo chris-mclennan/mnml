@@ -103,7 +103,7 @@ pub fn draw(
         ),
     ]));
     lines.push(Line::from(Span::styled(
-        "  ↑↓ select   r re-parse   esc back",
+        "  ↑↓ select   h heal with Claude   r re-parse   esc back",
         Style::default().fg(t.comment).bg(t.bg_dark),
     )));
     lines.push(Line::from(Span::styled(

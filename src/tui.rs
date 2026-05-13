@@ -463,6 +463,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     tr.move_selection(isize::MAX / 2);
                 }
             }
+            KeyCode::Char('h') => app.heal_from_active_trace(),
             KeyCode::Char('r') => app.refresh_active_trace(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
