@@ -217,8 +217,9 @@ the conversation already loaded (so a quick `-p` answer isn't a dead end — you
 let it apply edits). **JSONL session tail — done:** `src/ai/transcript.rs` reads
 `~/.claude/projects/<dashed-cwd>/<session-id>.jsonl` into `Vec<Turn>` (user / assistant / thinking
 preview / tool-use one-liner / truncated tool-result; meta + side-chain lines skipped); `AiState::Live
-{path, last_len, turns}` is a live mirror — `App::tick` re-reads when the `.jsonl` grows;
-`ui/ai_view.rs` renders the turns (assistant text as markdown). `claude` panes are spawned with a
+{path, last_len, turns}` is a live mirror — `App::tick` (`refresh_live_ai_panes`) appends just the
+bytes past `last_len` (up to the last complete line) when the `.jsonl` grows, full-re-reads if it
+shrank; `ui/ai_view.rs` renders the turns (assistant text as markdown). `claude` panes are spawned with a
 known `--session-id` (`BinaryProfile.session_id`), so `ai.session_view` (`<leader>a m`) opens a
 mirror for the active `claude`/Ai pane; `c`-promoting a `Pane::Ai` also flips that pane into a
 live mirror of the (now-interactive) session. `G` follows the bottom. *Follow-ups:* show the

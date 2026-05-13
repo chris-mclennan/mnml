@@ -1497,22 +1497,48 @@ impl App {
         self.focus = Focus::Pane;
     }
 
-    /// Re-read any live transcript mirrors whose `.jsonl` has grown.
+    /// Re-read any live transcript mirrors whose `.jsonl` has grown — incrementally:
+    /// only the bytes past `last_len` are read and parsed (up to the last complete
+    /// line) and their turns appended. A shrunk file (rotation / rewrite) triggers a
+    /// full re-read.
     fn refresh_live_ai_panes(&mut self) {
+        use std::io::{Read, Seek, SeekFrom};
         for pane in &mut self.panes {
-            if let Pane::Ai(a) = pane
-                && let crate::ai::AiState::Live {
-                    path,
-                    last_len,
-                    turns,
-                } = &mut a.state
-            {
-                let len = std::fs::metadata(&*path).map(|m| m.len()).unwrap_or(0);
-                if len != *last_len {
-                    *turns = crate::ai::transcript::read(path);
-                    *last_len = len;
-                }
+            let Pane::Ai(a) = pane else { continue };
+            let crate::ai::AiState::Live {
+                path,
+                last_len,
+                turns,
+            } = &mut a.state
+            else {
+                continue;
+            };
+            let len = std::fs::metadata(&*path).map(|m| m.len()).unwrap_or(0);
+            if len < *last_len {
+                // file shrank / rotated — re-read from scratch.
+                *turns = crate::ai::transcript::read(path);
+                *last_len = std::fs::metadata(&*path).map(|m| m.len()).unwrap_or(0);
+                continue;
             }
+            if len == *last_len {
+                continue;
+            }
+            // Append-only growth: read just the new tail, parse complete lines.
+            let mut chunk = String::new();
+            let ok = std::fs::File::open(&*path)
+                .and_then(|mut f| {
+                    f.seek(SeekFrom::Start(*last_len))?;
+                    f.read_to_string(&mut chunk)
+                })
+                .is_ok();
+            if !ok {
+                continue;
+            }
+            let Some(cut) = chunk.rfind('\n').map(|i| i + 1) else {
+                continue; // a partial line is still being written — wait for the rest
+            };
+            turns.extend(crate::ai::transcript::parse(&chunk[..cut]));
+            *last_len += cut as u64;
         }
     }
 

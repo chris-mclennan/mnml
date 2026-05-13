@@ -241,4 +241,19 @@ mod tests {
                 .any(|t| matches!(t, Turn::User(s) if s.contains("noise")))
         );
     }
+
+    #[test]
+    fn parsing_is_line_local_so_incremental_appends_work() {
+        // The live-mirror refresh parses each new tail-of-file chunk separately and
+        // appends — that's only sound if `parse` treats lines independently.
+        let head = "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"one\"}}\n";
+        let tail = "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"two\"}]}}\n";
+        let whole = format!("{head}{tail}");
+        let split: Vec<_> = parse(head).into_iter().chain(parse(tail)).collect();
+        assert_eq!(split, parse(&whole));
+        assert_eq!(
+            split,
+            vec![Turn::User("one".into()), Turn::Assistant("two".into())]
+        );
+    }
 }
