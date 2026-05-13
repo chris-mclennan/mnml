@@ -78,6 +78,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.statusline = None;
         app.rects.body = Some(area);
         app.rects.editor_panes.clear();
+        app.rects.fold_chips.clear();
         app.rects.split_dividers.clear();
         let layout = app.layout.clone();
         let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {
@@ -163,6 +164,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // ── the split-tree of pane bodies ──
     app.rects.body = Some(body_area);
     app.rects.editor_panes.clear();
+    app.rects.fold_chips.clear();
     app.rects.split_dividers.clear();
     let layout = app.layout.clone();
     let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {

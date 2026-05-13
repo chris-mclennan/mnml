@@ -45,6 +45,10 @@ enum Prefix {
     Gc,
     /// Saw `Z` — expecting `Z` (→ `:x`) or `Q` (→ `:q!`).
     Z,
+    /// Saw lowercase `z` — vim's fold prefix. `a` toggles, `R` unfolds all,
+    /// `M` (folds all — not yet wired). Distinct from [`Self::Z`] because
+    /// vim uses both letters for different families.
+    ZFold,
     /// Saw `r` — replace the char under the cursor with the next typed char.
     Replace,
     /// Saw `m` — expecting a letter to **set** a buffer-local mark.
@@ -226,6 +230,18 @@ impl VimInputHandler {
                 return match key.code {
                     KeyCode::Char('Z') => InputResult::App(AppCommand::ExCommand("x".into())),
                     KeyCode::Char('Q') => InputResult::App(AppCommand::ExCommand("q!".into())),
+                    _ => InputResult::Consumed,
+                };
+            }
+            Prefix::ZFold => {
+                self.reset_pending();
+                return match key.code {
+                    KeyCode::Char('a') | KeyCode::Char('o') | KeyCode::Char('c') => {
+                        InputResult::App(AppCommand::RunCommand("editor.toggle_fold".into()))
+                    }
+                    KeyCode::Char('R') => {
+                        InputResult::App(AppCommand::RunCommand("editor.unfold_all".into()))
+                    }
                     _ => InputResult::Consumed,
                 };
             }
@@ -642,6 +658,11 @@ impl VimInputHandler {
                 self.prefix = Prefix::Z;
                 InputResult::Consumed
             }
+            // `z` (lowercase) — vim's fold prefix. `za` toggles, `zR` unfolds all.
+            KeyCode::Char('z') => {
+                self.prefix = Prefix::ZFold;
+                InputResult::Consumed
+            }
             // % — jump to the matching bracket (uses the existing
             // `editor.bracket_match` command so vim and standard share one
             // implementation).
@@ -858,6 +879,7 @@ impl InputHandler for VimInputHandler {
             Prefix::G => s.push('g'),
             Prefix::Gc => s.push_str("gc"),
             Prefix::Z => s.push('Z'),
+            Prefix::ZFold => s.push('z'),
             Prefix::Replace => s.push('r'),
             Prefix::MarkSet => s.push('m'),
             Prefix::MarkJumpLine => s.push('\''),

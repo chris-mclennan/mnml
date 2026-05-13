@@ -1288,6 +1288,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             if app.begin_divider_drag(x, y) {
                 return;
             }
+            // Click on a fold chip → unfold that block. Match before the
+            // editor-pane click handler so the chip "owns" the click.
+            if let Some(&(_, pid, start)) = app
+                .rects
+                .fold_chips
+                .iter()
+                .find(|(r, _, _)| contains(*r, x, y))
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+                    b.folds.remove(&start);
+                }
+                return;
+            }
             // Bufferline tab — clicking the close badge closes; clicking elsewhere on the tab activates.
             if let Some(&(_, id)) = app
                 .rects

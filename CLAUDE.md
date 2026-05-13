@@ -661,6 +661,11 @@ the caret sits on the right visual row. Vertical motions (`MoveUp` / `MoveDown` 
 those) snap out of folded body via `Buffer::snap_cursor_out_of_fold(going_down)` — down jumps past the
 fold's end, up retreats to its start. Click-to-place uses `visible_to_file_row`. Edits clear every fold
 (simple invariant — smarter offset tracking is a follow-up). Lost on buffer close (not persisted).
+**Vim fold chords** — `za` / `zo` / `zc` toggle a fold (mnml has one gesture rather than separate open/close);
+`zR` unfolds every fold. New `Prefix::ZFold` (separate from `Prefix::Z`, which still owns `ZZ` / `ZQ`).
+**Click-to-unfold** — each rendered `⋯ N hidden` chip records `(rect, pane_id, start_line)` in
+`app.rects.fold_chips` per frame; the mouse-down handler matches against it before the editor click path
+and pops the fold from `b.folds`.
 **Snippets** — `src/snippets.rs` + `[snippets.<scope>]` config table (where `<scope>` is a file extension like `rs`/`py`/`ts` or
 the literal `global`; each entry is `<trigger> = "<expansion>"`). Two ways in: `snippet.expand` (`Ctrl+J`) replaces the
 identifier prefix immediately left of the active editor's cursor with the matching trigger's expansion (toasts if no match);

@@ -572,6 +572,10 @@ pub struct PaneRects {
     /// (gutter excluded). Click → focus that leaf + place the cursor; also the
     /// geometry `Ctrl+W`-style focus navigation uses.
     pub editor_panes: Vec<(Rect, PaneId)>,
+    /// `(chip_rect, pane_id, fold_start_line)` per rendered `⋯ N hidden`
+    /// chip — click on one to unfold that block. Cleared + rebuilt per
+    /// editor render.
+    pub fold_chips: Vec<(Rect, PaneId, usize)>,
     /// One entry per split divider, with enough info to drag-resize it.
     pub split_dividers: Vec<crate::layout::DividerHit>,
     pub statusline: Option<Rect>,

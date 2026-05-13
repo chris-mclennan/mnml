@@ -200,10 +200,14 @@ pub fn draw_pane(
     };
 
     let mut lines: Vec<Line> = Vec::with_capacity(text_h);
+    // Collected fold-chip rects (visual row + file line) — pushed onto
+    // `app.rects.fold_chips` after the `buf` borrow ends. Lets the click
+    // handler find which fold to unfold.
+    let mut chip_rects: Vec<(u16, usize)> = Vec::new();
     // Walk visible file lines starting at buf.scroll, skipping any folded
     // body. `next_line` is the file line for the next render row.
     let mut next_line = buf.next_visible_line(buf.scroll).unwrap_or(line_count);
-    for _r in 0..text_h {
+    for r in 0..text_h {
         let line_no = next_line;
         if line_no >= line_count {
             lines.push(Line::from(Span::styled(
@@ -431,6 +435,8 @@ pub fn draw_pane(
                     cells[vc] = (mc, mcolor, base_bg);
                 }
             }
+            // Remember the rect so click-to-unfold can find this fold.
+            chip_rects.push((r as u16, line_no));
         }
 
         // Inline diagnostic: when this line has an LSP error/warning, overlay
@@ -531,6 +537,19 @@ pub fn draw_pane(
         },
         pane_id,
     ));
+    // Per-render fold chip rects — clicked to unfold.
+    for (visual_row, line_no) in chip_rects {
+        app.rects.fold_chips.push((
+            Rect {
+                x: text_x,
+                y: area.y + visual_row,
+                width: text_w,
+                height: 1,
+            },
+            pane_id,
+            line_no,
+        ));
+    }
 
     if !focused {
         return None;
