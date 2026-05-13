@@ -704,6 +704,11 @@ pub struct App {
     /// The LSP hover popup, when open (set when a `textDocument/hover` reply
     /// arrives). The next key dismisses it (j/k/arrows scroll it first).
     pub hover: Option<crate::hover::HoverPopup>,
+    /// LSP `textDocument/signatureHelp` popup — function prototype + active
+    /// parameter highlight. Auto-triggered when the user types `(` or `,` in
+    /// insert mode; replaced when a fresh reply arrives; dismissed on Esc
+    /// or any non-typing cursor motion.
+    pub signature: Option<crate::signature::SignaturePopup>,
     /// `(path, line, character)` of an in-flight LSP rename — captured when the
     /// rename prompt opens so the accept handler sends the request for that spot.
     pending_rename: Option<(PathBuf, u32, u32)>,
@@ -861,6 +866,7 @@ impl App {
             prompt: None,
             context_menu: None,
             hover: None,
+            signature: None,
             pending_rename: None,
             pending_code_actions: Vec::new(),
             pending_code_action_path: None,
@@ -1610,6 +1616,30 @@ impl App {
             }
             _ => {}
         }
+        // Signature-help auto-trigger — orthogonal to completion. `(` opens
+        // a fresh popup; `,` re-fires so the active param can advance. `)`
+        // dismisses any open popup (we left the function call).
+        match typed {
+            Some('(') | Some(',') => self.request_signature_help_at_cursor(),
+            Some(')') => {
+                self.signature = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// `lsp.signature_help` — fire `textDocument/signatureHelp` at the active
+    /// cursor. The reply lands as [`crate::lsp::LspEvent::SignatureHelp`]
+    /// and replaces any open popup. Silent if no server is attached.
+    pub fn request_signature_help_at_cursor(&mut self) {
+        let Some(b) = self.active_editor() else {
+            return;
+        };
+        let Some(path) = b.path.clone() else { return };
+        let (row, col) = b.editor.row_col();
+        let text = b.editor.text().to_string();
+        self.lsp.did_change(&path, &text);
+        self.lsp.signature_help(&path, row as u32, col as u32);
     }
 
     /// Fire a `textDocument/completion` at the active editor's cursor — the reply
@@ -2665,6 +2695,9 @@ impl App {
                 }
             }
             LspEvent::WorkspaceSymbols(syms) => self.apply_workspace_symbols(syms),
+            LspEvent::SignatureHelp(sh) => {
+                self.signature = crate::signature::SignaturePopup::from_reply(sh);
+            }
             LspEvent::Message(m) => self.toast(m),
         }
     }

@@ -149,6 +149,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         handle_picker_key(app, key);
         return;
     }
+    // The LSP signature-help popup: Esc dismisses; any other key falls
+    // through (we want typing to continue updating the popup, not dismiss
+    // it). Cursor jumps via commands clear the popup separately.
+    if app.signature.is_some() && key.code == KeyCode::Esc {
+        app.signature = None;
+        return;
+    }
     // An LSP hover popup is up: arrows / j / k / PgUp / PgDn scroll it; Esc
     // closes it; anything else closes it and is then handled normally.
     if app.hover.is_some() {
@@ -1093,10 +1100,12 @@ fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
 
-    // A click anywhere dismisses the hover / completion popups (the click still lands).
+    // A click anywhere dismisses the hover / completion / signature popups
+    // (the click still lands).
     if matches!(m.kind, MouseEventKind::Down(_)) {
         app.hover = None;
         app.completion = None;
+        app.signature = None;
     }
 
     // While the picker is open it owns the mouse.

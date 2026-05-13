@@ -94,6 +94,11 @@ impl LspClient {
                         "references": {},
                         "rename": {},
                         "completion": { "completionItem": { "snippetSupport": false } },
+                        "signatureHelp": {
+                            "signatureInformation": {
+                                "parameterInformation": { "labelOffsetSupport": true }
+                            }
+                        },
                         "codeAction": {
                             "codeActionLiteralSupport": {
                                 "codeActionKind": {
@@ -490,6 +495,11 @@ fn handle_message(
                     let _ = tx.send(LspEvent::WorkspaceSymbols(symbols));
                 }
             }
+            "textDocument/signatureHelp" => {
+                if let Some(sh) = parse_signature_help(result) {
+                    let _ = tx.send(LspEvent::SignatureHelp(sh));
+                }
+            }
             _ => {}
         }
     }
@@ -803,6 +813,90 @@ fn parse_workspace_symbols(result: &serde_json::Value) -> Vec<crate::lsp::Worksp
         });
     }
     out
+}
+
+/// Parse a `textDocument/signatureHelp` reply into [`crate::lsp::SignatureHelp`].
+/// Returns `None` for null / empty replies so the open popup can stay put
+/// (the spec says null means "no change", not "dismiss").
+fn parse_signature_help(result: &serde_json::Value) -> Option<crate::lsp::SignatureHelp> {
+    if result.is_null() {
+        return None;
+    }
+    let sigs_v = result.get("signatures").and_then(|s| s.as_array())?;
+    if sigs_v.is_empty() {
+        return None;
+    }
+    let active_signature = result
+        .get("activeSignature")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(0);
+    let top_active_param = result
+        .get("activeParameter")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize);
+    let mut sigs: Vec<crate::lsp::SignatureInfo> = Vec::with_capacity(sigs_v.len());
+    for s in sigs_v {
+        let label = s
+            .get("label")
+            .and_then(|l| l.as_str())
+            .unwrap_or("")
+            .to_string();
+        if label.is_empty() {
+            continue;
+        }
+        let active_parameter = s
+            .get("activeParameter")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize)
+            .or(top_active_param);
+        let mut parameters: Vec<(usize, usize)> = Vec::new();
+        if let Some(ps) = s.get("parameters").and_then(|p| p.as_array()) {
+            for p in ps {
+                if let Some((s_off, e_off)) = parse_param_label(p, &label) {
+                    parameters.push((s_off, e_off));
+                }
+            }
+        }
+        sigs.push(crate::lsp::SignatureInfo {
+            label,
+            parameters,
+            active_parameter,
+        });
+    }
+    if sigs.is_empty() {
+        return None;
+    }
+    let active_signature = active_signature.min(sigs.len().saturating_sub(1));
+    Some(crate::lsp::SignatureHelp {
+        signatures: sigs,
+        active_signature,
+    })
+}
+
+/// `parameters[i].label` is either `[start_char, end_char]` (preferred — we
+/// advertised `labelOffsetSupport`) or a substring of the signature label
+/// (legacy). Returns `(start, end)` char offsets into `label`, or `None`.
+fn parse_param_label(p: &serde_json::Value, sig_label: &str) -> Option<(usize, usize)> {
+    let lbl = p.get("label")?;
+    if let Some(arr) = lbl.as_array()
+        && arr.len() == 2
+    {
+        let s = arr[0].as_u64()? as usize;
+        let e = arr[1].as_u64()? as usize;
+        if e <= sig_label.chars().count() && s <= e {
+            return Some((s, e));
+        }
+    }
+    if let Some(sub) = lbl.as_str()
+        && let Some(off) = sig_label.find(sub)
+    {
+        // byte offset to char offset
+        let start_char = sig_label[..off].chars().count();
+        let end_char = start_char + sub.chars().count();
+        return Some((start_char, end_char));
+    }
+    None
 }
 
 fn parse_symbol_information(v: &serde_json::Value) -> Option<DocumentSymbol> {

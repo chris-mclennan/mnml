@@ -106,6 +106,10 @@ pub enum LspEvent {
     /// character)` per hit across the whole project. Multiple servers may
     /// each contribute; events are emitted per server reply (the app merges).
     WorkspaceSymbols(Vec<WorkspaceSymbol>),
+    /// Result of a `textDocument/signatureHelp` request — parameter info for
+    /// the function call the cursor sits inside. `None` reply ⇒ no event
+    /// emitted (so the open popup stays put).
+    SignatureHelp(SignatureHelp),
     /// A server-side message worth surfacing as a toast.
     Message(String),
 }
@@ -122,6 +126,29 @@ pub struct DocumentSymbol {
     pub line: u32,
     pub character: u32,
     pub depth: u32,
+}
+
+/// Parsed `textDocument/signatureHelp` reply — what to render in the popup.
+#[derive(Debug, Clone)]
+pub struct SignatureHelp {
+    pub signatures: Vec<SignatureInfo>,
+    /// Which signature in `signatures` is "active" (the one to show first).
+    pub active_signature: usize,
+}
+
+/// One signature in a [`SignatureHelp`] reply — its label (full prototype
+/// text the server returns), the parameter ranges within that label, and
+/// which parameter is currently active.
+#[derive(Debug, Clone)]
+pub struct SignatureInfo {
+    pub label: String,
+    /// `(start_char, end_char)` ranges into `label`, one per parameter.
+    /// May be empty if the server didn't expose them (we fall back to just
+    /// showing the label without a highlight).
+    pub parameters: Vec<(usize, usize)>,
+    /// Index into `parameters` for the active param — `None` when unknown
+    /// or out of range.
+    pub active_parameter: Option<usize>,
 }
 
 /// A single entry in a `workspace/symbol` reply — like [`DocumentSymbol`] but
@@ -445,6 +472,11 @@ impl LspManager {
             sent = true;
         }
         sent
+    }
+    /// Send `textDocument/signatureHelp` at `(line, character)` — reply
+    /// arrives as [`LspEvent::SignatureHelp`].
+    pub fn signature_help(&mut self, path: &Path, line: u32, character: u32) -> bool {
+        self.request_at("textDocument/signatureHelp", path, line, character)
     }
     /// Send a `textDocument/codeAction` request — the reply arrives as
     /// [`LspEvent::CodeAction`]. `diagnostics` are the ones overlapping the

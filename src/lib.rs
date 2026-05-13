@@ -43,6 +43,7 @@ pub mod playwright;
 pub mod prompt;
 pub mod pty_pane;
 pub mod request_pane;
+pub mod signature;
 pub mod snippets;
 pub mod tree;
 pub mod tui;

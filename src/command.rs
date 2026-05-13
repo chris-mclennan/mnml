@@ -545,6 +545,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_completion(),
         },
         Command {
+            id: "lsp.signature_help",
+            title: "LSP: signature help (param info popup at cursor)",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.request_signature_help_at_cursor(),
+        },
+        Command {
             id: "lsp.rename",
             title: "LSP: rename symbol",
             group: "lsp",

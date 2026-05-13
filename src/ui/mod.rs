@@ -40,6 +40,7 @@ pub mod picker;
 pub mod prompt;
 pub mod pty_view;
 pub mod request_view;
+pub mod signature;
 pub mod statusline;
 pub mod tests_view;
 pub mod theme;
@@ -98,6 +99,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
         if app.hover.is_some() {
             hover::draw(frame, app, area, cursor_pos);
+        }
+        if app.signature.is_some() {
+            signature::draw(frame, app, area, cursor_pos);
         }
         if app.completion.is_some() {
             completion::draw(frame, app, area, cursor_pos);
@@ -202,6 +206,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if app.hover.is_some() {
         hover::draw(frame, app, area, cursor_pos);
+    }
+    if app.signature.is_some() {
+        signature::draw(frame, app, area, cursor_pos);
     }
     if app.completion.is_some() {
         completion::draw(frame, app, area, cursor_pos);

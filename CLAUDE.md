@@ -628,6 +628,15 @@ the `[A-Za-z0-9_]*` prefix left of a cursor offset. `App::snippet_expand_at_curs
 back to the `$0` spot, plus an LSP `did_change`). The e2e harness has a new `snippet <scope> <trigger> <expansion>` step
 that seeds an entry on `app.config.snippets`; `tests/e2e/snippets.test` exercises both expansion + the toast + the
 `global`-scope fallthrough.
+**Signature help** — `textDocument/signatureHelp` (`lsp.signature_help` for explicit fire,
+auto-triggered on `(` / `,` typed in insert mode; `)` dismisses). Reply parsed by
+`client::parse_signature_help` into `Vec<SignatureInfo{label, parameters: Vec<(start_char,end_char)>,
+active_parameter}>`. The popup (`src/signature.rs::SignaturePopup` + `src/ui/signature.rs`) anchors
+above the cursor (flipping below when there isn't room), renders the active signature's label with the
+active parameter range bolded + yellow, plus a `1/N signatures` indicator when the server returned
+overloads (cycle via `SignaturePopup::cycle` — chord not wired yet). Esc / any mouse click dismisses.
+`initialize` advertises `parameterInformation.labelOffsetSupport` so servers return numeric ranges
+instead of substrings.
 **completion — as-you-type popup**: `src/completion.rs`
 (`CompletionPopup{path, all, filtered, selected, scroll, prefix}` — one `textDocument/completion` reply
 populates `all`; `refilter(prefix)` narrows `filtered` locally via `crate::fuzzy` as you keep typing, no
