@@ -169,6 +169,11 @@ pub struct Buffer {
     /// `` `<letter>`` (exact). Lost on buffer close (no persistence yet;
     /// uppercase / global marks would live on `App` and persist in session.json).
     pub marks: std::collections::HashMap<char, (usize, usize)>,
+    /// Code folds: `start_line → end_line` (inclusive, both 0-based file lines).
+    /// Lines `[start+1, end]` are hidden in the editor; the start line shows
+    /// `⋯ N lines` after its text. Cleared on every text-changing edit (simple
+    /// invariant — a smarter offset-shift is a follow-up).
+    pub folds: std::collections::BTreeMap<usize, usize>,
 }
 
 impl Buffer {
@@ -200,6 +205,7 @@ impl Buffer {
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
             marks: std::collections::HashMap::new(),
+            folds: std::collections::BTreeMap::new(),
         };
         b.refresh_highlights();
         Ok(b)
@@ -233,6 +239,7 @@ impl Buffer {
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
             marks: std::collections::HashMap::new(),
+            folds: std::collections::BTreeMap::new(),
         }
     }
 
@@ -414,16 +421,33 @@ impl Buffer {
         }
         let mut changed = false;
         for op in ops {
+            // Direction hint for fold-aware snap *after* the editor moves —
+            // pulls the cursor out of any folded body it landed in.
+            use crate::edit_op::EditOp as E;
+            let direction = match &op {
+                E::MoveDown | E::PageDown | E::HalfPageDown | E::MoveBufferEnd => Some(true),
+                E::MoveUp | E::PageUp | E::HalfPageUp | E::MoveBufferStart => Some(false),
+                E::Repeat(_, inner) => match inner.as_ref() {
+                    E::MoveDown | E::PageDown | E::HalfPageDown => Some(true),
+                    E::MoveUp | E::PageUp | E::HalfPageUp => Some(false),
+                    _ => None,
+                },
+                _ => None,
+            };
             changed |= self
                 .editor
                 .apply(op, viewport_rows, clipboard)
                 .buffer_changed;
+            if let Some(going_down) = direction {
+                self.snap_cursor_out_of_fold(going_down);
+            }
         }
         if changed {
             self.recompute_dirty();
             self.refresh_highlights();
             self.refresh_find_matches();
             self.last_edited = Some(Instant::now());
+            self.folds.clear();
         }
         changed
     }
@@ -434,6 +458,97 @@ impl Buffer {
         if let Some(f) = self.find.as_mut() {
             f.recompute(self.editor.text());
         }
+    }
+
+    // ─── folds ──────────────────────────────────────────────────────
+    /// True when `line` (0-based) is inside any fold's *body* (i.e. should
+    /// be hidden by the renderer). The fold's start line is *not* hidden.
+    pub fn is_line_folded_body(&self, line: usize) -> bool {
+        for (&start, &end) in &self.folds {
+            if line > start && line <= end {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Walk the buffer's lines and produce the next visible file-line at or
+    /// after `from`. Lines hidden by a fold's body are skipped. Returns
+    /// `None` if every line at-or-after `from` is hidden (only possible at
+    /// the trailing edge of the file).
+    pub fn next_visible_line(&self, from: usize) -> Option<usize> {
+        let n = self.editor.line_count();
+        let mut line = from;
+        while line < n {
+            if !self.is_line_folded_body(line) {
+                return Some(line);
+            }
+            line += 1;
+        }
+        None
+    }
+
+    /// Map a *visible* row index (0-based, starting at `start_file_line`) to
+    /// the file line it points at. Skips any folded body. Returns `None`
+    /// when `visible_row` runs past the end of the buffer.
+    pub fn visible_to_file_row(&self, start_file_line: usize, visible_row: usize) -> Option<usize> {
+        let n = self.editor.line_count();
+        let mut visible = 0usize;
+        let mut line = start_file_line;
+        while line < n {
+            if !self.is_line_folded_body(line) {
+                if visible == visible_row {
+                    return Some(line);
+                }
+                visible += 1;
+            }
+            line += 1;
+        }
+        None
+    }
+
+    /// Inverse of [`Self::visible_to_file_row`] — how many visible rows lie
+    /// between `start_file_line` and `target_file_line` (exclusive). When
+    /// `target_file_line` is hidden, returns the index of the fold's start
+    /// instead so the caret has somewhere to land.
+    pub fn file_to_visible_row(&self, start_file_line: usize, target_file_line: usize) -> usize {
+        let mut visible = 0usize;
+        let mut line = start_file_line;
+        while line < target_file_line {
+            if !self.is_line_folded_body(line) {
+                visible += 1;
+            }
+            line += 1;
+        }
+        visible
+    }
+
+    /// Called from `apply_edit_ops` after a vertical motion lands the
+    /// cursor inside a folded body. `going_down=true` jumps the cursor
+    /// past the fold (to the line after its end); `false` retreats to
+    /// the fold's start. No-op when the cursor is on a visible line.
+    pub fn snap_cursor_out_of_fold(&mut self, going_down: bool) {
+        let row = self.editor.row_col().0;
+        let Some(start) = self.fold_owner_of(row) else {
+            return;
+        };
+        let end = self.folds.get(&start).copied().unwrap_or(start);
+        let line_count = self.editor.line_count();
+        let target = if going_down {
+            (end + 1).min(line_count.saturating_sub(1))
+        } else {
+            start
+        };
+        self.editor.place_cursor(target, 0);
+    }
+
+    /// If `line` sits inside a fold's body, return the fold's start line —
+    /// useful for snapping the cursor out of hidden space.
+    pub fn fold_owner_of(&self, line: usize) -> Option<usize> {
+        self.folds
+            .iter()
+            .find(|&(&start, &end)| line > start && line <= end)
+            .map(|(&start, _)| start)
     }
 }
 
@@ -468,6 +583,7 @@ fn comment_token_for(ext: Option<&str>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     #[test]
     fn filename_fallback_recognises_makefile_and_rakefile() {
         assert_eq!(
@@ -512,6 +628,64 @@ mod tests {
             assert!(t.is_char_boundary(s));
             assert!(t.is_char_boundary(e));
         }
+    }
+
+    #[test]
+    fn fold_visibility_helpers_skip_body() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.rs");
+        fs::write(&p, "0\n1\n2\n3\n4\n5\n6\n").unwrap();
+        let mut b = Buffer::open(&p, &Config::default()).unwrap();
+        // Fold lines [2..=4]
+        b.folds.insert(2, 4);
+        // Body = 3, 4
+        assert!(!b.is_line_folded_body(2)); // start visible
+        assert!(b.is_line_folded_body(3));
+        assert!(b.is_line_folded_body(4));
+        assert!(!b.is_line_folded_body(5));
+        // visible_to_file_row should skip the body. File has 8 logical
+        // lines (final "\n" produces a trailing empty line 7).
+        assert_eq!(b.visible_to_file_row(0, 0), Some(0));
+        assert_eq!(b.visible_to_file_row(0, 2), Some(2));
+        assert_eq!(b.visible_to_file_row(0, 3), Some(5));
+        assert_eq!(b.visible_to_file_row(0, 4), Some(6));
+        assert_eq!(b.visible_to_file_row(0, 5), Some(7));
+        assert_eq!(b.visible_to_file_row(0, 6), None);
+        // file_to_visible_row
+        assert_eq!(b.file_to_visible_row(0, 5), 3);
+    }
+
+    #[test]
+    fn snap_cursor_out_of_fold_picks_direction() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.rs");
+        fs::write(&p, "0\n1\n2\n3\n4\n5\n6\n").unwrap();
+        let mut b = Buffer::open(&p, &Config::default()).unwrap();
+        b.folds.insert(2, 4);
+        // Place cursor in body (line 3), snap down → line 5
+        b.editor.place_cursor(3, 0);
+        b.snap_cursor_out_of_fold(true);
+        assert_eq!(b.editor.row_col().0, 5);
+        // Body again (line 4), snap up → line 2
+        b.editor.place_cursor(4, 0);
+        b.snap_cursor_out_of_fold(false);
+        assert_eq!(b.editor.row_col().0, 2);
+        // Cursor on visible line — no-op.
+        b.editor.place_cursor(0, 0);
+        b.snap_cursor_out_of_fold(true);
+        assert_eq!(b.editor.row_col().0, 0);
+    }
+
+    #[test]
+    fn edits_clear_folds() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.rs");
+        fs::write(&p, "0\n1\n2\n").unwrap();
+        let mut b = Buffer::open(&p, &Config::default()).unwrap();
+        b.folds.insert(0, 2);
+        let mut clip = crate::clipboard::Clipboard::new();
+        b.apply_edit_ops(vec![crate::edit_op::EditOp::InsertChar('x')], &mut clip, 0);
+        assert!(b.folds.is_empty());
     }
 
     #[test]

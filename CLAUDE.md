@@ -650,6 +650,17 @@ enters filter mode (`OutlinePane.filter_mode = true`); subsequent printable keys
 filter + exits. `visible_indices()` is a fuzzy match against `name` (uses `crate::fuzzy`) — preserves
 nesting order so depth-indent stays readable. `selected` indexes into the filtered view; the count chip
 shows `M/N symbol(s)` when narrowed; "(no matches)" placeholder when the filter zeros the list.
+**Code folding** — `Buffer.folds: BTreeMap<usize, usize>` (`start_line → end_line` inclusive, both
+0-based file lines). `editor.toggle_fold` picks the smallest enclosing bracket pair around the cursor
+(`{}` > `[]` > `()`) and toggles a fold for the spanned lines; `editor.unfold_all` clears every fold on
+the active buffer. Renders the start line with a dim purple `  ⋯ N hidden` chip painted into the
+trailing space cells. Body lines are skipped during render — the loop walks via
+`Buffer::next_visible_line` starting at `buf.scroll`. Cursor placement uses `file_to_visible_row` so
+the caret sits on the right visual row. Vertical motions (`MoveUp` / `MoveDown` / `PageUp` / `PageDown`
+/ `HalfPageUp` / `HalfPageDown` / `MoveBufferStart` / `MoveBufferEnd`, plus `Repeat(_)` wrapping any of
+those) snap out of folded body via `Buffer::snap_cursor_out_of_fold(going_down)` — down jumps past the
+fold's end, up retreats to its start. Click-to-place uses `visible_to_file_row`. Edits clear every fold
+(simple invariant — smarter offset tracking is a follow-up). Lost on buffer close (not persisted).
 **Snippets** — `src/snippets.rs` + `[snippets.<scope>]` config table (where `<scope>` is a file extension like `rs`/`py`/`ts` or
 the literal `global`; each entry is `<trigger> = "<expansion>"`). Two ways in: `snippet.expand` (`Ctrl+J`) replaces the
 identifier prefix immediately left of the active editor's cursor with the matching trigger's expansion (toasts if no match);

@@ -1,0 +1,21 @@
+# Code folding — toggle a fold over a braced block, body lines hide, the
+# start line gets a `⋯ N hidden` chip; unfold_all clears it.
+write code.rs "fn main() {\n    one;\n    two;\n    three;\n}\nlet end = 1;"
+open code.rs
+
+# Move down 2 lines so the cursor is inside the braced block.
+key down
+key down
+
+# Toggle the fold — the surrounding `{}` block is folded.
+command editor.toggle_fold
+expect screen contains "folded"
+expect screen contains "hidden"
+expect screen lacks "two;"
+expect screen lacks "three;"
+expect screen contains "let end = 1;"
+
+# Unfold all → body comes back.
+command editor.unfold_all
+expect screen contains "two;"
+expect screen contains "three;"

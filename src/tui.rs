@@ -1378,7 +1378,10 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 };
                 app.last_click = Some((now, x, y, count));
                 if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
-                    let row = b.scroll + (y - tr.y) as usize;
+                    let visible_row = (y - tr.y) as usize;
+                    let row = b
+                        .visible_to_file_row(b.scroll, visible_row)
+                        .unwrap_or(b.scroll);
                     let col = b.h_scroll + (x - tr.x) as usize;
                     b.editor.place_cursor(row, col);
                     if count >= 2 {

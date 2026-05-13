@@ -96,13 +96,38 @@ pub fn draw_pane(
         .saturating_sub(scrollbar_w);
     let tw = text_w as usize;
     let text_h = area.height as usize;
+    let cur_row_initial = buf.editor.row_col().0;
+    // If the cursor landed in a fold's body (e.g. a fold was just toggled
+    // while the cursor was mid-block), snap it onto the fold's start line.
+    if let Some(owner) = buf.fold_owner_of(cur_row_initial) {
+        buf.editor.place_cursor(owner, 0);
+    }
     let (cur_row, cur_col) = buf.editor.row_col();
 
-    // Vertical scroll — keep the cursor row in view.
+    // Vertical scroll — keep the cursor row in view. With folds, "row" is a
+    // file-line index but visible distance is what matters. Snap `scroll` to
+    // a visible line first (a fold body would render nothing as the top row).
+    if buf.is_line_folded_body(buf.scroll)
+        && let Some(snap) = buf.fold_owner_of(buf.scroll)
+    {
+        buf.scroll = snap;
+    }
     if cur_row < buf.scroll {
         buf.scroll = cur_row;
-    } else if cur_row >= buf.scroll + text_h {
-        buf.scroll = cur_row + 1 - text_h;
+    } else {
+        let vis_offset = buf.file_to_visible_row(buf.scroll, cur_row);
+        if vis_offset >= text_h {
+            // Walk back `text_h - 1` visible lines from cur_row.
+            let mut walk_back = text_h.saturating_sub(1);
+            let mut line = cur_row;
+            while walk_back > 0 && line > 0 {
+                line -= 1;
+                if !buf.is_line_folded_body(line) {
+                    walk_back -= 1;
+                }
+            }
+            buf.scroll = line;
+        }
     }
     buf.scroll = buf
         .scroll
@@ -175,8 +200,11 @@ pub fn draw_pane(
     };
 
     let mut lines: Vec<Line> = Vec::with_capacity(text_h);
-    for r in 0..text_h {
-        let line_no = buf.scroll + r;
+    // Walk visible file lines starting at buf.scroll, skipping any folded
+    // body. `next_line` is the file line for the next render row.
+    let mut next_line = buf.next_visible_line(buf.scroll).unwrap_or(line_count);
+    for _r in 0..text_h {
+        let line_no = next_line;
         if line_no >= line_count {
             lines.push(Line::from(Span::styled(
                 " ".repeat(area.width as usize),
@@ -184,6 +212,8 @@ pub fn draw_pane(
             )));
             continue;
         }
+        // Schedule the next visible line for the next iteration.
+        next_line = buf.next_visible_line(line_no + 1).unwrap_or(line_count);
         let is_cur = line_no == cur_row;
         let base_bg = if is_cur {
             theme::cur().line
@@ -380,6 +410,29 @@ pub fn draw_pane(
             cells.push((ch, fg, bg));
         }
 
+        // Fold marker — painted into the trailing space cells of a fold's
+        // start line (`  ⋯ N hidden`). Same "overlay into trailing space"
+        // approach as the inline-diagnostic chip below.
+        if let Some(&end_line) = buf.folds.get(&line_no) {
+            let hidden = end_line.saturating_sub(line_no);
+            let chip = format!("  ⋯ {hidden} hidden");
+            let start_c = n + 2;
+            let mcolor = theme::cur().purple;
+            for (i, mc) in chip.chars().enumerate() {
+                let c = start_c + i;
+                if c < buf.h_scroll {
+                    continue;
+                }
+                let vc = c - buf.h_scroll;
+                if vc >= cells.len() {
+                    break;
+                }
+                if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
+                    cells[vc] = (mc, mcolor, base_bg);
+                }
+            }
+        }
+
         // Inline diagnostic: when this line has an LSP error/warning, overlay
         // the first non-empty message line in dim severity color starting two
         // cells past the line's content. Only paints into trailing space
@@ -482,7 +535,7 @@ pub fn draw_pane(
     if !focused {
         return None;
     }
-    let cy = area.y + (cur_row.saturating_sub(buf.scroll)) as u16;
+    let cy = area.y + buf.file_to_visible_row(buf.scroll, cur_row) as u16;
     let cx = text_x + (cur_col.saturating_sub(buf.h_scroll)) as u16;
     if cy < area.y + area.height && cx < area.x.saturating_add(area.width) {
         Some((cx, cy))

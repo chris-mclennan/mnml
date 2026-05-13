@@ -296,6 +296,20 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "editor.toggle_fold",
+            title: "Toggle fold at cursor (vim `za`-ish)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.toggle_fold_at_cursor(),
+        },
+        Command {
+            id: "editor.unfold_all",
+            title: "Unfold every fold in the active buffer (vim `zR`-ish)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.unfold_all_in_active(),
+        },
+        Command {
             id: "editor.open_at_cursor",
             title: "Open path under cursor (supports `:line:col`)",
             group: "editor",

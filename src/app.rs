@@ -5990,6 +5990,64 @@ impl App {
         }
     }
 
+    /// `editor.toggle_fold` (`za`) — fold/unfold at the cursor. Picks the
+    /// smallest enclosing bracket-pair (curly preferred over square over
+    /// round) and toggles a fold for the line range it covers. Toasts when
+    /// the cursor isn't inside any bracket pair.
+    pub fn toggle_fold_at_cursor(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        // If the cursor sits on (or in the body of) an existing fold,
+        // unfold it instead of folding tighter.
+        let cur_row = b.editor.row_col().0;
+        if let Some(&owner) = b.folds.keys().find(|&&s| {
+            let end = b.folds.get(&s).copied().unwrap_or(s);
+            cur_row >= s && cur_row <= end
+        }) {
+            if let Some(b) = self.active_editor_mut() {
+                b.folds.remove(&owner);
+                self.toast(format!("unfolded line {}", owner + 1));
+            }
+            return;
+        }
+        // Find the smallest enclosing pair across the three bracket kinds.
+        let pairs = [('{', '}'), ('[', ']'), ('(', ')')];
+        let mut best: Option<(usize, usize)> = None;
+        for &(open, close) in &pairs {
+            if let Some((o, c)) = b.editor.enclosing_bracket_pair(open, close) {
+                let lo_line = b.editor.line_at_byte(o);
+                let hi_line = b.editor.line_at_byte(c);
+                if hi_line > lo_line {
+                    let span = hi_line - lo_line;
+                    if best.is_none_or(|(s, e)| (e - s) > span) {
+                        best = Some((lo_line, hi_line));
+                    }
+                }
+            }
+        }
+        let Some((start, end)) = best else {
+            self.toast("nothing to fold here");
+            return;
+        };
+        if let Some(b) = self.active_editor_mut() {
+            b.folds.insert(start, end);
+            self.toast(format!("folded {} lines", end - start));
+        }
+    }
+
+    /// `editor.unfold_all` — drop every fold from the active buffer.
+    pub fn unfold_all_in_active(&mut self) {
+        if let Some(b) = self.active_editor_mut() {
+            let n = b.folds.len();
+            b.folds.clear();
+            if n > 0 {
+                self.toast(format!("unfolded {n} fold(s)"));
+            }
+        }
+    }
+
     /// `editor.bracket_match` (`Ctrl+]`) — when the cursor sits on a bracket
     /// (`()` / `[]` / `{}`), jump to its match. Toasts when there's none.
     pub fn bracket_match_jump(&mut self) {

@@ -411,6 +411,12 @@ impl Editor {
             .filter(|&b| b == b'\n')
             .count()
     }
+    /// Public byte-offset → 0-based line index. Mirrors [`Self::current_line`]
+    /// but for any caller (folds, click-to-place, etc.).
+    pub fn line_at_byte(&self, byte: usize) -> usize {
+        let byte = byte.min(self.text.len());
+        self.text[..byte].bytes().filter(|&b| b == b'\n').count()
+    }
     /// Byte offset of the start of line `line` (clamped to last line).
     fn line_start(&self, line: usize) -> usize {
         if line == 0 {
@@ -1535,7 +1541,7 @@ impl Editor {
     /// themselves), or `None` when the cursor isn't inside a pair.
     /// Walks the buffer with a depth counter so nested pairs are handled.
     /// Capped at 50k chars per side so a malformed file doesn't hang.
-    fn enclosing_bracket_pair(&self, open: char, close: char) -> Option<(usize, usize)> {
+    pub fn enclosing_bracket_pair(&self, open: char, close: char) -> Option<(usize, usize)> {
         const BUDGET: usize = 50_000;
         // Walk backward to find the unmatched open.
         let mut depth: usize = 0;
