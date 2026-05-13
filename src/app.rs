@@ -1643,6 +1643,37 @@ impl App {
             self.active = Some(id);
         }
         self.focus = Focus::Pane;
+        self.retarget_outline_to_active();
+    }
+
+    /// If an outline pane is open and the now-active editor is a different
+    /// file, retarget the outline to that file and re-fire `documentSymbol`.
+    /// No-op when nothing's open, the active pane isn't an editor with a
+    /// saved path, or the outline's already on this target.
+    pub fn retarget_outline_to_active(&mut self) {
+        let active_path = self.active_editor().and_then(|b| b.path.clone());
+        let Some(path) = active_path else { return };
+        let outline_idx = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Outline(_)));
+        let Some(idx) = outline_idx else { return };
+        let needs_retarget = match self.panes.get(idx) {
+            Some(Pane::Outline(o)) => o.target != path,
+            _ => false,
+        };
+        if !needs_retarget {
+            return;
+        }
+        if let Some(Pane::Outline(o)) = self.panes.get_mut(idx) {
+            o.target = path.clone();
+            o.items.clear();
+            o.clamp();
+        }
+        self.pending_outline = true;
+        if !self.lsp.document_symbol(&path) {
+            self.pending_outline = false;
+        }
     }
 
     /// Open `path` in the focused leaf. If it's already an open buffer it's

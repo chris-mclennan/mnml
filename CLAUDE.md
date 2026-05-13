@@ -498,7 +498,9 @@ outline (via `App.pending_outline` flag — same `documentSymbol` plumbing, diff
 Enter jumps to the symbol's location in the target editor (opens if not already in a pane), `r` re-fires
 the request, Esc → tree. The header shows the target's filename + symbol count; each row is `<kind>
 <indent><name>:<line>` with kind color-coded (fn/method blue, struct/class yellow, const/var cyan,
-module/namespace green). Auto-tracking when the focused editor changes is a follow-up.
+module/namespace green). **Auto-track on focus change** — `reveal_pane` calls `retarget_outline_to_active`,
+which retargets an open outline pane to the newly-active editor's path + re-fires `documentSymbol` (no-op
+when nothing changed or the active pane isn't a saved editor).
 **completion — as-you-type popup**: `src/completion.rs`
 (`CompletionPopup{path, all, filtered, selected, scroll, prefix}` — one `textDocument/completion` reply
 populates `all`; `refilter(prefix)` narrows `filtered` locally via `crate::fuzzy` as you keep typing, no
