@@ -2258,6 +2258,46 @@ impl App {
         }
     }
 
+    /// `y` in the browser pane's network panel — copy the selected request as a
+    /// curl command to the clipboard.
+    pub fn copy_net_entry_curl(&mut self) {
+        let curl = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Browser(b)) => b.selected_net().map(crate::browser_pane::NetEntry::as_curl),
+            _ => None,
+        };
+        match curl {
+            Some(c) => {
+                self.clipboard.set(c, false);
+                self.toast("copied request as curl");
+            }
+            None => self.toast("no network request selected"),
+        }
+    }
+
+    /// `Enter` in the browser pane's network panel — open the selected request in a
+    /// `Pane::Request` (split below the browser) and re-send it.
+    pub fn open_net_entry_as_request(&mut self) {
+        let Some(cur) = self.active else { return };
+        let request = match self.panes.get(cur) {
+            Some(Pane::Browser(b)) => b
+                .selected_net()
+                .map(crate::browser_pane::NetEntry::to_request),
+            _ => None,
+        };
+        let Some(request) = request else {
+            self.toast("no network request selected");
+            return;
+        };
+        let script = crate::http::script::Script::default();
+        let job_id = self.spawn_http_job(request.clone(), script.clone());
+        let pane = Pane::Request(crate::request_pane::RequestPane::new(
+            None, request, script, job_id,
+        ));
+        let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+    }
+
     /// Drain the CDP worker's event channel into the (single) `Pane::Browser`.
     fn drain_cdp_events(&mut self) {
         let Some(rx) = &self.cdp_chan else { return };
@@ -2418,6 +2458,14 @@ impl App {
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or("");
                     b.push(LogKind::Net, format!("→ {method} {}", cdp_short_url(url)));
+                    if let (Some(id), Some(req)) = (
+                        params
+                            .and_then(|p| p.get("requestId"))
+                            .and_then(serde_json::Value::as_str),
+                        req,
+                    ) {
+                        b.note_net_request(id, req);
+                    }
                 }
             }
             "Network.responseReceived" => {
@@ -2435,6 +2483,15 @@ impl App {
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or("");
                     b.push(LogKind::Net, format!("← {status} {}", cdp_short_url(url)));
+                    if let Some(id) = params
+                        .and_then(|p| p.get("requestId"))
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        let mime = resp
+                            .and_then(|r| r.get("mimeType"))
+                            .and_then(serde_json::Value::as_str);
+                        b.note_net_response(id, status, mime);
+                    }
                 }
             }
             "Network.loadingFailed" => {
@@ -2447,6 +2504,12 @@ impl App {
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or("failed");
                     b.push(LogKind::ConsoleErr, format!("✗ request failed: {why}"));
+                    if let Some(id) = params
+                        .and_then(|p| p.get("requestId"))
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        b.note_net_failed(id, why);
+                    }
                 }
             }
             _ => {} // loadEventFired, snapshots, etc. — not mirrored here

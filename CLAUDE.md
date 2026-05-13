@@ -248,16 +248,22 @@ stderr, hits `http://127.0.0.1:PORT/json` for the first page target's `webSocket
 thread pumps the WebSocket ↔ a command channel (`CdpCommand::Send(json)`/`Close`) in one loop (short socket read
 timeout makes it cooperative — same shape as the pty/AI workers) and forwards every protocol message up over
 `App.cdp_chan` as `CdpEvent::{Connected,Message(json),Closed}`. `Pane::Browser(BrowserPane)` (`src/browser_pane.rs`:
-`{url, cmd_tx, log:Vec<LogLine{kind,text}>, next_id, pending_eval, scroll, closed}`; `Drop` sends `Close` → kills Chrome)
-shows a header (current URL) + a live colour-coded log — console output (`Runtime.consoleAPICalled`/`Log.entryAdded`/
-`Runtime.exceptionThrown`), main-frame navigations (`Page.frameNavigated`), a filtered network log (`Network.requestWillBeSent`/
-`responseReceived`/`loadingFailed` → `→ GET host/path` / `← 200 …` / `✗ request failed`, but only Document/XHR/Fetch — the
-asset firehose is dropped via `cdp_resource_type_is_interesting`), and `eval` request/result lines —
-rendered by `src/ui/browser_view.rs`. `App::drain_cdp_events`/`apply_cdp_message` route events to the pane;
+`{url, cmd_tx, log:Vec<LogLine{kind,text}>, net:Vec<NetEntry>, net_focus, net_sel, next_id, pending_eval, scroll, closed}`;
+`Drop` sends `Close` → kills Chrome) shows a header (current URL) + a live colour-coded log — console output
+(`Runtime.consoleAPICalled`/`Log.entryAdded`/`Runtime.exceptionThrown`), main-frame navigations (`Page.frameNavigated`),
+a filtered network log (`Network.requestWillBeSent`/`responseReceived`/`loadingFailed` → `→ GET host/path` / `← 200 …` /
+`✗ request failed`, but only Document/XHR/Fetch — the asset firehose is dropped via `cdp_resource_type_is_interesting`),
+and `eval` request/result lines — rendered by `src/ui/browser_view.rs`. The same filtered requests are *also* accumulated
+as `NetEntry{request_id,method,url,headers,post_data,status,mime,failed}` records (`note_net_request`/`_response`/`_failed`,
+matched by `requestId`). `App::drain_cdp_events`/`apply_cdp_message` route events to the pane;
 `browser.open` (`<leader>B`, palette) prompts for a URL (`PromptKind::BrowserUrl`) and launches; in the pane `g`
 navigates (`PromptKind::BrowserNavigate` → `Page.navigate`), `e` evals JS (`PromptKind::BrowserEval` → `Runtime.evaluate`,
 `returnByValue`; the reply is matched by id → a `= …` line), `r` reloads, k/j/PgUp/PgDn/Home/End scroll, Esc → tree,
-`Ctrl+W` closes (kills Chrome). One browser pane at a time. *Follow-ups:* selectable network entries + export-as-curl,
+`Ctrl+W` closes (kills Chrome). **`n` toggles a network panel** — the `net` records as selectable rows (`METHOD status
+host/path [mime]`, status colour-coded); ↑↓/jk/PgUp/PgDn/g/G/Home/End move the selection, `y` copies the selected request
+as a curl command (`NetEntry::as_curl` — pseudo-headers `:method`/… skipped), `Enter` opens it in a `Pane::Request` split
+(`NetEntry::to_request` → `spawn_http_job`, re-sends), `n`/Esc leave the panel (then Esc → tree); the wheel moves the
+selection too. One browser pane at a time. *Follow-ups:* fetch `Network.getRequestPostData` when `postData` is absent,
 DOM inspection, screenshots, multiple pages/targets, headless mode.
 **Right-click context menus — done:** `src/context_menu.rs` (`ContextMenu{title,items:Vec<MenuItem{label,
 action: MenuAction}>,anchor,selected}`) + `src/ui/context_menu.rs` (a bordered floating list at the click,

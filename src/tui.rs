@@ -469,44 +469,67 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // A browser pane (Chrome driven over CDP): scroll the console log, `g` navigate,
-    // `e` eval JS, `r` reload, Esc → tree. `Ctrl+W` closes it (which kills Chrome).
+    // A browser pane (Chrome driven over CDP): scroll the console log, `n` toggles
+    // the selectable network panel (then ↑↓ select, `y` copy-as-curl, Enter →
+    // re-send in a request pane), `g` navigate, `e` eval JS, `r` reload, Esc →
+    // (leave the net panel, else) tree. `Ctrl+W` closes it (which kills Chrome).
     if matches!(app.panes.get(i), Some(Pane::Browser(_))) {
+        let net_focus = matches!(app.panes.get(i), Some(Pane::Browser(b)) if b.net_focus);
+        // In the net panel ↑↓/jk/PgUp/PgDn/g/G/Home/End move the row selection;
+        // otherwise they scroll the log.
+        let scroll_or_select = |app: &mut App, delta: isize, jump: Option<usize>| {
+            if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                if b.net_focus {
+                    match jump {
+                        Some(usize::MAX) => b.net_sel = b.net.len().saturating_sub(1),
+                        Some(n) => b.net_sel = n,
+                        None => b.move_net_sel(delta),
+                    }
+                } else {
+                    match jump {
+                        Some(usize::MAX) => b.scroll = usize::MAX,
+                        Some(n) => b.scroll = n,
+                        None => {
+                            b.scroll = if delta < 0 {
+                                b.scroll.saturating_sub(delta.unsigned_abs())
+                            } else {
+                                b.scroll.saturating_add(delta as usize)
+                            };
+                        }
+                    }
+                }
+            }
+        };
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up | KeyCode::Char('k') => scroll_or_select(app, -1, None),
+            KeyCode::Down | KeyCode::Char('j') => scroll_or_select(app, 1, None),
+            KeyCode::PageUp => scroll_or_select(app, -(viewport as isize), None),
+            KeyCode::PageDown => scroll_or_select(app, viewport as isize, None),
+            KeyCode::Home => scroll_or_select(app, 0, Some(0)),
+            KeyCode::End | KeyCode::Char('G') => scroll_or_select(app, 0, Some(usize::MAX)),
+            KeyCode::Char('g') if net_focus => scroll_or_select(app, 0, Some(0)),
+            KeyCode::Char('n') => {
                 if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                    b.scroll = b.scroll.saturating_sub(1);
+                    b.net_focus = !b.net_focus;
+                    if b.net_focus {
+                        b.net_sel = b.net_sel.min(b.net.len().saturating_sub(1));
+                    }
                 }
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                    b.scroll += 1;
-                }
-            }
-            KeyCode::PageUp => {
-                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                    b.scroll = b.scroll.saturating_sub(viewport);
-                }
-            }
-            KeyCode::PageDown => {
-                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                    b.scroll += viewport;
-                }
-            }
-            KeyCode::Home => {
-                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                    b.scroll = 0;
-                }
-            }
-            KeyCode::End | KeyCode::Char('G') => {
-                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                    b.scroll = usize::MAX; // pinned to the tail
-                }
-            }
+            KeyCode::Char('y') if net_focus => app.copy_net_entry_curl(),
+            KeyCode::Enter if net_focus => app.open_net_entry_as_request(),
             KeyCode::Char('g') => app.browser_navigate_prompt(),
             KeyCode::Char('e') => app.browser_eval_prompt(),
             KeyCode::Char('r') => app.browser_reload(),
-            KeyCode::Esc => app.focus_tree(),
+            KeyCode::Esc => {
+                if net_focus {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.net_focus = false;
+                    }
+                } else {
+                    app.focus_tree();
+                }
+            }
             _ => {}
         }
         return;
@@ -1058,12 +1081,20 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 });
             }
             Some(Pane::Browser(b)) => {
-                let n = delta.unsigned_abs() as usize;
-                b.scroll = if delta < 0 {
-                    b.scroll.saturating_sub(n)
+                if b.net_focus {
+                    b.move_net_sel(if delta < 0 {
+                        -(delta.unsigned_abs() as isize)
+                    } else {
+                        delta.unsigned_abs() as isize
+                    });
                 } else {
-                    b.scroll.saturating_add(n)
-                };
+                    let n = delta.unsigned_abs() as usize;
+                    b.scroll = if delta < 0 {
+                        b.scroll.saturating_sub(n)
+                    } else {
+                        b.scroll.saturating_add(n)
+                    };
+                }
             }
             None => {}
         }

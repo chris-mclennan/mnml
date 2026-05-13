@@ -1,7 +1,9 @@
 //! The browser pane (`Pane::Browser`) — a Chrome driven over CDP: a header with
-//! the current URL + a scrollable log of console output, page navigations and
-//! `eval` results, colour-coded by kind. Read-only render; keys (`g` navigate,
-//! `e` eval, `r` reload, scroll, Esc → tree) are wired in `tui.rs`.
+//! the current URL + either a scrollable log of console output / navigations /
+//! `eval` results (colour-coded by kind) or — when the `n` network panel is on —
+//! a selectable list of the captured requests. Read-only render; keys (`g`
+//! navigate, `e` eval, `r` reload, `n` toggle the panel, `y` copy-as-curl, Enter
+//! → re-send, scroll, Esc → tree) are wired in `tui.rs`.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -36,7 +38,7 @@ pub fn draw(
         return None;
     };
 
-    let mut lines: Vec<Line> = Vec::with_capacity(b.log.len() + 3);
+    let mut lines: Vec<Line> = Vec::new();
     // ── header ─────────────────────────────────────────────────────
     let url = if b.url.trim().is_empty() {
         "about:blank"
@@ -63,14 +65,86 @@ pub fn draw(
             Style::default().fg(t.comment).bg(t.bg_dark),
         ),
     ]));
+    let hint = if b.net_focus {
+        format!(
+            "  network ({}) · ↑↓ select · y curl · enter re-send · n logs · esc back",
+            b.net.len()
+        )
+    } else {
+        "  g navigate · e eval JS · r reload · n network · esc → tree".to_string()
+    };
     lines.push(Line::from(Span::styled(
-        "  g navigate · e eval JS · r reload · esc → tree",
+        hint,
         Style::default().fg(t.comment).bg(t.bg_dark),
     )));
     lines.push(Line::from(Span::styled(
         " ",
         Style::default().bg(t.bg_dark),
     )));
+    let header_rows = lines.len();
+    let h = area.height as usize;
+    let body_rows = h.saturating_sub(header_rows);
+
+    if b.net_focus {
+        // ── network panel: one selectable row per captured request ─────
+        if b.net.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  (no network requests captured yet — Document / XHR / Fetch only)",
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            )));
+        } else {
+            let sel = b.net_sel.min(b.net.len() - 1);
+            // Keep the selected row inside the viewport.
+            let first = if body_rows == 0 || sel < body_rows {
+                0
+            } else {
+                sel + 1 - body_rows
+            };
+            for (idx, e) in b.net.iter().enumerate().skip(first).take(body_rows) {
+                let on = idx == sel;
+                let row_bg = if on { t.bg2 } else { t.bg_dark };
+                let status = e.status_text();
+                let status_color = if e.failed.is_some() {
+                    t.red
+                } else {
+                    match e.status {
+                        Some(s) if (200..300).contains(&s) => t.green,
+                        Some(s) if (300..400).contains(&s) => t.yellow,
+                        Some(s) if s >= 400 => t.red,
+                        Some(_) => t.fg,
+                        None => t.comment,
+                    }
+                };
+                let marker = if on { "▶ " } else { "  " };
+                let mut spans = vec![
+                    Span::styled(marker, Style::default().fg(t.cyan).bg(row_bg)),
+                    Span::styled(
+                        format!("{:<6}", e.method),
+                        Style::default().fg(t.blue).bg(row_bg),
+                    ),
+                    Span::styled(
+                        format!("{:>4} ", status),
+                        Style::default().fg(status_color).bg(row_bg),
+                    ),
+                    Span::styled(e.short_url(), Style::default().fg(t.fg).bg(row_bg)),
+                ];
+                if let Some(m) = &e.mime
+                    && !m.is_empty()
+                {
+                    spans.push(Span::styled(
+                        format!("  [{m}]"),
+                        Style::default().fg(t.comment).bg(row_bg),
+                    ));
+                }
+                lines.push(Line::from(spans));
+            }
+        }
+        frame.render_widget(
+            Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),
+            area,
+        );
+        return None;
+    }
 
     // ── log (the line text carries its own marker — `→`, `←`, `»`, `= ` — so the
     // kind only drives colour, not a prefix glyph) ─────────────────
@@ -96,7 +170,6 @@ pub fn draw(
     }
 
     // ── scroll (follow the tail when pinned) ───────────────────────
-    let h = area.height as usize;
     let max_scroll = lines.len().saturating_sub(h.min(lines.len()));
     if b.scroll >= max_scroll {
         b.scroll = max_scroll;

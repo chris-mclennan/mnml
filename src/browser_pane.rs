@@ -30,12 +30,102 @@ pub struct LogLine {
     pub text: String,
 }
 
+/// One network request captured from the page (Document / XHR / Fetch only — the
+/// asset firehose is dropped). Built from `Network.requestWillBeSent`, then the
+/// `status` / `mime` filled in by `Network.responseReceived`, or `failed` by
+/// `Network.loadingFailed`. The selectable rows behind the `n` panel; `y` copies
+/// one as a curl command, `Enter` re-sends it in a request pane.
+#[derive(Debug, Clone)]
+pub struct NetEntry {
+    /// CDP `requestId` — to match the later response / failure event.
+    pub request_id: String,
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub post_data: Option<String>,
+    pub status: Option<i64>,
+    pub mime: Option<String>,
+    pub failed: Option<String>,
+}
+
+impl NetEntry {
+    /// `host/path` with no scheme / query, truncated — for the panel row.
+    pub fn short_url(&self) -> String {
+        let body = self
+            .url
+            .strip_prefix("https://")
+            .or_else(|| self.url.strip_prefix("http://"))
+            .unwrap_or(&self.url);
+        let body = body.split(['?', '#']).next().unwrap_or(body);
+        if body.chars().count() <= 60 {
+            body.to_string()
+        } else {
+            let keep: String = body.chars().take(59).collect();
+            format!("{keep}…")
+        }
+    }
+
+    /// `200` / `✗` / `…` — the status column for the panel row.
+    pub fn status_text(&self) -> String {
+        if self.failed.is_some() {
+            "✗".to_string()
+        } else if let Some(s) = self.status {
+            s.to_string()
+        } else {
+            "…".to_string()
+        }
+    }
+
+    /// Render this request as a `curl` command line (same shape as the request pane's).
+    pub fn as_curl(&self) -> String {
+        let mut out = format!("curl '{}'", self.url);
+        if self.method != "GET" && !(self.method == "POST" && self.post_data.is_some()) {
+            out.push_str(&format!(" -X {}", self.method));
+        }
+        for (k, v) in &self.headers {
+            // Skip pseudo-headers (`:method`, `:authority`, …) curl rejects.
+            if k.starts_with(':') {
+                continue;
+            }
+            out.push_str(&format!(" \\\n  -H '{}: {}'", k, v.replace('\'', "'\\''")));
+        }
+        if let Some(body) = &self.post_data {
+            out.push_str(&format!(
+                " \\\n  --data-raw '{}'",
+                body.replace('\'', "'\\''")
+            ));
+        }
+        out
+    }
+
+    /// As an [`crate::http::Request`] — for opening in a `Pane::Request`.
+    pub fn to_request(&self) -> crate::http::Request {
+        crate::http::Request {
+            method: self.method.clone(),
+            url: self.url.clone(),
+            headers: self
+                .headers
+                .iter()
+                .filter(|(k, _)| !k.starts_with(':'))
+                .cloned()
+                .collect(),
+            body: self.post_data.clone(),
+        }
+    }
+}
+
 pub struct BrowserPane {
     /// The page's current URL (updated on `Page.frameNavigated`).
     pub url: String,
     /// Down-channel to the CDP worker (commands; `Drop` sends `Close`).
     pub cmd_tx: Sender<CdpCommand>,
     pub log: Vec<LogLine>,
+    /// Network requests (Document / XHR / Fetch), in arrival order.
+    pub net: Vec<NetEntry>,
+    /// True ⇒ the `n` network panel is showing (rows selectable instead of the log).
+    pub net_focus: bool,
+    /// Selected network row when `net_focus`.
+    pub net_sel: usize,
     /// Next JSON-RPC id for requests this pane issues.
     next_id: i64,
     /// The id of an in-flight `Runtime.evaluate`, so its reply can be matched.
@@ -52,6 +142,9 @@ impl BrowserPane {
             url: url.clone(),
             cmd_tx,
             log: Vec::new(),
+            net: Vec::new(),
+            net_focus: false,
+            net_sel: 0,
             next_id: 100,
             pending_eval: None,
             scroll: usize::MAX, // follow the tail
@@ -71,6 +164,93 @@ impl BrowserPane {
             kind,
             text: text.into(),
         });
+    }
+
+    /// Record a `Network.requestWillBeSent` (its `request` object) as a [`NetEntry`].
+    pub fn note_net_request(&mut self, request_id: &str, request: &serde_json::Value) {
+        let method = request
+            .get("method")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("GET")
+            .to_string();
+        let url = request
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let headers = request
+            .get("headers")
+            .and_then(serde_json::Value::as_object)
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            match v {
+                                serde_json::Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            },
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let post_data = request
+            .get("postData")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        self.net.push(NetEntry {
+            request_id: request_id.to_string(),
+            method,
+            url,
+            headers,
+            post_data,
+            status: None,
+            mime: None,
+            failed: None,
+        });
+    }
+
+    /// Fill in the response status / mime for the matching pending [`NetEntry`].
+    pub fn note_net_response(&mut self, request_id: &str, status: i64, mime: Option<&str>) {
+        if let Some(e) = self
+            .net
+            .iter_mut()
+            .rev()
+            .find(|e| e.request_id == request_id)
+        {
+            e.status = Some(status);
+            e.mime = mime.map(str::to_string);
+        }
+    }
+
+    /// Mark the matching pending [`NetEntry`] as failed.
+    pub fn note_net_failed(&mut self, request_id: &str, why: &str) {
+        if let Some(e) = self
+            .net
+            .iter_mut()
+            .rev()
+            .find(|e| e.request_id == request_id)
+        {
+            e.failed = Some(why.to_string());
+        }
+    }
+
+    /// Clamp + move the network-panel selection by `delta`.
+    pub fn move_net_sel(&mut self, delta: isize) {
+        if self.net.is_empty() {
+            self.net_sel = 0;
+            return;
+        }
+        let max = self.net.len() - 1;
+        let cur = self.net_sel.min(max) as isize;
+        self.net_sel = (cur + delta).clamp(0, max as isize) as usize;
+    }
+
+    /// The currently-selected network entry, if the panel is non-empty.
+    pub fn selected_net(&self) -> Option<&NetEntry> {
+        self.net
+            .get(self.net_sel.min(self.net.len().saturating_sub(1)))
     }
 
     fn fresh_id(&mut self) -> i64 {
@@ -138,5 +318,92 @@ impl Drop for BrowserPane {
     fn drop(&mut self) {
         // Tell the worker to kill Chrome (best-effort — it may already be gone).
         let _ = self.cmd_tx.send(CdpCommand::Close);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry() -> NetEntry {
+        NetEntry {
+            request_id: "1.7".into(),
+            method: "POST".into(),
+            url: "https://api.test/v1/things?q=1".into(),
+            headers: vec![
+                (":method".into(), "POST".into()),
+                ("content-type".into(), "application/json".into()),
+                ("x-token".into(), "ab'cd".into()),
+            ],
+            post_data: Some(r#"{"a":1}"#.into()),
+            status: Some(201),
+            mime: Some("application/json".into()),
+            failed: None,
+        }
+    }
+
+    #[test]
+    fn as_curl_drops_pseudo_headers_and_quotes_body() {
+        let c = entry().as_curl();
+        assert!(c.starts_with("curl 'https://api.test/v1/things?q=1'"));
+        assert!(!c.contains(":method")); // pseudo-header skipped
+        assert!(c.contains("-H 'content-type: application/json'"));
+        assert!(c.contains(r"x-token: ab'\''cd")); // single-quote escaped
+        assert!(c.contains(r#"--data-raw '{"a":1}'"#));
+        // POST-with-body ⇒ no explicit -X (curl infers it from --data-raw).
+        assert!(!c.contains("-X POST"));
+    }
+
+    #[test]
+    fn to_request_filters_pseudo_headers() {
+        let r = entry().to_request();
+        assert_eq!(r.method, "POST");
+        assert_eq!(r.url, "https://api.test/v1/things?q=1");
+        assert!(r.headers.iter().all(|(k, _)| !k.starts_with(':')));
+        assert_eq!(r.body.as_deref(), Some(r#"{"a":1}"#));
+    }
+
+    #[test]
+    fn note_net_request_then_response_matches_by_id() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        p.note_net_request(
+            "42",
+            &serde_json::json!({
+                "method": "GET",
+                "url": "https://x.test/data",
+                "headers": { "accept": "application/json" },
+            }),
+        );
+        assert_eq!(p.net.len(), 1);
+        assert_eq!(p.net[0].method, "GET");
+        assert_eq!(
+            p.net[0].headers,
+            vec![("accept".to_string(), "application/json".to_string())]
+        );
+        p.note_net_response("42", 200, Some("application/json"));
+        assert_eq!(p.net[0].status, Some(200));
+        assert_eq!(p.net[0].mime.as_deref(), Some("application/json"));
+        p.note_net_failed("nope", "ERR"); // no match — nothing changes
+        assert!(p.net[0].failed.is_none());
+        p.note_net_failed("42", "ERR_TIMED_OUT");
+        assert_eq!(p.net[0].failed.as_deref(), Some("ERR_TIMED_OUT"));
+    }
+
+    #[test]
+    fn move_net_sel_clamps() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        p.move_net_sel(5); // empty ⇒ stays 0
+        assert_eq!(p.net_sel, 0);
+        for _ in 0..3 {
+            p.note_net_request("x", &serde_json::json!({"url": "https://a/b"}));
+        }
+        p.move_net_sel(10);
+        assert_eq!(p.net_sel, 2);
+        p.move_net_sel(-1);
+        assert_eq!(p.net_sel, 1);
+        p.move_net_sel(-9);
+        assert_eq!(p.net_sel, 0);
     }
 }
