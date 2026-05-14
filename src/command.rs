@@ -717,6 +717,15 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.snippet_next_placeholder(),
         },
         Command {
+            id: "snippet.prev_placeholder",
+            title: "Snippet: jump to previous placeholder",
+            group: "edit",
+            // Same dispatch-site binding as `next_placeholder`; Shift-Tab is
+            // taken by Outdent in the editor.
+            keys: &[],
+            run: |app| app.snippet_prev_placeholder(),
+        },
+        Command {
             id: "rqst.send",
             title: "HTTP: send request (.http/.curl) — or re-fire a request pane",
             group: "http",

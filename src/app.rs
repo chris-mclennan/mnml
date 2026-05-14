@@ -1062,9 +1062,17 @@ impl App {
                 MenuItem::new("Refresh tree", MenuAction::Command("tree.refresh")),
             ]
         } else {
-            vec![
+            let mut items = vec![
                 MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
                 MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
+            ];
+            if is_markdown_path(&path) {
+                items.push(MenuItem::new(
+                    "Preview markdown",
+                    MenuAction::PreviewMarkdown(path.clone()),
+                ));
+            }
+            items.extend([
                 MenuItem::new("New file…", MenuAction::NewFile(parent.clone())),
                 MenuItem::new("New folder…", MenuAction::NewFolder(parent)),
                 MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
@@ -1072,7 +1080,8 @@ impl App {
                 MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
                 MenuItem::new("Open externally", MenuAction::OpenExternally(path.clone())),
                 MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
-            ]
+            ]);
+            items
         };
         self.context_menu = Some(ContextMenu::new(Some(name), anchor, items));
     }
@@ -1089,6 +1098,12 @@ impl App {
         if let Some(Pane::Editor(b)) = self.panes.get(id)
             && let Some(p) = &b.path
         {
+            if is_markdown_path(p) {
+                items.push(MenuItem::new(
+                    "Preview markdown",
+                    MenuAction::PreviewMarkdown(p.clone()),
+                ));
+            }
             items.push(MenuItem::new(
                 "Copy path",
                 MenuAction::CopyPath(rel_path(&self.workspace, p)),
@@ -1157,6 +1172,7 @@ impl App {
             GitDeleteBranch(name) => self.git_delete_branch_prompt(name),
             GitWorktreeShell(path) => self.open_worktree_shell(&path.to_string_lossy()),
             GitWorktreeRemove(path) => self.git_worktree_remove_prompt(path),
+            PreviewMarkdown(path) => self.open_md_preview_for_path(path, self.active),
         }
     }
 
@@ -2740,28 +2756,26 @@ impl App {
             .unwrap_or(cursor_offset.min(inserted_len));
         let target_cursor = start + first_stop;
         place_cursor_at_byte(b, target_cursor);
-        // Open a placeholder session if there's anywhere left to tab to —
-        // the rest of `placeholders` plus the `$0` landing spot (when it
-        // differs from "end of insertion", which is the implicit default
-        // anyway and not worth a tab stop on its own).
-        let mut remaining: Vec<usize> = placeholders
-            .iter()
-            .skip(1)
-            .map(|&off| start + off)
-            .collect();
+        // Open a placeholder session if there are any tab stops — `$1..$9`
+        // at the front, optionally `$0` appended as the final stop. (When
+        // `$0` is absent we let Tab terminate at the last `$N` rather than
+        // yanking the cursor to the end.)
+        let mut stops: Vec<usize> = placeholders.iter().map(|&off| start + off).collect();
         if !placeholders.is_empty() && cursor_offset < inserted_len {
-            // `$0` was explicit AND lands somewhere meaningful — append it as
-            // the final stop. When `$0` is absent we let Tab terminate at
-            // the last `$N` rather than yanking the cursor to the end.
-            remaining.push(start + cursor_offset);
+            stops.push(start + cursor_offset);
         }
         let last_text_len = b.editor.text().len();
         let path_for_lsp = b.path.clone();
         let new_text_for_lsp = b.editor.text().to_string();
-        if let (false, Some(pane_id)) = (remaining.is_empty(), pane_id) {
+        // Only worth a session when there's somewhere to tab *to* — a single
+        // stop is the one we already placed at, no second stop = nothing to
+        // cycle. `current = 0` is where we just placed; advancing puts us at
+        // index 1.
+        if let (true, Some(pane_id)) = (stops.len() > 1, pane_id) {
             self.snippet_session = Some(crate::snippets::SnippetSession {
                 pane_id,
-                remaining,
+                stops,
+                current: 0,
                 last_text_len,
             });
         } else {
@@ -2774,39 +2788,64 @@ impl App {
         }
     }
 
-    /// Tab inside an open snippet session: jump the cursor to the next
-    /// placeholder, accounting for any text the user inserted at the current
-    /// one. Closes the session when the last stop is consumed.
+    /// Tab inside an open snippet session: advance to the next placeholder,
+    /// accounting for any text the user inserted at the current one. Closes
+    /// the session after the last stop.
     pub fn snippet_next_placeholder(&mut self) {
-        // Take the session out of `self` so the editor borrow below is clean.
+        self.snippet_step_placeholder(1);
+    }
+
+    /// Shift-Tab inside an open snippet session: walk back to the previous
+    /// placeholder. No-op at the first stop (doesn't wrap — wrapping mid-edit
+    /// is more confusing than helpful).
+    pub fn snippet_prev_placeholder(&mut self) {
+        self.snippet_step_placeholder(-1);
+    }
+
+    /// Shared step: `+1` = forward, `-1` = backward. Shifts all stops
+    /// strictly after the current cursor by the text-length delta accrued
+    /// since we last placed at a stop, then jumps to the new index.
+    fn snippet_step_placeholder(&mut self, dir: i32) {
         let Some(mut sess) = self.snippet_session.take() else {
             return;
         };
-        // If the focused pane drifted away, the session is stale — drop it.
         if Some(sess.pane_id) != self.active {
+            // Pane drifted away — let the session die.
             return;
         }
         let Some(b) = self.active_editor_mut() else {
             return;
         };
         let cur_len = b.editor.text().len();
-        // Net chars added (or removed) since we last placed the cursor at a
-        // stop — shifts every later position by the same delta. `i64` to
+        // Net chars added (or removed) since we last placed at a stop —
+        // shifts every position strictly after the active stop. `i64` to
         // tolerate net deletions.
         let delta = cur_len as i64 - sess.last_text_len as i64;
-        let next_raw = sess.remaining.remove(0);
-        let next = ((next_raw as i64 + delta).max(0) as usize).min(cur_len);
-        // Apply the same shift to the still-pending stops so the next Tab
-        // sees the correct (already-shifted) positions.
-        for off in &mut sess.remaining {
-            *off = (*off as i64 + delta).max(0) as usize;
+        let cur_idx = sess.current;
+        for (i, off) in sess.stops.iter_mut().enumerate() {
+            if i > cur_idx {
+                *off = (*off as i64 + delta).max(0) as usize;
+            }
         }
-        place_cursor_at_byte(b, next);
-        sess.last_text_len = cur_len;
-        // Re-store unless we just consumed the last stop.
-        if !sess.remaining.is_empty() {
+        // Compute the new index. Forward off the end ⇒ session ends.
+        // Backward at index 0 ⇒ stay put (no wrap).
+        let new_idx_signed = cur_idx as i32 + dir;
+        if dir > 0 && new_idx_signed >= sess.stops.len() as i32 {
+            // Walked off the last stop. Don't restore the session.
+            return;
+        }
+        if dir < 0 && new_idx_signed < 0 {
+            // Already at the first stop — re-store and bail.
+            sess.last_text_len = cur_len;
             self.snippet_session = Some(sess);
+            return;
         }
+        let new_idx = new_idx_signed as usize;
+        let target = sess.stops[new_idx].min(cur_len);
+        place_cursor_at_byte(b, target);
+        sess.current = new_idx;
+        sess.last_text_len = cur_len;
+        self.snippet_session = Some(sess);
     }
 
     fn lsp_request_at_cursor(
@@ -3305,40 +3344,47 @@ impl App {
         new_id
     }
 
-    /// Open a rendered-markdown preview of the active `.md` buffer, in a split to
-    /// the right. If one's already open for this file, just focus it.
+    /// Open a rendered-markdown preview of the active markdown buffer, in a
+    /// split to the right. If one's already open for this file, just focus it.
+    /// Accepts any file `is_markdown_path` recognises (`md` / `markdown` /
+    /// `mdx` / `mkd`).
     pub fn open_md_preview(&mut self) {
         let Some(cur) = self.active else {
             self.toast("no active buffer");
             return;
         };
         let path = match self.panes.get(cur) {
-            Some(Pane::Editor(b)) if b.language_ext.as_deref() == Some("md") => b.path.clone(),
-            Some(Pane::Editor(_))
-            | Some(Pane::Diff(_))
-            | Some(Pane::GitGraph(_))
-            | Some(Pane::GitStatus(_))
-            | Some(Pane::Request(_))
-            | Some(Pane::Pty(_))
-            | Some(Pane::Ai(_))
-            | Some(Pane::Tests(_))
-            | Some(Pane::Trace(_))
-            | Some(Pane::Browser(_))
-            | Some(Pane::Diagnostics(_))
-            | Some(Pane::Grep(_))
-            | Some(Pane::Flaky(_))
-            | Some(Pane::Outline(_)) => {
+            Some(Pane::Editor(b)) if b.path.as_deref().is_some_and(is_markdown_path) => {
+                b.path.clone()
+            }
+            Some(Pane::MdPreview(p)) => Some(p.path.clone()),
+            Some(Pane::Editor(_)) => {
                 self.toast("not a markdown file");
                 return;
             }
-            Some(Pane::MdPreview(p)) => Some(p.path.clone()), // already a preview — re-open beside it
-            None => None,
+            _ => {
+                self.toast("not a markdown file");
+                return;
+            }
         };
         let Some(path) = path else {
-            self.toast("markdown preview needs a saved .md file");
+            self.toast("markdown preview needs a saved markdown file");
             return;
         };
-        // Already showing a preview of this file somewhere? Focus it.
+        self.open_md_preview_for_path(path, Some(cur));
+    }
+
+    /// Open (or focus) a rendered-markdown preview for `path`. `near` is the
+    /// pane the preview should split off — if `None` (or invalid), the
+    /// currently active pane is used; if there's no active pane the preview
+    /// becomes the only pane. Used by the right-click "Preview markdown"
+    /// entry on the file tree and bufferline tab menus.
+    pub fn open_md_preview_for_path(&mut self, path: PathBuf, near: Option<PaneId>) {
+        if !is_markdown_path(&path) {
+            self.toast("not a markdown file");
+            return;
+        }
+        // Already showing a preview of this file? Focus it.
         if let Some(id) = self
             .panes
             .iter()
@@ -3347,19 +3393,32 @@ impl App {
             self.reveal_pane(id);
             return;
         }
-        let source = match self.panes.get(cur) {
-            Some(Pane::Editor(b)) => b.editor.text().to_string(),
-            _ => std::fs::read_to_string(&path).unwrap_or_default(),
+        // Prefer the in-memory text if the file is already open in an editor
+        // (so the preview tracks unsaved edits); otherwise read from disk.
+        let source = self
+            .panes
+            .iter()
+            .find_map(|p| match p {
+                Pane::Editor(b) if b.path.as_ref() == Some(&path) => {
+                    Some(b.editor.text().to_string())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| std::fs::read_to_string(&path).unwrap_or_default());
+        let preview = Pane::MdPreview(crate::pane::MdPreview {
+            path,
+            source,
+            scroll: 0,
+        });
+        let anchor = near.or(self.active);
+        let new_id = if let Some(a) = anchor.filter(|&i| i < self.panes.len()) {
+            self.split_leaf_with(a, crate::layout::SplitDir::Horizontal, preview)
+        } else {
+            self.panes.push(preview);
+            let id = self.panes.len() - 1;
+            self.layout = Layout::Leaf(id);
+            id
         };
-        let new_id = self.split_leaf_with(
-            cur,
-            crate::layout::SplitDir::Horizontal,
-            Pane::MdPreview(crate::pane::MdPreview {
-                path,
-                source,
-                scroll: 0,
-            }),
-        );
         self.active = Some(new_id);
         self.focus = Focus::Pane;
     }

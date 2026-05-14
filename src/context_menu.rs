@@ -45,6 +45,10 @@ pub enum MenuAction {
     GitWorktreeShell(PathBuf),
     /// Git rail — confirm + `git worktree remove <path>`.
     GitWorktreeRemove(PathBuf),
+    /// Open a rendered-markdown preview for `path` in a split. Surfaced from
+    /// the tree (right-click an `.md`/`.markdown`/`.mdx`/`.mkd` file) and
+    /// from a bufferline tab right-click on the same.
+    PreviewMarkdown(PathBuf),
 }
 
 #[derive(Debug, Clone)]

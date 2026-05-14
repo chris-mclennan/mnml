@@ -252,14 +252,19 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => app.completion = None, // fall through, handled normally
         }
     }
-    // A snippet placeholder cycle is active: Tab jumps to the next `$N` /
-    // `$0` stop; Esc dismisses. Anything else falls through (typing, arrows,
-    // etc. all work normally — the session just tracks length deltas so the
-    // next Tab targets the right spot).
+    // A snippet placeholder cycle is active: Tab jumps forward to the next
+    // `$N` / `$0` stop; Shift-Tab walks back to the previous stop; Esc
+    // dismisses. Anything else falls through (typing, arrows, etc. all work
+    // normally — the session just tracks length deltas so the next Tab
+    // targets the right spot).
     if app.snippet_session.is_some() {
         match key.code {
             KeyCode::Tab => {
                 app.snippet_next_placeholder();
+                return;
+            }
+            KeyCode::BackTab => {
+                app.snippet_prev_placeholder();
                 return;
             }
             KeyCode::Esc => {
@@ -1097,8 +1102,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 app.lsp.did_change(&p, &text);
                 // Live markdown preview: push the in-memory text to any open
                 // `Pane::MdPreview` of this file so the preview tracks edits
-                // instead of waiting for save.
-                if p.extension().and_then(|e| e.to_str()) == Some("md") {
+                // instead of waiting for save. Covers `.md` / `.markdown` /
+                // `.mdx` / `.mkd`.
+                if matches!(
+                    p.extension().and_then(|e| e.to_str()),
+                    Some("md" | "markdown" | "mdx" | "mkd")
+                ) {
                     app.refresh_md_previews_from_text(&p, &text);
                 }
             }

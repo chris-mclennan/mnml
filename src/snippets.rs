@@ -29,27 +29,34 @@
 
 use std::collections::BTreeMap;
 
-/// In-flight tab-stop cycle for a snippet that was just inserted. The cursor
-/// is currently at the most-recent placeholder; `remaining` holds the absolute
-/// byte offsets (within the buffer's text, not the snippet's text) of the
-/// later placeholders + the final landing spot, in tab-stop order. Tab
-/// consumes the head and jumps the cursor; when `remaining` empties, the
-/// session ends.
+/// In-flight tab-stop cycle for a snippet that was just inserted. `stops`
+/// holds the absolute byte offsets (within the buffer's text, not the
+/// snippet's text) of every placeholder that came in (`$1`..`$9` then `$0`
+/// when present), in tab-stop order; `current` is the index the cursor
+/// currently sits at. Tab advances `current`; Shift-Tab walks it back. When
+/// `current == stops.len()` the session ends.
 ///
 /// `last_text_len` records the buffer's text length at the moment the cursor
-/// was placed at the current placeholder. On the next Tab the head is shifted
-/// by `current_text_len - last_text_len` so chars typed at the placeholder
-/// push the later positions along by the right amount.
+/// was placed at `stops[current]`. On the next transition the stops at
+/// indices > `current` get shifted by `current_text_len - last_text_len` so
+/// chars typed at the active placeholder push the later positions along by
+/// the right amount. Stops at indices < `current` are not touched (they sit
+/// earlier in the file and aren't disturbed by edits at the cursor).
+///
+/// Limitation: Shift-Tab to a previously-visited stop puts the cursor at
+/// that stop's original position, *not* at the end of whatever the user
+/// typed there. Re-typing or backspacing is the user's recovery; tracking
+/// per-stop ranges would let us land at the end instead and is a follow-up.
 #[derive(Debug, Clone)]
 pub struct SnippetSession {
     /// Pane the session belongs to. If the active pane drifts away from this
     /// one the session is dropped (no cross-pane continuation).
     pub pane_id: usize,
-    /// Absolute byte offsets, in tab-stop order, of the placeholders the
-    /// cursor still needs to visit.
-    pub remaining: Vec<usize>,
-    /// Buffer text length the last time the cursor landed on a placeholder —
-    /// used to compute the shift to apply to `remaining` on the next Tab.
+    /// All placeholders in tab-stop order, as absolute byte offsets.
+    pub stops: Vec<usize>,
+    /// Index into `stops` the cursor sits at. Always `< stops.len()`.
+    pub current: usize,
+    /// Buffer text length when the cursor was placed at `stops[current]`.
     pub last_text_len: usize,
 }
 
