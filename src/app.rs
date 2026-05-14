@@ -245,6 +245,91 @@ pub struct ReplaceConfirm {
     pub total: usize,
 }
 
+/// Parse a leading vim-style line range from an ex command, returning
+/// `(start_line, end_line, remainder)` (lines are 0-based; `remainder`
+/// is the rest of the line, no leading whitespace). Supports:
+/// - `1,5` ⇒ lines 1–5 (1-based on the wire, converted to 0-based)
+/// - `.,+3` ⇒ current line + next 3
+/// - `5,$` ⇒ line 5 to end
+/// - `.+1` (single ref) ⇒ next line only
+/// - `%` ⇒ whole buffer (handled separately by `:%y` / `:%d` arms)
+///
+/// Returns `None` when the line doesn't start with something that looks
+/// like a range. (`current_line` and `line_count` are the active buffer's
+/// state, used to resolve `.` and `$`.)
+fn parse_line_range(
+    line: &str,
+    current_line: usize,
+    line_count: usize,
+) -> Option<(usize, usize, &str)> {
+    // First char must look like a range opener.
+    let first = line.chars().next()?;
+    if !(first.is_ascii_digit() || first == '.' || first == '$') {
+        return None;
+    }
+    // Find the boundary between the range spec and the command — the
+    // first ASCII letter (other than `e` in `123,5` — handled below).
+    let bytes = line.as_bytes();
+    let mut split = 0usize;
+    while split < bytes.len() {
+        let b = bytes[split];
+        if b.is_ascii_alphabetic() {
+            break;
+        }
+        split += 1;
+    }
+    if split == 0 || split == bytes.len() {
+        return None;
+    }
+    let spec = &line[..split];
+    let remainder = &line[split..];
+    // Parse the spec: `<from>` or `<from>,<to>`.
+    let (from_str, to_str) = match spec.find(',') {
+        Some(comma) => (&spec[..comma], &spec[comma + 1..]),
+        None => (spec, spec),
+    };
+    let resolve = |part: &str| -> Option<usize> {
+        let part = part.trim();
+        if part == "$" {
+            return Some(line_count.saturating_sub(1));
+        }
+        if part == "." || part.is_empty() {
+            return Some(current_line);
+        }
+        if let Some(rest) = part.strip_prefix(".+") {
+            let n: usize = rest.parse().ok()?;
+            return Some(
+                current_line
+                    .saturating_add(n)
+                    .min(line_count.saturating_sub(1)),
+            );
+        }
+        if let Some(rest) = part.strip_prefix(".-") {
+            let n: usize = rest.parse().ok()?;
+            return Some(current_line.saturating_sub(n));
+        }
+        if let Some(rest) = part.strip_prefix('+') {
+            let n: usize = rest.parse().ok()?;
+            return Some(
+                current_line
+                    .saturating_add(n)
+                    .min(line_count.saturating_sub(1)),
+            );
+        }
+        if let Some(rest) = part.strip_prefix('-') {
+            let n: usize = rest.parse().ok()?;
+            return Some(current_line.saturating_sub(n));
+        }
+        // Bare number — 1-based on the wire.
+        let n: usize = part.parse().ok()?;
+        Some(n.saturating_sub(1).min(line_count.saturating_sub(1)))
+    };
+    let from = resolve(from_str)?;
+    let to = resolve(to_str)?;
+    let (lo, hi) = if from <= to { (from, to) } else { (to, from) };
+    Some((lo, hi, remainder))
+}
+
 fn parse_substitute(line: &str) -> Option<Substitute> {
     // `%s/...` ⇒ buffer-wide; bare `s/...` ⇒ current-line only (vim convention).
     let (rest, whole_buffer) = if let Some(r) = line.strip_prefix("%s/") {
@@ -7696,6 +7781,72 @@ impl App {
     /// lines (full lines including any partial-line selection); without one,
     /// sorts the whole buffer. `unique` ⇒ de-dupe consecutive equal lines
     /// after sorting. Single edit op so undo restores the original order.
+    /// `:1,5d` — delete lines `[start_line..=end_line]` (0-based, inclusive),
+    /// yanking them into the unnamed register first (vim convention).
+    /// Single edit op so undo restores.
+    pub fn delete_lines(&mut self, start_line: usize, end_line: usize) {
+        let Some(idx) = self.active else {
+            self.toast(":d — no active editor");
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+            self.toast(":d — no active editor");
+            return;
+        };
+        let text = b.editor.text();
+        let line_count = b.editor.line_count();
+        let end_line = end_line.min(line_count.saturating_sub(1));
+        let start_line = start_line.min(end_line);
+        let line_start =
+            |row: usize| -> usize { text.split('\n').take(row).map(|s| s.len() + 1).sum() };
+        let start = line_start(start_line);
+        let end = if end_line + 1 >= line_count {
+            text.len()
+        } else {
+            line_start(end_line + 1)
+        };
+        let n = end_line - start_line + 1;
+        let yanked = text[start..end].to_string();
+        self.clipboard.set(yanked, true);
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+            b.apply_edit_ops(
+                vec![crate::edit_op::EditOp::ReplaceRange {
+                    start,
+                    end,
+                    text: String::new(),
+                }],
+                &mut self.clipboard,
+                0,
+            );
+        }
+        self.toast(format!(":d {start_line}..{end_line} ({n} line(s))"));
+    }
+
+    /// `:1,5y` — yank lines `[start_line..=end_line]` (0-based, inclusive)
+    /// linewise into the unnamed register. Doesn't modify the buffer.
+    pub fn yank_lines(&mut self, start_line: usize, end_line: usize) {
+        let Some(b) = self.active_editor() else {
+            self.toast(":y — no active editor");
+            return;
+        };
+        let text = b.editor.text();
+        let line_count = b.editor.line_count();
+        let end_line = end_line.min(line_count.saturating_sub(1));
+        let start_line = start_line.min(end_line);
+        let line_start =
+            |row: usize| -> usize { text.split('\n').take(row).map(|s| s.len() + 1).sum() };
+        let start = line_start(start_line);
+        let end = if end_line + 1 >= line_count {
+            text.len()
+        } else {
+            line_start(end_line + 1)
+        };
+        let n = end_line - start_line + 1;
+        let yanked = text[start..end].to_string();
+        self.clipboard.set(yanked, true);
+        self.toast(format!(":y {start_line}..{end_line} ({n} line(s))"));
+    }
+
     /// `:g/pattern/cmd` (or `:v/pattern/cmd` for invert) — run `<cmd>`
     /// on every line in the buffer whose text contains `<pattern>`
     /// (literal substring; vim's regex isn't wired). Lines visited
@@ -9910,6 +10061,31 @@ impl App {
                 b.editor.place_cursor(n.saturating_sub(1), 0);
             }
             return;
+        }
+        // Leading line-range form (`:1,5d`, `:5,$y`, `:.,+3d`, `:.+1d`).
+        // Parsed into `(start_line, end_line, remainder)`; the inner cmd
+        // is dispatched to a small subset (`d`, `y`) scoped to the range.
+        if let Some((start, end, remainder)) = parse_line_range(
+            line,
+            self.active_editor()
+                .map(|b| b.editor.row_col().0)
+                .unwrap_or(0),
+            self.active_editor()
+                .map(|b| b.editor.line_count())
+                .unwrap_or(1),
+        ) {
+            let cmd = remainder.trim();
+            match cmd {
+                "d" | "delete" | "del" | "de" => {
+                    self.delete_lines(start, end);
+                    return;
+                }
+                "y" | "yank" | "ya" => {
+                    self.yank_lines(start, end);
+                    return;
+                }
+                _ => { /* fall through to normal dispatcher */ }
+            }
         }
         // `:%s/old/new/[flags]` — vim-style global substitute. (No regex; flags
         // supported: `g` replace all on each line [default — we always do all
@@ -12493,6 +12669,24 @@ mod tests {
 
         // Disk is untouched (the dirty buffer was skipped).
         assert_eq!(fs::read_to_string(&a).unwrap(), "foo");
+    }
+
+    #[test]
+    fn parse_line_range_handles_common_forms() {
+        // `:1,5d` — line 1 (0-based: 0) to line 5 (0-based: 4); cmd "d".
+        let (s, e, r) = parse_line_range("1,5d", 0, 100).unwrap();
+        assert_eq!((s, e, r), (0, 4, "d"));
+        // `:5,$y` — line 5 to end. line_count=10 ⇒ end-line=9.
+        let (s, e, r) = parse_line_range("5,$y", 0, 10).unwrap();
+        assert_eq!((s, e, r), (4, 9, "y"));
+        // `:.,+3d` — current=2, +3 ⇒ end=5. line_count clamps.
+        let (s, e, r) = parse_line_range(".,+3d", 2, 100).unwrap();
+        assert_eq!((s, e, r), (2, 5, "d"));
+        // `:.+1d` — single ref form, just next line.
+        let (s, e, r) = parse_line_range(".+1d", 2, 100).unwrap();
+        assert_eq!((s, e, r), (3, 3, "d"));
+        // No range ⇒ None.
+        assert!(parse_line_range("d", 0, 10).is_none());
     }
 
     #[test]

@@ -371,6 +371,13 @@ highlighter immediately.
 (routes through `run_workspace_grep`).
 **`:copen` / `:cclose` / `:cwin[dow]`** — focus / close the grep pane (mnml's
 quickfix). Same alias family as the vim quickfix commands.
+**Vim line-range ex commands** — `:1,5d`, `:5,$y`, `:.,+3d`, `:.+1d` etc. New
+`parse_line_range(line, current_line, line_count) → Option<(start, end, remainder)>`
+parser supports bare numbers (1-based on the wire), `.` (current line), `$` (last),
+and `+N`/`-N`/`.+N`/`.-N` relative refs. Wired for `d`/`y` only — `s` already takes
+its own scoping via `%`. New `App::delete_lines` / `yank_lines` helpers.
+**Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
+Single-key chord in the `g` prefix.
 **Persistent ex history** — moved from vim handler to App; survives across sessions
 via `SavedSession.ex_history` (oldest first, capped at 100). New `InputHandler::
 set_ex_history` / `ex_history()` trait methods so the App can sync. Pre-seeded

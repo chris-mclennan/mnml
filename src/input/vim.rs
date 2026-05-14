@@ -543,6 +543,12 @@ impl VimInputHandler {
                     KeyCode::Char('i') => {
                         InputResult::App(AppCommand::RunCommand("vim.go_to_last_insert".into()))
                     }
+                    // `gI` — insert at literal column 0 (vs. `I` which
+                    // goes to first non-blank). Enters Insert mode.
+                    KeyCode::Char('I') => {
+                        self.enter_insert();
+                        InputResult::Ops(vec![MoveLineStart])
+                    }
                     KeyCode::Char('c') => {
                         self.prefix = Prefix::Gc;
                         self.count = if n > 1 { Some(n) } else { None };
