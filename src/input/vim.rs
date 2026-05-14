@@ -2138,6 +2138,18 @@ impl InputHandler for VimInputHandler {
         self.reset_pending();
         self.cmdline = None;
     }
+
+    fn set_ex_history(&mut self, entries: Vec<String>) {
+        // Cap on restore so a runaway session.json can't bloat us.
+        let take_from = entries.len().saturating_sub(EX_HISTORY_MAX);
+        self.ex_history = entries.into_iter().skip(take_from).collect();
+        self.ex_history_cursor = None;
+        self.ex_history_typing = None;
+    }
+
+    fn ex_history(&self) -> Vec<String> {
+        self.ex_history.clone()
+    }
 }
 
 #[cfg(test)]

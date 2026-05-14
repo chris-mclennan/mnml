@@ -344,6 +344,14 @@ pane for the active file). Vim users reach for `:diff` reflexively.
 **`:silent <cmd>` / `:sil <cmd>`** — run `<cmd>` with toasts suppressed (still
 recorded into `:messages`). `App.silent_depth` ⇒ `toast()` skips the visible
 toast while > 0. Re-entrant.
+**`:command <Name> <expansion>`** — define a user ex command. `:Name <args>` runs
+`<expansion> <args>`. Bare `:command` lists; `:delcommand <Name>` (alias `:delc`)
+removes one. `App.user_ex_commands` HashMap; resolved in `run_ex_command` before
+the builtin match.
+**Persistent ex history** — moved from vim handler to App; survives across sessions
+via `SavedSession.ex_history` (oldest first, capped at 100). New `InputHandler::
+set_ex_history` / `ex_history()` trait methods so the App can sync. Pre-seeded
+into every editor's input handler on session restore + on each new buffer open.
 **`picker.recent_commands`** — fuzzy picker over the most-recently-run commands
 (newest first, capped at 50). `command::run` notes every successful run on
 `App.recent_commands` (de-duped — re-running moves to front; some self-

@@ -408,6 +408,10 @@ struct SavedSession {
     /// oldest-first; capped at `CLOSED_BUFFERS_MAX` on restore.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     closed_buffers: Vec<SavedNavPoint>,
+    /// `App.ex_history` — recent `:`-line commands (Up/Down on the
+    /// cmdline walks through them). Oldest-first; capped at 100.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    ex_history: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -826,6 +830,15 @@ pub struct App {
     /// the same command runs twice consecutively the second push moves
     /// it to the front instead of duplicating).
     pub recent_commands: Vec<String>,
+    /// User-defined ex commands (`:command MyCmd <expansion>`). On
+    /// `:MyCmd <args>`, the expansion is run as a fresh ex command with
+    /// args appended. Purely an alias layer.
+    pub user_ex_commands: std::collections::HashMap<String, String>,
+    /// `:`-line history — every accepted ex command is appended (oldest
+    /// first, capped at `EX_HISTORY_MAX`). Persisted in session.json so
+    /// it survives a relaunch. The vim handler walks it on Up / Down via
+    /// the `set_cmdline` trait hook.
+    pub ex_history: Vec<String>,
     /// Vim `.` repeat — last completed change as a sequence of key
     /// events (re-feedable through `dispatch_key`). Empty until the user
     /// has done at least one mutation.
@@ -1107,6 +1120,8 @@ impl App {
             message_log: Vec::new(),
             silent_depth: 0,
             recent_commands: Vec::new(),
+            user_ex_commands: std::collections::HashMap::new(),
+            ex_history: Vec::new(),
             dot_keys: Vec::new(),
             dot_recording: None,
             dot_recording_saw_edit: false,
@@ -2755,6 +2770,7 @@ impl App {
                 // .editorconfig overrides the per-buffer settings (tab
                 // width, trailing newline, trim ws). Closer-to-file wins.
                 buf.apply_editorconfig(&self.workspace);
+                buf.input.set_ex_history(self.ex_history.clone());
                 // Restore the cursor + scroll from the last time we had this
                 // file open (if anywhere in `file_cursors`); harmless when the
                 // saved cursor doesn't fit the new file text.
@@ -2856,6 +2872,7 @@ impl App {
             match Buffer::open(&path, &self.config) {
                 Ok(mut buf) => {
                     buf.apply_editorconfig(&self.workspace);
+                    buf.input.set_ex_history(self.ex_history.clone());
                     let text = buf.editor.text().to_string();
                     self.panes.push(Pane::Editor(buf));
                     let new_id = self.panes.len() - 1;
@@ -9842,6 +9859,23 @@ impl App {
             self.run_substitute(sub);
             return;
         }
+        // User-defined ex command resolution. `:command MyCmd <body>`
+        // adds it; `:MyCmd <args>` runs `<body> <args>` as a fresh ex
+        // command. Lookup is by the leading word (case-sensitive — vim
+        // requires user commands to start with a capital letter, but we
+        // don't enforce that).
+        if let Some(first_word) = line.split_whitespace().next()
+            && let Some(expansion) = self.user_ex_commands.get(first_word).cloned()
+        {
+            let args = line[first_word.len()..].trim();
+            let merged = if args.is_empty() {
+                expansion
+            } else {
+                format!("{expansion} {args}")
+            };
+            self.run_ex_command(&merged);
+            return;
+        }
         // `:silent <cmd>` / `:sil <cmd>` — run `<cmd>` with toasts
         // suppressed (still recorded in `:messages`). Useful for
         // chained ex commands you don't want narrating themselves.
@@ -10398,6 +10432,46 @@ impl App {
                     self.toast(format!(":cd — workspace is {}", self.workspace.display()));
                 } else {
                     self.toast(":cd — workspace is per-session; not changed");
+                }
+            }
+            // `:command <Name> <expansion>` — register a user-defined ex
+            // command. `:Name <args>` runs `<expansion> <args>`. Bare
+            // `:command` lists. `:delcommand <Name>` (alias `:delc`)
+            // removes one. Vim canonical aliases.
+            "command" | "com" => {
+                let rest = rest.trim();
+                if rest.is_empty() {
+                    if self.user_ex_commands.is_empty() {
+                        self.toast(":command — none defined");
+                    } else {
+                        let mut entries: Vec<String> = self
+                            .user_ex_commands
+                            .iter()
+                            .map(|(k, v)| {
+                                let preview: String = v.chars().take(30).collect();
+                                let suffix = if v.chars().count() > 30 { "…" } else { "" };
+                                format!("{k}={preview}{suffix}")
+                            })
+                            .collect();
+                        entries.sort();
+                        self.toast(format!(":command · {}", entries.join("  ")));
+                    }
+                } else if let Some((name, body)) = rest.split_once(char::is_whitespace) {
+                    self.user_ex_commands
+                        .insert(name.trim().to_string(), body.trim().to_string());
+                    self.toast(format!(":command {} = {}", name.trim(), body.trim()));
+                } else {
+                    self.toast(":command <Name> <expansion>");
+                }
+            }
+            "delcommand" | "delc" => {
+                let key = rest.trim();
+                if key.is_empty() {
+                    self.toast(":delcommand <Name>");
+                } else if self.user_ex_commands.remove(key).is_some() {
+                    self.toast(format!(":delcommand {key}"));
+                } else {
+                    self.toast(format!(":delcommand — no such command: {key}"));
                 }
             }
             // `:ab[breviate] <key> <expansion>` — set a vim abbreviation
@@ -11421,6 +11495,7 @@ impl App {
                     col: *col,
                 })
                 .collect(),
+            ex_history: self.ex_history.clone(),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -11587,6 +11662,18 @@ impl App {
                 .skip(take_from)
                 .map(|np| (PathBuf::from(np.path), np.row, np.col))
                 .collect();
+        }
+        // Ex command history — restore the most recent 100. Push into
+        // every open editor's input handler too so vim's cmdline Up/Down
+        // can walk it immediately.
+        if !saved.ex_history.is_empty() {
+            let take_from = saved.ex_history.len().saturating_sub(100);
+            self.ex_history = saved.ex_history.into_iter().skip(take_from).collect();
+            for p in self.panes.iter_mut() {
+                if let Pane::Editor(b) = p {
+                    b.input.set_ex_history(self.ex_history.clone());
+                }
+            }
         }
         // Per-file change list — restore for any buffer we just re-opened.
         // Cursor sits past the newest entry so the first `g;` lands on the

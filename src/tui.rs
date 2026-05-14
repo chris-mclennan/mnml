@@ -1336,7 +1336,19 @@ fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
                     .apply(EditOp::MoveToLine(n), 20, &mut app.clipboard);
             }
         }
-        ExCommand(s) => app.run_ex_command(&s),
+        ExCommand(s) => {
+            // Push onto persistent ex history (de-duped against newest,
+            // capped at 100). The handler-side history mirror is updated
+            // on launch from `App.ex_history` via `set_ex_history`.
+            if app.ex_history.last() != Some(&s) {
+                app.ex_history.push(s.clone());
+                if app.ex_history.len() > 100 {
+                    let drop = app.ex_history.len() - 100;
+                    app.ex_history.drain(..drop);
+                }
+            }
+            app.run_ex_command(&s);
+        }
         RunCommand(id) => {
             command::run(&id, app);
         }

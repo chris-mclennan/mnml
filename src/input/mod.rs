@@ -130,6 +130,14 @@ pub trait InputHandler: Send {
     fn name(&self) -> &'static str;
     /// Focus left this buffer — let a modal handler drop to its base mode and clear chords.
     fn on_blur(&mut self) {}
+    /// Pre-seed the handler's `:`-line history from a persisted list.
+    /// Default no-op (standard mode has no `:` line).
+    fn set_ex_history(&mut self, _entries: Vec<String>) {}
+    /// Snapshot of the handler's current `:`-line history (newest at the
+    /// end). Default empty. Used by App to persist across sessions.
+    fn ex_history(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Build a handler for the given style name. Unknown names fall back to `"standard"`.
