@@ -348,6 +348,15 @@ toast while > 0. Re-entrant.
 `<expansion> <args>`. Bare `:command` lists; `:delcommand <Name>` (alias `:delc`)
 removes one. `App.user_ex_commands` HashMap; resolved in `run_ex_command` before
 the builtin match.
+**`:make [task]`** — kick off the configured `[tasks.make]` task (or named task) in
+a pty pane. Vim canonical "build / test from inside the editor".
+**`:g/pattern/cmd`** / **`:v/pattern/cmd`** — vim's "global" command. Runs `<cmd>`
+on every line whose text contains `<pattern>` (literal substring; vim's regex
+isn't wired). `:v/` is the invert form. Visits rows in reverse so `:d`-style
+line removals don't misalign.
+**`:!!`** — repeat last `:!cmd` shell command. `App.last_shell_cmd` tracks.
+**`:silent!`** — alias for `:silent` (we don't distinguish error toasts from
+normal toasts).
 **Persistent ex history** — moved from vim handler to App; survives across sessions
 via `SavedSession.ex_history` (oldest first, capped at 100). New `InputHandler::
 set_ex_history` / `ex_history()` trait methods so the App can sync. Pre-seeded

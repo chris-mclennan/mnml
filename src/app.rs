@@ -834,6 +834,8 @@ pub struct App {
     /// `:MyCmd <args>`, the expansion is run as a fresh ex command with
     /// args appended. Purely an alias layer.
     pub user_ex_commands: std::collections::HashMap<String, String>,
+    /// Last `:!cmd` shell command (vim `:!!` re-runs it).
+    pub last_shell_cmd: Option<String>,
     /// `:`-line history — every accepted ex command is appended (oldest
     /// first, capped at `EX_HISTORY_MAX`). Persisted in session.json so
     /// it survives a relaunch. The vim handler walks it on Up / Down via
@@ -1121,6 +1123,7 @@ impl App {
             silent_depth: 0,
             recent_commands: Vec::new(),
             user_ex_commands: std::collections::HashMap::new(),
+            last_shell_cmd: None,
             ex_history: Vec::new(),
             dot_keys: Vec::new(),
             dot_recording: None,
@@ -1938,7 +1941,9 @@ impl App {
                 crate::command::run(&item.id, self);
             }
             PickerKind::Themes => self.set_theme(&item.id),
-            PickerKind::Tasks => self.run_task(&item.id),
+            PickerKind::Tasks => {
+                self.run_task(&item.id);
+            }
             PickerKind::Branches => self.checkout_branch(&item.id),
             PickerKind::Worktrees => self.open_worktree_shell(&item.id),
             PickerKind::Locations => {
@@ -2143,10 +2148,10 @@ impl App {
     }
 
     /// Run a named `[tasks.<name>]` entry in a new pty pane.
-    pub fn run_task(&mut self, name: &str) {
+    pub fn run_task(&mut self, name: &str) -> bool {
         let Some(def) = self.config.tasks.get(name).cloned() else {
             self.toast(format!("unknown task: {name}"));
-            return;
+            return false;
         };
         let cwd = match &def.cwd {
             Some(rel) => {
@@ -2160,6 +2165,7 @@ impl App {
             None => self.workspace.clone(),
         };
         self.open_pty(crate::pty_pane::BinaryProfile::task(name, &def.cmd, cwd));
+        true
     }
 
     /// `[startup] tasks = [...]` — run each on workspace open (called once by the
@@ -7690,6 +7696,60 @@ impl App {
     /// lines (full lines including any partial-line selection); without one,
     /// sorts the whole buffer. `unique` ⇒ de-dupe consecutive equal lines
     /// after sorting. Single edit op so undo restores the original order.
+    /// `:g/pattern/cmd` (or `:v/pattern/cmd` for invert) — run `<cmd>`
+    /// on every line in the buffer whose text contains `<pattern>`
+    /// (literal substring; vim's regex isn't wired). Lines visited
+    /// top-to-bottom with cursor pre-placed at line start. Captures the
+    /// matching rows up front so `<cmd>` operations that delete lines
+    /// don't misalign the visit list.
+    pub fn run_global_cmd(&mut self, spec: &str, invert: bool) {
+        // spec = "<pattern>/<cmd>"
+        let Some(slash) = spec.find('/') else {
+            self.toast(":g — usage `g/pattern/cmd`");
+            return;
+        };
+        let pattern = &spec[..slash];
+        let cmd = &spec[slash + 1..];
+        if pattern.is_empty() || cmd.is_empty() {
+            self.toast(":g — pattern and cmd both required");
+            return;
+        }
+        let Some(idx) = self.active else {
+            self.toast(":g — no active editor");
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get(idx) else {
+            self.toast(":g — no active editor");
+            return;
+        };
+        // Capture matching row indices (top-to-bottom).
+        let mut rows: Vec<usize> = Vec::new();
+        for (i, line) in b.editor.text().split('\n').enumerate() {
+            let matched = line.contains(pattern);
+            if matched != invert {
+                rows.push(i);
+            }
+        }
+        if rows.is_empty() {
+            self.toast(format!(":g — no lines match {pattern:?}"));
+            return;
+        }
+        let count = rows.len();
+        let cmd = cmd.to_string();
+        // Walk in reverse so `:d`-style line removals don't shift later
+        // row indices.
+        for row in rows.into_iter().rev() {
+            if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                if row >= b.editor.line_count() {
+                    continue;
+                }
+                b.editor.place_cursor(row, 0);
+            }
+            self.run_ex_command(&cmd);
+        }
+        self.toast(format!(":g · ran on {count} line(s)"));
+    }
+
     /// `:[%]norm <keys>` — for each line in the requested range, place
     /// the cursor at line start, then re-dispatch each char of `<keys>`
     /// through the active editor's vim handler. `whole=true` ⇒ whole
@@ -9876,13 +9936,37 @@ impl App {
             self.run_ex_command(&merged);
             return;
         }
+        // `:g/pattern/cmd` — vim's "global" command. Runs `<cmd>` on
+        // every line whose text contains `<pattern>` (literal substring,
+        // case-sensitive). Reverse form `:v/pattern/cmd` runs on lines
+        // that *don't* match. Lines are visited top-to-bottom; the cmd
+        // runs after `place_cursor(row, 0)` so things like `:d` apply
+        // to the matched line.
+        if let Some(rest) = line
+            .strip_prefix("g/")
+            .or_else(|| line.strip_prefix("global/"))
+        {
+            self.run_global_cmd(rest, false);
+            return;
+        }
+        if let Some(rest) = line
+            .strip_prefix("v/")
+            .or_else(|| line.strip_prefix("vglobal/"))
+        {
+            self.run_global_cmd(rest, true);
+            return;
+        }
         // `:silent <cmd>` / `:sil <cmd>` — run `<cmd>` with toasts
         // suppressed (still recorded in `:messages`). Useful for
         // chained ex commands you don't want narrating themselves.
         if let Some(rest) = line
-            .strip_prefix("silent ")
+            .strip_prefix("silent! ")
+            .or_else(|| line.strip_prefix("sil! "))
+            .or_else(|| line.strip_prefix("silent "))
             .or_else(|| line.strip_prefix("sil "))
         {
+            // Mnml doesn't distinguish error toasts from normal toasts,
+            // so `:silent` and `:silent!` behave identically.
             self.silent_depth = self.silent_depth.saturating_add(1);
             self.run_ex_command(rest);
             self.silent_depth = self.silent_depth.saturating_sub(1);
@@ -9905,14 +9989,24 @@ impl App {
         // a substitute for opening a `:term <cmd>` pty for long-running things.
         if let Some(rest) = line.strip_prefix("!") {
             let rest = rest.trim();
-            if rest.is_empty() {
+            // `:!!` ⇒ repeat last `:!` command (vim canonical).
+            let actual_cmd = if rest == "!" {
+                let Some(last) = self.last_shell_cmd.clone() else {
+                    self.toast(":!! — no previous :! command");
+                    return;
+                };
+                last
+            } else if rest.is_empty() {
                 self.toast(":! — command required");
                 return;
-            }
+            } else {
+                rest.to_string()
+            };
+            self.last_shell_cmd = Some(actual_cmd.clone());
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
             let out = std::process::Command::new(&shell)
                 .arg("-c")
-                .arg(rest)
+                .arg(&actual_cmd)
                 .current_dir(&self.workspace)
                 .output();
             match out {
@@ -10156,6 +10250,19 @@ impl App {
             // command). Vim users reach for `:diff` reflexively.
             "diff" | "diffs" | "diffsplit" => {
                 crate::command::run("git.diff_file", self);
+            }
+            // `:make [task]` — kick off the configured `[tasks.make]`
+            // task (or the named task) in a pty pane. Vim canonical for
+            // "build / test from inside the editor".
+            "make" | "mak" => {
+                let task = if rest.trim().is_empty() {
+                    "make".to_string()
+                } else {
+                    rest.trim().to_string()
+                };
+                if !self.run_task(&task) {
+                    self.toast(format!(":make — no [tasks.{task}] in config"));
+                }
             }
             "marks" => {
                 let mut parts: Vec<String> = Vec::new();
