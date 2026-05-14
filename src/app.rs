@@ -743,6 +743,10 @@ pub struct App {
     /// and re-opens it. Capped at `CLOSED_BUFFERS_MAX`. Not persisted —
     /// closing-then-reopening across sessions is what `recent_files` is for.
     pub closed_buffers: Vec<(PathBuf, usize, usize)>,
+    /// The pane that was active *before* the current one. `Ctrl+Tab` jumps
+    /// here. Each `reveal_pane` captures the outgoing active. Cleared when
+    /// the captured pane is closed.
+    pub last_active: Option<PaneId>,
     /// Per-file last `(cursor_byte, scroll)`, captured when a buffer is closed
     /// or saved, restored when the file is re-opened later. Persisted in
     /// session.json so it survives restarts. Capped at `FILE_CURSORS_MAX`.
@@ -877,6 +881,10 @@ pub struct App {
     /// matches when the user bails. `Some(None)` ⇒ "previously cleared";
     /// `None` ⇒ no Find prompt in flight.
     pub find_preview_snapshot: Option<Option<crate::buffer::FindState>>,
+    /// Byte range to scope the in-flight find to (set when the prompt opens
+    /// with a multi-line selection active). Consumed by `accept_find` and
+    /// `update_live_find_preview`. `None` ⇒ search the whole buffer.
+    pub find_pending_range: Option<(usize, usize)>,
     /// Cursor position when the Find prompt opened — kept around in case
     /// future incremental UX wants to bring the cursor back on cancel.
     pub find_preview_cursor: usize,
@@ -986,6 +994,7 @@ impl App {
             zen_mode: false,
             recent_files: Vec::new(),
             closed_buffers: Vec::new(),
+            last_active: None,
             file_cursors: std::collections::HashMap::new(),
             global_marks: std::collections::HashMap::new(),
             nav_back: Vec::new(),
@@ -1027,6 +1036,7 @@ impl App {
             pending_workspace_symbol_query: None,
             find_regex_default: false,
             find_preview_snapshot: None,
+            find_pending_range: None,
             find_preview_cursor: 0,
             find_history: Vec::new(),
             find_history_cursor: 0,
@@ -1985,6 +1995,9 @@ impl App {
         if id >= self.panes.len() {
             return;
         }
+        // Capture the outgoing active for `Ctrl+Tab` (last-buffer toggle) —
+        // skip the no-op case where we're "revealing" the already-active.
+        let prior = self.active;
         if self.layout.contains(id) {
             self.active = Some(id);
         } else if let Some(cur) = self.active {
@@ -1994,8 +2007,27 @@ impl App {
             self.layout = Layout::Leaf(id);
             self.active = Some(id);
         }
+        if prior != self.active {
+            self.last_active = prior;
+        }
         self.focus = Focus::Pane;
         self.retarget_outline_to_active();
+    }
+
+    /// `buffer.last` (`Ctrl+Tab`) — switch to the previously-active pane.
+    /// MRU two-buffer toggle (vim's `Ctrl+^`); pressing it twice oscillates
+    /// between the two most recently focused panes. No-op if there's no
+    /// recorded prior active or if it's been closed.
+    pub fn switch_to_last_buffer(&mut self) {
+        let Some(target) = self.last_active else {
+            self.toast("no previous buffer");
+            return;
+        };
+        if target >= self.panes.len() {
+            self.last_active = None;
+            return;
+        }
+        self.reveal_pane(target);
     }
 
     /// If an outline pane is open and the now-active editor is a different
@@ -3447,6 +3479,17 @@ impl App {
             .active
             .map(|a| if a > removed { a - 1 } else { a })
             .filter(|_| !self.panes.is_empty());
+        // Same shift for `last_active` (Ctrl+Tab target). Drop it when the
+        // pane it pointed at is the one being removed.
+        self.last_active = self.last_active.and_then(|a| {
+            if a == removed {
+                None
+            } else if a > removed {
+                Some(a - 1)
+            } else {
+                Some(a)
+            }
+        });
     }
 
     /// Split the focused leaf, opening a fresh buffer (a re-open of the same file,
@@ -5709,6 +5752,7 @@ impl App {
         self.pending_branch_source = None;
         if was_find {
             self.restore_find_preview_snapshot();
+            self.find_pending_range = None;
         }
     }
     pub fn prompt_accept(&mut self) {
@@ -5864,25 +5908,41 @@ impl App {
             self.toast("find only works in editor panes");
             return;
         };
-        let seed = if b.editor.has_selection() {
+        // Treat a multi-line selection as a scope: search only within it,
+        // and don't seed the query with the (potentially huge) selection
+        // text. Single-line selection keeps the existing seed-as-query
+        // behavior.
+        let multi_line_sel = b.editor.selection().and_then(|(lo, hi)| {
+            let text = b.editor.text();
+            let crosses_newline = text.get(lo..hi).is_some_and(|s| s.contains('\n'));
+            if crosses_newline { Some((lo, hi)) } else { None }
+        });
+        let seed = if multi_line_sel.is_some() {
+            // Don't dump the whole selection into the query field.
+            String::new()
+        } else if b.editor.has_selection() {
             b.editor.selected_text().to_string()
         } else if let Some(f) = &b.find {
             f.query.clone()
         } else {
             String::new()
         };
-        // A multi-line selection isn't a useful default — keep the first line.
         let seed = seed.lines().next().unwrap_or("").to_string();
-        // Remember the editor's current find state so Esc on the prompt
-        // restores it (we replace it live as the user types).
         self.find_preview_snapshot = Some(b.find.clone());
         self.find_preview_cursor = b.editor.cursor();
-        // History cursor parks past the newest entry — Up walks back, Down
-        // walks forward toward the live input.
         self.find_history_cursor = self.find_history.len();
+        // Stash the multi-line selection range so `accept_find` /
+        // `update_live_find_preview` can scope matches to it. Cleared on
+        // any new find prompt open.
+        self.find_pending_range = multi_line_sel;
+        let title = if multi_line_sel.is_some() {
+            "Find (in selection)"
+        } else {
+            "Find"
+        };
         self.prompt = Some(crate::prompt::Prompt::seeded(
             crate::prompt::PromptKind::Find,
-            "Find",
+            title,
             seed,
         ));
     }
@@ -5926,6 +5986,7 @@ impl App {
     /// moved — just the highlight set + match index. Empty query clears.
     pub fn update_live_find_preview(&mut self, query: String) {
         let regex_default = self.find_regex_default;
+        let pending_range = self.find_pending_range;
         let Some(cur) = self.active else { return };
         let Some(Pane::Editor(b)) = self.panes.get_mut(cur) else {
             return;
@@ -5942,6 +6003,7 @@ impl App {
             query,
             regex,
             case_sensitive,
+            range: pending_range,
             ..Default::default()
         };
         state.recompute(b.editor.text());
@@ -5988,6 +6050,8 @@ impl App {
             }
         }
         self.find_history_cursor = self.find_history.len();
+        // Consume the in-flight scope range — accept_find is one-shot.
+        let pending_range = self.find_pending_range.take();
         let regex_default = self.find_regex_default;
         let Some(cur) = self.active else { return };
         let Some(Pane::Editor(b)) = self.panes.get_mut(cur) else {
@@ -6005,6 +6069,7 @@ impl App {
             query: query.clone(),
             regex,
             case_sensitive,
+            range: pending_range,
             ..Default::default()
         };
         state.recompute(b.editor.text());

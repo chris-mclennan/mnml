@@ -34,17 +34,31 @@ pub struct FindState {
     /// sensitive search). Ignored when `regex` is true; the (?i) prefix on
     /// the regex isn't applied either way once that flag's set.
     pub case_sensitive: bool,
+    /// Restrict matches to this byte range (inclusive start, exclusive end).
+    /// `None` ⇒ whole buffer. Set by `App::open_find_prompt` when the user
+    /// triggered Find with a multi-line selection active — gives a quick
+    /// "search inside this block" gesture without a separate UI toggle.
+    pub range: Option<(usize, usize)>,
 }
 
 impl FindState {
     pub fn recompute(&mut self, text: &str) {
-        self.matches = if self.regex {
-            find_all_regex(text, &self.query)
-        } else if self.case_sensitive {
-            find_all_case_sensitive(text, &self.query)
-        } else {
-            find_all_ci_ascii(text, &self.query)
+        let (lo, hi) = match self.range {
+            Some((a, b)) => (a.min(text.len()), b.min(text.len())),
+            None => (0, text.len()),
         };
+        let scope = if lo < hi { &text[lo..hi] } else { "" };
+        let raw_matches = if self.regex {
+            find_all_regex(scope, &self.query)
+        } else if self.case_sensitive {
+            find_all_case_sensitive(scope, &self.query)
+        } else {
+            find_all_ci_ascii(scope, &self.query)
+        };
+        self.matches = raw_matches
+            .into_iter()
+            .map(|(s, e)| (s + lo, e + lo))
+            .collect();
         if self.matches.is_empty() {
             self.current = None;
         } else if let Some(c) = self.current {

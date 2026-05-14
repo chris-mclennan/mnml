@@ -574,17 +574,26 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "buffer.next",
-            title: "Next buffer",
+            title: "Next buffer (positional)",
             group: "buffer",
-            keys: &["ctrl+pagedown", "ctrl+tab"],
+            keys: &["ctrl+pagedown"],
             run: |app| app.next_buffer(),
         },
         Command {
             id: "buffer.prev",
-            title: "Previous buffer",
+            title: "Previous buffer (positional)",
             group: "buffer",
-            keys: &["ctrl+pageup", "ctrl+shift+tab"],
+            keys: &["ctrl+pageup"],
             run: |app| app.prev_buffer(),
+        },
+        Command {
+            id: "buffer.last",
+            title: "Switch to previously-active buffer (vim `Ctrl+^`)",
+            group: "buffer",
+            // `Ctrl+Tab` for VSCode/IDE muscle memory; `ctrl+6` is a vim
+            // alias (Ctrl+^ is hard to type on most keyboards).
+            keys: &["ctrl+tab", "ctrl+6"],
+            run: |app| app.switch_to_last_buffer(),
         },
         Command {
             id: "tree.refresh",
