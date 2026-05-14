@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::clipboard::Clipboard;
-use crate::edit_op::{EditOp, EditOutcome};
+use crate::edit_op::{CaseTransform, EditOp, EditOutcome};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Snapshot {
@@ -1247,6 +1247,42 @@ impl Editor {
                 self.cursor = self.byte_at_col(line + 1, col);
                 out.buffer_changed = true;
             }
+            TransformSelectionCase(kind) => {
+                if let Some((lo, hi)) = self.selection() {
+                    let original = &self.text[lo..hi];
+                    let transformed: String = match kind {
+                        CaseTransform::Lower => original.to_lowercase(),
+                        CaseTransform::Upper => original.to_uppercase(),
+                        CaseTransform::Toggle => original
+                            .chars()
+                            .map(|c| {
+                                if c.is_ascii_uppercase() {
+                                    c.to_ascii_lowercase()
+                                } else if c.is_ascii_lowercase() {
+                                    c.to_ascii_uppercase()
+                                } else {
+                                    c
+                                }
+                            })
+                            .collect(),
+                    };
+                    if transformed != original {
+                        self.checkpoint();
+                        self.text.replace_range(lo..hi, &transformed);
+                        // Cursor lands at the end of the transformed range
+                        // (vim parks it at the start, but landing at the end
+                        // is more useful when chaining; both are common).
+                        self.cursor = lo + transformed.len();
+                        self.anchor = None;
+                        out.buffer_changed = true;
+                    } else {
+                        // No actual change (e.g. lowercasing all-lowercase
+                        // text) — still drop the selection like vim does.
+                        self.cursor = lo;
+                        self.anchor = None;
+                    }
+                }
+            }
             JoinLines { keep_space } => {
                 // vim `J` (keep_space=true) / `gJ` (keep_space=false).
                 let line = self.current_line();
@@ -2098,6 +2134,58 @@ mod tests {
         e.cursor = 0;
         e.apply(JoinLines { keep_space: false }, 10, &mut c);
         assert_eq!(e.text(), "foo    bar");
+    }
+
+    #[test]
+    fn case_transform_lowercases_selection() {
+        let (mut e, mut c) = ed("HELLO World");
+        e.cursor = 0;
+        e.apply(SelectAll, 10, &mut c);
+        e.apply(
+            TransformSelectionCase(crate::edit_op::CaseTransform::Lower),
+            10,
+            &mut c,
+        );
+        assert_eq!(e.text(), "hello world");
+    }
+
+    #[test]
+    fn case_transform_uppercases_selection() {
+        let (mut e, mut c) = ed("Hello World");
+        e.cursor = 0;
+        e.apply(SelectAll, 10, &mut c);
+        e.apply(
+            TransformSelectionCase(crate::edit_op::CaseTransform::Upper),
+            10,
+            &mut c,
+        );
+        assert_eq!(e.text(), "HELLO WORLD");
+    }
+
+    #[test]
+    fn case_transform_toggle_swaps_each_letter() {
+        let (mut e, mut c) = ed("Hello, World!");
+        e.cursor = 0;
+        e.apply(SelectAll, 10, &mut c);
+        e.apply(
+            TransformSelectionCase(crate::edit_op::CaseTransform::Toggle),
+            10,
+            &mut c,
+        );
+        // Punctuation untouched; each ASCII letter swapped.
+        assert_eq!(e.text(), "hELLO, wORLD!");
+    }
+
+    #[test]
+    fn case_transform_no_selection_is_noop() {
+        let (mut e, mut c) = ed("Hello");
+        e.cursor = 0;
+        e.apply(
+            TransformSelectionCase(crate::edit_op::CaseTransform::Upper),
+            10,
+            &mut c,
+        );
+        assert_eq!(e.text(), "Hello");
     }
 
     #[test]

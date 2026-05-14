@@ -131,6 +131,9 @@ pub enum EditOp {
     JoinLines {
         keep_space: bool,
     },
+    /// Transform the active selection's text in place. Vim visual `u` /
+    /// `U` / `~` (lower / upper / toggle). No-op without a selection.
+    TransformSelectionCase(CaseTransform),
 
     // ── clipboard / registers ──
     /// vim `yy`
@@ -152,6 +155,17 @@ pub enum EditOp {
 
     /// Apply `op` `n` times (vim counts: `3w`, `5dd`). The editor never learns counts exist.
     Repeat(u32, Box<EditOp>),
+}
+
+/// Letter-case transform variant for `EditOp::TransformSelectionCase`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaseTransform {
+    /// `a-z` ← `A-Z`; non-alphabetic chars untouched.
+    Lower,
+    /// `A-Z` ← `a-z`.
+    Upper,
+    /// Swap each ASCII letter's case.
+    Toggle,
 }
 
 impl EditOp {

@@ -144,6 +144,10 @@ the split in that direction (`view.focus_left/right/up/down`); `w` cycles (`view
 `q`/`c` close (`view.close_split`); `s` splits down; `v` splits right. Standard mode keeps `Ctrl+W`
 bound to `buffer.close` (browser-tab convention) — the vim handler intercepts before the keymap
 resolver gets a chance. `pending_display` shows `^W` in the statusline while the chord is pending.
+**Vim visual case ops** — `u` lowercases, `U` uppercases, `~` toggles case of the active selection.
+New `EditOp::TransformSelectionCase(CaseTransform::Lower|Upper|Toggle)` — replaces selection in
+place, drops the selection, returns to Normal mode (vim convention). Toggle is ASCII-only (uses
+`is_ascii_uppercase`/`lowercase`); Lower / Upper use Unicode `to_lowercase` / `to_uppercase`.
 **Vim `Y` / `J` / `gJ`** — `Y` yanks the current line (alias for `yy`, emits `EditOp::YankLine`). `J`
 properly joins the next line in via `EditOp::JoinLines{keep_space: true}` — trims trailing whitespace
 from the current line, trims leading whitespace from the next, inserts a single space (omitted when

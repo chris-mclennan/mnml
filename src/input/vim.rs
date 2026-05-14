@@ -882,9 +882,29 @@ impl VimInputHandler {
                 self.prefix = Prefix::G;
                 InputResult::Consumed
             }
-            KeyCode::Char('U') | KeyCode::Char('u') => {
-                // case ops aren't in the EditOp vocabulary yet — ignore quietly.
-                InputResult::Consumed
+            // vim visual case ops — `u` lowercase, `U` uppercase, `~` toggle.
+            // The transform replaces the selection in place; the handler
+            // returns to Normal mode (vim convention).
+            KeyCode::Char('u') => {
+                self.enter_normal();
+                InputResult::Ops(vec![
+                    TransformSelectionCase(crate::edit_op::CaseTransform::Lower),
+                    SelectClear,
+                ])
+            }
+            KeyCode::Char('U') => {
+                self.enter_normal();
+                InputResult::Ops(vec![
+                    TransformSelectionCase(crate::edit_op::CaseTransform::Upper),
+                    SelectClear,
+                ])
+            }
+            KeyCode::Char('~') => {
+                self.enter_normal();
+                InputResult::Ops(vec![
+                    TransformSelectionCase(crate::edit_op::CaseTransform::Toggle),
+                    SelectClear,
+                ])
             }
             // vim visual `*` / `#` — search for the literally-selected text
             // (preserves spaces / punctuation; no word-boundary check, unlike
