@@ -1,0 +1,20 @@
+# Vim `cgn` — change-next-find-match. Type `/foo` to find "foo", then
+# `cgn` selects the first match and enters Insert mode for replacement.
+write text.txt "alpha foo beta\nfoo gamma foo\nfoo end"
+open text.txt
+command editor.use_vim
+
+# Open find prompt and search for "foo".
+key /
+type foo
+key enter
+expect screen contains "match"
+
+# `cgn` — selects the first match (cursor was at start of file; first match
+# starts at byte 6). Replaces it with "QUUX".
+key c
+key g
+key n
+type QUUX
+key escape
+expect screen contains "alpha QUUX beta"

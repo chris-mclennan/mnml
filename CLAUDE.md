@@ -182,11 +182,17 @@ paragraph, etc. New `PendingOp::Lower` / `Upper` / `ToggleCase` variants — emi
 `TransformSelectionCase` after the motion's `SelectStart` + motion seal the range. Doubled
 forms (`guu`, `gUU`, `g~~`) operate on the whole current line via `SelectLine`. Pending-op
 display chips: `gu` / `gU` / `g~`.
-**Vim `gn` / `gN`** — find as text-object: select the next / previous match of the active
-find pattern from the cursor (wraps). `App::select_find_match(forward)` reads the buffer's
-`FindState.matches`, picks the first one strictly after / last one strictly before the
-cursor, and sets the editor's anchor + cursor via new `Editor::set_selection(start, end)`.
-Standalone form for now — `cgn` / `dgn` (operator-pending integration) is a follow-up.
+**Vim `gn` / `gN`** — find as text-object. Selects the match the cursor is on (if any),
+else the next / previous one (wraps). Standalone (`gn` from normal mode) goes through
+`App::select_find_match(forward)` which reads `Buffer.find.matches` and sets editor.anchor
++ cursor via new `Editor::set_selection(start, end)`. **Operator-pending forms** (`cgn` /
+`dgn` / `ygn` / `gugn` / `gUgn` / `g~gn`) work too: `EditCtx` was extended with
+`next_find_match` / `prev_find_match` (the buffer pre-computes the cursor-relative match
+range via `make_ctx`), and the vim handler emits an Op sequence
+`[SetCursorByte(start), SelectStart, SetCursorByte(end), <op-effect>]` directly. Required
+new `EditOp::SetCursorByte(usize)` (sets cursor to a specific byte offset, char-boundary
+clamped). The operator-pending dispatch routes `g` (with op set) into `Prefix::G` while
+preserving `self.op`, and the `n`/`N` arms in the G-prefix consume `pending_op` if set.
 **`picker.marks`** — fuzzy picker over every set mark (buffer-local lowercase first, then
 global uppercase). Each row labels the letter, the file (relative), the line/col, and a
 short slice of the line text as a preview. Accept jumps to the mark (opens the file if

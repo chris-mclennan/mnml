@@ -100,6 +100,15 @@ pub struct EditCtx {
     pub at_line_start: bool,
     pub at_line_end: bool,
     pub has_selection: bool,
+    /// Byte range `(start, end)` of the closest find-match strictly *after*
+    /// the cursor (wraps to first). `None` when the buffer has no active find
+    /// state or the matches list is empty. Used by vim's `gn` text-object
+    /// (especially in operator-pending state — `cgn` / `dgn` / `ygn` need
+    /// the range up-front to chain the operator's effect).
+    pub next_find_match: Option<(usize, usize)>,
+    /// Mirror for vim's `gN` (closest match strictly *before* the cursor;
+    /// wraps to last).
+    pub prev_find_match: Option<(usize, usize)>,
 }
 
 pub trait InputHandler: Send {

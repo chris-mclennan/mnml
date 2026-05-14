@@ -151,6 +151,8 @@ mod tests {
             at_line_start: true,
             at_line_end: true,
             has_selection: has_sel,
+            next_find_match: None,
+            prev_find_match: None,
         }
     }
     fn key(code: KeyCode, mods: KeyModifiers) -> KeyEvent {

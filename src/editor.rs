@@ -854,6 +854,14 @@ impl Editor {
                 let line = n.saturating_sub(1).min(self.line_count().saturating_sub(1));
                 self.cursor = self.line_start(line);
             }
+            SetCursorByte(b) => {
+                let mut b = b.min(self.text.len());
+                while b > 0 && !self.text.is_char_boundary(b) {
+                    b -= 1;
+                }
+                self.cursor = b;
+                self.goal_col = self.col_at_byte(b);
+            }
 
             // ── selection ──
             SelectStart => self.anchor = Some(self.cursor),

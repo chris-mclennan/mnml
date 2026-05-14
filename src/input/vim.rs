@@ -240,7 +240,7 @@ impl VimInputHandler {
         }
     }
 
-    fn handle_normal(&mut self, key: KeyEvent, _ctx: &EditCtx) -> InputResult {
+    fn handle_normal(&mut self, key: KeyEvent, ctx: &EditCtx) -> InputResult {
         use EditOp::*;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
@@ -288,6 +288,9 @@ impl VimInputHandler {
             }
             Prefix::G => {
                 let n = self.count1();
+                // Stash the pending op (if any) — `reset_pending` would
+                // clear it, but op-pending `gn` / `gN` etc. need it.
+                let pending_op = self.op;
                 self.reset_pending();
                 return match key.code {
                     KeyCode::Char('g') => InputResult::Ops(vec![MoveBufferStart]),
@@ -359,18 +362,74 @@ impl VimInputHandler {
                         self.op = Some(PendingOp::ToggleCase);
                         InputResult::Consumed
                     }
-                    // `gn` / `gN` — select the next / previous match of the
-                    // active find pattern (vim's "find as text object").
-                    // Standalone form sets the editor selection. Operator-
-                    // pending support (`cgn` etc.) is a follow-up — for now
-                    // the user can chain `c` / `d` against the resulting
-                    // selection manually.
-                    KeyCode::Char('n') => {
-                        InputResult::App(AppCommand::RunCommand("find.select_match_forward".into()))
+                    // `gn` / `gN` — find as text-object. Standalone (no
+                    // pending operator) ⇒ run the App command which sets
+                    // editor.anchor + cursor. Operator-pending form
+                    // (`cgn` / `dgn` / `ygn` / `gugn` / etc.) builds the
+                    // selection + operator effect from the pre-computed
+                    // match range carried in `ctx`.
+                    KeyCode::Char(c @ ('n' | 'N')) => {
+                        let forward = c == 'n';
+                        if let Some(op) = pending_op {
+                            let range = if forward {
+                                ctx.next_find_match
+                            } else {
+                                ctx.prev_find_match
+                            };
+                            // already reset above
+                            let Some((start, end)) = range else {
+                                let cmd = if forward {
+                                    "find.select_match_forward"
+                                } else {
+                                    "find.select_match_backward"
+                                };
+                                return InputResult::App(AppCommand::RunCommand(cmd.into()));
+                            };
+                            let mut ops =
+                                vec![SetCursorByte(start), SelectStart, SetCursorByte(end)];
+                            match op {
+                                PendingOp::Delete => ops.push(DeleteSelection),
+                                PendingOp::Yank => {
+                                    ops.push(YankSelection);
+                                    ops.push(SelectClear);
+                                }
+                                PendingOp::Change => {
+                                    ops.push(ReplaceSelection(String::new()));
+                                    self.mode = VimMode::Insert;
+                                }
+                                PendingOp::Lower => {
+                                    ops.push(TransformSelectionCase(
+                                        crate::edit_op::CaseTransform::Lower,
+                                    ));
+                                    ops.push(SelectClear);
+                                }
+                                PendingOp::Upper => {
+                                    ops.push(TransformSelectionCase(
+                                        crate::edit_op::CaseTransform::Upper,
+                                    ));
+                                    ops.push(SelectClear);
+                                }
+                                PendingOp::ToggleCase => {
+                                    ops.push(TransformSelectionCase(
+                                        crate::edit_op::CaseTransform::Toggle,
+                                    ));
+                                    ops.push(SelectClear);
+                                }
+                                PendingOp::Indent | PendingOp::Outdent | PendingOp::Reflow => {
+                                    // Not meaningful for a find-match
+                                    // range — drop silently.
+                                    return InputResult::Consumed;
+                                }
+                            }
+                            return InputResult::Ops(ops);
+                        }
+                        let cmd = if forward {
+                            "find.select_match_forward"
+                        } else {
+                            "find.select_match_backward"
+                        };
+                        InputResult::App(AppCommand::RunCommand(cmd.into()))
                     }
-                    KeyCode::Char('N') => InputResult::App(AppCommand::RunCommand(
-                        "find.select_match_backward".into(),
-                    )),
                     // `ga` — show character info as a toast (decimal + hex).
                     KeyCode::Char('a') => {
                         InputResult::App(AppCommand::RunCommand("editor.char_info".into()))
@@ -733,6 +792,16 @@ impl VimInputHandler {
             if matches!(key.code, KeyCode::Char('a')) {
                 self.op = Some(op);
                 self.prefix = Prefix::TextObjectAround;
+                return InputResult::Consumed;
+            }
+            // operator + `g` → enter the G prefix with the operator
+            // preserved. Used for op-pending `gn` / `gN` (vim's "find as
+            // text object"). Other g-prefixed motions (`gg`, `gj`, etc.)
+            // would also work here in principle but most aren't yet wired
+            // to honor the pending op.
+            if matches!(key.code, KeyCode::Char('g')) {
+                self.op = Some(op);
+                self.prefix = Prefix::G;
                 return InputResult::Consumed;
             }
             // operator + f / F / t / T → find-char with operator applied.
@@ -1488,6 +1557,8 @@ mod tests {
             at_line_start: true,
             at_line_end: false,
             has_selection: false,
+            next_find_match: None,
+            prev_find_match: None,
         }
     }
     fn k(c: char) -> KeyEvent {

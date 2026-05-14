@@ -24,6 +24,11 @@ pub enum EditOp {
     MoveBufferEnd,
     /// 1-based line; clamps.
     MoveToLine(usize),
+    /// Set the cursor to byte offset `usize` directly. Clamps to text bounds
+    /// and to the next char boundary if needed. Used by vim's `gn`
+    /// operator-pending dispatch (place cursor at a known match end before
+    /// SelectStart drops the anchor at the match start).
+    SetCursorByte(usize),
     PageUp,
     PageDown,
     /// vim `Ctrl+U` — scroll the cursor up by half the visible page.
@@ -238,6 +243,7 @@ impl EditOp {
             | MoveBufferStart
             | MoveBufferEnd
             | MoveToLine(_)
+            | SetCursorByte(_)
             | PageUp
             | PageDown
             | HalfPageUp

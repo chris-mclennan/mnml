@@ -420,14 +420,44 @@ impl Buffer {
     fn make_ctx(&self) -> EditCtx {
         let (row, col) = self.editor.row_col();
         let line = self.editor.line_str(row);
+        let cur = self.editor.cursor();
+        // Pre-compute the closest find matches around the cursor so vim's
+        // `gn` / `gN` text-objects (especially in operator-pending state)
+        // can chain selection + operator atomically without re-scanning.
+        let (next_match, prev_match) = match self.find.as_ref() {
+            Some(f) if !f.matches.is_empty() => {
+                // Vim's `gn` selects the match the cursor is *on* if any,
+                // else the next one (wraps). `gN` is the mirror.
+                let contains_cur = |(s, e): &&(usize, usize)| *s <= cur && cur < *e;
+                let next = f
+                    .matches
+                    .iter()
+                    .find(contains_cur)
+                    .copied()
+                    .or_else(|| f.matches.iter().find(|(s, _)| *s >= cur).copied())
+                    .or_else(|| Some(f.matches[0]));
+                let prev = f
+                    .matches
+                    .iter()
+                    .rev()
+                    .find(contains_cur)
+                    .copied()
+                    .or_else(|| f.matches.iter().rev().find(|(_, e)| *e <= cur).copied())
+                    .or_else(|| f.matches.last().copied());
+                (next, prev)
+            }
+            _ => (None, None),
+        };
         EditCtx {
-            cursor: self.editor.cursor(),
+            cursor: cur,
             line_len: line.chars().count(),
             line_idx: row,
             line_count: self.editor.line_count(),
             at_line_start: col == 0,
             at_line_end: self.editor.is_at_line_end(),
             has_selection: self.editor.has_selection(),
+            next_find_match: next_match,
+            prev_find_match: prev_match,
         }
     }
 
