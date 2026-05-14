@@ -163,6 +163,8 @@ walks forward from cursor to the next digit, picks up a leading `-` only when it
 sign (the char before isn't an identifier char — so `(-5)` is `-5`, but `x-5` is `5`). Cursor lands
 on the last digit of the modified number (vim convention). No-op when no digit is on/after the
 cursor.
+**Vim normal-mode `~`** — toggles the case of the ASCII letter under the cursor and advances right.
+`[count]~` repeats. New `EditOp::ToggleCaseChar`.
 **Vim visual case ops** — `u` lowercases, `U` uppercases, `~` toggles case of the active selection.
 New `EditOp::TransformSelectionCase(CaseTransform::Lower|Upper|Toggle)` — replaces selection in
 place, drops the selection, returns to Normal mode (vim convention). Toggle is ASCII-only (uses

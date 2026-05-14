@@ -134,6 +134,11 @@ pub enum EditOp {
     /// Transform the active selection's text in place. Vim visual `u` /
     /// `U` / `~` (lower / upper / toggle). No-op without a selection.
     TransformSelectionCase(CaseTransform),
+    /// Toggle the case of the ASCII letter under the cursor and advance one
+    /// char to the right. Vim normal-mode `~` (without `g~`); operates on
+    /// one char at a time, count repeats it. Non-letter chars just advance
+    /// the cursor.
+    ToggleCaseChar,
     /// Find the next decimal integer on the cursor's line at-or-after the
     /// cursor; add `delta` to it, replace in place, leave the cursor on the
     /// last digit. Vim `Ctrl+A` (delta=+1) / `Ctrl+X` (delta=-1), with

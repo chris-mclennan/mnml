@@ -1247,6 +1247,30 @@ impl Editor {
                 self.cursor = self.byte_at_col(line + 1, col);
                 out.buffer_changed = true;
             }
+            ToggleCaseChar => {
+                // vim `~` — toggle the ASCII letter under the cursor + advance.
+                if self.cursor < self.text.len() {
+                    let b = self.text.as_bytes()[self.cursor];
+                    if b.is_ascii_alphabetic() {
+                        self.checkpoint();
+                        let toggled = if b.is_ascii_uppercase() {
+                            b.to_ascii_lowercase()
+                        } else {
+                            b.to_ascii_uppercase()
+                        };
+                        // Single-byte ASCII swap; replace_range keeps it safe.
+                        let s = std::str::from_utf8(&[toggled]).unwrap().to_string();
+                        self.text.replace_range(self.cursor..self.cursor + 1, &s);
+                        out.buffer_changed = true;
+                    }
+                    // Advance to the next char boundary (handles multi-byte).
+                    let mut next = self.cursor + 1;
+                    while next < self.text.len() && !self.text.is_char_boundary(next) {
+                        next += 1;
+                    }
+                    self.cursor = next;
+                }
+            }
             ChangeNumberAtCursor { delta } => {
                 let line = self.current_line();
                 let bol = self.line_start(line);
@@ -2322,6 +2346,27 @@ mod tests {
         let (mut e, mut c) = ed("\n\n");
         e.apply(ReflowParagraph { width: 20 }, 10, &mut c);
         assert_eq!(e.text(), "\n\n");
+    }
+
+    #[test]
+    fn toggle_case_char_swaps_and_advances() {
+        let (mut e, mut c) = ed("aBc");
+        e.cursor = 0;
+        e.apply(ToggleCaseChar, 10, &mut c);
+        assert_eq!(e.text(), "ABc");
+        assert_eq!(e.cursor(), 1);
+        e.apply(ToggleCaseChar, 10, &mut c);
+        assert_eq!(e.text(), "Abc");
+        assert_eq!(e.cursor(), 2);
+    }
+
+    #[test]
+    fn toggle_case_char_skips_non_alpha_but_advances() {
+        let (mut e, mut c) = ed("a 1");
+        e.cursor = 1; // on the space
+        e.apply(ToggleCaseChar, 10, &mut c);
+        assert_eq!(e.text(), "a 1"); // unchanged
+        assert_eq!(e.cursor(), 2); // advanced past
     }
 
     #[test]

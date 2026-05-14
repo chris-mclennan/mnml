@@ -686,6 +686,12 @@ impl VimInputHandler {
                 self.prefix = Prefix::Window;
                 InputResult::Consumed
             }
+            // vim `~` — toggle case of char under cursor + advance.
+            // `[count]~` repeats: `5~` toggles 5 chars.
+            KeyCode::Char('~') => {
+                self.reset_pending();
+                InputResult::Ops(Self::repeated(ToggleCaseChar, n))
+            }
             // vim half-page scroll: Ctrl+D (down) / Ctrl+U (up).
             KeyCode::Char('d') if ctrl => {
                 self.reset_pending();
