@@ -990,6 +990,11 @@ impl Editor {
                 let line = n.saturating_sub(1).min(self.line_count().saturating_sub(1));
                 self.cursor = self.line_start(line);
             }
+            MoveToCol(n) => {
+                let col = n.saturating_sub(1);
+                let line = self.current_line();
+                self.cursor = self.byte_at_col(line, col);
+            }
             InsertCharFromLine { above } => {
                 let (row, col) = self.row_col();
                 let target_row = if above {

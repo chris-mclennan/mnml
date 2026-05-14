@@ -10415,6 +10415,10 @@ impl App {
                     self.force_close_pane(idx);
                 }
             }
+            // `:close` / `:clo` / `:hide` — close the active pane (vim canonical
+            // "close window"). Same dirty-prompt path as `:bd` so unsaved
+            // editors prompt.
+            "close" | "clo" | "hide" => self.close_active_pane(),
             "bn" | "bnext" => self.next_buffer(),
             "bp" | "bprev" | "bprevious" => self.prev_buffer(),
             // `:bfirst` / `:bf` / `:brewind` / `:br` — jump to the first
@@ -11198,8 +11202,27 @@ impl App {
                 // `:e` (bare) and `:e %` both reload the active buffer
                 // (vim's `%` substitutes to the current file's path; we
                 // short-circuit it). Non-empty other paths open the file.
+                // `:e +N <path>` opens the file and jumps to line N (vim
+                // canonical). `:e +<path>` (no N) opens at last line.
                 if rest.is_empty() || rest.trim() == "%" {
                     self.reload_active(false);
+                } else if let Some(after_plus) = rest.strip_prefix('+') {
+                    let (count_part, path_part) = match after_plus.find(char::is_whitespace) {
+                        Some(i) => (&after_plus[..i], after_plus[i..].trim()),
+                        None => ("", after_plus),
+                    };
+                    let p = self.workspace.join(path_part);
+                    self.open_path(&p);
+                    let line = if count_part.is_empty() {
+                        self.active_editor()
+                            .map(|b| b.editor.line_count())
+                            .unwrap_or(1)
+                    } else {
+                        count_part.parse::<usize>().unwrap_or(1).max(1)
+                    };
+                    if let Some(b) = self.active_editor_mut() {
+                        b.editor.place_cursor(line.saturating_sub(1), 0);
+                    }
                 } else {
                     let p = self.workspace.join(rest);
                     self.open_path(&p);

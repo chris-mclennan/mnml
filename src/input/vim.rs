@@ -1716,12 +1716,30 @@ impl VimInputHandler {
                 self.prefix = Prefix::ZFold;
                 InputResult::Consumed
             }
-            // % — jump to the matching bracket (uses the existing
-            // `editor.bracket_match` command so vim and standard share one
-            // implementation).
-            KeyCode::Char('%') => {
+            // `<count>|` — jump to character column N on the current line
+            // (1-based, vim canonical). Bare `|` (no count) ⇒ column 1.
+            KeyCode::Char('|') => {
+                let n = self.count1();
                 self.reset_pending();
-                InputResult::App(AppCommand::RunCommand("editor.bracket_match".into()))
+                InputResult::Ops(vec![EditOp::MoveToCol(n as usize)])
+            }
+            // % — `<count>%` jumps to that PERCENTAGE of the buffer (vim
+            // canonical, e.g. `50%` ⇒ mid-buffer). Bare `%` (no count) falls
+            // through to bracket-match.
+            KeyCode::Char('%') => {
+                let pct = self.count;
+                self.reset_pending();
+                if let Some(pct) = pct {
+                    // line_count from ctx; clamp pct into [1, 100].
+                    let pct = (pct as usize).clamp(1, 100);
+                    let lc = ctx.line_count.max(1);
+                    // vim formula: ((count * lc) + 99) / 100, then clamp.
+                    let target = (pct * lc).div_ceil(100);
+                    let target = target.clamp(1, lc);
+                    InputResult::Ops(vec![EditOp::MoveToLine(target)])
+                } else {
+                    InputResult::App(AppCommand::RunCommand("editor.bracket_match".into()))
+                }
             }
             // `*` / `#` — find next / prev occurrence of the word under the
             // cursor. Sets the buffer's find state and jumps.

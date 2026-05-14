@@ -1,0 +1,26 @@
+# Vim `<count>%` — jump to N% of buffer. `<count>|` — jump to column N.
+
+write ten.txt "a\nb\nc\nd\ne\nf\ng\nh\ni\nj"
+open ten.txt
+
+command editor.use_vim
+
+# `50%` ⇒ line 5 of 10 — line 5 holds "e". Replace with X to verify cursor
+# location.
+type "50"
+key %
+key r
+key X
+command file.save
+expect file ten.txt contains "a\nb\nc\nd\nX\nf\ng\nh\ni\nj"
+
+# `5|` on a long line ⇒ column 5 (1-based). Replace with Y.
+write wide.txt "alphabet"
+open wide.txt
+type "5"
+key |
+key r
+key Y
+command file.save
+# alphabet → "alphYbet" — column 5 holds 'b' before replace.
+expect file wide.txt contains "alphYbet"

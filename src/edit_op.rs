@@ -42,6 +42,9 @@ pub enum EditOp {
     MoveBufferEnd,
     /// 1-based line; clamps.
     MoveToLine(usize),
+    /// 1-based character column on the current line; clamps to line length.
+    /// Vim's `<count>|`.
+    MoveToCol(usize),
     /// Set the cursor to byte offset `usize` directly. Clamps to text bounds
     /// and to the next char boundary if needed. Used by vim's `gn`
     /// operator-pending dispatch (place cursor at a known match end before
@@ -312,6 +315,7 @@ impl EditOp {
             | MoveBufferStart
             | MoveBufferEnd
             | MoveToLine(_)
+            | MoveToCol(_)
             | SetCursorByte(_)
             | PageUp
             | PageDown

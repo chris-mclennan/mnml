@@ -397,6 +397,13 @@ with operators (`d+` deletes through next line's first non-blank, etc.).
 **Vim `g0` / `g^` / `g$` / `gj` / `gk`** — display-line motion aliases. mnml doesn't wrap
 (yet), so each is wired to the matching logical-line motion — no behavioral difference today,
 but the chords are reflexive for vim users and become real once visual wrap lands.
+**Vim `<count>%` / `<count>|`** — `<count>%` jumps to N% of the buffer
+(`((count * line_count) + 99) / 100`, clamped); bare `%` (no count) still falls through to
+bracket-match. `<count>|` jumps to character column N on the current line (1-based, new
+`EditOp::MoveToCol`). Both compose with operators (`d50%`, `c5|`).
+**`:close` / `:clo` / `:hide`** — vim canonical "close current window" aliases for
+`:bd` (dirty-prompt path included). **`:e +N <path>`** — open a file and jump to line N
+(vim canonical "open at line"); `:e +<path>` (no N) opens at last line.
 **Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
 Single-key chord in the `g` prefix.
 **`:1,5j` / `:join`** — bare form joins current+next; ranged form collapses the
