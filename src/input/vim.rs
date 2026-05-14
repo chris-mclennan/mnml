@@ -609,6 +609,13 @@ impl VimInputHandler {
                 self.enter_insert();
                 InputResult::Ops(vec![MoveLineFirstNonWs])
             }
+            // vim `Ctrl+A` — increment the next number on the cursor's line.
+            // Counts apply: `5<C-a>` adds 5. Must come before the bare `a`
+            // arm (which would otherwise swallow Ctrl+a too).
+            KeyCode::Char('a') if ctrl => {
+                self.reset_pending();
+                InputResult::Ops(vec![ChangeNumberAtCursor { delta: n as i64 }])
+            }
             KeyCode::Char('a') => {
                 self.enter_insert();
                 InputResult::Ops(vec![MoveRight])
@@ -626,6 +633,12 @@ impl VimInputHandler {
                 InputResult::Ops(vec![InsertNewlineAbove])
             }
             // single-char edits
+            // `Ctrl+X` — decrement the next number on the cursor's line.
+            // Counts apply: `5<C-x>` subtracts 5.
+            KeyCode::Char('x') if ctrl => {
+                self.reset_pending();
+                InputResult::Ops(vec![ChangeNumberAtCursor { delta: -(n as i64) }])
+            }
             KeyCode::Char('x') => {
                 self.reset_pending();
                 InputResult::Ops(Self::repeated(DeleteForward, n))

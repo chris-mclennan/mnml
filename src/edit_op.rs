@@ -134,6 +134,16 @@ pub enum EditOp {
     /// Transform the active selection's text in place. Vim visual `u` /
     /// `U` / `~` (lower / upper / toggle). No-op without a selection.
     TransformSelectionCase(CaseTransform),
+    /// Find the next decimal integer on the cursor's line at-or-after the
+    /// cursor; add `delta` to it, replace in place, leave the cursor on the
+    /// last digit. Vim `Ctrl+A` (delta=+1) / `Ctrl+X` (delta=-1), with
+    /// counts `[count]<C-a>` (delta=+count). A leading `-` is treated as a
+    /// sign when the char before it isn't an identifier char (so `x-5` is
+    /// "5 with no sign", but `(-5)` is "-5"). No-op when no digit is
+    /// present at-or-after the cursor on its line.
+    ChangeNumberAtCursor {
+        delta: i64,
+    },
     /// Greedy word-wrap the cursor's paragraph to `width` chars per line
     /// (vim `gqq`). Preserves the leading whitespace prefix of the first
     /// line on every wrapped line so indented prose stays indented.

@@ -7938,6 +7938,13 @@ impl App {
                     } else {
                         self.toast(format!(":set tab_width={v} — not a number"));
                     }
+                } else if let Some(v) = rest.strip_prefix("text_width=") {
+                    if let Ok(n) = v.trim().parse::<usize>() {
+                        self.config.editor.text_width = n.max(8);
+                        self.toast(format!("text_width: {}", self.config.editor.text_width));
+                    } else {
+                        self.toast(format!(":set text_width={v} — not a number"));
+                    }
                 } else if matches!(opt, "relativenumber" | "rnu") {
                     self.set_relative_line_numbers(true);
                 } else if matches!(opt, "norelativenumber" | "nornu") {

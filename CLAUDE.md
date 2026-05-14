@@ -147,12 +147,17 @@ the split in that direction (`view.focus_left/right/up/down`); `w` cycles (`view
 bound to `buffer.close` (browser-tab convention) — the vim handler intercepts before the keymap
 resolver gets a chance. `pending_display` shows `^W` in the statusline while the chord is pending.
 **Vim `gqq` paragraph reflow** — greedy word-wrap the cursor's paragraph to `[editor] text_width`
-(default 80). New `EditOp::ReflowParagraph{width}` uses `paragraph_bounds` to find the range, splits
-into words, rebuilds with line-wrapping. Preserves the first line's leading whitespace as the indent
-on every wrapped line so indented prose stays indented. The `gqq` chord routes through
-`editor.reflow_paragraph` (the App method reads `text_width` from config). Operator-pending forms
-(`gqap`, `gq` + motion) aren't wired yet — `gqq` is the bounded MVP. `:set` doesn't yet expose a
-runtime toggle for `text_width`; use the config file or pre-load.
+(default 80; runtime `:set text_width=N`). New `EditOp::ReflowParagraph{width}` uses `paragraph_bounds`
+to find the range, splits into words, rebuilds with line-wrapping. Preserves the first line's leading
+whitespace as the indent on every wrapped line so indented prose stays indented. The `gqq` chord routes
+through `editor.reflow_paragraph` (the App method reads `text_width` from config). Operator-pending
+forms (`gqap`, `gq` + motion) aren't wired yet — `gqq` is the bounded MVP.
+**Vim `Ctrl+A` / `Ctrl+X`** — increment / decrement the next decimal integer on the cursor's line.
+Counts apply: `5<C-a>` adds 5, `3<C-x>` subtracts 3. New `EditOp::ChangeNumberAtCursor{delta}`
+walks forward from cursor to the next digit, picks up a leading `-` only when it qualifies as a
+sign (the char before isn't an identifier char — so `(-5)` is `-5`, but `x-5` is `5`). Cursor lands
+on the last digit of the modified number (vim convention). No-op when no digit is on/after the
+cursor.
 **Vim visual case ops** — `u` lowercases, `U` uppercases, `~` toggles case of the active selection.
 New `EditOp::TransformSelectionCase(CaseTransform::Lower|Upper|Toggle)` — replaces selection in
 place, drops the selection, returns to Normal mode (vim convention). Toggle is ASCII-only (uses

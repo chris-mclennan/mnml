@@ -1247,6 +1247,54 @@ impl Editor {
                 self.cursor = self.byte_at_col(line + 1, col);
                 out.buffer_changed = true;
             }
+            ChangeNumberAtCursor { delta } => {
+                let line = self.current_line();
+                let bol = self.line_start(line);
+                let eol = self.line_end(line);
+                let bytes = self.text.as_bytes();
+                // Walk forward from cursor on this line until we hit a digit.
+                let mut digit_pos = self.cursor.max(bol);
+                while digit_pos < eol && !bytes[digit_pos].is_ascii_digit() {
+                    digit_pos += 1;
+                }
+                if digit_pos >= eol {
+                    return;
+                }
+                // The number's start: walk back through digits.
+                let mut start = digit_pos;
+                while start > bol && bytes[start - 1].is_ascii_digit() {
+                    start -= 1;
+                }
+                // Maybe a leading `-` sign — qualifies when the char *before*
+                // it isn't an identifier char (digit / letter / `_`).
+                if start > bol && bytes[start - 1] == b'-' {
+                    let qualifies = start - 1 == bol
+                        || !(bytes[start - 2].is_ascii_alphanumeric() || bytes[start - 2] == b'_');
+                    if qualifies {
+                        start -= 1;
+                    }
+                }
+                // The number's end: walk forward through digits.
+                let mut end = digit_pos;
+                while end < eol && bytes[end].is_ascii_digit() {
+                    end += 1;
+                }
+                let num_str = &self.text[start..end];
+                let Ok(n) = num_str.parse::<i64>() else {
+                    return;
+                };
+                let new_n = n.saturating_add(delta);
+                let new_str = new_n.to_string();
+                if new_str == num_str {
+                    return;
+                }
+                self.checkpoint();
+                self.text.replace_range(start..end, &new_str);
+                // Cursor lands on the last char of the new number (vim).
+                self.cursor = start + new_str.len().saturating_sub(1);
+                self.anchor = None;
+                out.buffer_changed = true;
+            }
             ReflowParagraph { width } => {
                 let (start, end) = self.paragraph_bounds(false);
                 if end <= start {
@@ -2274,6 +2322,48 @@ mod tests {
         let (mut e, mut c) = ed("\n\n");
         e.apply(ReflowParagraph { width: 20 }, 10, &mut c);
         assert_eq!(e.text(), "\n\n");
+    }
+
+    #[test]
+    fn change_number_increments_at_cursor() {
+        let (mut e, mut c) = ed("count = 41");
+        e.cursor = 0;
+        e.apply(ChangeNumberAtCursor { delta: 1 }, 10, &mut c);
+        assert_eq!(e.text(), "count = 42");
+        // Cursor lands on the last digit.
+        assert_eq!(e.cursor(), 9);
+    }
+
+    #[test]
+    fn change_number_decrements_with_count() {
+        let (mut e, mut c) = ed("v=10");
+        e.cursor = 0;
+        e.apply(ChangeNumberAtCursor { delta: -3 }, 10, &mut c);
+        assert_eq!(e.text(), "v=7");
+    }
+
+    #[test]
+    fn change_number_picks_up_negative_sign_in_parens() {
+        let (mut e, mut c) = ed("(-5)");
+        e.cursor = 0;
+        e.apply(ChangeNumberAtCursor { delta: 1 }, 10, &mut c);
+        assert_eq!(e.text(), "(-4)");
+    }
+
+    #[test]
+    fn change_number_doesnt_steal_id_minus() {
+        // `x-5` is "5 with no sign" — the `-` is part of the prior identifier.
+        let (mut e, mut c) = ed("x-5");
+        e.cursor = 0;
+        e.apply(ChangeNumberAtCursor { delta: 1 }, 10, &mut c);
+        assert_eq!(e.text(), "x-6");
+    }
+
+    #[test]
+    fn change_number_noop_when_no_digit_on_line() {
+        let (mut e, mut c) = ed("just words");
+        e.apply(ChangeNumberAtCursor { delta: 1 }, 10, &mut c);
+        assert_eq!(e.text(), "just words");
     }
 
     #[test]
