@@ -147,7 +147,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // Macro recording — capture every keystroke that flows through here.
     // Replaying explicitly skips this so it doesn't re-record into a new
     // macro mid-replay.
-    if let crate::app::MacroState::Recording { keys } = &mut app.macro_state {
+    if let crate::app::MacroState::Recording { keys, .. } = &mut app.macro_state {
         keys.push(key);
     }
     // Esc dismisses any visible toast (visual fluff the user explicitly
@@ -1208,6 +1208,14 @@ fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
         SetMark(c) => app.set_mark_at_cursor(c),
         JumpToMarkLine(c) => app.jump_to_mark(c, false),
         JumpToMarkExact(c) => app.jump_to_mark(c, true),
+        MacroRecordInto(c) => {
+            app.set_pending_macro_register(c);
+            app.macro_toggle();
+        }
+        MacroReplayFrom(c) => {
+            app.set_pending_macro_register(c);
+            app.macro_replay();
+        }
     }
 }
 

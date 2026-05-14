@@ -76,6 +76,13 @@ pub enum AppCommand {
     JumpToMarkLine(char),
     /// vim `` `<letter>`` — jump to the mark's exact `(row, col)`.
     JumpToMarkExact(char),
+    /// vim `q<reg>` — pin the macro register, then toggle recording.
+    /// `'@'` ⇒ anonymous (the chord `qq` from idle). The App's
+    /// `macro_toggle` is state-aware: idle ⇒ start recording into `reg`;
+    /// already recording ⇒ stop (the new `reg` is ignored).
+    MacroRecordInto(char),
+    /// vim `@<reg>` — replay the macro stored in `reg`. `'@'` ⇒ anonymous.
+    MacroReplayFrom(char),
 }
 
 /// Result of feeding one key to a handler.

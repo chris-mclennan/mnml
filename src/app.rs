@@ -192,14 +192,18 @@ fn find_all_case_sensitive(haystack: &str, needle: &str) -> Vec<(usize, usize)> 
 /// isn't a substitute. The delimiter is fixed to `/` (vim accepts arbitrary
 /// delimiters but the common case is `/`); `\/` and `\\` escape inside the
 /// fields.
-/// Vim macro state. Single anonymous register — `q` toggles recording
-/// into a buffer; `@` plays it back. While replaying, `@` is ignored to
-/// prevent infinite recursion.
+/// Vim macro state. Recording captures every key event flowing through
+/// `dispatch_key` (the toggling `q` itself is removed in `record_macro_stop`).
+/// Replaying ignores `@` keys so a macro can't recursively re-fire itself.
+/// The `register` field on Recording is the target slot in
+/// `App.macro_buffer` (HashMap keyed by letter). `'@'` is the conventional
+/// "anonymous" register — bare `q` records there.
 #[derive(Debug, Clone, Default)]
 pub enum MacroState {
     #[default]
     Idle,
     Recording {
+        register: char,
         keys: Vec<ratatui::crossterm::event::KeyEvent>,
     },
     Replaying,
@@ -793,10 +797,15 @@ pub struct App {
     /// ignores `@` keys to prevent unbounded recursion. Single anonymous
     /// register MVP — `q<reg>` named-register form is a follow-up.
     pub macro_state: MacroState,
-    /// Last completed macro's keys (the result of a `q...q` recording).
-    /// `@` replays this. Survives across the session but not across
-    /// relaunches.
-    pub macro_buffer: Vec<ratatui::crossterm::event::KeyEvent>,
+    /// Stored macros, keyed by register letter (`a`-`z`) plus `'@'` for
+    /// the anonymous register (which is what bare `q...q` and `@@` use).
+    /// Replaced on each successful `q...q` recording for that register.
+    /// Volatile (not persisted across relaunches).
+    pub macro_buffer: std::collections::HashMap<char, Vec<ratatui::crossterm::event::KeyEvent>>,
+    /// Set by the vim handler when the user types `q<reg>` / `@<reg>`;
+    /// consumed by [`Self::macro_toggle`] / [`Self::macro_replay`] on the
+    /// very next call. `None` ⇒ use the anonymous `'@'` register.
+    pub pending_macro_register: Option<char>,
     /// Last `:s` / `:%s` payload, parsed. Vim `&` re-runs it on the cursor's
     /// current line (vim convention: `&` always uses line scope, regardless
     /// of whether the original was buffer-wide). `c` (confirm) flag is
@@ -1055,7 +1064,8 @@ impl App {
             closed_buffers: Vec::new(),
             last_active: None,
             macro_state: MacroState::default(),
-            macro_buffer: Vec::new(),
+            macro_buffer: std::collections::HashMap::new(),
+            pending_macro_register: None,
             last_substitute: None,
             file_cursors: std::collections::HashMap::new(),
             global_marks: std::collections::HashMap::new(),
@@ -2145,16 +2155,32 @@ impl App {
         self.retarget_outline_to_active();
     }
 
-    /// `vim.macro_toggle` — `q` in vim normal. Idle ⇒ start recording (the
-    /// `q` itself isn't included). Recording ⇒ stop, save buffer (the
-    /// trailing `q` is popped from the captured keys).
+    /// `vim.macro_toggle` — `q` in vim normal. Idle ⇒ start recording into
+    /// the conventional `'@'` register (or whatever `pending_macro_register`
+    /// holds, set by the vim handler when the user typed `q<reg>` first).
+    /// Recording ⇒ stop, save buffer (the trailing `q` is popped from the
+    /// captured keys).
     pub fn macro_toggle(&mut self) {
+        // If we're already recording, stop — ignore any new register hint
+        // (the user just pressed `q` to stop, possibly via the prefix).
+        if matches!(self.macro_state, MacroState::Recording { .. }) {
+            self.pending_macro_register = None;
+            return self.macro_toggle_stop();
+        }
+        let target = std::mem::take(&mut self.pending_macro_register).unwrap_or('@');
         match std::mem::take(&mut self.macro_state) {
             MacroState::Idle => {
-                self.macro_state = MacroState::Recording { keys: Vec::new() };
-                self.toast("recording macro · q to stop");
+                self.macro_state = MacroState::Recording {
+                    register: target,
+                    keys: Vec::new(),
+                };
+                if target == '@' {
+                    self.toast("recording macro · q to stop");
+                } else {
+                    self.toast(format!("recording macro into \"{target} · q to stop"));
+                }
             }
-            MacroState::Recording { mut keys } => {
+            MacroState::Recording { register, mut keys } => {
                 // The `q` that triggered the stop got pushed by dispatch_key
                 // before we ran. Pop it so replay doesn't re-trigger toggle.
                 if let Some(last) = keys.last()
@@ -2163,8 +2189,12 @@ impl App {
                     keys.pop();
                 }
                 let n = keys.len();
-                self.macro_buffer = keys;
-                self.toast(format!("macro saved · {n} key(s)"));
+                self.macro_buffer.insert(register, keys);
+                if register == '@' {
+                    self.toast(format!("macro saved · {n} key(s)"));
+                } else {
+                    self.toast(format!("\"{register} saved · {n} key(s)"));
+                }
             }
             MacroState::Replaying => {
                 // Shouldn't normally happen — Replaying is set only inside
@@ -2177,22 +2207,61 @@ impl App {
     /// `vim.macro_replay` — `@` in vim normal. Re-feed the saved macro
     /// keys through dispatch_key. Sets `macro_state = Replaying` so
     /// dispatch_key skips re-recording AND skips re-triggering replay
-    /// when the macro contains another `@` (recursion guard).
+    /// when the macro contains another `@` (recursion guard). With a
+    /// pending register letter (set by the vim handler when the user typed
+    /// `@<reg>`), uses that register's macro; else replays `'@'`.
     pub fn macro_replay(&mut self) {
-        if self.macro_buffer.is_empty() {
+        let target = std::mem::take(&mut self.pending_macro_register).unwrap_or('@');
+        let Some(keys) = self.macro_buffer.get(&target).cloned() else {
+            if target == '@' {
+                self.toast("no macro to replay");
+            } else {
+                self.toast(format!("no macro in \"{target}"));
+            }
+            return;
+        };
+        if keys.is_empty() {
             self.toast("no macro to replay");
             return;
         }
         if matches!(self.macro_state, MacroState::Replaying) {
-            // Recursion — ignore.
             return;
         }
-        let keys = self.macro_buffer.clone();
         self.macro_state = MacroState::Replaying;
         for key in keys {
             crate::tui::dispatch_key(self, key);
         }
         self.macro_state = MacroState::Idle;
+    }
+
+    /// Set the next-up macro register (used by the vim `q<reg>` /
+    /// `@<reg>` chord — the handler stashes the letter here before
+    /// firing `vim.macro_toggle` / `vim.macro_replay`).
+    pub fn set_pending_macro_register(&mut self, reg: char) {
+        self.pending_macro_register = Some(reg);
+    }
+
+    /// Stop recording — finalize the current macro into its register.
+    /// Pulled out of [`Self::macro_toggle`] so the dispatch path can
+    /// short-circuit without re-checking the (idle ⇒ start, recording ⇒
+    /// stop) toggle.
+    fn macro_toggle_stop(&mut self) {
+        let MacroState::Recording { register, mut keys } = std::mem::take(&mut self.macro_state)
+        else {
+            return;
+        };
+        if let Some(last) = keys.last()
+            && last.code == ratatui::crossterm::event::KeyCode::Char('q')
+        {
+            keys.pop();
+        }
+        let n = keys.len();
+        self.macro_buffer.insert(register, keys);
+        if register == '@' {
+            self.toast(format!("macro saved · {n} key(s)"));
+        } else {
+            self.toast(format!("\"{register} saved · {n} key(s)"));
+        }
     }
 
     /// `buffer.last` (`Ctrl+Tab`) — switch to the previously-active pane.

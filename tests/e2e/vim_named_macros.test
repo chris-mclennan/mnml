@@ -1,0 +1,34 @@
+# vim named macros — `qa...q` records into register a; `@a` replays.
+write code.txt "alpha\nbravo\ncharlie\ndelta"
+open code.txt
+command editor.use_vim
+
+# Record macro into register a: append "!" to current line.
+key q
+key a
+key A
+type !
+key esc
+key j
+key q
+expect screen contains "alpha!"
+
+# Replay from register a — appends "!" to current line ("bravo").
+key @
+key a
+expect screen contains "bravo!"
+
+# Record macro into register b: insert "X" at start of line.
+key q
+key b
+key I
+type X
+key esc
+key j
+key q
+expect screen contains "Xcharlie"
+
+# Replay register b — affects "delta".
+key @
+key b
+expect screen contains "Xdelta"

@@ -94,6 +94,13 @@ enum Prefix {
     /// (or read from). MVP supports `"a`-`"z` named, `"0` last yank,
     /// `"+` system clipboard, `"_` blackhole.
     Register,
+    /// Saw `q` while idle — next key is the macro register letter to
+    /// record into (or `q` to start anonymous recording for backwards
+    /// compat with mnml's earlier behavior).
+    MacroRecordTarget,
+    /// Saw `@` — next key is the macro register letter to replay (or `@`
+    /// for anonymous).
+    MacroReplayTarget,
 }
 
 #[derive(Debug)]
@@ -123,6 +130,11 @@ pub struct VimInputHandler {
     /// Insert-mode `Ctrl+R` ⇒ next key is a register letter; paste that
     /// register's contents inline at the cursor (vim canonical).
     insert_waiting_for_register: bool,
+    /// Mirror of the App's macro recording state. Local because the vim
+    /// handler needs to decide on `q` whether to enter `MacroRecordTarget`
+    /// prefix (idle) or fire the stop toggle (recording). Kept in sync by
+    /// `MacroRecordInto` dispatch (start) and the `q` stop arm.
+    is_recording_macro: bool,
 }
 
 impl VimInputHandler {
@@ -138,6 +150,7 @@ impl VimInputHandler {
             last_find_char: None,
             pending_register: None,
             insert_waiting_for_register: false,
+            is_recording_macro: false,
         }
     }
 
@@ -820,6 +833,36 @@ impl VimInputHandler {
                 }
                 return InputResult::Consumed;
             }
+            Prefix::MacroRecordTarget => {
+                // `q<reg>` — start recording into <reg> (or stop if already
+                // recording). `qq` toggles anonymous (`'@'`). Sets the
+                // local `is_recording_macro` mirror so the next `q`
+                // routes to "stop" instead of re-entering this prefix.
+                self.prefix = Prefix::None;
+                if let KeyCode::Char(c) = key.code {
+                    if c == 'q' {
+                        self.is_recording_macro = true;
+                        return InputResult::App(AppCommand::RunCommand("vim.macro_toggle".into()));
+                    }
+                    if c.is_ascii_lowercase() {
+                        self.is_recording_macro = true;
+                        return InputResult::App(AppCommand::MacroRecordInto(c));
+                    }
+                }
+                return InputResult::Consumed;
+            }
+            Prefix::MacroReplayTarget => {
+                self.prefix = Prefix::None;
+                if let KeyCode::Char(c) = key.code {
+                    if c == '@' {
+                        return InputResult::App(AppCommand::MacroReplayFrom('@'));
+                    }
+                    if c.is_ascii_lowercase() {
+                        return InputResult::App(AppCommand::MacroReplayFrom(c));
+                    }
+                }
+                return InputResult::Consumed;
+            }
             Prefix::Window => {
                 self.reset_pending();
                 // vim `Ctrl+W <dir>` — focus the split in that direction.
@@ -1165,17 +1208,23 @@ impl VimInputHandler {
                 self.prefix = Prefix::Window;
                 InputResult::Consumed
             }
-            // vim `q` — toggle macro recording (single anonymous register).
-            // `@` (below) replays. While replaying, `@` is ignored to
-            // prevent recursion. The proper `q<reg>` named-register form
-            // is a follow-up.
+            // vim `q` — recording control:
+            // - Idle  ⇒ enter `MacroRecordTarget` prefix; next key picks
+            //   the register letter (or `q` for anonymous, mnml convenience).
+            // - Recording ⇒ stop (route straight to `vim.macro_toggle`,
+            //   which is state-aware: recording ⇒ stop).
             KeyCode::Char('q') => {
-                self.reset_pending();
-                InputResult::App(AppCommand::RunCommand("vim.macro_toggle".into()))
+                if self.is_recording_macro {
+                    self.is_recording_macro = false;
+                    InputResult::App(AppCommand::RunCommand("vim.macro_toggle".into()))
+                } else {
+                    self.prefix = Prefix::MacroRecordTarget;
+                    InputResult::Consumed
+                }
             }
             KeyCode::Char('@') => {
-                self.reset_pending();
-                InputResult::App(AppCommand::RunCommand("vim.macro_replay".into()))
+                self.prefix = Prefix::MacroReplayTarget;
+                InputResult::Consumed
             }
             // vim `Ctrl+^` / `Ctrl+6` — switch to the alternate (most
             // recently active) buffer. `^` and `6` are the same physical
@@ -1722,6 +1771,8 @@ impl InputHandler for VimInputHandler {
             Prefix::BracketOpen => s.push('['),
             Prefix::BracketClose => s.push(']'),
             Prefix::Register => s.push('"'),
+            Prefix::MacroRecordTarget => s.push('q'),
+            Prefix::MacroReplayTarget => s.push('@'),
             Prefix::None => {}
         }
         if self.mode == VimMode::VisualLine {
