@@ -359,6 +359,18 @@ impl VimInputHandler {
                         self.op = Some(PendingOp::ToggleCase);
                         InputResult::Consumed
                     }
+                    // `gn` / `gN` — select the next / previous match of the
+                    // active find pattern (vim's "find as text object").
+                    // Standalone form sets the editor selection. Operator-
+                    // pending support (`cgn` etc.) is a follow-up — for now
+                    // the user can chain `c` / `d` against the resulting
+                    // selection manually.
+                    KeyCode::Char('n') => {
+                        InputResult::App(AppCommand::RunCommand("find.select_match_forward".into()))
+                    }
+                    KeyCode::Char('N') => InputResult::App(AppCommand::RunCommand(
+                        "find.select_match_backward".into(),
+                    )),
                     // `ga` — show character info as a toast (decimal + hex).
                     KeyCode::Char('a') => {
                         InputResult::App(AppCommand::RunCommand("editor.char_info".into()))

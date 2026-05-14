@@ -352,6 +352,21 @@ impl Editor {
         self.comment_token = token.into();
     }
     /// Move the cursor to `(row, col)` (both clamped), clearing any selection.
+    /// Set the selection to the byte range `[start, end)`. The cursor lands
+    /// at `end` and the anchor at `start`. Clamps to text bounds. No-op when
+    /// either offset isn't on a char boundary.
+    pub fn set_selection(&mut self, start: usize, end: usize) {
+        let len = self.text.len();
+        let s = start.min(len);
+        let e = end.min(len);
+        if !self.text.is_char_boundary(s) || !self.text.is_char_boundary(e) {
+            return;
+        }
+        self.anchor = Some(s);
+        self.cursor = e;
+        self.goal_col = self.col_at_byte(self.cursor);
+    }
+
     /// Used for click-to-place.
     pub fn place_cursor(&mut self, row: usize, col: usize) {
         let row = row.min(self.line_count().saturating_sub(1));

@@ -182,6 +182,15 @@ paragraph, etc. New `PendingOp::Lower` / `Upper` / `ToggleCase` variants — emi
 `TransformSelectionCase` after the motion's `SelectStart` + motion seal the range. Doubled
 forms (`guu`, `gUU`, `g~~`) operate on the whole current line via `SelectLine`. Pending-op
 display chips: `gu` / `gU` / `g~`.
+**Vim `gn` / `gN`** — find as text-object: select the next / previous match of the active
+find pattern from the cursor (wraps). `App::select_find_match(forward)` reads the buffer's
+`FindState.matches`, picks the first one strictly after / last one strictly before the
+cursor, and sets the editor's anchor + cursor via new `Editor::set_selection(start, end)`.
+Standalone form for now — `cgn` / `dgn` (operator-pending integration) is a follow-up.
+**`picker.marks`** — fuzzy picker over every set mark (buffer-local lowercase first, then
+global uppercase). Each row labels the letter, the file (relative), the line/col, and a
+short slice of the line text as a preview. Accept jumps to the mark (opens the file if
+needed). New `PickerKind::Marks`.
 **Vim `gv`** — re-select the last visual selection. The editor remembers `(anchor, cursor)` whenever a
 selection is closed (`SelectClear`, `YankSelection`, `DeleteSelection`); `gv` emits new
 `EditOp::RestoreLastSelection` to put it back and the handler flips into Visual mode.

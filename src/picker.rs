@@ -41,6 +41,9 @@ pub enum PickerKind {
     /// `id` = the index (as a string) into [`crate::app::App::pending_snippets`].
     /// Accept ⇒ insert the snippet's expansion at the active editor's cursor.
     Snippets,
+    /// `id` = `"local:<letter>"` (current buffer) or `"global:<letter>"`
+    /// (cross-file). Accept ⇒ jump to the mark (open the file if needed).
+    Marks,
 }
 
 #[derive(Debug, Clone)]

@@ -1709,6 +1709,62 @@ impl App {
         }
         self.open_picker(Picker::new(PickerKind::Buffers, "Switch buffer", items));
     }
+    /// `picker.marks` (`<leader>m m`) — fuzzy picker over every set mark.
+    /// Buffer-local (lowercase) marks first, then global (uppercase) ones.
+    /// Each row labels the letter, the file (relative), the line/col, and a
+    /// short slice of the line text as a preview.
+    pub fn open_marks_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let mut items: Vec<PickerItem> = Vec::new();
+        // Local marks for the active buffer.
+        if let Some(b) = self.active_editor() {
+            let mut local: Vec<(char, (usize, usize))> =
+                b.marks.iter().map(|(&c, &v)| (c, v)).collect();
+            local.sort_by_key(|(c, _)| *c);
+            let text = b.editor.text();
+            let path = b
+                .path
+                .as_ref()
+                .map(|p| rel_path(&self.workspace, p))
+                .unwrap_or_else(|| b.display_name().to_string());
+            for (c, (row, col)) in local {
+                let line = text.lines().nth(row).unwrap_or("").trim();
+                let preview: String = line.chars().take(40).collect();
+                items.push(PickerItem::new(
+                    format!("local:{c}"),
+                    format!("'{c}  {path}:{}:{}  {preview}", row + 1, col + 1),
+                    "local".to_string(),
+                ));
+            }
+        }
+        // Global marks across the workspace.
+        let mut global: Vec<(char, (PathBuf, usize, usize))> = self
+            .global_marks
+            .iter()
+            .map(|(&c, v)| (c, v.clone()))
+            .collect();
+        global.sort_by_key(|(c, _)| *c);
+        for (c, (path, row, col)) in global {
+            let rel = rel_path(&self.workspace, &path);
+            // Try to read a preview line from disk (fast, single line).
+            let preview = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|text| text.lines().nth(row).map(|s| s.trim().to_string()))
+                .unwrap_or_default();
+            let preview: String = preview.chars().take(40).collect();
+            items.push(PickerItem::new(
+                format!("global:{}", c.to_ascii_lowercase()),
+                format!("'{c}  {rel}:{}:{}  {preview}", row + 1, col + 1),
+                "global".to_string(),
+            ));
+        }
+        if items.is_empty() {
+            self.toast("no marks set");
+            return;
+        }
+        self.open_picker(Picker::new(PickerKind::Marks, "Marks", items));
+    }
+
     /// Open the command palette over the registered commands (builtins + any
     /// plugin-registered ones).
     pub fn open_command_palette(&mut self) {
@@ -1850,6 +1906,18 @@ impl App {
             PickerKind::Snippets => {
                 if let Ok(idx) = item.id.parse::<usize>() {
                     self.snippet_insert_at_cursor(idx);
+                }
+            }
+            PickerKind::Marks => {
+                let mut parts = item.id.splitn(2, ':');
+                if let (Some(scope), Some(letter_str)) = (parts.next(), parts.next())
+                    && let Some(c) = letter_str.chars().next()
+                {
+                    match scope {
+                        "local" => self.jump_to_mark(c, true),
+                        "global" => self.jump_to_mark(c.to_ascii_uppercase(), true),
+                        _ => {}
+                    }
                 }
             }
         }
@@ -6920,6 +6988,50 @@ impl App {
         };
         let dirty = if b.dirty { " ●" } else { "" };
         self.toast(format!("{path}{dirty} · Ln {}/{total} · {pct}%", row + 1));
+    }
+
+    /// vim `gn` / `gN` — select the next / previous match of the active
+    /// find pattern. Forward picks the first match strictly after the cursor
+    /// (wraps to first); backward picks the last match strictly before the
+    /// cursor (wraps to last). Sets editor anchor + cursor so the selection
+    /// shows up; the user can then `c` / `d` over it via the visual
+    /// charwise path (mnml's vim handler keeps mode in Normal — selection
+    /// renders regardless of handler mode). Toasts on misses.
+    pub fn select_find_match(&mut self, forward: bool) {
+        let Some(idx) = self.active else {
+            self.toast("gn — no active editor");
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+            self.toast("gn — no active editor");
+            return;
+        };
+        let Some(find) = b.find.as_ref() else {
+            self.toast("gn — no active find (use / first)");
+            return;
+        };
+        if find.matches.is_empty() {
+            self.toast("gn — no matches");
+            return;
+        }
+        let cur = b.editor.cursor();
+        let pick = if forward {
+            find.matches
+                .iter()
+                .find(|(s, _)| *s > cur)
+                .copied()
+                .unwrap_or(find.matches[0])
+        } else {
+            find.matches
+                .iter()
+                .rev()
+                .find(|(_, e)| *e <= cur)
+                .copied()
+                .unwrap_or_else(|| *find.matches.last().unwrap())
+        };
+        b.editor.set_selection(pick.0, pick.1);
+        let arrow = if forward { "→" } else { "←" };
+        self.toast(format!("{arrow} match"));
     }
 
     /// `editor.repeat_last_substitute` — vim `&`. Re-runs the most recent
