@@ -95,7 +95,8 @@ replaces tabs with `[editor] tab_width` spaces buffer-wide);
 splits on unescaped `/` (`\/`/`\\`/`\n`/`\t` understood inside the fields), `g` is implicit (whole buffer
 always), `i` makes the match case-insensitive (`buffer::find_all_ci_ascii` vs `app::find_all_case_sensitive`),
 no-replacement form `:%s/foo/` deletes; one undo step + an `:%s — N replacement(s)` toast. Literal-string
-match for now — no regex.
+match for now — no regex. **Bare `:s/old/new/[flags]`** substitutes only on the cursor's *current line*
+(vim convention) — same parser, `Substitute.whole_buffer = false`. The toast prefix changes (`:s` vs `:%s`).
 **Vim marks** — lowercase `a`-`z` are buffer-local (`Buffer.marks: HashMap<char, (row, col)>`);
 uppercase `A`-`Z` are **global** (`App.global_marks: HashMap<char, (PathBuf, row, col)>`, persisted in
 `.mnml/session.json` so they survive a relaunch). Vim normal-mode chords: `m<letter>` sets the mark at

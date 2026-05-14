@@ -198,15 +198,20 @@ struct Substitute {
     replace: String,
     /// True ⇒ case-insensitive match (`i` flag).
     case_insensitive: bool,
+    /// `:%s/...` is buffer-wide; bare `:s/...` is current-line only
+    /// (vim convention).
+    whole_buffer: bool,
 }
 
 fn parse_substitute(line: &str) -> Option<Substitute> {
-    // Accept `%s/…` and the leading-`:`-already-stripped form. The vim parser
-    // also accepts `:s/…/…/g` for current-line; we treat that as buffer-wide
-    // for now (cursor line isn't tracked separately here).
-    let rest = line
-        .strip_prefix("%s/")
-        .or_else(|| line.strip_prefix("s/"))?;
+    // `%s/...` ⇒ buffer-wide; bare `s/...` ⇒ current-line only (vim convention).
+    let (rest, whole_buffer) = if let Some(r) = line.strip_prefix("%s/") {
+        (r, true)
+    } else if let Some(r) = line.strip_prefix("s/") {
+        (r, false)
+    } else {
+        return None;
+    };
     // Split into find / replace / flags on unescaped `/`. `\/` and `\\` survive.
     let mut parts: Vec<String> = Vec::with_capacity(3);
     let mut cur = String::new();
@@ -251,6 +256,7 @@ fn parse_substitute(line: &str) -> Option<Substitute> {
         find,
         replace,
         case_insensitive,
+        whole_buffer,
     })
 }
 
@@ -7962,26 +7968,44 @@ impl App {
 
     /// Interpret a vim `:`-line (without the leading `:`). Anything we don't
     /// recognise is bridged to a registered command if one matches, else toasted.
-    /// Apply a parsed `:%s/old/new/[flags]` to the active editor — buffer-wide
-    /// substring replace (literal, no regex). Case-insensitive when the `i`
-    /// flag is set. Result is staged as one undo step + toasted.
+    /// Apply a parsed `:%s/old/new/[flags]` (or `:s/...` for current line) to
+    /// the active editor. Literal substring replace (no regex);
+    /// case-insensitive when the `i` flag is set. Staged as one undo step.
     fn run_substitute(&mut self, sub: Substitute) {
         let Some(idx) = self.active else {
-            self.toast(":%s — no active editor");
+            self.toast(":s — no active editor");
             return;
         };
         let Some(Pane::Editor(b)) = self.panes.get(idx) else {
-            self.toast(":%s — only works in editor panes");
+            self.toast(":s — only works in editor panes");
             return;
         };
         let text = b.editor.text().to_string();
-        let matches = if sub.case_insensitive {
-            crate::buffer::find_all_ci_ascii(&text, &sub.find)
+        // Compute the byte range to operate on. `:%s` ⇒ whole buffer; bare
+        // `:s` ⇒ the cursor's current line (no trailing newline).
+        let (lo, hi) = if sub.whole_buffer {
+            (0usize, text.len())
         } else {
-            find_all_case_sensitive(&text, &sub.find)
+            let cur = b.editor.cursor();
+            let bol = text[..cur].rfind('\n').map(|i| i + 1).unwrap_or(0);
+            let eol = text[bol..]
+                .find('\n')
+                .map(|i| bol + i)
+                .unwrap_or(text.len());
+            (bol, eol)
         };
+        let scope = &text[lo..hi];
+        let matches: Vec<(usize, usize)> = if sub.case_insensitive {
+            crate::buffer::find_all_ci_ascii(scope, &sub.find)
+        } else {
+            find_all_case_sensitive(scope, &sub.find)
+        }
+        .into_iter()
+        .map(|(s, e)| (s + lo, e + lo))
+        .collect();
+        let label = if sub.whole_buffer { ":%s" } else { ":s" };
         if matches.is_empty() {
-            self.toast(format!(":%s — no match for {:?}", sub.find));
+            self.toast(format!("{label} — no match for {:?}", sub.find));
             return;
         }
         let n = matches.len();
@@ -8006,7 +8030,7 @@ impl App {
             let t = b.editor.text().to_string();
             self.lsp.did_change(&p, &t);
         }
-        self.toast(format!(":%s — {n} replacement(s)"));
+        self.toast(format!("{label} — {n} replacement(s)"));
     }
 
     pub fn run_ex_command(&mut self, line: &str) {
@@ -9507,6 +9531,11 @@ mod tests {
         assert_eq!(s.find, "foo");
         assert_eq!(s.replace, "bar");
         assert!(!s.case_insensitive);
+        assert!(s.whole_buffer);
+
+        // Bare `s/` ⇒ current line only.
+        let s = parse_substitute("s/foo/bar/").unwrap();
+        assert!(!s.whole_buffer);
 
         // `i` flag.
         let s = parse_substitute("%s/Foo/x/i").unwrap();
