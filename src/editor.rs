@@ -835,6 +835,14 @@ impl Editor {
                 }
                 self.cursor = b;
             }
+            MoveDownFirstNonWs => {
+                self.move_vertical(1);
+                self.apply_one(MoveLineFirstNonWs, vp, clip, out);
+            }
+            MoveUpFirstNonWs => {
+                self.move_vertical(-1);
+                self.apply_one(MoveLineFirstNonWs, vp, clip, out);
+            }
             MoveLineLastNonWs => {
                 let line = self.current_line();
                 let (s, e) = (self.line_start(line), self.line_end(line));

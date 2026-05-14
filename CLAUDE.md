@@ -389,6 +389,14 @@ in place so the parser declines and the outer dispatcher falls through.
 `Ctrl+^`); `:undo` / `:u` and `:redo` / `:red` (single-step alternatives to `:earlier`
 / `:later`); `:redraw` / `:redr` / `:redraw!` (force a screen redraw — alias for
 `view.redraw` / `Ctrl+L`).
+**Vim `+` / `-` / `<CR>` / `_`** — `+` (also `<CR>` in Normal): move down N lines then to
+first non-whitespace. `-`: same, up N lines. `_`: alias for `^` (first non-blank of current
+line, vim canonical). New `EditOp::MoveDownFirstNonWs` / `MoveUpFirstNonWs` (each calls
+`move_vertical` then re-applies `MoveLineFirstNonWs`). Wired in `motion()` so they compose
+with operators (`d+` deletes through next line's first non-blank, etc.).
+**Vim `g0` / `g^` / `g$` / `gj` / `gk`** — display-line motion aliases. mnml doesn't wrap
+(yet), so each is wired to the matching logical-line motion — no behavioral difference today,
+but the chords are reflexive for vim users and become real once visual wrap lands.
 **Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
 Single-key chord in the `g` prefix.
 **`:1,5j` / `:join`** — bare form joins current+next; ranged form collapses the

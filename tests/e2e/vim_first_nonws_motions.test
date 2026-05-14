@@ -1,0 +1,43 @@
+# Vim `+` / `-` / `_` — move to first non-blank of next / prev / current line.
+# Also covers `<CR>` aliased to `+`. The test setup uses `r<c>` (vim normal
+# replace-one-char) to leave a clear marker at the cursor position.
+
+write data.txt "alpha\n  beta\n    gamma\n\tdelta"
+open data.txt
+
+command editor.use_vim
+
+# Cursor on line 1 col 0. `+` ⇒ down + first non-blank ⇒ line 2, col 2.
+# Replace the char there with `X`. After: "alpha\n  Xeta\n..."
+key +
+key r
+key X
+expect screen contains "  Xeta"
+
+# Up + first non-blank (`-`) ⇒ line 1 col 0. Replace with `Y`.
+key -
+key r
+key Y
+expect screen contains "Ylpha"
+
+# `_` ⇒ first non-blank of current line (alias for `^`). Cursor's already
+# at line 1 col 0; jumping down twice to line 3, then `0 _` should leave us
+# at the first non-blank again.
+key down
+key down
+key 0
+key _
+key r
+key Z
+# Line 3 was "    gamma"; first non-blank is column 4 ⇒ "    Zamma".
+expect screen contains "    Zamma"
+
+# `<CR>` works as `+` — down + first non-blank.
+# Cursor on line 3. Press Enter ⇒ down to line 4 + first non-blank
+# (after the leading tab) ⇒ on `d` of "\tdelta".
+key enter
+key r
+key W
+# Verify on disk so we don't depend on terminal tab-rendering.
+command file.save
+expect file data.txt contains "\tWelta"

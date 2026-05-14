@@ -15,6 +15,12 @@ pub enum EditOp {
     MoveWordEnd,
     MoveLineStart,
     MoveLineFirstNonWs,
+    /// vim `+` (or `<CR>` in normal) — move down N lines then to the first
+    /// non-whitespace char. Clamps to last line. On a blank line lands at col 0.
+    MoveDownFirstNonWs,
+    /// vim `-` — move up N lines then to the first non-whitespace char.
+    /// Clamps to first line.
+    MoveUpFirstNonWs,
     /// vim `g_` — move to the last non-whitespace char of the current line.
     /// (Vim's $ goes to EOL; g_ stops on the last non-blank.) On a blank line
     /// behaves like `MoveLineStart`.
@@ -297,6 +303,8 @@ impl EditOp {
             | MoveWordEnd
             | MoveLineStart
             | MoveLineFirstNonWs
+            | MoveDownFirstNonWs
+            | MoveUpFirstNonWs
             | MoveLineLastNonWs
             | MoveParagraph { .. }
             | MoveSentence { .. }

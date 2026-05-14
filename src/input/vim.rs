@@ -270,8 +270,11 @@ impl VimInputHandler {
             KeyCode::Char('b') => MoveWordLeft,
             KeyCode::Char('e') => MoveWordEnd,
             KeyCode::Char('0') | KeyCode::Home => MoveLineStart,
-            KeyCode::Char('^') => MoveLineFirstNonWs,
+            KeyCode::Char('^') | KeyCode::Char('_') => MoveLineFirstNonWs,
             KeyCode::Char('$') | KeyCode::End => MoveLineEnd,
+            // `+` / `<CR>` — down N lines + first non-blank. `-` — up N lines + first non-blank.
+            KeyCode::Char('+') | KeyCode::Enter => MoveDownFirstNonWs,
+            KeyCode::Char('-') => MoveUpFirstNonWs,
             KeyCode::Char('G') => MoveBufferEnd,
             // `{` / `}` — paragraph nav (prev / next blank-line boundary).
             KeyCode::Char('{') => MoveParagraph { forward: false },
@@ -588,6 +591,15 @@ impl VimInputHandler {
                     }
                     // `g_` — move to last non-blank char of the current line.
                     KeyCode::Char('_') => InputResult::Ops(vec![MoveLineLastNonWs]),
+                    // `g0` / `g^` / `g$` / `gj` / `gk` / `gm` — display-line
+                    // motions. mnml doesn't wrap (yet), so each is an alias for
+                    // the logical-line equivalent. `gm` ⇒ middle of the
+                    // (single) line — half the line width.
+                    KeyCode::Char('0') => InputResult::Ops(vec![MoveLineStart]),
+                    KeyCode::Char('^') => InputResult::Ops(vec![MoveLineFirstNonWs]),
+                    KeyCode::Char('$') => InputResult::Ops(vec![MoveLineEnd]),
+                    KeyCode::Char('j') => InputResult::Ops(Self::repeated(EditOp::MoveDown, n)),
+                    KeyCode::Char('k') => InputResult::Ops(Self::repeated(EditOp::MoveUp, n)),
                     // `gu{motion}` — lowercase. Sets a pending op + waits
                     // for a motion (or `u` for the doubled "current line"
                     // form). E.g. `guu` lowercases the line; `guw` the word.
