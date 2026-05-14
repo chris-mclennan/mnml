@@ -239,6 +239,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.find_word_under_cursor(false),
         },
         Command {
+            id: "find.selection_forward",
+            title: "Find: selected text (forward) — vim visual `*`",
+            group: "find",
+            keys: &[],
+            run: |app| app.find_selection_under_cursor(true),
+        },
+        Command {
+            id: "find.selection_backward",
+            title: "Find: selected text (backward) — vim visual `#`",
+            group: "find",
+            keys: &[],
+            run: |app| app.find_selection_under_cursor(false),
+        },
+        Command {
             id: "find.replace",
             title: "Replace every match of the active find",
             group: "find",

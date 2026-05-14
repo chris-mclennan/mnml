@@ -886,6 +886,17 @@ impl VimInputHandler {
                 // case ops aren't in the EditOp vocabulary yet — ignore quietly.
                 InputResult::Consumed
             }
+            // vim visual `*` / `#` — search for the literally-selected text
+            // (preserves spaces / punctuation; no word-boundary check, unlike
+            // normal-mode `*`).
+            KeyCode::Char('*') => {
+                self.enter_normal();
+                InputResult::App(AppCommand::RunCommand("find.selection_forward".into()))
+            }
+            KeyCode::Char('#') => {
+                self.enter_normal();
+                InputResult::App(AppCommand::RunCommand("find.selection_backward".into()))
+            }
             KeyCode::Char(':') => {
                 self.cmdline = Some(String::new());
                 InputResult::Consumed

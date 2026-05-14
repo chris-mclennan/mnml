@@ -1458,6 +1458,30 @@ impl App {
         }
     }
 
+    /// `find.selection_forward` / `find.selection_backward` — vim's visual
+    /// `*` / `#`: search for the literally-selected text (preserves spaces /
+    /// punctuation, no word-boundary check). Falls back to a toast when
+    /// there's no active selection.
+    pub fn find_selection_under_cursor(&mut self, forward: bool) {
+        let Some(cur) = self.active else {
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get(cur) else {
+            return;
+        };
+        let sel = b.editor.selected_text();
+        if sel.is_empty() {
+            self.toast("no selection");
+            return;
+        }
+        // Selections may span newlines; the find layer matches literally so
+        // multi-line selections work too (the highlight just spans rows).
+        self.accept_find(sel.to_string());
+        if !forward {
+            self.find_prev();
+        }
+    }
+
     /// `buffer.reopen` — pop the most-recently-closed buffer off
     /// [`Self::closed_buffers`] and re-open it at its captured position.
     /// No-op when the stack is empty.
