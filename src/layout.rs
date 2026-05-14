@@ -140,6 +140,28 @@ impl Layout {
         }
     }
 
+    /// Reset every `Split` in the tree to a 50/50 ratio. Vim `Ctrl+W =` —
+    /// "equalize all splits" with a poor-man's "even at every level".
+    /// (True equalization across the *visible* viewport would weight by
+    /// pane count rather than tree level; for a binary tree this is a
+    /// good-enough approximation that matches how vim behaves on
+    /// nested splits.)
+    pub fn equalize_splits(&mut self) {
+        match self {
+            Layout::Split {
+                ratio,
+                first,
+                second,
+                ..
+            } => {
+                *ratio = 50;
+                first.equalize_splits();
+                second.equalize_splits();
+            }
+            Layout::Empty | Layout::Leaf(_) => {}
+        }
+    }
+
     /// Set the `ratio` of the `Split` reached by following `path` from the root
     /// (`false` = into `first`, `true` = into `second`). No-op if the path doesn't
     /// land on a `Split`. The ratio is clamped to 10..=90.
@@ -345,6 +367,30 @@ mod tests {
         };
         l.shift_after(2); // pretend pane 2 was removed from app.panes
         assert_eq!(l.leaves(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn equalize_splits_resets_every_ratio() {
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 75,
+            first: Box::new(Layout::Leaf(0)),
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Vertical,
+                ratio: 20,
+                first: Box::new(Layout::Leaf(1)),
+                second: Box::new(Layout::Leaf(2)),
+            }),
+        };
+        l.equalize_splits();
+        let Layout::Split { ratio, second, .. } = &l else {
+            panic!()
+        };
+        assert_eq!(*ratio, 50);
+        let Layout::Split { ratio: inner, .. } = &**second else {
+            panic!()
+        };
+        assert_eq!(*inner, 50);
     }
 
     #[test]

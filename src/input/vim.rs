@@ -481,7 +481,8 @@ impl VimInputHandler {
             Prefix::Window => {
                 self.reset_pending();
                 // vim `Ctrl+W <dir>` — focus the split in that direction.
-                // h/j/k/l, arrow keys, plus `w` (cycle), `q` (close).
+                // h/j/k/l, arrow keys, plus `w` (cycle), `q` (close), `=`
+                // (equalize), `o` (only).
                 let cmd = match key.code {
                     KeyCode::Char('h') | KeyCode::Left => "view.focus_left",
                     KeyCode::Char('l') | KeyCode::Right => "view.focus_right",
@@ -491,6 +492,8 @@ impl VimInputHandler {
                     KeyCode::Char('q' | 'c') => "view.close_split",
                     KeyCode::Char('s') => "view.split_down",
                     KeyCode::Char('v') => "view.split_right",
+                    KeyCode::Char('=') => "view.equalize_splits",
+                    KeyCode::Char('o') => "view.close_others",
                     _ => return InputResult::Consumed,
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));

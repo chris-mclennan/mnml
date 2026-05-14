@@ -366,6 +366,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.scroll_cursor_in_view(1.0),
         },
         Command {
+            id: "view.equalize_splits",
+            title: "Equalize every split's ratio to 50/50 (vim `Ctrl+W =`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.equalize_splits(),
+        },
+        Command {
+            id: "view.close_others",
+            title: "Close every pane except the active one (vim `:only`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.close_other_panes(),
+        },
+        Command {
             id: "editor.jump_prev_edit",
             title: "Jump to previous edit position (vim `g;`)",
             group: "editor",

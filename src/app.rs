@@ -6503,6 +6503,12 @@ impl App {
         }
     }
 
+    /// `view.equalize_splits` — vim `Ctrl+W =`. Reset every split's ratio to
+    /// 50/50 so the panes share the screen evenly at every nesting level.
+    pub fn equalize_splits(&mut self) {
+        self.layout.equalize_splits();
+    }
+
     /// vim `zz` / `zt` / `zb` — adjust the scroll position so the cursor
     /// lands at the center / top / bottom of the visible viewport.
     /// `frac_from_top`: 0.0 = top, 0.5 = middle, 1.0 = bottom (clamped).
