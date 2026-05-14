@@ -399,6 +399,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.scroll_cursor_in_view(1.0),
         },
         Command {
+            id: "view.move_cursor_view_top",
+            title: "Move cursor to top of viewport (vim `H`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.move_cursor_in_view(0.0),
+        },
+        Command {
+            id: "view.move_cursor_view_middle",
+            title: "Move cursor to middle of viewport (vim `M`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.move_cursor_in_view(0.5),
+        },
+        Command {
+            id: "view.move_cursor_view_bottom",
+            title: "Move cursor to bottom of viewport (vim `L`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.move_cursor_in_view(1.0),
+        },
+        Command {
             id: "view.scroll_buffer_down",
             title: "Scroll buffer one line down (vim `Ctrl+E`)",
             group: "view",

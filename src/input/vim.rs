@@ -89,6 +89,11 @@ enum Prefix {
     /// Saw `]` — bracket-prefix for "go to next <kind>". Mirror of
     /// [`Self::BracketOpen`].
     BracketClose,
+    /// Saw `"` — named-register prefix. Next key (`a`-`z`, `0`, `+`, `_`)
+    /// selects the register the following yank / paste / delete will go to
+    /// (or read from). MVP supports `"a`-`"z` named, `"0` last yank,
+    /// `"+` system clipboard, `"_` blackhole.
+    Register,
 }
 
 #[derive(Debug)]
@@ -111,6 +116,13 @@ pub struct VimInputHandler {
     /// (repeat in same direction) and `,` (repeat in opposite direction)
     /// can re-fire it. `None` until the user has done one find-char.
     last_find_char: Option<(char, bool, bool)>,
+    /// Named-register hint set by `"<reg>`. Persists for *one* yank /
+    /// paste / delete (or operator combo: `"ayy`, `"ap`, `"add`). Cleared
+    /// on use. `None` ⇒ default (unnamed) register.
+    pending_register: Option<char>,
+    /// Insert-mode `Ctrl+R` ⇒ next key is a register letter; paste that
+    /// register's contents inline at the cursor (vim canonical).
+    insert_waiting_for_register: bool,
 }
 
 impl VimInputHandler {
@@ -124,6 +136,8 @@ impl VimInputHandler {
             tab_width: cfg.editor.tab_width.max(1),
             text_width: cfg.editor.text_width.max(8),
             last_find_char: None,
+            pending_register: None,
+            insert_waiting_for_register: false,
         }
     }
 
@@ -157,6 +171,35 @@ impl VimInputHandler {
         self.cmdline = None;
     }
 
+    /// True when the op (or any wrapped inner op) touches the clipboard —
+    /// used to decide whether a pending `"<reg>` hint should be consumed
+    /// for this dispatch. Yank, paste, cut, line/word/selection delete
+    /// (vim's `d` always yanks the deleted text). Pure motions / undo /
+    /// editing-without-deletion don't.
+    fn touches_clipboard(op: &EditOp) -> bool {
+        use EditOp::*;
+        matches!(
+            op,
+            YankLine
+                | YankSelection
+                | YankBlock
+                | PasteAfter
+                | PasteBefore
+                | PasteAfterEnd
+                | PasteBeforeEnd
+                | Paste
+                | CutSelection
+                | DeleteSelection
+                | DeleteLine
+                | DeleteForward
+                | DeleteWordLeft
+                | DeleteWordRight
+                | DeleteToLineStart
+                | DeleteToLineEnd
+                | DeleteBlock
+        ) || matches!(op, Repeat(_, inner) if Self::touches_clipboard(inner))
+    }
+
     /// Map a key to a pure cursor motion (used standalone and after an operator).
     /// `None` ⇒ not a motion.
     fn motion(code: KeyCode) -> Option<EditOp> {
@@ -173,6 +216,12 @@ impl VimInputHandler {
             KeyCode::Char('^') => MoveLineFirstNonWs,
             KeyCode::Char('$') | KeyCode::End => MoveLineEnd,
             KeyCode::Char('G') => MoveBufferEnd,
+            // `{` / `}` — paragraph nav (prev / next blank-line boundary).
+            KeyCode::Char('{') => MoveParagraph { forward: false },
+            KeyCode::Char('}') => MoveParagraph { forward: true },
+            // `(` / `)` — sentence nav (prev / next sentence boundary).
+            KeyCode::Char('(') => MoveSentence { forward: false },
+            KeyCode::Char(')') => MoveSentence { forward: true },
             KeyCode::PageUp => PageUp,
             KeyCode::PageDown => PageDown,
             _ => return None,
@@ -220,7 +269,25 @@ impl VimInputHandler {
     fn handle_insert(&mut self, key: KeyEvent, _ctx: &EditCtx) -> InputResult {
         use EditOp::*;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // Insert-mode `Ctrl+R <reg>` — paste the named register inline.
+        // Was set on the previous keystroke (see the Ctrl+R arm below).
+        if self.insert_waiting_for_register {
+            self.insert_waiting_for_register = false;
+            if let KeyCode::Char(c) = key.code {
+                let valid = c.is_ascii_lowercase() || c == '0' || c == '+' || c == '_';
+                if valid {
+                    return InputResult::Ops(vec![SetRegisterHint(Some(c)), Paste]);
+                }
+            }
+            return InputResult::Consumed;
+        }
         match key.code {
+            // vim insert `Ctrl+R` — followed by a register letter, pastes
+            // that register's contents at the cursor (vim canonical).
+            KeyCode::Char('r') if ctrl => {
+                self.insert_waiting_for_register = true;
+                InputResult::Consumed
+            }
             KeyCode::Esc => {
                 // vim drifts the cursor one left when leaving Insert.
                 self.enter_normal();
@@ -720,6 +787,22 @@ impl VimInputHandler {
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));
             }
+            Prefix::Register => {
+                // Pick the named register (`a`-`z`, `0`, `+`, `_`); the
+                // hint persists for one yank / paste / delete (or operator
+                // combo). `prefix` resets but `op` / `count` are preserved
+                // so `"a3yy` works.
+                self.prefix = Prefix::None;
+                if let KeyCode::Char(c) = key.code {
+                    let valid = c.is_ascii_lowercase() || c == '0' || c == '+' || c == '_';
+                    if valid {
+                        // Lowercase registers are stored verbatim; the named
+                        // pool keys are 'a'-'z' / '0' / '+' / '_'.
+                        self.pending_register = Some(c);
+                    }
+                }
+                return InputResult::Consumed;
+            }
             Prefix::Window => {
                 self.reset_pending();
                 // vim `Ctrl+W <dir>` — focus the split in that direction.
@@ -928,6 +1011,29 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("view.redraw".into()))
             }
+            // vim `Ctrl+G` — toast file info (vim canonical).
+            KeyCode::Char('g') if ctrl => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("editor.file_info".into()))
+            }
+            // vim `H` / `M` / `L` — move cursor to top / middle / bottom of
+            // the visible viewport (scroll stays put).
+            KeyCode::Char('H') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("view.move_cursor_view_top".into()))
+            }
+            KeyCode::Char('M') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand(
+                    "view.move_cursor_view_middle".into(),
+                ))
+            }
+            KeyCode::Char('L') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand(
+                    "view.move_cursor_view_bottom".into(),
+                ))
+            }
             // vim `Ctrl+I` — jumplist forward (alias of nav.forward).
             // Must come BEFORE the bare `i` arm.
             KeyCode::Char('i') if ctrl => {
@@ -1102,6 +1208,12 @@ impl VimInputHandler {
             }
             KeyCode::Char(']') => {
                 self.prefix = Prefix::BracketClose;
+                InputResult::Consumed
+            }
+            // `"` — named-register prefix. Next key picks the register
+            // (`a`-`z` named, `0` last-yank, `+` system, `_` blackhole).
+            KeyCode::Char('"') => {
+                self.prefix = Prefix::Register;
                 InputResult::Consumed
             }
             // vim `~` — toggle case of char under cursor + advance.
@@ -1510,12 +1622,29 @@ impl InputHandler for VimInputHandler {
         if let Some(line) = self.cmdline.take() {
             return self.handle_cmdline(key, line);
         }
-        match self.mode {
+        let result = match self.mode {
             VimMode::Insert => self.handle_insert(key, ctx),
             VimMode::Normal => self.handle_normal(key, ctx),
             VimMode::Visual | VimMode::VisualLine => self.handle_visual(key, ctx),
             VimMode::VisualBlock => self.handle_visual_block(key, ctx),
+        };
+        // If a `"<reg>` prefix is still pending and we're returning Ops,
+        // prepend `SetRegisterHint` so the inner clipboard op routes
+        // through that register. Cleared after one use (vim convention —
+        // `"a` only sticks for the next op). Only consume the hint when
+        // the result is `Ops(...)` (the only path that touches Clipboard);
+        // pure motions / app commands keep the hint alive.
+        if let InputResult::Ops(ops) = &result
+            && self.pending_register.is_some()
+            && ops.iter().any(Self::touches_clipboard)
+        {
+            let reg = self.pending_register.take();
+            let mut prefixed = Vec::with_capacity(ops.len() + 1);
+            prefixed.push(EditOp::SetRegisterHint(reg));
+            prefixed.extend(ops.iter().cloned());
+            return InputResult::Ops(prefixed);
         }
+        result
     }
 
     fn mode(&self) -> EditingMode {
@@ -1531,6 +1660,10 @@ impl InputHandler for VimInputHandler {
             return Some(format!(":{line}"));
         }
         let mut s = String::new();
+        if let Some(r) = self.pending_register {
+            s.push('"');
+            s.push(r);
+        }
         if let Some(n) = self.count {
             s.push_str(&n.to_string());
         }
@@ -1571,6 +1704,7 @@ impl InputHandler for VimInputHandler {
             Prefix::Window => s.push_str("^W"),
             Prefix::BracketOpen => s.push('['),
             Prefix::BracketClose => s.push(']'),
+            Prefix::Register => s.push('"'),
             Prefix::None => {}
         }
         if self.mode == VimMode::VisualLine {

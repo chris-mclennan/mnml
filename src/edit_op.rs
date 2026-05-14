@@ -19,6 +19,18 @@ pub enum EditOp {
     /// (Vim's $ goes to EOL; g_ stops on the last non-blank.) On a blank line
     /// behaves like `MoveLineStart`.
     MoveLineLastNonWs,
+    /// vim `{` / `}` — move to the previous / next blank-line boundary
+    /// (paragraph navigation). `forward=true` ⇒ `}`. Lands on the *blank
+    /// line* itself (or BOF/EOF when none found).
+    MoveParagraph {
+        forward: bool,
+    },
+    /// vim `(` / `)` — move to the previous / next sentence boundary.
+    /// Sentence = end-of-line OR `.`/`!`/`?` followed by whitespace/EOF.
+    /// `forward=true` ⇒ `)`.
+    MoveSentence {
+        forward: bool,
+    },
     MoveLineEnd,
     MoveBufferStart,
     MoveBufferEnd,
@@ -191,6 +203,11 @@ pub enum EditOp {
     },
 
     // ── clipboard / registers ──
+    /// Sets the clipboard's `pending_register` hint, consumed by the next
+    /// `set` / `text` call. Vim handler emits `[SetRegisterHint(Some(c)),
+    /// <clipboard op>]` after a `"<c>` prefix. `None` clears any prior hint.
+    /// Pure side-effect on the Clipboard; doesn't touch the editor.
+    SetRegisterHint(Option<char>),
     /// vim `yy`
     YankLine,
     /// vim `y` (visual) / standard Ctrl+C
@@ -245,6 +262,8 @@ impl EditOp {
             | MoveLineStart
             | MoveLineFirstNonWs
             | MoveLineLastNonWs
+            | MoveParagraph { .. }
+            | MoveSentence { .. }
             | MoveLineEnd
             | MoveBufferStart
             | MoveBufferEnd
@@ -274,6 +293,7 @@ impl EditOp {
             | AddCursorAbove
             | BlockSelectStart
             | BlockSelectClear
+            | SetRegisterHint(_)
             | YankLine
             | YankSelection
             | YankBlock

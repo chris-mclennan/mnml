@@ -210,7 +210,29 @@ which leave the cursor at the start of a linewise paste). New `EditOp::PasteAfte
 `PasteBeforeEnd`.
 **Vim insert-mode chords** — `Ctrl+W` deletes the previous word; `Ctrl+U` deletes to
 start of line; `Ctrl+H` is a backspace alias; `Ctrl+T` / `Ctrl+D` indent / outdent the
-current line. Vim canonical for typing-flow corrections without leaving Insert.
+current line; **`Ctrl+R <reg>`** pastes the named register's contents inline at the
+cursor (vim canonical). Vim canonical for typing-flow corrections without leaving Insert.
+**Vim `H` / `M` / `L`** — move the cursor to the **top / middle / bottom of the visible
+viewport** (scroll stays put). Distinct from `zz` / `zt` / `zb` (which scroll to put the
+cursor at that position; H/M/L move the cursor to that position). New
+`App::move_cursor_in_view(frac)`; commands `view.move_cursor_view_top` /
+`_middle` / `_bottom`.
+**Vim `Ctrl+G`** — toast the active editor's `<path> · Ln N/M · X%` (alias for
+`editor.file_info`).
+**Vim `{` / `}`** — paragraph navigation (prev / next blank-line boundary). New
+`EditOp::MoveParagraph{forward}`. Pure motion — works after operators (`d}`, `c{`).
+**Vim `(` / `)`** — sentence navigation. Sentence boundary = `.` / `!` / `?` followed by
+whitespace. New `EditOp::MoveSentence{forward}`.
+**Vim named registers** — `Clipboard` gained a `HashMap<char, (String, bool)>` named pool
+plus a `pending_register: Option<char>` hint consumed by the next `set` / `text`. The vim
+handler parses `"<reg>` (a-z named, `0` last-yank, `+` system, `_` blackhole) into
+`VimInputHandler.pending_register`; before returning Ops it prepends
+`EditOp::SetRegisterHint(Some(reg))` if the result touches the clipboard
+(`Self::touches_clipboard` — yank/paste/cut/delete*/etc.). `set_yank` mirrors into `"0`
+on every yank that didn't go to a named register. `:reg` lists every populated register
+sorted. `Ctrl+R <reg>` in Insert pastes inline (uses `[SetRegisterHint(reg), Paste]`).
+Limitations: no uppercase-append form (`"A` appending to `"a` register); no `"1`-`"9`
+delete history; no `"%` / `"#` / `":` / `"/` special registers.
 **Vim `gv`** — re-select the last visual selection. The editor remembers `(anchor, cursor)` whenever a
 selection is closed (`SelectClear`, `YankSelection`, `DeleteSelection`); `gv` emits new
 `EditOp::RestoreLastSelection` to put it back and the handler flips into Visual mode.

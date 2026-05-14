@@ -848,6 +848,114 @@ impl Editor {
                 }
             }
             MoveLineEnd => self.cursor = self.line_end(self.current_line()),
+            MoveParagraph { forward } => {
+                let cur_row = self.current_line();
+                let line_count = self.line_count();
+                let is_blank = |row: usize| {
+                    let (s, e) = self.line_byte_range(row);
+                    self.text[s..e].chars().all(|c| c.is_whitespace())
+                };
+                let target = if forward {
+                    // Skip the current run, then find the next blank.
+                    let mut skipped_current = false;
+                    let mut row = cur_row + 1;
+                    let mut found = None;
+                    while row < line_count {
+                        if is_blank(row) {
+                            if skipped_current {
+                                found = Some(row);
+                                break;
+                            }
+                            // landed on the current paragraph's trailing blank
+                            // — vim convention: jump past it to the NEXT blank
+                            // after intervening text. Keep walking.
+                            row += 1;
+                            continue;
+                        }
+                        skipped_current = true;
+                        row += 1;
+                    }
+                    found.unwrap_or_else(|| line_count.saturating_sub(1))
+                } else {
+                    // Walk back to the previous blank.
+                    if cur_row == 0 {
+                        0
+                    } else {
+                        let mut skipped_current = false;
+                        let mut row = cur_row - 1;
+                        let mut found = None;
+                        loop {
+                            if is_blank(row) {
+                                if skipped_current {
+                                    found = Some(row);
+                                    break;
+                                }
+                                if row == 0 {
+                                    break;
+                                }
+                                row -= 1;
+                                continue;
+                            }
+                            skipped_current = true;
+                            if row == 0 {
+                                break;
+                            }
+                            row -= 1;
+                        }
+                        found.unwrap_or(0)
+                    }
+                };
+                self.cursor = self.line_start(target);
+            }
+            MoveSentence { forward } => {
+                // Sentence boundary = `.`/`!`/`?` followed by whitespace, or
+                // a blank line. Vim's sentence motion is famously loose; this
+                // is the common-case approximation.
+                let bytes = self.text.as_bytes();
+                let len = bytes.len();
+                if forward {
+                    let mut i = self.cursor + 1;
+                    while i < len {
+                        let c = bytes[i];
+                        if (c == b'.' || c == b'!' || c == b'?') && i + 1 < len {
+                            let nxt = bytes[i + 1];
+                            if nxt == b' ' || nxt == b'\n' || nxt == b'\t' {
+                                // land on the char after the whitespace
+                                let mut j = i + 1;
+                                while j < len && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                                    j += 1;
+                                }
+                                self.cursor = j;
+                                return;
+                            }
+                        }
+                        i += 1;
+                    }
+                    self.cursor = len;
+                } else {
+                    // Walk backward; find the *start* of the current sentence
+                    // (just-past the prior boundary, or BOF).
+                    let mut i = self.cursor.saturating_sub(1);
+                    while i > 0 {
+                        let c = bytes[i];
+                        if (c == b'.' || c == b'!' || c == b'?') && i + 1 < len {
+                            let nxt = bytes[i + 1];
+                            if nxt == b' ' || nxt == b'\n' || nxt == b'\t' {
+                                let mut j = i + 1;
+                                while j < len && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                                    j += 1;
+                                }
+                                if j < self.cursor {
+                                    self.cursor = j;
+                                    return;
+                                }
+                            }
+                        }
+                        i -= 1;
+                    }
+                    self.cursor = 0;
+                }
+            }
             MoveBufferStart => self.cursor = 0,
             MoveBufferEnd => self.cursor = self.text.len(),
             MoveToLine(n) => {
@@ -1625,11 +1733,14 @@ impl Editor {
             }
 
             // ── clipboard / registers ──
+            SetRegisterHint(reg) => {
+                clip.set_pending_register(reg);
+            }
             YankLine => {
                 let line = self.current_line();
                 let mut s = self.line_str(line).to_string();
                 s.push('\n');
-                clip.set(s.clone(), true);
+                clip.set_yank(s.clone(), true);
                 out.clipboard_set = Some(s);
                 out.clipboard_linewise = true;
             }
@@ -1650,7 +1761,7 @@ impl Editor {
                         parts.push(self.text[*s..*e].to_string());
                     }
                     let joined = parts.join("\n");
-                    clip.set(joined.clone(), false);
+                    clip.set_yank(joined.clone(), false);
                     out.clipboard_set = Some(joined);
                     self.block_anchor = None;
                 }
@@ -1696,7 +1807,7 @@ impl Editor {
             YankSelection => {
                 if let Some((lo, hi)) = self.selection() {
                     let s = self.text[lo..hi].to_string();
-                    clip.set(s.clone(), false);
+                    clip.set_yank(s.clone(), false);
                     out.clipboard_set = Some(s);
                     self.remember_selection();
                 }

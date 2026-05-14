@@ -7358,6 +7358,40 @@ impl App {
         b.scroll = cur_row.saturating_sub(offset);
     }
 
+    /// vim `H` / `M` / `L` — move the *cursor* to the high (top) / middle /
+    /// low (bottom) of the visible viewport (scroll stays put). `frac` =
+    /// 0.0 ⇒ first visible row, 0.5 ⇒ middle, 1.0 ⇒ last visible row.
+    pub fn move_cursor_in_view(&mut self, frac_from_top: f32) {
+        let Some(cur) = self.active else { return };
+        let h = self
+            .rects
+            .editor_panes
+            .iter()
+            .find(|(_, p)| *p == cur)
+            .map(|(r, _)| r.height as usize)
+            .unwrap_or(0);
+        let body_h = h.saturating_sub(if self.config.editor.breadcrumb { 1 } else { 0 });
+        if body_h == 0 {
+            return;
+        }
+        let Some(b) = self.active_editor_mut() else {
+            return;
+        };
+        let scroll = b.scroll;
+        let last_visible = scroll + body_h.saturating_sub(1);
+        let line_count = b.editor.line_count();
+        let frac = frac_from_top.clamp(0.0, 1.0);
+        let target = if frac == 0.0 {
+            scroll
+        } else if frac == 1.0 {
+            last_visible.min(line_count.saturating_sub(1))
+        } else {
+            scroll + (body_h as f32 * frac) as usize
+        };
+        let target = target.min(line_count.saturating_sub(1));
+        b.editor.place_cursor(target, 0);
+    }
+
     /// vim `[c` / `]c` — jump cursor to the previous / next changed line
     /// in the active buffer (per the cached `git diff` line-signs). Wraps
     /// around. No-op when no change marks are recorded.
@@ -9316,17 +9350,38 @@ impl App {
                 }
             }
             "reg" | "registers" | "di" | "display" => {
-                let s = self.clipboard.text();
-                if s.is_empty() {
-                    self.toast(":reg — clipboard empty");
-                } else {
-                    let preview: String = s
+                let mut parts: Vec<String> = Vec::new();
+                let preview = |s: &str, cap: usize| -> String {
+                    let mut out: String = s
                         .chars()
-                        .take(80)
+                        .take(cap)
                         .map(|c| if c == '\n' { '↵' } else { c })
                         .collect();
-                    let suffix = if s.chars().count() > 80 { "…" } else { "" };
-                    self.toast(format!("\"\"  {preview}{suffix}"));
+                    if s.chars().count() > cap {
+                        out.push('…');
+                    }
+                    out
+                };
+                let unnamed = self.clipboard.text();
+                if !unnamed.is_empty() {
+                    parts.push(format!("\"\"  {}", preview(&unnamed, 40)));
+                }
+                let mut named: Vec<(char, (String, bool))> = self
+                    .clipboard
+                    .named_registers()
+                    .iter()
+                    .map(|(c, v)| (*c, v.clone()))
+                    .collect();
+                named.sort_by_key(|(c, _)| *c);
+                for (c, (text, _linewise)) in named {
+                    if !text.is_empty() {
+                        parts.push(format!("\"{c}  {}", preview(&text, 40)));
+                    }
+                }
+                if parts.is_empty() {
+                    self.toast(":reg — empty");
+                } else {
+                    self.toast(format!(":reg · {}", parts.join("  ")));
                 }
             }
             // `:source <path>` (alias `:so`) — re-apply a config file at
