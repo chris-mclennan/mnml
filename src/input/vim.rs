@@ -1076,6 +1076,22 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("editor.file_info".into()))
             }
+            // vim `Ctrl+]` — jump to definition (vim's tag-follow chord;
+            // mnml aliases to LSP `goto_definition`).
+            KeyCode::Char(']') if ctrl => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("lsp.goto_definition".into()))
+            }
+            // vim `Ctrl+T` — jump back from tag (mnml aliases to nav.back).
+            KeyCode::Char('t') if ctrl => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("nav.back".into()))
+            }
+            // vim `K` — keyword help / docs for word under cursor (LSP hover).
+            KeyCode::Char('K') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("lsp.hover".into()))
+            }
             // vim `H` / `M` / `L` — move cursor to top / middle / bottom of
             // the visible viewport (scroll stays put).
             KeyCode::Char('H') => {

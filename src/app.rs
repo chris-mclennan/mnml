@@ -806,6 +806,9 @@ pub struct App {
     /// consumed by [`Self::macro_toggle`] / [`Self::macro_replay`] on the
     /// very next call. `None` ⇒ use the anonymous `'@'` register.
     pub pending_macro_register: Option<char>,
+    /// Throttle stamp for `check_external_file_changes` — stat'ing every
+    /// open file on every tick is overkill; we cap the cadence to ~2s.
+    last_external_check: Option<std::time::Instant>,
     /// Last `:s` / `:%s` payload, parsed. Vim `&` re-runs it on the cursor's
     /// current line (vim convention: `&` always uses line scope, regardless
     /// of whether the original was buffer-wide). `c` (confirm) flag is
@@ -1066,6 +1069,7 @@ impl App {
             macro_state: MacroState::default(),
             macro_buffer: std::collections::HashMap::new(),
             pending_macro_register: None,
+            last_external_check: None,
             last_substitute: None,
             file_cursors: std::collections::HashMap::new(),
             global_marks: std::collections::HashMap::new(),
@@ -10262,11 +10266,100 @@ impl App {
         self.drain_cdp_events();
         self.refresh_live_ai_panes();
         self.autosave_idle_buffers();
+        self.check_external_file_changes();
         self.check_format_save_deadline();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL
         {
             self.toast = None;
+        }
+    }
+
+    /// Check every open editor buffer's path for an external mtime
+    /// change vs the last-known `disk_mtime`. Throttled to once every
+    /// ~2 seconds (stat is cheap but not free, and tick fires
+    /// continuously). When divergence is detected:
+    /// - Clean buffer (no unsaved edits) ⇒ silently reload from disk +
+    ///   toast "<file> reloaded".
+    /// - Dirty buffer ⇒ toast a warning ("<file> changed on disk —
+    ///   :e! to discard / save to overwrite") and leave the buffer
+    ///   alone. The mtime mirror is still updated so the warning fires
+    ///   only once per change.
+    fn check_external_file_changes(&mut self) {
+        let now = std::time::Instant::now();
+        if let Some(last) = self.last_external_check
+            && now.duration_since(last) < std::time::Duration::from_secs(2)
+        {
+            return;
+        }
+        self.last_external_check = Some(now);
+        // Collect the (idx, path, was_dirty) for buffers whose mtime
+        // diverges. Done as a separate pass to avoid borrow conflicts.
+        let mut diverged: Vec<(usize, std::path::PathBuf, bool)> = Vec::new();
+        for (i, p) in self.panes.iter().enumerate() {
+            let Pane::Editor(b) = p else { continue };
+            let Some(path) = &b.path else { continue };
+            let Some(last_known) = b.disk_mtime else {
+                continue;
+            };
+            let Ok(now_mtime) = std::fs::metadata(path).and_then(|m| m.modified()) else {
+                continue;
+            };
+            if now_mtime > last_known {
+                diverged.push((i, path.clone(), b.dirty));
+            }
+        }
+        for (idx, path, was_dirty) in diverged {
+            if was_dirty {
+                let rel = rel_path(&self.workspace, &path);
+                self.toast(format!(
+                    "{rel} changed on disk — :e! to discard / save to overwrite"
+                ));
+                // Update mtime so we don't re-toast next tick.
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    b.disk_mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+                }
+            } else {
+                // Clean ⇒ silently reload. Capture cursor + scroll, re-read,
+                // restore.
+                let (cursor, scroll) = if let Some(Pane::Editor(b)) = self.panes.get(idx) {
+                    (b.editor.cursor(), b.scroll)
+                } else {
+                    (0, 0)
+                };
+                if let Ok(text) = std::fs::read_to_string(&path)
+                    && let Some(Pane::Editor(b)) = self.panes.get_mut(idx)
+                {
+                    let len = b.editor.text().len();
+                    b.apply_edit_ops(
+                        vec![crate::edit_op::EditOp::ReplaceRange {
+                            start: 0,
+                            end: len,
+                            text: text.clone(),
+                        }],
+                        &mut self.clipboard,
+                        0,
+                    );
+                    let new_len = b.editor.text().len();
+                    b.editor.place_cursor(0, 0);
+                    let _ = new_len; // placeholder if needed later
+                    // Restore cursor + scroll best-effort.
+                    let cur = cursor.min(b.editor.text().len());
+                    let row = b.editor.text()[..cur]
+                        .bytes()
+                        .filter(|&c| c == b'\n')
+                        .count();
+                    let line_count = b.editor.line_count();
+                    b.editor
+                        .place_cursor(row.min(line_count.saturating_sub(1)), 0);
+                    b.scroll = scroll.min(line_count.saturating_sub(1));
+                    b.dirty = false;
+                    b.disk_mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+                    let rel = rel_path(&self.workspace, &path);
+                    self.toast(format!("{rel} reloaded"));
+                    self.lsp.did_save(&path, &text);
+                }
+            }
         }
     }
 

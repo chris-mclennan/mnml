@@ -177,6 +177,12 @@ pub struct Buffer {
     /// Stamp of the last text-changing edit (used by `[editor] autosave_secs`).
     /// `None` until the first edit; cleared back to `None` on save.
     pub last_edited: Option<Instant>,
+    /// Last-known on-disk modification time for `path`. Captured on open
+    /// and refreshed on save. The App's tick compares this to the file's
+    /// current mtime and toasts (clean buffer ⇒ auto-reload; dirty ⇒
+    /// warn) when they diverge — catches "you edited this in another
+    /// app" surprises.
+    pub disk_mtime: Option<std::time::SystemTime>,
     /// `Some` when an in-buffer find is active (matches recomputed on every edit).
     pub find: Option<FindState>,
     /// Strip trailing whitespace from each line before writing. Honored by
@@ -237,6 +243,7 @@ impl Buffer {
             diagnostics: Vec::new(),
             inlay_hints: Vec::new(),
             last_edited: None,
+            disk_mtime: std::fs::metadata(path).and_then(|m| m.modified()).ok(),
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
             ensure_trailing_newline: cfg.editor.ensure_trailing_newline,
@@ -275,6 +282,7 @@ impl Buffer {
             diagnostics: Vec::new(),
             inlay_hints: Vec::new(),
             last_edited: None,
+            disk_mtime: None,
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
             ensure_trailing_newline: cfg.editor.ensure_trailing_newline,
@@ -337,6 +345,7 @@ impl Buffer {
         self.saved_text = self.editor.text().to_string();
         self.dirty = false;
         self.last_edited = None;
+        self.disk_mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
         Ok(())
     }
 
@@ -350,6 +359,7 @@ impl Buffer {
             self.apply_ensure_trailing_newline();
         }
         std::fs::write(&path, self.editor.text())?;
+        self.disk_mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
         self.path = Some(path);
         self.saved_text = self.editor.text().to_string();
         self.dirty = false;

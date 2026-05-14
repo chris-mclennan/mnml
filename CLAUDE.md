@@ -239,6 +239,22 @@ non-zero exit ⇒ buffer untouched + toast with stderr preview. Useful for `jq .
 **`lsp.organize_imports`** (`Alt+Shift+O`) — fires `textDocument/codeAction` with
 `context.only = ["source.organizeImports"]`; auto-applies the first returned action.
 New `LspManager::code_action_with_only` + client `code_action_inner` factor.
+**Vim named macros** — `q<reg>` records into `<reg>` (`a`-`z`); `qq` records into the
+anonymous `'@'` register (mnml convenience); `q` during recording stops. `@<reg>` replays;
+`@@` replays anonymous. `App.macro_buffer: HashMap<char, Vec<KeyEvent>>`,
+`MacroState::Recording { register, keys }`, new `AppCommand::MacroRecordInto(c)` /
+`MacroReplayFrom(c)` for register-aware dispatch. Vim handler keeps a local
+`is_recording_macro: bool` mirror so the `q` chord can decide between "enter
+record-target prefix" (idle) and "stop the recording" (recording).
+**Vim `K` / `Ctrl+]` / `Ctrl+T`** — keyword help (LSP hover) / jump to definition /
+jumplist back. The latter two are vim's tag-stack chords; mnml aliases them to the
+existing LSP/nav commands since we don't have a separate ctags layer.
+**External file modification detection** — every ~2 sec `App::tick` calls
+`check_external_file_changes` which compares each open editor buffer's
+`Buffer.disk_mtime` (set on open + save) against the file's current mtime. Clean buffer ⇒
+silently reload (preserve cursor row + scroll best-effort, fire `did_save` to LSP);
+dirty buffer ⇒ toast a warning ("<file> changed on disk — :e! to discard / save to
+overwrite") and update mtime so the warning fires only once per change.
 **Vim `"1`-`"9` delete history** — every delete that goes to the unnamed register also
 pushes onto a 9-deep ring (`"1` = most recent, shifts older entries down to `"2`-`"9`,
 drops past `"9`). Explicit named-register deletes (`"add`) don't pollute the ring (vim
