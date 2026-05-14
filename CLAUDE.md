@@ -246,13 +246,25 @@ anonymous `'@'` register (mnml convenience); `q` during recording stops. `@<reg>
 `MacroReplayFrom(c)` for register-aware dispatch. Vim handler keeps a local
 `is_recording_macro: bool` mirror so the `q` chord can decide between "enter
 record-target prefix" (idle) and "stop the recording" (recording).
-**Vim-surround** (`ds<c>` / `cs<from><to>`) — vim-surround plugin equivalent. `ds"`
-deletes the surrounding `"..."` quote pair (leaves inner content); `cs"'` changes
-`"..."` to `'...'`; works for quotes (`"`, `'`, `` ` ``) and brackets (`(`/`)`,
-`[`/`]`, `{`/`}`, `<`/`>`). New `EditOp::DeleteSurround(c)` /
-`ChangeSurround{from, to}`. Operator-pending `s` (after `d` or `c`) routes into
-new `Prefix::SurroundDelete` / `SurroundChange(char)`. `ys{motion}<c>` (add
-surround) is a follow-up.
+**Vim-surround** (`ds<c>` / `cs<from><to>` / `ys{motion}<c>` / `yss<c>`) — full
+vim-surround equivalent. `ds"` deletes the surrounding `"..."`; `cs"'` changes them
+to `'...'`; `ysiw"` wraps the inner word with quotes; `yss<` wraps the current line
+with `<...>`. Works for quotes (`"`, `'`, `` ` ``) and brackets (`(`/`)`, `[`/`]`,
+`{`/`}`, `<`/`>`). New `EditOp::DeleteSurround(c)` / `ChangeSurround{from, to}` /
+`SurroundSelection{open, close}`. Operator-pending `s` after `d`/`c`/`y` routes into
+new prefix variants (`SurroundDelete`, `SurroundChange(char)`, `SurroundAddCharWait`).
+The add-surround flow uses a two-phase build: motion completes ⇒ `pending_surround_ops`
+holds the select-ops, transition to char-wait ⇒ char arrives, emit
+`[…select…, SurroundSelection, SelectClear]`.
+**`.editorconfig` support** — `Buffer::apply_editorconfig(workspace)` walks up from
+the file's directory to (or until `root = true`), parses `.editorconfig` files, and
+applies per-file overrides for `tab_width` / `indent_size` ⇒ `editor.tab_width`,
+`insert_final_newline` ⇒ `ensure_trailing_newline`, `trim_trailing_whitespace` ⇒
+`trim_trailing_ws_on_save`. New `editorconfig` module hand-rolls a minimal INI parser
++ glob matcher (`*` non-`/`, `**` any, `?` one char, exact, `/`-anchored). Brace
+expansion `{js,ts}` and char classes `[abc]` skipped — patterns containing them fall
+through to no-match (safer than wrong-match). Ran on every `Buffer::open` from the
+App side (3 call sites). 6 unit tests in the module.
 **Vim `K` / `Ctrl+]` / `Ctrl+T`** — keyword help (LSP hover) / jump to definition /
 jumplist back. The latter two are vim's tag-stack chords; mnml aliases them to the
 existing LSP/nav commands since we don't have a separate ctags layer.

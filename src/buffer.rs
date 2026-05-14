@@ -263,6 +263,29 @@ impl Buffer {
         Ok(b)
     }
 
+    /// Apply any `.editorconfig` settings that match the buffer's path,
+    /// walking up from the file's directory to (and including) `workspace`.
+    /// No-op when the buffer has no path. Closer-to-file settings win.
+    /// Run by `App` right after `Buffer::open` so the per-file overrides
+    /// land before any edits.
+    pub fn apply_editorconfig(&mut self, workspace: &Path) {
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+        let cfg = crate::editorconfig::resolve_for(&path, workspace);
+        if let Some(w) = cfg.tab_width
+            && w >= 1
+        {
+            self.editor.set_tab_width(w);
+        }
+        if let Some(v) = cfg.insert_final_newline {
+            self.ensure_trailing_newline = v;
+        }
+        if let Some(v) = cfg.trim_trailing_whitespace {
+            self.trim_trailing_ws_on_save = v;
+        }
+    }
+
     pub fn scratch(cfg: &Config) -> Buffer {
         let mut editor = Editor::new(String::new(), cfg.editor.tab_width);
         editor.auto_pair = cfg.editor.auto_pair;

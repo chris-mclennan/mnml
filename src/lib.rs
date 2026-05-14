@@ -24,6 +24,7 @@ pub mod context_menu;
 pub mod e2e;
 pub mod edit_op;
 pub mod editor;
+pub mod editorconfig;
 pub mod focus;
 pub mod fuzzy;
 pub mod git;

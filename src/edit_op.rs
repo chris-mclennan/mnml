@@ -74,6 +74,16 @@ pub enum EditOp {
     /// `around` includes the quote chars themselves.
     SelectInnerSmartQuote,
     SelectAroundSmartQuote,
+    /// vim-surround `ys{motion}<c>` — wrap the active selection with the
+    /// `open` char on the left and `close` on the right. Both chars come
+    /// from a single user keystroke after motion completes — quotes are
+    /// symmetric (open == close) and brackets pair canonically (handled
+    /// in the editor by the `surround_open_close` mapping). Cursor lands
+    /// at the post-edit cursor of the closing char.
+    SurroundSelection {
+        open: char,
+        close: char,
+    },
     /// vim-surround `ds<c>` — find the enclosing pair of `<c>` (quote
     /// or bracket; `c`'s match is implied — e.g. `ds(` matches `(...)`)
     /// and delete just the open + close chars, leaving the inner content

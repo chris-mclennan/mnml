@@ -2348,6 +2348,9 @@ impl App {
         // etc. route to `Pane::Request` once that track lands.)
         match Buffer::open(&path, &self.config) {
             Ok(mut buf) => {
+                // .editorconfig overrides the per-buffer settings (tab
+                // width, trailing newline, trim ws). Closer-to-file wins.
+                buf.apply_editorconfig(&self.workspace);
                 // Restore the cursor + scroll from the last time we had this
                 // file open (if anywhere in `file_cursors`); harmless when the
                 // saved cursor doesn't fit the new file text.
@@ -2446,7 +2449,8 @@ impl App {
             self.reveal_pane(i);
         } else {
             match Buffer::open(&path, &self.config) {
-                Ok(buf) => {
+                Ok(mut buf) => {
+                    buf.apply_editorconfig(&self.workspace);
                     let text = buf.editor.text().to_string();
                     self.panes.push(Pane::Editor(buf));
                     let new_id = self.panes.len() - 1;
@@ -3861,7 +3865,10 @@ impl App {
         };
         let new_buf = match path {
             Some(p) => {
-                Buffer::open(&p, &self.config).unwrap_or_else(|_| Buffer::scratch(&self.config))
+                let mut b = Buffer::open(&p, &self.config)
+                    .unwrap_or_else(|_| Buffer::scratch(&self.config));
+                b.apply_editorconfig(&self.workspace);
+                b
             }
             None => Buffer::scratch(&self.config),
         };

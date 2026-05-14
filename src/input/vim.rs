@@ -43,6 +43,11 @@ enum PendingOp {
     Upper,
     /// `g~{motion}` — toggle case of the motion's range.
     ToggleCase,
+    /// vim-surround `ys{motion}<c>` — wrap the motion's range with a
+    /// surround char chosen *after* the motion completes. The motion's
+    /// select-ops get stashed in `pending_surround_ops`, then we transition
+    /// to `Prefix::SurroundAddCharWait` for the char keystroke.
+    SurroundAdd,
 }
 
 /// A multi-key prefix that isn't an operator (`g…`, `Z…`, `r…`).
@@ -106,6 +111,11 @@ enum Prefix {
     SurroundDelete,
     /// vim-surround `cs<from>` — next key is the new surround char.
     SurroundChange(char),
+    /// vim-surround `ys{motion}` waited for the motion to complete; now
+    /// the next key is the surround char. The motion's select-ops are
+    /// stashed in `pending_surround_ops` and merged into the final
+    /// `[…select…, SurroundSelection(open, close), SelectClear]` Ops.
+    SurroundAddCharWait,
 }
 
 #[derive(Debug)]
@@ -140,6 +150,12 @@ pub struct VimInputHandler {
     /// prefix (idle) or fire the stop toggle (recording). Kept in sync by
     /// `MacroRecordInto` dispatch (start) and the `q` stop arm.
     is_recording_macro: bool,
+    /// vim-surround `ys{motion}<c>` builds an Ops sequence in two parts —
+    /// the motion's selection (filled when motion completes), then the
+    /// final `SurroundSelection(open, close)` (filled when the surround
+    /// char arrives). This stash holds the partial selection ops while
+    /// `Prefix::SurroundAddCharWait` waits for the surround char.
+    pending_surround_ops: Vec<EditOp>,
 }
 
 impl VimInputHandler {
@@ -156,6 +172,7 @@ impl VimInputHandler {
             pending_register: None,
             insert_waiting_for_register: false,
             is_recording_macro: false,
+            pending_surround_ops: Vec::new(),
         }
     }
 
@@ -529,7 +546,10 @@ impl VimInputHandler {
                                     ));
                                     ops.push(SelectClear);
                                 }
-                                PendingOp::Indent | PendingOp::Outdent | PendingOp::Reflow => {
+                                PendingOp::Indent
+                                | PendingOp::Outdent
+                                | PendingOp::Reflow
+                                | PendingOp::SurroundAdd => {
                                     // Not meaningful for a find-match
                                     // range — drop silently.
                                     return InputResult::Consumed;
@@ -696,6 +716,13 @@ impl VimInputHandler {
                         ));
                         ops.push(SelectClear);
                     }
+                    PendingOp::SurroundAdd => {
+                        // Find-char + ys ⇒ stash the find selection ops
+                        // and wait for the surround char.
+                        self.pending_surround_ops = ops.clone();
+                        self.prefix = Prefix::SurroundAddCharWait;
+                        return InputResult::Consumed;
+                    }
                 }
                 return InputResult::Ops(ops);
             }
@@ -802,6 +829,14 @@ impl VimInputHandler {
                         ));
                         ops.push(SelectClear);
                     }
+                    PendingOp::SurroundAdd => {
+                        // Stash the select-ops and wait for the surround
+                        // char. `ops` was built from the text-object's
+                        // `select_op`; we use those as the selection.
+                        self.pending_surround_ops = ops.clone();
+                        self.prefix = Prefix::SurroundAddCharWait;
+                        return InputResult::Consumed;
+                    }
                 }
                 return InputResult::Ops(ops);
             }
@@ -881,6 +916,33 @@ impl VimInputHandler {
                 }
                 return InputResult::Consumed;
             }
+            Prefix::SurroundAddCharWait => {
+                // `ys{motion}<c>` (or `yss<c>`) — char arrives now.
+                // The selection ops are already in pending_surround_ops.
+                let stash = std::mem::take(&mut self.pending_surround_ops);
+                self.reset_pending();
+                if let KeyCode::Char(c) = key.code {
+                    let valid = matches!(
+                        c,
+                        '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+                    );
+                    if valid {
+                        let (open, close) = match c {
+                            '"' | '\'' | '`' => (c, c),
+                            '(' | ')' => ('(', ')'),
+                            '[' | ']' => ('[', ']'),
+                            '{' | '}' => ('{', '}'),
+                            '<' | '>' => ('<', '>'),
+                            _ => unreachable!(),
+                        };
+                        let mut ops = stash;
+                        ops.push(SurroundSelection { open, close });
+                        ops.push(SelectClear);
+                        return InputResult::Ops(ops);
+                    }
+                }
+                return InputResult::Consumed;
+            }
             Prefix::SurroundChange(from) => {
                 if from == '\0' {
                     // First key: capture the FROM char.
@@ -956,6 +1018,7 @@ impl VimInputHandler {
                     | (PendingOp::Lower, KeyCode::Char('u'))
                     | (PendingOp::Upper, KeyCode::Char('U'))
                     | (PendingOp::ToggleCase, KeyCode::Char('~'))
+                    | (PendingOp::SurroundAdd, KeyCode::Char('s'))
             );
             let n = self.count1();
             self.reset_pending();
@@ -991,23 +1054,33 @@ impl VimInputHandler {
                         TransformSelectionCase(crate::edit_op::CaseTransform::Toggle),
                         SelectClear,
                     ]),
+                    PendingOp::SurroundAdd => {
+                        // `yss<c>` ⇒ surround the current line.
+                        self.pending_surround_ops = vec![SelectLine];
+                        self.prefix = Prefix::SurroundAddCharWait;
+                        InputResult::Consumed
+                    }
                 };
             }
-            // operator + `s` ⇒ vim-surround chord (`ds<c>` deletes,
-            // `cs<from><to>` changes). `ys{motion}<c>` is a follow-up.
+            // operator + `s` ⇒ vim-surround chord:
+            // - `ds<c>` deletes a surround pair
+            // - `cs<from><to>` changes a surround pair
+            // - `ys{motion}<c>` adds a surround around the motion's range
             if matches!(key.code, KeyCode::Char('s')) {
                 if matches!(op, PendingOp::Delete) {
                     self.prefix = Prefix::SurroundDelete;
                     return InputResult::Consumed;
                 }
                 if matches!(op, PendingOp::Change) {
-                    // Need the FROM char first; SurroundChange(from) then
-                    // takes the second key as the TO.
-                    // Switch to a wait-for-from sub-state by setting
-                    // SurroundChange('\0') as a placeholder. The next key
-                    // becomes `from`, then we transition to
-                    // SurroundChange(from) waiting for `to`.
                     self.prefix = Prefix::SurroundChange('\0');
+                    return InputResult::Consumed;
+                }
+                if matches!(op, PendingOp::Yank) {
+                    // `ys{motion}<c>` — motion comes next, then char.
+                    // Mark with a SurroundAdd op so the motion handler
+                    // stashes the select ops + transitions to char-wait.
+                    self.op = Some(PendingOp::SurroundAdd);
+                    self.pending_surround_ops.clear();
                     return InputResult::Consumed;
                 }
             }
@@ -1092,6 +1165,12 @@ impl VimInputHandler {
                             crate::edit_op::CaseTransform::Toggle,
                         ));
                         ops.push(SelectClear);
+                    }
+                    PendingOp::SurroundAdd => {
+                        // `ys{motion}` ⇒ stash select ops, await char.
+                        self.pending_surround_ops = ops.clone();
+                        self.prefix = Prefix::SurroundAddCharWait;
+                        return InputResult::Consumed;
                     }
                 }
                 return InputResult::Ops(ops);
@@ -1825,6 +1904,7 @@ impl InputHandler for VimInputHandler {
                 PendingOp::Lower => s.push_str("gu"),
                 PendingOp::Upper => s.push_str("gU"),
                 PendingOp::ToggleCase => s.push_str("g~"),
+                PendingOp::SurroundAdd => s.push_str("ys"),
             }
         }
         match self.prefix {
@@ -1855,6 +1935,7 @@ impl InputHandler for VimInputHandler {
             Prefix::MacroRecordTarget => s.push('q'),
             Prefix::MacroReplayTarget => s.push('@'),
             Prefix::SurroundDelete => s.push_str("ds"),
+            Prefix::SurroundAddCharWait => s.push_str("ys"),
             Prefix::SurroundChange(from) => {
                 if from == '\0' {
                     s.push_str("cs");

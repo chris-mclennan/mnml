@@ -29,3 +29,16 @@ key s
 key (
 key <
 expect screen contains "let t = <1, 2>;"
+
+# `ysiw"` — wrap inner word with quotes. Move to line 3 (let u = [a, b];)
+# which was unaffected. `j 0 w` puts cursor on "u".
+key j
+key 0
+key w
+# `ysiw"` wraps the word "u" with quotes.
+key y
+key s
+key i
+key w
+key "
+expect screen contains "\"u\""

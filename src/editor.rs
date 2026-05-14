@@ -352,6 +352,11 @@ impl Editor {
         self.comment_token = token.into();
     }
     /// Move the cursor to `(row, col)` (both clamped), clearing any selection.
+    /// Update the tab width. Used by .editorconfig per-buffer overrides.
+    pub fn set_tab_width(&mut self, width: usize) {
+        self.tab_width = width.max(1);
+    }
+
     /// Set the selection to the byte range `[start, end)`. The cursor lands
     /// at `end` and the anchor at `start`. Clamps to text bounds. No-op when
     /// either offset isn't on a char boundary.
@@ -1063,6 +1068,23 @@ impl Editor {
                         self.anchor = Some(open + q.len_utf8());
                         self.cursor = close;
                     }
+                }
+            }
+            SurroundSelection { open, close } => {
+                if let Some((lo, hi)) = self.selection() {
+                    self.checkpoint();
+                    let mut close_buf = [0u8; 4];
+                    let close_str = close.encode_utf8(&mut close_buf);
+                    let mut open_buf = [0u8; 4];
+                    let open_str = open.encode_utf8(&mut open_buf);
+                    // Insert close at hi first (later offset), then open at
+                    // lo, so earlier offsets stay valid.
+                    self.text.insert_str(hi, close_str);
+                    self.text.insert_str(lo, open_str);
+                    // Land cursor on the closing char.
+                    self.cursor = hi + open.len_utf8();
+                    self.anchor = None;
+                    out.buffer_changed = true;
                 }
             }
             DeleteSurround(c) => {
