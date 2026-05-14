@@ -366,6 +366,11 @@ expression eval (vim's `:execute` does string concat with `.`).
 buffer's `language_ext` so the highlighter targets a different grammar
 (`:setf rust` for a `.txt` snippet that's actually code, etc.). Re-runs the
 highlighter immediately.
+**`:enew` / `:ene`** — fresh scratch buffer in the current pane.
+**`:vimgrep <pat>` / `:grep <pat>` / `:gr <pat>`** — alias for workspace grep
+(routes through `run_workspace_grep`).
+**`:copen` / `:cclose` / `:cwin[dow]`** — focus / close the grep pane (mnml's
+quickfix). Same alias family as the vim quickfix commands.
 **Persistent ex history** — moved from vim handler to App; survives across sessions
 via `SavedSession.ex_history` (oldest first, capped at 100). New `InputHandler::
 set_ex_history` / `ex_history()` trait methods so the App can sync. Pre-seeded

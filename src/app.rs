@@ -10323,6 +10323,14 @@ impl App {
                     _ => self.toast(":syntax on|off"),
                 }
             }
+            // `:enew` / `:ene` — fresh scratch buffer in current pane.
+            "enew" | "ene" => {
+                let buf = crate::buffer::Buffer::scratch(&self.config);
+                self.panes.push(Pane::Editor(buf));
+                let new_id = self.panes.len() - 1;
+                self.reveal_pane(new_id);
+                self.toast(":enew");
+            }
             // `:make [task]` — kick off the configured `[tasks.make]`
             // task (or the named task) in a pty pane. Vim canonical for
             // "build / test from inside the editor".
@@ -10565,6 +10573,33 @@ impl App {
                     b.recompute_dirty();
                     b.refresh_highlights();
                     self.toast(format!(":later {n}"));
+                }
+            }
+            // `:copen` / `:cclose` / `:cwin[dow]` — focus / close the
+            // grep ("quickfix") pane. mnml has one such pane per session.
+            // `:vimgrep <pat>` / `:grep <pat>` / `:gr` — workspace grep
+            // (vim's vimgrep + Quickfix one-shot). Result lands in the
+            // grep pane.
+            "vimgrep" | "vim" | "grep" | "gr" => {
+                let q = rest.trim();
+                if q.is_empty() {
+                    self.toast(":grep <pattern>");
+                } else {
+                    self.run_workspace_grep(q.to_string());
+                }
+            }
+            "copen" | "cope" | "cwindow" | "cwin" => {
+                if let Some(idx) = self.panes.iter().position(|p| matches!(p, Pane::Grep(_))) {
+                    self.reveal_pane(idx);
+                } else {
+                    self.toast(":copen — no grep results yet");
+                }
+            }
+            "cclose" | "ccl" => {
+                if let Some(idx) = self.panes.iter().position(|p| matches!(p, Pane::Grep(_))) {
+                    self.force_close_pane(idx);
+                } else {
+                    self.toast(":cclose — no grep pane");
                 }
             }
             "cnext" | "cn" => self.quickfix_navigate(1),
