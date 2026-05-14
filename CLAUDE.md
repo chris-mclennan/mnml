@@ -214,7 +214,9 @@ vs `ai/mod.rs`) via `tab_labels(&panes)`. **Middle-click closes a tab** (browser
 `tui::dispatch_mouse`). Per-tab **diagnostic chip** (`bufferline::diag_chip_for`) — editor
 tabs whose buffer has LSP diagnostics render `✗N` (errors, red) or `⚠N` (warnings, yellow) between the name
 and the dirty badge; errors win over warnings. Widths recompute so the strip layout stays tight. **Statusline polish** — `Ln 12/580` (current of total) + a yellow `Sel N` chip
-when there's a selection (chars selected).
+when there's a selection (chars selected). **Find chip** — when a `find.find` is active on the buffer, a yellow
+`/<query> N/M` chip surfaces on the left side (after diagnostics) so the match count is visible without re-opening the
+prompt; the query is char-truncated at 24.
 **Zen mode** — `view.zen` (`Ctrl+Shift+Z`) hides tree + bufferline + statusline; the editor takes the full window.
 Overlays (picker, prompt, hover, completion) still work. Not persisted — fresh launch is a normal IDE view.
 **Reopen closed buffer** — `buffer.reopen` (`Ctrl+Shift+T`, `<leader>b r`): pops the
@@ -223,7 +225,10 @@ most-recently-closed editor off `App.closed_buffers` (capped at `CLOSED_BUFFERS_
 `(cursor, scroll)` from `file_cursors` is restored. Not persisted across sessions — that's what
 `recent_files` is for.
 **Recent files** — `App::recent_files` (last 20 paths opened, de-duped, newest-first) updated in `open_path` and persisted
-in `session.json`. `picker.recent` (`Ctrl+R`) opens a fuzzy picker over them.
+in `session.json`. `picker.recent` (`Ctrl+R`) opens a fuzzy picker over them. Also surfaced at the **top of `Ctrl+P`** —
+`open_file_picker` prepends recent files (in recency order) before the workspace file list (de-duped against it). Empty
+query → recents on top (the fuzzy `refilter` keeps original order on tie scores); start typing → score-based ranking
+takes over and the order is determined by the match.
 **Persisted theme** — `theme.pick` writes the picked theme name to session.json; restore calls a silent `set_theme_silent`
 so a "theme: …" toast doesn't pop on every launch. Unknown theme names ⇒ launch default. **`Ctrl+G` go to line** —
 standard-mode equivalent of vim's `:N`. **Esc clears find highlights** — Esc on an editor with active find drops the find
@@ -705,7 +710,8 @@ and pops the fold from `b.folds`.
 the literal `global`; each entry is `<trigger> = "<expansion>"`). Two ways in: `snippet.expand` (`Ctrl+J`) replaces the
 identifier prefix immediately left of the active editor's cursor with the matching trigger's expansion (toasts if no match);
 `snippet.pick` (`<leader>i s`, `PickerKind::Snippets`) opens a fuzzy picker over every snippet available for the active buffer
-and inserts the chosen one at the cursor without consuming a trigger word. A single literal `$0` in the expansion picks where
+and inserts the chosen one at the cursor without consuming a trigger word. The picker preview joins multi-line expansions
+with `↵` (placeholder markers stripped) and caps at 60 chars so multi-line snippets stay readable in one row. A single literal `$0` in the expansion picks where
 the cursor lands after insertion (absent ⇒ cursor at the end of the inserted text); further `$0`s are left in the text as
 literals. Extension-scoped triggers shadow same-named `global` ones. `snippets::snippets_for(table, ext)` returns the sorted
 list (ext first, then global), `snippets::find_by_trigger` does exact-match lookup, `snippets::word_before_cursor` extracts

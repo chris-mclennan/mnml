@@ -1485,24 +1485,40 @@ impl App {
     pub fn close_picker(&mut self) {
         self.picker = None;
     }
-    /// Open the fuzzy file finder over every file in the workspace.
+    /// Open the fuzzy file finder over every file in the workspace. Recent
+    /// files (from `App::recent_files`) are prepended in recency order so
+    /// "Ctrl+P, Enter" jumps straight back to the last file — fuzzy
+    /// `refilter` keeps original order on tie scores, and the empty-query
+    /// score is constant, so the prepended order survives until the user
+    /// types something.
     pub fn open_file_picker(&mut self) {
         use crate::picker::PickerItem;
+        use std::collections::HashSet;
         let root = self.workspace.clone();
-        let items: Vec<PickerItem> = self
-            .tree
-            .all_files()
-            .into_iter()
-            .map(|p| {
-                let rel = p.strip_prefix(&root).unwrap_or(&p).to_path_buf();
-                let label = rel.to_string_lossy().to_string();
-                let dir = rel
-                    .parent()
-                    .map(|d| d.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                PickerItem::new(p.to_string_lossy().to_string(), label, dir)
-            })
-            .collect();
+        let make_item = |p: &Path| -> PickerItem {
+            let rel = p.strip_prefix(&root).unwrap_or(p).to_path_buf();
+            let label = rel.to_string_lossy().to_string();
+            let dir = rel
+                .parent()
+                .map(|d| d.to_string_lossy().to_string())
+                .unwrap_or_default();
+            PickerItem::new(p.to_string_lossy().to_string(), label, dir)
+        };
+        // Recents first (newest first; absolute paths only — non-workspace
+        // entries silently come along, which is fine, they still open).
+        let mut seen: HashSet<PathBuf> = HashSet::new();
+        let mut items: Vec<PickerItem> = Vec::new();
+        for p in &self.recent_files {
+            if seen.insert(p.clone()) && p.exists() {
+                items.push(make_item(p));
+            }
+        }
+        // Then the rest of the workspace, skipping anything already in.
+        for p in self.tree.all_files() {
+            if seen.insert(p.clone()) {
+                items.push(make_item(&p));
+            }
+        }
         self.open_picker(Picker::new(PickerKind::Files, "Open file", items));
     }
 
@@ -2726,8 +2742,23 @@ impl App {
             .iter()
             .enumerate()
             .map(|(i, s)| {
-                // First line of the expansion as the preview detail.
-                let preview = s.text.lines().next().unwrap_or("").to_string();
+                // Multi-line preview: collapse to a single inline string
+                // joining lines with a `↵` glyph so the user sees the shape
+                // of the expansion without the picker row going multi-line.
+                // Strip placeholder markers (`$0`/`$1`/…) so the preview
+                // shows what the inserted text looks like.
+                let raw = s.text.replace("$0", "");
+                let mut preview: String = raw
+                    .lines()
+                    .map(str::trim_end)
+                    .filter(|l| !l.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ↵ ");
+                // Cap so the preview doesn't blow up the picker row.
+                if preview.chars().count() > 60 {
+                    let truncated: String = preview.chars().take(60).collect();
+                    preview = format!("{truncated}…");
+                }
                 PickerItem::new(
                     i.to_string(),
                     format!("{}  →  {}", s.trigger, preview),

@@ -129,6 +129,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     theme::cur().statusline,
                 ));
             }
+            // Active find: ` " quoted query "  N/M ` so the user knows what's
+            // matched without re-opening the prompt.
+            if let Some(f) = b.find.as_ref()
+                && !f.matches.is_empty()
+            {
+                let cur = f.current.map(|i| i + 1).unwrap_or(0);
+                let m = f.matches.len();
+                // Truncate long queries so the chip stays readable.
+                let q: String = f.query.chars().take(24).collect();
+                let ellip = if f.query.chars().count() > 24 { "…" } else { "" };
+                left.push(Seg::new(
+                    format!(" /{q}{ellip} {cur}/{m} "),
+                    theme::cur().bg_darker,
+                    theme::cur().yellow,
+                ));
+            }
         }
         None => left.push(Seg::new(
             " [no file] ",
