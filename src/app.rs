@@ -273,7 +273,9 @@ fn parse_line_range(
     let mut split = 0usize;
     while split < bytes.len() {
         let b = bytes[split];
-        if b.is_ascii_alphabetic() {
+        // Stop at the first ASCII letter or vim-canonical command-char
+        // (`>` / `<` for indent / outdent).
+        if b.is_ascii_alphabetic() || b == b'>' || b == b'<' {
             break;
         }
         split += 1;
@@ -7822,6 +7824,67 @@ impl App {
         self.toast(format!(":d {start_line}..{end_line} ({n} line(s))"));
     }
 
+    /// `:1,5>` / `:1,5<` — indent / outdent the line range by one
+    /// `[editor] tab_width` step. `indent=true` ⇒ `>`. Selects the
+    /// range first, then runs the existing Indent/Outdent op.
+    pub fn indent_lines_range(&mut self, start_line: usize, end_line: usize, indent: bool) {
+        let Some(idx) = self.active else {
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+            return;
+        };
+        let line_count = b.editor.line_count();
+        let end_line = end_line.min(line_count.saturating_sub(1));
+        let start_line = start_line.min(end_line);
+        // Place cursor at start of start_line, then SelectLine + extend
+        // by (end - start) MoveDown's. Operator emits Indent/Outdent.
+        b.editor.place_cursor(start_line, 0);
+        b.editor
+            .apply(crate::edit_op::EditOp::SelectLine, 20, &mut self.clipboard);
+        for _ in 0..(end_line - start_line) {
+            b.editor
+                .apply(crate::edit_op::EditOp::MoveDown, 20, &mut self.clipboard);
+        }
+        let op = if indent {
+            crate::edit_op::EditOp::Indent
+        } else {
+            crate::edit_op::EditOp::Outdent
+        };
+        b.editor.apply(op, 20, &mut self.clipboard);
+        b.editor
+            .apply(crate::edit_op::EditOp::SelectClear, 20, &mut self.clipboard);
+        let arrow = if indent { ">" } else { "<" };
+        self.toast(format!(":{arrow} {start_line}..{end_line}"));
+    }
+
+    /// `:1,5j` / `:1,5join` — join lines in `[start_line..=end_line]` into
+    /// one line. Same trim+space-insert rules as the `J` op (vim
+    /// canonical). No-op when range is a single line.
+    pub fn join_lines_range(&mut self, start_line: usize, end_line: usize) {
+        if end_line <= start_line {
+            return;
+        }
+        let Some(idx) = self.active else {
+            self.toast(":j — no active editor");
+            return;
+        };
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+            // Place cursor on start_line, then fire J (end_line - start_line)
+            // times to collapse the range upward.
+            b.editor.place_cursor(start_line, 0);
+            let count = end_line - start_line;
+            for _ in 0..count {
+                b.editor.apply(
+                    crate::edit_op::EditOp::JoinLines { keep_space: true },
+                    20,
+                    &mut self.clipboard,
+                );
+            }
+            self.toast(format!(":j {start_line}..{end_line}"));
+        }
+    }
+
     /// `:1,5y` — yank lines `[start_line..=end_line]` (0-based, inclusive)
     /// linewise into the unnamed register. Doesn't modify the buffer.
     pub fn yank_lines(&mut self, start_line: usize, end_line: usize) {
@@ -10084,6 +10147,18 @@ impl App {
                     self.yank_lines(start, end);
                     return;
                 }
+                "j" | "join" => {
+                    self.join_lines_range(start, end);
+                    return;
+                }
+                ">" | ">>" => {
+                    self.indent_lines_range(start, end, true);
+                    return;
+                }
+                "<" | "<<" => {
+                    self.indent_lines_range(start, end, false);
+                    return;
+                }
                 _ => { /* fall through to normal dispatcher */ }
             }
         }
@@ -10264,6 +10339,12 @@ impl App {
             "qa" | "qall" | "quitall" => self.should_quit = true,
             "qa!" | "qall!" => self.should_quit = true,
             "bd" | "bdelete" => self.close_active_pane(),
+            // `:bd!` / `:bdelete!` — force-close (bypass dirty prompt).
+            "bd!" | "bdelete!" => {
+                if let Some(idx) = self.active {
+                    self.force_close_pane(idx);
+                }
+            }
             "bn" | "bnext" => self.next_buffer(),
             "bp" | "bprev" | "bprevious" => self.prev_buffer(),
             // `:b <substr>` / `:buffer <substr>` — switch to the editor pane
@@ -10483,6 +10564,19 @@ impl App {
                     b.language_ext = Some(name.to_string());
                     b.refresh_highlights();
                     self.toast(format!(":setf {name}"));
+                }
+            }
+            // `:j` / `:join` — bare form joins the current line with the
+            // next (vim's `J`).
+            "j" | "join" => {
+                let Some(idx) = self.active else { return };
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    b.editor.apply(
+                        crate::edit_op::EditOp::JoinLines { keep_space: true },
+                        20,
+                        &mut self.clipboard,
+                    );
+                    self.toast(":j");
                 }
             }
             "syntax" | "syn" => {

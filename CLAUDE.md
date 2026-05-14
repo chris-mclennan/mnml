@@ -378,6 +378,11 @@ and `+N`/`-N`/`.+N`/`.-N` relative refs. Wired for `d`/`y` only — `s` already 
 its own scoping via `%`. New `App::delete_lines` / `yank_lines` helpers.
 **Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
 Single-key chord in the `g` prefix.
+**`:1,5j` / `:join`** — bare form joins current+next; ranged form collapses the
+range. Same trim+space rules as `J`.
+**`:1,5>` / `:1,5<`** — indent / outdent line range by one tab_width step. Parser
+also stops at `>` / `<` boundaries (not just letters).
+**`:bd!` / `:bdelete!`** — force-close (bypass the dirty prompt).
 **Persistent ex history** — moved from vim handler to App; survives across sessions
 via `SavedSession.ex_history` (oldest first, capped at 100). New `InputHandler::
 set_ex_history` / `ex_history()` trait methods so the App can sync. Pre-seeded
