@@ -138,7 +138,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 let m = f.matches.len();
                 // Truncate long queries so the chip stays readable.
                 let q: String = f.query.chars().take(24).collect();
-                let ellip = if f.query.chars().count() > 24 { "…" } else { "" };
+                let ellip = if f.query.chars().count() > 24 {
+                    "…"
+                } else {
+                    ""
+                };
                 left.push(Seg::new(
                     format!(" /{q}{ellip} {cur}/{m} "),
                     theme::cur().bg_darker,

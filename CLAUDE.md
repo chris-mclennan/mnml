@@ -136,6 +136,11 @@ back from the cursor for an unmatched open, then forward for the matching close 
 50k-char budget per side). Spans multiple lines unlike the quote variants.
 **Half-page scroll** — new `EditOp::HalfPageUp` / `HalfPageDown` (interpreted in `editor.rs::apply` with
 `vp / 2`). Bound to `Ctrl+U` / `Ctrl+D` in vim normal mode (vim canonical).
+**Vim `Y` / `J`** — `Y` yanks the current line (alias for `yy`, emits `EditOp::YankLine`). `J` properly
+joins the next line in via new `EditOp::JoinLines` — trims trailing whitespace from the current line,
+trims leading whitespace from the next, inserts a single space (omitted when the current line is empty,
+vim's convention). `[count]J` repeats — `3J` brings two lines up. Cursor lands on the inserted space
+(or at the join boundary when none was inserted).
 **Vim change list (`g;` / `g,`)** — every text-changing edit pushes the cursor's `(row, col)` onto the
 buffer's `edit_history: Vec<(usize, usize)>` (capped at `EDIT_HISTORY_MAX = 100`); consecutive entries
 within a few columns of each other dedupe so a burst of typing doesn't bury the list. `g;` walks back,

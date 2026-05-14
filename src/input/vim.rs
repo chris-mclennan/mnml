@@ -619,10 +619,19 @@ impl VimInputHandler {
                 InputResult::Consumed
             }
             KeyCode::Char('J') => {
+                let n = self.count1();
                 self.reset_pending();
-                // join: go to line end, delete forward (the newline + leading ws would
-                // need a dedicated op — approximate with DeleteForward for now).
-                InputResult::Ops(vec![MoveLineEnd, DeleteForward])
+                // vim `J` joins the next line in (with a single space, leading
+                // whitespace eaten). `[count]J` joins `count - 1` more lines
+                // — `3J` brings two lines up. `JoinLines` is a single op; we
+                // repeat it to get the count right.
+                let times = n.max(1).saturating_sub(1).max(1);
+                InputResult::Ops(Self::repeated(JoinLines, times))
+            }
+            KeyCode::Char('Y') => {
+                // vim `Y` — yank the current line (synonym for `yy`).
+                self.reset_pending();
+                InputResult::Ops(vec![YankLine])
             }
             // paste / undo / redo
             KeyCode::Char('p') => {

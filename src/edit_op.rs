@@ -122,6 +122,13 @@ pub enum EditOp {
     MoveLineDown,
     /// Duplicate the current line below itself (VSCode `Ctrl+Shift+D`).
     DuplicateLine,
+    /// vim `J` — join the next line into the current one. Trims trailing
+    /// whitespace from the current line + leading whitespace from the next,
+    /// then inserts a single space (unless the current line is empty or
+    /// already ends with whitespace, in which case no separator is inserted —
+    /// vim convention). Cursor lands at the join boundary. No-op on the
+    /// last line.
+    JoinLines,
 
     // ── clipboard / registers ──
     /// vim `yy`

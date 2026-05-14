@@ -1247,6 +1247,49 @@ impl Editor {
                 self.cursor = self.byte_at_col(line + 1, col);
                 out.buffer_changed = true;
             }
+            JoinLines => {
+                // vim `J` — join the next line into the current one.
+                let line = self.current_line();
+                let total = self.line_count();
+                if line + 1 < total {
+                    self.checkpoint();
+                    let bol = self.line_start(line);
+                    let eol = self.line_end(line);
+                    // Walk back from end-of-line past trailing whitespace.
+                    let mut trim_end = eol;
+                    while trim_end > bol {
+                        let b = self.text.as_bytes()[trim_end - 1];
+                        if b == b' ' || b == b'\t' {
+                            trim_end -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    // Walk forward from the start of the next line past
+                    // leading whitespace. The next line starts at `eol + 1`
+                    // (skipping the `\n`).
+                    let next_bol = eol + 1;
+                    let next_eol = self.line_end(line + 1);
+                    let mut next_first = next_bol;
+                    while next_first < next_eol {
+                        let b = self.text.as_bytes()[next_first];
+                        if b == b' ' || b == b'\t' {
+                            next_first += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    // Insert " " between unless the (post-trim) current line
+                    // is empty — vim's convention.
+                    let separator = if trim_end == bol { "" } else { " " };
+                    self.text.replace_range(trim_end..next_first, separator);
+                    // Cursor lands ON the inserted space (vim convention),
+                    // or at the join boundary when no space was inserted.
+                    self.cursor = trim_end;
+                    self.anchor = None;
+                    out.buffer_changed = true;
+                }
+            }
 
             // ── clipboard / registers ──
             YankLine => {
@@ -1998,6 +2041,44 @@ mod tests {
         let (mut e, mut c) = ed("only");
         e.apply(DuplicateLine, 10, &mut c);
         assert_eq!(e.text(), "only\nonly");
+    }
+
+    #[test]
+    fn join_lines_inserts_single_space_eating_indent() {
+        let (mut e, mut c) = ed("foo \n   bar");
+        e.cursor = 0;
+        e.apply(JoinLines, 10, &mut c);
+        // Trailing ws on first line + leading ws on second eaten; one space.
+        assert_eq!(e.text(), "foo bar");
+        // Cursor lands at the join boundary (where the inserted space is).
+        assert_eq!(e.cursor(), 3);
+    }
+
+    #[test]
+    fn join_lines_no_separator_for_empty_first_line() {
+        let (mut e, mut c) = ed("\nbar");
+        e.cursor = 0;
+        e.apply(JoinLines, 10, &mut c);
+        // Empty first line → no separator inserted.
+        assert_eq!(e.text(), "bar");
+        assert_eq!(e.cursor(), 0);
+    }
+
+    #[test]
+    fn join_lines_noop_on_last_line() {
+        let (mut e, mut c) = ed("only");
+        e.apply(JoinLines, 10, &mut c);
+        assert_eq!(e.text(), "only");
+    }
+
+    #[test]
+    fn join_lines_count_chains_two_joins() {
+        let (mut e, mut c) = ed("a\nb\nc");
+        e.cursor = 0;
+        // 3J ⇒ 2 join ops; should pull both lines up.
+        e.apply(JoinLines, 10, &mut c);
+        e.apply(JoinLines, 10, &mut c);
+        assert_eq!(e.text(), "a b c");
     }
 
     #[test]
