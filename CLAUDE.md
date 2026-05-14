@@ -430,6 +430,13 @@ auto_indent`. Vim canonical.
 `scs` / `hlsearch` / `hls` / `incsearch` / `is` all toast "already on" (mnml's default).
 Their `no…` variants toast "not supported". `:set wrap` / `nowrap` toast "wrap not implemented".
 Vim users get a friendly hint instead of "unknown option".
+**Vim adverbs** — `:keepjumps` / `:keepalt` / `:noautocmd` / `:keepmarks` (plus short forms
+`:keepj` / `:keepa` / `:noa` / `:kee`) strip the adverb and run the inner ex command. mnml's
+jumplist / alt-buffer / autocmd machinery isn't precise enough for strict suppression — the
+adverbs document intent for vim users; behavior matches the bare command.
+**Vim netrw aliases** — `:Explore` / `:E` / `:Sexplore` / `:Sex` / `:Vexplore` / `:Vex` /
+`:Lexplore` / `:Lex` toggle mnml's file tree (closest thing to netrw). **`:browse` / `:bro`**
+opens the `Ctrl+P` file picker (vim canonical "show a file open dialog").
 **Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
 Single-key chord in the `g` prefix.
 **`:1,5j` / `:join`** — bare form joins current+next; ranged form collapses the

@@ -10293,6 +10293,26 @@ impl App {
             self.silent_depth = self.silent_depth.saturating_sub(1);
             return;
         }
+        // Vim adverbs `:keepjumps <cmd>` / `:keepalt <cmd>` / `:noautocmd <cmd>`.
+        // Vim uses them to suppress jumplist / alt-buffer / autocmd side effects.
+        // mnml's jumplist + alt-buffer machinery aren't sophisticated enough
+        // to honor these strictly — strip the adverb and run the inner cmd
+        // (vim users get the chained behavior; the suppression is best-effort).
+        for adverb in [
+            "keepjumps ",
+            "keepj ",
+            "keepalt ",
+            "keepa ",
+            "noautocmd ",
+            "noa ",
+            "keepmarks ",
+            "kee ",
+        ] {
+            if let Some(rest) = line.strip_prefix(adverb) {
+                self.run_ex_command(rest);
+                return;
+            }
+        }
         // `:%!cmd` — pipe the whole buffer through `cmd`, replace it
         // with stdout. With an active selection (no `%` prefix), filters
         // the selection only. Useful for `jq .`, `sort`, `prettier`, etc.
@@ -10419,6 +10439,20 @@ impl App {
             // "close window"). Same dirty-prompt path as `:bd` so unsaved
             // editors prompt.
             "close" | "clo" | "hide" => self.close_active_pane(),
+            // `:Explore` / `:E` / `:Sex[plore]` / `:Vex[plore]` / `:Lex[plore]`
+            // — vim's netrw file-explorer aliases. mnml routes them to the
+            // file tree (`view.toggle_tree`) since that's the closest thing.
+            "Explore" | "Ex" | "Sexplore" | "Sex" | "Vexplore" | "Vex" | "Lexplore" | "Lex" => {
+                self.toggle_tree_visibility();
+            }
+            // `:browse edit` / `:browse e` / `:browse` — vim canonical "open a
+            // file picker". Route to mnml's `Ctrl+P` file picker.
+            "browse" | "bro" => {
+                // `:browse edit <whatever>` → ignore the inner cmd; just open
+                // the picker (vim's behavior is similar — the GUI dialog comes
+                // up regardless).
+                self.open_file_picker();
+            }
             "bn" | "bnext" => self.next_buffer(),
             "bp" | "bprev" | "bprevious" => self.prev_buffer(),
             // Tab aliases — mnml has buffers, not tabs, but vim users reach
