@@ -723,6 +723,38 @@ impl Editor {
                 }
                 self.cursor = b;
             }
+            MoveLineLastNonWs => {
+                let line = self.current_line();
+                let (s, e) = (self.line_start(line), self.line_end(line));
+                let slice = &self.text[s..e];
+                // walk back over trailing whitespace
+                let mut last_nonws_end = s;
+                let mut idx = s;
+                for ch in slice.chars() {
+                    let nxt = idx + ch.len_utf8();
+                    if !ch.is_whitespace() {
+                        last_nonws_end = nxt;
+                    }
+                    idx = nxt;
+                }
+                if last_nonws_end == s {
+                    // blank line — go to start
+                    self.cursor = s;
+                } else {
+                    // land on the last non-blank char (one char back from its end)
+                    let mut c = s;
+                    let mut prev = s;
+                    for ch in slice.chars() {
+                        let nxt = c + ch.len_utf8();
+                        if nxt == last_nonws_end {
+                            prev = c;
+                            break;
+                        }
+                        c = nxt;
+                    }
+                    self.cursor = prev;
+                }
+            }
             MoveLineEnd => self.cursor = self.line_end(self.current_line()),
             MoveBufferStart => self.cursor = 0,
             MoveBufferEnd => self.cursor = self.text.len(),
@@ -1100,6 +1132,37 @@ impl Editor {
                 }
                 self.anchor = None;
                 out.buffer_changed = true;
+            }
+            ReplaceCharAtCursor(c) => {
+                if let Some((lo, hi)) = self.selection() {
+                    // visual r<c>: replace each non-newline char with c
+                    self.checkpoint();
+                    let mut out_s = String::with_capacity(hi - lo);
+                    for ch in self.text[lo..hi].chars() {
+                        if ch == '\n' {
+                            out_s.push('\n');
+                        } else {
+                            out_s.push(c);
+                        }
+                    }
+                    self.text.replace_range(lo..hi, &out_s);
+                    self.cursor = lo;
+                    self.anchor = None;
+                    out.buffer_changed = true;
+                } else {
+                    let cur = self.cursor;
+                    if let Some(target) = self.text[cur..].chars().next()
+                        && target != '\n'
+                    {
+                        self.checkpoint();
+                        let end = cur + target.len_utf8();
+                        let mut buf = [0u8; 4];
+                        let s = c.encode_utf8(&mut buf);
+                        self.text.replace_range(cur..end, s);
+                        // cursor stays at `cur` (vim convention)
+                        out.buffer_changed = true;
+                    }
+                }
             }
             ReplaceRange { start, end, text } => {
                 let len = self.text.len();

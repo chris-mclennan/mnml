@@ -15,6 +15,10 @@ pub enum EditOp {
     MoveWordEnd,
     MoveLineStart,
     MoveLineFirstNonWs,
+    /// vim `g_` — move to the last non-whitespace char of the current line.
+    /// (Vim's $ goes to EOL; g_ stops on the last non-blank.) On a blank line
+    /// behaves like `MoveLineStart`.
+    MoveLineLastNonWs,
     MoveLineEnd,
     MoveBufferStart,
     MoveBufferEnd,
@@ -103,6 +107,11 @@ pub enum EditOp {
     /// Delete the current selection (no-op if none).
     DeleteSelection,
     ReplaceSelection(String),
+    /// vim normal `r<c>` — replace the char under the cursor with `c`. Cursor
+    /// stays at the same byte position (vim convention). No-op at EOL/EOF or
+    /// on a newline. With a selection, replaces every char in the selection
+    /// with `c` (vim visual `r<c>`); newlines inside the selection are kept.
+    ReplaceCharAtCursor(char),
     /// Replace the bytes `[start, end)` with `text`, leaving the cursor after the
     /// inserted text. Offsets must be valid char boundaries in the *current*
     /// buffer (callers applying several edits should sort them descending by
@@ -207,6 +216,7 @@ impl EditOp {
             | MoveWordEnd
             | MoveLineStart
             | MoveLineFirstNonWs
+            | MoveLineLastNonWs
             | MoveLineEnd
             | MoveBufferStart
             | MoveBufferEnd

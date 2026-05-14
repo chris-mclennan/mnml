@@ -73,75 +73,156 @@ macro_rules! patterns {
 }
 
 fn rust_patterns() -> &'static [(Regex, &'static str)] {
-    patterns!(RUST, [
-        (r"^\s*(?:pub(?:\([^)]+\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)", "fn"),
-        (r"^\s*(?:pub(?:\([^)]+\))?\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)", "struct"),
-        (r"^\s*(?:pub(?:\([^)]+\))?\s+)?enum\s+([A-Za-z_][A-Za-z0-9_]*)", "enum"),
-        (r"^\s*(?:pub(?:\([^)]+\))?\s+)?trait\s+([A-Za-z_][A-Za-z0-9_]*)", "trait"),
-        (r"^\s*impl(?:<[^>]*>)?\s+([A-Za-z_][A-Za-z0-9_]*)", "impl"),
-        (r"^\s*(?:pub(?:\([^)]+\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)", "mod"),
-        (r"^\s*(?:pub(?:\([^)]+\))?\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)", "type"),
-        (r"^\s*(?:pub(?:\([^)]+\))?\s+)?const\s+([A-Z_][A-Z0-9_]*)", "const"),
-    ])
+    patterns!(
+        RUST,
+        [
+            (
+                r"^\s*(?:pub(?:\([^)]+\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
+                "fn"
+            ),
+            (
+                r"^\s*(?:pub(?:\([^)]+\))?\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)",
+                "struct"
+            ),
+            (
+                r"^\s*(?:pub(?:\([^)]+\))?\s+)?enum\s+([A-Za-z_][A-Za-z0-9_]*)",
+                "enum"
+            ),
+            (
+                r"^\s*(?:pub(?:\([^)]+\))?\s+)?trait\s+([A-Za-z_][A-Za-z0-9_]*)",
+                "trait"
+            ),
+            (r"^\s*impl(?:<[^>]*>)?\s+([A-Za-z_][A-Za-z0-9_]*)", "impl"),
+            (
+                r"^\s*(?:pub(?:\([^)]+\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)",
+                "mod"
+            ),
+            (
+                r"^\s*(?:pub(?:\([^)]+\))?\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)",
+                "type"
+            ),
+            (
+                r"^\s*(?:pub(?:\([^)]+\))?\s+)?const\s+([A-Z_][A-Z0-9_]*)",
+                "const"
+            ),
+        ]
+    )
 }
 
 fn python_patterns() -> &'static [(Regex, &'static str)] {
-    patterns!(PYTHON, [
-        (r"^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)", "fn"),
-        (r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)", "class"),
-    ])
+    patterns!(
+        PYTHON,
+        [
+            (r"^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)", "fn"),
+            (r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)", "class"),
+        ]
+    )
 }
 
 fn js_patterns() -> &'static [(Regex, &'static str)] {
-    patterns!(JS, [
-        (r"^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)", "fn"),
-        (r"^\s*(?:export\s+(?:default\s+)?)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)", "class"),
-        (r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>)", "fn"),
-    ])
+    patterns!(
+        JS,
+        [
+            (
+                r"^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)",
+                "fn"
+            ),
+            (
+                r"^\s*(?:export\s+(?:default\s+)?)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)",
+                "class"
+            ),
+            (
+                r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>)",
+                "fn"
+            ),
+        ]
+    )
 }
 
 fn ts_patterns() -> &'static [(Regex, &'static str)] {
-    patterns!(TS, [
-        (r"^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)", "fn"),
-        (r"^\s*(?:export\s+(?:default\s+)?)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)", "class"),
-        (r"^\s*(?:export\s+(?:default\s+)?)?interface\s+([A-Za-z_$][A-Za-z0-9_$]*)", "interface"),
-        (r"^\s*(?:export\s+(?:default\s+)?)?type\s+([A-Za-z_$][A-Za-z0-9_$]*)", "type"),
-        (r"^\s*(?:export\s+(?:default\s+)?)?enum\s+([A-Za-z_$][A-Za-z0-9_$]*)", "enum"),
-        (r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*[:=]\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>)", "fn"),
-    ])
+    patterns!(
+        TS,
+        [
+            (
+                r"^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)",
+                "fn"
+            ),
+            (
+                r"^\s*(?:export\s+(?:default\s+)?)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)",
+                "class"
+            ),
+            (
+                r"^\s*(?:export\s+(?:default\s+)?)?interface\s+([A-Za-z_$][A-Za-z0-9_$]*)",
+                "interface"
+            ),
+            (
+                r"^\s*(?:export\s+(?:default\s+)?)?type\s+([A-Za-z_$][A-Za-z0-9_$]*)",
+                "type"
+            ),
+            (
+                r"^\s*(?:export\s+(?:default\s+)?)?enum\s+([A-Za-z_$][A-Za-z0-9_$]*)",
+                "enum"
+            ),
+            (
+                r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*[:=]\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>)",
+                "fn"
+            ),
+        ]
+    )
 }
 
 fn go_patterns() -> &'static [(Regex, &'static str)] {
-    patterns!(GO, [
-        (r"^func(?:\s+\([^)]+\))?\s+([A-Za-z_][A-Za-z0-9_]*)", "fn"),
-        (r"^type\s+([A-Za-z_][A-Za-z0-9_]*)", "type"),
-    ])
+    patterns!(
+        GO,
+        [
+            (r"^func(?:\s+\([^)]+\))?\s+([A-Za-z_][A-Za-z0-9_]*)", "fn"),
+            (r"^type\s+([A-Za-z_][A-Za-z0-9_]*)", "type"),
+        ]
+    )
 }
 
 fn ruby_patterns() -> &'static [(Regex, &'static str)] {
-    patterns!(RUBY, [
-        (r"^\s*def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[!?=]?)", "fn"),
-        (r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)", "class"),
-        (r"^\s*module\s+([A-Za-z_][A-Za-z0-9_]*)", "module"),
-    ])
+    patterns!(
+        RUBY,
+        [
+            (r"^\s*def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[!?=]?)", "fn"),
+            (r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)", "class"),
+            (r"^\s*module\s+([A-Za-z_][A-Za-z0-9_]*)", "module"),
+        ]
+    )
 }
 
 fn c_patterns() -> &'static [(Regex, &'static str)] {
     // C is hard without a real parser. Match `<type> <name>(`-like shapes
     // at column 0. Skips static & inline since they're often mis-parsed.
-    patterns!(C, [
-        (r"^[A-Za-z_][A-Za-z_0-9*\s]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", "fn"),
-        (r"^\s*typedef\s+(?:struct|enum|union)?\s*[A-Za-z_0-9\s{}]*\b([A-Za-z_][A-Za-z0-9_]*)\s*;", "type"),
-    ])
+    patterns!(
+        C,
+        [
+            (
+                r"^[A-Za-z_][A-Za-z_0-9*\s]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                "fn"
+            ),
+            (
+                r"^\s*typedef\s+(?:struct|enum|union)?\s*[A-Za-z_0-9\s{}]*\b([A-Za-z_][A-Za-z0-9_]*)\s*;",
+                "type"
+            ),
+        ]
+    )
 }
 
 fn cpp_patterns() -> &'static [(Regex, &'static str)] {
-    patterns!(CPP, [
-        (r"^[A-Za-z_][A-Za-z_0-9:*<>\s,&]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", "fn"),
-        (r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)", "class"),
-        (r"^\s*struct\s+([A-Za-z_][A-Za-z0-9_]*)", "struct"),
-        (r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_]*)", "namespace"),
-    ])
+    patterns!(
+        CPP,
+        [
+            (
+                r"^[A-Za-z_][A-Za-z_0-9:*<>\s,&]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                "fn"
+            ),
+            (r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)", "class"),
+            (r"^\s*struct\s+([A-Za-z_][A-Za-z0-9_]*)", "struct"),
+            (r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_]*)", "namespace"),
+        ]
+    )
 }
 
 #[cfg(test)]
@@ -166,12 +247,16 @@ const MAX_N: usize = 10;
         let names: Vec<&str> = s.iter().map(|x| x.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["outer", "S", "E", "S", "method", "other", "T", "inner", "MAX_N"]
+            vec![
+                "outer", "S", "E", "S", "method", "other", "T", "inner", "MAX_N"
+            ]
         );
         let kinds: Vec<&'static str> = s.iter().map(|x| x.kind).collect();
         assert_eq!(
             kinds,
-            vec!["fn", "struct", "enum", "impl", "fn", "fn", "trait", "mod", "const"]
+            vec![
+                "fn", "struct", "enum", "impl", "fn", "fn", "trait", "mod", "const"
+            ]
         );
     }
 
@@ -204,10 +289,7 @@ const arrow = () => 42;
 ";
         let s = extract_symbols(src, "ts");
         let names: Vec<&str> = s.iter().map(|x| x.name.as_str()).collect();
-        assert_eq!(
-            names,
-            vec!["hello", "Box", "Shape", "Aliased", "arrow"]
-        );
+        assert_eq!(names, vec!["hello", "Box", "Shape", "Aliased", "arrow"]);
     }
 
     #[test]

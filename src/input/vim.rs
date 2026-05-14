@@ -242,7 +242,7 @@ impl VimInputHandler {
             Prefix::Replace => {
                 self.reset_pending();
                 return match key.code {
-                    KeyCode::Char(c) => InputResult::Ops(vec![ReplaceSelection(c.to_string())]),
+                    KeyCode::Char(c) => InputResult::Ops(vec![EditOp::ReplaceCharAtCursor(c)]),
                     KeyCode::Esc => InputResult::Consumed,
                     _ => InputResult::Consumed,
                 };
@@ -296,16 +296,12 @@ impl VimInputHandler {
                     }
                     // `gx` — open the URL under the cursor in the OS browser.
                     KeyCode::Char('x') => {
-                        InputResult::App(AppCommand::RunCommand(
-                            "editor.open_url_at_cursor".into(),
-                        ))
+                        InputResult::App(AppCommand::RunCommand("editor.open_url_at_cursor".into()))
                     }
                     // `gi` — jump to the most recent edit position + enter
                     // Insert mode (vim canon).
                     KeyCode::Char('i') => {
-                        InputResult::App(AppCommand::RunCommand(
-                            "vim.go_to_last_insert".into(),
-                        ))
+                        InputResult::App(AppCommand::RunCommand("vim.go_to_last_insert".into()))
                     }
                     KeyCode::Char('c') => {
                         self.prefix = Prefix::Gc;
@@ -336,6 +332,16 @@ impl VimInputHandler {
                     KeyCode::Char('J') => {
                         let times = n.max(1).saturating_sub(1).max(1);
                         InputResult::Ops(Self::repeated(JoinLines { keep_space: false }, times))
+                    }
+                    // `g_` — move to last non-blank char of the current line.
+                    KeyCode::Char('_') => InputResult::Ops(vec![MoveLineLastNonWs]),
+                    // `ga` — show character info as a toast (decimal + hex).
+                    KeyCode::Char('a') => {
+                        InputResult::App(AppCommand::RunCommand("editor.char_info".into()))
+                    }
+                    // `g8` — show UTF-8 bytes of the char under the cursor.
+                    KeyCode::Char('8') => {
+                        InputResult::App(AppCommand::RunCommand("editor.char_utf8".into()))
                     }
                     _ => InputResult::Consumed,
                 };
@@ -713,9 +719,7 @@ impl VimInputHandler {
         // Skip when ctrl is held — chords like `Ctrl+W` / `Ctrl+H` would
         // otherwise misfire as `w` / `h` motions before the modifier arms
         // below get a chance.
-        if !ctrl
-            && let Some(m) = Self::motion(key.code)
-        {
+        if !ctrl && let Some(m) = Self::motion(key.code) {
             let n = self.count1();
             self.reset_pending();
             return InputResult::Ops(Self::repeated(m, n));
@@ -723,6 +727,12 @@ impl VimInputHandler {
 
         let n = self.count1();
         match key.code {
+            // vim `Ctrl+I` — jumplist forward (alias of nav.forward).
+            // Must come BEFORE the bare `i` arm.
+            KeyCode::Char('i') if ctrl => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("nav.forward".into()))
+            }
             // enter Insert in various places
             KeyCode::Char('i') => {
                 self.enter_insert();
@@ -765,6 +775,12 @@ impl VimInputHandler {
             KeyCode::Char('A') => {
                 self.enter_insert();
                 InputResult::Ops(vec![MoveLineEnd])
+            }
+            // vim `Ctrl+O` — jumplist back (alias of nav.back). Must come
+            // BEFORE the bare `o` arm.
+            KeyCode::Char('o') if ctrl => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("nav.back".into()))
             }
             KeyCode::Char('o') => {
                 self.enter_insert();
@@ -809,6 +825,15 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::Ops(Self::repeated(Redo, n))
             }
+            // Note: terminals send Ctrl+I as Tab — we still wire both forms
+            // so a terminal that distinguishes them (Kitty protocol) gets
+            // the canonical chord, and Tab in normal mode (which has no
+            // built-in meaning) does the right thing on the rest. Ctrl+O is
+            // also wired for the canonical chord.
+            KeyCode::Tab => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("nav.forward".into()))
+            }
             // vim `Ctrl+W` — split/window prefix. Standard mode keeps
             // `Ctrl+W` bound to `buffer.close`; in vim it becomes a chord
             // ending in a direction (h/j/k/l) or `w`/`q`.
@@ -843,6 +868,13 @@ impl VimInputHandler {
             KeyCode::Char('~') => {
                 self.reset_pending();
                 InputResult::Ops(Self::repeated(ToggleCaseChar, n))
+            }
+            // vim `&` — repeat the last :s on the cursor's current line.
+            KeyCode::Char('&') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand(
+                    "editor.repeat_last_substitute".into(),
+                ))
             }
             // vim half-page scroll: Ctrl+D (down) / Ctrl+U (up).
             KeyCode::Char('d') if ctrl => {

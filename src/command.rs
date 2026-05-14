@@ -497,6 +497,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.show_file_info(),
         },
         Command {
+            id: "editor.repeat_last_substitute",
+            title: "Repeat last :s on current line (vim `&`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.repeat_last_substitute(),
+        },
+        Command {
+            id: "editor.char_info",
+            title: "Toast char info: dec / hex / U+XXXX (vim `ga`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.show_char_info(),
+        },
+        Command {
+            id: "editor.char_utf8",
+            title: "Toast UTF-8 byte sequence of char under cursor (vim `g8`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.show_char_utf8(),
+        },
+        Command {
             id: "editor.open_url_at_cursor",
             title: "Open URL under cursor in OS browser (vim `gx`)",
             group: "editor",

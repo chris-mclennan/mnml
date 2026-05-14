@@ -205,7 +205,7 @@ pub enum MacroState {
     Replaying,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Substitute {
     find: String,
     replace: String,
@@ -792,6 +792,12 @@ pub struct App {
     /// `@` replays this. Survives across the session but not across
     /// relaunches.
     pub macro_buffer: Vec<ratatui::crossterm::event::KeyEvent>,
+    /// Last `:s` / `:%s` payload, parsed. Vim `&` re-runs it on the cursor's
+    /// current line (vim convention: `&` always uses line scope, regardless
+    /// of whether the original was buffer-wide). `c` (confirm) flag is
+    /// dropped on replay to keep the gesture snappy. Cleared on session end
+    /// (not persisted — vim's session "last sub" is also volatile).
+    last_substitute: Option<Substitute>,
     /// Per-file last `(cursor_byte, scroll)`, captured when a buffer is closed
     /// or saved, restored when the file is re-opened later. Persisted in
     /// session.json so it survives restarts. Capped at `FILE_CURSORS_MAX`.
@@ -1045,6 +1051,7 @@ impl App {
             last_active: None,
             macro_state: MacroState::default(),
             macro_buffer: Vec::new(),
+            last_substitute: None,
             file_cursors: std::collections::HashMap::new(),
             global_marks: std::collections::HashMap::new(),
             nav_back: Vec::new(),
@@ -6041,7 +6048,11 @@ impl App {
         let multi_line_sel = b.editor.selection().and_then(|(lo, hi)| {
             let text = b.editor.text();
             let crosses_newline = text.get(lo..hi).is_some_and(|s| s.contains('\n'));
-            if crosses_newline { Some((lo, hi)) } else { None }
+            if crosses_newline {
+                Some((lo, hi))
+            } else {
+                None
+            }
         });
         let seed = if multi_line_sel.is_some() {
             // Don't dump the whole selection into the query field.
@@ -6854,7 +6865,12 @@ impl App {
         }
         // Strip common surrounding punctuation / brackets.
         let mut token = &line[start..end];
-        token = token.trim_matches(|c: char| matches!(c, '<' | '>' | '(' | ')' | '[' | ']' | '"' | '\'' | ',' | '.' | ';' | ':'));
+        token = token.trim_matches(|c: char| {
+            matches!(
+                c,
+                '<' | '>' | '(' | ')' | '[' | ']' | '"' | '\'' | ',' | '.' | ';' | ':'
+            )
+        });
         let url_scheme = ["http://", "https://", "file://", "mailto:", "ftp://"];
         if !url_scheme.iter().any(|s| token.starts_with(s)) {
             self.toast(format!("not a URL at cursor: {token:?}"));
@@ -6901,6 +6917,60 @@ impl App {
         self.toast(format!("{path}{dirty} · Ln {}/{total} · {pct}%", row + 1));
     }
 
+    /// `editor.repeat_last_substitute` — vim `&`. Re-runs the most recent
+    /// `:s` / `:%s` payload, but always scoped to the cursor's current line
+    /// (vim convention) and with `c` (confirm) dropped. Toast when nothing
+    /// to repeat.
+    pub fn repeat_last_substitute(&mut self) {
+        let Some(mut sub) = self.last_substitute.clone() else {
+            self.toast("no previous :s");
+            return;
+        };
+        sub.whole_buffer = false;
+        sub.confirm = false;
+        self.run_substitute(sub);
+    }
+
+    /// `editor.char_info` — vim `ga`. Toasts the char under the cursor in
+    /// dec / hex (and the unicode codepoint U+XXXX). No-op on EOL/EOF.
+    pub fn show_char_info(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let text = b.editor.text();
+        let cur = b.editor.cursor();
+        let Some(ch) = text[cur..].chars().next() else {
+            self.toast("EOF");
+            return;
+        };
+        if ch == '\n' {
+            self.toast("<NL>");
+            return;
+        }
+        let cp = ch as u32;
+        self.toast(format!("{ch:?}  ({cp} · 0x{cp:X} · U+{cp:04X})"));
+    }
+
+    /// `editor.char_utf8` — vim `g8`. Toasts the UTF-8 byte sequence of the
+    /// char under the cursor as space-separated 2-digit hex.
+    pub fn show_char_utf8(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let text = b.editor.text();
+        let cur = b.editor.cursor();
+        let Some(ch) = text[cur..].chars().next() else {
+            self.toast("EOF");
+            return;
+        };
+        let mut buf = [0u8; 4];
+        let s = ch.encode_utf8(&mut buf);
+        let bytes: Vec<String> = s.bytes().map(|b| format!("{b:02x}")).collect();
+        self.toast(format!("{ch:?}  utf-8: {}", bytes.join(" ")));
+    }
+
     /// `:sort [u]` — sort lines. With an active selection, sorts only those
     /// lines (full lines including any partial-line selection); without one,
     /// sorts the whole buffer. `unique` ⇒ de-dupe consecutive equal lines
@@ -6936,12 +7006,7 @@ impl App {
                     let s = line_start(line);
                     text[s..].find('\n').map(|i| s + i).unwrap_or(text.len())
                 };
-                (
-                    line_start(lo_line),
-                    line_end(hi_line),
-                    lo_line,
-                    hi_line,
-                )
+                (line_start(lo_line), line_end(hi_line), lo_line, hi_line)
             } else {
                 let line_count = text.bytes().filter(|&c| c == b'\n').count() + 1;
                 (0, text.len(), 0, line_count.saturating_sub(1))
@@ -8420,7 +8485,11 @@ impl App {
                 b.editor.auto_pair = on;
             }
         }
-        self.toast(if on { "auto-pair: on" } else { "auto-pair: off" });
+        self.toast(if on {
+            "auto-pair: on"
+        } else {
+            "auto-pair: off"
+        });
     }
     pub fn toggle_auto_pair(&mut self) {
         self.set_auto_pair(!self.config.editor.auto_pair);
@@ -8480,6 +8549,8 @@ impl App {
             self.toast(":s — only works in editor panes");
             return;
         };
+        // Remember for vim `&` (re-run on the cursor's current line).
+        self.last_substitute = Some(sub.clone());
         let text = b.editor.text().to_string();
         // Compute the byte range to operate on. `:%s` ⇒ whole buffer; bare
         // `:s` ⇒ the cursor's current line (no trailing newline).
@@ -8747,6 +8818,68 @@ impl App {
             "bd" | "bdelete" => self.close_active_pane(),
             "bn" | "bnext" => self.next_buffer(),
             "bp" | "bprev" | "bprevious" => self.prev_buffer(),
+            // `:b <substr>` / `:buffer <substr>` — switch to the editor pane
+            // whose path contains <substr> (case-insensitive). Vim convention:
+            // ambiguous matches toast a hint; bare `:b` toasts a list.
+            "b" | "buffer" => {
+                let q = rest.trim();
+                if q.is_empty() {
+                    let names: Vec<String> = self
+                        .panes
+                        .iter()
+                        .filter_map(|p| match p {
+                            Pane::Editor(b) => Some(
+                                b.path
+                                    .as_ref()
+                                    .map(|pp| rel_path(&self.workspace, pp))
+                                    .unwrap_or_else(|| b.display_name().to_string()),
+                            ),
+                            _ => None,
+                        })
+                        .collect();
+                    if names.is_empty() {
+                        self.toast(":b — no buffers");
+                    } else {
+                        self.toast(format!(":b · {}", names.join("  ")));
+                    }
+                } else {
+                    let qlc = q.to_lowercase();
+                    let mut hits: Vec<(usize, String)> = Vec::new();
+                    for (idx, p) in self.panes.iter().enumerate() {
+                        if let Pane::Editor(b) = p {
+                            let label = b
+                                .path
+                                .as_ref()
+                                .map(|pp| rel_path(&self.workspace, pp))
+                                .unwrap_or_else(|| b.display_name().to_string());
+                            if label.to_lowercase().contains(&qlc) {
+                                hits.push((idx, label));
+                            }
+                        }
+                    }
+                    match hits.len() {
+                        0 => self.toast(format!(":b — no match for {q:?}")),
+                        1 => self.reveal_pane(hits[0].0),
+                        _ => {
+                            // Pick the one whose filename matches, else toast hint.
+                            let exact = hits.iter().find(|(_, l)| {
+                                std::path::Path::new(l)
+                                    .file_name()
+                                    .and_then(|s| s.to_str())
+                                    .map(|s| s.to_lowercase() == qlc)
+                                    .unwrap_or(false)
+                            });
+                            if let Some((idx, _)) = exact {
+                                self.reveal_pane(*idx);
+                            } else {
+                                let labels: Vec<String> =
+                                    hits.iter().map(|(_, l)| l.clone()).collect();
+                                self.toast(format!(":b — ambiguous: {}", labels.join(", ")));
+                            }
+                        }
+                    }
+                }
+            }
             // Split commands. `:sp [path]` opens (or splits) below; `:vsp` /
             // `:vs` opens to the right. Bare form just splits the current
             // pane; with a path, splits and opens that file in the new leaf.
@@ -8807,6 +8940,23 @@ impl App {
             "version" | "ver" => {
                 let ver = env!("MNML_GIT_SHA");
                 self.toast(format!("mnml {ver}"));
+            }
+            // `:reg` / `:registers` — toast clipboard contents (we have a
+            // single anonymous register for now). Newlines render as `↵`,
+            // truncated to keep the toast short.
+            "reg" | "registers" | "di" | "display" => {
+                let s = self.clipboard.text();
+                if s.is_empty() {
+                    self.toast(":reg — clipboard empty");
+                } else {
+                    let preview: String = s
+                        .chars()
+                        .take(80)
+                        .map(|c| if c == '\n' { '↵' } else { c })
+                        .collect();
+                    let suffix = if s.chars().count() > 80 { "…" } else { "" };
+                    self.toast(format!("\"\"  {preview}{suffix}"));
+                }
             }
             // `:source <path>` (alias `:so`) — re-apply a config file at
             // runtime. Layers on top of the current config (missing keys

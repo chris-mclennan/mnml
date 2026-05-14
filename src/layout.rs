@@ -232,9 +232,16 @@ impl Layout {
     /// (`Horizontal` = side-by-side; `Vertical` = stacked). `to_second`
     /// puts the active leaf in `second` (right / bottom); else `first`
     /// (left / top). Returns true on a change.
-    pub fn move_active_to(&mut self, target: PaneId, target_dir: SplitDir, to_second: bool) -> bool {
+    pub fn move_active_to(
+        &mut self,
+        target: PaneId,
+        target_dir: SplitDir,
+        to_second: bool,
+    ) -> bool {
         match self {
-            Layout::Split { dir, first, second, .. } => {
+            Layout::Split {
+                dir, first, second, ..
+            } => {
                 let in_first = first.contains(target);
                 let in_second = second.contains(target);
                 if !in_first && !in_second {
@@ -533,7 +540,9 @@ mod tests {
             panic!()
         };
         let Layout::Split {
-            first: f, second: s, ..
+            first: f,
+            second: s,
+            ..
         } = &**second
         else {
             panic!()
@@ -602,7 +611,12 @@ mod tests {
         };
         let changed = l.move_active_to(1, SplitDir::Horizontal, false);
         assert!(changed);
-        let Layout::Split { dir, first, second, .. } = &l else { panic!() };
+        let Layout::Split {
+            dir, first, second, ..
+        } = &l
+        else {
+            panic!()
+        };
         assert_eq!(*dir, SplitDir::Horizontal);
         assert!(matches!(**first, Layout::Leaf(1)));
         assert!(matches!(**second, Layout::Leaf(0)));
