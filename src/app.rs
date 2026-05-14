@@ -10740,6 +10740,27 @@ impl App {
                 }
             }
             "ls" | "files" | "buffers" | "buf" => self.open_buffer_picker(),
+            // fzf.vim-style aliases — wide adoption among vim users.
+            "Files" => self.open_file_picker(),
+            "Buffers" => self.open_buffer_picker(),
+            "Rg" | "Ag" | "Lines" => {
+                if rest.trim().is_empty() {
+                    self.open_grep_prompt();
+                } else {
+                    // `:Rg foo` — run grep with the query directly.
+                    self.run_workspace_grep(rest.trim().to_string());
+                }
+            }
+            "BLines" => self.open_find_prompt(),
+            "History" => {
+                crate::command::run("picker.recent", self);
+            }
+            "Commands" => {
+                crate::command::run("palette", self);
+            }
+            "Marks" => {
+                crate::command::run("picker.marks", self);
+            }
             // `:diff` / `:diffs` / `:diffsplit` — open the diff pane for
             // the active file (alias for the existing `git.diff_file`
             // command). Vim users reach for `:diff` reflexively.

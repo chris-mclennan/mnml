@@ -450,6 +450,10 @@ completion (file paths after `:e`, `:sp` etc.) isn't wired yet — the handler d
 filesystem access — those Tabs are no-ops.
 **Vim cmdline `Ctrl+W` / `Ctrl+U`** — delete previous word / clear the whole line. Vim
 canonical insert-mode chords transplanted into the `:` line.
+**fzf.vim aliases** — `:Files` (Ctrl+P file picker), `:Buffers` (buffer picker), `:Rg` / `:Ag`
+/ `:Lines` (workspace grep — with optional inline query: `:Rg foo`), `:BLines` (find in
+current buffer), `:History` (recent-files picker), `:Commands` (palette), `:Marks` (marks
+picker). Wide adoption among vim users from the fzf ecosystem.
 **Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
 Single-key chord in the `g` prefix.
 **`:1,5j` / `:join`** — bare form joins current+next; ranged form collapses the
