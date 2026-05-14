@@ -442,12 +442,15 @@ opens the `Ctrl+P` file picker (vim canonical "show a file open dialog").
 `:set cc!` toggles between 0 and 80 (vim's classic). `view.toggle_color_column` is the
 palette form. Editor view paints the cell at column `N-1` with the theme's `bg2` background
 — priority is just above the base bg, so selection / find / cursor-line tints still win.
-**`:` cmdline Tab completion** — pressing Tab on a `:`-line whose FIRST word is being typed
-cycles through matching ex command names from a curated list (`EX_COMPLETION_NAMES`).
-First Tab swaps in the alphabetically-first match; subsequent Tabs cycle. Any non-Tab key
-clears the cycle state so editing doesn't keep "completing" surprisingly. Trailing-arg
-completion (file paths after `:e`, `:sp` etc.) isn't wired yet — the handler doesn't have
-filesystem access — those Tabs are no-ops.
+**`:` cmdline Tab completion** — pressing Tab on a `:`-line cycles through matching
+candidates. FIRST word matches against `EX_COMPLETION_NAMES`. TRAILING arg of a
+path-accepting command (`:e` / `:edit` / `:sp` / `:vsp` / `:tabnew` / `:badd` /
+`:saveas` / `:w` / `:source` / `:r`) cycles through workspace file/dir entries (hidden
+entries shown only when the typed prefix starts with `.`). Cycle state lives on App
+(`App.cmdline_complete_state`); the handler emits `AppCommand::CmdlineTabComplete` and
+the App computes / writes back via the new `InputHandler::cmdline_get` / `cmdline_set`
+trait methods. Watermark check on `last_shown` drops the cycle as soon as the user edits
+the line by any other means.
 **Vim cmdline `Ctrl+W` / `Ctrl+U`** — delete previous word / clear the whole line. Vim
 canonical insert-mode chords transplanted into the `:` line.
 **fzf.vim aliases** — `:Files` (Ctrl+P file picker), `:Buffers` (buffer picker), `:Rg` / `:Ag`

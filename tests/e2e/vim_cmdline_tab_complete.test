@@ -24,3 +24,19 @@ expect screen contains ":tabclose"
 key tab
 expect screen contains ":tabe"
 key escape
+
+# File-path completion: after a path-accepting command + space, Tab cycles
+# through workspace entries. Set up a few files so we have something to
+# complete.
+write apple.md "a"
+write apricot.md "b"
+
+key :
+type "e ap"
+key tab
+# First match (alphabetical): "apple.md".
+expect screen contains ":e apple.md"
+# Second Tab → "apricot.md".
+key tab
+expect screen contains ":e apricot.md"
+key escape

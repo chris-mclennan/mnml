@@ -288,6 +288,92 @@ fn expand_mark_refs(line: &str, lookup: &dyn Fn(char) -> Option<usize>) -> Strin
     out
 }
 
+/// Compute Tab-completion candidates for the current `:` cmdline.
+/// - FIRST word ⇒ match against [`crate::input::vim::EX_COMPLETION_NAMES`].
+/// - Trailing arg of a path-accepting command ⇒ workspace-rooted file/dir
+///   lookup using the user's typed prefix.
+fn compute_cmdline_completions(line: &str, workspace: &Path) -> Option<CmdlineCompleteState> {
+    use crate::input::vim::EX_COMPLETION_NAMES;
+    // Identify the trailing whitespace-separated token; everything before is
+    // the cmdline's "head" (preserved verbatim).
+    let split_at = line.rfind(char::is_whitespace).map(|i| i + 1).unwrap_or(0);
+    let head = &line[..split_at];
+    let token = &line[split_at..];
+    if head.is_empty() {
+        // First word — complete ex command names.
+        let mut matches: Vec<String> = EX_COMPLETION_NAMES
+            .iter()
+            .filter(|name| name.starts_with(token))
+            .map(|s| s.to_string())
+            .collect();
+        matches.sort();
+        matches.dedup();
+        return Some(CmdlineCompleteState {
+            head: String::new(),
+            matches,
+            idx: 0,
+            last_shown: String::new(),
+        });
+    }
+    // Trailing arg — only complete paths for known path-accepting commands.
+    let first_word = head.split_whitespace().next().unwrap_or("");
+    let path_takers = [
+        "e", "edit", "sp", "split", "vs", "vsp", "vsplit", "tabnew", "tabe", "tabedit", "badd",
+        "ba", "saveas", "w", "write", "source", "so", "r", "read", "Files",
+    ];
+    if !path_takers.contains(&first_word) {
+        return Some(CmdlineCompleteState {
+            head: head.to_string(),
+            matches: Vec::new(),
+            idx: 0,
+            last_shown: String::new(),
+        });
+    }
+    // Split the user's path prefix into "dir part" + "stem" (the chars after
+    // the last `/` we'll match against entries in dir).
+    let (dir_part, stem) = match token.rfind('/') {
+        Some(i) => (&token[..=i], &token[i + 1..]),
+        None => ("", token),
+    };
+    let base = if dir_part.is_empty() {
+        workspace.to_path_buf()
+    } else if dir_part.starts_with('/') {
+        Path::new(dir_part).to_path_buf()
+    } else {
+        workspace.join(dir_part)
+    };
+    let mut matches: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&base) {
+        for ent in entries.flatten() {
+            let Some(name) = ent.file_name().to_str().map(|s| s.to_string()) else {
+                continue;
+            };
+            if !name.starts_with(stem) {
+                continue;
+            }
+            // Hidden files only show when the user opted in (typed leading `.`).
+            if name.starts_with('.') && !stem.starts_with('.') {
+                continue;
+            }
+            let is_dir = ent.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            let display = if is_dir {
+                format!("{dir_part}{name}/")
+            } else {
+                format!("{dir_part}{name}")
+            };
+            matches.push(display);
+        }
+    }
+    matches.sort();
+    matches.dedup();
+    Some(CmdlineCompleteState {
+        head: head.to_string(),
+        matches,
+        idx: 0,
+        last_shown: String::new(),
+    })
+}
+
 fn parse_line_range(
     line: &str,
     current_line: usize,
@@ -879,6 +965,26 @@ pub struct PaneRects {
     pub context_menu_items: Vec<(Rect, usize)>,
 }
 
+/// Ex-cmdline Tab completion cycle. While the user keeps pressing Tab, this
+/// remembers the part of the cmdline that should NOT change, the list of
+/// matching candidates, and which one is on screen. The cmdline currently
+/// shows `head + matches[idx]`. Cleared whenever the user types anything
+/// other than Tab on the cmdline.
+#[derive(Debug, Clone)]
+pub struct CmdlineCompleteState {
+    /// Text BEFORE the trailing word being completed (kept verbatim).
+    pub head: String,
+    /// Candidate completions in display order (sorted, de-duped).
+    pub matches: Vec<String>,
+    /// Index into `matches` of the entry currently in the cmdline.
+    pub idx: usize,
+    /// Snapshot of the cmdline text immediately AFTER the most recent Tab
+    /// applied a completion. Used as a watermark so that the next handle_key
+    /// run can detect "the user edited the line since the last cycle" and
+    /// clear the cycle state.
+    pub last_shown: String,
+}
+
 /// Live visual-block I / A state. Captured at insert-start; consumed when the
 /// handler returns to Normal mode (App::tick polls the transition). `rows`
 /// excludes the top row (the user's literal typing already lands there).
@@ -965,6 +1071,12 @@ pub struct App {
     /// the typed run on every other row in the rect (vim's "edit a column"
     /// power tool). `None` whenever there's no active block insert.
     pub block_insert_state: Option<BlockInsertState>,
+    /// Ex-cmdline Tab-completion cycle state. `head` = the part of the
+    /// cmdline that stays put; `matches` = candidate completions; `idx` =
+    /// the match index currently displayed. Cleared by any non-Tab cmdline
+    /// keystroke (handled by App::cmdline_tab_complete tracking the previous
+    /// line text).
+    pub cmdline_complete_state: Option<CmdlineCompleteState>,
     /// Recent toasts (oldest first, capped at `MESSAGE_LOG_MAX`). Vim
     /// `:messages` shows them. Keeps a history beyond the live toast
     /// (which expires after `TOAST_TTL`).
@@ -1263,6 +1375,7 @@ impl App {
             last_active: None,
             macro_state: MacroState::default(),
             block_insert_state: None,
+            cmdline_complete_state: None,
             macro_buffer: std::collections::HashMap::new(),
             pending_macro_register: None,
             last_external_check: None,
@@ -10014,6 +10127,60 @@ impl App {
         });
         // Drive the handler into Insert (Vim mode flip via trait method).
         b.input.request_insert_mode();
+    }
+
+    /// Tab pressed on the `:` cmdline ⇒ cycle through completion candidates.
+    /// First Tab swaps in the alphabetically-first match; subsequent Tabs
+    /// cycle through the list. Candidates come from
+    /// [`crate::input::vim::EX_COMPLETION_NAMES`] for the FIRST word, and
+    /// from the workspace filesystem for trailing args of path-accepting
+    /// commands (`:e` / `:edit` / `:sp` / `:vsp` / `:tabnew` / `:badd` /
+    /// `:saveas` / `:source` / `:r`). Cycle state persists on
+    /// `App.cmdline_complete_state`; any non-Tab keystroke that mutates the
+    /// cmdline drops it (we check `last_shown` vs. current text on each Tab).
+    pub fn cmdline_tab_complete(&mut self) {
+        let Some(b) = self.active_editor_mut() else {
+            self.cmdline_complete_state = None;
+            return;
+        };
+        let Some(line) = b.input.cmdline_get() else {
+            // cmdline is closed — drop any stale cycle state.
+            self.cmdline_complete_state = None;
+            return;
+        };
+        // If the user edited the line since the last cycle, drop state.
+        if let Some(st) = &self.cmdline_complete_state
+            && st.last_shown != line
+        {
+            self.cmdline_complete_state = None;
+        }
+        // Compute or advance the cycle.
+        let new_state = if let Some(mut st) = self.cmdline_complete_state.take() {
+            if st.matches.is_empty() {
+                self.cmdline_complete_state = None;
+                return;
+            }
+            st.idx = (st.idx + 1) % st.matches.len();
+            st
+        } else {
+            let Some(state) = compute_cmdline_completions(&line, &self.workspace) else {
+                return;
+            };
+            if state.matches.is_empty() {
+                return;
+            }
+            state
+        };
+        let new_line = format!("{}{}", new_state.head, &new_state.matches[new_state.idx]);
+        // Stash before-write so `last_shown` can match against the line as
+        // the handler reports it on the next Tab.
+        let mut stored = new_state;
+        stored.last_shown = new_line.clone();
+        // Write back to the handler.
+        if let Some(b) = self.active_editor_mut() {
+            b.input.cmdline_set(Some(new_line));
+        }
+        self.cmdline_complete_state = Some(stored);
     }
 
     /// Visual-block `c` / `s` ⇒ delete the rectangle first, then start a

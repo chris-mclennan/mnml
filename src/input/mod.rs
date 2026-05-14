@@ -94,6 +94,11 @@ pub enum AppCommand {
     /// column (now collapsed since the slice is gone). On Esc the typed run
     /// is replayed on every other row.
     BlockChangeStart,
+    /// Tab pressed on the `:` cmdline — ask the App to compute completion
+    /// candidates and cycle them. The handler can't do path completion on
+    /// its own (no workspace access), so the App owns the cycle state and
+    /// rewrites the cmdline via `InputHandler::cmdline_set`.
+    CmdlineTabComplete,
 }
 
 /// Result of feeding one key to a handler.
@@ -154,6 +159,14 @@ pub trait InputHandler: Send {
     /// no modes). Used by `App::block_insert_start` so the App can drive the
     /// handler into Insert without going through a keystroke.
     fn request_insert_mode(&mut self) {}
+    /// Current `:` cmdline text, if the handler has one open. Default `None`
+    /// (Standard mode has no cmdline). Used by `App::cmdline_tab_complete`.
+    fn cmdline_get(&self) -> Option<String> {
+        None
+    }
+    /// Replace the `:` cmdline text (e.g. after Tab completion picks a match).
+    /// Default no-op. Used by `App::cmdline_tab_complete`.
+    fn cmdline_set(&mut self, _text: Option<String>) {}
 }
 
 /// Build a handler for the given style name. Unknown names fall back to `"standard"`.
