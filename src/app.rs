@@ -6553,6 +6553,66 @@ impl App {
         }
     }
 
+    /// `editor.open_url_at_cursor` — vim `gx`. Pull the whitespace-delimited
+    /// token around the cursor on the current line; if it starts with a URL
+    /// scheme (`http`, `https`, `file:`, `mailto:`), hand it to the OS's
+    /// default opener (`open` / `xdg-open` / `start`). Toasts when nothing
+    /// URL-shaped is at the cursor.
+    pub fn open_url_at_cursor(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let text = b.editor.text();
+        let cursor = b.editor.cursor();
+        // Bounds of the current line.
+        let bol = text[..cursor].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let eol = text[bol..]
+            .find('\n')
+            .map(|i| bol + i)
+            .unwrap_or(text.len());
+        let line = &text[bol..eol];
+        let line_off = cursor - bol;
+        // Walk back / forward through non-whitespace chars to find the token.
+        let bytes = line.as_bytes();
+        let mut start = line_off.min(line.len());
+        while start > 0 && !bytes[start - 1].is_ascii_whitespace() {
+            start -= 1;
+        }
+        let mut end = line_off.min(line.len());
+        while end < line.len() && !bytes[end].is_ascii_whitespace() {
+            end += 1;
+        }
+        if start >= end {
+            self.toast("no URL at cursor");
+            return;
+        }
+        // Strip common surrounding punctuation / brackets.
+        let mut token = &line[start..end];
+        token = token.trim_matches(|c: char| matches!(c, '<' | '>' | '(' | ')' | '[' | ']' | '"' | '\'' | ',' | '.' | ';' | ':'));
+        let url_scheme = ["http://", "https://", "file://", "mailto:", "ftp://"];
+        if !url_scheme.iter().any(|s| token.starts_with(s)) {
+            self.toast(format!("not a URL at cursor: {token:?}"));
+            return;
+        }
+        // OS opener — same flow as `editor.open_at_cursor`'s file path handler.
+        let (cmd, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
+            ("open", &[])
+        } else if cfg!(target_os = "windows") {
+            ("cmd", &["/C", "start", ""])
+        } else {
+            ("xdg-open", &[])
+        };
+        let _ = std::process::Command::new(cmd)
+            .args(args)
+            .arg(token)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        self.toast(format!("opened {token}"));
+    }
+
     /// `editor.file_info` — vim `Ctrl+G`. Toast `<path> · Ln N/M · X%` for
     /// the active editor (no-op when nothing's open).
     pub fn show_file_info(&mut self) {

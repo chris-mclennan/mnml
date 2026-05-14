@@ -278,6 +278,12 @@ impl VimInputHandler {
                     KeyCode::Char('f') => {
                         InputResult::App(AppCommand::RunCommand("editor.open_at_cursor".into()))
                     }
+                    // `gx` — open the URL under the cursor in the OS browser.
+                    KeyCode::Char('x') => {
+                        InputResult::App(AppCommand::RunCommand(
+                            "editor.open_url_at_cursor".into(),
+                        ))
+                    }
                     KeyCode::Char('c') => {
                         self.prefix = Prefix::Gc;
                         self.count = if n > 1 { Some(n) } else { None };

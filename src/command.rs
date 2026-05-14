@@ -408,6 +408,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.show_file_info(),
         },
         Command {
+            id: "editor.open_url_at_cursor",
+            title: "Open URL under cursor in OS browser (vim `gx`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.open_url_at_cursor(),
+        },
+        Command {
             id: "editor.jump_prev_edit",
             title: "Jump to previous edit position (vim `g;`)",
             group: "editor",

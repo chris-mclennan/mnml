@@ -147,6 +147,10 @@ back from the cursor for an unmatched open, then forward for the matching close 
 `vp / 2`). Bound to `Ctrl+U` / `Ctrl+D` in vim normal mode (vim canonical).
 **Vim `gf`** — open the path under the cursor (vim `gf`); routes through the `editor.open_at_cursor`
 command (also bound to `Ctrl+Shift+O` in standard mode). Supports `path:line:col` suffixes.
+**Vim `gx`** — open the URL under the cursor in the OS's default browser. Pulls the
+whitespace-delimited token around the cursor, strips trailing punctuation (`<>()[]"'.,;:`),
+checks for a known scheme (`http`/`https`/`file`/`mailto`/`ftp`), hands off via `open` /
+`xdg-open` / `start` (same opener machinery as the file-tree right-click).
 **Vim `Ctrl+W` split-nav prefix** — in vim normal mode, `Ctrl+W` is intercepted as a window-chord
 prefix (new `Prefix::Window`). Subsequent key picks the action: `h`/`j`/`k`/`l` (or arrows) focus
 the split in that direction (`view.focus_left/right/up/down`); `w` cycles (`view.focus_next_split`);
