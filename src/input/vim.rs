@@ -762,6 +762,20 @@ impl VimInputHandler {
                     KeyCode::Char('b') => {
                         InputResult::App(AppCommand::RunCommand("view.cursor_to_bottom".into()))
                     }
+                    // vim horizontal-scroll chords: `zh` / `zl` scroll left
+                    // / right by one column; `zH` / `zL` by half a screen.
+                    KeyCode::Char('h') => {
+                        InputResult::App(AppCommand::RunCommand("view.hscroll_left".into()))
+                    }
+                    KeyCode::Char('l') => {
+                        InputResult::App(AppCommand::RunCommand("view.hscroll_right".into()))
+                    }
+                    KeyCode::Char('H') => {
+                        InputResult::App(AppCommand::RunCommand("view.hscroll_left_half".into()))
+                    }
+                    KeyCode::Char('L') => {
+                        InputResult::App(AppCommand::RunCommand("view.hscroll_right_half".into()))
+                    }
                     _ => InputResult::Consumed,
                 };
             }
@@ -2277,6 +2291,13 @@ impl VimInputHandler {
             KeyCode::Char('A') => {
                 self.enter_normal();
                 InputResult::App(AppCommand::BlockInsertStart { append: true })
+            }
+            // Block change: `c` / `s` — delete the rect then enter Insert
+            // mode at the rect's leftmost column. On Esc the typed run is
+            // replayed on every other row (same machinery as block `I`).
+            KeyCode::Char('c') | KeyCode::Char('s') => {
+                self.enter_normal();
+                InputResult::App(AppCommand::BlockChangeStart)
             }
             // Swap which corner the cursor is in (vim's visual `o` works in
             // block mode too — but we only have a single anchor so this just

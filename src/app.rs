@@ -8471,6 +8471,30 @@ impl App {
             .min(b.editor.line_count().saturating_sub(1));
     }
 
+    /// vim `zh` / `zl` / `zH` / `zL` — adjust horizontal scroll without
+    /// moving the cursor. `delta` is a column count (positive = scroll right,
+    /// negative = scroll left). Half / full forms multiply by viewport width.
+    pub fn hscroll_buffer(&mut self, delta: i32) {
+        let Some(b) = self.active_editor_mut() else {
+            return;
+        };
+        b.h_scroll = (b.h_scroll as i32 + delta).max(0) as usize;
+    }
+    /// vim `zH` / `zL` — half-screen horizontal scroll. Reads the active pane's
+    /// width from `self.rects`; falls back to 80 if not recorded.
+    pub fn hscroll_buffer_half_screen(&mut self, dir: i32) {
+        let Some(cur) = self.active else { return };
+        let w = self
+            .rects
+            .editor_panes
+            .iter()
+            .find(|(_, p)| *p == cur)
+            .map(|(r, _)| r.width as usize)
+            .unwrap_or(80);
+        let half = (w / 2).max(1) as i32;
+        self.hscroll_buffer(dir * half);
+    }
+
     /// vim `zz` / `zt` / `zb` — adjust the scroll position so the cursor
     /// lands at the center / top / bottom of the visible viewport.
     /// `frac_from_top`: 0.0 = top, 0.5 = middle, 1.0 = bottom (clamped).
@@ -9989,6 +10013,40 @@ impl App {
             append,
         });
         // Drive the handler into Insert (Vim mode flip via trait method).
+        b.input.request_insert_mode();
+    }
+
+    /// Visual-block `c` / `s` ⇒ delete the rectangle first, then start a
+    /// block-insert at the rect's leftmost column (now collapsed since the
+    /// slice is gone). On Esc the typed run is replayed on every other row,
+    /// same as plain [`Self::block_insert_start`].
+    pub fn block_change_start(&mut self) {
+        let Some(idx) = self.active else { return };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+            return;
+        };
+        let Some((rmin, cmin, rmax, _cmax)) = b.editor.block_selection() else {
+            return;
+        };
+        // Delete the rectangle. Editor::apply on DeleteBlock leaves the
+        // cursor at (rmin, cmin) — exactly where we want to insert.
+        b.editor
+            .apply(crate::edit_op::EditOp::DeleteBlock, 20, &mut self.clipboard);
+        b.recompute_dirty();
+        b.refresh_highlights();
+        let other_rows: Vec<usize> = ((rmin + 1)..=rmax).collect();
+        let start_byte = b.editor.byte_at_col_pub(rmin, cmin);
+        b.editor.set_cursor_byte(start_byte);
+        let top_row_byte_len_before = b.editor.line_byte_len(rmin);
+        self.block_insert_state = Some(BlockInsertState {
+            other_rows,
+            col: cmin,
+            start_byte,
+            top_row_byte_len_before,
+            top_row: rmin,
+            pane_id: idx,
+            append: false,
+        });
         b.input.request_insert_mode();
     }
 

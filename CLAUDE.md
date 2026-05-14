@@ -454,22 +454,27 @@ canonical insert-mode chords transplanted into the `:` line.
 / `:Lines` (workspace grep — with optional inline query: `:Rg foo`), `:BLines` (find in
 current buffer), `:History` (recent-files picker), `:Commands` (palette), `:Marks` (marks
 picker). Wide adoption among vim users from the fzf ecosystem.
-**Visual-block `I` / `A` (multi-line insert)** — the long-asked-for vim power tool. In
-VisualBlock mode, `I` enters Insert at the rect's leftmost column; `A` enters at the
-right-of-rightmost column. The user types as usual on the top row; on Esc, the typed run
-is replayed on every other row in the rect at the same column. New
-`AppCommand::BlockInsertStart{append}`, new `App.block_insert_state: Option<BlockInsertState>`
-(rows, col, start_byte, top_row_byte_len_before, pane_id, append). The replay polls in
-`App::tick` — when the active handler's mode flips from Insert back to Normal AND the state
-is set, take inserted_len = top_row_len_now - top_row_len_before, slice that span out of
-the buffer, splice it at each other row at byte position `byte_at_col(row, col)`. All
-per-row inserts batched through `Buffer::apply_edit_ops` so a single Undo reverts the
-whole block-insert. New `InputHandler::request_insert_mode()` trait method (vim flips
-its internal `VimMode::Insert`; standard is no-op) lets the App drive the handler without
-synthesizing a keystroke. New `Editor::byte_at_col_pub` / `line_byte_len` / `set_cursor_byte`
-helpers. Limitations: rows shorter than the rect's leftmost column still get the splice
-(at EOL — vim's `A` does this too); block change (`c`) isn't wired separately. Cursor
-lands at the insert origin after replay (vim convention).
+**Visual-block `I` / `A` / `c` / `s` (multi-line edit)** — the long-asked-for vim power tool.
+In VisualBlock mode, `I` enters Insert at the rect's leftmost column; `A` enters at the
+right-of-rightmost column. `c` / `s` first delete the rectangle (via `EditOp::DeleteBlock`,
+cursor lands at `(rmin, cmin)`) then start the same insert dance. The user types as usual
+on the top row; on Esc, the typed run is replayed on every other row in the rect at the
+same column. New `AppCommand::BlockInsertStart{append}` and `BlockChangeStart`, new
+`App.block_insert_state: Option<BlockInsertState>` (rows, col, start_byte,
+top_row_byte_len_before, pane_id, append). The replay polls in `App::tick` — when the
+active handler's mode flips from Insert back to Normal AND the state is set, take
+inserted_len = top_row_len_now - top_row_len_before, slice that span out of the buffer,
+splice it at each other row at byte position `byte_at_col(row, col)`. All per-row inserts
+batched through `Buffer::apply_edit_ops` so a single Undo reverts the whole block-insert.
+New `InputHandler::request_insert_mode()` trait method (vim flips its internal
+`VimMode::Insert`; standard is no-op) lets the App drive the handler without synthesizing
+a keystroke. New `Editor::byte_at_col_pub` / `line_byte_len` / `set_cursor_byte` helpers.
+Limitations: rows shorter than the rect's leftmost column still get the splice (at EOL —
+vim's `A` does this too). Cursor lands at the insert origin after replay (vim convention).
+**Vim `zh` / `zl` / `zH` / `zL` (horizontal scroll)** — `zh` / `zl` scroll the viewport one
+column left / right; `zH` / `zL` half a screen. Adjust `Buffer.h_scroll` without moving the
+cursor. New `App::hscroll_buffer` / `hscroll_buffer_half_screen` helpers; the half-screen form
+reads pane width from `App.rects` (fallback 80).
 **Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
 Single-key chord in the `g` prefix.
 **`:1,5j` / `:join`** — bare form joins current+next; ranged form collapses the

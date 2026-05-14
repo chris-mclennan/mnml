@@ -89,6 +89,11 @@ pub enum AppCommand {
     BlockInsertStart {
         append: bool,
     },
+    /// vim visual-block `c` / `s` — delete the rectangular selection first,
+    /// then enter the same multi-row insert dance at the rect's leftmost
+    /// column (now collapsed since the slice is gone). On Esc the typed run
+    /// is replayed on every other row.
+    BlockChangeStart,
 }
 
 /// Result of feeding one key to a handler.

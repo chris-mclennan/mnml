@@ -1364,6 +1364,7 @@ fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
             app.macro_replay();
         }
         BlockInsertStart { append } => app.block_insert_start(append),
+        BlockChangeStart => app.block_change_start(),
     }
 }
 
