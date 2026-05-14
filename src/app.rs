@@ -39,6 +39,9 @@ const FIND_HISTORY_MAX: usize = 50;
 /// Cap on the recently-closed-buffers stack — newer entries push older ones off.
 const CLOSED_BUFFERS_MAX: usize = 20;
 
+/// Cap on `App.message_log` — vim `:messages` shows up to this many recent toasts.
+const MESSAGE_LOG_MAX: usize = 200;
+
 /// One entry on a navigation stack — a file + a `(row, col)` so we can jump
 /// back even if the buffer's text has shifted since (the precise byte offset
 /// would be stale; row/col is a more forgiving anchor).
@@ -287,9 +290,8 @@ fn parse_substitute(line: &str) -> Option<Substitute> {
     let find = parts.remove(0);
     let replace = parts.remove(0);
     let flags = parts.first().cloned().unwrap_or_default();
-    if find.is_empty() {
-        return None;
-    }
+    // Empty find ⇒ reuse last :s find (vim canonical: `:s//foo/g`).
+    // We allow the empty here; `run_substitute` resolves via `last_substitute`.
     let case_insensitive = flags.contains('i');
     let confirm = flags.contains('c');
     let count_only = flags.contains('n');
@@ -813,6 +815,10 @@ pub struct App {
     /// Throttle stamp for `check_external_file_changes` — stat'ing every
     /// open file on every tick is overkill; we cap the cadence to ~2s.
     last_external_check: Option<std::time::Instant>,
+    /// Recent toasts (oldest first, capped at `MESSAGE_LOG_MAX`). Vim
+    /// `:messages` shows them. Keeps a history beyond the live toast
+    /// (which expires after `TOAST_TTL`).
+    pub message_log: Vec<String>,
     /// Vim `.` repeat — last completed change as a sequence of key
     /// events (re-feedable through `dispatch_key`). Empty until the user
     /// has done at least one mutation.
@@ -1091,6 +1097,7 @@ impl App {
             macro_buffer: std::collections::HashMap::new(),
             pending_macro_register: None,
             last_external_check: None,
+            message_log: Vec::new(),
             dot_keys: Vec::new(),
             dot_recording: None,
             dot_recording_saw_edit: false,
@@ -2168,6 +2175,22 @@ impl App {
         // Capture the outgoing active for `Ctrl+Tab` (last-buffer toggle) —
         // skip the no-op case where we're "revealing" the already-active.
         let prior = self.active;
+        // Optional: autosave the outgoing buffer if it's dirty and the
+        // user opted in via `[editor] autosave_on_focus_loss`. Avoid
+        // the no-op self-switch case.
+        if self.config.editor.autosave_on_focus_loss
+            && let Some(outgoing) = prior
+            && outgoing != id
+            && let Some(Pane::Editor(b)) = self.panes.get_mut(outgoing)
+            && b.dirty
+            && b.path.is_some()
+            && b.save_to_disk().is_ok()
+        {
+            let upd = b.path.clone().map(|p| (p, b.editor.text().to_string()));
+            if let Some((p, text)) = upd {
+                self.lsp.did_save(&p, &text);
+            }
+        }
         if self.layout.contains(id) {
             self.active = Some(id);
         } else if let Some(cur) = self.active {
@@ -9435,7 +9458,7 @@ impl App {
     /// Apply a parsed `:%s/old/new/[flags]` (or `:s/...` for current line) to
     /// the active editor. Literal substring replace (no regex);
     /// case-insensitive when the `i` flag is set. Staged as one undo step.
-    fn run_substitute(&mut self, sub: Substitute) {
+    fn run_substitute(&mut self, mut sub: Substitute) {
         let Some(idx) = self.active else {
             self.toast(":s — no active editor");
             return;
@@ -9444,6 +9467,19 @@ impl App {
             self.toast(":s — only works in editor panes");
             return;
         };
+        // Empty find ⇒ reuse last :s find (vim canonical `:s//new/g`).
+        if sub.find.is_empty() {
+            if let Some(last) = self.last_substitute.as_ref() {
+                sub.find = last.find.clone();
+                // Inherit case-insensitivity flag from last sub if not set.
+                if !sub.case_insensitive {
+                    sub.case_insensitive = last.case_insensitive;
+                }
+            } else {
+                self.toast(":s — no previous find to reuse");
+                return;
+            }
+        }
         // Remember for vim `&` (re-run on the cursor's current line).
         self.last_substitute = Some(sub.clone());
         let text = b.editor.text().to_string();
@@ -9916,6 +9952,18 @@ impl App {
             // `:ls` / `:files` / `:buffers` — vim canonical "list buffers".
             // Opens the buffer-switcher picker (same as Ctrl+P's buffer
             // mode).
+            // `:messages` / `:mes` — show the most-recent N toasts
+            // (vim canonical). Joined with `↵` for the toast preview.
+            "messages" | "mes" => {
+                if self.message_log.is_empty() {
+                    self.toast(":messages — none yet");
+                } else {
+                    let recent: Vec<String> =
+                        self.message_log.iter().rev().take(8).cloned().collect();
+                    let joined = recent.join("  ↵  ");
+                    self.toast(format!(":mes · {joined}"));
+                }
+            }
             "ls" | "files" | "buffers" | "buf" => self.open_buffer_picker(),
             "marks" => {
                 let mut parts: Vec<String> = Vec::new();
@@ -9978,6 +10026,94 @@ impl App {
                         format!("  → {}", fwd.join("  "))
                     };
                     self.toast(format!(":jumps {}{}", b_part, f_part));
+                }
+            }
+            // `:wn` / `:wnext` — write the current buffer + jump to next.
+            // `:wp` / `:wprev` — write + jump to prev.
+            "wn" | "wnext" => {
+                self.save_active();
+                self.next_buffer();
+            }
+            "wp" | "wprev" | "wprevious" => {
+                self.save_active();
+                self.prev_buffer();
+            }
+            // `:wa` already exists below — short alias.
+            // `:d[elete]` — delete current line (vim canonical ex form
+            // of `dd`). Goes through `DeleteLine` so the unnamed register
+            // gets the line.
+            "d" | "delete" | "de" | "del" => {
+                let Some(idx) = self.active else { return };
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    b.editor
+                        .apply(crate::edit_op::EditOp::DeleteLine, 20, &mut self.clipboard);
+                    self.toast(":delete");
+                }
+            }
+            // `:y[ank]` — yank current line.
+            "y" | "yank" | "ya" => {
+                let Some(idx) = self.active else { return };
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    b.editor
+                        .apply(crate::edit_op::EditOp::YankLine, 20, &mut self.clipboard);
+                    self.toast(":yank");
+                }
+            }
+            // `:put` / `:put!` — paste the unnamed register on the next /
+            // previous line (vim canonical ex-cmd form of `p`/`P`).
+            // Linewise — always inserts a new line (even if the register
+            // is charwise).
+            "put" | "pu" => {
+                let Some(idx) = self.active else {
+                    self.toast(":put — no active editor");
+                    return;
+                };
+                let s = self.clipboard.text();
+                if s.is_empty() {
+                    self.toast(":put — clipboard empty");
+                    return;
+                };
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    let row = b.editor.row_col().0;
+                    let line_end = b.editor.line_byte_range(row).1;
+                    let insert_at = line_end;
+                    let payload = format!("\n{}", s.trim_end_matches('\n'));
+                    b.apply_edit_ops(
+                        vec![crate::edit_op::EditOp::ReplaceRange {
+                            start: insert_at,
+                            end: insert_at,
+                            text: payload,
+                        }],
+                        &mut self.clipboard,
+                        0,
+                    );
+                    self.toast(format!(":put — inserted {}B below", s.len()));
+                }
+            }
+            "put!" => {
+                let Some(idx) = self.active else {
+                    self.toast(":put! — no active editor");
+                    return;
+                };
+                let s = self.clipboard.text();
+                if s.is_empty() {
+                    self.toast(":put! — clipboard empty");
+                    return;
+                }
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    let row = b.editor.row_col().0;
+                    let line_start = b.editor.line_byte_range(row).0;
+                    let payload = format!("{}\n", s.trim_end_matches('\n'));
+                    b.apply_edit_ops(
+                        vec![crate::edit_op::EditOp::ReplaceRange {
+                            start: line_start,
+                            end: line_start,
+                            text: payload,
+                        }],
+                        &mut self.clipboard,
+                        0,
+                    );
+                    self.toast(format!(":put! — inserted {}B above", s.len()));
                 }
             }
             // `:%y` / `:%d` — yank / delete the whole buffer. Single edit
@@ -10838,7 +10974,13 @@ impl App {
     }
 
     pub fn toast(&mut self, msg: impl Into<String>) {
-        self.toast = Some((msg.into(), Instant::now()));
+        let s: String = msg.into();
+        self.toast = Some((s.clone(), Instant::now()));
+        self.message_log.push(s);
+        if self.message_log.len() > MESSAGE_LOG_MAX {
+            let drop = self.message_log.len() - MESSAGE_LOG_MAX;
+            self.message_log.drain(..drop);
+        }
     }
     /// Current toast text if it hasn't expired.
     pub fn live_toast(&self) -> Option<&str> {
@@ -11910,8 +12052,11 @@ mod tests {
         let s = parse_substitute("s/x/y/").unwrap();
         assert_eq!(s.find, "x");
 
-        // Empty find ⇒ None.
-        assert!(parse_substitute("%s//bar/").is_none());
+        // Empty find ⇒ Some (deferred to runtime — `:s//foo/` reuses
+        // the last :s find at run time).
+        let s = parse_substitute("%s//bar/").unwrap();
+        assert_eq!(s.find, "");
+        assert_eq!(s.replace, "bar");
         // Not a substitute at all ⇒ None.
         assert!(parse_substitute("w").is_none());
         assert!(parse_substitute("qa").is_none());

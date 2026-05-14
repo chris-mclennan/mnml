@@ -314,6 +314,26 @@ the next line dispatches in Normal mode.
 offset (avoids the libc `localtime_r` dance).
 **`:%s/.../.../n`** — count-only mode (vim canonical). Doesn't touch the buffer;
 toasts the match count.
+**`:s//new/`** — empty find reuses the last `:s` find pattern (vim canonical).
+Inherits the case-insensitivity flag from the previous sub when the new flags
+don't override.
+**`:put` / `:put!`** — paste the unnamed register on the next / previous line
+(vim canonical ex form of `p` / `P`). Linewise — always inserts a fresh line.
+**`:messages` / `:mes`** — toast the most-recent N (8) entries from
+`App.message_log` (capped at `MESSAGE_LOG_MAX = 200`). The toast machinery now
+mirrors every emitted toast into the log.
+**`:d[elete]` / `:y[ank]`** — vim canonical ex form of `dd` / `yy` (delete /
+yank current line; the unnamed register gets the line).
+**`:wn` / `:wp`** — write the active buffer + jump to next / prev buffer.
+**Vim insert `Ctrl+O`** — temporarily flips to Normal for one command, then
+back to Insert. Chord-aware: `dd` from oneshot stays Normal until the second
+`d` completes. `VimInputHandler.insert_oneshot_normal` flag is checked at the
+bottom of `handle_key`.
+**`[editor] autosave_on_focus_loss`** — save dirty buffers automatically when
+they lose focus (e.g. switching to another buffer / pane). Off by default —
+useful for "never lose work" workflows but surprising for users who switch
+buffers to compare-then-discard.
+**Vim `Ctrl+W R`** — alias for `Ctrl+W r` (rotate splits).
 **Vim `.` (dot) repeat** — re-feeds the last "change" through the dispatcher. A change
 is bounded by mode + chord state: starts when the user enters Insert from Normal, when
 operator-pending opens a chord, or when a one-shot Normal-mode mutation happens (`p`,

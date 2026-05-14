@@ -94,6 +94,11 @@ pub struct EditorConfig {
     /// per-workspace when you do. If the LSP isn't attached (or doesn't
     /// implement formatting), the save proceeds normally.
     pub format_on_save: bool,
+    /// Save dirty buffers automatically when they lose focus (switching
+    /// to another buffer / pane). Off by default. Useful for the "never
+    /// lose work" workflow but surprising for users who use buffer-switching
+    /// for "compare-then-discard" gestures.
+    pub autosave_on_focus_loss: bool,
     /// Show LSP inlay hints (type / parameter chips). Default `true` —
     /// painted in dim color at the end of each line that has hints. The
     /// LSP request is fired on open + save; hints persist on the buffer
@@ -172,6 +177,7 @@ impl Default for Config {
                 auto_pair: false,
                 auto_indent: true,
                 format_on_save: false,
+                autosave_on_focus_loss: false,
                 inlay_hints: true,
                 code_lens: true,
                 text_width: 80,
@@ -264,6 +270,7 @@ struct RawEditor {
     auto_pair: Option<bool>,
     auto_indent: Option<bool>,
     format_on_save: Option<bool>,
+    autosave_on_focus_loss: Option<bool>,
     inlay_hints: Option<bool>,
     code_lens: Option<bool>,
     text_width: Option<usize>,
@@ -341,6 +348,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.format_on_save {
             self.editor.format_on_save = v;
+        }
+        if let Some(v) = raw.editor.autosave_on_focus_loss {
+            self.editor.autosave_on_focus_loss = v;
         }
         if let Some(v) = raw.editor.inlay_hints {
             self.editor.inlay_hints = v;

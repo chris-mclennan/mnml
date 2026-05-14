@@ -156,6 +156,11 @@ pub struct VimInputHandler {
     /// char arrives). This stash holds the partial selection ops while
     /// `Prefix::SurroundAddCharWait` waits for the surround char.
     pending_surround_ops: Vec<EditOp>,
+    /// vim insert `Ctrl+O <cmd>` — flips temporarily to Normal for one
+    /// command, then back to Insert. Set when Ctrl+O is pressed in
+    /// Insert; checked at the bottom of `handle_key`. Cleared when we
+    /// flip back (chord-aware: stays Normal while a chord is pending).
+    insert_oneshot_normal: bool,
     /// `:`-line history — every accepted ex command is pushed (oldest
     /// first, capped at `EX_HISTORY_MAX`). Up / Down on the cmdline
     /// walks it. Volatile (not persisted across relaunches; that's a
@@ -186,6 +191,7 @@ impl VimInputHandler {
             insert_waiting_for_register: false,
             is_recording_macro: false,
             pending_surround_ops: Vec::new(),
+            insert_oneshot_normal: false,
             ex_history: Vec::new(),
             ex_history_cursor: None,
             ex_history_typing: None,
@@ -401,6 +407,15 @@ impl VimInputHandler {
             // that register's contents at the cursor (vim canonical).
             KeyCode::Char('r') if ctrl => {
                 self.insert_waiting_for_register = true;
+                InputResult::Consumed
+            }
+            // vim insert `Ctrl+O` — temporarily switch to Normal for one
+            // command, then back to Insert. Cleared in the post-dispatch
+            // hook in `handle_key` (chord-aware: stays Normal until chord
+            // completes).
+            KeyCode::Char('o') if ctrl => {
+                self.mode = VimMode::Normal;
+                self.insert_oneshot_normal = true;
                 InputResult::Consumed
             }
             // vim insert `Ctrl+Y` / `Ctrl+E` — insert the char from the
@@ -1086,8 +1101,11 @@ impl VimInputHandler {
                     KeyCode::Char('o') => "view.close_others",
                     KeyCode::Char('r') => "view.rotate_splits",
                     // `Ctrl+W x` — exchange active leaf with sibling (vim
-                    // canonical alias for the same operation).
+                    // canonical alias for the same operation). Vim also has
+                    // `R` (reverse rotation) — for our 2-pane swap it's the
+                    // same op.
                     KeyCode::Char('x') => "view.rotate_splits",
+                    KeyCode::Char('R') => "view.rotate_splits",
                     KeyCode::Char('+') => "view.split_grow_height",
                     KeyCode::Char('-') => "view.split_shrink_height",
                     KeyCode::Char('>') => "view.split_grow_width",
@@ -1989,6 +2007,24 @@ impl InputHandler for VimInputHandler {
             prefixed.push(EditOp::SetRegisterHint(reg));
             prefixed.extend(ops.iter().cloned());
             return InputResult::Ops(prefixed);
+        }
+        // Insert-mode `Ctrl+O` one-shot: after the next Normal-mode
+        // command completes (chord done, no pending op), flip back to
+        // Insert. Note the chord-await: `dd` from oneshot stays Normal
+        // for the second `d`, then flips back.
+        if self.insert_oneshot_normal
+            && self.mode == VimMode::Normal
+            && self.op.is_none()
+            && matches!(self.prefix, Prefix::None)
+        {
+            // Check we actually consumed something — `Ctrl+O` itself
+            // didn't (it just set the flag). Look at result.
+            let consumed_more = !matches!(result, InputResult::Consumed)
+                || !matches!(key.code, KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL));
+            if consumed_more {
+                self.insert_oneshot_normal = false;
+                self.mode = VimMode::Insert;
+            }
         }
         result
     }
