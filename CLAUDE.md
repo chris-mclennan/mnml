@@ -482,6 +482,11 @@ works in mnml.
 `:TestFailed` (rerun last failed), `:Flaky` (flaky-test dashboard).
 **Git hunk ex aliases** — `:NextHunk` / `:Hnext` (jump to next changed hunk), `:PrevHunk` /
 `:Hprev`, `:PeekHunk` / `:Hpeek` (popup the diff hunk at cursor).
+**MRU buffer picker** — `:Buffers` / `:ls` / Ctrl+P-buffer picker now shows panes in
+most-recently-used order with the active pane dropped to the bottom so the picker opens
+already-cursored on the *previous* buffer (vim's "alternate buffer" idea — Enter swaps).
+New `App.pane_mru: Vec<PaneId>` (newest first) maintained in `reveal_pane`; entries
+removed and re-indexed in `remove_pane_storage`.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

@@ -1047,6 +1047,11 @@ pub struct App {
     /// here. Each `reveal_pane` captures the outgoing active. Cleared when
     /// the captured pane is closed.
     pub last_active: Option<PaneId>,
+    /// Most-recently-used pane ids, newest first. Updated by every
+    /// `reveal_pane`; entries removed when a pane is closed (so indices
+    /// stay valid even after the panes Vec is mutated). The buffer picker
+    /// shows panes in this order so the user's recent context is on top.
+    pub pane_mru: Vec<PaneId>,
     /// Vim macro recording / replay state. `None` ⇒ idle; `Recording`
     /// captures every key event that flows through dispatch_key (the
     /// toggling `q` itself is removed in `record_macro_stop`); `Replaying`
@@ -1373,6 +1378,7 @@ impl App {
             recent_files: Vec::new(),
             closed_buffers: Vec::new(),
             last_active: None,
+            pane_mru: Vec::new(),
             macro_state: MacroState::default(),
             block_insert_state: None,
             cmdline_complete_state: None,
@@ -2024,11 +2030,33 @@ impl App {
     /// Open the buffer switcher over the currently-open panes.
     pub fn open_buffer_picker(&mut self) {
         use crate::picker::PickerItem;
-        let items: Vec<PickerItem> = self
-            .panes
-            .iter()
-            .enumerate()
-            .map(|(i, p)| {
+        // Order: MRU first, then anything left over (panes opened but never
+        // focused — shouldn't happen normally but the fallback keeps the list
+        // complete). The active pane is dropped from the top so the picker
+        // starts on the second-most-recent (vim's "alternate buffer" pattern
+        // — pressing Enter on the picker swaps quickly).
+        let mut ordered: Vec<usize> = Vec::with_capacity(self.panes.len());
+        let active = self.active;
+        for &id in self.pane_mru.iter() {
+            if id < self.panes.len() && Some(id) != active && !ordered.contains(&id) {
+                ordered.push(id);
+            }
+        }
+        for i in 0..self.panes.len() {
+            if Some(i) != active && !ordered.contains(&i) {
+                ordered.push(i);
+            }
+        }
+        // Active last (so it's still in the list, but at the bottom).
+        if let Some(a) = active
+            && a < self.panes.len()
+        {
+            ordered.push(a);
+        }
+        let items: Vec<PickerItem> = ordered
+            .into_iter()
+            .map(|i| {
+                let p = &self.panes[i];
                 PickerItem::new(
                     i.to_string(),
                     p.title(),
@@ -2495,6 +2523,11 @@ impl App {
         }
         self.focus = Focus::Pane;
         self.retarget_outline_to_active();
+        // MRU bookkeeping — push the now-active pane to the front (de-dupe
+        // against any prior entry for the same id). Capped indirectly:
+        // [`force_close_pane`] removes entries when a pane is closed.
+        self.pane_mru.retain(|&id_| id_ != id);
+        self.pane_mru.insert(0, id);
     }
 
     /// `vim.macro_toggle` — `q` in vim normal. Idle ⇒ start recording into
@@ -4534,6 +4567,13 @@ impl App {
                 Some(a)
             }
         });
+        // MRU: drop the removed pane's entry, shift higher ids down.
+        self.pane_mru.retain(|&id| id != removed);
+        for id in self.pane_mru.iter_mut() {
+            if *id > removed {
+                *id -= 1;
+            }
+        }
     }
 
     /// Split the focused leaf, opening a fresh buffer (a re-open of the same file,
