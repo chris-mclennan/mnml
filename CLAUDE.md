@@ -383,6 +383,11 @@ range. Same trim+space rules as `J`.
 **`:1,5>` / `:1,5<`** — indent / outdent line range by one tab_width step. Parser
 also stops at `>` / `<` boundaries (not just letters).
 **`:bd!` / `:bdelete!`** — force-close (bypass the dirty prompt).
+**Vim `g Ctrl+G`** — toast file stats (lines / words / chars / bytes / cursor
+position). Useful for prose buffers (markdown / blog drafts).
+**`:ascii`** — alias for `ga` (char info under cursor).
+**`:goto N` / `:go N`** — jump to byte offset N (rough — places cursor at the
+line containing that byte). Vim canonical for byte-position navigation.
 **Persistent ex history** — moved from vim handler to App; survives across sessions
 via `SavedSession.ex_history` (oldest first, capped at 100). New `InputHandler::
 set_ex_history` / `ex_history()` trait methods so the App can sync. Pre-seeded

@@ -7739,6 +7739,29 @@ impl App {
         self.run_substitute(sub);
     }
 
+    /// `editor.file_stats` — vim `g Ctrl+G`. Toast char / word / line
+    /// counts for the active editor + the cursor's byte position. Useful
+    /// for prose buffers (markdown / blog drafts).
+    pub fn show_file_stats(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let text = b.editor.text();
+        let chars = text.chars().count();
+        let lines = b.editor.line_count();
+        let words = text.split_whitespace().count();
+        let bytes = text.len();
+        let cur = b.editor.cursor();
+        let cur_pct = cur
+            .checked_mul(100)
+            .and_then(|n| n.checked_div(bytes))
+            .unwrap_or(100);
+        self.toast(format!(
+            "{lines} lines · {words} words · {chars} chars · {bytes}B · cursor at {cur}B ({cur_pct}%)"
+        ));
+    }
+
     /// `editor.char_info` — vim `ga`. Toasts the char under the cursor in
     /// dec / hex (and the unicode codepoint U+XXXX). No-op on EOL/EOF.
     pub fn show_char_info(&mut self) {
@@ -10591,6 +10614,21 @@ impl App {
                         self.toast(":syntax off");
                     }
                     _ => self.toast(":syntax on|off"),
+                }
+            }
+            // `:ascii` ⇒ char info under cursor (vim canonical alias for `ga`).
+            "ascii" | "asc" => self.show_char_info(),
+            // `:goto N` ⇒ jump to byte N (rough — places cursor at line where
+            // the byte falls). Vim canonical for byte-position navigation.
+            "goto" | "go" => {
+                if let Ok(target) = rest.trim().parse::<usize>()
+                    && let Some(b) = self.active_editor_mut()
+                {
+                    let text = b.editor.text();
+                    let target = target.min(text.len());
+                    let row = text[..target].bytes().filter(|&c| c == b'\n').count();
+                    b.editor.place_cursor(row, 0);
+                    self.toast(format!(":goto {target}B → line {}", row + 1));
                 }
             }
             // `:enew` / `:ene` — fresh scratch buffer in current pane.

@@ -523,6 +523,13 @@ impl VimInputHandler {
                 let pending_op = self.op;
                 self.reset_pending();
                 return match key.code {
+                    // `g Ctrl+G` — file stats toast (lines / words / chars /
+                    // bytes / cursor position). Vim canonical "more
+                    // detailed than `Ctrl+G`". Must come before the bare
+                    // `g` arm.
+                    KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        InputResult::App(AppCommand::RunCommand("editor.file_stats".into()))
+                    }
                     KeyCode::Char('g') => InputResult::Ops(vec![MoveBufferStart]),
                     KeyCode::Char('d') => {
                         InputResult::App(AppCommand::RunCommand("lsp.goto_definition".into()))

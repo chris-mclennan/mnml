@@ -664,6 +664,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.repeat_last_substitute(),
         },
         Command {
+            id: "editor.file_stats",
+            title: "File stats: lines / words / chars / bytes / cursor position (vim `g Ctrl+G`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.show_file_stats(),
+        },
+        Command {
             id: "editor.char_info",
             title: "Toast char info: dec / hex / U+XXXX (vim `ga`)",
             group: "editor",
