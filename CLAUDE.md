@@ -451,8 +451,14 @@ entries shown only when the typed prefix starts with `.`). Cycle state lives on 
 the App computes / writes back via the new `InputHandler::cmdline_get` / `cmdline_set`
 trait methods. Watermark check on `last_shown` drops the cycle as soon as the user edits
 the line by any other means.
-**Vim cmdline `Ctrl+W` / `Ctrl+U`** — delete previous word / clear the whole line. Vim
-canonical insert-mode chords transplanted into the `:` line.
+**Vim cmdline `Ctrl+W` / `Ctrl+U` + mid-line editing** — `:` cmdline now tracks a caret
+position (`VimInputHandler.cmdline_cursor`, byte offset). Left / Right step one char
+boundary; Home / End jump to ends; Backspace deletes before the caret; Delete deletes at
+the caret; printable chars insert at the caret. `Ctrl+W` deletes the word before the
+caret; `Ctrl+U` clears the whole line; `Ctrl+A` / `Ctrl+E` jump to start / end (vim +
+readline canon). The statusline pending-display renders the caret as a `▏` (left
+one-eighth block) inline. History Up / Down places the caret at end-of-line (vim
+convention).
 **fzf.vim aliases** — `:Files` (Ctrl+P file picker), `:Buffers` (buffer picker), `:Rg` / `:Ag`
 / `:Lines` (workspace grep — with optional inline query: `:Rg foo`), `:BLines` (find in
 current buffer), `:History` (recent-files picker), `:Commands` (palette), `:Marks` (marks

@@ -122,10 +122,37 @@ enum Prefix {
 /// than dynamically generated — most are matched as prefixes by the dispatcher,
 /// so a few canonical names cover their short forms too. `pub(crate)` so the
 /// App can consume the same list when computing completion matches.
+/// Step backward one character boundary from `byte` in `s`. Returns `0` when
+/// `byte == 0`. Char-boundary safe for UTF-8.
+fn prev_char_boundary(s: &str, byte: usize) -> usize {
+    if byte == 0 {
+        return 0;
+    }
+    let mut i = byte - 1;
+    while !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+/// Step forward one character boundary from `byte` in `s`. Clamps to `s.len()`.
+fn next_char_boundary(s: &str, byte: usize) -> usize {
+    if byte >= s.len() {
+        return s.len();
+    }
+    let mut i = byte + 1;
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
 pub(crate) const EX_COMPLETION_NAMES: &[&str] = &[
     "argdo",
     "ascii",
+    "Ag",
     "badd",
+    "BLines",
+    "Buffers",
     "bdelete",
     "bfirst",
     "blast",
@@ -154,6 +181,7 @@ pub(crate) const EX_COMPLETION_NAMES: &[&str] = &[
     "enew",
     "execute",
     "files",
+    "Files",
     "first",
     "Explore",
     "global",
@@ -161,6 +189,7 @@ pub(crate) const EX_COMPLETION_NAMES: &[&str] = &[
     "grep",
     "help",
     "hide",
+    "History",
     "jumps",
     "keepa",
     "keepalt",
@@ -170,9 +199,11 @@ pub(crate) const EX_COMPLETION_NAMES: &[&str] = &[
     "later",
     "Lex",
     "Lexplore",
+    "Lines",
     "ls",
     "make",
     "marks",
+    "Marks",
     "messages",
     "move",
     "next",
@@ -195,6 +226,7 @@ pub(crate) const EX_COMPLETION_NAMES: &[&str] = &[
     "reload",
     "resize",
     "retab",
+    "Rg",
     "saveas",
     "set",
     "setf",
@@ -218,6 +250,7 @@ pub(crate) const EX_COMPLETION_NAMES: &[&str] = &[
     "tabonly",
     "tabprev",
     "term",
+    "Commands",
     "undo",
     "unique",
     "version",
@@ -247,6 +280,10 @@ pub struct VimInputHandler {
     prefix: Prefix,
     /// `Some` while the user is typing a `:`-line (without the leading `:`).
     cmdline: Option<String>,
+    /// Byte offset of the caret within `cmdline`. `0` when no cmdline is
+    /// open. Lets Left/Right/Home/End/Delete/Backspace edit mid-line and
+    /// renders a `▏` marker in [`Self::pending_display`].
+    cmdline_cursor: usize,
     tab_width: usize,
     /// Snapshot of `[editor] text_width` at construction — used by `gqap` /
     /// `gqip` to emit `EditOp::ReflowParagraph` directly. `gqq` goes
@@ -308,6 +345,7 @@ impl VimInputHandler {
             op: None,
             prefix: Prefix::None,
             cmdline: None,
+            cmdline_cursor: 0,
             tab_width: cfg.editor.tab_width.max(1),
             text_width: cfg.editor.text_width.max(8),
             last_find_char: None,
@@ -345,6 +383,14 @@ impl VimInputHandler {
     fn enter_insert(&mut self) {
         self.mode = VimMode::Insert;
         self.reset_pending();
+    }
+
+    /// Open the `:` cmdline with empty text and the caret at the start.
+    /// Centralizes the "begin-cmdline" gesture so every entrypoint stays
+    /// consistent with the cursor field.
+    fn open_cmdline(&mut self) {
+        self.cmdline = Some(String::new());
+        self.cmdline_cursor = 0;
     }
 
     fn enter_normal(&mut self) {
@@ -419,25 +465,51 @@ impl VimInputHandler {
 
     fn handle_cmdline(&mut self, key: KeyEvent, line: String) -> InputResult {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        // Ctrl+W in cmdline ⇒ delete the previous word.
+        let cur = self.cmdline_cursor.min(line.len());
+        // Ctrl+W in cmdline ⇒ delete the previous word (cursor moves left
+        // by the deleted span).
         if matches!(key.code, KeyCode::Char('w')) && ctrl {
-            let mut s = line;
-            // Strip trailing whitespace, then trailing run of non-whitespace.
-            while s.ends_with(char::is_whitespace) {
-                s.pop();
+            let mut end = cur;
+            // Strip trailing whitespace BEFORE the cursor.
+            while end > 0 {
+                let prev = prev_char_boundary(&line, end);
+                let c = line[prev..end].chars().next().unwrap_or(' ');
+                if !c.is_whitespace() {
+                    break;
+                }
+                end = prev;
             }
-            while let Some(c) = s.chars().last() {
+            // Strip the trailing run of non-whitespace.
+            let mut new_start = end;
+            while new_start > 0 {
+                let prev = prev_char_boundary(&line, new_start);
+                let c = line[prev..new_start].chars().next().unwrap_or(' ');
                 if c.is_whitespace() {
                     break;
                 }
-                s.pop();
+                new_start = prev;
             }
+            let mut s = line;
+            s.replace_range(new_start..cur, "");
+            self.cmdline_cursor = new_start;
             self.cmdline = Some(s);
             return InputResult::Consumed;
         }
         // Ctrl+U in cmdline ⇒ clear the whole line.
         if matches!(key.code, KeyCode::Char('u')) && ctrl {
             self.cmdline = Some(String::new());
+            self.cmdline_cursor = 0;
+            return InputResult::Consumed;
+        }
+        // Ctrl+A / Ctrl+E ⇒ jump to start / end of line (vim+readline canon).
+        if matches!(key.code, KeyCode::Char('a')) && ctrl {
+            self.cmdline_cursor = 0;
+            self.cmdline = Some(line);
+            return InputResult::Consumed;
+        }
+        if matches!(key.code, KeyCode::Char('e')) && ctrl {
+            self.cmdline_cursor = line.len();
+            self.cmdline = Some(line);
             return InputResult::Consumed;
         }
         match key.code {
@@ -445,18 +517,21 @@ impl VimInputHandler {
                 // Stash the current line back on the handler so the App can
                 // read it via `cmdline_get`, compute completions (which may
                 // include workspace file paths the handler can't see), and
-                // write the result back via `cmdline_set`.
+                // write the result back via `cmdline_set`. Cursor returns
+                // to end-of-line after Tab.
                 self.cmdline = Some(line);
                 InputResult::App(AppCommand::CmdlineTabComplete)
             }
             KeyCode::Esc => {
                 self.cmdline = None;
+                self.cmdline_cursor = 0;
                 self.ex_history_cursor = None;
                 self.ex_history_typing = None;
                 InputResult::Consumed
             }
             KeyCode::Enter => {
                 self.cmdline = None;
+                self.cmdline_cursor = 0;
                 self.ex_history_cursor = None;
                 self.ex_history_typing = None;
                 if line.is_empty() {
@@ -475,53 +550,97 @@ impl VimInputHandler {
                 }
             }
             KeyCode::Up => {
-                // Walk backward through history. Set typing-stash on first
-                // Up so Down past the newest restores it.
                 if self.ex_history.is_empty() {
+                    self.cmdline = Some(line);
                     return InputResult::Consumed;
                 }
                 if self.ex_history_cursor.is_none() {
-                    self.ex_history_typing = Some(line);
+                    self.ex_history_typing = Some(line.clone());
                     self.ex_history_cursor = Some(self.ex_history.len());
                 }
-                let cur = self.ex_history_cursor.unwrap_or(self.ex_history.len());
-                let new = cur.saturating_sub(1);
+                let curh = self.ex_history_cursor.unwrap_or(self.ex_history.len());
+                let new = curh.saturating_sub(1);
                 self.ex_history_cursor = Some(new);
-                self.cmdline = Some(self.ex_history[new].clone());
+                let entry = self.ex_history[new].clone();
+                self.cmdline_cursor = entry.len();
+                self.cmdline = Some(entry);
                 InputResult::Consumed
             }
             KeyCode::Down => {
                 if self.ex_history.is_empty() || self.ex_history_cursor.is_none() {
+                    self.cmdline = Some(line);
                     return InputResult::Consumed;
                 }
-                let cur = self.ex_history_cursor.unwrap();
-                let new = cur + 1;
+                let curh = self.ex_history_cursor.unwrap();
+                let new = curh + 1;
                 if new >= self.ex_history.len() {
-                    // Past newest — restore typed text.
-                    self.cmdline = Some(self.ex_history_typing.take().unwrap_or_default());
+                    let entry = self.ex_history_typing.take().unwrap_or_default();
+                    self.cmdline_cursor = entry.len();
+                    self.cmdline = Some(entry);
                     self.ex_history_cursor = None;
                 } else {
                     self.ex_history_cursor = Some(new);
-                    self.cmdline = Some(self.ex_history[new].clone());
+                    let entry = self.ex_history[new].clone();
+                    self.cmdline_cursor = entry.len();
+                    self.cmdline = Some(entry);
                 }
                 InputResult::Consumed
             }
+            KeyCode::Left => {
+                self.cmdline_cursor = prev_char_boundary(&line, cur);
+                self.cmdline = Some(line);
+                InputResult::Consumed
+            }
+            KeyCode::Right => {
+                self.cmdline_cursor = next_char_boundary(&line, cur);
+                self.cmdline = Some(line);
+                InputResult::Consumed
+            }
+            KeyCode::Home => {
+                self.cmdline_cursor = 0;
+                self.cmdline = Some(line);
+                InputResult::Consumed
+            }
+            KeyCode::End => {
+                self.cmdline_cursor = line.len();
+                self.cmdline = Some(line);
+                InputResult::Consumed
+            }
             KeyCode::Backspace => {
-                if line.is_empty() {
-                    self.cmdline = None;
+                if cur == 0 {
+                    if line.is_empty() {
+                        self.cmdline = None;
+                        self.cmdline_cursor = 0;
+                    } else {
+                        self.cmdline = Some(line);
+                    }
                     InputResult::Consumed
                 } else {
+                    let prev = prev_char_boundary(&line, cur);
                     let mut s = line;
-                    s.pop();
+                    s.replace_range(prev..cur, "");
+                    self.cmdline_cursor = prev;
                     self.cmdline = Some(s);
                     self.ex_history_cursor = None;
                     self.ex_history_typing = None;
                     InputResult::Consumed
                 }
             }
+            KeyCode::Delete => {
+                if cur < line.len() {
+                    let next = next_char_boundary(&line, cur);
+                    let mut s = line;
+                    s.replace_range(cur..next, "");
+                    self.cmdline = Some(s);
+                    self.ex_history_cursor = None;
+                    self.ex_history_typing = None;
+                }
+                InputResult::Consumed
+            }
             KeyCode::Char(c) => {
                 let mut s = line;
-                s.push(c);
+                s.insert(cur, c);
+                self.cmdline_cursor = cur + c.len_utf8();
                 self.cmdline = Some(s);
                 self.ex_history_cursor = None;
                 self.ex_history_typing = None;
@@ -2019,7 +2138,7 @@ impl VimInputHandler {
             // command line
             KeyCode::Char(':') => {
                 self.reset_pending();
-                self.cmdline = Some(String::new());
+                self.open_cmdline();
                 InputResult::Consumed
             }
             KeyCode::Char('/') if ctrl => {
@@ -2155,7 +2274,7 @@ impl VimInputHandler {
                 InputResult::App(AppCommand::RunCommand("find.selection_backward".into()))
             }
             KeyCode::Char(':') => {
-                self.cmdline = Some(String::new());
+                self.open_cmdline();
                 InputResult::Consumed
             }
             _ => InputResult::Consumed,
@@ -2245,7 +2364,7 @@ impl VimInputHandler {
                 InputResult::Consumed
             }
             KeyCode::Char(':') => {
-                self.cmdline = Some(String::new());
+                self.open_cmdline();
                 InputResult::Consumed
             }
             _ => InputResult::Consumed,
@@ -2318,12 +2437,17 @@ impl InputHandler for VimInputHandler {
     }
 
     fn cmdline_set(&mut self, text: Option<String>) {
+        self.cmdline_cursor = text.as_ref().map(String::len).unwrap_or(0);
         self.cmdline = text;
     }
 
     fn pending_display(&self) -> Option<String> {
         if let Some(line) = &self.cmdline {
-            return Some(format!(":{line}"));
+            // Render with a `▏` caret at the byte position (clamped to a char
+            // boundary). The cursor at end-of-line still gets a visible marker.
+            let cur = self.cmdline_cursor.min(line.len());
+            let (head, tail) = line.split_at(cur);
+            return Some(format!(":{head}\u{258f}{tail}"));
         }
         let mut s = String::new();
         if let Some(r) = self.pending_register {
@@ -2628,10 +2752,11 @@ mod tests {
             v.handle_key(k(':'), &ctx()),
             InputResult::Consumed
         ));
-        assert_eq!(v.pending_display().as_deref(), Some(":"));
+        // pending_display embeds a `▏` caret marker at the cursor byte.
+        assert_eq!(v.pending_display().as_deref(), Some(":\u{258f}"));
         v.handle_key(k('w'), &ctx());
         v.handle_key(k('q'), &ctx());
-        assert_eq!(v.pending_display().as_deref(), Some(":wq"));
+        assert_eq!(v.pending_display().as_deref(), Some(":wq\u{258f}"));
         match v.handle_key(kc(KeyCode::Enter), &ctx()) {
             InputResult::App(AppCommand::ExCommand(s)) => assert_eq!(s, "wq"),
             _ => panic!("expected ExCommand"),
