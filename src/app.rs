@@ -257,6 +257,37 @@ pub struct ReplaceConfirm {
 /// Returns `None` when the line doesn't start with something that looks
 /// like a range. (`current_line` and `line_count` are the active buffer's
 /// state, used to resolve `.` and `$`.)
+/// Expand vim-style mark refs in a `:` line BEFORE the line-range parser sees
+/// it. `'<letter>` (buffer-local lowercase, global uppercase) and `'<` / `'>`
+/// (the start / end rows of the last visual selection) get replaced with their
+/// 1-based row numbers. Unresolvable marks are left in place so the line-range
+/// parser declines and the outer dispatcher falls through.
+fn expand_mark_refs(line: &str, lookup: &dyn Fn(char) -> Option<usize>) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\'' {
+            if let Some(&next) = chars.peek()
+                && (next.is_ascii_alphabetic() || next == '<' || next == '>')
+            {
+                chars.next();
+                if let Some(row) = lookup(next) {
+                    out.push_str(&(row + 1).to_string());
+                    continue;
+                }
+                // Couldn't resolve — leave both chars so the parser declines.
+                out.push('\'');
+                out.push(next);
+                continue;
+            }
+            out.push('\'');
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn parse_line_range(
     line: &str,
     current_line: usize,
@@ -10148,18 +10179,34 @@ impl App {
             }
             return;
         }
-        // Leading line-range form (`:1,5d`, `:5,$y`, `:.,+3d`, `:.+1d`).
-        // Parsed into `(start_line, end_line, remainder)`; the inner cmd
-        // is dispatched to a small subset (`d`, `y`) scoped to the range.
-        if let Some((start, end, remainder)) = parse_line_range(
-            line,
-            self.active_editor()
-                .map(|b| b.editor.row_col().0)
-                .unwrap_or(0),
-            self.active_editor()
-                .map(|b| b.editor.line_count())
-                .unwrap_or(1),
-        ) {
+        // Leading line-range form (`:1,5d`, `:5,$y`, `:.,+3d`, `:.+1d`,
+        // `:'a,'bd`, `:'<,'>d`). Mark refs (`'<letter>` / `'<` / `'>`) are
+        // resolved to row numbers first; then the existing parser handles
+        // numeric / `.` / `$` / `+N` / `-N` forms.
+        let active_row = self
+            .active_editor()
+            .map(|b| b.editor.row_col().0)
+            .unwrap_or(0);
+        let active_line_count = self
+            .active_editor()
+            .map(|b| b.editor.line_count())
+            .unwrap_or(1);
+        let resolve_mark = |c: char| -> Option<usize> {
+            let b = self.active_editor()?;
+            if c == '<' || c == '>' {
+                let (lo, hi) = b.editor.last_selection_rows()?;
+                return Some(if c == '<' { lo } else { hi });
+            }
+            if c.is_ascii_uppercase() {
+                self.global_marks.get(&c).map(|(_, row, _)| *row)
+            } else {
+                b.marks.get(&c).map(|(row, _)| *row)
+            }
+        };
+        let expanded = expand_mark_refs(line, &resolve_mark);
+        if let Some((start, end, remainder)) =
+            parse_line_range(&expanded, active_row, active_line_count)
+        {
             let cmd = remainder.trim();
             match cmd {
                 "d" | "delete" | "del" | "de" => {
@@ -10370,6 +10417,51 @@ impl App {
             }
             "bn" | "bnext" => self.next_buffer(),
             "bp" | "bprev" | "bprevious" => self.prev_buffer(),
+            // `:bfirst` / `:bf` / `:brewind` / `:br` — jump to the first
+            // editor pane. `:blast` / `:bl` — jump to the last. Vim canonical.
+            "bfirst" | "bf" | "brewind" | "br" => {
+                if let Some(idx) = self.panes.iter().position(|p| matches!(p, Pane::Editor(_))) {
+                    self.reveal_pane(idx);
+                }
+            }
+            "blast" | "bl" => {
+                if let Some(idx) = self
+                    .panes
+                    .iter()
+                    .rposition(|p| matches!(p, Pane::Editor(_)))
+                {
+                    self.reveal_pane(idx);
+                }
+            }
+            // `:#` / `:b#` / `:e#` / `:bu#` — switch to the alternate (most
+            // recently active) buffer. Vim canonical for the `Ctrl+^` chord.
+            "#" | "b#" | "e#" | "bu#" | "buffer#" => self.switch_to_last_buffer(),
+            // `:undo` / `:u` and `:redo` / `:red` — vim canonical aliases for
+            // a single undo / redo step (count form lives at `:earlier N` /
+            // `:later N`).
+            "u" | "undo" => {
+                let Some(idx) = self.active else { return };
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    b.editor
+                        .apply(crate::edit_op::EditOp::Undo, 20, &mut self.clipboard);
+                    b.recompute_dirty();
+                    b.refresh_highlights();
+                }
+            }
+            "red" | "redo" => {
+                let Some(idx) = self.active else { return };
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    b.editor
+                        .apply(crate::edit_op::EditOp::Redo, 20, &mut self.clipboard);
+                    b.recompute_dirty();
+                    b.refresh_highlights();
+                }
+            }
+            // `:redraw` / `:redr` / `:redraw!` — force a screen redraw (vim
+            // canonical, useful after a sub-process scrambles the terminal).
+            "redraw" | "redr" | "redraw!" => {
+                self.redraw_requested = true;
+            }
             // `:b <substr>` / `:buffer <substr>` — switch to the editor pane
             // whose path contains <substr> (case-insensitive). Vim convention:
             // ambiguous matches toast a hint; bare `:b` toasts a list.

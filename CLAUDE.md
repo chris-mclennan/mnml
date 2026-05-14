@@ -376,6 +376,19 @@ quickfix). Same alias family as the vim quickfix commands.
 parser supports bare numbers (1-based on the wire), `.` (current line), `$` (last),
 and `+N`/`-N`/`.+N`/`.-N` relative refs. Wired for `d`/`y` only — `s` already takes
 its own scoping via `%`. New `App::delete_lines` / `yank_lines` helpers.
+**Line-range mark refs** — `:'a,'bd`, `:'<,'>y`, etc. `expand_mark_refs` pre-processes
+the line before `parse_line_range` sees it, substituting `'<letter>` (buffer-local
+lowercase, global uppercase) and `'<` / `'>` (start / end of the last visual selection)
+with their 1-based row numbers. Backed by new `Editor::last_selection_rows()` which
+converts the existing `last_selection` byte range to row indices (rolling back the end
+row by 1 when the selection's exclusive boundary sits exactly past a trailing newline,
+so V-line `V↓↓y` followed by `:'<,'>d` deletes 3 rows not 4). Unresolvable marks left
+in place so the parser declines and the outer dispatcher falls through.
+**Buffer-list ex aliases** — `:bfirst` / `:bf` / `:brewind` / `:br` (first editor pane);
+`:blast` / `:bl` (last); `:#` / `:b#` / `:e#` / `:bu#` (alternate buffer — alias for
+`Ctrl+^`); `:undo` / `:u` and `:redo` / `:red` (single-step alternatives to `:earlier`
+/ `:later`); `:redraw` / `:redr` / `:redraw!` (force a screen redraw — alias for
+`view.redraw` / `Ctrl+L`).
 **Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
 Single-key chord in the `g` prefix.
 **`:1,5j` / `:join`** — bare form joins current+next; ranged form collapses the

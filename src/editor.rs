@@ -426,6 +426,21 @@ impl Editor {
         Some((rmin, cmin, rmax, cmax))
     }
 
+    /// Row range of the last "closed" selection (vim's `'<` / `'>` marks).
+    /// Returns `(start_row, end_row)` inclusive. `None` until the buffer has
+    /// closed at least one selection. If the end byte sits exactly past a
+    /// trailing newline (a linewise / extended selection's exclusive boundary),
+    /// the row is rolled back so the range reflects the last *content* row.
+    pub fn last_selection_rows(&self) -> Option<(usize, usize)> {
+        let (lo, hi) = self.last_selection?;
+        let (r1, _) = self.row_col_at(lo);
+        let (mut r2, c2) = self.row_col_at(hi);
+        if r2 > r1 && c2 == 0 && hi > 0 && self.text.as_bytes().get(hi - 1) == Some(&b'\n') {
+            r2 -= 1;
+        }
+        Some((r1, r2))
+    }
+
     /// `(row, char_col)` of the byte position `byte` (clamped to text bounds).
     pub fn row_col_at(&self, byte: usize) -> (usize, usize) {
         let byte = byte.min(self.text.len());
