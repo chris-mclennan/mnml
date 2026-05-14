@@ -110,8 +110,25 @@ pub enum LspEvent {
     /// the function call the cursor sits inside. `None` reply ⇒ no event
     /// emitted (so the open popup stays put).
     SignatureHelp(SignatureHelp),
+    /// Result of a `textDocument/inlayHint` request — virtual text the
+    /// server suggests inserting at specific positions. Rendered as dim
+    /// chips by the editor view.
+    InlayHints {
+        path: PathBuf,
+        hints: Vec<InlayHint>,
+    },
     /// A server-side message worth surfacing as a toast.
     Message(String),
+}
+
+/// A single inlay hint — virtual text the server wants displayed at a
+/// specific position. We keep just `(line, character, label)` since the
+/// MVP renderer paints them as dim end-of-line chips.
+#[derive(Debug, Clone)]
+pub struct InlayHint {
+    pub line: u32,
+    pub character: u32,
+    pub label: String,
 }
 
 /// A single entry in a `textDocument/documentSymbol` reply. We keep just
@@ -477,6 +494,19 @@ impl LspManager {
     /// arrives as [`LspEvent::SignatureHelp`].
     pub fn signature_help(&mut self, path: &Path, line: u32, character: u32) -> bool {
         self.request_at("textDocument/signatureHelp", path, line, character)
+    }
+    /// Send `textDocument/inlayHint` for the whole file — reply arrives as
+    /// [`LspEvent::InlayHints`]. Caller passes `line_count` so the request
+    /// range covers the whole buffer.
+    pub fn inlay_hint(&mut self, path: &Path, line_count: u32) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.inlay_hint(path, line_count);
+                sent = true;
+            }
+        }
+        sent
     }
     /// Send a `textDocument/codeAction` request — the reply arrives as
     /// [`LspEvent::CodeAction`]. `diagnostics` are the ones overlapping the

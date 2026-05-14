@@ -485,6 +485,43 @@ pub fn draw_pane(
             }
         }
 
+        // Inlay hints: collect every hint on this line, format as one
+        // joined string, paint into trailing space cells in dim color.
+        // (Vim canonical position is inline — we render end-of-line for
+        // the MVP because it doesn't shift real code cells.)
+        let hints_on_line: Vec<&crate::lsp::InlayHint> = if app.config.editor.inlay_hints {
+            buf.inlay_hints
+                .iter()
+                .filter(|h| (h.line as usize) == line_no)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if !hints_on_line.is_empty() {
+            let chip = hints_on_line
+                .iter()
+                .map(|h| h.label.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("  ");
+            let with_lead = format!("  {chip}");
+            let start_c = n + 2;
+            let hcolor = theme::cur().comment;
+            for (i, mc) in with_lead.chars().enumerate() {
+                let c = start_c + i;
+                if c < buf.h_scroll {
+                    continue;
+                }
+                let vc = c - buf.h_scroll;
+                if vc >= cells.len() {
+                    break;
+                }
+                if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
+                    cells[vc] = (mc, hcolor, base_bg);
+                }
+            }
+        }
+
         let mut spans: Vec<Span> = vec![sign_span, Span::styled(num_gutter, num_style)];
         let mut i = 0;
         while i < cells.len() {

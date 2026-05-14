@@ -170,6 +170,10 @@ pub struct Buffer {
     pub blame: Option<Vec<crate::git::blame::BlameLine>>,
     /// LSP diagnostics for this file (replaced wholesale on each `publishDiagnostics`).
     pub diagnostics: Vec<crate::lsp::Diagnostic>,
+    /// LSP inlay hints — virtual text the server suggests at specific
+    /// positions. Refreshed on save (and after the initial `did_open`
+    /// reply lands). Rendered as dim chips in the editor view.
+    pub inlay_hints: Vec<crate::lsp::InlayHint>,
     /// Stamp of the last text-changing edit (used by `[editor] autosave_secs`).
     /// `None` until the first edit; cleared back to `None` on save.
     pub last_edited: Option<Instant>,
@@ -231,6 +235,7 @@ impl Buffer {
             highlights: Vec::new(),
             blame: None,
             diagnostics: Vec::new(),
+            inlay_hints: Vec::new(),
             last_edited: None,
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
@@ -268,6 +273,7 @@ impl Buffer {
             highlights: Vec::new(),
             blame: None,
             diagnostics: Vec::new(),
+            inlay_hints: Vec::new(),
             last_edited: None,
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,

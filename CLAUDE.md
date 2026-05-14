@@ -232,6 +232,14 @@ gestures while typing.
 `"`, `'`, `` ` ``. The smallest enclosing range wins. New `SelectInnerSmartQuote` /
 `SelectAroundSmartQuote` ops. Saves a keystroke when you don't care which quote variant
 you're inside.
+**LSP inlay hints** — `[editor] inlay_hints = true` (default; `:set [no]inlayhints` /
+`:set inlayhints!` runtime toggle). `LspManager::inlay_hint(path, line_count)` fires
+`textDocument/inlayHint` for the whole file on open + on save; reply parsed by
+`parse_inlay_hints` (handles both string-label and array-of-parts shapes) into
+`Vec<InlayHint{line, character, label}>` per buffer. `editor_view.rs` paints them as dim
+chips at the end of each line that has hints (concatenated with two-space separators if
+multiple). Vim canonical position is *inline* — end-of-line MVP avoids shifting real
+code cells. `initialize` advertises `inlayHint` capability so servers actually return them.
 **Vim named registers** — `Clipboard` gained a `HashMap<char, (String, bool)>` named pool
 plus a `pending_register: Option<char>` hint consumed by the next `set` / `text`. The vim
 handler parses `"<reg>` (a-z named, `0` last-yank, `+` system, `_` blackhole) into

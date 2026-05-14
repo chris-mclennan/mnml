@@ -89,6 +89,11 @@ pub struct EditorConfig {
     /// per-workspace when you do. If the LSP isn't attached (or doesn't
     /// implement formatting), the save proceeds normally.
     pub format_on_save: bool,
+    /// Show LSP inlay hints (type / parameter chips). Default `true` —
+    /// painted in dim color at the end of each line that has hints. The
+    /// LSP request is fired on open + save; hints persist on the buffer
+    /// until refreshed.
+    pub inlay_hints: bool,
     /// Target line width for `editor.reflow_paragraph` (vim `gqq`) — greedy
     /// word-wrap at this many chars. Default 80.
     pub text_width: usize,
@@ -154,6 +159,7 @@ impl Default for Config {
                 auto_pair: false,
                 auto_indent: true,
                 format_on_save: false,
+                inlay_hints: true,
                 text_width: 80,
                 ensure_trailing_newline: true,
             },
@@ -240,6 +246,7 @@ struct RawEditor {
     auto_pair: Option<bool>,
     auto_indent: Option<bool>,
     format_on_save: Option<bool>,
+    inlay_hints: Option<bool>,
     text_width: Option<usize>,
     ensure_trailing_newline: Option<bool>,
 }
@@ -314,6 +321,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.format_on_save {
             self.editor.format_on_save = v;
+        }
+        if let Some(v) = raw.editor.inlay_hints {
+            self.editor.inlay_hints = v;
         }
         if let Some(v) = raw.editor.text_width {
             self.editor.text_width = v.max(8);

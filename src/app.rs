@@ -2294,6 +2294,9 @@ impl App {
                 let new_id = self.panes.len() - 1;
                 self.reveal_pane(new_id);
                 self.lsp.did_open(&path, &text);
+                // Initial inlay-hint request — refreshed on save thereafter.
+                let line_count = text.lines().count().max(1) as u32;
+                self.lsp.inlay_hint(&path, line_count);
                 // Auto-open MD preview alongside, if enabled and not yet open.
                 // Passive (focus stays on the editor we just opened).
                 if self.config.ui.auto_md_preview && is_markdown_path(&path) {
@@ -2416,9 +2419,13 @@ impl App {
     }
 
     /// Tell the LSP server `path` was saved (re-reads the file — we just wrote it).
+    /// Also fires `textDocument/inlayHint` for the visible window range so the
+    /// hint chips refresh after edits.
     fn notify_lsp_saved(&mut self, path: &Path) {
         if let Ok(text) = std::fs::read_to_string(path) {
             self.lsp.did_save(path, &text);
+            let line_count = text.lines().count().max(1) as u32;
+            self.lsp.inlay_hint(path, line_count);
         }
     }
 
@@ -3351,6 +3358,16 @@ impl App {
                 }
             }
             LspEvent::Formatting { path, edits } => self.apply_formatting_edits(path, edits),
+            LspEvent::InlayHints { path, hints } => {
+                for p in self.panes.iter_mut() {
+                    if let Pane::Editor(b) = p
+                        && b.path.as_deref() == Some(path.as_path())
+                    {
+                        b.inlay_hints = hints;
+                        break;
+                    }
+                }
+            }
             LspEvent::CodeAction(actions) => self.apply_code_action_reply(actions),
             LspEvent::DocumentSymbols(symbols) => {
                 if self.pending_outline {
@@ -9651,6 +9668,22 @@ impl App {
                     self.set_highlight_word_under_cursor(false);
                 } else if matches!(opt, "hlword!" | "invhlword") {
                     self.toggle_highlight_word_under_cursor();
+                } else if matches!(opt, "inlayhints") {
+                    self.config.editor.inlay_hints = true;
+                    self.toast("inlay hints: on");
+                } else if matches!(opt, "noinlayhints") {
+                    self.config.editor.inlay_hints = false;
+                    self.toast("inlay hints: off");
+                } else if matches!(opt, "inlayhints!" | "invinlayhints") {
+                    self.config.editor.inlay_hints = !self.config.editor.inlay_hints;
+                    self.toast(format!(
+                        "inlay hints: {}",
+                        if self.config.editor.inlay_hints {
+                            "on"
+                        } else {
+                            "off"
+                        }
+                    ));
                 } else if matches!(opt, "automdpreview") {
                     self.config.ui.auto_md_preview = true;
                     self.toast("auto-preview md: on");

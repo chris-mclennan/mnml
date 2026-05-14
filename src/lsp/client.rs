@@ -110,6 +110,10 @@ impl LspClient {
                                 }
                             }
                         },
+                        "inlayHint": {
+                            "dynamicRegistration": false,
+                            "resolveSupport": { "properties": ["label.tooltip", "label.location"] }
+                        },
                         "documentSymbol": {
                             "hierarchicalDocumentSymbolSupport": true,
                             "symbolKind": {
@@ -279,6 +283,24 @@ impl LspClient {
                 "command": cmd.command,
                 "arguments": cmd.arguments,
             }),
+        );
+    }
+
+    /// `textDocument/inlayHint` — reply is `InlayHint[]` (or null). Range
+    /// covers the whole file (servers are typically scope-aware enough to
+    /// only return relevant hints — and we MVP-render just end-of-line
+    /// chips so total volume isn't a concern).
+    pub fn inlay_hint(&mut self, path: &Path, line_count: u32) {
+        self.request_with_path(
+            "textDocument/inlayHint",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": line_count.saturating_sub(1), "character": 0 }
+                }
+            }),
+            Some(path),
         );
     }
 
@@ -498,6 +520,12 @@ fn handle_message(
             "textDocument/signatureHelp" => {
                 if let Some(sh) = parse_signature_help(result) {
                     let _ = tx.send(LspEvent::SignatureHelp(sh));
+                }
+            }
+            "textDocument/inlayHint" => {
+                if let Some(path) = req_path {
+                    let hints = parse_inlay_hints(result);
+                    let _ = tx.send(LspEvent::InlayHints { path, hints });
                 }
             }
             _ => {}
@@ -818,6 +846,40 @@ fn parse_workspace_symbols(result: &serde_json::Value) -> Vec<crate::lsp::Worksp
 /// Parse a `textDocument/signatureHelp` reply into [`crate::lsp::SignatureHelp`].
 /// Returns `None` for null / empty replies so the open popup can stay put
 /// (the spec says null means "no change", not "dismiss").
+/// Parse a `textDocument/inlayHint` reply (`InlayHint[]` or null) into our
+/// flat `(line, char, label)` form. Labels can be either a plain string or
+/// an array of `InlayHintLabelPart` (we concatenate the parts' values).
+pub fn parse_inlay_hints(result: &serde_json::Value) -> Vec<crate::lsp::InlayHint> {
+    let mut out = Vec::new();
+    let Some(arr) = result.as_array() else {
+        return out;
+    };
+    for hint in arr {
+        let Some(pos) = hint.get("position") else {
+            continue;
+        };
+        let line = pos.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let character = pos.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let label = match hint.get("label") {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(serde_json::Value::Array(parts)) => parts
+                .iter()
+                .filter_map(|p| p.get("value").and_then(|v| v.as_str()))
+                .collect::<Vec<_>>()
+                .join(""),
+            _ => continue,
+        };
+        if !label.is_empty() {
+            out.push(crate::lsp::InlayHint {
+                line,
+                character,
+                label,
+            });
+        }
+    }
+    out
+}
+
 fn parse_signature_help(result: &serde_json::Value) -> Option<crate::lsp::SignatureHelp> {
     if result.is_null() {
         return None;
@@ -1011,6 +1073,31 @@ mod tests {
         assert_eq!(got2[0].1[0].0.start.line, 0);
         // null ⇒ empty
         assert!(parse_workspace_edit(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn parse_inlay_hints_handles_string_and_part_labels() {
+        let reply = json!([
+            {
+                "position": { "line": 0, "character": 5 },
+                "label": ": i32"
+            },
+            {
+                "position": { "line": 1, "character": 10 },
+                "label": [{"value": ": "}, {"value": "String"}]
+            },
+            {
+                // No label ⇒ skip
+                "position": { "line": 2, "character": 0 }
+            }
+        ]);
+        let hints = parse_inlay_hints(&reply);
+        assert_eq!(hints.len(), 2);
+        assert_eq!(hints[0].label, ": i32");
+        assert_eq!(hints[0].line, 0);
+        assert_eq!(hints[0].character, 5);
+        assert_eq!(hints[1].label, ": String");
+        assert_eq!(hints[1].line, 1);
     }
 
     #[test]
