@@ -396,6 +396,11 @@ collapses and the editor expands to fill the freed columns. Blame mode wins
 cursor's row. `[ui] cursor_line` config (default `false`). Theme's `line` color
 is the canonical highlight; the existing render path already used it but the
 flag now gates whether the user actually sees it.
+**`:set scrolloff=N` / `:set so=N`** — keep the cursor at least N lines from
+the viewport's top / bottom edge (auto-scroll). `[ui] scrolloff` config (default
+0; vim canonical). Clamped to half the viewport height. Mirror
+`:set sidescrolloff=N` / `:set siso=N` for horizontal — keeps cursor N cols
+from the side edges.
 **Persistent ex history** — moved from vim handler to App; survives across sessions
 via `SavedSession.ex_history` (oldest first, capped at 100). New `InputHandler::
 set_ex_history` / `ex_history()` trait methods so the App can sync. Pre-seeded

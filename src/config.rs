@@ -140,6 +140,13 @@ pub struct UiConfig {
     /// Paint a subtle background tint on the cursor's row (vim
     /// `:set cursorline`). Off by default — some users find it noisy.
     pub cursor_line: bool,
+    /// Vim `:set scrolloff=N` — keep the cursor at least N lines from
+    /// the viewport's top / bottom edge (auto-scroll). Default 0
+    /// (vim canonical default; many users set it to 5–10).
+    pub scrolloff: usize,
+    /// Vim `:set sidescrolloff=N` — horizontal counterpart. Keep cursor
+    /// at least N columns from the viewport's left / right edge.
+    pub sidescrolloff: usize,
     /// Show visible markers for whitespace (`·` for space, `→` for tab) in the
     /// editor. `:set list` / `:set nolist`. Off by default.
     pub show_whitespace: bool,
@@ -202,6 +209,8 @@ impl Default for Config {
                 relative_line_numbers: false,
                 line_numbers: true,
                 cursor_line: false,
+                scrolloff: 0,
+                sidescrolloff: 0,
                 show_whitespace: false,
                 syntax: true,
                 bracket_rainbow: false,
@@ -300,6 +309,8 @@ struct RawUi {
     relative_line_numbers: Option<bool>,
     line_numbers: Option<bool>,
     cursor_line: Option<bool>,
+    scrolloff: Option<usize>,
+    sidescrolloff: Option<usize>,
     show_whitespace: Option<bool>,
     syntax: Option<bool>,
     bracket_rainbow: Option<bool>,
@@ -399,6 +410,12 @@ impl Config {
         }
         if let Some(v) = raw.ui.cursor_line {
             self.ui.cursor_line = v;
+        }
+        if let Some(v) = raw.ui.scrolloff {
+            self.ui.scrolloff = v;
+        }
+        if let Some(v) = raw.ui.sidescrolloff {
+            self.ui.sidescrolloff = v;
         }
         if let Some(v) = raw.ui.show_whitespace {
             self.ui.show_whitespace = v;

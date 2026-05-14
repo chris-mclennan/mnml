@@ -117,13 +117,18 @@ pub fn draw_pane(
     {
         buf.scroll = snap;
     }
-    if cur_row < buf.scroll {
-        buf.scroll = cur_row;
+    // `[ui] scrolloff = N` ⇒ keep the cursor at least N lines from the
+    // top / bottom of the viewport (vim canonical). Default 0.
+    let scrolloff = app.config.ui.scrolloff.min(text_h.saturating_sub(1) / 2);
+    if cur_row < buf.scroll + scrolloff {
+        buf.scroll = cur_row.saturating_sub(scrolloff);
     } else {
         let vis_offset = buf.file_to_visible_row(buf.scroll, cur_row);
-        if vis_offset >= text_h {
-            // Walk back `text_h - 1` visible lines from cur_row.
-            let mut walk_back = text_h.saturating_sub(1);
+        let max_offset = text_h.saturating_sub(scrolloff + 1);
+        if vis_offset >= max_offset.max(1) {
+            // Walk back `text_h - 1 - scrolloff` visible lines from cur_row.
+            let target = text_h.saturating_sub(1).saturating_sub(scrolloff);
+            let mut walk_back = target;
             let mut line = cur_row;
             while walk_back > 0 && line > 0 {
                 line -= 1;
@@ -138,12 +143,15 @@ pub fn draw_pane(
         .scroll
         .min(line_count.saturating_sub(text_h.min(line_count)));
 
-    // Horizontal scroll — keep the cursor column in view.
+    // Horizontal scroll — keep the cursor column in view. Honors
+    // `[ui] sidescrolloff` (vim canonical): keep cursor ≥ N cols from
+    // the viewport's left/right edge.
     if tw > 0 {
-        if cur_col < buf.h_scroll {
-            buf.h_scroll = cur_col;
-        } else if cur_col >= buf.h_scroll + tw {
-            buf.h_scroll = cur_col + 1 - tw;
+        let side = app.config.ui.sidescrolloff.min(tw / 2);
+        if cur_col < buf.h_scroll + side {
+            buf.h_scroll = cur_col.saturating_sub(side);
+        } else if cur_col + side >= buf.h_scroll + tw {
+            buf.h_scroll = cur_col + 1 + side - tw;
         }
     }
 

@@ -11286,6 +11286,26 @@ impl App {
                     } else {
                         self.toast(format!(":set tab_width={v} — not a number"));
                     }
+                } else if let Some(v) = rest
+                    .strip_prefix("scrolloff=")
+                    .or_else(|| rest.strip_prefix("so="))
+                {
+                    if let Ok(n) = v.trim().parse::<usize>() {
+                        self.config.ui.scrolloff = n;
+                        self.toast(format!("scrolloff: {n}"));
+                    } else {
+                        self.toast(format!(":set scrolloff={v} — not a number"));
+                    }
+                } else if let Some(v) = rest
+                    .strip_prefix("sidescrolloff=")
+                    .or_else(|| rest.strip_prefix("siso="))
+                {
+                    if let Ok(n) = v.trim().parse::<usize>() {
+                        self.config.ui.sidescrolloff = n;
+                        self.toast(format!("sidescrolloff: {n}"));
+                    } else {
+                        self.toast(format!(":set sidescrolloff={v} — not a number"));
+                    }
                 } else if let Some(v) = rest.strip_prefix("text_width=") {
                     if let Ok(n) = v.trim().parse::<usize>() {
                         self.config.editor.text_width = n.max(8);
