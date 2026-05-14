@@ -387,6 +387,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.equalize_splits(),
         },
         Command {
+            id: "view.rotate_splits",
+            title: "Rotate the active split with its sibling (vim `Ctrl+W r`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.rotate_splits(),
+        },
+        Command {
             id: "view.close_others",
             title: "Close every pane except the active one (vim `:only`)",
             group: "view",

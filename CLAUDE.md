@@ -150,7 +150,8 @@ prefix (new `Prefix::Window`). Subsequent key picks the action: `h`/`j`/`k`/`l` 
 the split in that direction (`view.focus_left/right/up/down`); `w` cycles (`view.focus_next_split`);
 `q`/`c` close (`view.close_split`); `s` splits down; `v` splits right; `=` equalizes every split's
 ratio to 50/50 (`view.equalize_splits` → `Layout::equalize_splits`); `o` closes every other pane
-(`view.close_others` — same as `:only`). Standard mode keeps `Ctrl+W` bound to `buffer.close`
+(`view.close_others` — same as `:only`); `r` rotates the active leaf with its sibling
+(`view.rotate_splits` → `Layout::swap_siblings_containing`). Standard mode keeps `Ctrl+W` bound to `buffer.close`
 (browser-tab convention) — the vim handler intercepts before the keymap resolver gets a chance.
 `pending_display` shows `^W` in the statusline while the chord is pending.
 **Vim `gqq` paragraph reflow** — greedy word-wrap the cursor's paragraph to `[editor] text_width`

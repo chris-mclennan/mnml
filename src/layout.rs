@@ -140,6 +140,43 @@ impl Layout {
         }
     }
 
+    /// Swap the two sides of the smallest split that contains `target`.
+    /// Vim `Ctrl+W r` rotates the splits at the cursor's level. Returns
+    /// `true` if a swap was made (target was in a Split node).
+    pub fn swap_siblings_containing(&mut self, target: PaneId) -> bool {
+        match self {
+            Layout::Split { first, second, .. } => {
+                // If either side is the target's leaf or a subtree containing
+                // it, recurse first; if the recursion couldn't find a deeper
+                // Split, swap our own children.
+                let in_first = first.contains(target);
+                let in_second = second.contains(target);
+                if !in_first && !in_second {
+                    return false;
+                }
+                let recursed_first = if in_first {
+                    first.swap_siblings_containing(target)
+                } else {
+                    false
+                };
+                let recursed_second = if in_second {
+                    second.swap_siblings_containing(target)
+                } else {
+                    false
+                };
+                // If a deeper Split handled it, don't swap here.
+                if recursed_first || recursed_second {
+                    return true;
+                }
+                // Both children are Leafs (or one is, the other is Leaf-equivalent
+                // for our purposes) — swap.
+                std::mem::swap(first, second);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Reset every `Split` in the tree to a 50/50 ratio. Vim `Ctrl+W =` —
     /// "equalize all splits" with a poor-man's "even at every level".
     /// (True equalization across the *visible* viewport would weight by
@@ -367,6 +404,54 @@ mod tests {
         };
         l.shift_after(2); // pretend pane 2 was removed from app.panes
         assert_eq!(l.leaves(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn swap_siblings_swaps_immediate_parent() {
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::Leaf(0)),
+            second: Box::new(Layout::Leaf(1)),
+        };
+        let swapped = l.swap_siblings_containing(0);
+        assert!(swapped);
+        let Layout::Split { first, second, .. } = &l else {
+            panic!()
+        };
+        assert!(matches!(**first, Layout::Leaf(1)));
+        assert!(matches!(**second, Layout::Leaf(0)));
+    }
+
+    #[test]
+    fn swap_siblings_walks_to_deepest_split() {
+        // Outer split holds leaf 0 + an inner split holding leaves 1 + 2.
+        // Asking to swap siblings of leaf 1 should swap inner's children
+        // (leaves 1 + 2), not the outer.
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::Leaf(0)),
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Vertical,
+                ratio: 50,
+                first: Box::new(Layout::Leaf(1)),
+                second: Box::new(Layout::Leaf(2)),
+            }),
+        };
+        let swapped = l.swap_siblings_containing(1);
+        assert!(swapped);
+        let Layout::Split { second, .. } = &l else {
+            panic!()
+        };
+        let Layout::Split {
+            first: f, second: s, ..
+        } = &**second
+        else {
+            panic!()
+        };
+        assert!(matches!(**f, Layout::Leaf(2)));
+        assert!(matches!(**s, Layout::Leaf(1)));
     }
 
     #[test]

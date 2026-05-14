@@ -6544,6 +6544,15 @@ impl App {
         self.layout.equalize_splits();
     }
 
+    /// `view.rotate_splits` — vim `Ctrl+W r`. Swap the two sides of the
+    /// smallest split that contains the active leaf.
+    pub fn rotate_splits(&mut self) {
+        let Some(cur) = self.active else { return };
+        if self.layout.swap_siblings_containing(cur) {
+            self.toast("rotated splits");
+        }
+    }
+
     /// `editor.file_info` — vim `Ctrl+G`. Toast `<path> · Ln N/M · X%` for
     /// the active editor (no-op when nothing's open).
     pub fn show_file_info(&mut self) {
