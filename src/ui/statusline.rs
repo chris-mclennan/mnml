@@ -159,6 +159,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // ── right ──
     let mut right: Vec<Seg> = Vec::new();
+    // Autosave indicator — `[AS Ns]` chip when `[editor] autosave_secs > 0`.
+    // Lets the user see at a glance that idle saves are armed.
+    let autosave = app.config.editor.autosave_secs;
+    if autosave > 0 {
+        right.push(Seg::new(
+            format!(" AS {autosave}s "),
+            theme::cur().bg_darker,
+            theme::cur().green,
+        ));
+    }
     if let Some(b) = app.active_editor() {
         let (row, col) = b.editor.row_col();
         // `Ln 12/580` (current of total) — the "/580" lets the user gauge

@@ -8302,7 +8302,13 @@ impl App {
                     self.toast(format!(":set {rest} — not supported"));
                 }
             }
-            "noh" | "nohl" | "nohlsearch" => {}
+            // `:noh` / `:nohlsearch` — clear the active buffer's find state
+            // (drops the highlights). Vim convention.
+            "noh" | "nohl" | "nohlsearch" => {
+                if let Some(b) = self.active_editor_mut() {
+                    b.find = None;
+                }
+            }
             other => {
                 // Last resort: maybe it names a registered command.
                 if crate::command::registry().get(other).is_some() {
