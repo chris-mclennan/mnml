@@ -809,6 +809,23 @@ pub struct App {
     /// Throttle stamp for `check_external_file_changes` — stat'ing every
     /// open file on every tick is overkill; we cap the cadence to ~2s.
     last_external_check: Option<std::time::Instant>,
+    /// Vim `.` repeat — last completed change as a sequence of key
+    /// events (re-feedable through `dispatch_key`). Empty until the user
+    /// has done at least one mutation.
+    pub dot_keys: Vec<ratatui::crossterm::event::KeyEvent>,
+    /// Vim `.` recording — keys of the in-progress change. Started on
+    /// the first key that enters Insert mode or produces a one-shot
+    /// mutation in Normal; finalized into [`Self::dot_keys`] when mode
+    /// returns to Normal (or immediately for one-shot mutations).
+    pub dot_recording: Option<Vec<ratatui::crossterm::event::KeyEvent>>,
+    /// True if any key during the current `dot_recording` session has
+    /// produced a buffer mutation. Used to decide whether to finalize
+    /// the recording (mutation seen) or discard it (cancelled chord)
+    /// when the recording session ends.
+    pub dot_recording_saw_edit: bool,
+    /// True while `.` is replaying. Suppresses re-recording (so a `.`
+    /// replay doesn't capture itself) and prevents nested replay.
+    pub is_replaying_dot: bool,
     /// Last `:s` / `:%s` payload, parsed. Vim `&` re-runs it on the cursor's
     /// current line (vim convention: `&` always uses line scope, regardless
     /// of whether the original was buffer-wide). `c` (confirm) flag is
@@ -1070,6 +1087,10 @@ impl App {
             macro_buffer: std::collections::HashMap::new(),
             pending_macro_register: None,
             last_external_check: None,
+            dot_keys: Vec::new(),
+            dot_recording: None,
+            dot_recording_saw_edit: false,
+            is_replaying_dot: false,
             last_substitute: None,
             file_cursors: std::collections::HashMap::new(),
             global_marks: std::collections::HashMap::new(),
@@ -2243,6 +2264,26 @@ impl App {
     /// firing `vim.macro_toggle` / `vim.macro_replay`).
     pub fn set_pending_macro_register(&mut self, reg: char) {
         self.pending_macro_register = Some(reg);
+    }
+
+    /// vim `.` — re-feed the last recorded change through the
+    /// dispatcher. Sets `is_replaying_dot = true` so the replay
+    /// doesn't re-record itself or recurse on a nested `.` inside
+    /// the captured sequence.
+    pub fn dot_replay(&mut self) {
+        if self.dot_keys.is_empty() {
+            self.toast("nothing to repeat");
+            return;
+        }
+        if self.is_replaying_dot {
+            return;
+        }
+        let keys = self.dot_keys.clone();
+        self.is_replaying_dot = true;
+        for key in keys {
+            crate::tui::dispatch_key(self, key);
+        }
+        self.is_replaying_dot = false;
     }
 
     /// Stop recording — finalize the current macro into its register.

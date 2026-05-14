@@ -1448,6 +1448,11 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::Ops(Self::repeated(ToggleCaseChar, n))
             }
+            // vim `.` — repeat the last change.
+            KeyCode::Char('.') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("vim.dot_repeat".into()))
+            }
             // vim `&` — repeat the last :s on the cursor's current line.
             KeyCode::Char('&') => {
                 self.reset_pending();

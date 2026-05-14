@@ -256,6 +256,18 @@ new prefix variants (`SurroundDelete`, `SurroundChange(char)`, `SurroundAddCharW
 The add-surround flow uses a two-phase build: motion completes ⇒ `pending_surround_ops`
 holds the select-ops, transition to char-wait ⇒ char arrives, emit
 `[…select…, SurroundSelection, SelectClear]`.
+**Vim `.` (dot) repeat** — re-feeds the last "change" through the dispatcher. A change
+is bounded by mode + chord state: starts when the user enters Insert from Normal, when
+operator-pending opens a chord, or when a one-shot Normal-mode mutation happens (`p`,
+`x`, `~`, etc.); ends when both mode is back to Normal AND no chord is pending. The
+recording is finalized only if at least one keystroke during the session produced a
+buffer mutation (so cancelled chords like `dEsc` get discarded, not re-fired). Tracked
+on the App side (`dot_keys` / `dot_recording` / `dot_recording_saw_edit` /
+`is_replaying_dot`); the dispatcher captures `mode` + `pending_display()` before/after
+each key and feeds them to `record_dot`. The vim handler's `.` chord routes to
+`vim.dot_repeat` which calls `App::dot_replay`. **Limitations**: keys consumed by the
+keymap resolver (app-level chords) bypass the recorder; macro-replay-style nested
+recursion is suppressed via `is_replaying_dot`.
 **`.editorconfig` support** — `Buffer::apply_editorconfig(workspace)` walks up from
 the file's directory to (or until `root = true`), parses `.editorconfig` files, and
 applies per-file overrides for `tab_width` / `indent_size` ⇒ `editor.tab_width`,

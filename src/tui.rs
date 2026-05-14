@@ -1120,11 +1120,25 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => Some(c),
         _ => None,
     };
+    // Capture mode + pending-chord state BEFORE dispatch so the dot-
+    // recorder can detect mode transitions and chord-completion. Only
+    // meaningful for editor panes.
+    let (mode_before, pending_before) = match app.panes.get(i) {
+        Some(Pane::Editor(b)) => (Some(b.input.mode()), b.input.pending_display()),
+        _ => (None, None),
+    };
+    // Skip dot recording for the `.` repeat key itself (we're replaying)
+    // and during macro replay.
+    let skip_dot = app.is_replaying_dot
+        || matches!(key.code, KeyCode::Char('.'))
+            && mode_before == Some(crate::input::EditingMode::Normal)
+            && pending_before.is_none();
     // `b` borrows app.panes; `&mut app.clipboard` is a disjoint field — fine.
     let ev = match app.panes.get_mut(i) {
         Some(Pane::Editor(b)) => b.feed_key(key, &mut app.clipboard, viewport),
         _ => return,
     };
+    let edited = matches!(ev, BufferEvent::Edited);
     match ev {
         BufferEvent::Edited => {
             // Keep the LSP server's view in sync (full-text didChange).
@@ -1157,6 +1171,106 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 app.focus_tree();
             }
         }
+    }
+    // Dot-repeat recording — see App.dot_keys / dot_recording. Runs at
+    // the bottom so we can compare mode_before / mode_after + chord state.
+    if !skip_dot {
+        let (mode_after, pending_after) = match app.panes.get(i) {
+            Some(Pane::Editor(b)) => (Some(b.input.mode()), b.input.pending_display()),
+            _ => (None, None),
+        };
+        record_dot(
+            app,
+            key,
+            mode_before,
+            mode_after,
+            pending_before,
+            pending_after,
+            edited,
+        );
+    }
+}
+
+/// Update [`App::dot_recording`] / [`App::dot_keys`] based on the mode +
+/// chord-state transition this dispatch caused. The recording starts
+/// when a "change" begins and finalizes when it ends. Boundaries:
+///
+/// - Normal + no chord pending → Insert ⇒ start recording (this `key`).
+/// - Normal + no chord pending → Normal + chord pending (e.g. `d` from
+///   normal opens operator-pending) ⇒ start recording.
+/// - During recording (chord still pending OR in Insert) ⇒ append.
+/// - End of recording: chord cleared and (mode is Normal OR back from
+///   Insert), AND a buffer mutation occurred ⇒ finalize into `dot_keys`.
+/// - End of recording with no mutation (e.g. user `Esc`'d the operator
+///   before completing it) ⇒ discard.
+/// - One-shot Normal-mode mutation with no chord (e.g. `p`) ⇒ record this
+///   `key` and finalize immediately.
+fn record_dot(
+    app: &mut crate::app::App,
+    key: KeyEvent,
+    mode_before: Option<crate::input::EditingMode>,
+    mode_after: Option<crate::input::EditingMode>,
+    pending_before: Option<String>,
+    pending_after: Option<String>,
+    edited: bool,
+) {
+    use crate::input::EditingMode;
+    let (Some(before), Some(after)) = (mode_before, mode_after) else {
+        return;
+    };
+    let recording = app.dot_recording.is_some();
+    // 1. Already recording — append. Then check if we just finalized.
+    if recording {
+        if let Some(rec) = &mut app.dot_recording {
+            rec.push(key);
+        }
+        if edited {
+            app.dot_recording_saw_edit = true;
+        }
+        let in_flight = after == EditingMode::Insert || pending_after.is_some();
+        if !in_flight {
+            // Recording terminated. If any earlier keystroke in the
+            // session produced a mutation, finalize. Otherwise discard
+            // (the chord was cancelled — e.g. ESC out of operator-pending).
+            if app.dot_recording_saw_edit {
+                if let Some(rec) = app.dot_recording.take() {
+                    app.dot_keys = rec;
+                }
+            } else {
+                app.dot_recording = None;
+            }
+            app.dot_recording_saw_edit = false;
+        }
+        return;
+    }
+    // 2. Not currently recording — does this key start a new change?
+    let in_flight_after = after == EditingMode::Insert || pending_after.is_some();
+    let started_change =
+        before == EditingMode::Normal && pending_before.is_none() && in_flight_after;
+    if started_change {
+        app.dot_recording = Some(vec![key]);
+        app.dot_recording_saw_edit = edited;
+        return;
+    }
+    // 3. Visual → Insert (visual `c`) starts a change too.
+    if before == EditingMode::Visual && after == EditingMode::Insert {
+        app.dot_recording = Some(vec![key]);
+        app.dot_recording_saw_edit = edited;
+        return;
+    }
+    // 4. One-shot Normal-mode mutation (`p`, `~`, `u`, etc.) — record the
+    //    single key and finalize.
+    if before == EditingMode::Normal
+        && after == EditingMode::Normal
+        && pending_before.is_none()
+        && pending_after.is_none()
+        && edited
+    {
+        app.dot_keys = vec![key];
+    }
+    // 5. Visual op (e.g. `vlld`) ⇒ also a one-shot capture.
+    if before == EditingMode::Visual && after == EditingMode::Normal && edited {
+        app.dot_keys = vec![key];
     }
 }
 

@@ -525,6 +525,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_marks_picker(),
         },
         Command {
+            id: "vim.dot_repeat",
+            title: "Vim: repeat last change (.)",
+            group: "vim",
+            keys: &[],
+            run: |app| app.dot_replay(),
+        },
+        Command {
             id: "find.select_match_forward",
             title: "Select next find match (vim `gn`)",
             group: "find",
