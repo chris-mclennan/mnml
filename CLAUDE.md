@@ -448,6 +448,8 @@ First Tab swaps in the alphabetically-first match; subsequent Tabs cycle. Any no
 clears the cycle state so editing doesn't keep "completing" surprisingly. Trailing-arg
 completion (file paths after `:e`, `:sp` etc.) isn't wired yet — the handler doesn't have
 filesystem access — those Tabs are no-ops.
+**Vim cmdline `Ctrl+W` / `Ctrl+U`** — delete previous word / clear the whole line. Vim
+canonical insert-mode chords transplanted into the `:` line.
 **Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
 Single-key chord in the `g` prefix.
 **`:1,5j` / `:join`** — bare form joins current+next; ranged form collapses the

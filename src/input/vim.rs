@@ -465,10 +465,32 @@ impl VimInputHandler {
     }
 
     fn handle_cmdline(&mut self, key: KeyEvent, line: String) -> InputResult {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         // Any key that's NOT Tab clears the cycle state (so editing after a
         // partial Tab-cycle doesn't keep "cycling" surprisingly).
         if key.code != KeyCode::Tab {
             self.cmdline_complete = None;
+        }
+        // Ctrl+W in cmdline ⇒ delete the previous word.
+        if matches!(key.code, KeyCode::Char('w')) && ctrl {
+            let mut s = line;
+            // Strip trailing whitespace, then trailing run of non-whitespace.
+            while s.ends_with(char::is_whitespace) {
+                s.pop();
+            }
+            while let Some(c) = s.chars().last() {
+                if c.is_whitespace() {
+                    break;
+                }
+                s.pop();
+            }
+            self.cmdline = Some(s);
+            return InputResult::Consumed;
+        }
+        // Ctrl+U in cmdline ⇒ clear the whole line.
+        if matches!(key.code, KeyCode::Char('u')) && ctrl {
+            self.cmdline = Some(String::new());
+            return InputResult::Consumed;
         }
         match key.code {
             KeyCode::Tab => {
