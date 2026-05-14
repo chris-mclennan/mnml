@@ -128,7 +128,9 @@ pub enum EditOp {
     /// already ends with whitespace, in which case no separator is inserted —
     /// vim convention). Cursor lands at the join boundary. No-op on the
     /// last line. `keep_space=false` ⇒ no space inserted (vim `gJ`).
-    JoinLines { keep_space: bool },
+    JoinLines {
+        keep_space: bool,
+    },
 
     // ── clipboard / registers ──
     /// vim `yy`

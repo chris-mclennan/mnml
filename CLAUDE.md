@@ -412,7 +412,11 @@ branch lists, `git worktree list --porcelain`, `checkout` / `checkout --track` /
 → `git checkout` (remotes via `--track`); `git.new_branch` (`<leader>g n`, `B`) — prompt → `git checkout
 -b`; `git.worktrees` (`<leader>g w`, `w`) — picker over the worktrees → opens a shell pane in the chosen
 one; after a checkout `App::after_checkout()` refreshes git + tree and toasts (warns if unsaved editors
-are open). headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
+are open). **`git.stash` / `git.stash_pop`** (`<leader>g S` / `<leader>g P`) — `src/git/stash.rs` shells
+out to `git stash push -u [-m <msg>]` and `git stash pop`. The stash command opens a
+`PromptKind::GitStashMessage` prompt for an optional message (Enter alone ⇒ untitled stash); pop is
+fire-and-forget. Both refresh git status + tree and warn on unsaved-buffer surprises after the
+operation. headless+IPC (interactive TUI listens too) + the `run.sh`/`dev.sh`
 wrappers. The statusline git segment shows branch + `⇡ahead ⇣behind` + `✚staged ●modified
 …untracked ⚠conflicts` (only the nonzero parts), from `git status --porcelain -b`. The Git
 track is done (phase 4 — branch-rail UI [vs the picker], commit-with-Codex, "recompose commit with AI", multi-repo — is queued; see `.local/PLAN.md`). **HTTP track — in progress:** `src/http/` holds `Request`/`Response` +

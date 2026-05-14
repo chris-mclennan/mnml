@@ -57,6 +57,9 @@ pub enum PromptKind {
     /// Accept ⇒ `workspace/symbol` with the typed query; the reply lands as
     /// `LspEvent::WorkspaceSymbols` and opens a `Locations` picker.
     LspWorkspaceSymbol,
+    /// Accept ⇒ `git stash push -u -m <input>` (or no `-m` if empty) — the
+    /// optional message form of `git.stash`. Esc ⇒ cancel without stashing.
+    GitStashMessage,
 }
 
 #[derive(Debug)]

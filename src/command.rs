@@ -526,6 +526,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_commit_prompt(),
         },
         Command {
+            id: "git.stash",
+            title: "Git: stash (push -u, optional message)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_stash_prompt(),
+        },
+        Command {
+            id: "git.stash_pop",
+            title: "Git: stash pop (apply + drop most recent)",
+            group: "git",
+            keys: &[],
+            run: |app| app.run_git_stash_pop(),
+        },
+        Command {
             id: "git.graph",
             title: "Git: commit graph (DAG browser)",
             group: "git",

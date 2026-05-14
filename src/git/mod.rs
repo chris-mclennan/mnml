@@ -12,6 +12,7 @@ pub mod graph;
 pub mod log;
 pub mod rail;
 pub mod stage;
+pub mod stash;
 pub mod status;
 
 pub use status::GitStatus;

@@ -104,6 +104,8 @@ pub fn root() -> &'static Leader {
                             ('o', cmd("git.checkout", "checkout branch")),
                             ('n', cmd("git.new_branch", "new branch")),
                             ('w', cmd("git.worktrees", "worktrees → shell")),
+                            ('S', cmd("git.stash", "stash (with optional msg)")),
+                            ('P', cmd("git.stash_pop", "stash pop")),
                         ],
                     ),
                 ),

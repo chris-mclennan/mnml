@@ -5557,6 +5557,52 @@ impl App {
         }
     }
 
+    // ─── stash ──────────────────────────────────────────────────────
+    /// `git.stash` — open a prompt for the (optional) message. Accept with an
+    /// empty input ⇒ untitled stash. Accept with text ⇒ `git stash push -u
+    /// -m <text>`. Esc ⇒ no stash. The `-u` (include untracked) flag is on
+    /// by default so new files don't get left behind.
+    pub fn open_stash_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::GitStashMessage,
+            "Stash message (Enter for none)",
+        ));
+    }
+
+    /// Run the stash push directly (called from the prompt's accept arm or
+    /// from a future "stash without message" chord).
+    pub fn run_git_stash_push(&mut self, message: Option<&str>) {
+        match crate::git::stash::push(&self.workspace, message) {
+            Ok(summary) => {
+                self.after_git_change();
+                self.tree.refresh();
+                let dirty_open = self
+                    .panes
+                    .iter()
+                    .any(|p| matches!(p, Pane::Editor(b) if b.dirty));
+                let warn = if dirty_open {
+                    " — heads up: unsaved edits in open buffers"
+                } else {
+                    ""
+                };
+                self.toast(format!("{summary}{warn}"));
+            }
+            Err(e) => self.toast(format!("git stash: {e}")),
+        }
+    }
+
+    /// `git.stash_pop` — apply + drop the most recent stash.
+    pub fn run_git_stash_pop(&mut self) {
+        match crate::git::stash::pop(&self.workspace) {
+            Ok(summary) => {
+                self.after_git_change();
+                self.tree.refresh();
+                self.toast(format!("popped: {summary}"));
+            }
+            Err(e) => self.toast(format!("git stash pop: {e}")),
+        }
+    }
+
     // ─── commit ─────────────────────────────────────────────────────
     /// Open the commit-message prompt. Commits whatever is staged when accepted;
     /// if nothing's staged, `git commit` says so.
@@ -5621,6 +5667,11 @@ impl App {
                     }
                     Err(e) => self.toast(format!("git commit --amend: {e}")),
                 }
+            }
+            crate::prompt::PromptKind::GitStashMessage => {
+                let msg = p.input.trim();
+                let msg_opt = if msg.is_empty() { None } else { Some(msg) };
+                self.run_git_stash_push(msg_opt);
             }
             crate::prompt::PromptKind::AiAsk => {
                 let q = p.input.trim();
