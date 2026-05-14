@@ -25,7 +25,7 @@ enum VimMode {
     VisualLine,
 }
 
-/// A pending operator awaiting a motion (`d`, `c`, `y`, `>`, `<`).
+/// A pending operator awaiting a motion (`d`, `c`, `y`, `>`, `<`, `gq`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingOp {
     Delete,
@@ -33,6 +33,9 @@ enum PendingOp {
     Yank,
     Indent,
     Outdent,
+    /// `gq` — paragraph reflow. Combined with a text object (currently `ip`
+    /// / `ap`) to scope which paragraph(s) to reflow.
+    Reflow,
 }
 
 /// A multi-key prefix that isn't an operator (`g…`, `Z…`, `r…`).
@@ -85,6 +88,12 @@ pub struct VimInputHandler {
     /// `Some` while the user is typing a `:`-line (without the leading `:`).
     cmdline: Option<String>,
     tab_width: usize,
+    /// Snapshot of `[editor] text_width` at construction — used by `gqap` /
+    /// `gqip` to emit `EditOp::ReflowParagraph` directly. `gqq` goes
+    /// through the App command (which reads the live config), so the only
+    /// staleness window is between a `:set text_width=N` and the *next*
+    /// time the input handler is rebuilt (e.g. via `editor.use_vim`).
+    text_width: usize,
 }
 
 impl VimInputHandler {
@@ -96,6 +105,7 @@ impl VimInputHandler {
             prefix: Prefix::None,
             cmdline: None,
             tab_width: cfg.editor.tab_width.max(1),
+            text_width: cfg.editor.text_width.max(8),
         }
     }
 
@@ -339,7 +349,20 @@ impl VimInputHandler {
                         "editor.reflow_paragraph".into(),
                     ));
                 }
-                // `gq` + motion isn't wired yet — treat as cancelled.
+                // `gqip` / `gqap` — the inner-paragraph and around-paragraph
+                // text objects. Set the operator + text-object prefix so the
+                // existing TextObjectInner/Around dispatch picks it up.
+                if matches!(key.code, KeyCode::Char('i')) {
+                    self.op = Some(PendingOp::Reflow);
+                    self.prefix = Prefix::TextObjectInner;
+                    return InputResult::Consumed;
+                }
+                if matches!(key.code, KeyCode::Char('a')) {
+                    self.op = Some(PendingOp::Reflow);
+                    self.prefix = Prefix::TextObjectAround;
+                    return InputResult::Consumed;
+                }
+                // `gq` + motion (other) isn't wired yet — treat as cancelled.
                 return InputResult::Consumed;
             }
             Prefix::MarkSet => {
@@ -411,6 +434,15 @@ impl VimInputHandler {
                         ops.push(Outdent);
                         ops.push(SelectClear);
                     }
+                    PendingOp::Reflow => {
+                        // `gqf<c>` / `gqt<c>` — reflow doesn't honor an
+                        // arbitrary span yet; fall back to the cursor's
+                        // paragraph and ignore the find motion.
+                        ops.clear();
+                        ops.push(ReflowParagraph {
+                            width: self.text_width,
+                        });
+                    }
                 }
                 return InputResult::Ops(ops);
             }
@@ -481,6 +513,19 @@ impl VimInputHandler {
                         ops.push(Outdent);
                         ops.push(SelectClear);
                     }
+                    PendingOp::Reflow => {
+                        // For paragraph reflow we don't actually use the
+                        // selection — the ReflowParagraph op finds the
+                        // paragraph from the cursor's line via
+                        // `paragraph_bounds`. Emit it directly instead of
+                        // the select_op above. (`gqip` ≡ `gqq`; `gqap` is
+                        // identical for now since the paragraph extension
+                        // doesn't change reflow output.)
+                        ops.clear();
+                        ops.push(ReflowParagraph {
+                            width: self.text_width,
+                        });
+                    }
                 }
                 return InputResult::Ops(ops);
             }
@@ -539,6 +584,9 @@ impl VimInputHandler {
                     }
                     PendingOp::Indent => InputResult::Ops(Self::repeated(Indent, n)),
                     PendingOp::Outdent => InputResult::Ops(Self::repeated(Outdent, n)),
+                    PendingOp::Reflow => InputResult::Ops(vec![ReflowParagraph {
+                        width: self.text_width,
+                    }]),
                 };
             }
             // operator + `i` / `a` → text-object prefix (`diw`, `daw`, …).
@@ -590,6 +638,14 @@ impl VimInputHandler {
                     PendingOp::Outdent => {
                         ops.push(Outdent);
                         ops.push(SelectClear);
+                    }
+                    PendingOp::Reflow => {
+                        // `gqw` / `gqj` etc. don't have a span-aware reflow;
+                        // fall back to the cursor's paragraph.
+                        ops.clear();
+                        ops.push(ReflowParagraph {
+                            width: self.text_width,
+                        });
                     }
                 }
                 return InputResult::Ops(ops);
@@ -1071,13 +1127,14 @@ impl InputHandler for VimInputHandler {
             s.push_str(&n.to_string());
         }
         if let Some(op) = self.op {
-            s.push(match op {
-                PendingOp::Delete => 'd',
-                PendingOp::Change => 'c',
-                PendingOp::Yank => 'y',
-                PendingOp::Indent => '>',
-                PendingOp::Outdent => '<',
-            });
+            match op {
+                PendingOp::Delete => s.push('d'),
+                PendingOp::Change => s.push('c'),
+                PendingOp::Yank => s.push('y'),
+                PendingOp::Indent => s.push('>'),
+                PendingOp::Outdent => s.push('<'),
+                PendingOp::Reflow => s.push_str("gq"),
+            }
         }
         match self.prefix {
             Prefix::G => s.push('g'),

@@ -169,6 +169,24 @@ split (5% step). `Layout::adjust_split_ratio_for(target, dir, grow_delta)` flips
 on which side `target` is in, so the chord always grows the pane the cursor is in. Standard mode keeps `Ctrl+W` bound to `buffer.close`
 (browser-tab convention) — the vim handler intercepts before the keymap resolver gets a chance.
 `pending_display` shows `^W` in the statusline while the chord is pending.
+**Vim `gqip` / `gqap`** — paragraph reflow as an operator + text-object: `gqip` reflows the
+inner paragraph (same effect as `gqq`); `gqap` is the same op for now since the around-paragraph
+extension doesn't change reflow output. Wired through new `PendingOp::Reflow` and the existing
+`TextObjectInner` / `TextObjectAround` prefixes. The vim handler caches `text_width` from config
+at construction (rebuilt on `editor.use_vim`); a `:set text_width=N` between handler builds is
+visible to `gqq` (which goes through the App command and reads live config) but not to `gqip` /
+`gqap` until the next handler rebuild.
+**Sticky scroll** — when a fold's body extends past the top of the viewport, the editor view
+overwrites body row 0 with the fold's start line (bold + `bg2`) so the user always knows what
+function/section they're inside. Pure post-process: the line that *was* at row 0 gets covered
+(user can scroll up by one to see it). Picks the smallest enclosing fold (closest scope). Only
+active when `Buffer.folds` is non-empty.
+**Folds survive line-shift edits** — `feed_key`'s per-op snapshot computes `cursor_line_before`
++ line-count delta, then `Buffer::shift_folds_after(at_line, delta)` adjusts every fold's
+`(start, end)` pair: above the edit ⇒ keep, below ⇒ shift by delta, straddling ⇒ drop. Batch
+edits via `apply_edit_ops` still clear folds wholesale (that path is for LSP rename / code
+actions / find-replace where multiple edits at different positions would need per-edit
+attribution we don't track).
 **Vim `gqq` paragraph reflow** — greedy word-wrap the cursor's paragraph to `[editor] text_width`
 (default 80; runtime `:set text_width=N`). New `EditOp::ReflowParagraph{width}` uses `paragraph_bounds`
 to find the range, splits into words, rebuilds with line-wrapping. Preserves the first line's leading

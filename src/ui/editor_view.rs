@@ -488,6 +488,36 @@ pub fn draw_pane(
         }
         lines.push(Line::from(spans));
     }
+    // Sticky scroll: when a fold's body extends past the top of the
+    // viewport, paint that fold's start line as a sticky header in row 0.
+    // Heuristic — only "real" overlap (fold actually started above).
+    // Picks the smallest such fold (closest enclosing).
+    if !buf.folds.is_empty() {
+        let scroll = buf.scroll;
+        let mut sticky: Option<(usize, usize)> = None; // (size, start_line)
+        for (&start, &end) in &buf.folds {
+            if start < scroll && end >= scroll {
+                let size = end - start;
+                if sticky.is_none_or(|(s, _)| size < s) {
+                    sticky = Some((size, start));
+                }
+            }
+        }
+        if let Some((_, start_line)) = sticky
+            && let Some(line) = lines.first_mut()
+        {
+            let raw = buf.editor.line_str(start_line).to_string();
+            let pad: String = " ".repeat(area.width as usize);
+            let txt = format!("{raw}{pad}");
+            let txt: String = txt.chars().take(area.width as usize).collect();
+            let t = theme::cur();
+            let style = Style::default()
+                .fg(t.fg)
+                .bg(t.bg2)
+                .add_modifier(ratatui::style::Modifier::BOLD);
+            *line = Line::from(Span::styled(txt, style));
+        }
+    }
     frame.render_widget(Paragraph::new(lines), area);
 
     if want_scrollbar && text_h > 0 {

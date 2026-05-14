@@ -446,8 +446,19 @@ impl Buffer {
         match self.input.handle_key(key, &ctx) {
             InputResult::Ops(ops) => {
                 let mut changed = false;
+                // Snapshot per-op so single-point edits get accurate line
+                // deltas and folds can shift instead of being dropped.
                 for op in ops {
+                    let cursor_line_before = self.editor.row_col().0;
+                    let lines_before = self.editor.line_count();
                     let out = self.editor.apply(op, viewport_rows, clipboard);
+                    if out.buffer_changed {
+                        let lines_after = self.editor.line_count();
+                        let delta = lines_after as i64 - lines_before as i64;
+                        if delta != 0 {
+                            self.shift_folds_after(cursor_line_before, delta);
+                        }
+                    }
                     changed |= out.buffer_changed;
                 }
                 if changed {
@@ -511,6 +522,39 @@ impl Buffer {
             self.note_edit_position();
         }
         changed
+    }
+
+    /// Shift fold start/end pairs so they survive a line-count change at
+    /// `at_line` (the cursor's line at edit time). `delta` is the net line
+    /// change (`+1` for an inserted newline, `-1` for a removed line, etc.).
+    /// Folds *entirely above* `at_line` are unchanged. Folds *entirely
+    /// below* shift by `delta`. Folds straddling `at_line` are dropped
+    /// (they're likely broken). Negative deltas that would push a fold's
+    /// start at-or-before `at_line` also drop the fold (collapsed too far).
+    fn shift_folds_after(&mut self, at_line: usize, delta: i64) {
+        if self.folds.is_empty() {
+            return;
+        }
+        let pairs: Vec<(usize, usize)> = self.folds.iter().map(|(&s, &e)| (s, e)).collect();
+        self.folds.clear();
+        for (start, end) in pairs {
+            // Above edit point — keep.
+            if end < at_line {
+                self.folds.insert(start, end);
+                continue;
+            }
+            // Strictly below the edit line — shift both bounds.
+            if start > at_line {
+                let new_start = (start as i64 + delta).max(0) as usize;
+                let new_end = (end as i64 + delta).max(0) as usize;
+                if new_start < new_end {
+                    self.folds.insert(new_start, new_end);
+                }
+                continue;
+            }
+            // Straddles `at_line` (the edit happened inside the fold) ⇒
+            // drop. The fold's structure is no longer trustworthy.
+        }
     }
 
     /// Append the cursor's current `(row, col)` to [`Self::edit_history`] —
@@ -734,6 +778,44 @@ mod tests {
             assert!(t.is_char_boundary(s));
             assert!(t.is_char_boundary(e));
         }
+    }
+
+    #[test]
+    fn shift_folds_after_below_edit_shifts_both_bounds() {
+        let cfg = Config::default();
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.rs");
+        fs::write(&p, "0\n1\n2\n3\n4\n5\n6\n7\n").unwrap();
+        let mut b = Buffer::open(&p, &cfg).unwrap();
+        b.folds.insert(5, 6); // fold lines 5..=6
+        b.shift_folds_after(2, 1); // inserted a line at row 2, lines below shift +1
+        // Old fold at 5..=6 ⇒ now at 6..=7.
+        assert!(b.folds.contains_key(&6));
+        assert_eq!(b.folds.get(&6).copied(), Some(7));
+    }
+
+    #[test]
+    fn shift_folds_after_above_edit_preserved() {
+        let cfg = Config::default();
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.rs");
+        fs::write(&p, "0\n1\n2\n3\n4\n5\n6\n").unwrap();
+        let mut b = Buffer::open(&p, &cfg).unwrap();
+        b.folds.insert(0, 2); // above the edit
+        b.shift_folds_after(5, -1);
+        assert_eq!(b.folds.get(&0).copied(), Some(2));
+    }
+
+    #[test]
+    fn shift_folds_after_straddling_dropped() {
+        let cfg = Config::default();
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.rs");
+        fs::write(&p, "0\n1\n2\n3\n4\n5\n6\n").unwrap();
+        let mut b = Buffer::open(&p, &cfg).unwrap();
+        b.folds.insert(2, 5); // contains the edit line 3
+        b.shift_folds_after(3, 1);
+        assert!(b.folds.is_empty());
     }
 
     #[test]
