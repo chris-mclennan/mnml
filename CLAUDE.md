@@ -478,6 +478,8 @@ from ALE / coc / nvim-lspconfig conventions. All also surface in `:` cmdline Tab
 `:Gcommit` / `:Commit` (commit prompt), `:Branch` / `:Branches` (branch picker), `:Stash` /
 `:StashPop`. Routes to the corresponding `git.*` commands so fugitive.vim muscle memory
 works in mnml.
+**Playwright ex aliases** — `:Test` (test.run_at_cursor), `:TestAll`, `:TestFile`,
+`:TestFailed` (rerun last failed), `:Flaky` (flaky-test dashboard).
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

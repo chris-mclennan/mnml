@@ -11179,6 +11179,22 @@ impl App {
             "StashPop" => {
                 crate::command::run("git.stash_pop", self);
             }
+            // Playwright test aliases.
+            "Test" => {
+                crate::command::run("test.run_at_cursor", self);
+            }
+            "TestAll" => {
+                crate::command::run("test.run_all", self);
+            }
+            "TestFile" => {
+                crate::command::run("test.run_file", self);
+            }
+            "TestFailed" => {
+                crate::command::run("test.rerun_failed", self);
+            }
+            "Flaky" => {
+                crate::command::run("flaky.show", self);
+            }
             // `:diff` / `:diffs` / `:diffsplit` — open the diff pane for
             // the active file (alias for the existing `git.diff_file`
             // command). Vim users reach for `:diff` reflexively.
