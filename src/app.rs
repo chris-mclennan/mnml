@@ -8237,6 +8237,9 @@ impl App {
             // `:retab` — replace tabs with `[editor] tab_width` spaces in
             // the whole buffer.
             "retab" => self.run_retab(),
+            // `:term` / `:terminal` — open a shell in a new split (alias for
+            // `term.shell` / `Ctrl+T`).
+            "term" | "terminal" => self.open_shell(),
             "e" | "edit" => {
                 if rest.is_empty() {
                     self.reload_active(false);

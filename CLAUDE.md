@@ -90,7 +90,8 @@ Normal/Insert/Visual + `:`-line), swappable at runtime (`editor.toggle_keymap` /
 via `App::run_ex_command` (`:sp [path]` / `:vsp [path]` split + open; `:only` collapses to active
 pane; `:pwd` toasts the workspace path; `:tabnew <path>` aliases to `open_path` since mnml has
 buffers, not tabs; `:sort [u]` sorts lines [selection or whole buffer; `u` de-dupes]; `:retab`
-replaces tabs with `[editor] tab_width` spaces buffer-wide);
+replaces tabs with `[editor] tab_width` spaces buffer-wide; `:term`/`:terminal` opens a shell pty
+in a split [alias for `term.shell` / `Ctrl+T`]);
 **`:%s/old/new/[flags]`** — vim-style global substitute via `parse_substitute` + `App::run_substitute`:
 splits on unescaped `/` (`\/`/`\\`/`\n`/`\t` understood inside the fields), `g` is implicit (whole buffer
 always), `i` makes the match case-insensitive (`buffer::find_all_ci_ascii` vs `app::find_all_case_sensitive`),
