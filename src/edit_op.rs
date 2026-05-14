@@ -69,6 +69,11 @@ pub enum EditOp {
     /// between two matching quote chars on the same line.
     SelectInnerQuote(char),
     SelectAroundQuote(char),
+    /// vim `iq` / `aq` (mnml extension) — smart-pick the enclosing quote
+    /// pair from `"`, `'`, `` ` ``. The smallest enclosing range wins.
+    /// `around` includes the quote chars themselves.
+    SelectInnerSmartQuote,
+    SelectAroundSmartQuote,
     /// vim bracket text object: `i(`, `i[`, `i{` / `a(`, `a[`, `a{`. The
     /// `char` is the open bracket (the editor derives the matching close).
     /// Spans multiple lines — finds the enclosing pair by depth-counting
@@ -124,6 +129,13 @@ pub enum EditOp {
     // ── text mutation ──
     InsertChar(char),
     InsertStr(String),
+    /// vim insert `Ctrl+Y` / `Ctrl+E` — insert the char at the cursor's
+    /// column from the line above (`above=true`) or below (`above=false`).
+    /// No-op when the source line doesn't have a char at that column (or
+    /// the cursor is at the first/last line).
+    InsertCharFromLine {
+        above: bool,
+    },
     InsertNewline,
     /// vim `o`
     InsertNewlineBelow,
@@ -282,6 +294,8 @@ impl EditOp {
             | SelectAroundWord
             | SelectInnerQuote(_)
             | SelectAroundQuote(_)
+            | SelectInnerSmartQuote
+            | SelectAroundSmartQuote
             | SelectInnerBracket(_)
             | SelectAroundBracket(_)
             | SelectInnerParagraph

@@ -962,6 +962,29 @@ impl Editor {
                 let line = n.saturating_sub(1).min(self.line_count().saturating_sub(1));
                 self.cursor = self.line_start(line);
             }
+            InsertCharFromLine { above } => {
+                let (row, col) = self.row_col();
+                let target_row = if above {
+                    if row == 0 {
+                        return;
+                    }
+                    row - 1
+                } else {
+                    if row + 1 >= self.line_count() {
+                        return;
+                    }
+                    row + 1
+                };
+                let line = self.line_str(target_row);
+                let Some(ch) = line.chars().nth(col) else {
+                    return;
+                };
+                self.checkpoint();
+                let s = ch.to_string();
+                self.text.insert_str(self.cursor, &s);
+                self.cursor += s.len();
+                out.buffer_changed = true;
+            }
             SetCursorByte(b) => {
                 let mut b = b.min(self.text.len());
                 while b > 0 && !self.text.is_char_boundary(b) {
@@ -1015,6 +1038,31 @@ impl Editor {
                 if let Some((open, close)) = self.enclosing_quote_pair_on_line(q) {
                     self.anchor = Some(open);
                     self.cursor = close + q.len_utf8();
+                }
+            }
+            SelectInnerSmartQuote | SelectAroundSmartQuote => {
+                let around = matches!(op, SelectAroundSmartQuote);
+                let mut best: Option<(usize, usize, char)> = None;
+                for q in ['"', '\'', '`'] {
+                    if let Some((open, close)) = self.enclosing_quote_pair_on_line(q) {
+                        let span = close.saturating_sub(open);
+                        match best {
+                            None => best = Some((open, close, q)),
+                            Some((_, _, _)) if span < (best.unwrap().1 - best.unwrap().0) => {
+                                best = Some((open, close, q));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if let Some((open, close, q)) = best {
+                    if around {
+                        self.anchor = Some(open);
+                        self.cursor = close + q.len_utf8();
+                    } else {
+                        self.anchor = Some(open + q.len_utf8());
+                        self.cursor = close;
+                    }
                 }
             }
             SelectInnerBracket(open) => {

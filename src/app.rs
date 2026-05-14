@@ -9349,6 +9349,41 @@ impl App {
                     self.toast(format!(":jumps {}{}", b_part, f_part));
                 }
             }
+            // `:%y` / `:%d` — yank / delete the whole buffer. Single edit
+            // op so undo restores. The clipboard receives the buffer text
+            // (linewise) so a subsequent `p` pastes it back as lines.
+            "%y" | "%yank" => {
+                let Some(b) = self.active_editor() else {
+                    self.toast(":%y — no active editor");
+                    return;
+                };
+                let text = b.editor.text().to_string();
+                self.clipboard.set(text.clone(), true);
+                self.toast(format!(":%y — yanked {}B", text.len()));
+            }
+            "%d" | "%delete" => {
+                let Some(idx) = self.active else {
+                    self.toast(":%d — no active editor");
+                    return;
+                };
+                let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+                    self.toast(":%d — no active editor");
+                    return;
+                };
+                let text = b.editor.text().to_string();
+                let len = text.len();
+                self.clipboard.set(text, true);
+                b.apply_edit_ops(
+                    vec![crate::edit_op::EditOp::ReplaceRange {
+                        start: 0,
+                        end: len,
+                        text: String::new(),
+                    }],
+                    &mut self.clipboard,
+                    0,
+                );
+                self.toast(format!(":%d — cut {len}B"));
+            }
             "reg" | "registers" | "di" | "display" => {
                 let mut parts: Vec<String> = Vec::new();
                 let preview = |s: &str, cap: usize| -> String {

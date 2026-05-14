@@ -288,6 +288,15 @@ impl VimInputHandler {
                 self.insert_waiting_for_register = true;
                 InputResult::Consumed
             }
+            // vim insert `Ctrl+Y` / `Ctrl+E` — insert the char from the
+            // line above / below at the same column. Useful for "copy this
+            // structure" gestures.
+            KeyCode::Char('y') if ctrl => {
+                InputResult::Ops(vec![InsertCharFromLine { above: true }])
+            }
+            KeyCode::Char('e') if ctrl => {
+                InputResult::Ops(vec![InsertCharFromLine { above: false }])
+            }
             KeyCode::Esc => {
                 // vim drifts the cursor one left when leaving Insert.
                 self.enter_normal();
@@ -692,6 +701,15 @@ impl VimInputHandler {
                             SelectAroundQuote(q)
                         } else {
                             SelectInnerQuote(q)
+                        }
+                    }
+                    // `iq` / `aq` (mnml extension) — smart-pick the closest
+                    // enclosing quote pair (`"`, `'`, or `` ` ``).
+                    KeyCode::Char('q') => {
+                        if around {
+                            SelectAroundSmartQuote
+                        } else {
+                            SelectInnerSmartQuote
                         }
                     }
                     KeyCode::Char('p') => {

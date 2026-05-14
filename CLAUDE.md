@@ -223,6 +223,15 @@ cursor at that position; H/M/L move the cursor to that position). New
 `EditOp::MoveParagraph{forward}`. Pure motion — works after operators (`d}`, `c{`).
 **Vim `(` / `)`** — sentence navigation. Sentence boundary = `.` / `!` / `?` followed by
 whitespace. New `EditOp::MoveSentence{forward}`.
+**`:%y` / `:%d`** — buffer-wide yank / delete (vim canonical). Single edit op so undo
+restores; `:%y` mirrors to the clipboard linewise so a subsequent `p` re-pastes the buffer.
+**Vim insert `Ctrl+Y` / `Ctrl+E`** — insert the char from the line above / below at the
+same column. New `EditOp::InsertCharFromLine{above}`. Useful for "copy this structure"
+gestures while typing.
+**Vim `iq` / `aq` (mnml extension)** — smart-pick the closest enclosing quote pair from
+`"`, `'`, `` ` ``. The smallest enclosing range wins. New `SelectInnerSmartQuote` /
+`SelectAroundSmartQuote` ops. Saves a keystroke when you don't care which quote variant
+you're inside.
 **Vim named registers** — `Clipboard` gained a `HashMap<char, (String, bool)>` named pool
 plus a `pending_register: Option<char>` hint consumed by the next `set` / `text`. The vim
 handler parses `"<reg>` (a-z named, `0` last-yank, `+` system, `_` blackhole) into
