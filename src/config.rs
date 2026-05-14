@@ -127,6 +127,11 @@ pub struct UiConfig {
     /// background tint. Off by default — can be noisy in dense files.
     /// `:set [no]hlword` / `view.toggle_highlight_word`.
     pub highlight_word_under_cursor: bool,
+    /// Auto-open the rendered-markdown preview alongside any markdown file
+    /// when it's first opened (the same flow as `markdown.preview` /
+    /// right-click → "Preview markdown"). Off by default — opt in via
+    /// `[ui] auto_md_preview = true` for a writing-focused workflow.
+    pub auto_md_preview: bool,
 }
 
 impl Default for Config {
@@ -152,6 +157,7 @@ impl Default for Config {
                 scrollbar: true,
                 highlight_trailing_ws: false,
                 highlight_word_under_cursor: false,
+                auto_md_preview: false,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -237,6 +243,7 @@ struct RawUi {
     scrollbar: Option<bool>,
     highlight_trailing_ws: Option<bool>,
     highlight_word_under_cursor: Option<bool>,
+    auto_md_preview: Option<bool>,
 }
 
 impl Config {
@@ -315,6 +322,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.highlight_word_under_cursor {
             self.ui.highlight_word_under_cursor = v;
+        }
+        if let Some(v) = raw.ui.auto_md_preview {
+            self.ui.auto_md_preview = v;
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;

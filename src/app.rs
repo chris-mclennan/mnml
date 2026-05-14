@@ -801,6 +801,12 @@ pub struct App {
     /// routing).
     pending_code_actions: Vec<crate::lsp::CodeAction>,
     pending_code_action_path: Option<PathBuf>,
+    /// When true, the next code-action reply auto-applies the first
+    /// returned action instead of opening the picker. Set by
+    /// `lsp.quick_fix`; cleared whether the reply lands or the request
+    /// fails. The "first" action is whatever the server orders first —
+    /// servers typically front-load the most relevant action.
+    pending_code_action_auto_apply: bool,
     /// When true, the next `LspEvent::DocumentSymbols` reply routes to the
     /// open outline pane instead of opening the symbols picker. Set by
     /// `open_outline_pane` / `refresh_outline_pane`; cleared after one reply.
@@ -973,6 +979,7 @@ impl App {
             pending_rename: None,
             pending_code_actions: Vec::new(),
             pending_code_action_path: None,
+            pending_code_action_auto_apply: false,
             pending_outline: false,
             pending_snippets: Vec::new(),
             snippet_session: None,
@@ -1172,7 +1179,7 @@ impl App {
             GitDeleteBranch(name) => self.git_delete_branch_prompt(name),
             GitWorktreeShell(path) => self.open_worktree_shell(&path.to_string_lossy()),
             GitWorktreeRemove(path) => self.git_worktree_remove_prompt(path),
-            PreviewMarkdown(path) => self.open_md_preview_for_path(path, self.active),
+            PreviewMarkdown(path) => self.open_md_preview_for_path(path, self.active, true),
         }
     }
 
@@ -1994,6 +2001,11 @@ impl App {
                 let new_id = self.panes.len() - 1;
                 self.reveal_pane(new_id);
                 self.lsp.did_open(&path, &text);
+                // Auto-open MD preview alongside, if enabled and not yet open.
+                // Passive (focus stays on the editor we just opened).
+                if self.config.ui.auto_md_preview && is_markdown_path(&path) {
+                    self.open_md_preview_for_path(path.clone(), Some(new_id), false);
+                }
             }
             Err(e) => self.toast(format!("cannot open {}: {e}", path.display())),
         }
@@ -2501,16 +2513,43 @@ impl App {
         self.lsp.did_change(&path, &text);
         if !self.lsp.code_action(&path, range, &diagnostics) {
             self.pending_code_action_path = None;
+            self.pending_code_action_auto_apply = false;
             self.toast("no language server for this file (code action)");
         }
     }
 
-    /// Handle a `textDocument/codeAction` reply: empty ⇒ toast, otherwise stash
-    /// the actions and open a picker. The picker's `accept` calls
-    /// [`Self::apply_code_action`].
+    /// `lsp.quick_fix` (Alt+Enter) — like [`Self::lsp_code_action`], but the
+    /// reply handler auto-applies the *first* action instead of opening a
+    /// picker. The point is the common "fix this for me" gesture next to
+    /// an inline diagnostic — pick-the-first matches what most IDEs do
+    /// because servers front-load the most relevant action.
+    pub fn lsp_quick_fix(&mut self) {
+        self.pending_code_action_auto_apply = true;
+        // Reuse the same request path; `apply_code_action_reply` branches
+        // on the auto-apply flag.
+        self.lsp_code_action();
+    }
+
+    /// Handle a `textDocument/codeAction` reply.
+    ///
+    /// - With `pending_code_action_auto_apply` set: applies the first action
+    ///   directly (toasts when the list is empty). Resets the flag either way.
+    /// - Otherwise: stashes the actions and opens a picker; the picker's
+    ///   `accept` calls [`Self::apply_code_action`].
     fn apply_code_action_reply(&mut self, actions: Vec<crate::lsp::CodeAction>) {
+        let auto = std::mem::take(&mut self.pending_code_action_auto_apply);
         if actions.is_empty() {
-            self.toast("no code actions");
+            self.toast(if auto {
+                "no quick fix available"
+            } else {
+                "no code actions"
+            });
+            return;
+        }
+        if auto {
+            // Apply the first action without prompting.
+            self.pending_code_actions = actions;
+            self.apply_code_action(0);
             return;
         }
         use crate::picker::PickerItem;
@@ -3371,26 +3410,37 @@ impl App {
             self.toast("markdown preview needs a saved markdown file");
             return;
         };
-        self.open_md_preview_for_path(path, Some(cur));
+        self.open_md_preview_for_path(path, Some(cur), true);
     }
 
     /// Open (or focus) a rendered-markdown preview for `path`. `near` is the
     /// pane the preview should split off — if `None` (or invalid), the
     /// currently active pane is used; if there's no active pane the preview
-    /// becomes the only pane. Used by the right-click "Preview markdown"
-    /// entry on the file tree and bufferline tab menus.
-    pub fn open_md_preview_for_path(&mut self, path: PathBuf, near: Option<PaneId>) {
+    /// becomes the only pane. `focus_preview = true` reveals + focuses the
+    /// new preview (the right-click + `markdown.preview` flows want this);
+    /// `false` opens the preview alongside but leaves focus where it was
+    /// (the auto-open-on-file-open flow wants this — the user reached for
+    /// the editor, not the preview).
+    pub fn open_md_preview_for_path(
+        &mut self,
+        path: PathBuf,
+        near: Option<PaneId>,
+        focus_preview: bool,
+    ) {
         if !is_markdown_path(&path) {
             self.toast("not a markdown file");
             return;
         }
-        // Already showing a preview of this file? Focus it.
+        // Already showing a preview of this file? Focus it (or no-op when
+        // we're in passive auto-open mode).
         if let Some(id) = self
             .panes
             .iter()
             .position(|p| matches!(p, Pane::MdPreview(mp) if mp.path == path))
         {
-            self.reveal_pane(id);
+            if focus_preview {
+                self.reveal_pane(id);
+            }
             return;
         }
         // Prefer the in-memory text if the file is already open in an editor
@@ -3410,7 +3460,8 @@ impl App {
             source,
             scroll: 0,
         });
-        let anchor = near.or(self.active);
+        let prior_active = self.active;
+        let anchor = near.or(prior_active);
         let new_id = if let Some(a) = anchor.filter(|&i| i < self.panes.len()) {
             self.split_leaf_with(a, crate::layout::SplitDir::Horizontal, preview)
         } else {
@@ -3419,8 +3470,14 @@ impl App {
             self.layout = Layout::Leaf(id);
             id
         };
-        self.active = Some(new_id);
-        self.focus = Focus::Pane;
+        if focus_preview {
+            self.active = Some(new_id);
+            self.focus = Focus::Pane;
+        } else {
+            // `split_leaf_with` doesn't touch `self.active`, but be explicit
+            // — passive auto-open should leave focus exactly where it was.
+            self.active = prior_active;
+        }
     }
 
     /// After a `.md` buffer is saved, refresh any open previews of that file.
@@ -7728,6 +7785,22 @@ impl App {
                     self.set_highlight_word_under_cursor(false);
                 } else if matches!(opt, "hlword!" | "invhlword") {
                     self.toggle_highlight_word_under_cursor();
+                } else if matches!(opt, "automdpreview") {
+                    self.config.ui.auto_md_preview = true;
+                    self.toast("auto-preview md: on");
+                } else if matches!(opt, "noautomdpreview") {
+                    self.config.ui.auto_md_preview = false;
+                    self.toast("auto-preview md: off");
+                } else if matches!(opt, "automdpreview!" | "invautomdpreview") {
+                    self.config.ui.auto_md_preview = !self.config.ui.auto_md_preview;
+                    self.toast(format!(
+                        "auto-preview md: {}",
+                        if self.config.ui.auto_md_preview {
+                            "on"
+                        } else {
+                            "off"
+                        }
+                    ));
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }

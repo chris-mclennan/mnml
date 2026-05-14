@@ -323,9 +323,13 @@ markers unwrapped, long lines word-wrapped to the pane width via `md_preview::wr
 (`<leader>m`) opens a rendered, read-only, scrollable view in a split next to the source,
 live-updated on every edit (any of `.md`/`.markdown`/`.mdx`/`.mkd`). **Right-click "Preview
 markdown"** — entries surface on the file-tree context menu and the bufferline tab context
-menu when the file is markdown; both run `App::open_md_preview_for_path` which focuses an
-existing preview of the same path, or splits a new one off the clicked pane (and pulls the
-in-memory text from any open editor for that file so the preview tracks unsaved edits).
+menu when the file is markdown; both run `App::open_md_preview_for_path(path, near, focus_preview=true)`
+which focuses an existing preview of the same path, or splits a new one off the clicked pane
+(and pulls the in-memory text from any open editor for that file so the preview tracks unsaved
+edits). **Auto-open** — `[ui] auto_md_preview = true` (off by default; `:set [no]automdpreview`
+runtime toggle): on every `open_path` for a markdown file, also open the preview pane next to it
+in passive mode (`focus_preview=false`, so focus stays on the editor where the user reached).
+Idempotent — opening the same file twice doesn't re-split.
 Git: branch + change counts in the statusline + tree tint + per-row git-state badge in the
 tree (`M`/`A`/`?`/`!` right-aligned, colour-matched to the existing tint — modified/staged/
 untracked/conflicted; rendered by `ui/tree_view.rs`); **gutter line-signs** —
@@ -632,6 +636,10 @@ labelled by title, `kind` shown as the dim detail); the picker's `accept` indexe
 `App::apply_code_action` applies the workspace edit through the same `apply_rename_edits` path (open buffers ⇒
 `Buffer::apply_edit_ops`, others ⇒ splice on disk) then fires `workspace/executeCommand` via
 `LspManager::execute_command` (fire-and-forget — the server's effects come back as future `applyEdit` / diagnostics).
+**Quick fix** — `lsp.quick_fix` (`Alt+Enter`): same code-action request, but the reply handler auto-applies
+the *first* returned action instead of opening the picker (servers front-load the most relevant action, so
+this matches the typical IDE "fix this for me" gesture). Toggled via `App.pending_code_action_auto_apply`,
+which `apply_code_action_reply` consumes (`std::mem::take`). Empty reply ⇒ "no quick fix available" toast.
 **Go to symbol** — `lsp.symbols` (`Ctrl+Shift+O` / `<leader>l s`): fires `textDocument/documentSymbol`,
 parses both reply shapes (`DocumentSymbol[]` hierarchical + legacy `SymbolInformation[]` flat) into
 `Vec<DocumentSymbol{name, kind, line, character, depth}>` (depth-first walk; `symbol_kind_label` maps the

@@ -656,6 +656,14 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_code_action(),
         },
         Command {
+            id: "lsp.quick_fix",
+            title: "LSP: quick fix (auto-apply first code action)",
+            group: "lsp",
+            // Standard "fix this for me" chord across most IDEs.
+            keys: &["alt+enter"],
+            run: |app| app.lsp_quick_fix(),
+        },
+        Command {
             id: "lsp.symbols",
             title: "LSP: symbols in this file (→ picker)",
             group: "lsp",
