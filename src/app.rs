@@ -2449,7 +2449,36 @@ impl App {
         self.pending_outline = true;
         if !self.lsp.document_symbol(&path) {
             self.pending_outline = false;
-            self.toast("no language server for this file (outline)");
+            // Fallback: regex-based extraction for the languages we support.
+            // Empty result on unknown extensions just leaves the pane blank.
+            self.populate_regex_outline(&path);
+        }
+    }
+
+    /// Synchronous regex-based outline fallback — runs when no LSP is
+    /// attached for this file's language. Pulls patterns from
+    /// `crate::regex_outline::extract_symbols`.
+    fn populate_regex_outline(&mut self, path: &Path) {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+        let text = self
+            .panes
+            .iter()
+            .find_map(|p| match p {
+                Pane::Editor(b) if b.is_at(path) => Some(b.editor.text().to_string()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let items = crate::regex_outline::extract_symbols(&text, &ext);
+        if let Some(o) = self.panes.iter_mut().find_map(|p| match p {
+            Pane::Outline(o) => Some(o),
+            _ => None,
+        }) {
+            o.items = items;
+            o.clamp();
         }
     }
 
@@ -2488,7 +2517,7 @@ impl App {
         self.pending_outline = true;
         if !self.lsp.document_symbol(&path) {
             self.pending_outline = false;
-            self.toast("no language server for this file (outline)");
+            self.populate_regex_outline(&path);
         }
     }
 

@@ -42,6 +42,7 @@ pub mod picker;
 pub mod playwright;
 pub mod prompt;
 pub mod pty_pane;
+pub mod regex_outline;
 pub mod request_pane;
 pub mod signature;
 pub mod snippets;

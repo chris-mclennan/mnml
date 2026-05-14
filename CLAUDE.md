@@ -722,6 +722,14 @@ container}>)` and merges into `App.pending_workspace_symbols`; the picker (re-)o
 hits appear as servers respond. `client::parse_workspace_symbols` handles both reply shapes — legacy
 `SymbolInformation[]` (full `location.range`) and the newer lazy `WorkspaceSymbol[]` (uri only, defaults to
 (0, 0)). Reuses `PickerKind::Locations` for the accept path.
+**Regex outline (no-LSP fallback)** — when the outline pane's target file has no language server
+attached, `App::populate_regex_outline` runs `crate::regex_outline::extract_symbols(text, ext)` to
+pull function/class/struct/etc. definitions via regex. Languages covered: `rs`/`py`/`js`/`jsx`/`ts`/
+`tsx`/`go`/`rb`/`c`/`cpp` (anything else returns empty). Patterns are conservative — they target
+the common case (top-level + simple-indent forms), not generics, decorators, or macro-defined
+identifiers. Tree-sitter `tags.scm` queries would be more accurate; this exists because it ships
+in 200 lines instead of vendoring a query family. Triggered both on first open
+(`open_outline_pane`) and on `r` refresh (`refresh_outline_pane`) when the LSP request fails.
 **Markdown outline** — when the outline pane's target is a `.md` / `.markdown` / `.mdx` / `.mkd` file,
 `open_outline_pane` / `refresh_outline_pane` / `retarget_outline_to_active` skip the LSP and call
 `crate::markdown_outline::extract_headings(text)` directly. ATX-style headings (`#` through `######`)
