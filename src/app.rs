@@ -6538,6 +6538,101 @@ impl App {
         self.layout.equalize_splits();
     }
 
+    /// `:sort [u]` — sort lines. With an active selection, sorts only those
+    /// lines (full lines including any partial-line selection); without one,
+    /// sorts the whole buffer. `unique` ⇒ de-dupe consecutive equal lines
+    /// after sorting. Single edit op so undo restores the original order.
+    pub fn run_sort_lines(&mut self, unique: bool) {
+        let Some(b) = self.active_editor_mut() else {
+            self.toast("no active editor");
+            return;
+        };
+        let text = b.editor.text();
+        // Determine the line range — selection if any, else whole buffer.
+        let (start_byte, end_byte, start_line, end_line) =
+            if let Some((sel_lo, sel_hi)) = b.editor.selection() {
+                let line_at = |byte: usize| text[..byte].bytes().filter(|&c| c == b'\n').count();
+                let lo_line = line_at(sel_lo);
+                let hi_line = line_at(sel_hi);
+                let line_start = |line: usize| -> usize {
+                    if line == 0 {
+                        return 0;
+                    }
+                    let mut seen = 0;
+                    for (i, ch) in text.bytes().enumerate() {
+                        if ch == b'\n' {
+                            seen += 1;
+                            if seen == line {
+                                return i + 1;
+                            }
+                        }
+                    }
+                    text.len()
+                };
+                let line_end = |line: usize| -> usize {
+                    let s = line_start(line);
+                    text[s..].find('\n').map(|i| s + i).unwrap_or(text.len())
+                };
+                (
+                    line_start(lo_line),
+                    line_end(hi_line),
+                    lo_line,
+                    hi_line,
+                )
+            } else {
+                let line_count = text.bytes().filter(|&c| c == b'\n').count() + 1;
+                (0, text.len(), 0, line_count.saturating_sub(1))
+            };
+        if start_byte >= end_byte {
+            return;
+        }
+        let mut lines: Vec<&str> = text[start_byte..end_byte].split('\n').collect();
+        lines.sort();
+        if unique {
+            lines.dedup();
+        }
+        let new_block = lines.join("\n");
+        if new_block == text[start_byte..end_byte] {
+            return;
+        }
+        let ops = vec![crate::edit_op::EditOp::ReplaceRange {
+            start: start_byte,
+            end: end_byte,
+            text: new_block,
+        }];
+        let mut clip = crate::clipboard::Clipboard::new();
+        b.apply_edit_ops(ops, &mut clip, 0);
+        self.toast(format!(
+            ":sort{} — {} line(s)",
+            if unique { " (unique)" } else { "" },
+            end_line + 1 - start_line
+        ));
+    }
+
+    /// `:retab` — replace every TAB with `[editor] tab_width` spaces in the
+    /// whole buffer. One ReplaceRange so undo reverts in a single step.
+    pub fn run_retab(&mut self) {
+        let tab_w = self.config.editor.tab_width;
+        let Some(b) = self.active_editor_mut() else {
+            self.toast("no active editor");
+            return;
+        };
+        let text = b.editor.text();
+        if !text.contains('\t') {
+            return;
+        }
+        let new_text = text.replace('\t', &" ".repeat(tab_w));
+        let end = text.len();
+        let ops = vec![crate::edit_op::EditOp::ReplaceRange {
+            start: 0,
+            end,
+            text: new_text,
+        }];
+        let mut clip = crate::clipboard::Clipboard::new();
+        b.apply_edit_ops(ops, &mut clip, 0);
+        self.toast(format!(":retab — tabs → {tab_w} spaces"));
+    }
+
     /// vim `zz` / `zt` / `zb` — adjust the scroll position so the cursor
     /// lands at the center / top / bottom of the visible viewport.
     /// `frac_from_top`: 0.0 = top, 0.5 = middle, 1.0 = bottom (clamped).
@@ -8020,6 +8115,12 @@ impl App {
                 let p = self.workspace.display().to_string();
                 self.toast(p);
             }
+            // `:sort [u]` — sort lines (whole buffer if no selection;
+            // active selection otherwise). `u` = unique (de-dupe).
+            "sort" => self.run_sort_lines(rest.contains('u')),
+            // `:retab` — replace tabs with `[editor] tab_width` spaces in
+            // the whole buffer.
+            "retab" => self.run_retab(),
             "e" | "edit" => {
                 if rest.is_empty() {
                     self.reload_active(false);

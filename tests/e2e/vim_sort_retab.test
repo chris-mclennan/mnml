@@ -1,0 +1,37 @@
+# vim ex-commands :sort and :retab.
+
+write data.txt "charlie\nbravo\nalpha\nbravo"
+open data.txt
+
+command editor.use_vim
+
+# `:sort` whole buffer (no selection). Lines come out alphabetical.
+key :
+type "sort"
+key enter
+
+expect screen contains "alpha"
+expect screen contains "bravo"
+expect screen contains "charlie"
+
+# Verify on disk after a save.
+command file.save
+# Sorted lines, with bravo duplicated (no `u` flag).
+expect file data.txt contains "alpha\nbravo\nbravo\ncharlie"
+
+# `:sort u` removes the duplicate.
+key :
+type "sort u"
+key enter
+command file.save
+expect file data.txt contains "alpha\nbravo\ncharlie"
+expect file data.txt lacks "bravo\nbravo"
+
+# `:retab` — write a tab, then expand it.
+write code.txt "\tfoo"
+open code.txt
+key :
+type "retab"
+key enter
+# Default tab_width is 4 ⇒ "    foo".
+expect screen contains "    foo"
