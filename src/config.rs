@@ -139,6 +139,11 @@ pub struct UiConfig {
     /// Paint matched `()[]{}` brackets in cycling depth colors. `:set rainbow`
     /// / `:set norainbow`. Off by default.
     pub bracket_rainbow: bool,
+    /// Master switch for tree-sitter syntax highlighting. `true` (default)
+    /// runs the highlighter as usual; `false` paints all editor text in
+    /// the theme's foreground color. `:syntax on` / `:syntax off` toggles
+    /// at runtime.
+    pub syntax: bool,
     /// Show a 1-column vertical scrollbar on the right edge of each editor
     /// pane (track + proportional thumb). `:set [no]scrollbar`. On by default
     /// — costs one column of usable text width.
@@ -189,6 +194,7 @@ impl Default for Config {
                 tree_width: 30,
                 relative_line_numbers: false,
                 show_whitespace: false,
+                syntax: true,
                 bracket_rainbow: false,
                 scrollbar: true,
                 highlight_trailing_ws: false,
@@ -284,6 +290,7 @@ struct RawUi {
     tree_width: Option<u16>,
     relative_line_numbers: Option<bool>,
     show_whitespace: Option<bool>,
+    syntax: Option<bool>,
     bracket_rainbow: Option<bool>,
     scrollbar: Option<bool>,
     highlight_trailing_ws: Option<bool>,
@@ -378,6 +385,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.show_whitespace {
             self.ui.show_whitespace = v;
+        }
+        if let Some(v) = raw.ui.syntax {
+            self.ui.syntax = v;
         }
         if let Some(v) = raw.ui.bracket_rainbow {
             self.ui.bracket_rainbow = v;

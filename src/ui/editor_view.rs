@@ -323,7 +323,11 @@ pub fn draw_pane(
         let n = chars.len();
         let indent_cols = chars.iter().take_while(|c| **c == ' ').count();
         let has_content = indent_cols < n;
-        let spans_for_line = buf.line_spans(line_no);
+        let spans_for_line: &[crate::highlight::ColoredSpan] = if app.config.ui.syntax {
+            buf.line_spans(line_no)
+        } else {
+            &[]
+        };
         // When `highlight_trailing_ws` is on, find where the trailing-ws run
         // begins. `None` ⇒ no trailing ws on this line (or a blank line —
         // we don't highlight pure-whitespace lines since the user isn't

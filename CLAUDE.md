@@ -357,6 +357,15 @@ line removals don't misalign.
 **`:!!`** — repeat last `:!cmd` shell command. `App.last_shell_cmd` tracks.
 **`:silent!`** — alias for `:silent` (we don't distinguish error toasts from
 normal toasts).
+**`:syntax on|off` / `:syn`** — toggle tree-sitter highlights (master switch on
+`[ui] syntax`, default true). When off, all editor text uses the theme's foreground.
+**`:execute "<str>"` / `:exe`** — strip outer quotes (single or double),
+unescape `\"` / `\\`, run as a fresh ex command. Strict literal MVP — no
+expression eval (vim's `:execute` does string concat with `.`).
+**`:setf <name>` / `:set filetype=<name>` / `:set ft=<name>`** — override the
+buffer's `language_ext` so the highlighter targets a different grammar
+(`:setf rust` for a `.txt` snippet that's actually code, etc.). Re-runs the
+highlighter immediately.
 **Persistent ex history** — moved from vim handler to App; survives across sessions
 via `SavedSession.ex_history` (oldest first, capped at 100). New `InputHandler::
 set_ex_history` / `ex_history()` trait methods so the App can sync. Pre-seeded

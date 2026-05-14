@@ -10251,6 +10251,78 @@ impl App {
             "diff" | "diffs" | "diffsplit" => {
                 crate::command::run("git.diff_file", self);
             }
+            // `:execute "<str>"` / `:exe "<str>"` — strip outer quotes,
+            // unescape `\\` and `\"`, run the result as a fresh ex cmd.
+            // No expression eval (vim's `:execute` does string concat
+            // with `.`); strict literal MVP.
+            "execute" | "exe" => {
+                let s = rest.trim();
+                let inner = if s.len() >= 2
+                    && ((s.starts_with('"') && s.ends_with('"'))
+                        || (s.starts_with('\'') && s.ends_with('\'')))
+                {
+                    &s[1..s.len() - 1]
+                } else {
+                    s
+                };
+                // Unescape `\"` → `"` and `\\` → `\`.
+                let unescaped: String = {
+                    let mut out = String::with_capacity(inner.len());
+                    let mut chars = inner.chars().peekable();
+                    while let Some(c) = chars.next() {
+                        if c == '\\'
+                            && let Some(&n) = chars.peek()
+                        {
+                            match n {
+                                '"' | '\\' | '\'' => {
+                                    chars.next();
+                                    out.push(n);
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
+                        out.push(c);
+                    }
+                    out
+                };
+                if unescaped.is_empty() {
+                    self.toast(":execute — empty string");
+                } else {
+                    self.run_ex_command(&unescaped);
+                }
+            }
+            // `:syntax on|off` — toggle tree-sitter highlights (master
+            // switch). Off paints all editor text in the theme's
+            // foreground color.
+            // `:setf <name>` / `:set filetype=<name>` — override the
+            // buffer's `language_ext` so the highlighter targets a
+            // different grammar (`:setf rust` for a `.txt` snippet that's
+            // actually code, etc.). Re-runs the highlighter immediately.
+            "setf" | "setfiletype" => {
+                let name = rest.trim();
+                if name.is_empty() {
+                    self.toast(":setf <ext>");
+                } else if let Some(b) = self.active_editor_mut() {
+                    b.language_ext = Some(name.to_string());
+                    b.refresh_highlights();
+                    self.toast(format!(":setf {name}"));
+                }
+            }
+            "syntax" | "syn" => {
+                let opt = rest.trim();
+                match opt {
+                    "on" | "" => {
+                        self.config.ui.syntax = true;
+                        self.toast(":syntax on");
+                    }
+                    "off" => {
+                        self.config.ui.syntax = false;
+                        self.toast(":syntax off");
+                    }
+                    _ => self.toast(":syntax on|off"),
+                }
+            }
             // `:make [task]` — kick off the configured `[tasks.make]`
             // task (or the named task) in a pty pane. Vim canonical for
             // "build / test from inside the editor".
@@ -10855,6 +10927,16 @@ impl App {
                     self.set_input_style(v.trim());
                 } else if let Some(v) = rest.strip_prefix("theme=") {
                     self.set_theme(v.trim());
+                } else if let Some(v) = rest
+                    .strip_prefix("filetype=")
+                    .or_else(|| rest.strip_prefix("ft="))
+                {
+                    let name = v.trim().to_string();
+                    if let Some(b) = self.active_editor_mut() {
+                        b.language_ext = Some(name.clone());
+                        b.refresh_highlights();
+                        self.toast(format!(":set filetype={name}"));
+                    }
                 } else if let Some(v) = rest.strip_prefix("tab_width=") {
                     if let Ok(n) = v.trim().parse::<usize>() {
                         self.set_tab_width(n);
