@@ -254,8 +254,8 @@ allowed (bufferline shows all), `App.active` = focused pane = uniquely the focus
 `view.focus_next_split`, `view.close_split` commands, surfaced in the which-key `+split`
 submenu (`<leader>s …` / `Ctrl+K s …`); click a leaf to focus it, drag a divider to
 resize it; closing a dirty buffer pops a Save/Discard/Cancel overlay (`src/ui/close_prompt.rs`).
-tree-sitter syntax highlight (`src/highlight.rs`, 30 grammars: rs/js/jsx/ts/tsx/py/json/go/
-toml/css/bash/html/md/c/cpp/rb/java/cs/lua/yaml/scala/ex/hs/php/swift/make/zig/nix/ocaml/dart/sql — `build_config` maps file extensions →
+tree-sitter syntax highlight (`src/highlight.rs`, 32 grammars: rs/js/jsx/ts/tsx/py/json/go/
+toml/css/bash/html/md/c/cpp/rb/java/cs/lua/yaml/scala/ex/hs/php/swift/make/zig/nix/ocaml/dart/sql/kt/regex — `build_config` maps file extensions →
 `(language, highlights, injections, locals)` query set; `config_for_lang` resolves *injected*
 languages so fenced code blocks in markdown / embedded HTML·CSS·JS get highlighted too, and the
 markdown `text.*` captures are in `HIGHLIGHT_NAMES`) + indent guides; hybrid relative line numbers (`[ui] relative_line_numbers`,
@@ -545,7 +545,9 @@ focus:EditField::{Url,Method,Headers,Body}, url_cursor, body_cursor, headers_buf
 `request.url` / `request.method` / `request.body` directly. **Headers** are edited as a multi-line `Key: Value`
 text buffer (`headers_to_text` serialises from `request.headers`; `parse_headers_text` parses back, dropping
 blank lines + lines without `:`); `RequestPane::commit_headers` (called from `App::refire_request` before each
-send) writes the parsed list onto `request.headers`. **`Ctrl+S` over a request pane** writes the edited request
+send) writes the parsed list onto `request.headers`. The view styles each header line as `<key in cyan> :
+<value in fg>` so the structure is visible at a glance even though the editing model is still a flat textarea
+(lines without `:` mid-edit render dim-gray as a hint they're not yet a valid header). **`Ctrl+S` over a request pane** writes the edited request
 back to its source file (`App::save_active` routes to `App::save_request_to_source` when the active pane is
 a Request); pane without a `source_path` ⇒ toast and bail. **Format-preserving multi-block writeback** —
 `send_request_from_active` captures `RequestPane.source_block_name` when the source is a multi-block

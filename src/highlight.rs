@@ -246,6 +246,8 @@ fn config_for_lang(name: &str) -> Option<&'static HighlightConfiguration> {
         "dart" => "dart",
         "sql" | "psql" | "mysql" => "sql",
         "make" | "makefile" => "make",
+        "kotlin" | "kt" | "kts" => "kt",
+        "regex" => "regex",
         _ => return None,
     };
     config_for_ext(ext)
@@ -485,6 +487,23 @@ fn build_config(ext: &str) -> Option<HighlightConfiguration> {
             "",
             "",
         ),
+        "kt" | "kts" => (
+            tree_sitter_kotlin_sg::LANGUAGE.into(),
+            "kotlin",
+            tree_sitter_kotlin_sg::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ),
+        // Regex literals — typically used as an injection target by other
+        // grammars (rust's `regex!` macro, JS's `/.../` literals). Direct
+        // `.regex` files are rare but harmless to handle.
+        "regex" => (
+            tree_sitter_regex::LANGUAGE.into(),
+            "regex",
+            tree_sitter_regex::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ),
         _ => return None,
     };
     let mut cfg = HighlightConfiguration::new(lang, name, hl_q, inj_q, loc_q).ok()?;
@@ -520,6 +539,21 @@ mod tests {
         let lines = highlight_lines("hello\nworld\n", "xyz");
         assert_eq!(lines.len(), 3);
         assert!(lines.iter().all(|l| l.is_empty()));
+    }
+
+    #[test]
+    fn kotlin_parses() {
+        let src = "fun main() { println(\"hi\") }\n";
+        let lines = highlight_lines(src, "kt");
+        // Line 0 should have at least one styled span (the `fun` keyword
+        // or the string literal). We don't pin which color since themes
+        // change them; just verify the highlighter did something.
+        assert!(!lines.is_empty());
+        assert!(
+            lines[0].iter().any(|&(_, _, _)| true) && !lines[0].is_empty(),
+            "expected kotlin highlighter to emit at least one span: {:?}",
+            lines[0]
+        );
     }
 
     #[test]

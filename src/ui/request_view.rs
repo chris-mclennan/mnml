@@ -171,11 +171,33 @@ fn draw_edit(
             *caret = Some((area.x + 4, y));
         }
     } else {
+        // Style each header line as `<key in cyan> : <value in fg>` —
+        // editing model is still the flat textarea (the user types `Name:
+        // value\n` like before), but at render time we split on the first
+        // `:` to color-code. Lines without `:` (mid-edit) render in dim
+        // gray as a hint they're not yet a valid header.
+        let key_style = Style::default()
+            .fg(t.cyan)
+            .bg(t.bg_dark)
+            .add_modifier(Modifier::BOLD);
+        let sep_style = Style::default().fg(t.comment).bg(t.bg_dark);
+        let val_style = Style::default().fg(t.fg).bg(t.bg_dark);
+        let plain_dim = Style::default().fg(t.comment).bg(t.bg_dark);
         for (i, line) in hb.lines().enumerate() {
-            rows.push(Line::from(vec![Span::styled(
-                format!("    {line}"),
-                Style::default().fg(t.comment).bg(t.bg_dark),
-            )]));
+            let spans: Vec<Span> = if let Some(colon) = line.find(':') {
+                let (k, rest) = line.split_at(colon);
+                // Skip the `:` itself; preserve any leading space in the value.
+                let v = &rest[1..];
+                vec![
+                    Span::styled("    ".to_string(), val_style),
+                    Span::styled(k.to_string(), key_style),
+                    Span::styled(":".to_string(), sep_style),
+                    Span::styled(v.to_string(), val_style),
+                ]
+            } else {
+                vec![Span::styled(format!("    {line}"), plain_dim)]
+            };
+            rows.push(Line::from(spans));
             if h_focus && focused && caret.is_none() {
                 let start = nth_line_start(hb, i);
                 let end = nth_line_end(hb, i);

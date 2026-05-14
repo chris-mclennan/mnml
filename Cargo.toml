@@ -75,6 +75,8 @@ tree-sitter-nix = "0.3.0"
 tree-sitter-ocaml = "0.25.0"
 tree-sitter-dart = "0.2.0"
 tree-sitter-sequel = "0.3.11"
+tree-sitter-kotlin-sg = "0.4"
+tree-sitter-regex = "0.24"
 
 # Added per-track later (kept out for now to keep build fast / resolution simple):
 #   nucleo             — fuzzy matcher (picker/palette) — hand-rolled in src/fuzzy.rs for now
