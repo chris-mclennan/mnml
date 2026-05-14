@@ -230,6 +230,16 @@ impl VimInputHandler {
                 self.enter_normal();
                 InputResult::Consumed
             }
+            // Insert-mode chords (vim canonical):
+            // Ctrl+W ⇒ delete previous word
+            // Ctrl+U ⇒ delete to start of line
+            // Ctrl+H ⇒ backspace alias
+            // Ctrl+T / Ctrl+D ⇒ indent / outdent current line
+            KeyCode::Char('w') if ctrl => InputResult::Ops(vec![DeleteWordLeft]),
+            KeyCode::Char('u') if ctrl => InputResult::Ops(vec![DeleteToLineStart]),
+            KeyCode::Char('h') if ctrl => InputResult::Ops(vec![Backspace]),
+            KeyCode::Char('t') if ctrl => InputResult::Ops(vec![Indent]),
+            KeyCode::Char('d') if ctrl => InputResult::Ops(vec![Outdent]),
             KeyCode::Char(c) if !ctrl => InputResult::Ops(vec![InsertChar(c)]),
             KeyCode::Enter => InputResult::Ops(vec![InsertNewline]),
             KeyCode::Tab => InputResult::Ops(vec![InsertStr(" ".repeat(self.tab_width))]),

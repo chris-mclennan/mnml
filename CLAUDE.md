@@ -208,6 +208,9 @@ still fire (exit overlays, leave visual mode, etc.).
 **Vim `gp` / `gP`** — paste, cursor lands at the END of the pasted text (vs. `p` / `P`
 which leave the cursor at the start of a linewise paste). New `EditOp::PasteAfterEnd` /
 `PasteBeforeEnd`.
+**Vim insert-mode chords** — `Ctrl+W` deletes the previous word; `Ctrl+U` deletes to
+start of line; `Ctrl+H` is a backspace alias; `Ctrl+T` / `Ctrl+D` indent / outdent the
+current line. Vim canonical for typing-flow corrections without leaving Insert.
 **Vim `gv`** — re-select the last visual selection. The editor remembers `(anchor, cursor)` whenever a
 selection is closed (`SelectClear`, `YankSelection`, `DeleteSelection`); `gv` emits new
 `EditOp::RestoreLastSelection` to put it back and the handler flips into Visual mode.
