@@ -86,7 +86,10 @@ P0–P3 done. Working: NvChad-ish layout; editable buffers via
 either `StandardInputHandler` (VSCode-style, modeless) or `VimInputHandler` (modal:
 Normal/Insert/Visual + `:`-line), swappable at runtime (`editor.toggle_keymap` /
 `editor.use_vim` / `editor.use_standard` in the palette, or `:set input=vim`);
-`:`-commands (`w q wq x q! wa wqa qa bd bn bp e set %s/old/new/[gi] …`) via `App::run_ex_command`;
+`:`-commands (`w q wq x q! wa wqa qa bd bn bp e sp vsp tabnew only pwd set %s/old/new/[gi] …`)
+via `App::run_ex_command` (`:sp [path]` / `:vsp [path]` split + open; `:only` collapses to active
+pane; `:pwd` toasts the workspace path; `:tabnew <path>` aliases to `open_path` since mnml has
+buffers, not tabs);
 **`:%s/old/new/[flags]`** — vim-style global substitute via `parse_substitute` + `App::run_substitute`:
 splits on unescaped `/` (`\/`/`\\`/`\n`/`\t` understood inside the fields), `g` is implicit (whole buffer
 always), `i` makes the match case-insensitive (`buffer::find_all_ci_ascii` vs `app::find_all_case_sensitive`),

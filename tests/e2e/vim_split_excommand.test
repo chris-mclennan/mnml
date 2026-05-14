@@ -1,0 +1,28 @@
+# vim `:sp <path>` splits the current pane vertically (new pane below) and
+# opens the file in the new leaf. `:only` collapses back to a single pane.
+
+write a.txt "alpha"
+write b.txt "beta"
+open a.txt
+
+command editor.use_vim
+
+# `:sp b.txt` — split + open b.txt in the new pane.
+key :
+type "sp b.txt"
+key enter
+
+# Both files are reachable. The screen now shows both alpha and beta.
+expect screen contains "alpha"
+expect screen contains "beta"
+
+# `:only` collapses to a single pane. The active leaf stays.
+key :
+type "only"
+key enter
+
+# Only the active pane's content remains visible (screen lacks the other).
+# The active pane after the split was the b.txt pane (split_active makes
+# the new leaf active).
+expect screen contains "beta"
+expect screen lacks "alpha"

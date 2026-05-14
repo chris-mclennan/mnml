@@ -7922,6 +7922,39 @@ impl App {
             "bd" | "bdelete" => self.close_active_pane(),
             "bn" | "bnext" => self.next_buffer(),
             "bp" | "bprev" | "bprevious" => self.prev_buffer(),
+            // Split commands. `:sp [path]` opens (or splits) below; `:vsp` /
+            // `:vs` opens to the right. Bare form just splits the current
+            // pane; with a path, splits and opens that file in the new leaf.
+            "sp" | "split" => {
+                self.split_active(crate::layout::SplitDir::Vertical);
+                if !rest.is_empty() {
+                    let p = self.workspace.join(rest);
+                    self.open_path(&p);
+                }
+            }
+            "vs" | "vsp" | "vsplit" => {
+                self.split_active(crate::layout::SplitDir::Horizontal);
+                if !rest.is_empty() {
+                    let p = self.workspace.join(rest);
+                    self.open_path(&p);
+                }
+            }
+            // Vim-ish `:tabnew` / `:tabe` — mnml has buffers, not tabs;
+            // alias the closest concept (open the file as a new buffer).
+            "tabnew" | "tabe" | "tabedit" => {
+                if rest.is_empty() {
+                    self.toast(":tabnew <path> — path required");
+                } else {
+                    self.open_path(&self.workspace.join(rest));
+                }
+            }
+            // `:only` / `:on` — close every pane except the active one.
+            "on" | "only" => self.close_other_panes(),
+            // `:pwd` — show the workspace path (vim convention).
+            "pwd" => {
+                let p = self.workspace.display().to_string();
+                self.toast(p);
+            }
             "e" | "edit" => {
                 if rest.is_empty() {
                     self.reload_active(false);
