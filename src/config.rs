@@ -92,6 +92,11 @@ pub struct EditorConfig {
     /// Target line width for `editor.reflow_paragraph` (vim `gqq`) — greedy
     /// word-wrap at this many chars. Default 80.
     pub text_width: usize,
+    /// On save, append a `\n` to the buffer if it doesn't already end with
+    /// one (POSIX text file convention). On by default — flip with
+    /// `[editor] ensure_trailing_newline = false` for files that need a
+    /// strictly-no-trailing-newline format.
+    pub ensure_trailing_newline: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -150,6 +155,7 @@ impl Default for Config {
                 auto_indent: true,
                 format_on_save: false,
                 text_width: 80,
+                ensure_trailing_newline: true,
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),
@@ -235,6 +241,7 @@ struct RawEditor {
     auto_indent: Option<bool>,
     format_on_save: Option<bool>,
     text_width: Option<usize>,
+    ensure_trailing_newline: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -303,6 +310,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.text_width {
             self.editor.text_width = v.max(8);
+        }
+        if let Some(v) = raw.editor.ensure_trailing_newline {
+            self.editor.ensure_trailing_newline = v;
         }
         if let Some(v) = raw.ui.theme {
             self.ui.theme = v;

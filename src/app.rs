@@ -8015,6 +8015,12 @@ impl App {
                     } else {
                         self.toast(format!(":set text_width={v} — not a number"));
                     }
+                } else if matches!(opt, "endofline" | "eol") {
+                    self.config.editor.ensure_trailing_newline = true;
+                    self.toast("ensure_trailing_newline: on");
+                } else if matches!(opt, "noendofline" | "noeol") {
+                    self.config.editor.ensure_trailing_newline = false;
+                    self.toast("ensure_trailing_newline: off");
                 } else if matches!(opt, "relativenumber" | "rnu") {
                     self.set_relative_line_numbers(true);
                 } else if matches!(opt, "norelativenumber" | "nornu") {
@@ -9141,7 +9147,9 @@ mod tests {
         app.save_active_as("subdir/renamed.txt");
         let new_abs = app.workspace.join("subdir").join("renamed.txt");
         assert!(new_abs.exists());
-        assert_eq!(fs::read_to_string(&new_abs).unwrap(), "alpha!!");
+        // ensure_trailing_newline (on by default) appends `\n` since
+        // "alpha!!" doesn't end with one.
+        assert_eq!(fs::read_to_string(&new_abs).unwrap(), "alpha!!\n");
         let buf = app.active_editor().unwrap();
         assert_eq!(buf.path.as_deref(), Some(new_abs.as_path()));
         assert!(!buf.dirty);
@@ -9265,11 +9273,16 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        assert_eq!(a_buf.editor.text(), "BAR bar BAR");
+        // The open buffer + on-disk file both got the in-memory update.
+        // Disk version has a trailing `\n` because the open buffer goes
+        // through `save_to_disk` which honors `ensure_trailing_newline`.
+        assert_eq!(a_buf.editor.text(), "BAR bar BAR\n");
         assert!(!a_buf.dirty); // saved through to disk
-        assert_eq!(fs::read_to_string(&a).unwrap(), "BAR bar BAR");
+        assert_eq!(fs::read_to_string(&a).unwrap(), "BAR bar BAR\n");
 
-        // b.txt was disk-only ⇒ just the disk got rewritten.
+        // b.txt was disk-only ⇒ just the disk got rewritten. The
+        // disk-write path (grep_replace's direct splice, not `save_to_disk`)
+        // doesn't apply `ensure_trailing_newline` — that's a save-only step.
         assert_eq!(fs::read_to_string(&b).unwrap(), "say BAR loud");
     }
 

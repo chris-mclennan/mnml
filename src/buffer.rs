@@ -164,6 +164,9 @@ pub struct Buffer {
     /// Strip trailing whitespace from each line before writing. Honored by
     /// [`Self::save_to_disk`] + [`Self::save_as`]. Read from config at open.
     pub trim_trailing_ws_on_save: bool,
+    /// Append a `\n` on save if the buffer doesn't already end with one
+    /// (POSIX text file convention). Read from config at open.
+    pub ensure_trailing_newline: bool,
     /// Vim-style local marks (lowercase `a`-`z`), keyed by letter and stored as
     /// `(row, col)`. Set by `m<letter>`, jumped by `'<letter>` (line) or
     /// `` `<letter>`` (exact). Lost on buffer close (no persistence yet;
@@ -217,6 +220,7 @@ impl Buffer {
             last_edited: None,
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
+            ensure_trailing_newline: cfg.editor.ensure_trailing_newline,
             marks: std::collections::HashMap::new(),
             folds: std::collections::BTreeMap::new(),
             edit_history: Vec::new(),
@@ -253,6 +257,7 @@ impl Buffer {
             last_edited: None,
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
+            ensure_trailing_newline: cfg.editor.ensure_trailing_newline,
             marks: std::collections::HashMap::new(),
             folds: std::collections::BTreeMap::new(),
             edit_history: Vec::new(),
@@ -304,6 +309,9 @@ impl Buffer {
         if self.trim_trailing_ws_on_save {
             self.apply_trim_trailing_ws();
         }
+        if self.ensure_trailing_newline {
+            self.apply_ensure_trailing_newline();
+        }
         let path = self.path.clone().unwrap();
         std::fs::write(&path, self.editor.text())?;
         self.saved_text = self.editor.text().to_string();
@@ -318,12 +326,32 @@ impl Buffer {
         if self.trim_trailing_ws_on_save {
             self.apply_trim_trailing_ws();
         }
+        if self.ensure_trailing_newline {
+            self.apply_ensure_trailing_newline();
+        }
         std::fs::write(&path, self.editor.text())?;
         self.path = Some(path);
         self.saved_text = self.editor.text().to_string();
         self.dirty = false;
         self.last_edited = None;
         Ok(())
+    }
+
+    /// Append a single `\n` to the buffer if it doesn't already end with one
+    /// (and the buffer isn't empty). Goes through `apply_edit_ops` so undo
+    /// can revert it.
+    fn apply_ensure_trailing_newline(&mut self) {
+        let text = self.editor.text();
+        if text.is_empty() || text.ends_with('\n') {
+            return;
+        }
+        let end = text.len();
+        let ops = vec![crate::edit_op::EditOp::ReplaceRange {
+            start: end,
+            end,
+            text: "\n".to_string(),
+        }];
+        self.apply_edit_ops(ops, &mut crate::clipboard::Clipboard::new(), 0);
     }
 
     /// Strip trailing space/tab from every line in the buffer (called from the
@@ -786,6 +814,9 @@ mod tests {
         std::fs::write(&path, "  hi   \n  there\t\nlast  ").unwrap();
         let mut cfg = Config::default();
         cfg.editor.trim_trailing_ws_on_save = true;
+        // Disable ensure_trailing_newline for this test so the assertion
+        // focuses on trim behavior alone.
+        cfg.editor.ensure_trailing_newline = false;
         let mut b = Buffer::open(&path, &cfg).unwrap();
         b.editor.place_cursor(0, 4); // on `hi` (col 4 is inside the trailing ws)
         b.save_to_disk().unwrap();
@@ -849,6 +880,54 @@ mod tests {
             .join("\n");
         fs::write(&p, body).unwrap();
         Buffer::open(&p, &Config::default()).unwrap()
+    }
+
+    #[test]
+    fn ensure_trailing_newline_appends_when_missing() {
+        let cfg = Config::default();
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("nl.txt");
+        fs::write(&p, "no newline").unwrap();
+        let mut b = Buffer::open(&p, &cfg).unwrap();
+        b.save_to_disk().unwrap();
+        let on_disk = fs::read_to_string(&p).unwrap();
+        assert_eq!(on_disk, "no newline\n");
+    }
+
+    #[test]
+    fn ensure_trailing_newline_skips_when_present() {
+        let cfg = Config::default();
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("nl.txt");
+        fs::write(&p, "ok\n").unwrap();
+        let mut b = Buffer::open(&p, &cfg).unwrap();
+        // Force a save (text matches → dirty is false → save_to_disk no-ops
+        // for dirty checks but we still want the file write).
+        b.save_to_disk().unwrap();
+        assert_eq!(fs::read_to_string(&p).unwrap(), "ok\n");
+    }
+
+    #[test]
+    fn ensure_trailing_newline_skips_empty_buffer() {
+        let cfg = Config::default();
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("empty.txt");
+        fs::write(&p, "").unwrap();
+        let mut b = Buffer::open(&p, &cfg).unwrap();
+        b.save_to_disk().unwrap();
+        assert_eq!(fs::read_to_string(&p).unwrap(), "");
+    }
+
+    #[test]
+    fn ensure_trailing_newline_off_leaves_file_alone() {
+        let mut cfg = Config::default();
+        cfg.editor.ensure_trailing_newline = false;
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("no-nl.txt");
+        fs::write(&p, "x").unwrap();
+        let mut b = Buffer::open(&p, &cfg).unwrap();
+        b.save_to_disk().unwrap();
+        assert_eq!(fs::read_to_string(&p).unwrap(), "x");
     }
 
     #[test]

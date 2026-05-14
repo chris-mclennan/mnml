@@ -284,8 +284,10 @@ standard-mode equivalent of vim's `:N`. **Esc clears find highlights** — Esc o
 state before the input handler sees the Esc (vim's normal-mode transitions still work). **`:w <path>` save-as** — also
 `:saveas <path>`. Repoints the buffer, creates parent dirs, refreshes git / tree / LSP / md preview / blame.
 **`:e` / `file.reload` reload from disk** — re-read the active buffer, preserving cursor + scroll. `:e!` to force-discard
-dirty changes. **Optional editor extras** — `[editor] trim_trailing_ws_on_save` (off by default; strips trailing
-space/tab per line on `save_to_disk` via `EditOp::ReplaceRange` so undo restores them; cursor preserved + clamped),
+dirty changes. **Optional editor extras** — `[editor] ensure_trailing_newline` (on by default; appends `\n` on save when
+the buffer doesn't already end with one — POSIX text file convention. Goes through `apply_edit_ops` so
+undo can revert. Empty buffers are skipped. `:set [no]eol` runtime toggle), `[editor] trim_trailing_ws_on_save`
+(off by default; strips trailing space/tab per line on `save_to_disk` via `EditOp::ReplaceRange` so undo restores them; cursor preserved + clamped),
 `[editor] breadcrumb` (default on; a dim workspace-relative path row above each editor body — middle-truncates with `…`),
 `[editor] auto_pair` (off by default; typing `(` `[` `{` `"` `'` `` ` `` inserts the matching close char when the next
 char is "empty space" — whitespace, EOF, closer, or punctuator. Typing a close char on top of an auto-inserted one
