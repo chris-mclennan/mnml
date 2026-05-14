@@ -6544,6 +6544,29 @@ impl App {
         self.layout.equalize_splits();
     }
 
+    /// `editor.file_info` — vim `Ctrl+G`. Toast `<path> · Ln N/M · X%` for
+    /// the active editor (no-op when nothing's open).
+    pub fn show_file_info(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let path = b
+            .path
+            .as_ref()
+            .map(|p| rel_path(&self.workspace, p))
+            .unwrap_or_else(|| b.display_name().to_string());
+        let (row, _) = b.editor.row_col();
+        let total = b.editor.line_count();
+        let pct = if total <= 1 {
+            100
+        } else {
+            ((row + 1) * 100) / total.max(1)
+        };
+        let dirty = if b.dirty { " ●" } else { "" };
+        self.toast(format!("{path}{dirty} · Ln {}/{total} · {pct}%", row + 1));
+    }
+
     /// `:sort [u]` — sort lines. With an active selection, sorts only those
     /// lines (full lines including any partial-line selection); without one,
     /// sorts the whole buffer. `unique` ⇒ de-dupe consecutive equal lines

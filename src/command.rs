@@ -394,6 +394,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.close_other_panes(),
         },
         Command {
+            id: "editor.file_info",
+            title: "Toast file info: <path> · Ln N/M · X% (vim `Ctrl+G`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.show_file_info(),
+        },
+        Command {
             id: "editor.jump_prev_edit",
             title: "Jump to previous edit position (vim `g;`)",
             group: "editor",

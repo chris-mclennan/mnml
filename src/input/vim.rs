@@ -762,6 +762,13 @@ impl VimInputHandler {
                 self.count = if n > 1 { Some(n) } else { None };
                 InputResult::Consumed
             }
+            // vim `Ctrl+G` — toast file info. Standard mode keeps it
+            // bound to `editor.goto_line` (the keymap resolver handles
+            // that); the vim handler intercepts here first.
+            KeyCode::Char('g') if ctrl => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("editor.file_info".into()))
+            }
             // prefixes
             KeyCode::Char('g') => {
                 self.prefix = Prefix::G;
