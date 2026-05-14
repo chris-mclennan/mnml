@@ -74,6 +74,20 @@ pub enum EditOp {
     /// `around` includes the quote chars themselves.
     SelectInnerSmartQuote,
     SelectAroundSmartQuote,
+    /// vim-surround `ds<c>` — find the enclosing pair of `<c>` (quote
+    /// or bracket; `c`'s match is implied — e.g. `ds(` matches `(...)`)
+    /// and delete just the open + close chars, leaving the inner content
+    /// intact. No-op when no enclosing pair on the cursor's line (quotes)
+    /// or surrounding the cursor (brackets).
+    DeleteSurround(char),
+    /// vim-surround `cs<from><to>` — change the enclosing pair of `<from>`
+    /// to a `<to>` pair (e.g. `cs"'` ⇒ `"foo"` becomes `'foo'`). Tracks
+    /// vim-surround's char ⇒ pair mapping (`(` opens with `(`, closes
+    /// with `)`; quotes are symmetric). No-op when no enclosing pair.
+    ChangeSurround {
+        from: char,
+        to: char,
+    },
     /// vim bracket text object: `i(`, `i[`, `i{` / `a(`, `a[`, `a{`. The
     /// `char` is the open bracket (the editor derives the matching close).
     /// Spans multiple lines — finds the enclosing pair by depth-counting

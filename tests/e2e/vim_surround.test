@@ -1,0 +1,31 @@
+# vim-surround — `ds<c>` deletes the surrounding pair; `cs<from><to>`
+# changes it (e.g. `cs"'` ⇒ "foo" becomes 'foo').
+write code.txt "let s = \"hello\";\nlet t = (1, 2);\nlet u = [a, b];"
+open code.txt
+command editor.use_vim
+
+# Cursor at start of file. Move right past 'let s = ' (10 chars) — into
+# the "..." string. Use word motion: w gets us to the next word.
+key w
+key w
+key w
+# Now cursor is somewhere in/near "hello". `ds"` deletes the surrounding "...".
+key d
+key s
+key "
+expect screen contains "let s = hello;"
+
+# Move to line 2, cursor INSIDE (1, 2). f( lands on `(`; `l` moves
+# forward one to put cursor on `1` (inside the pair, where the
+# bracket-pair scan walks back to find the open).
+key j
+key 0
+key f
+key (
+key l
+# `cs(<` changes the parens to angle brackets.
+key c
+key s
+key (
+key <
+expect screen contains "let t = <1, 2>;"

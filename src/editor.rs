@@ -1065,6 +1065,73 @@ impl Editor {
                     }
                 }
             }
+            DeleteSurround(c) => {
+                // Resolve which char is the open / close marker. Quotes
+                // are symmetric (open == close); brackets use the canonical
+                // open and its match.
+                let (open, close) = match c {
+                    '"' | '\'' | '`' => (c, c),
+                    '(' | ')' => ('(', ')'),
+                    '[' | ']' => ('[', ']'),
+                    '{' | '}' => ('{', '}'),
+                    '<' | '>' => ('<', '>'),
+                    _ => return,
+                };
+                let pair = if matches!(c, '"' | '\'' | '`') {
+                    self.enclosing_quote_pair_on_line(c)
+                } else {
+                    self.enclosing_bracket_pair(open, close)
+                };
+                if let Some((o, cl)) = pair {
+                    // Splice descending so earlier offsets stay valid.
+                    self.checkpoint();
+                    let close_len = close.len_utf8();
+                    let open_len = open.len_utf8();
+                    self.text.replace_range(cl..cl + close_len, "");
+                    self.text.replace_range(o..o + open_len, "");
+                    // Land cursor at the (now-shifted) inner-content start.
+                    self.cursor = o.min(self.text.len());
+                    self.anchor = None;
+                    out.buffer_changed = true;
+                }
+            }
+            ChangeSurround { from, to } => {
+                let (from_open, from_close) = match from {
+                    '"' | '\'' | '`' => (from, from),
+                    '(' | ')' => ('(', ')'),
+                    '[' | ']' => ('[', ']'),
+                    '{' | '}' => ('{', '}'),
+                    '<' | '>' => ('<', '>'),
+                    _ => return,
+                };
+                let (to_open, to_close) = match to {
+                    '"' | '\'' | '`' => (to, to),
+                    '(' | ')' => ('(', ')'),
+                    '[' | ']' => ('[', ']'),
+                    '{' | '}' => ('{', '}'),
+                    '<' | '>' => ('<', '>'),
+                    _ => return,
+                };
+                let pair = if matches!(from, '"' | '\'' | '`') {
+                    self.enclosing_quote_pair_on_line(from)
+                } else {
+                    self.enclosing_bracket_pair(from_open, from_close)
+                };
+                if let Some((o, cl)) = pair {
+                    self.checkpoint();
+                    let close_len = from_close.len_utf8();
+                    let open_len = from_open.len_utf8();
+                    let mut to_close_buf = [0u8; 4];
+                    let to_close_str = to_close.encode_utf8(&mut to_close_buf);
+                    let mut to_open_buf = [0u8; 4];
+                    let to_open_str = to_open.encode_utf8(&mut to_open_buf);
+                    // Replace close first (later offset), then open.
+                    self.text.replace_range(cl..cl + close_len, to_close_str);
+                    self.text.replace_range(o..o + open_len, to_open_str);
+                    self.anchor = None;
+                    out.buffer_changed = true;
+                }
+            }
             SelectInnerBracket(open) => {
                 let close = match_close_for(open);
                 if let Some((o, c)) = self.enclosing_bracket_pair(open, close) {

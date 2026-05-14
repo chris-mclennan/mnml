@@ -246,6 +246,13 @@ anonymous `'@'` register (mnml convenience); `q` during recording stops. `@<reg>
 `MacroReplayFrom(c)` for register-aware dispatch. Vim handler keeps a local
 `is_recording_macro: bool` mirror so the `q` chord can decide between "enter
 record-target prefix" (idle) and "stop the recording" (recording).
+**Vim-surround** (`ds<c>` / `cs<from><to>`) — vim-surround plugin equivalent. `ds"`
+deletes the surrounding `"..."` quote pair (leaves inner content); `cs"'` changes
+`"..."` to `'...'`; works for quotes (`"`, `'`, `` ` ``) and brackets (`(`/`)`,
+`[`/`]`, `{`/`}`, `<`/`>`). New `EditOp::DeleteSurround(c)` /
+`ChangeSurround{from, to}`. Operator-pending `s` (after `d` or `c`) routes into
+new `Prefix::SurroundDelete` / `SurroundChange(char)`. `ys{motion}<c>` (add
+surround) is a follow-up.
 **Vim `K` / `Ctrl+]` / `Ctrl+T`** — keyword help (LSP hover) / jump to definition /
 jumplist back. The latter two are vim's tag-stack chords; mnml aliases them to the
 existing LSP/nav commands since we don't have a separate ctags layer.

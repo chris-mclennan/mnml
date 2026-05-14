@@ -101,6 +101,11 @@ enum Prefix {
     /// Saw `@` — next key is the macro register letter to replay (or `@`
     /// for anonymous).
     MacroReplayTarget,
+    /// vim-surround `ds` — next key is the surround char to delete
+    /// (`"`, `'`, `` ` ``, `(`, `[`, `{`, `<`).
+    SurroundDelete,
+    /// vim-surround `cs<from>` — next key is the new surround char.
+    SurroundChange(char),
 }
 
 #[derive(Debug)]
@@ -863,6 +868,48 @@ impl VimInputHandler {
                 }
                 return InputResult::Consumed;
             }
+            Prefix::SurroundDelete => {
+                self.reset_pending();
+                if let KeyCode::Char(c) = key.code {
+                    let valid = matches!(
+                        c,
+                        '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+                    );
+                    if valid {
+                        return InputResult::Ops(vec![DeleteSurround(c)]);
+                    }
+                }
+                return InputResult::Consumed;
+            }
+            Prefix::SurroundChange(from) => {
+                if from == '\0' {
+                    // First key: capture the FROM char.
+                    if let KeyCode::Char(c) = key.code {
+                        let valid = matches!(
+                            c,
+                            '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+                        );
+                        if valid {
+                            self.prefix = Prefix::SurroundChange(c);
+                            return InputResult::Consumed;
+                        }
+                    }
+                    self.reset_pending();
+                    return InputResult::Consumed;
+                }
+                // Second key: TO char.
+                self.reset_pending();
+                if let KeyCode::Char(c) = key.code {
+                    let valid = matches!(
+                        c,
+                        '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+                    );
+                    if valid {
+                        return InputResult::Ops(vec![ChangeSurround { from, to: c }]);
+                    }
+                }
+                return InputResult::Consumed;
+            }
             Prefix::Window => {
                 self.reset_pending();
                 // vim `Ctrl+W <dir>` — focus the split in that direction.
@@ -945,6 +992,24 @@ impl VimInputHandler {
                         SelectClear,
                     ]),
                 };
+            }
+            // operator + `s` ⇒ vim-surround chord (`ds<c>` deletes,
+            // `cs<from><to>` changes). `ys{motion}<c>` is a follow-up.
+            if matches!(key.code, KeyCode::Char('s')) {
+                if matches!(op, PendingOp::Delete) {
+                    self.prefix = Prefix::SurroundDelete;
+                    return InputResult::Consumed;
+                }
+                if matches!(op, PendingOp::Change) {
+                    // Need the FROM char first; SurroundChange(from) then
+                    // takes the second key as the TO.
+                    // Switch to a wait-for-from sub-state by setting
+                    // SurroundChange('\0') as a placeholder. The next key
+                    // becomes `from`, then we transition to
+                    // SurroundChange(from) waiting for `to`.
+                    self.prefix = Prefix::SurroundChange('\0');
+                    return InputResult::Consumed;
+                }
             }
             // operator + `i` / `a` → text-object prefix (`diw`, `daw`, …).
             // `reset_pending()` above cleared `self.op`; put it back so the
@@ -1789,6 +1854,15 @@ impl InputHandler for VimInputHandler {
             Prefix::Register => s.push('"'),
             Prefix::MacroRecordTarget => s.push('q'),
             Prefix::MacroReplayTarget => s.push('@'),
+            Prefix::SurroundDelete => s.push_str("ds"),
+            Prefix::SurroundChange(from) => {
+                if from == '\0' {
+                    s.push_str("cs");
+                } else {
+                    s.push_str("cs");
+                    s.push(from);
+                }
+            }
             Prefix::None => {}
         }
         if self.mode == VimMode::VisualLine {
