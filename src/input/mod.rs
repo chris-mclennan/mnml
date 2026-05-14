@@ -83,6 +83,12 @@ pub enum AppCommand {
     MacroRecordInto(char),
     /// vim `@<reg>` — replay the macro stored in `reg`. `'@'` ⇒ anonymous.
     MacroReplayFrom(char),
+    /// vim visual-block `I` / `A` — enter Insert mode at the leftmost / right-of-
+    /// rightmost column of the block, with the App tracking the rect so that on
+    /// Esc the typed run is replayed at the same column on every other row.
+    BlockInsertStart {
+        append: bool,
+    },
 }
 
 /// Result of feeding one key to a handler.
@@ -138,6 +144,11 @@ pub trait InputHandler: Send {
     fn ex_history(&self) -> Vec<String> {
         Vec::new()
     }
+    /// Ask the handler to enter Insert mode. Vim's impl flips its internal
+    /// VimMode + clears any pending chord; Standard mode is no-op (it has
+    /// no modes). Used by `App::block_insert_start` so the App can drive the
+    /// handler into Insert without going through a keystroke.
+    fn request_insert_mode(&mut self) {}
 }
 
 /// Build a handler for the given style name. Unknown names fall back to `"standard"`.

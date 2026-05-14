@@ -2266,6 +2266,18 @@ impl VimInputHandler {
                 self.enter_normal();
                 InputResult::Ops(vec![DeleteBlock])
             }
+            // Block insert / append: `I` ⇒ insert at leftmost col of rect on
+            // every row; `A` ⇒ append after the rightmost col. The App
+            // captures the rect, drives the handler to Insert, then replays
+            // the typed run on every other row when the user presses Esc.
+            KeyCode::Char('I') => {
+                self.enter_normal();
+                InputResult::App(AppCommand::BlockInsertStart { append: false })
+            }
+            KeyCode::Char('A') => {
+                self.enter_normal();
+                InputResult::App(AppCommand::BlockInsertStart { append: true })
+            }
             // Swap which corner the cursor is in (vim's visual `o` works in
             // block mode too — but we only have a single anchor so this just
             // mirrors row/col by moving cursor to the opposite corner; the
@@ -2338,6 +2350,10 @@ impl InputHandler for VimInputHandler {
             VimMode::Insert => EditingMode::Insert,
             VimMode::Visual | VimMode::VisualLine | VimMode::VisualBlock => EditingMode::Visual,
         }
+    }
+
+    fn request_insert_mode(&mut self) {
+        self.enter_insert();
     }
 
     fn pending_display(&self) -> Option<String> {

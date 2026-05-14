@@ -1363,6 +1363,7 @@ fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
             app.set_pending_macro_register(c);
             app.macro_replay();
         }
+        BlockInsertStart { append } => app.block_insert_start(append),
     }
 }
 

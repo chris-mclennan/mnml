@@ -879,6 +879,28 @@ pub struct PaneRects {
     pub context_menu_items: Vec<(Rect, usize)>,
 }
 
+/// Live visual-block I / A state. Captured at insert-start; consumed when the
+/// handler returns to Normal mode (App::tick polls the transition). `rows`
+/// excludes the top row (the user's literal typing already lands there).
+#[derive(Debug, Clone)]
+pub struct BlockInsertState {
+    /// Rows OTHER than the top row that should receive the replayed text.
+    pub other_rows: Vec<usize>,
+    /// 0-based character column where the insert started (`I` ⇒ cmin,
+    /// `A` ⇒ cmax + 1).
+    pub col: usize,
+    /// Byte offset at which the insert started (also the cursor at start).
+    pub start_byte: usize,
+    /// Byte length of the top row at insert start. After Esc, the difference
+    /// against the new top-row length tells us how much was inserted.
+    pub top_row_byte_len_before: usize,
+    /// Top row index — `pane_id` lives separately so we can verify the pane
+    /// hasn't been swapped out under us.
+    pub top_row: usize,
+    pub pane_id: usize,
+    pub append: bool,
+}
+
 pub struct App {
     pub workspace: PathBuf,
     pub config: Config,
@@ -937,6 +959,12 @@ pub struct App {
     /// Throttle stamp for `check_external_file_changes` — stat'ing every
     /// open file on every tick is overkill; we cap the cadence to ~2s.
     last_external_check: Option<std::time::Instant>,
+    /// Active visual-block I / A insert. Captured when the user presses `I`
+    /// or `A` in VisualBlock mode: the App pins the rectangle's rows + the
+    /// insert column, drives the handler to Insert, and on Esc-out replays
+    /// the typed run on every other row in the rect (vim's "edit a column"
+    /// power tool). `None` whenever there's no active block insert.
+    pub block_insert_state: Option<BlockInsertState>,
     /// Recent toasts (oldest first, capped at `MESSAGE_LOG_MAX`). Vim
     /// `:messages` shows them. Keeps a history beyond the live toast
     /// (which expires after `TOAST_TTL`).
@@ -1234,6 +1262,7 @@ impl App {
             closed_buffers: Vec::new(),
             last_active: None,
             macro_state: MacroState::default(),
+            block_insert_state: None,
             macro_buffer: std::collections::HashMap::new(),
             pending_macro_register: None,
             last_external_check: None,
@@ -9924,6 +9953,111 @@ impl App {
         self.set_highlight_word_under_cursor(!self.config.ui.highlight_word_under_cursor);
     }
 
+    /// Visual-block `I` / `A` ⇒ start a block-insert. Captures the rect,
+    /// drops the block selection, places the cursor at the (column-aligned)
+    /// insert origin, and asks the active input handler to enter Insert mode.
+    /// The actual multi-row replay happens in
+    /// [`Self::block_insert_replay_if_done`] when the handler returns to
+    /// Normal mode (typically Esc out of Insert).
+    pub fn block_insert_start(&mut self, append: bool) {
+        let Some(idx) = self.active else { return };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+            return;
+        };
+        let Some((rmin, cmin, rmax, cmax)) = b.editor.block_selection() else {
+            return;
+        };
+        let col = if append { cmax + 1 } else { cmin };
+        // The "other rows" exclude the top row — the user types literally
+        // there during Insert; we only replay onto the rest.
+        let other_rows: Vec<usize> = ((rmin + 1)..=rmax).collect();
+        // Drop the block selection so Insert renders without the rect tint.
+        b.editor.block_anchor = None;
+        // Place the cursor at (rmin, col). `byte_at_col_pub` clamps to line
+        // length, so on short lines `A` lands at EOL (vim's behavior — and
+        // why we still record `col` for the replay's per-row recomputation).
+        let start_byte = b.editor.byte_at_col_pub(rmin, col);
+        b.editor.set_cursor_byte(start_byte);
+        let top_row_byte_len_before = b.editor.line_byte_len(rmin);
+        self.block_insert_state = Some(BlockInsertState {
+            other_rows,
+            col,
+            start_byte,
+            top_row_byte_len_before,
+            top_row: rmin,
+            pane_id: idx,
+            append,
+        });
+        // Drive the handler into Insert (Vim mode flip via trait method).
+        b.input.request_insert_mode();
+    }
+
+    /// Polled by [`Self::tick`]. When a block-insert state is pending AND
+    /// the active handler has returned to Normal mode, replay the typed run
+    /// on every "other row" in the rect, then clear the state. Idempotent.
+    pub fn block_insert_replay_if_done(&mut self) {
+        let Some(state) = self.block_insert_state.as_ref() else {
+            return;
+        };
+        // Pane still exists?
+        if state.pane_id >= self.panes.len() {
+            self.block_insert_state = None;
+            return;
+        }
+        // Handler still in Insert? Keep waiting.
+        let Some(Pane::Editor(b)) = self.panes.get(state.pane_id) else {
+            self.block_insert_state = None;
+            return;
+        };
+        if b.input.mode() == crate::input::EditingMode::Insert {
+            return;
+        }
+        // Snapshot the inserted text by comparing the top row's new byte
+        // length to what we captured at start. If it shrunk (user Backspaced
+        // past the original insert position), nothing to replay.
+        let state = self.block_insert_state.take().unwrap();
+        let Some(Pane::Editor(b)) = self.panes.get_mut(state.pane_id) else {
+            return;
+        };
+        let top_row_byte_len_now = b.editor.line_byte_len(state.top_row);
+        if top_row_byte_len_now <= state.top_row_byte_len_before {
+            return;
+        }
+        let inserted_len = top_row_byte_len_now - state.top_row_byte_len_before;
+        let inserted: String = b
+            .editor
+            .text()
+            .get(state.start_byte..state.start_byte + inserted_len)
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        if inserted.is_empty() || state.other_rows.is_empty() {
+            return;
+        }
+        // For each other row (descending so earlier byte offsets stay
+        // valid), splice `inserted` at the col-aligned byte position. Rows
+        // shorter than `col` get the splice appended at EOL — vim canonical
+        // (block A on short lines, anyway).
+        let mut ops: Vec<crate::edit_op::EditOp> = Vec::with_capacity(state.other_rows.len());
+        let mut targets: Vec<(usize, usize)> = state
+            .other_rows
+            .iter()
+            .map(|&row| (row, b.editor.byte_at_col_pub(row, state.col)))
+            .collect();
+        targets.sort_by_key(|&(_, b)| std::cmp::Reverse(b));
+        for (_, byte) in targets {
+            ops.push(crate::edit_op::EditOp::ReplaceRange {
+                start: byte,
+                end: byte,
+                text: inserted.clone(),
+            });
+        }
+        // Single coalesced edit so one Undo reverts the whole block insert.
+        b.apply_edit_ops(ops, &mut self.clipboard, 20);
+        // Cursor returns to the insert origin (vim convention).
+        b.editor.set_cursor_byte(state.start_byte);
+        b.recompute_dirty();
+    }
+
     /// `view.toggle_color_column` — flip `[ui] color_column` between 0 (off)
     /// and 80 (vim's classic line-length hint). The exact column can be set
     /// via `:set colorcolumn=N`.
@@ -12170,6 +12304,7 @@ impl App {
         self.autosave_idle_buffers();
         self.check_external_file_changes();
         self.check_format_save_deadline();
+        self.block_insert_replay_if_done();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL
         {

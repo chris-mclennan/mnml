@@ -398,6 +398,28 @@ impl Editor {
     pub fn line_byte_range(&self, line: usize) -> (usize, usize) {
         (self.line_start(line), self.line_end(line))
     }
+    /// Byte length of `line`'s content (newline excluded).
+    pub fn line_byte_len(&self, line: usize) -> usize {
+        let (s, e) = self.line_byte_range(line);
+        e - s
+    }
+    /// Public mirror of [`Self::byte_at_col`]. Lets the App map a (row, char-col)
+    /// pair to a byte offset — used by visual-block insert to position the
+    /// cursor at the insert origin and to splice the replay text on other rows.
+    pub fn byte_at_col_pub(&self, line: usize, col: usize) -> usize {
+        self.byte_at_col(line, col)
+    }
+    /// Public cursor setter, byte-clamped to a char boundary. The App uses
+    /// this for "place the cursor here precisely" gestures (visual-block
+    /// insert origin, etc.) that bypass the EditOp path.
+    pub fn set_cursor_byte(&mut self, byte: usize) {
+        let mut b = byte.min(self.text.len());
+        while b < self.text.len() && !self.text.is_char_boundary(b) {
+            b += 1;
+        }
+        self.cursor = b;
+        self.goal_col = self.col_at_byte(self.cursor);
+    }
     /// Char-column count of `text[..byte_offset_within_line]` relative to the
     /// start of the line that contains `byte`. Public so the view can map a
     /// selection's byte offsets to columns.
