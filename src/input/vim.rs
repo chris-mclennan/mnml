@@ -802,6 +802,18 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("find.word_backward".into()))
             }
+            // vim `n` / `N` — step through the active find's matches.
+            // `n` = next, `N` = previous (vim convention; both relative to
+            // search direction, but mnml's find is direction-agnostic so
+            // we map straight to find.next / find.prev).
+            KeyCode::Char('n') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("find.next".into()))
+            }
+            KeyCode::Char('N') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("find.prev".into()))
+            }
             // f / F / t / T — find char on the cursor's line. The next char
             // typed is the target; the prefix dispatcher emits the EditOp.
             KeyCode::Char('f') => {
@@ -858,6 +870,11 @@ impl VimInputHandler {
             KeyCode::Char('/') if ctrl => {
                 self.reset_pending();
                 InputResult::Ops(vec![ToggleLineComment])
+            }
+            // vim `/` — open the find prompt (forward search).
+            KeyCode::Char('/') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("find.find".into()))
             }
             KeyCode::Esc => {
                 self.reset_pending();
