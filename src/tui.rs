@@ -244,6 +244,15 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.completion_move(1);
                 return;
             }
+            // Ctrl+K / Ctrl+J — vim-style alternates for Up / Down.
+            KeyCode::Char('k') if ctrl => {
+                app.completion_move(-1);
+                return;
+            }
+            KeyCode::Char('j') if ctrl => {
+                app.completion_move(1);
+                return;
+            }
             KeyCode::PageUp => {
                 app.completion_move(-8);
                 return;

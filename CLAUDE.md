@@ -154,6 +154,19 @@ filename-exact match wins on ambiguity). Bare `:b` toasts the open buffers list.
 **Persisted `closed_buffers`** — `Ctrl+Shift+T` (`buffer.reopen`) survives a relaunch:
 `SavedSession.closed_buffers: Vec<SavedNavPoint>` round-trips the recently-closed buffer paths +
 their last cursor positions, capped at `CLOSED_BUFFERS_MAX` on restore.
+**Vim `Ctrl+L`** — force a screen redraw (`view.redraw` command flips `App.redraw_requested` so
+`tui.rs`'s loop calls `term.clear()` next frame). Vim canonical chord for "stale terminal? rip it".
+**Vim `''` / `` `` ``** — second-quote / second-backtick after the mark prefix is aliased to
+`nav.back` (vim's "jump to previous cursor position"). Bare-letter forms still go to `JumpToMarkLine`
+/ `JumpToMarkExact`.
+**`:!cmd`** — fire `cmd` through `$SHELL -c` synchronously from the workspace dir; toast the first
+200 chars of stdout (or stderr if empty) + exit status. Bounded — for long-running tasks reach for
+`:term <cmd>` (a pty pane). Vim canonical.
+**Completion popup `Ctrl+J` / `Ctrl+K`** — vim-style alternates for Down / Up in the LSP
+completion popup (in addition to the existing arrows + `Ctrl+N` / `Ctrl+P`). Ergonomic for vim
+users who don't want to leave the home row.
+**Statusline filesize chip** — compact in-memory byte count next to the `Ln/Col` chip
+(`123B` / `4.2K` / `12M`). Reflects unsaved edits; `format_byte_size` helper picks the unit.
 **Vim `gv`** — re-select the last visual selection. The editor remembers `(anchor, cursor)` whenever a
 selection is closed (`SelectClear`, `YankSelection`, `DeleteSelection`); `gv` emits new
 `EditOp::RestoreLastSelection` to put it back and the handler flips into Visual mode.

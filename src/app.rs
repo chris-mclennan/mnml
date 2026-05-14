@@ -8770,6 +8770,49 @@ impl App {
             self.run_substitute(sub);
             return;
         }
+        // `:!cmd` — fire `cmd` through the shell synchronously, toast a snippet
+        // of stdout/stderr (capped) + exit status. Bounded by the harness — not
+        // a substitute for opening a `:term <cmd>` pty for long-running things.
+        if let Some(rest) = line.strip_prefix("!") {
+            let rest = rest.trim();
+            if rest.is_empty() {
+                self.toast(":! — command required");
+                return;
+            }
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+            let out = std::process::Command::new(&shell)
+                .arg("-c")
+                .arg(rest)
+                .current_dir(&self.workspace)
+                .output();
+            match out {
+                Ok(out) => {
+                    let mut text = String::from_utf8_lossy(&out.stdout).to_string();
+                    if text.is_empty() {
+                        text = String::from_utf8_lossy(&out.stderr).to_string();
+                    }
+                    let text = text.trim_end().to_string();
+                    let preview: String = text.chars().take(200).collect();
+                    let suffix = if text.chars().count() > 200 {
+                        "…"
+                    } else {
+                        ""
+                    };
+                    let status = match out.status.code() {
+                        Some(0) => String::new(),
+                        Some(c) => format!(" [exit {c}]"),
+                        None => " [killed]".to_string(),
+                    };
+                    if preview.is_empty() {
+                        self.toast(format!(":! ok{status}"));
+                    } else {
+                        self.toast(format!(":! {preview}{suffix}{status}"));
+                    }
+                }
+                Err(e) => self.toast(format!(":! — {e}")),
+            }
+            return;
+        }
         let (cmd, rest) = match line.split_once(char::is_whitespace) {
             Some((c, r)) => (c, r.trim()),
             None => (line, ""),

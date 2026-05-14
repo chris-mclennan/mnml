@@ -497,6 +497,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.show_file_info(),
         },
         Command {
+            id: "view.redraw",
+            title: "Force a full screen redraw (vim `Ctrl+L`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.redraw_requested = true,
+        },
+        Command {
             id: "editor.repeat_last_substitute",
             title: "Repeat last :s on current line (vim `&`)",
             group: "editor",

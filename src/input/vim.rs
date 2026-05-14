@@ -400,6 +400,11 @@ impl VimInputHandler {
                     KeyCode::Char(c) if c.is_ascii_alphabetic() => {
                         InputResult::App(AppCommand::JumpToMarkLine(c))
                     }
+                    // `''` — jump to the previous cursor position (vim
+                    // convention; alias of `nav.back`).
+                    KeyCode::Char('\'') => {
+                        InputResult::App(AppCommand::RunCommand("nav.back".into()))
+                    }
                     _ => InputResult::Consumed,
                 };
             }
@@ -408,6 +413,10 @@ impl VimInputHandler {
                 return match key.code {
                     KeyCode::Char(c) if c.is_ascii_alphabetic() => {
                         InputResult::App(AppCommand::JumpToMarkExact(c))
+                    }
+                    // `` `` `` — exact jump to previous cursor position.
+                    KeyCode::Char('`') => {
+                        InputResult::App(AppCommand::RunCommand("nav.back".into()))
                     }
                     _ => InputResult::Consumed,
                 };
@@ -728,6 +737,11 @@ impl VimInputHandler {
 
         let n = self.count1();
         match key.code {
+            // vim `Ctrl+L` — force a screen redraw (vim canonical).
+            KeyCode::Char('l') if ctrl => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("view.redraw".into()))
+            }
             // vim `Ctrl+I` — jumplist forward (alias of nav.forward).
             // Must come BEFORE the bare `i` arm.
             KeyCode::Char('i') if ctrl => {

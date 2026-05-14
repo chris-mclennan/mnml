@@ -171,6 +171,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     if let Some(b) = app.active_editor() {
         let (row, col) = b.editor.row_col();
+        // Filesize chip — buffer's *in-memory* byte count (so unsaved edits
+        // are reflected). Compact: `<1KB` shows raw bytes, otherwise KB / MB.
+        let bytes = b.editor.text().len();
+        let size_label = format_byte_size(bytes);
+        right.push(Seg::new(
+            format!(" {size_label} "),
+            theme::cur().comment,
+            theme::cur().bg2,
+        ));
         // `Ln 12/580` (current of total) — the "/580" lets the user gauge
         // where they are in the file without scanning the scroll bar.
         right.push(Seg::new(
@@ -317,5 +326,27 @@ fn mode_chip(app: &App) -> (&'static str, Color) {
                 }
             }
         },
+    }
+}
+
+/// Render `bytes` as a compact size label: `123B`, `4.2K`, `12M`. Tuned for
+/// the statusline chip — single token, no fractional digits past 1 decimal.
+fn format_byte_size(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{bytes}B")
+    } else if bytes < 1024 * 1024 {
+        let kb = bytes as f64 / 1024.0;
+        if kb < 10.0 {
+            format!("{kb:.1}K")
+        } else {
+            format!("{}K", kb as usize)
+        }
+    } else {
+        let mb = bytes as f64 / (1024.0 * 1024.0);
+        if mb < 10.0 {
+            format!("{mb:.1}M")
+        } else {
+            format!("{}M", mb as usize)
+        }
     }
 }
