@@ -8361,6 +8361,13 @@ impl App {
     }
 
     pub fn run_sort_lines(&mut self, unique: bool, reverse: bool) {
+        self.run_sort_lines_opts(unique, reverse, false);
+    }
+
+    /// Same as [`Self::run_sort_lines`] but with a case-insensitive flag —
+    /// vim's `:sort i`. `case_insensitive=true` compares lines via their
+    /// lowercase form (ASCII; cheap, matches vim's default behavior).
+    pub fn run_sort_lines_opts(&mut self, unique: bool, reverse: bool, case_insensitive: bool) {
         let Some(b) = self.active_editor_mut() else {
             self.toast("no active editor");
             return;
@@ -8400,9 +8407,17 @@ impl App {
             return;
         }
         let mut lines: Vec<&str> = text[start_byte..end_byte].split('\n').collect();
-        lines.sort();
+        if case_insensitive {
+            lines.sort_by_key(|l| l.to_ascii_lowercase());
+        } else {
+            lines.sort();
+        }
         if unique {
-            lines.dedup();
+            if case_insensitive {
+                lines.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+            } else {
+                lines.dedup();
+            }
         }
         if reverse {
             lines.reverse();
@@ -11092,12 +11107,30 @@ impl App {
             // `:co N` / `:copy N` / `:t N` — duplicate the cursor's line and
             // place the copy after line N. Same destination semantics as `:m`.
             "co" | "copy" | "t" => self.run_move_or_copy_line(rest, true),
-            "sort" => self.run_sort_lines(rest.contains('u'), false),
-            "sort!" => self.run_sort_lines(rest.contains('u'), true),
+            "sort" => self.run_sort_lines_opts(rest.contains('u'), false, rest.contains('i')),
+            "sort!" => self.run_sort_lines_opts(rest.contains('u'), true, rest.contains('i')),
             // `:retab` — replace tabs with `[editor] tab_width` spaces in
             // the whole buffer.
-            "retab" => self.run_retab(false),
-            "retab!" => self.run_retab(true),
+            "retab" => {
+                let prior_tab_w = self.config.editor.tab_width;
+                if let Ok(n) = rest.trim().parse::<usize>()
+                    && n >= 1
+                {
+                    self.config.editor.tab_width = n;
+                }
+                self.run_retab(false);
+                self.config.editor.tab_width = prior_tab_w;
+            }
+            "retab!" => {
+                let prior_tab_w = self.config.editor.tab_width;
+                if let Ok(n) = rest.trim().parse::<usize>()
+                    && n >= 1
+                {
+                    self.config.editor.tab_width = n;
+                }
+                self.run_retab(true);
+                self.config.editor.tab_width = prior_tab_w;
+            }
             // `:term` / `:terminal` — open a shell in a new split (alias for
             // `term.shell` / `Ctrl+T`).
             "term" | "terminal" => {

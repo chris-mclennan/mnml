@@ -493,6 +493,12 @@ renders the selected item's first non-empty doc line as a dim italic footer bene
 list. `initialize` now advertises `completionItem.documentationFormat: ["markdown",
 "plaintext"]` so servers send docs eagerly. Lazy `completionItem/resolve` not wired yet
 — what the server returns on the initial reply is all we show.
+**`:retab N` / `:retab! N`** — vim's optional N override; if the arg is a positive integer
+it's used as the tab width for this retab only (the global `[editor] tab_width` is
+restored after). Bare `:retab` still uses the global setting.
+**`:sort i`** — case-insensitive sort (vim canonical). Combines with `u` and `!` as
+expected. `run_sort_lines` now delegates to `run_sort_lines_opts(unique, reverse,
+case_insensitive)`.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.
