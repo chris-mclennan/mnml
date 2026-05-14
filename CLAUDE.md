@@ -146,6 +146,13 @@ the split in that direction (`view.focus_left/right/up/down`); `w` cycles (`view
 `q`/`c` close (`view.close_split`); `s` splits down; `v` splits right. Standard mode keeps `Ctrl+W`
 bound to `buffer.close` (browser-tab convention) — the vim handler intercepts before the keymap
 resolver gets a chance. `pending_display` shows `^W` in the statusline while the chord is pending.
+**Vim `gqq` paragraph reflow** — greedy word-wrap the cursor's paragraph to `[editor] text_width`
+(default 80). New `EditOp::ReflowParagraph{width}` uses `paragraph_bounds` to find the range, splits
+into words, rebuilds with line-wrapping. Preserves the first line's leading whitespace as the indent
+on every wrapped line so indented prose stays indented. The `gqq` chord routes through
+`editor.reflow_paragraph` (the App method reads `text_width` from config). Operator-pending forms
+(`gqap`, `gq` + motion) aren't wired yet — `gqq` is the bounded MVP. `:set` doesn't yet expose a
+runtime toggle for `text_width`; use the config file or pre-load.
 **Vim visual case ops** — `u` lowercases, `U` uppercases, `~` toggles case of the active selection.
 New `EditOp::TransformSelectionCase(CaseTransform::Lower|Upper|Toggle)` — replaces selection in
 place, drops the selection, returns to Normal mode (vim convention). Toggle is ASCII-only (uses

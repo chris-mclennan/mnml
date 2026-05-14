@@ -1,0 +1,24 @@
+# `[ui] auto_md_preview = true` ⇒ on every `open_path` of a markdown file,
+# auto-split a preview pane next to it (focus stays on the editor).
+
+# Toggle the flag on (defaults to off).
+command view.toggle_auto_md_preview
+expect screen contains "auto-preview md: on"
+
+# Seed a markdown file and open it.
+write notes.md "# Title\n\nSome **bold** text.\n"
+open notes.md
+
+# Both panes should be visible side-by-side: the source editor's tab name
+# `notes.md ●` (no dirty marker yet — file just opened, but the bufferline
+# always has the name) and the preview pane's `notes.md ◳` title chip.
+expect screen contains "notes.md"
+expect screen contains "◳"
+
+# The preview pane renders the rendered text — `**bold**` markers are
+# stripped, leaving the bold word visible.
+expect screen contains "Some bold text"
+
+# Active pane should still be the editor (focus didn't shift to the preview).
+# The cursor row indicator on the statusline reflects the editor's position.
+expect dirty false

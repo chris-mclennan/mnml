@@ -1247,6 +1247,59 @@ impl Editor {
                 self.cursor = self.byte_at_col(line + 1, col);
                 out.buffer_changed = true;
             }
+            ReflowParagraph { width } => {
+                let (start, end) = self.paragraph_bounds(false);
+                if end <= start {
+                    return;
+                }
+                let body = &self.text[start..end];
+                if body.trim().is_empty() {
+                    return;
+                }
+                // Keep the leading whitespace of the first line as the
+                // common indent — applied to every wrapped line so indented
+                // prose stays indented.
+                let first_line_end = body.find('\n').unwrap_or(body.len());
+                let indent: String = body[..first_line_end]
+                    .chars()
+                    .take_while(|c| c.is_whitespace())
+                    .collect();
+                // Greedy word-wrap. Words = runs of non-whitespace; the
+                // separator between them is always a single space (no
+                // attempt to preserve double-space-after-period etc.).
+                let words: Vec<&str> = body.split_whitespace().filter(|w| !w.is_empty()).collect();
+                if words.is_empty() {
+                    return;
+                }
+                let target = width.max(indent.chars().count() + 8);
+                let mut wrapped = String::with_capacity(body.len());
+                let mut line_chars = 0usize;
+                for (i, w) in words.iter().enumerate() {
+                    let wlen = w.chars().count();
+                    if i == 0 {
+                        wrapped.push_str(&indent);
+                        wrapped.push_str(w);
+                        line_chars = indent.chars().count() + wlen;
+                    } else if line_chars + 1 + wlen > target {
+                        wrapped.push('\n');
+                        wrapped.push_str(&indent);
+                        wrapped.push_str(w);
+                        line_chars = indent.chars().count() + wlen;
+                    } else {
+                        wrapped.push(' ');
+                        wrapped.push_str(w);
+                        line_chars += 1 + wlen;
+                    }
+                }
+                if wrapped == body {
+                    return;
+                }
+                self.checkpoint();
+                self.text.replace_range(start..end, &wrapped);
+                self.cursor = start;
+                self.anchor = None;
+                out.buffer_changed = true;
+            }
             TransformSelectionCase(kind) => {
                 if let Some((lo, hi)) = self.selection() {
                     let original = &self.text[lo..hi];
@@ -2174,6 +2227,53 @@ mod tests {
         );
         // Punctuation untouched; each ASCII letter swapped.
         assert_eq!(e.text(), "hELLO, wORLD!");
+    }
+
+    #[test]
+    fn reflow_paragraph_wraps_long_line_to_width() {
+        // Long single-line paragraph wraps to the requested width.
+        let (mut e, mut c) = ed("the quick brown fox jumps over the lazy dog");
+        e.cursor = 0;
+        e.apply(ReflowParagraph { width: 16 }, 10, &mut c);
+        // Each line should be <= 16 chars.
+        for line in e.text().lines() {
+            assert!(line.chars().count() <= 16, "line longer than 16: {line:?}");
+        }
+        // Round-trip preserves the words in order.
+        let words: Vec<&str> = e.text().split_whitespace().collect();
+        assert_eq!(
+            words,
+            vec![
+                "the", "quick", "brown", "fox", "jumps", "over", "the", "lazy", "dog"
+            ]
+        );
+    }
+
+    #[test]
+    fn reflow_paragraph_collapses_multi_line_paragraph() {
+        let (mut e, mut c) = ed("alpha\nbeta\ngamma");
+        e.cursor = 0;
+        // Wide enough for everything on one line.
+        e.apply(ReflowParagraph { width: 80 }, 10, &mut c);
+        assert_eq!(e.text(), "alpha beta gamma");
+    }
+
+    #[test]
+    fn reflow_paragraph_preserves_first_line_indent() {
+        let (mut e, mut c) = ed("    indented prose that goes on for a while now");
+        e.cursor = 0;
+        e.apply(ReflowParagraph { width: 24 }, 10, &mut c);
+        // Every line starts with the 4-space indent.
+        for line in e.text().lines() {
+            assert!(line.starts_with("    "), "line missing indent: {line:?}");
+        }
+    }
+
+    #[test]
+    fn reflow_paragraph_skips_blank_paragraph() {
+        let (mut e, mut c) = ed("\n\n");
+        e.apply(ReflowParagraph { width: 20 }, 10, &mut c);
+        assert_eq!(e.text(), "\n\n");
     }
 
     #[test]

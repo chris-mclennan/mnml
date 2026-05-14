@@ -43,6 +43,9 @@ enum Prefix {
     G,
     /// Saw `gc` — expecting `c` (→ `gcc`) or a motion.
     Gc,
+    /// Saw `gq` — expecting `q` (→ `gqq` reflow current paragraph) or a
+    /// motion (not yet supported).
+    Gq,
     /// Saw `Z` — expecting `Z` (→ `:x`) or `Q` (→ `:q!`).
     Z,
     /// Saw lowercase `z` — vim's fold prefix. `a` toggles, `R` unfolds all,
@@ -268,6 +271,10 @@ impl VimInputHandler {
                         self.count = if n > 1 { Some(n) } else { None };
                         InputResult::Consumed
                     }
+                    KeyCode::Char('q') => {
+                        self.prefix = Prefix::Gq;
+                        InputResult::Consumed
+                    }
                     KeyCode::Char('v') => {
                         // `gv` — re-establish the last visual selection.
                         // The editor restores `(anchor, cursor)`; we flip the
@@ -304,6 +311,18 @@ impl VimInputHandler {
                     }
                     None => InputResult::Consumed,
                 };
+            }
+            Prefix::Gq => {
+                self.reset_pending();
+                if key.code == KeyCode::Char('q') {
+                    // `gqq` — reflow the cursor's paragraph. The width comes
+                    // from `[editor] text_width`; the command resolves it.
+                    return InputResult::App(AppCommand::RunCommand(
+                        "editor.reflow_paragraph".into(),
+                    ));
+                }
+                // `gq` + motion isn't wired yet — treat as cancelled.
+                return InputResult::Consumed;
             }
             Prefix::MarkSet => {
                 self.reset_pending();
@@ -970,6 +989,7 @@ impl InputHandler for VimInputHandler {
         match self.prefix {
             Prefix::G => s.push('g'),
             Prefix::Gc => s.push_str("gc"),
+            Prefix::Gq => s.push_str("gq"),
             Prefix::Z => s.push('Z'),
             Prefix::ZFold => s.push('z'),
             Prefix::Replace => s.push('r'),

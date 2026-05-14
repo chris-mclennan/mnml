@@ -89,6 +89,9 @@ pub struct EditorConfig {
     /// per-workspace when you do. If the LSP isn't attached (or doesn't
     /// implement formatting), the save proceeds normally.
     pub format_on_save: bool,
+    /// Target line width for `editor.reflow_paragraph` (vim `gqq`) — greedy
+    /// word-wrap at this many chars. Default 80.
+    pub text_width: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +149,7 @@ impl Default for Config {
                 auto_pair: false,
                 auto_indent: true,
                 format_on_save: false,
+                text_width: 80,
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),
@@ -230,6 +234,7 @@ struct RawEditor {
     auto_pair: Option<bool>,
     auto_indent: Option<bool>,
     format_on_save: Option<bool>,
+    text_width: Option<usize>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -295,6 +300,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.format_on_save {
             self.editor.format_on_save = v;
+        }
+        if let Some(v) = raw.editor.text_width {
+            self.editor.text_width = v.max(8);
         }
         if let Some(v) = raw.ui.theme {
             self.ui.theme = v;

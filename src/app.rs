@@ -6483,6 +6483,26 @@ impl App {
         }
     }
 
+    /// `editor.reflow_paragraph` — vim `gqq`. Greedy word-wrap the cursor's
+    /// paragraph to `[editor] text_width`. The reflow op preserves the
+    /// first line's leading indent on every wrapped line.
+    pub fn reflow_paragraph_at_cursor(&mut self) {
+        let width = self.config.editor.text_width;
+        let Some(b) = self.active_editor_mut() else {
+            self.toast("no active editor");
+            return;
+        };
+        let mut clip = crate::clipboard::Clipboard::new();
+        let changed = b.apply_edit_ops(
+            vec![crate::edit_op::EditOp::ReflowParagraph { width }],
+            &mut clip,
+            0,
+        );
+        if changed {
+            self.toast(format!("reflow → {width} cols"));
+        }
+    }
+
     /// `editor.jump_prev_edit` — vim `g;`. Walks back through the active
     /// buffer's change list (per-edit `(row, col)` history) and places the
     /// cursor there. Pushes the *current* position onto the nav-back stack
@@ -8626,10 +8646,7 @@ impl App {
         }
         // Find query history — restore the most recent N (oldest first).
         if !saved.find_history.is_empty() {
-            let take_from = saved
-                .find_history
-                .len()
-                .saturating_sub(FIND_HISTORY_MAX);
+            let take_from = saved.find_history.len().saturating_sub(FIND_HISTORY_MAX);
             self.find_history = saved.find_history.into_iter().skip(take_from).collect();
             self.find_history_cursor = self.find_history.len();
         }

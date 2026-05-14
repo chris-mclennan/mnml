@@ -176,6 +176,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_scrollbar(),
         },
         Command {
+            id: "view.toggle_auto_md_preview",
+            title: "Toggle auto-open markdown preview on file open",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.auto_md_preview = !app.config.ui.auto_md_preview;
+                let on = app.config.ui.auto_md_preview;
+                app.toast(format!(
+                    "auto-preview md: {}",
+                    if on { "on" } else { "off" }
+                ));
+            },
+        },
+        Command {
             id: "view.toggle_highlight_trailing_ws",
             title: "Toggle trailing-whitespace highlight (red bg on trailing space/tab)",
             group: "view",
@@ -322,6 +336,13 @@ fn builtin_commands() -> Vec<Command> {
             group: "editor",
             keys: &[],
             run: |app| app.unfold_all_in_active(),
+        },
+        Command {
+            id: "editor.reflow_paragraph",
+            title: "Reflow current paragraph to text_width (vim `gqq`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.reflow_paragraph_at_cursor(),
         },
         Command {
             id: "editor.jump_prev_edit",

@@ -134,6 +134,15 @@ pub enum EditOp {
     /// Transform the active selection's text in place. Vim visual `u` /
     /// `U` / `~` (lower / upper / toggle). No-op without a selection.
     TransformSelectionCase(CaseTransform),
+    /// Greedy word-wrap the cursor's paragraph to `width` chars per line
+    /// (vim `gqq`). Preserves the leading whitespace prefix of the first
+    /// line on every wrapped line so indented prose stays indented.
+    /// Multi-paragraph selections aren't supported in this MVP — the op
+    /// always reflows the cursor's paragraph (use the visual variant in a
+    /// follow-up). Cursor lands at the start of the reflowed range.
+    ReflowParagraph {
+        width: usize,
+    },
 
     // ── clipboard / registers ──
     /// vim `yy`
