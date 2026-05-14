@@ -418,6 +418,15 @@ impl VimInputHandler {
                 self.insert_oneshot_normal = true;
                 InputResult::Consumed
             }
+            // vim insert `Ctrl+N` / `Ctrl+P` — keyword completion (scan
+            // the active buffer for words matching the prefix). Routes
+            // through the same completion popup as LSP completion.
+            KeyCode::Char('n') if ctrl => {
+                InputResult::App(AppCommand::RunCommand("editor.keyword_complete".into()))
+            }
+            KeyCode::Char('p') if ctrl => InputResult::App(AppCommand::RunCommand(
+                "editor.keyword_complete_back".into(),
+            )),
             // vim insert `Ctrl+Y` / `Ctrl+E` — insert the char from the
             // line above / below at the same column. Useful for "copy this
             // structure" gestures.

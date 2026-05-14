@@ -334,6 +334,20 @@ they lose focus (e.g. switching to another buffer / pane). Off by default —
 useful for "never lose work" workflows but surprising for users who switch
 buffers to compare-then-discard.
 **Vim `Ctrl+W R`** — alias for `Ctrl+W r` (rotate splits).
+**Vim insert `Ctrl+N` / `Ctrl+P`** — keyword completion (vim-native, non-LSP).
+Scans the active buffer for words matching the prefix-before-cursor and opens the
+same completion popup we use for LSP. Capped at 200 matches; de-duped. New
+`App::keyword_complete(backward)` + commands `editor.keyword_complete` /
+`_back`.
+**`:diff` / `:diffs` / `:diffsplit`** — alias for `git.diff_file` (open the diff
+pane for the active file). Vim users reach for `:diff` reflexively.
+**`:silent <cmd>` / `:sil <cmd>`** — run `<cmd>` with toasts suppressed (still
+recorded into `:messages`). `App.silent_depth` ⇒ `toast()` skips the visible
+toast while > 0. Re-entrant.
+**`picker.recent_commands`** — fuzzy picker over the most-recently-run commands
+(newest first, capped at 50). `command::run` notes every successful run on
+`App.recent_commands` (de-duped — re-running moves to front; some self-
+referential commands skipped).
 **Vim `.` (dot) repeat** — re-feeds the last "change" through the dispatcher. A change
 is bounded by mode + chord state: starts when the user enters Insert from Normal, when
 operator-pending opens a chord, or when a one-shot Normal-mode mutation happens (`p`,

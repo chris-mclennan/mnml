@@ -819,6 +819,13 @@ pub struct App {
     /// `:messages` shows them. Keeps a history beyond the live toast
     /// (which expires after `TOAST_TTL`).
     pub message_log: Vec<String>,
+    /// Vim `:silent <cmd>` nesting depth. While > 0, `toast()` skips
+    /// the visible toast (still records into `message_log`).
+    pub silent_depth: usize,
+    /// Recently-run command ids, newest first, capped + de-duped (when
+    /// the same command runs twice consecutively the second push moves
+    /// it to the front instead of duplicating).
+    pub recent_commands: Vec<String>,
     /// Vim `.` repeat — last completed change as a sequence of key
     /// events (re-feedable through `dispatch_key`). Empty until the user
     /// has done at least one mutation.
@@ -1098,6 +1105,8 @@ impl App {
             pending_macro_register: None,
             last_external_check: None,
             message_log: Vec::new(),
+            silent_depth: 0,
+            recent_commands: Vec::new(),
             dot_keys: Vec::new(),
             dot_recording: None,
             dot_recording_saw_edit: false,
@@ -2318,6 +2327,137 @@ impl App {
         self.panes.push(Pane::Editor(buf));
         let new_id = self.panes.len() - 1;
         self.reveal_pane(new_id);
+    }
+
+    /// Track the just-run command id for `picker.recent_commands`.
+    /// Moves an existing entry to the front (de-dupes), caps at 50.
+    pub fn note_recent_command(&mut self, id: &str) {
+        self.recent_commands.retain(|c| c != id);
+        self.recent_commands.insert(0, id.to_string());
+        if self.recent_commands.len() > 50 {
+            self.recent_commands.truncate(50);
+        }
+    }
+
+    /// `picker.recent_commands` — fuzzy picker over the most-recently-
+    /// run commands (newest first). Distinct from `palette` (alphabetical
+    /// over all builtins + dynamic).
+    pub fn open_recent_commands_picker(&mut self) {
+        use crate::picker::PickerItem;
+        if self.recent_commands.is_empty() {
+            self.toast("no recent commands yet");
+            return;
+        }
+        let items: Vec<PickerItem> = self
+            .recent_commands
+            .iter()
+            .filter_map(|id| {
+                crate::command::registry().get(id).map(|cmd| {
+                    PickerItem::new(
+                        cmd.id,
+                        format!("{}  ·  {}", cmd.group, cmd.title),
+                        cmd.key_hint(),
+                    )
+                })
+            })
+            .collect();
+        if items.is_empty() {
+            self.toast("no recent commands resolvable");
+            return;
+        }
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Commands,
+            "Recent commands",
+            items,
+        ));
+    }
+
+    /// vim insert `Ctrl+N` / `Ctrl+P` — keyword completion. Scans the
+    /// active buffer for words matching the prefix-before-cursor and
+    /// opens the same completion popup we use for LSP. Direction
+    /// (forward/backward through the matches) is set via initial
+    /// selection.
+    pub fn keyword_complete(&mut self, _backward: bool) {
+        let Some(idx) = self.active else {
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get(idx) else {
+            return;
+        };
+        let cur = b.editor.cursor();
+        let text = b.editor.text();
+        // Compute identifier prefix immediately left of cursor.
+        let mut start = cur;
+        while start > 0 {
+            let prev = match text[..start].chars().next_back() {
+                Some(c) => c,
+                None => break,
+            };
+            if !(prev.is_alphanumeric() || prev == '_') {
+                break;
+            }
+            start -= prev.len_utf8();
+        }
+        let prefix = text[start..cur].to_string();
+        if prefix.is_empty() {
+            return;
+        }
+        // Scan for matching identifiers (word boundary). Dedup, cap at 200.
+        let mut matches: Vec<String> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let bytes = text.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            // Skip non-identifier chars.
+            let next = match text[i..].chars().next() {
+                Some(c) => c,
+                None => break,
+            };
+            if !(next.is_alphanumeric() || next == '_') {
+                i += next.len_utf8();
+                continue;
+            }
+            // Capture identifier.
+            let s = i;
+            let mut j = i;
+            while j < bytes.len() {
+                let c = match text[j..].chars().next() {
+                    Some(c) => c,
+                    None => break,
+                };
+                if !(c.is_alphanumeric() || c == '_') {
+                    break;
+                }
+                j += c.len_utf8();
+            }
+            let word = &text[s..j];
+            if word != prefix && word.starts_with(&prefix) && seen.insert(word.to_string()) {
+                matches.push(word.to_string());
+                if matches.len() >= 200 {
+                    break;
+                }
+            }
+            i = j;
+        }
+        if matches.is_empty() {
+            self.toast(format!("no keyword matches for {prefix:?}"));
+            return;
+        }
+        let Some(path) = self.active_editor().and_then(|b| b.path.clone()) else {
+            return;
+        };
+        let items: Vec<crate::completion::CompletionItem> = matches
+            .into_iter()
+            .map(|m| crate::completion::CompletionItem {
+                label: m.clone(),
+                insert: m,
+                detail: "buffer".to_string(),
+            })
+            .collect();
+        let popup = crate::completion::CompletionPopup::new(path, items, &prefix);
+        if !popup.is_empty() {
+            self.completion = Some(popup);
+        }
     }
 
     /// vim `Ctrl+R Ctrl+W` (insert) — insert the identifier under the
@@ -9702,6 +9842,18 @@ impl App {
             self.run_substitute(sub);
             return;
         }
+        // `:silent <cmd>` / `:sil <cmd>` — run `<cmd>` with toasts
+        // suppressed (still recorded in `:messages`). Useful for
+        // chained ex commands you don't want narrating themselves.
+        if let Some(rest) = line
+            .strip_prefix("silent ")
+            .or_else(|| line.strip_prefix("sil "))
+        {
+            self.silent_depth = self.silent_depth.saturating_add(1);
+            self.run_ex_command(rest);
+            self.silent_depth = self.silent_depth.saturating_sub(1);
+            return;
+        }
         // `:%!cmd` — pipe the whole buffer through `cmd`, replace it
         // with stdout. With an active selection (no `%` prefix), filters
         // the selection only. Useful for `jq .`, `sort`, `prettier`, etc.
@@ -9965,6 +10117,12 @@ impl App {
                 }
             }
             "ls" | "files" | "buffers" | "buf" => self.open_buffer_picker(),
+            // `:diff` / `:diffs` / `:diffsplit` — open the diff pane for
+            // the active file (alias for the existing `git.diff_file`
+            // command). Vim users reach for `:diff` reflexively.
+            "diff" | "diffs" | "diffsplit" => {
+                crate::command::run("git.diff_file", self);
+            }
             "marks" => {
                 let mut parts: Vec<String> = Vec::new();
                 if let Some(b) = self.active_editor() {
@@ -10975,7 +11133,11 @@ impl App {
 
     pub fn toast(&mut self, msg: impl Into<String>) {
         let s: String = msg.into();
-        self.toast = Some((s.clone(), Instant::now()));
+        // `:silent <cmd>` suppresses the visible toast but the message
+        // is still recorded in the log so `:messages` can recover it.
+        if self.silent_depth == 0 {
+            self.toast = Some((s.clone(), Instant::now()));
+        }
         self.message_log.push(s);
         if self.message_log.len() > MESSAGE_LOG_MAX {
             let drop = self.message_log.len() - MESSAGE_LOG_MAX;

@@ -83,15 +83,28 @@ pub fn registry() -> &'static Registry {
 /// plugin-registered (`DynCommand`) id is queued for the IPC layer to report.
 /// Returns false if the id matches neither.
 pub fn run(id: &str, app: &mut App) -> bool {
-    if let Some(cmd) = registry().get(id) {
+    let ok = if let Some(cmd) = registry().get(id) {
         (cmd.run)(app);
-        return true;
+        true
+    } else if app.run_dynamic_command(id) {
+        true
+    } else {
+        app.toast(format!("no such command: {id}"));
+        false
+    };
+    if ok {
+        // Track for the recent-commands picker. Skip the recent-picker
+        // command itself so it doesn't dominate its own list, and skip
+        // self-referential `vim.dot_repeat` / `vim.macro_replay` to keep
+        // the recents focused on user intent.
+        if !matches!(
+            id,
+            "picker.recent_commands" | "vim.dot_repeat" | "vim.macro_replay" | "palette"
+        ) {
+            app.note_recent_command(id);
+        }
     }
-    if app.run_dynamic_command(id) {
-        return true;
-    }
-    app.toast(format!("no such command: {id}"));
-    false
+    ok
 }
 
 fn builtin_commands() -> Vec<Command> {
@@ -558,6 +571,27 @@ fn builtin_commands() -> Vec<Command> {
             group: "go",
             keys: &[],
             run: |app| app.open_marks_picker(),
+        },
+        Command {
+            id: "picker.recent_commands",
+            title: "Pick a recently-run command",
+            group: "go",
+            keys: &[],
+            run: |app| app.open_recent_commands_picker(),
+        },
+        Command {
+            id: "editor.keyword_complete",
+            title: "Keyword completion: scan buffer for matches (vim insert `Ctrl+N`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.keyword_complete(false),
+        },
+        Command {
+            id: "editor.keyword_complete_back",
+            title: "Keyword completion (backward, vim insert `Ctrl+P`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.keyword_complete(true),
         },
         Command {
             id: "editor.insert_word_under_cursor",
