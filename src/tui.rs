@@ -149,12 +149,27 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         handle_picker_key(app, key);
         return;
     }
-    // The LSP signature-help popup: Esc dismisses; any other key falls
-    // through (we want typing to continue updating the popup, not dismiss
-    // it). Cursor jumps via commands clear the popup separately.
-    if app.signature.is_some() && key.code == KeyCode::Esc {
-        app.signature = None;
-        return;
+    // The LSP signature-help popup: Esc dismisses; Up / Down cycle through
+    // overload signatures (only when there's more than one — otherwise the
+    // arrow keys still navigate the editor). Any other key falls through (we
+    // want typing to continue updating the popup, not dismiss it). Cursor
+    // jumps via commands clear the popup separately.
+    if let Some(sig) = app.signature.as_mut() {
+        match key.code {
+            KeyCode::Esc => {
+                app.signature = None;
+                return;
+            }
+            KeyCode::Down if sig.signatures.len() > 1 => {
+                sig.cycle();
+                return;
+            }
+            KeyCode::Up if sig.signatures.len() > 1 => {
+                sig.cycle_prev();
+                return;
+            }
+            _ => {}
+        }
     }
     // An LSP hover popup is up: arrows / j / k / PgUp / PgDn scroll it; Esc
     // closes it; anything else closes it and is then handled normally.

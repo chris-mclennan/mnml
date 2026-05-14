@@ -327,6 +327,13 @@ struct SavedSession {
     /// with `m<Letter>`. Persisted so they survive a restart.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     global_marks: Vec<SavedGlobalMark>,
+    /// Code folds per file. Restored only for buffers re-opened in this
+    /// session — files the user opens later don't auto-fold from this list.
+    /// Folds are cleared on edit, so a stale entry whose file changed
+    /// externally just gets stomped on the first edit; no separate
+    /// invalidation step is needed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    folds: Vec<SavedFolds>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -342,6 +349,14 @@ struct SavedFileCursor {
     path: String,
     cursor_byte: usize,
     scroll: usize,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct SavedFolds {
+    path: String,
+    /// `(start_line, end_line)` pairs (both 0-based, inclusive). Mirrors
+    /// `Buffer.folds` in flat form because TOML/JSON tuple maps are awkward.
+    folds: Vec<(usize, usize)>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -7991,6 +8006,19 @@ impl App {
                     col: *col,
                 })
                 .collect(),
+            folds: self
+                .panes
+                .iter()
+                .filter_map(|p| match p {
+                    Pane::Editor(b) if !b.folds.is_empty() => b.path.as_ref().map(|path| {
+                        SavedFolds {
+                            path: path.to_string_lossy().into_owned(),
+                            folds: b.folds.iter().map(|(&s, &e)| (s, e)).collect(),
+                        }
+                    }),
+                    _ => None,
+                })
+                .collect(),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -8087,6 +8115,26 @@ impl App {
             if gm.letter.is_ascii_uppercase() {
                 self.global_marks
                     .insert(gm.letter, (PathBuf::from(gm.path), gm.row, gm.col));
+            }
+        }
+        // Restore folds onto any buffer whose path matches a saved entry.
+        // Out-of-range pairs (start >= line_count, or end < start) get
+        // dropped silently — likely stale because the file was edited
+        // externally.
+        for sf in saved.folds {
+            let target = PathBuf::from(&sf.path);
+            for p in self.panes.iter_mut() {
+                if let Pane::Editor(b) = p
+                    && b.path.as_deref() == Some(target.as_path())
+                {
+                    let line_count = b.editor.line_count();
+                    for (start, end) in &sf.folds {
+                        if *end >= *start && *start < line_count && *end < line_count {
+                            b.folds.insert(*start, *end);
+                        }
+                    }
+                    break;
+                }
             }
         }
         let fallback = idx_to_pane.iter().rev().flatten().next().copied();

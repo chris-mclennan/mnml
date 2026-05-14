@@ -664,7 +664,10 @@ the caret sits on the right visual row. Vertical motions (`MoveUp` / `MoveDown` 
 / `HalfPageUp` / `HalfPageDown` / `MoveBufferStart` / `MoveBufferEnd`, plus `Repeat(_)` wrapping any of
 those) snap out of folded body via `Buffer::snap_cursor_out_of_fold(going_down)` — down jumps past the
 fold's end, up retreats to its start. Click-to-place uses `visible_to_file_row`. Edits clear every fold
-(simple invariant — smarter offset tracking is a follow-up). Lost on buffer close (not persisted).
+(simple invariant — smarter offset tracking is a follow-up). Lost on buffer close. **Persisted across
+launches** via `SavedFolds{path, folds: Vec<(start, end)>}` in `session.json` — restored only for buffers
+that re-open in the same session, applied after `open_path` runs so the new buffer's `Buffer.folds` map
+gets the saved pairs (out-of-range pairs are dropped silently — likely stale from an external edit).
 **Vim fold chords** — `za` / `zo` / `zc` toggle a fold (mnml has one gesture rather than separate open/close);
 `zR` unfolds every fold. New `Prefix::ZFold` (separate from `Prefix::Z`, which still owns `ZZ` / `ZQ`).
 **Click-to-unfold** — each rendered `⋯ N hidden` chip records `(rect, pane_id, start_line)` in
@@ -701,7 +704,11 @@ auto-triggered on `(` / `,` typed in insert mode; `)` dismisses). Reply parsed b
 active_parameter}>`. The popup (`src/signature.rs::SignaturePopup` + `src/ui/signature.rs`) anchors
 above the cursor (flipping below when there isn't room), renders the active signature's label with the
 active parameter range bolded + yellow, plus a `1/N signatures` indicator when the server returned
-overloads (cycle via `SignaturePopup::cycle` — chord not wired yet). Esc / any mouse click dismisses.
+overloads. **Cycling overloads** — when there's more than one signature, Up / Down inside the popup move
+between them (`SignaturePopup::cycle` / `cycle_prev`); single-signature popups don't steal arrow keys
+from the editor. Commands `lsp.signature_next` / `lsp.signature_prev` are registered for the palette
+but unbound (the chord lives at the dispatch site since the gating depends on a popup-state condition).
+Esc / any mouse click dismisses.
 `initialize` advertises `parameterInformation.labelOffsetSupport` so servers return numeric ranges
 instead of substrings.
 **completion — as-you-type popup**: `src/completion.rs`

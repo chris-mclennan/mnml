@@ -4,8 +4,9 @@
 //! populated from `textDocument/signatureHelp` replies.
 //!
 //! Read-only — Esc dismisses, any cursor jump dismisses, a fresh reply
-//! replaces. Multi-signature overload sets just show the active one (no
-//! up/down cycle yet).
+//! replaces. Multi-signature overload sets cycle through with Up / Down
+//! while the popup is up (only when there's more than one signature, so
+//! single-signature popups don't steal arrow keys from the editor).
 
 use crate::lsp::{SignatureHelp, SignatureInfo};
 
@@ -32,11 +33,19 @@ impl SignaturePopup {
     }
 
     /// Cycle to the next signature in an overload set (no-op when there's
-    /// only one). Wraps. Wired through a future `lsp.signature_next` chord —
-    /// the popup itself doesn't capture keys yet.
+    /// only one). Wraps. Bound to Down while the popup is up.
     pub fn cycle(&mut self) {
         if self.signatures.len() > 1 {
             self.active = (self.active + 1) % self.signatures.len();
+        }
+    }
+
+    /// Cycle to the previous signature in an overload set. Wraps. Bound to
+    /// Up while the popup is up.
+    pub fn cycle_prev(&mut self) {
+        let n = self.signatures.len();
+        if n > 1 {
+            self.active = (self.active + n - 1) % n;
         }
     }
 }
@@ -86,6 +95,32 @@ mod tests {
         p.cycle();
         assert_eq!(p.active, 1);
         p.cycle();
+        assert_eq!(p.active, 0);
+    }
+
+    #[test]
+    fn cycle_prev_wraps() {
+        let sh = SignatureHelp {
+            signatures: vec![sig("a", &[], None), sig("b", &[], None), sig("c", &[], None)],
+            active_signature: 0,
+        };
+        let mut p = SignaturePopup::from_reply(sh).unwrap();
+        p.cycle_prev();
+        assert_eq!(p.active, 2);
+        p.cycle_prev();
+        assert_eq!(p.active, 1);
+    }
+
+    #[test]
+    fn cycle_single_is_noop() {
+        let sh = SignatureHelp {
+            signatures: vec![sig("solo", &[], None)],
+            active_signature: 0,
+        };
+        let mut p = SignaturePopup::from_reply(sh).unwrap();
+        p.cycle();
+        assert_eq!(p.active, 0);
+        p.cycle_prev();
         assert_eq!(p.active, 0);
     }
 }

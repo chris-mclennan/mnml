@@ -609,6 +609,32 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.request_signature_help_at_cursor(),
         },
         Command {
+            id: "lsp.signature_next",
+            title: "LSP: next signature (overload)",
+            group: "lsp",
+            // Bound directly in `tui::dispatch_key` to Down while the popup is
+            // up *and* has more than one signature — keeping that condition in
+            // the keymap layer would require new gating machinery for one
+            // case, so the binding lives at the dispatch site instead.
+            keys: &[],
+            run: |app| {
+                if let Some(s) = app.signature.as_mut() {
+                    s.cycle();
+                }
+            },
+        },
+        Command {
+            id: "lsp.signature_prev",
+            title: "LSP: previous signature (overload)",
+            group: "lsp",
+            keys: &[],
+            run: |app| {
+                if let Some(s) = app.signature.as_mut() {
+                    s.cycle_prev();
+                }
+            },
+        },
+        Command {
             id: "lsp.rename",
             title: "LSP: rename symbol",
             group: "lsp",
