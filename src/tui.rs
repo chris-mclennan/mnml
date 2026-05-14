@@ -285,6 +285,19 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // The interactive replace overlay (`:%s/.../.../c`) steals keys:
+    // y = replace this, n = skip, a = replace all remaining, q/Esc = quit.
+    // Per-match cursor jump is handled by App; we just route the key.
+    if app.replace_confirm.is_some() {
+        match key.code {
+            KeyCode::Char('y' | 'Y') => app.replace_confirm_yes(),
+            KeyCode::Char('n' | 'N') => app.replace_confirm_no(),
+            KeyCode::Char('a' | 'A') => app.replace_confirm_all(),
+            KeyCode::Char('q' | 'Q') | KeyCode::Esc => app.replace_confirm_quit(),
+            _ => {}
+        }
+        return;
+    }
     // The "unsaved changes" confirm overlay steals keys: s/Enter = Save, d = Discard, c/Esc = Cancel.
     if app.close_prompt.is_some() {
         match key.code {

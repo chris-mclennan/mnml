@@ -201,6 +201,26 @@ struct Substitute {
     /// `:%s/...` is buffer-wide; bare `:s/...` is current-line only
     /// (vim convention).
     whole_buffer: bool,
+    /// `c` flag — interactive confirmation (y/n/a/q at each match).
+    confirm: bool,
+}
+
+/// In-flight `:%s/.../.../c` (interactive replace) state. The user steps
+/// through each match — `y` apply + advance, `n` skip + advance, `a`
+/// apply this and all remaining, `q` / Esc abort. Surfaced via the same
+/// overlay machinery as the other `prompt`-style modal states.
+#[derive(Debug, Clone)]
+pub struct ReplaceConfirm {
+    pub pane_id: PaneId,
+    pub find: String,
+    pub replace: String,
+    /// All match byte ranges at the start (descending order so applies
+    /// keep earlier offsets valid). We pop from the end as we go.
+    pub remaining: Vec<(usize, usize)>,
+    /// Count of replacements applied so far (for the final toast).
+    pub applied: usize,
+    /// Total matches at the start (for the prompt label).
+    pub total: usize,
 }
 
 fn parse_substitute(line: &str) -> Option<Substitute> {
@@ -252,11 +272,13 @@ fn parse_substitute(line: &str) -> Option<Substitute> {
         return None;
     }
     let case_insensitive = flags.contains('i');
+    let confirm = flags.contains('c');
     Some(Substitute {
         find,
         replace,
         case_insensitive,
         whole_buffer,
+        confirm,
     })
 }
 
@@ -885,6 +907,9 @@ pub struct App {
     /// with a multi-line selection active). Consumed by `accept_find` and
     /// `update_live_find_preview`. `None` ⇒ search the whole buffer.
     pub find_pending_range: Option<(usize, usize)>,
+    /// In-flight `:%s/.../.../c` interactive replace (vim's confirm flag).
+    /// Steals keys until the user finishes (y/n/a/q at each match).
+    pub replace_confirm: Option<ReplaceConfirm>,
     /// Cursor position when the Find prompt opened — kept around in case
     /// future incremental UX wants to bring the cursor back on cancel.
     pub find_preview_cursor: usize,
@@ -1037,6 +1062,7 @@ impl App {
             find_regex_default: false,
             find_preview_snapshot: None,
             find_pending_range: None,
+            replace_confirm: None,
             find_preview_cursor: 0,
             find_history: Vec::new(),
             find_history_cursor: 0,
@@ -8226,6 +8252,29 @@ impl App {
             return;
         }
         let n = matches.len();
+        // `:%s/.../.../c` ⇒ interactive: pop the confirm overlay and walk
+        // through matches one at a time. The overlay's keys do the work.
+        if sub.confirm {
+            // Descending order so each apply keeps earlier offsets valid;
+            // we pop from the end (last match first) is *un*-vim-like, so
+            // reverse to keep walk-from-top order. As replacements happen,
+            // the upcoming offsets are shifted by `apply_replace_confirm`
+            // since they're all strictly later in the buffer.
+            let mut remaining: Vec<(usize, usize)> = matches.clone();
+            remaining.reverse(); // now last match is at index 0; pop = first
+            self.replace_confirm = Some(ReplaceConfirm {
+                pane_id: idx,
+                find: sub.find.clone(),
+                replace: sub.replace.clone(),
+                remaining,
+                applied: 0,
+                total: n,
+            });
+            // Place the cursor on the first match so the user sees what's
+            // about to change.
+            self.replace_confirm_jump_to_current();
+            return;
+        }
         // Descending order so each replace keeps earlier byte offsets valid.
         let ops: Vec<crate::edit_op::EditOp> = matches
             .into_iter()
@@ -8248,6 +8297,124 @@ impl App {
             self.lsp.did_change(&p, &t);
         }
         self.toast(format!("{label} — {n} replacement(s)"));
+    }
+
+    /// Jump the cursor to the *next* pending match in `replace_confirm`
+    /// (the last entry — `remaining` is reverse-ordered, pop returns the
+    /// first remaining match). Toast the prompt label so the user sees the
+    /// available chord (y/n/a/q). Caller drains the state if there's
+    /// nothing left.
+    fn replace_confirm_jump_to_current(&mut self) {
+        let Some(rc) = self.replace_confirm.as_ref() else {
+            return;
+        };
+        let pane_id = rc.pane_id;
+        let Some(&(start, _)) = rc.remaining.last() else {
+            return;
+        };
+        let n = rc.remaining.len();
+        let total = rc.total;
+        let find = rc.find.clone();
+        let replace = rc.replace.clone();
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(pane_id) {
+            place_cursor_at_byte(b, start);
+        }
+        self.toast(format!(
+            "{}/{} replace {find:?} → {replace:?} ?  y/n/a/q",
+            total - n + 1,
+            total
+        ));
+    }
+
+    /// `y` (replace) in the interactive replace overlay. Apply at the
+    /// current match, shift remaining offsets by the replacement's length
+    /// delta, advance.
+    pub fn replace_confirm_yes(&mut self) {
+        let Some(mut rc) = self.replace_confirm.take() else {
+            return;
+        };
+        if let Some((start, end)) = rc.remaining.pop() {
+            let new_text = rc.replace.clone();
+            let delta = new_text.len() as i64 - (end - start) as i64;
+            if let Some(Pane::Editor(b)) = self.panes.get_mut(rc.pane_id) {
+                let mut clip = crate::clipboard::Clipboard::new();
+                let ops = vec![crate::edit_op::EditOp::ReplaceRange {
+                    start,
+                    end,
+                    text: new_text,
+                }];
+                b.apply_edit_ops(ops, &mut clip, 0);
+            }
+            rc.applied += 1;
+            // Shift later matches by the length delta (they're at higher
+            // byte offsets, so they all move).
+            for (s, e) in rc.remaining.iter_mut() {
+                *s = (*s as i64 + delta).max(0) as usize;
+                *e = (*e as i64 + delta).max(0) as usize;
+            }
+        }
+        if rc.remaining.is_empty() {
+            self.toast(format!(":s/c — replaced {}/{}", rc.applied, rc.total));
+        } else {
+            self.replace_confirm = Some(rc);
+            self.replace_confirm_jump_to_current();
+        }
+    }
+
+    /// `n` (skip) in the interactive replace overlay. Advance without
+    /// editing.
+    pub fn replace_confirm_no(&mut self) {
+        let Some(mut rc) = self.replace_confirm.take() else {
+            return;
+        };
+        rc.remaining.pop();
+        if rc.remaining.is_empty() {
+            self.toast(format!(":s/c — replaced {}/{}", rc.applied, rc.total));
+        } else {
+            self.replace_confirm = Some(rc);
+            self.replace_confirm_jump_to_current();
+        }
+    }
+
+    /// `a` (apply this and all remaining) in the interactive replace overlay.
+    pub fn replace_confirm_all(&mut self) {
+        let Some(mut rc) = self.replace_confirm.take() else {
+            return;
+        };
+        // Drain remaining into ReplaceRange ops (reverse order so earlier
+        // offsets stay valid).
+        let mut ops: Vec<crate::edit_op::EditOp> = Vec::with_capacity(rc.remaining.len());
+        let count = rc.remaining.len();
+        // `remaining` is reverse-ordered (pop = first match). Iterate as-is
+        // so we apply later → earlier (== descending byte offset, valid
+        // without shifting).
+        while let Some((s, e)) = rc.remaining.pop() {
+            ops.insert(
+                0,
+                crate::edit_op::EditOp::ReplaceRange {
+                    start: s,
+                    end: e,
+                    text: rc.replace.clone(),
+                },
+            );
+        }
+        // Now `ops` is in descending offset order (insert(0) reversed).
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(rc.pane_id) {
+            let mut clip = crate::clipboard::Clipboard::new();
+            b.apply_edit_ops(ops, &mut clip, 0);
+        }
+        rc.applied += count;
+        self.toast(format!(":s/c — replaced {}/{}", rc.applied, rc.total));
+    }
+
+    /// `q` / Esc in the interactive replace overlay. Drop the state.
+    pub fn replace_confirm_quit(&mut self) {
+        if let Some(rc) = self.replace_confirm.take() {
+            self.toast(format!(
+                ":s/c — quit at {}/{} replacement(s)",
+                rc.applied, rc.total
+            ));
+        }
     }
 
     pub fn run_ex_command(&mut self, line: &str) {
@@ -9795,6 +9962,15 @@ mod tests {
         // Not a substitute at all ⇒ None.
         assert!(parse_substitute("w").is_none());
         assert!(parse_substitute("qa").is_none());
+
+        // `c` flag — interactive confirm.
+        let s = parse_substitute("%s/foo/bar/c").unwrap();
+        assert!(s.confirm);
+        let s = parse_substitute("%s/foo/bar/gci").unwrap();
+        assert!(s.confirm && s.case_insensitive);
+        // Bare s with `c`: line-scoped + interactive.
+        let s = parse_substitute("s/foo/bar/c").unwrap();
+        assert!(s.confirm && !s.whole_buffer);
     }
 
     #[test]
