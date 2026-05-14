@@ -780,6 +780,18 @@ impl VimInputHandler {
                 self.prefix = Prefix::Window;
                 InputResult::Consumed
             }
+            // vim `q` — toggle macro recording (single anonymous register).
+            // `@` (below) replays. While replaying, `@` is ignored to
+            // prevent recursion. The proper `q<reg>` named-register form
+            // is a follow-up.
+            KeyCode::Char('q') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("vim.macro_toggle".into()))
+            }
+            KeyCode::Char('@') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("vim.macro_replay".into()))
+            }
             // vim `~` — toggle case of char under cursor + advance.
             // `[count]~` repeats: `5~` toggles 5 chars.
             KeyCode::Char('~') => {

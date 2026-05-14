@@ -144,6 +144,12 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
 // ─── key dispatch (shared with headless/IPC) ────────────────────────
 
 pub fn dispatch_key(app: &mut App, key: KeyEvent) {
+    // Macro recording — capture every keystroke that flows through here.
+    // Replaying explicitly skips this so it doesn't re-record into a new
+    // macro mid-replay.
+    if let crate::app::MacroState::Recording { keys } = &mut app.macro_state {
+        keys.push(key);
+    }
     // An open picker / palette overlay steals all keys until it's dismissed.
     if app.picker.is_some() {
         handle_picker_key(app, key);

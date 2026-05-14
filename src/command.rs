@@ -624,6 +624,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.switch_to_last_buffer(),
         },
         Command {
+            id: "vim.macro_toggle",
+            title: "Vim: start / stop macro recording (q)",
+            group: "vim",
+            keys: &[],
+            run: |app| app.macro_toggle(),
+        },
+        Command {
+            id: "vim.macro_replay",
+            title: "Vim: replay last recorded macro (@)",
+            group: "vim",
+            keys: &[],
+            run: |app| app.macro_replay(),
+        },
+        Command {
             id: "tree.refresh",
             title: "Refresh file tree",
             group: "view",

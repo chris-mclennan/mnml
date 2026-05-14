@@ -176,6 +176,15 @@ extension doesn't change reflow output. Wired through new `PendingOp::Reflow` an
 at construction (rebuilt on `editor.use_vim`); a `:set text_width=N` between handler builds is
 visible to `gqq` (which goes through the App command and reads live config) but not to `gqip` /
 `gqap` until the next handler rebuild.
+**Vim macros** (`q...q` / `@`) — single anonymous register MVP. `q` in vim normal toggles
+recording (the toggling `q` itself is removed from the captured stream); `@` replays. Captures
+every `KeyEvent` flowing through `tui::dispatch_key` (gated on `App.macro_state ==
+Recording`); `Replaying` ignores `@` to prevent unbounded recursion. The proper
+named-register form (`qa...q`, `@a`) is a follow-up — would require register-aware Clipboard.
+**Snippet placeholder polish** — `SnippetSession.stop_cursors: Vec<Option<usize>>` records the
+cursor's exit position at each visited stop. Backtab to a previously-visited stop now lands at
+the end of typed content there (vim convention — was the start of the stop before). Forward Tab
+to a not-yet-visited stop still uses the placeholder's bare position.
 **Sticky scroll** — when a fold's body extends past the top of the viewport, the editor view
 overwrites body row 0 with the fold's start line (bold + `bg2`) so the user always knows what
 function/section they're inside. Pure post-process: the line that *was* at row 0 gets covered

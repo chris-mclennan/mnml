@@ -1,0 +1,27 @@
+# vim macros (single anonymous register MVP).
+# Record: q ... q. Replay: @.
+
+write code.txt "hello\nworld\nfoo\nbar"
+open code.txt
+
+command editor.use_vim
+
+# Start recording: q. Then i (insert) → type "X" → esc → j (down).
+# Stop recording: q.
+key q
+key i
+type X
+key esc
+key j
+key q
+
+# After recording: line 0 should now be "Xhello", cursor on line 1.
+expect screen contains "Xhello"
+
+# Replay with @: same actions on the next line.
+key @
+expect screen contains "Xworld"
+
+# And again.
+key @
+expect screen contains "Xfoo"

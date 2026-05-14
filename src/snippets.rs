@@ -58,6 +58,11 @@ pub struct SnippetSession {
     pub current: usize,
     /// Buffer text length when the cursor was placed at `stops[current]`.
     pub last_text_len: usize,
+    /// Per-stop cursor "exit position" — the cursor's byte offset the last
+    /// time the user left that stop. Backtab to a visited stop restores
+    /// the cursor here instead of dropping it back at `stops[idx]`. `None`
+    /// for never-visited stops.
+    pub stop_cursors: Vec<Option<usize>>,
 }
 
 /// One snippet entry as it lives on `App` (placeholder markers pre-parsed

@@ -192,6 +192,19 @@ fn find_all_case_sensitive(haystack: &str, needle: &str) -> Vec<(usize, usize)> 
 /// isn't a substitute. The delimiter is fixed to `/` (vim accepts arbitrary
 /// delimiters but the common case is `/`); `\/` and `\\` escape inside the
 /// fields.
+/// Vim macro state. Single anonymous register — `q` toggles recording
+/// into a buffer; `@` plays it back. While replaying, `@` is ignored to
+/// prevent infinite recursion.
+#[derive(Debug, Clone, Default)]
+pub enum MacroState {
+    #[default]
+    Idle,
+    Recording {
+        keys: Vec<ratatui::crossterm::event::KeyEvent>,
+    },
+    Replaying,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct Substitute {
     find: String,
@@ -769,6 +782,16 @@ pub struct App {
     /// here. Each `reveal_pane` captures the outgoing active. Cleared when
     /// the captured pane is closed.
     pub last_active: Option<PaneId>,
+    /// Vim macro recording / replay state. `None` ⇒ idle; `Recording`
+    /// captures every key event that flows through dispatch_key (the
+    /// toggling `q` itself is removed in `record_macro_stop`); `Replaying`
+    /// ignores `@` keys to prevent unbounded recursion. Single anonymous
+    /// register MVP — `q<reg>` named-register form is a follow-up.
+    pub macro_state: MacroState,
+    /// Last completed macro's keys (the result of a `q...q` recording).
+    /// `@` replays this. Survives across the session but not across
+    /// relaunches.
+    pub macro_buffer: Vec<ratatui::crossterm::event::KeyEvent>,
     /// Per-file last `(cursor_byte, scroll)`, captured when a buffer is closed
     /// or saved, restored when the file is re-opened later. Persisted in
     /// session.json so it survives restarts. Capped at `FILE_CURSORS_MAX`.
@@ -1020,6 +1043,8 @@ impl App {
             recent_files: Vec::new(),
             closed_buffers: Vec::new(),
             last_active: None,
+            macro_state: MacroState::default(),
+            macro_buffer: Vec::new(),
             file_cursors: std::collections::HashMap::new(),
             global_marks: std::collections::HashMap::new(),
             nav_back: Vec::new(),
@@ -2040,6 +2065,56 @@ impl App {
         self.retarget_outline_to_active();
     }
 
+    /// `vim.macro_toggle` — `q` in vim normal. Idle ⇒ start recording (the
+    /// `q` itself isn't included). Recording ⇒ stop, save buffer (the
+    /// trailing `q` is popped from the captured keys).
+    pub fn macro_toggle(&mut self) {
+        match std::mem::take(&mut self.macro_state) {
+            MacroState::Idle => {
+                self.macro_state = MacroState::Recording { keys: Vec::new() };
+                self.toast("recording macro · q to stop");
+            }
+            MacroState::Recording { mut keys } => {
+                // The `q` that triggered the stop got pushed by dispatch_key
+                // before we ran. Pop it so replay doesn't re-trigger toggle.
+                if let Some(last) = keys.last()
+                    && last.code == ratatui::crossterm::event::KeyCode::Char('q')
+                {
+                    keys.pop();
+                }
+                let n = keys.len();
+                self.macro_buffer = keys;
+                self.toast(format!("macro saved · {n} key(s)"));
+            }
+            MacroState::Replaying => {
+                // Shouldn't normally happen — Replaying is set only inside
+                // replay_macro. Reset to idle just in case.
+                self.macro_state = MacroState::Idle;
+            }
+        }
+    }
+
+    /// `vim.macro_replay` — `@` in vim normal. Re-feed the saved macro
+    /// keys through dispatch_key. Sets `macro_state = Replaying` so
+    /// dispatch_key skips re-recording AND skips re-triggering replay
+    /// when the macro contains another `@` (recursion guard).
+    pub fn macro_replay(&mut self) {
+        if self.macro_buffer.is_empty() {
+            self.toast("no macro to replay");
+            return;
+        }
+        if matches!(self.macro_state, MacroState::Replaying) {
+            // Recursion — ignore.
+            return;
+        }
+        let keys = self.macro_buffer.clone();
+        self.macro_state = MacroState::Replaying;
+        for key in keys {
+            crate::tui::dispatch_key(self, key);
+        }
+        self.macro_state = MacroState::Idle;
+    }
+
     /// `buffer.last` (`Ctrl+Tab`) — switch to the previously-active pane.
     /// MRU two-buffer toggle (vim's `Ctrl+^`); pressing it twice oscillates
     /// between the two most recently focused panes. No-op if there's no
@@ -2993,11 +3068,13 @@ impl App {
         // cycle. `current = 0` is where we just placed; advancing puts us at
         // index 1.
         if let (true, Some(pane_id)) = (stops.len() > 1, pane_id) {
+            let n_stops = stops.len();
             self.snippet_session = Some(crate::snippets::SnippetSession {
                 pane_id,
                 stops,
                 current: 0,
                 last_text_len,
+                stop_cursors: vec![None; n_stops],
             });
         } else {
             self.snippet_session = None;
@@ -3026,6 +3103,8 @@ impl App {
     /// Shared step: `+1` = forward, `-1` = backward. Shifts all stops
     /// strictly after the current cursor by the text-length delta accrued
     /// since we last placed at a stop, then jumps to the new index.
+    /// Records the cursor's exit position for the *current* stop so a
+    /// later Backtab to it lands at the end of typed content (vim-ish).
     fn snippet_step_placeholder(&mut self, dir: i32) {
         let Some(mut sess) = self.snippet_session.take() else {
             return;
@@ -3038,14 +3117,28 @@ impl App {
             return;
         };
         let cur_len = b.editor.text().len();
+        // Capture the exit cursor for the current stop before we move on.
+        let exit_cursor = b.editor.cursor();
+        let cur_idx = sess.current;
+        if cur_idx < sess.stop_cursors.len() {
+            sess.stop_cursors[cur_idx] = Some(exit_cursor);
+        }
         // Net chars added (or removed) since we last placed at a stop —
         // shifts every position strictly after the active stop. `i64` to
         // tolerate net deletions.
         let delta = cur_len as i64 - sess.last_text_len as i64;
-        let cur_idx = sess.current;
         for (i, off) in sess.stops.iter_mut().enumerate() {
             if i > cur_idx {
                 *off = (*off as i64 + delta).max(0) as usize;
+            }
+        }
+        // Same shift applied to recorded exit cursors of later stops (so
+        // forward Tab → Backtab → forward chain still lands correctly).
+        for (i, c) in sess.stop_cursors.iter_mut().enumerate() {
+            if i > cur_idx
+                && let Some(pos) = c
+            {
+                *pos = (*pos as i64 + delta).max(0) as usize;
             }
         }
         // Compute the new index. Forward off the end ⇒ session ends.
@@ -3062,7 +3155,14 @@ impl App {
             return;
         }
         let new_idx = new_idx_signed as usize;
-        let target = sess.stops[new_idx].min(cur_len);
+        // Prefer the stop's exit cursor (typed-content end) if we've been
+        // there before; else the placeholder's bare position.
+        let target = sess
+            .stop_cursors
+            .get(new_idx)
+            .and_then(|c| *c)
+            .unwrap_or(sess.stops[new_idx])
+            .min(cur_len);
         place_cursor_at_byte(b, target);
         sess.current = new_idx;
         sess.last_text_len = cur_len;
