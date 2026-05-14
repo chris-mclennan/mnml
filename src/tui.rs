@@ -150,6 +150,12 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     if let crate::app::MacroState::Recording { keys } = &mut app.macro_state {
         keys.push(key);
     }
+    // Esc dismisses any visible toast (visual fluff the user explicitly
+    // said "go away" to). Doesn't return — other Esc handlers further
+    // down still fire (e.g. exit overlays, leave visual mode).
+    if key.code == KeyCode::Esc {
+        app.toast = None;
+    }
     // An open picker / palette overlay steals all keys until it's dismissed.
     if app.picker.is_some() {
         handle_picker_key(app, key);

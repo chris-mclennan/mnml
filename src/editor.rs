@@ -1759,6 +1759,49 @@ impl Editor {
                 self.anchor = None;
                 out.buffer_changed = true;
             }
+            PasteAfterEnd => {
+                let s = clip.text();
+                if s.is_empty() {
+                    return;
+                }
+                self.checkpoint();
+                if clip.is_linewise() {
+                    let line = self.current_line();
+                    let eol = self.line_end(line);
+                    let insert_at = if eol < self.text.len() { eol + 1 } else { eol };
+                    let mut payload = s.clone();
+                    if eol >= self.text.len() && !self.text.is_empty() {
+                        payload = format!("\n{}", s.trim_end_matches('\n'));
+                    }
+                    self.text.insert_str(insert_at, &payload);
+                    // gp: cursor at END of pasted block (vim convention).
+                    self.cursor = insert_at + payload.len();
+                } else {
+                    let at = self.next_char_boundary(self.cursor).min(self.text.len());
+                    self.text.insert_str(at, &s);
+                    self.cursor = at + s.len();
+                }
+                self.anchor = None;
+                out.buffer_changed = true;
+            }
+            PasteBeforeEnd => {
+                let s = clip.text();
+                if s.is_empty() {
+                    return;
+                }
+                self.checkpoint();
+                if clip.is_linewise() {
+                    let line = self.current_line();
+                    let bol = self.line_start(line);
+                    self.text.insert_str(bol, &s);
+                    self.cursor = bol + s.len();
+                } else {
+                    self.text.insert_str(self.cursor, &s);
+                    self.cursor += s.len();
+                }
+                self.anchor = None;
+                out.buffer_changed = true;
+            }
             Paste => {
                 let s = clip.text();
                 if s.is_empty() {

@@ -107,6 +107,10 @@ pub struct VimInputHandler {
     /// staleness window is between a `:set text_width=N` and the *next*
     /// time the input handler is rebuilt (e.g. via `editor.use_vim`).
     text_width: usize,
+    /// Last `(ch, forward, before)` from an `f`/`F`/`t`/`T` so vim's `;`
+    /// (repeat in same direction) and `,` (repeat in opposite direction)
+    /// can re-fire it. `None` until the user has done one find-char.
+    last_find_char: Option<(char, bool, bool)>,
 }
 
 impl VimInputHandler {
@@ -119,6 +123,7 @@ impl VimInputHandler {
             cmdline: None,
             tab_width: cfg.editor.tab_width.max(1),
             text_width: cfg.editor.text_width.max(8),
+            last_find_char: None,
         }
     }
 
@@ -368,6 +373,11 @@ impl VimInputHandler {
                     // (`cgn` / `dgn` / `ygn` / `gugn` / etc.) builds the
                     // selection + operator effect from the pre-computed
                     // match range carried in `ctx`.
+                    // `gp` / `gP` — paste; cursor lands at END of the pasted
+                    // text (vs. plain `p`/`P` where it lands at the start of
+                    // a linewise paste). Vim convention.
+                    KeyCode::Char('p') => InputResult::Ops(vec![PasteAfterEnd]),
+                    KeyCode::Char('P') => InputResult::Ops(vec![PasteBeforeEnd]),
                     KeyCode::Char(c @ ('n' | 'N')) => {
                         let forward = c == 'n';
                         if let Some(op) = pending_op {
@@ -531,6 +541,8 @@ impl VimInputHandler {
                     before,
                     inclusive,
                 };
+                // Stash for `;` / `,` repeat.
+                self.last_find_char = Some((c, forward, before));
                 // Standalone find — just move the cursor.
                 let Some(op) = op else {
                     return InputResult::Ops(vec![motion]);
@@ -1031,6 +1043,46 @@ impl VimInputHandler {
             KeyCode::Char('@') => {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("vim.macro_replay".into()))
+            }
+            // vim `Ctrl+^` / `Ctrl+6` — switch to the alternate (most
+            // recently active) buffer. `^` and `6` are the same physical
+            // key on US layouts; vim accepts both.
+            KeyCode::Char('^') if ctrl => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("buffer.last".into()))
+            }
+            KeyCode::Char('6') if ctrl => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("buffer.last".into()))
+            }
+            // vim `;` / `,` — repeat last `f`/`F`/`t`/`T` in same /
+            // opposite direction. No-op until the user has done at least
+            // one find-char.
+            KeyCode::Char(';') => {
+                self.reset_pending();
+                if let Some((c, forward, before)) = self.last_find_char {
+                    InputResult::Ops(vec![FindCharOnLine {
+                        ch: c,
+                        forward,
+                        before,
+                        inclusive: false,
+                    }])
+                } else {
+                    InputResult::Consumed
+                }
+            }
+            KeyCode::Char(',') => {
+                self.reset_pending();
+                if let Some((c, forward, before)) = self.last_find_char {
+                    InputResult::Ops(vec![FindCharOnLine {
+                        ch: c,
+                        forward: !forward,
+                        before,
+                        inclusive: false,
+                    }])
+                } else {
+                    InputResult::Consumed
+                }
             }
             // `[` / `]` — bracket prefix for jump-to-prev / jump-to-next
             // chords (`[c` / `]c` git hunks; `[d` / `]d` diagnostics).

@@ -197,6 +197,17 @@ preserving `self.op`, and the `n`/`N` arms in the G-prefix consume `pending_op` 
 global uppercase). Each row labels the letter, the file (relative), the line/col, and a
 short slice of the line text as a preview. Accept jumps to the mark (opens the file if
 needed). New `PickerKind::Marks`.
+**Vim `;` / `,`** — repeat the last `f` / `F` / `t` / `T` find-char in the same /
+opposite direction. New `VimInputHandler.last_find_char: Option<(char, bool, bool)>`
+records every find-char dispatch.
+**Vim `Ctrl+^` / `Ctrl+6`** — switch to the alternate (most recently active) buffer.
+Aliased to `buffer.last` (the existing `Ctrl+Tab` target).
+**Esc dismisses the toast** — pressing Esc anywhere clears any visible toast immediately
+(visual fluff the user explicitly said "go away" to). Doesn't return — other Esc handlers
+still fire (exit overlays, leave visual mode, etc.).
+**Vim `gp` / `gP`** — paste, cursor lands at the END of the pasted text (vs. `p` / `P`
+which leave the cursor at the start of a linewise paste). New `EditOp::PasteAfterEnd` /
+`PasteBeforeEnd`.
 **Vim `gv`** — re-select the last visual selection. The editor remembers `(anchor, cursor)` whenever a
 selection is closed (`SelectClear`, `YankSelection`, `DeleteSelection`); `gv` emits new
 `EditOp::RestoreLastSelection` to put it back and the handler flips into Visual mode.

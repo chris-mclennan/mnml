@@ -201,6 +201,12 @@ pub enum EditOp {
     PasteAfter,
     /// vim `P`
     PasteBefore,
+    /// vim `gp` — same as `PasteAfter` but cursor lands at the END of the
+    /// pasted text instead of at the start (linewise) / end (charwise).
+    /// Difference is meaningful for linewise pastes only.
+    PasteAfterEnd,
+    /// vim `gP` — same as `PasteBefore` but cursor at end of pasted text.
+    PasteBeforeEnd,
     /// standard Ctrl+V — paste at the cursor, replacing the selection if any.
     Paste,
 
