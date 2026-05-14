@@ -118,6 +118,25 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_tree_visibility(),
         },
         Command {
+            id: "view.focus_tree",
+            title: "Focus the file tree (without toggling)",
+            group: "view",
+            // VSCode convention. `Ctrl+B` toggles tree visibility; this just
+            // moves focus there (and forces it visible if it was hidden).
+            keys: &["ctrl+shift+e"],
+            run: |app| {
+                app.tree_visible = true;
+                app.focus_tree();
+            },
+        },
+        Command {
+            id: "view.about",
+            title: "About mnml — version + key state snapshot",
+            group: "view",
+            keys: &[],
+            run: |app| app.show_about(),
+        },
+        Command {
             id: "view.toggle_tree_section",
             title: "Toggle workspace section (collapse/expand the file list)",
             group: "view",
@@ -378,6 +397,20 @@ fn builtin_commands() -> Vec<Command> {
             group: "view",
             keys: &[],
             run: |app| app.scroll_cursor_in_view(1.0),
+        },
+        Command {
+            id: "view.scroll_buffer_down",
+            title: "Scroll buffer one line down (vim `Ctrl+E`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.scroll_buffer(1),
+        },
+        Command {
+            id: "view.scroll_buffer_up",
+            title: "Scroll buffer one line up (vim `Ctrl+Y`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.scroll_buffer(-1),
         },
         Command {
             id: "view.equalize_splits",

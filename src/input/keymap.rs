@@ -101,6 +101,11 @@ impl Keymap {
         self.map.get(&Chord::of(ev)).map(String::as_str)
     }
 
+    /// Number of bound chords. Used by the About / Settings display.
+    pub fn binding_count(&self) -> usize {
+        self.map.len()
+    }
+
     /// Bind one keyspec → command id (used for plugin-registered commands). A
     /// keyspec that doesn't parse is ignored. Overwrites any existing binding.
     pub fn bind(&mut self, spec: &str, id: &str) {

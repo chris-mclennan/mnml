@@ -6565,6 +6565,42 @@ impl App {
         }
     }
 
+    /// `view.about` — pop a hover-style "About mnml" with build sha + a
+    /// snapshot of key state (workspace, theme, input style, keymap size,
+    /// open buffer count). Esc / mouse-click dismisses. Holds the spot until
+    /// a real settings pane lands.
+    pub fn show_about(&mut self) {
+        let sha = env!("MNML_GIT_SHA");
+        let ws = self
+            .workspace
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("workspace");
+        let theme = crate::ui::theme::cur().name.to_string();
+        let style = self.config.editor.input_style.clone();
+        let keymap_size = self.keymap.binding_count();
+        let buffers = self.panes.len();
+        let lines = vec![
+            format!("mnml — {sha}"),
+            String::new(),
+            format!("workspace · {ws}"),
+            format!("workspace path · {}", self.workspace.display()),
+            String::new(),
+            format!("input style · {style}"),
+            format!("theme · {theme}"),
+            format!("text width · {}", self.config.editor.text_width),
+            format!("tab width · {}", self.config.editor.tab_width),
+            String::new(),
+            format!("keymap · {keymap_size} chord(s)"),
+            format!("open panes · {buffers}"),
+            String::new(),
+            "Esc to dismiss · `:version` for just the sha".to_string(),
+        ];
+        if let Some(p) = crate::hover::HoverPopup::from_lines(lines) {
+            self.hover = Some(p);
+        }
+    }
+
     /// `editor.open_url_at_cursor` — vim `gx`. Pull the whitespace-delimited
     /// token around the cursor on the current line; if it starts with a URL
     /// scheme (`http`, `https`, `file:`, `mailto:`), hand it to the OS's
@@ -6741,6 +6777,18 @@ impl App {
         let mut clip = crate::clipboard::Clipboard::new();
         b.apply_edit_ops(ops, &mut clip, 0);
         self.toast(format!(":retab — tabs → {tab_w} spaces"));
+    }
+
+    /// vim `Ctrl+E` / `Ctrl+Y` — scroll the buffer one line down / up
+    /// without moving the cursor (until the cursor would scroll off-screen,
+    /// in which case it sticks at the edge). `delta` = +1 scrolls one line
+    /// down (showing more below); `-1` scrolls up.
+    pub fn scroll_buffer(&mut self, delta: i32) {
+        let Some(b) = self.active_editor_mut() else {
+            return;
+        };
+        b.scroll = ((b.scroll as i32 + delta).max(0) as usize)
+            .min(b.editor.line_count().saturating_sub(1));
     }
 
     /// vim `zz` / `zt` / `zb` — adjust the scroll position so the cursor
@@ -8259,7 +8307,10 @@ impl App {
                 self.toast(format!("mnml {ver}"));
             }
             "e" | "edit" => {
-                if rest.is_empty() {
+                // `:e` (bare) and `:e %` both reload the active buffer
+                // (vim's `%` substitutes to the current file's path; we
+                // short-circuit it). Non-empty other paths open the file.
+                if rest.is_empty() || rest.trim() == "%" {
                     self.reload_active(false);
                 } else {
                     let p = self.workspace.join(rest);
