@@ -101,7 +101,11 @@ mod tests {
     #[test]
     fn cycle_prev_wraps() {
         let sh = SignatureHelp {
-            signatures: vec![sig("a", &[], None), sig("b", &[], None), sig("c", &[], None)],
+            signatures: vec![
+                sig("a", &[], None),
+                sig("b", &[], None),
+                sig("c", &[], None),
+            ],
             active_signature: 0,
         };
         let mut p = SignaturePopup::from_reply(sh).unwrap();

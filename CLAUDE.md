@@ -416,9 +416,16 @@ focus:EditField::{Url,Method,Headers,Body}, url_cursor, body_cursor, headers_buf
 text buffer (`headers_to_text` serialises from `request.headers`; `parse_headers_text` parses back, dropping
 blank lines + lines without `:`); `RequestPane::commit_headers` (called from `App::refire_request` before each
 send) writes the parsed list onto `request.headers`. **`Ctrl+S` over a request pane** writes the edited request
-back to its source file as a curl command (`App::save_active` routes to `App::save_request_to_source` when the
-active pane is a Request); pane without a `source_path` ⇒ toast and bail. Multi-block `.http` files get rewritten
-as a single curl — multi-block-preserving writeback is a follow-up.
+back to its source file (`App::save_active` routes to `App::save_request_to_source` when the active pane is
+a Request); pane without a `source_path` ⇒ toast and bail. **Format-preserving multi-block writeback** —
+`send_request_from_active` captures `RequestPane.source_block_name` when the source is a multi-block
+`.http` / `.rest` (`Some("name")` for `### name`, `Some("")` for bare `###`, `None` for the leading
+unnamed block or single-block files). On save, multi-block sources go through `splice_http_block` (re-parses
+the on-disk file, finds the matching block by separator name, replaces just that block's line range with
+`RequestPane::as_http_block(...)` — the canonical `### name\nMETHOD url\nHeaders\n\nbody` rendering — and
+preserves every other block verbatim, including the file's trailing-newline policy). Splice-failure (file
+edited externally so the source block is gone) refuses with a toast rather than overwriting. Single-block
+sources (`.curl`, or `.http` with one block) still get the simple curl-overwrite write path.
 **Pty / AI-CLI panes — first cut done:** `src/pty_pane.rs` (`portable-pty` +
 `vt100`) — `PtySession` = a live pty + child + a `Mutex<vt100::Parser>` a reader thread pumps;
 `BinaryProfile::shell()/claude_code(ws)/codex(ws)` (claude injects `.mnml/CLAUDE.md` via

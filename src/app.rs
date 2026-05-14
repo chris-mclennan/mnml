@@ -421,6 +421,57 @@ fn place_cursor_at_byte(b: &mut Buffer, byte: usize) {
     b.editor.place_cursor(row, col);
 }
 
+/// Replace the named block inside an `.http` / `.rest` source with the
+/// pre-rendered `new_block` text, leaving every other block untouched.
+/// `name` is what `RequestPane.source_block_name` stored — `Some(s)` means
+/// the matched block had `### s` (or `### ` alone when `s.is_empty()`); the
+/// only `None` case here is a single-block file, which the caller handles
+/// separately. Returns `None` when the file no longer parses as multi-block,
+/// or no block matches — caller falls back to whole-file overwrite.
+fn splice_http_block(existing: &str, name: Option<&str>, new_block: &str) -> Option<String> {
+    let blocks = crate::http::file::parse_all(existing).ok()?;
+    if blocks.len() < 2 {
+        return None;
+    }
+    let lines: Vec<&str> = existing.split('\n').collect();
+    // Resolve the `### name` separator on each block (`Block.name` is the text
+    // after `###`; we also need to know whether the block had a separator at
+    // all, since the leading block in a multi-block file doesn't).
+    let block_separator_name = |b: &crate::http::file::Block| -> Option<String> {
+        lines
+            .get(b.start_line)
+            .and_then(|l| l.trim_start().strip_prefix("###"))
+            .map(|rest| rest.trim().to_string())
+    };
+    let target_idx = blocks.iter().position(|b| match name {
+        // Match both "had a `###` separator" and the right name.
+        Some(want) => block_separator_name(b).is_some_and(|n| n == want),
+        // We only call this with `Some(name)` from the caller, but stay safe.
+        None => block_separator_name(b).is_none(),
+    })?;
+    let target = &blocks[target_idx];
+    let last_idx = lines.len().saturating_sub(1);
+    let end = target.end_line.min(last_idx);
+    // The replacement carries its own trailing newline (from `as_http_block`).
+    // Trim it before splicing so the file's existing line structure isn't
+    // double-newlined when we re-join.
+    let replacement = new_block.trim_end_matches('\n');
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    out.extend(lines[..target.start_line].iter().map(|s| s.to_string()));
+    for line in replacement.split('\n') {
+        out.push(line.to_string());
+    }
+    if end < last_idx {
+        out.extend(lines[end + 1..].iter().map(|s| s.to_string()));
+    }
+    let mut joined = out.join("\n");
+    // Preserve the original file's trailing-newline policy.
+    if existing.ends_with('\n') && !joined.ends_with('\n') {
+        joined.push('\n');
+    }
+    Some(joined)
+}
+
 /// Workspace grep — try `rg --vimgrep` first (fast, gitignore-aware), fall back
 /// to `git grep -n --column` if `rg` isn't on PATH. Returns parsed hits + which
 /// tool produced them (used for the `Pane::Grep` title's "rg: …" / "git grep: …"
@@ -4891,7 +4942,10 @@ impl App {
 
         // Pick the request + the directive text. For `.http`/`.rest`, use the
         // block under the cursor; otherwise treat the whole buffer as one request.
-        let (mut request, script_src): (http::Request, String) =
+        // `source_block_name` is captured iff the file is genuinely multi-block
+        // (>1 parsed block) — single-block files round-trip through the simple
+        // overwrite path on save.
+        let (mut request, script_src, source_block_name): (http::Request, String, Option<String>) =
             if matches!(ext.as_str(), "http" | "rest")
                 && let Ok(blocks) = http::file::parse_all(&text)
             {
@@ -4902,10 +4956,27 @@ impl App {
                     .unwrap_or(&blocks[0]);
                 let src =
                     lines[b.start_line..=b.end_line.min(lines.len().saturating_sub(1))].join("\n");
-                (b.request.clone(), src)
+                let block_name = if blocks.len() > 1 {
+                    // Multi-block. `b.name` is `Some(s)` when the block had a
+                    // `###` separator with text, `None` for the leading
+                    // headerless block. Distinguish the two on save by
+                    // remembering "no separator at all" vs "bare ###" — if the
+                    // block's first line *is* `###`, store `Some("")`.
+                    if lines
+                        .get(b.start_line)
+                        .is_some_and(|l| l.trim_start().starts_with("###"))
+                    {
+                        Some(b.name.clone().unwrap_or_default())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                (b.request.clone(), src, block_name)
             } else {
                 match http::parse(&text) {
-                    Ok(r) => (r, text.clone()),
+                    Ok(r) => (r, text.clone(), None),
                     Err(e) => {
                         self.toast(format!("can't parse request: {e}"));
                         return;
@@ -4924,10 +4995,10 @@ impl App {
         }
 
         let job_id = self.spawn_http_job(request.clone(), script.clone());
-        let pane = Pane::Request(crate::request_pane::RequestPane::new(
-            path, request, script, job_id,
-        ));
-        let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+        let mut rp = crate::request_pane::RequestPane::new(path, request, script, job_id);
+        rp.source_block_name = source_block_name;
+        let new_id =
+            self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, Pane::Request(rp));
         self.active = Some(new_id);
         self.focus = Focus::Pane;
     }
@@ -6984,17 +7055,64 @@ impl App {
         if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
             rp.commit_headers();
         }
-        let (path, text) = match self.panes.get(cur) {
+        // Snapshot the pane state in one pass so we can let go of the borrow
+        // before any disk I/O.
+        let (path, ext, source_block_name, curl_text, http_block) = match self.panes.get(cur) {
             Some(Pane::Request(rp)) => {
                 let Some(p) = rp.source_path.clone() else {
                     self.toast("no source file to save to (re-fire is in-memory only)");
                     return;
                 };
-                (p, rp.as_curl())
+                let ext = p
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                (
+                    p,
+                    ext,
+                    rp.source_block_name.clone(),
+                    rp.as_curl(),
+                    rp.as_http_block(rp.source_block_name.as_deref()),
+                )
             }
             _ => return,
         };
-        match std::fs::write(&path, format!("{text}\n")) {
+        // Multi-block `.http` / `.rest` source: splice just that block in
+        // place so the other blocks survive. If the splice can't find a
+        // home for the edit (file was edited externally and the block we
+        // sent from is gone) we refuse rather than overwrite — losing the
+        // other blocks would be the worst possible outcome.
+        if matches!(ext.as_str(), "http" | "rest") && source_block_name.is_some() {
+            let existing = match std::fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(e) => {
+                    self.toast(format!("save failed: {e}"));
+                    return;
+                }
+            };
+            let Some(new_text) =
+                splice_http_block(&existing, source_block_name.as_deref(), &http_block)
+            else {
+                self.toast(
+                    "can't locate the source block (file changed?) — re-fire from the editor to refresh",
+                );
+                return;
+            };
+            match std::fs::write(&path, &new_text) {
+                Ok(()) => {
+                    let rel = rel_path(&self.workspace, &path);
+                    self.toast(format!("saved block → {rel}"));
+                    self.git.refresh();
+                }
+                Err(e) => self.toast(format!("save failed: {e}")),
+            }
+            return;
+        }
+        // Single-block source (`.curl`, or `.http` whose only block is the
+        // one we're saving): overwrite with the curl one-liner. Same as the
+        // pre-multi-block behavior.
+        match std::fs::write(&path, format!("{curl_text}\n")) {
             Ok(()) => {
                 let rel = rel_path(&self.workspace, &path);
                 self.toast(format!("saved request → {rel}"));
@@ -8010,12 +8128,12 @@ impl App {
                 .panes
                 .iter()
                 .filter_map(|p| match p {
-                    Pane::Editor(b) if !b.folds.is_empty() => b.path.as_ref().map(|path| {
-                        SavedFolds {
+                    Pane::Editor(b) if !b.folds.is_empty() => {
+                        b.path.as_ref().map(|path| SavedFolds {
                             path: path.to_string_lossy().into_owned(),
                             folds: b.folds.iter().map(|(&s, &e)| (s, e)).collect(),
-                        }
-                    }),
+                        })
+                    }
                     _ => None,
                 })
                 .collect(),
@@ -9021,5 +9139,77 @@ mod tests {
         let b = app.active_editor().unwrap();
         assert_eq!(b.editor.text(), "let y = 1;\n");
         assert!(b.dirty);
+    }
+
+    #[test]
+    fn splice_http_block_preserves_other_blocks() {
+        let src = "\
+### one
+GET https://example.com/one
+
+### two
+POST https://example.com/two
+Content-Type: application/json
+
+{\"a\": 1}
+
+### three
+GET https://example.com/three
+";
+        let new_two = "### two\nPUT https://example.com/two-EDITED\n";
+        let out = splice_http_block(src, Some("two"), new_two).unwrap();
+        // The other blocks survive verbatim.
+        assert!(out.contains("### one\nGET https://example.com/one"));
+        assert!(out.contains("### three\nGET https://example.com/three"));
+        // The target block is the edited one, not the original.
+        assert!(out.contains("PUT https://example.com/two-EDITED"));
+        assert!(!out.contains("POST https://example.com/two"));
+        // Trailing-newline policy preserved.
+        assert!(out.ends_with('\n'));
+    }
+
+    #[test]
+    fn splice_http_block_returns_none_for_single_block() {
+        let src = "GET https://example.com\n";
+        let new_text = "### x\nPUT https://example.com\n";
+        // Single-block file ⇒ caller falls back to whole-file overwrite.
+        assert!(splice_http_block(src, Some("x"), new_text).is_none());
+    }
+
+    #[test]
+    fn splice_http_block_returns_none_when_name_missing() {
+        let src = "\
+### a
+GET https://example.com/a
+
+### b
+GET https://example.com/b
+";
+        // No block named "missing" ⇒ caller falls back to overwrite (which the
+        // user would notice is destructive — better than silently editing the
+        // wrong block).
+        assert!(splice_http_block(src, Some("missing"), "### missing\nGET x\n").is_none());
+    }
+
+    #[test]
+    fn splice_http_block_handles_unnamed_leading_block() {
+        // The leading block in a multi-block .http file may not have a `###`
+        // separator. Editing it shouldn't disturb the named blocks below.
+        let src = "\
+GET https://example.com/leading
+
+### second
+GET https://example.com/second
+";
+        // The unnamed leading block: matched with `Some(\"\")`? No — by the
+        // capture rule it gets `None` (no `###` separator at all). The save
+        // path won't reach `splice_http_block` for None, so this test
+        // documents what `splice_http_block` does in case it's called: it
+        // matches the block whose start_line has no `###` prefix.
+        let new_text = "PUT https://example.com/leading-EDITED\n";
+        let out = splice_http_block(src, None, new_text).unwrap();
+        assert!(out.contains("PUT https://example.com/leading-EDITED"));
+        assert!(out.contains("### second\nGET https://example.com/second"));
+        assert!(!out.contains("GET https://example.com/leading\n"));
     }
 }

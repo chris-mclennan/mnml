@@ -23,6 +23,13 @@ use crate::http::script::{AssertionResult, Script};
 pub struct RequestPane {
     /// The `.http`/`.curl`/`.rest` file the request was launched from (title only).
     pub source_path: Option<PathBuf>,
+    /// Name of the source block this request came from, if the source file is
+    /// multi-block (`### name` separator). `Some("")` for an unnamed block in a
+    /// multi-block file (the `###` separator alone). `None` for single-block
+    /// files (`.curl`, or `.http` with no `###` separators) — those overwrite
+    /// the whole file on save. Used by `App::save_request_to_source` to do
+    /// format-preserving writeback that only edits the matched block.
+    pub source_block_name: Option<String>,
     /// The request being sent — templates already expanded, `@set-*` already
     /// applied. **Mutable from the Edit view**: the URL/method/body field
     /// editors mutate this directly so the next `r` re-fires with the edits.
@@ -175,6 +182,7 @@ impl RequestPane {
         let headers_cursor = headers_buffer.len();
         RequestPane {
             source_path,
+            source_block_name: None,
             request,
             script,
             job_id,
@@ -187,6 +195,42 @@ impl RequestPane {
             headers_buffer,
             headers_cursor,
         }
+    }
+
+    /// Render this request as an `.http` block — what
+    /// `App::save_request_to_source` writes back into multi-block source files.
+    /// `name` (without leading `###`) controls the leading separator: `Some(s)`
+    /// emits `### s` (or bare `###` when `s.is_empty()`); `None` skips the
+    /// separator entirely (used when the matched block had no `###` prefix).
+    pub fn as_http_block(&self, name: Option<&str>) -> String {
+        let mut out = String::new();
+        if let Some(n) = name {
+            if n.is_empty() {
+                out.push_str("###\n");
+            } else {
+                out.push_str("### ");
+                out.push_str(n);
+                out.push('\n');
+            }
+        }
+        out.push_str(&self.request.method);
+        out.push(' ');
+        out.push_str(&self.request.url);
+        out.push('\n');
+        for (k, v) in &self.request.headers {
+            out.push_str(k);
+            out.push_str(": ");
+            out.push_str(v);
+            out.push('\n');
+        }
+        if let Some(body) = &self.request.body {
+            out.push('\n');
+            out.push_str(body);
+            if !body.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+        out
     }
 
     /// Parse the editable `headers_buffer` back into `request.headers`. Called
