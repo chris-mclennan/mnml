@@ -6747,6 +6747,21 @@ impl App {
         self.layout.equalize_splits();
     }
 
+    /// vim `Ctrl+W H/J/K/L` — move the active leaf within its immediate
+    /// parent split. `(target_dir, to_second)`:
+    ///   H ⇒ (Horizontal, false)  active on the left
+    ///   L ⇒ (Horizontal, true)   active on the right
+    ///   K ⇒ (Vertical,   false)  active on top
+    ///   J ⇒ (Vertical,   true)   active on bottom
+    /// Poor-man's version — operates on the immediate parent only (vim's
+    /// canonical behavior promotes the leaf to the outermost split).
+    pub fn move_active_split_edge(&mut self, dir: crate::layout::SplitDir, to_second: bool) {
+        let Some(cur) = self.active else { return };
+        if !self.layout.move_active_to(cur, dir, to_second) {
+            self.toast("nothing to rearrange");
+        }
+    }
+
     /// `view.rotate_splits` — vim `Ctrl+W r`. Swap the two sides of the
     /// smallest split that contains the active leaf.
     pub fn rotate_splits(&mut self) {
@@ -7022,6 +7037,83 @@ impl App {
         let offset = (body_h as f32 * frac) as usize;
         // New scroll = cursor - offset, clamped at zero.
         b.scroll = cur_row.saturating_sub(offset);
+    }
+
+    /// vim `[c` / `]c` — jump cursor to the previous / next changed line
+    /// in the active buffer (per the cached `git diff` line-signs). Wraps
+    /// around. No-op when no change marks are recorded.
+    pub fn git_jump_to_change(&mut self, forward: bool) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("no path");
+            return;
+        };
+        let Some(changes) = self.git.snapshot().line_changes.get(&path) else {
+            self.toast("no change marks");
+            return;
+        };
+        if changes.is_empty() {
+            self.toast("no change marks");
+            return;
+        }
+        let cur_row = b.editor.row_col().0;
+        // Group consecutive change lines into "hunks" — pick the start of
+        // the next/prev one.
+        let mut hunks: Vec<usize> = Vec::new();
+        let mut prev_line: Option<usize> = None;
+        for (line, _) in changes.iter() {
+            if prev_line.is_none_or(|p| *line > p + 1) {
+                hunks.push(*line);
+            }
+            prev_line = Some(*line);
+        }
+        let target = if forward {
+            hunks
+                .iter()
+                .copied()
+                .find(|&l| l > cur_row)
+                .or_else(|| hunks.first().copied())
+        } else {
+            hunks
+                .iter()
+                .copied()
+                .rev()
+                .find(|&l| l < cur_row)
+                .or_else(|| hunks.last().copied())
+        };
+        let Some(row) = target else { return };
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(row, 0);
+            self.toast(format!(
+                "{} hunk → line {}",
+                if forward { "next" } else { "prev" },
+                row + 1
+            ));
+        }
+    }
+
+    /// vim `gi` — jump cursor to the most recent edit position and enter
+    /// Insert mode. Reads the last entry of `Buffer.edit_history`. The
+    /// "enter insert mode" half is delivered by re-feeding an `i` keypress
+    /// through `dispatch_key` (only meaningful when the active handler is
+    /// vim — `gi` is a vim chord, so the dispatch lands on vim's `i` arm).
+    pub fn vim_go_to_last_insert(&mut self) {
+        let Some(b) = self.active_editor_mut() else {
+            return;
+        };
+        let Some(&(row, col)) = b.edit_history.last() else {
+            self.toast("no recent edit");
+            return;
+        };
+        b.editor.place_cursor(row, col);
+        let key = ratatui::crossterm::event::KeyEvent::new(
+            ratatui::crossterm::event::KeyCode::Char('i'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        );
+        crate::tui::dispatch_key(self, key);
     }
 
     /// `editor.jump_prev_edit` — vim `g;`. Walks back through the active

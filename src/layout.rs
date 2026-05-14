@@ -224,6 +224,47 @@ impl Layout {
         }
     }
 
+    /// Reposition the active leaf within its immediate parent split. Vim
+    /// `Ctrl+W H/J/K/L` "move to far edge" — this is a poor-man's version
+    /// that operates on the *immediate* parent (not the outermost), so
+    /// nested layouts only see a one-level rearrangement.
+    /// `target_dir` is the direction the parent should end up as
+    /// (`Horizontal` = side-by-side; `Vertical` = stacked). `to_second`
+    /// puts the active leaf in `second` (right / bottom); else `first`
+    /// (left / top). Returns true on a change.
+    pub fn move_active_to(&mut self, target: PaneId, target_dir: SplitDir, to_second: bool) -> bool {
+        match self {
+            Layout::Split { dir, first, second, .. } => {
+                let in_first = first.contains(target);
+                let in_second = second.contains(target);
+                if !in_first && !in_second {
+                    return false;
+                }
+                // Recurse to the deepest split first.
+                let recursed = if in_first {
+                    first.move_active_to(target, target_dir, to_second)
+                } else {
+                    second.move_active_to(target, target_dir, to_second)
+                };
+                if recursed {
+                    return true;
+                }
+                let mut changed = false;
+                if *dir != target_dir {
+                    *dir = target_dir;
+                    changed = true;
+                }
+                // If the active is on the wrong side, swap children.
+                if (in_first && to_second) || (in_second && !to_second) {
+                    std::mem::swap(first, second);
+                    changed = true;
+                }
+                changed
+            }
+            _ => false,
+        }
+    }
+
     /// Reset every `Split` in the tree to a 50/50 ratio. Vim `Ctrl+W =` —
     /// "equalize all splits" with a poor-man's "even at every level".
     /// (True equalization across the *visible* viewport would weight by
@@ -546,6 +587,38 @@ mod tests {
         };
         let res = l.adjust_split_ratio_for(0, SplitDir::Horizontal, 10);
         assert!(!res);
+    }
+
+    #[test]
+    fn move_active_to_changes_dir_and_swaps() {
+        // Vertical split (stacked: 0 on top, 1 on bottom). Move active 1
+        // to the LEFT (target dir = Horizontal, to_second = false).
+        // After: dir = Horizontal, first = 1, second = 0.
+        let mut l = Layout::Split {
+            dir: SplitDir::Vertical,
+            ratio: 50,
+            first: Box::new(Layout::Leaf(0)),
+            second: Box::new(Layout::Leaf(1)),
+        };
+        let changed = l.move_active_to(1, SplitDir::Horizontal, false);
+        assert!(changed);
+        let Layout::Split { dir, first, second, .. } = &l else { panic!() };
+        assert_eq!(*dir, SplitDir::Horizontal);
+        assert!(matches!(**first, Layout::Leaf(1)));
+        assert!(matches!(**second, Layout::Leaf(0)));
+    }
+
+    #[test]
+    fn move_active_to_noop_when_already_correct() {
+        // Horizontal: 0 left, 1 right. Move active 1 to the right ⇒ no-op.
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::Leaf(0)),
+            second: Box::new(Layout::Leaf(1)),
+        };
+        let changed = l.move_active_to(1, SplitDir::Horizontal, true);
+        assert!(!changed);
     }
 
     #[test]

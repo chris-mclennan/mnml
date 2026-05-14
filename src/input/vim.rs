@@ -76,6 +76,12 @@ enum Prefix {
     /// Saw `Ctrl+W` — vim's window/split navigation prefix. Next key picks a
     /// direction (`h`/`j`/`k`/`l` or arrows), cycles (`w`), or closes (`q`).
     Window,
+    /// Saw `[` — bracket-prefix for "go to prev <kind>". `[c` = prev git
+    /// hunk; `[d` = prev LSP diagnostic.
+    BracketOpen,
+    /// Saw `]` — bracket-prefix for "go to next <kind>". Mirror of
+    /// [`Self::BracketOpen`].
+    BracketClose,
 }
 
 #[derive(Debug)]
@@ -292,6 +298,13 @@ impl VimInputHandler {
                     KeyCode::Char('x') => {
                         InputResult::App(AppCommand::RunCommand(
                             "editor.open_url_at_cursor".into(),
+                        ))
+                    }
+                    // `gi` — jump to the most recent edit position + enter
+                    // Insert mode (vim canon).
+                    KeyCode::Char('i') => {
+                        InputResult::App(AppCommand::RunCommand(
+                            "vim.go_to_last_insert".into(),
                         ))
                     }
                     KeyCode::Char('c') => {
@@ -529,6 +542,24 @@ impl VimInputHandler {
                 }
                 return InputResult::Ops(ops);
             }
+            Prefix::BracketOpen => {
+                self.reset_pending();
+                let cmd = match key.code {
+                    KeyCode::Char('c') => "git.jump_prev_change",
+                    KeyCode::Char('d') => "lsp.prev_diagnostic",
+                    _ => return InputResult::Consumed,
+                };
+                return InputResult::App(AppCommand::RunCommand(cmd.into()));
+            }
+            Prefix::BracketClose => {
+                self.reset_pending();
+                let cmd = match key.code {
+                    KeyCode::Char('c') => "git.jump_next_change",
+                    KeyCode::Char('d') => "lsp.next_diagnostic",
+                    _ => return InputResult::Consumed,
+                };
+                return InputResult::App(AppCommand::RunCommand(cmd.into()));
+            }
             Prefix::Window => {
                 self.reset_pending();
                 // vim `Ctrl+W <dir>` — focus the split in that direction.
@@ -550,6 +581,11 @@ impl VimInputHandler {
                     KeyCode::Char('-') => "view.split_shrink_height",
                     KeyCode::Char('>') => "view.split_grow_width",
                     KeyCode::Char('<') => "view.split_shrink_width",
+                    // Move active split to far edge of immediate parent.
+                    KeyCode::Char('H') => "view.move_split_left",
+                    KeyCode::Char('L') => "view.move_split_right",
+                    KeyCode::Char('K') => "view.move_split_up",
+                    KeyCode::Char('J') => "view.move_split_down",
                     _ => return InputResult::Consumed,
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));
@@ -791,6 +827,16 @@ impl VimInputHandler {
             KeyCode::Char('@') => {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("vim.macro_replay".into()))
+            }
+            // `[` / `]` — bracket prefix for jump-to-prev / jump-to-next
+            // chords (`[c` / `]c` git hunks; `[d` / `]d` diagnostics).
+            KeyCode::Char('[') => {
+                self.prefix = Prefix::BracketOpen;
+                InputResult::Consumed
+            }
+            KeyCode::Char(']') => {
+                self.prefix = Prefix::BracketClose;
+                InputResult::Consumed
             }
             // vim `~` — toggle case of char under cursor + advance.
             // `[count]~` repeats: `5~` toggles 5 chars.
@@ -1170,6 +1216,8 @@ impl InputHandler for VimInputHandler {
                 s.push(c);
             }
             Prefix::Window => s.push_str("^W"),
+            Prefix::BracketOpen => s.push('['),
+            Prefix::BracketClose => s.push(']'),
             Prefix::None => {}
         }
         if self.mode == VimMode::VisualLine {

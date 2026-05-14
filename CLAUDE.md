@@ -166,7 +166,21 @@ ratio to 50/50 (`view.equalize_splits` → `Layout::equalize_splits`); `o` close
 (`view.rotate_splits` → `Layout::swap_siblings_containing`); `+`/`-` grow/shrink height of the
 nearest enclosing vertical split; `>`/`<` grow/shrink width of the nearest enclosing horizontal
 split (5% step). `Layout::adjust_split_ratio_for(target, dir, grow_delta)` flips the sign based
-on which side `target` is in, so the chord always grows the pane the cursor is in. Standard mode keeps `Ctrl+W` bound to `buffer.close`
+on which side `target` is in, so the chord always grows the pane the cursor is in.
+`H`/`J`/`K`/`L` (uppercase) move the active leaf to the left / bottom / top / right of its
+*immediate* parent split — `Layout::move_active_to(target, dir, to_second)` updates the parent's
+direction (if needed) and swaps siblings (if needed). Poor-man's vs vim's "promote to outermost"
+canonical behavior — operates on the immediate parent only.
+**Vim `gi`** — jump cursor to the most-recent edit position (last entry of `Buffer.edit_history`)
+and enter Insert mode. The "enter Insert" half is delivered by re-feeding an `i` keypress through
+`dispatch_key` (only meaningful in vim mode — `gi` is a vim chord, so the dispatch lands on vim's
+`i` arm). Toasts when there's no recent edit.
+**Vim `[c` / `]c` / `[d` / `]d`** — bracket prefix (new `Prefix::BracketOpen` /
+`Prefix::BracketClose`) for "go to prev/next thing":
+  `[c` / `]c` jump to the prev/next git hunk in the active buffer (uses
+  `App.git.snapshot().line_changes` — consecutive change lines grouped into hunks; wraps).
+  `[d` / `]d` jump to the prev/next LSP diagnostic (routes through the existing
+  `lsp.prev_diagnostic` / `next_diagnostic`). Standard mode keeps `Ctrl+W` bound to `buffer.close`
 (browser-tab convention) — the vim handler intercepts before the keymap resolver gets a chance.
 `pending_display` shows `^W` in the statusline while the chord is pending.
 **Vim `gqip` / `gqap`** — paragraph reflow as an operator + text-object: `gqip` reflows the

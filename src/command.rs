@@ -427,6 +427,34 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.rotate_splits(),
         },
         Command {
+            id: "view.move_split_left",
+            title: "Move active split to the left of its parent (vim `Ctrl+W H`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.move_active_split_edge(crate::layout::SplitDir::Horizontal, false),
+        },
+        Command {
+            id: "view.move_split_right",
+            title: "Move active split to the right of its parent (vim `Ctrl+W L`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.move_active_split_edge(crate::layout::SplitDir::Horizontal, true),
+        },
+        Command {
+            id: "view.move_split_up",
+            title: "Move active split to the top of its parent (vim `Ctrl+W K`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.move_active_split_edge(crate::layout::SplitDir::Vertical, false),
+        },
+        Command {
+            id: "view.move_split_down",
+            title: "Move active split to the bottom of its parent (vim `Ctrl+W J`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.move_active_split_edge(crate::layout::SplitDir::Vertical, true),
+        },
+        Command {
             id: "view.split_grow_height",
             title: "Grow active split's height (vim `Ctrl+W +`)",
             group: "view",
@@ -482,6 +510,27 @@ fn builtin_commands() -> Vec<Command> {
             // Vim chord-bound; not exposed as a global default.
             keys: &[],
             run: |app| app.jump_prev_edit(),
+        },
+        Command {
+            id: "vim.go_to_last_insert",
+            title: "Vim: jump to last edit + enter Insert (gi)",
+            group: "vim",
+            keys: &[],
+            run: |app| app.vim_go_to_last_insert(),
+        },
+        Command {
+            id: "git.jump_prev_change",
+            title: "Git: jump to previous changed hunk in this buffer (vim `[c`)",
+            group: "git",
+            keys: &[],
+            run: |app| app.git_jump_to_change(false),
+        },
+        Command {
+            id: "git.jump_next_change",
+            title: "Git: jump to next changed hunk in this buffer (vim `]c`)",
+            group: "git",
+            keys: &[],
+            run: |app| app.git_jump_to_change(true),
         },
         Command {
             id: "editor.jump_next_edit",
