@@ -277,6 +277,7 @@ pub(crate) const EX_COMPLETION_NAMES: &[&str] = &[
     "StashPop",
     "Status",
     "Test",
+    "Toast",
     "TestAll",
     "TestFailed",
     "TestFile",

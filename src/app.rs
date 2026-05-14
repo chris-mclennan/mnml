@@ -11245,6 +11245,15 @@ impl App {
             "PeekHunk" | "Hpeek" => {
                 crate::command::run("git.peek_change", self);
             }
+            // `:Toast <text>` — show a toast (useful for scripting / plugin
+            // development / quick debugging from the cmdline).
+            "Toast" => {
+                if rest.trim().is_empty() {
+                    self.toast(":Toast <text>");
+                } else {
+                    self.toast(rest.trim().to_string());
+                }
+            }
             // `:diff` / `:diffs` / `:diffsplit` — open the diff pane for
             // the active file (alias for the existing `git.diff_file`
             // command). Vim users reach for `:diff` reflexively.
