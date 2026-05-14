@@ -67,6 +67,9 @@ enum Prefix {
     /// `(forward, before)` — `f`=(true, false), `F`=(false, false),
     /// `t`=(true, true), `T`=(false, true).
     FindChar(bool, bool),
+    /// Saw `Ctrl+W` — vim's window/split navigation prefix. Next key picks a
+    /// direction (`h`/`j`/`k`/`l` or arrows), cycles (`w`), or closes (`q`).
+    Window,
 }
 
 #[derive(Debug)]
@@ -440,6 +443,23 @@ impl VimInputHandler {
                 }
                 return InputResult::Ops(ops);
             }
+            Prefix::Window => {
+                self.reset_pending();
+                // vim `Ctrl+W <dir>` — focus the split in that direction.
+                // h/j/k/l, arrow keys, plus `w` (cycle), `q` (close).
+                let cmd = match key.code {
+                    KeyCode::Char('h') | KeyCode::Left => "view.focus_left",
+                    KeyCode::Char('l') | KeyCode::Right => "view.focus_right",
+                    KeyCode::Char('k') | KeyCode::Up => "view.focus_up",
+                    KeyCode::Char('j') | KeyCode::Down => "view.focus_down",
+                    KeyCode::Char('w') => "view.focus_next_split",
+                    KeyCode::Char('q' | 'c') => "view.close_split",
+                    KeyCode::Char('s') => "view.split_down",
+                    KeyCode::Char('v') => "view.split_right",
+                    _ => return InputResult::Consumed,
+                };
+                return InputResult::App(AppCommand::RunCommand(cmd.into()));
+            }
             Prefix::None => {}
         }
 
@@ -610,6 +630,13 @@ impl VimInputHandler {
             KeyCode::Char('r') if ctrl => {
                 self.reset_pending();
                 InputResult::Ops(Self::repeated(Redo, n))
+            }
+            // vim `Ctrl+W` — split/window prefix. Standard mode keeps
+            // `Ctrl+W` bound to `buffer.close`; in vim it becomes a chord
+            // ending in a direction (h/j/k/l) or `w`/`q`.
+            KeyCode::Char('w') if ctrl => {
+                self.prefix = Prefix::Window;
+                InputResult::Consumed
             }
             // vim half-page scroll: Ctrl+D (down) / Ctrl+U (up).
             KeyCode::Char('d') if ctrl => {
@@ -925,6 +952,7 @@ impl InputHandler for VimInputHandler {
                 };
                 s.push(c);
             }
+            Prefix::Window => s.push_str("^W"),
             Prefix::None => {}
         }
         if self.mode == VimMode::VisualLine {

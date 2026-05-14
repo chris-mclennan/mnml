@@ -136,6 +136,12 @@ back from the cursor for an unmatched open, then forward for the matching close 
 50k-char budget per side). Spans multiple lines unlike the quote variants.
 **Half-page scroll** — new `EditOp::HalfPageUp` / `HalfPageDown` (interpreted in `editor.rs::apply` with
 `vp / 2`). Bound to `Ctrl+U` / `Ctrl+D` in vim normal mode (vim canonical).
+**Vim `Ctrl+W` split-nav prefix** — in vim normal mode, `Ctrl+W` is intercepted as a window-chord
+prefix (new `Prefix::Window`). Subsequent key picks the action: `h`/`j`/`k`/`l` (or arrows) focus
+the split in that direction (`view.focus_left/right/up/down`); `w` cycles (`view.focus_next_split`);
+`q`/`c` close (`view.close_split`); `s` splits down; `v` splits right. Standard mode keeps `Ctrl+W`
+bound to `buffer.close` (browser-tab convention) — the vim handler intercepts before the keymap
+resolver gets a chance. `pending_display` shows `^W` in the statusline while the chord is pending.
 **Vim `Y` / `J` / `gJ`** — `Y` yanks the current line (alias for `yy`, emits `EditOp::YankLine`). `J`
 properly joins the next line in via `EditOp::JoinLines{keep_space: true}` — trims trailing whitespace
 from the current line, trims leading whitespace from the next, inserts a single space (omitted when
