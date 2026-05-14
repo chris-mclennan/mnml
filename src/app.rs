@@ -7360,6 +7360,60 @@ impl App {
         self.toast("asking Claude for a commit message…");
     }
 
+    /// `git.codex_commit` — same shape as `request_ai_commit_message` but
+    /// invokes the Codex CLI (`codex exec <prompt>`) instead of Claude.
+    /// Useful when the user prefers OpenAI's model for commit messages.
+    /// Routes the reply through the same `pending_commit_msg_job` channel,
+    /// so the commit prompt opens pre-seeded just like the Claude flow.
+    pub fn request_codex_commit_message(&mut self) {
+        if self.git.snapshot().staged == 0 {
+            self.toast("nothing staged — stage some changes first");
+            return;
+        }
+        let diff = crate::git::stage::staged_diff(&self.workspace);
+        if diff.trim().is_empty() {
+            self.toast("no staged diff to summarise");
+            return;
+        }
+        let diff = if diff.len() > 24_000 {
+            format!("{}\n…(diff truncated)…", &diff[..24_000])
+        } else {
+            diff
+        };
+        let prompt = format!(
+            "Write a git commit message for the staged changes below. \
+             First line: imperative mood, ≤72 chars, no trailing period. \
+             Then a blank line and a short body ONLY if it adds something. \
+             Output ONLY the commit message — no preamble, no code fences.\n\n\
+             ```diff\n{diff}\n```"
+        );
+        let job_id = self.spawn_codex_job(prompt);
+        self.pending_commit_msg_job = Some(job_id);
+        if let Some(Pane::GitStatus(g)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            g.ai_msg_job = Some(job_id);
+        }
+        self.toast("asking Codex for a commit message…");
+    }
+
+    /// Mirror of [`Self::spawn_ai_job`] for `codex exec` — codex is
+    /// stateless per call so no session id; we still use the
+    /// `App.ai_chan` for delivery (the messages share `AiMsg` shape).
+    fn spawn_codex_job(&mut self, prompt: String) -> u64 {
+        let job_id = self.next_job_id;
+        self.next_job_id += 1;
+        let tx = self
+            .ai_chan
+            .get_or_insert_with(std::sync::mpsc::channel)
+            .0
+            .clone();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
+        std::thread::spawn(move || {
+            crate::ai::stream_codex_to_channel(&prompt, &worker_cancel, tx, job_id);
+        });
+        job_id
+    }
+
     /// `git.ai_recompose` — ask Claude to rewrite HEAD's commit message based
     /// on its diff. The reply lands as a `PromptKind::GitCommitAmend` prompt;
     /// accept ⇒ `git commit --amend -m <new>`. Limited to HEAD for now —

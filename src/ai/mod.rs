@@ -281,11 +281,51 @@ pub fn stream_to_channel(
     sink: std::sync::mpsc::Sender<(u64, AiMsg)>,
     job_id: u64,
 ) {
+    stream_cli_to_channel(
+        CLI,
+        &["-p", "--session-id", session_id, prompt],
+        cancel,
+        sink,
+        job_id,
+        "Claude Code",
+    );
+}
+
+/// `codex exec <prompt>` variant. Mirrors [`stream_to_channel`] for the
+/// OpenAI Codex CLI — used by `git.codex_commit` to get an AI-written
+/// commit message from `codex` instead of `claude`. (No session id —
+/// codex's invocation is stateless per call.)
+pub fn stream_codex_to_channel(
+    prompt: &str,
+    cancel: &AtomicBool,
+    sink: std::sync::mpsc::Sender<(u64, AiMsg)>,
+    job_id: u64,
+) {
+    stream_cli_to_channel(
+        "codex",
+        &["exec", prompt],
+        cancel,
+        sink,
+        job_id,
+        "Codex CLI",
+    );
+}
+
+/// Shared spawn-and-pump core. Splits out the bin / args from the
+/// streaming machinery so `claude -p` and `codex exec` can both flow
+/// through it without duplicating the reader-thread + cancel-loop logic.
+fn stream_cli_to_channel(
+    bin: &str,
+    args: &[&str],
+    cancel: &AtomicBool,
+    sink: std::sync::mpsc::Sender<(u64, AiMsg)>,
+    job_id: u64,
+    friendly_name: &str,
+) {
     use std::io::Read;
     use std::process::Stdio;
-    let mut child = match Command::new(CLI)
-        .args(["-p", "--session-id", session_id])
-        .arg(prompt)
+    let mut child = match Command::new(bin)
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -296,7 +336,7 @@ pub fn stream_to_channel(
             let _ = sink.send((
                 job_id,
                 AiMsg::Failed(format!(
-                    "running `{CLI} -p`: {e} — is the Claude Code CLI on PATH?"
+                    "running `{bin}`: {e} — is the {friendly_name} on PATH?"
                 )),
             ));
             return;
@@ -345,7 +385,7 @@ pub fn stream_to_channel(
             }
             Ok(None) => std::thread::sleep(std::time::Duration::from_millis(40)),
             Err(e) => {
-                let _ = sink.send((job_id, AiMsg::Failed(format!("waiting on `{CLI} -p`: {e}"))));
+                let _ = sink.send((job_id, AiMsg::Failed(format!("waiting on `{bin}`: {e}"))));
                 return;
             }
         }

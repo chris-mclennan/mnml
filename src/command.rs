@@ -750,6 +750,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.request_ai_commit_message(),
         },
         Command {
+            id: "git.codex_commit",
+            title: "Git: write a commit message with Codex (from the staged diff)",
+            group: "git",
+            keys: &[],
+            run: |app| app.request_codex_commit_message(),
+        },
+        Command {
             id: "git.ai_recompose",
             title: "Git: rewrite HEAD's message with Claude (--amend)",
             group: "git",

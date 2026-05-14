@@ -484,6 +484,10 @@ commits refresh open graph panes. **staging view** — `Pane::GitStatus` (`src/g
 **AI commit message** — `git.ai_commit` (`<leader>g m`, also `C` in the staging pane): `claude -p`
 summarises `git diff --cached`; the result lands (via `App.pending_commit_msg_job`, sharing `ai_chan`)
 in the commit prompt pre-seeded with its first line (`Prompt::seeded`).
+**Codex commit message** — `git.codex_commit` (`<leader>g x`): same shape but invokes `codex exec`
+instead of `claude -p`. New `ai::stream_codex_to_channel` mirrors `stream_to_channel` (refactored
+to share a `stream_cli_to_channel` core that takes the binary + args, so both flow through the
+same reader-thread + cancel-loop machinery). Codex is stateless per call (no `--session-id`).
 **AI recompose HEAD's message** — `git.ai_recompose` (`<leader>g M`): same shape, but the prompt
 context is `git show HEAD --stat -p` + the current message (`commit::show_head` / `commit::head_message`),
 the job is routed via `App.pending_amend_msg_job`, and the resulting `PromptKind::GitCommitAmend`
