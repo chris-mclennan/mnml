@@ -8788,12 +8788,54 @@ impl App {
             "retab" => self.run_retab(),
             // `:term` / `:terminal` — open a shell in a new split (alias for
             // `term.shell` / `Ctrl+T`).
-            "term" | "terminal" => self.open_shell(),
+            "term" | "terminal" => {
+                if rest.trim().is_empty() {
+                    self.open_shell();
+                } else {
+                    // `:term <cmd>` — open a one-shot pty pane running the
+                    // given shell command in the workspace.
+                    let ws = self.workspace.clone();
+                    self.open_pty(crate::pty_pane::BinaryProfile::task(
+                        "term",
+                        rest.trim(),
+                        ws,
+                    ));
+                }
+            }
             // `:version` — toast the build sha (formerly the bottom-right
             // statusline chip).
             "version" | "ver" => {
                 let ver = env!("MNML_GIT_SHA");
                 self.toast(format!("mnml {ver}"));
+            }
+            // `:source <path>` (alias `:so`) — re-apply a config file at
+            // runtime. Layers on top of the current config (missing keys
+            // keep their existing value). Rebuilds the keymap (input-style
+            // / [keys.*] changes take effect) and bounces the active
+            // editor's input handler if `[editor] input_style` changed.
+            "source" | "so" => {
+                if rest.trim().is_empty() {
+                    self.toast(":source <path> — path required");
+                } else {
+                    let path = self.workspace.join(rest.trim());
+                    if !path.exists() {
+                        self.toast(format!(":source — not found: {}", path.display()));
+                    } else {
+                        let prior_style = self.config.editor.input_style.clone();
+                        self.config.apply_file_pub(&path);
+                        if self.config.editor.input_style != prior_style {
+                            // Re-apply input style (rebuilds keymap +
+                            // swaps every editor's handler).
+                            let new_style = self.config.editor.input_style.clone();
+                            self.set_input_style(&new_style);
+                        } else {
+                            // Keymap might have changed without an input
+                            // style switch — rebuild it explicitly.
+                            self.keymap = crate::input::keymap::Keymap::build(&self.config);
+                        }
+                        self.toast(format!(":source {}", rel_path(&self.workspace, &path)));
+                    }
+                }
             }
             "e" | "edit" => {
                 // `:e` (bare) and `:e %` both reload the active buffer

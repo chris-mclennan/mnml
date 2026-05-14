@@ -272,6 +272,13 @@ impl Config {
         cfg
     }
 
+    /// Public entry to re-apply a single config file at runtime — `:source
+    /// <path>` (vim convention). Layered on top of the current config so
+    /// previous values stick if the file omits a key.
+    pub fn apply_file_pub(&mut self, path: &Path) {
+        self.apply_file(path);
+    }
+
     fn apply_file(&mut self, path: &Path) {
         let text = match std::fs::read_to_string(path) {
             Ok(t) => t,
