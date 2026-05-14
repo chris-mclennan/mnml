@@ -11195,6 +11195,16 @@ impl App {
             "Flaky" => {
                 crate::command::run("flaky.show", self);
             }
+            // Git hunk navigation aliases.
+            "NextHunk" | "Hnext" => {
+                crate::command::run("git.jump_next_change", self);
+            }
+            "PrevHunk" | "Hprev" => {
+                crate::command::run("git.jump_prev_change", self);
+            }
+            "PeekHunk" | "Hpeek" => {
+                crate::command::run("git.peek_change", self);
+            }
             // `:diff` / `:diffs` / `:diffsplit` — open the diff pane for
             // the active file (alias for the existing `git.diff_file`
             // command). Vim users reach for `:diff` reflexively.
