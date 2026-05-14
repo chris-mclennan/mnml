@@ -174,7 +174,20 @@ pub struct Buffer {
     /// `⋯ N lines` after its text. Cleared on every text-changing edit (simple
     /// invariant — a smarter offset-shift is a follow-up).
     pub folds: std::collections::BTreeMap<usize, usize>,
+    /// Vim "change list" — `(row, col)` of every text-changing edit, oldest
+    /// first; consecutive duplicates collapse so fast typing at one spot
+    /// doesn't bury the history. `g;` walks back through it; `g,` walks
+    /// forward. Capped at [`EDIT_HISTORY_MAX`].
+    pub edit_history: Vec<(usize, usize)>,
+    /// Cursor into [`Self::edit_history`] for `g;` / `g,` walking. Equal to
+    /// `edit_history.len()` ⇒ "past the newest entry" (the next `g;` jumps
+    /// to the most recent edit, then walks back).
+    pub edit_history_cursor: usize,
 }
+
+/// Cap for [`Buffer::edit_history`] — keeps the most recent N change
+/// positions so `g;` doesn't walk through ancient history forever.
+pub const EDIT_HISTORY_MAX: usize = 100;
 
 impl Buffer {
     pub fn open(path: &Path, cfg: &Config) -> std::io::Result<Buffer> {
@@ -206,6 +219,8 @@ impl Buffer {
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
             marks: std::collections::HashMap::new(),
             folds: std::collections::BTreeMap::new(),
+            edit_history: Vec::new(),
+            edit_history_cursor: 0,
         };
         b.refresh_highlights();
         Ok(b)
@@ -240,6 +255,8 @@ impl Buffer {
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
             marks: std::collections::HashMap::new(),
             folds: std::collections::BTreeMap::new(),
+            edit_history: Vec::new(),
+            edit_history_cursor: 0,
         }
     }
 
@@ -396,6 +413,7 @@ impl Buffer {
                     self.refresh_highlights();
                     self.refresh_find_matches();
                     self.last_edited = Some(Instant::now());
+                    self.note_edit_position();
                     BufferEvent::Edited
                 } else {
                     BufferEvent::Redraw
@@ -448,8 +466,54 @@ impl Buffer {
             self.refresh_find_matches();
             self.last_edited = Some(Instant::now());
             self.folds.clear();
+            self.note_edit_position();
         }
         changed
+    }
+
+    /// Append the cursor's current `(row, col)` to [`Self::edit_history`] —
+    /// called after a text-changing edit. Skips when the new position is
+    /// adjacent to the previous (same row, columns within a few of each
+    /// other) so a burst of typing doesn't bury the change list. Resets the
+    /// `g;`/`g,` walk cursor back to the end (after the newest entry).
+    fn note_edit_position(&mut self) {
+        let (row, col) = self.editor.row_col();
+        let last = self.edit_history.last().copied();
+        let near = last.is_some_and(|(r, c)| r == row && c.abs_diff(col) < 4);
+        if !near {
+            self.edit_history.push((row, col));
+            if self.edit_history.len() > EDIT_HISTORY_MAX {
+                let drop_n = self.edit_history.len() - EDIT_HISTORY_MAX;
+                self.edit_history.drain(..drop_n);
+            }
+        }
+        self.edit_history_cursor = self.edit_history.len();
+    }
+
+    /// Vim `g;` — walk to the previous entry on the change list and place
+    /// the cursor there. Returns `Some((row, col))` of the new position,
+    /// `None` when there's nothing further back. The walk position
+    /// (`edit_history_cursor`) shifts down by one each call.
+    pub fn jump_prev_edit(&mut self) -> Option<(usize, usize)> {
+        if self.edit_history.is_empty() || self.edit_history_cursor == 0 {
+            return None;
+        }
+        self.edit_history_cursor -= 1;
+        let (row, col) = self.edit_history[self.edit_history_cursor];
+        self.editor.place_cursor(row, col);
+        Some((row, col))
+    }
+
+    /// Vim `g,` — walk forward through the change list (paired with `g;`).
+    /// Returns `None` when already at the newest entry.
+    pub fn jump_next_edit(&mut self) -> Option<(usize, usize)> {
+        if self.edit_history_cursor + 1 >= self.edit_history.len() {
+            return None;
+        }
+        self.edit_history_cursor += 1;
+        let (row, col) = self.edit_history[self.edit_history_cursor];
+        self.editor.place_cursor(row, col);
+        Some((row, col))
     }
 
     /// Re-run the find-state's matches against the current text (no-op when no
@@ -771,5 +835,56 @@ mod tests {
         s.regex = true;
         s.recompute(t);
         assert_eq!(s.matches, vec![(0, 2), (3, 6), (7, 11)]);
+    }
+
+    fn buf_with_lines(lines: usize) -> Buffer {
+        // Many tests touch positions like (3, 5) which `place_cursor` would
+        // clamp on an empty scratch buffer. Open a real file with `lines`
+        // padded lines so coordinates land where we expect.
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("scratch.txt");
+        let body = (0..lines)
+            .map(|_| "0123456789".to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&p, body).unwrap();
+        Buffer::open(&p, &Config::default()).unwrap()
+    }
+
+    #[test]
+    fn edit_history_dedups_nearby_positions() {
+        let mut b = buf_with_lines(10);
+        // Place at (0, 0) and record. Then place at (0, 1) (adjacent col,
+        // within the dedup threshold) — should NOT push a new entry.
+        b.editor.place_cursor(0, 0);
+        b.note_edit_position();
+        b.editor.place_cursor(0, 1);
+        b.note_edit_position();
+        assert_eq!(b.edit_history.len(), 1);
+        // Move to a different row → a new entry.
+        b.editor.place_cursor(2, 0);
+        b.note_edit_position();
+        assert_eq!(b.edit_history.len(), 2);
+    }
+
+    #[test]
+    fn edit_history_jump_prev_next_walks_history() {
+        let mut b = buf_with_lines(10);
+        // Build a history of three distinct positions.
+        for (r, c) in &[(0usize, 0usize), (3, 5), (7, 1)] {
+            b.editor.place_cursor(*r, *c);
+            b.note_edit_position();
+        }
+        assert_eq!(b.edit_history.len(), 3);
+        // After the last edit, cursor index sits past the newest. `g;`
+        // walks back through them.
+        assert_eq!(b.jump_prev_edit(), Some((7, 1)));
+        assert_eq!(b.jump_prev_edit(), Some((3, 5)));
+        assert_eq!(b.jump_prev_edit(), Some((0, 0)));
+        assert_eq!(b.jump_prev_edit(), None); // exhausted
+        // `g,` walks forward.
+        assert_eq!(b.jump_next_edit(), Some((3, 5)));
+        assert_eq!(b.jump_next_edit(), Some((7, 1)));
+        assert_eq!(b.jump_next_edit(), None); // already at newest
     }
 }

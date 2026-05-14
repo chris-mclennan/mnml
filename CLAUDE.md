@@ -136,6 +136,14 @@ back from the cursor for an unmatched open, then forward for the matching close 
 50k-char budget per side). Spans multiple lines unlike the quote variants.
 **Half-page scroll** — new `EditOp::HalfPageUp` / `HalfPageDown` (interpreted in `editor.rs::apply` with
 `vp / 2`). Bound to `Ctrl+U` / `Ctrl+D` in vim normal mode (vim canonical).
+**Vim change list (`g;` / `g,`)** — every text-changing edit pushes the cursor's `(row, col)` onto the
+buffer's `edit_history: Vec<(usize, usize)>` (capped at `EDIT_HISTORY_MAX = 100`); consecutive entries
+within a few columns of each other dedupe so a burst of typing doesn't bury the list. `g;` walks back,
+`g,` walks forward (cursor index is `edit_history_cursor`, sits past the newest after each edit). Vim
+chords go through `AppCommand::RunCommand("editor.jump_prev_edit"/"jump_next_edit")` →
+`Buffer::jump_prev_edit` / `jump_next_edit`. `App::jump_prev_edit` also pushes the current position onto
+the nav-back stack so `Alt+Left` returns. Toasts the new `row+1:col+1`. Hooked into both `feed_key`'s and
+`apply_edit_ops`'s "if changed" branches via `Buffer::note_edit_position`.
 selection/undo/clipboard; fuzzy file finder (`Ctrl+P`) + command palette
 (`Ctrl+Shift+P` where the terminal supports the kitty protocol, else `F1`) + buffer
 switcher (`src/picker.rs` / `src/fuzzy.rs`); config-driven keymap — app-level chords

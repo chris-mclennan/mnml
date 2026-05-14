@@ -64,9 +64,15 @@ enum Check {
     /// On-disk check — the file at `rel` (relative to the workspace) contains
     /// the given substring. Useful for save-path tests where the rendered
     /// screen wouldn't show the result.
-    FileContains { rel: String, text: String },
+    FileContains {
+        rel: String,
+        text: String,
+    },
     /// On-disk check — the file at `rel` does **not** contain the substring.
-    FileLacks { rel: String, text: String },
+    FileLacks {
+        rel: String,
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone)]

@@ -6343,6 +6343,41 @@ impl App {
         }
     }
 
+    /// `editor.jump_prev_edit` — vim `g;`. Walks back through the active
+    /// buffer's change list (per-edit `(row, col)` history) and places the
+    /// cursor there. Pushes the *current* position onto the nav-back stack
+    /// so `Alt+Left` can return after the jump.
+    pub fn jump_prev_edit(&mut self) {
+        let here = self.current_nav_point();
+        let Some(b) = self.active_editor_mut() else {
+            return;
+        };
+        let Some((row, col)) = b.jump_prev_edit() else {
+            self.toast("no earlier edit");
+            return;
+        };
+        if let Some(np) = here {
+            self.push_nav_back(np);
+        }
+        self.toast(format!("g; → {}:{}", row + 1, col + 1));
+    }
+
+    /// `editor.jump_next_edit` — vim `g,`. Mirror of [`Self::jump_prev_edit`].
+    pub fn jump_next_edit(&mut self) {
+        let here = self.current_nav_point();
+        let Some(b) = self.active_editor_mut() else {
+            return;
+        };
+        let Some((row, col)) = b.jump_next_edit() else {
+            self.toast("at newest edit");
+            return;
+        };
+        if let Some(np) = here {
+            self.push_nav_back(np);
+        }
+        self.toast(format!("g, → {}:{}", row + 1, col + 1));
+    }
+
     /// `editor.bracket_match` (`Ctrl+]`) — when the cursor sits on a bracket
     /// (`()` / `[]` / `{}`), jump to its match. Toasts when there's none.
     pub fn bracket_match_jump(&mut self) {

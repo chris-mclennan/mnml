@@ -310,6 +310,21 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.unfold_all_in_active(),
         },
         Command {
+            id: "editor.jump_prev_edit",
+            title: "Jump to previous edit position (vim `g;`)",
+            group: "editor",
+            // Vim chord-bound; not exposed as a global default.
+            keys: &[],
+            run: |app| app.jump_prev_edit(),
+        },
+        Command {
+            id: "editor.jump_next_edit",
+            title: "Jump to next edit position (vim `g,`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.jump_next_edit(),
+        },
+        Command {
             id: "editor.open_at_cursor",
             title: "Open path under cursor (supports `:line:col`)",
             group: "editor",

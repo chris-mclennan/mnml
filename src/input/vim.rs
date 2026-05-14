@@ -268,6 +268,14 @@ impl VimInputHandler {
                         self.mode = VimMode::Visual;
                         InputResult::Ops(vec![RestoreLastSelection])
                     }
+                    // `g;` / `g,` — walk backward / forward through the
+                    // change list (vim's per-buffer edit-position history).
+                    KeyCode::Char(';') => {
+                        InputResult::App(AppCommand::RunCommand("editor.jump_prev_edit".into()))
+                    }
+                    KeyCode::Char(',') => {
+                        InputResult::App(AppCommand::RunCommand("editor.jump_next_edit".into()))
+                    }
                     _ => InputResult::Consumed,
                 };
             }
