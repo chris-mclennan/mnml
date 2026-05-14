@@ -4,8 +4,10 @@
 //! extension (`rs`, `py`, `ts`, …) or the literal `global` (always available).
 //! Each entry is `<trigger> = "<expansion>"`. A single literal `$0` marker in
 //! the expansion picks where the cursor lands after insertion; without one the
-//! cursor is at the end. Multi-line expansions use `\n` (or a TOML triple-quote
-//! string).
+//! cursor is at the end. `$1` … `$9` are tab-stop **placeholders** — after
+//! insertion the cursor lands at `$1`, then Tab cycles to `$2`, `$3`, … and
+//! finally to `$0` (or the end of the inserted text). Multi-line expansions
+//! use `\n` (or a TOML triple-quote string).
 //!
 //! Example:
 //! ```toml
@@ -27,49 +29,108 @@
 
 use std::collections::BTreeMap;
 
-/// One snippet entry as it lives on `App` (the `$0` marker pre-parsed into a
-/// byte offset within `text` so the caller doesn't have to scan again).
+/// In-flight tab-stop cycle for a snippet that was just inserted. The cursor
+/// is currently at the most-recent placeholder; `remaining` holds the absolute
+/// byte offsets (within the buffer's text, not the snippet's text) of the
+/// later placeholders + the final landing spot, in tab-stop order. Tab
+/// consumes the head and jumps the cursor; when `remaining` empties, the
+/// session ends.
+///
+/// `last_text_len` records the buffer's text length at the moment the cursor
+/// was placed at the current placeholder. On the next Tab the head is shifted
+/// by `current_text_len - last_text_len` so chars typed at the placeholder
+/// push the later positions along by the right amount.
+#[derive(Debug, Clone)]
+pub struct SnippetSession {
+    /// Pane the session belongs to. If the active pane drifts away from this
+    /// one the session is dropped (no cross-pane continuation).
+    pub pane_id: usize,
+    /// Absolute byte offsets, in tab-stop order, of the placeholders the
+    /// cursor still needs to visit.
+    pub remaining: Vec<usize>,
+    /// Buffer text length the last time the cursor landed on a placeholder —
+    /// used to compute the shift to apply to `remaining` on the next Tab.
+    pub last_text_len: usize,
+}
+
+/// One snippet entry as it lives on `App` (placeholder markers pre-parsed
+/// into byte offsets within `text` so the caller doesn't have to re-scan).
 #[derive(Debug, Clone)]
 pub struct Snippet {
     pub trigger: String,
     pub text: String,
-    /// Byte offset into `text` where the cursor should land after insert.
-    /// `text.len()` when no `$0` marker was present.
+    /// Byte offset into `text` where the cursor should land after insert
+    /// (the `$0` marker, or `text.len()` when absent).
     pub cursor_offset: usize,
+    /// Byte offsets of `$1` … `$9` placeholders, **in tab-stop order**
+    /// (`$1` first, then `$2`, …; gaps are tolerated — only the markers that
+    /// actually appear are listed). Each is a position within `text`.
+    /// Cursor lands here in sequence as the user presses Tab.
+    pub placeholders: Vec<usize>,
     /// `"rs"` / `"py"` / … / `"global"` — for the picker's detail column.
     pub scope: String,
 }
 
 impl Snippet {
-    /// Parse the raw `(trigger, expansion)` pair. A single `$0` is stripped
-    /// out and its position becomes `cursor_offset`; further `$0`s (if any)
-    /// are left in the text untouched (treated as literal).
+    /// Parse the raw `(trigger, expansion)` pair. A single occurrence of each
+    /// `$0` … `$9` marker is stripped out and its position recorded. Further
+    /// occurrences of the same marker are left as literal text.
     pub fn parse(trigger: impl Into<String>, raw: &str, scope: impl Into<String>) -> Snippet {
         let trigger = trigger.into();
         let scope = scope.into();
-        match raw.find("$0") {
-            Some(at) => {
-                let mut text = String::with_capacity(raw.len() - 2);
-                text.push_str(&raw[..at]);
-                text.push_str(&raw[at + 2..]);
-                Snippet {
-                    trigger,
-                    text,
-                    cursor_offset: at,
-                    scope,
+        // Walk the input once, peeling out the *first* occurrence of each
+        // `$N` (N = 0..=9) and recording its byte offset in the cleaned text.
+        let mut text = String::with_capacity(raw.len());
+        let mut found: [Option<usize>; 10] = [None; 10];
+        let bytes = raw.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            // Recognize `$<digit>` as a marker (ASCII only — both bytes), but
+            // only the first time we see each digit. Subsequent matches fall
+            // through to the literal-copy path below.
+            if bytes[i] == b'$' && i + 1 < bytes.len() {
+                let c = bytes[i + 1];
+                if c.is_ascii_digit() {
+                    let n = (c - b'0') as usize;
+                    if found[n].is_none() {
+                        found[n] = Some(text.len());
+                        i += 2;
+                        continue;
+                    }
                 }
             }
-            None => {
-                let text = raw.to_string();
-                let cursor_offset = text.len();
-                Snippet {
-                    trigger,
-                    text,
-                    cursor_offset,
-                    scope,
-                }
-            }
+            // Literal char — copy a full UTF-8 codepoint (1–4 bytes) so we
+            // don't shred multi-byte sequences.
+            let ch_len = utf8_char_len(bytes[i]);
+            // Safe: `i + ch_len` is on a char boundary because `raw` is valid UTF-8.
+            text.push_str(&raw[i..i + ch_len]);
+            i += ch_len;
         }
+        let cursor_offset = found[0].unwrap_or(text.len());
+        let placeholders: Vec<usize> = (1..=9).filter_map(|n| found[n]).collect();
+        Snippet {
+            trigger,
+            text,
+            cursor_offset,
+            placeholders,
+            scope,
+        }
+    }
+}
+
+/// Length in bytes of the UTF-8 codepoint that starts at `b` (the leading
+/// byte). Standard 0xxx/110x/1110/1111 lookahead. Continuation bytes
+/// (`0x80..=0xBF`) can't be a leading byte on a valid `&str`, but we
+/// saturate to 1 there to keep the loop honest.
+fn utf8_char_len(b: u8) -> usize {
+    if b < 0xC0 {
+        1
+    } else if b < 0xE0 {
+        2
+    } else if b < 0xF0 {
+        3
+    } else {
+        4
     }
 }
 
@@ -166,6 +227,52 @@ mod tests {
         let s = Snippet::parse("dup", "a$0b$0c", "global");
         assert_eq!(s.text, "ab$0c");
         assert_eq!(&s.text[..s.cursor_offset], "a");
+    }
+
+    #[test]
+    fn snippet_parse_placeholders_in_order() {
+        let s = Snippet::parse("for", "for $1 in $2 {\n    $0\n}", "rs");
+        assert_eq!(s.text, "for  in  {\n    \n}");
+        // $1 lands after "for ", $2 after "for  in ".
+        assert_eq!(s.placeholders, vec![4, 8]);
+        // $0 sits where the marker was — between the indent and the closing newline.
+        assert_eq!(&s.text[..s.cursor_offset], "for  in  {\n    ");
+    }
+
+    #[test]
+    fn snippet_parse_placeholder_gaps_tolerated() {
+        // $1 + $3 only — $2 missing. Order is by tab index, not by appearance.
+        let s = Snippet::parse("g", "[$3]($1)", "global");
+        assert_eq!(s.text, "[]()");
+        // $1 first (after "[]("), then $3 (after "[").
+        assert_eq!(s.placeholders, vec![3, 1]);
+        // No $0 ⇒ cursor at end.
+        assert_eq!(s.cursor_offset, s.text.len());
+    }
+
+    #[test]
+    fn snippet_parse_repeated_placeholder_only_first_stripped() {
+        let s = Snippet::parse("d", "$1 + $1", "rs");
+        // Only the first $1 becomes a placeholder; the second stays as literal text.
+        assert_eq!(s.text, " + $1");
+        assert_eq!(s.placeholders, vec![0]);
+    }
+
+    #[test]
+    fn snippet_parse_preserves_utf8() {
+        // Multi-byte chars before/after a marker — make sure the marker offset
+        // is the *byte* offset and the surrounding text isn't corrupted.
+        let s = Snippet::parse("e", "→ $1 ←", "global");
+        assert_eq!(s.text, "→  ←");
+        // "→" is 3 bytes + a space = byte offset 4.
+        assert_eq!(s.placeholders, vec![4]);
+    }
+
+    #[test]
+    fn snippet_parse_lone_dollar_is_literal() {
+        let s = Snippet::parse("p", "price: $a", "global");
+        assert_eq!(s.text, "price: $a");
+        assert!(s.placeholders.is_empty());
     }
 
     #[test]

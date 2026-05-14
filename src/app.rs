@@ -398,6 +398,14 @@ fn byte_to_row_col(text: &str, byte: usize) -> (usize, usize) {
     (row, col)
 }
 
+/// Place the buffer's cursor at byte offset `byte` (clamped). Used by snippet
+/// expansion to land on `$N` / `$0` markers without hand-walking the cursor
+/// glyph by glyph.
+fn place_cursor_at_byte(b: &mut Buffer, byte: usize) {
+    let (row, col) = byte_to_row_col(b.editor.text(), byte);
+    b.editor.place_cursor(row, col);
+}
+
 /// Workspace grep — try `rg --vimgrep` first (fast, gitignore-aware), fall back
 /// to `git grep -n --column` if `rg` isn't on PATH. Returns parsed hits + which
 /// tool produced them (used for the `Pane::Grep` title's "rg: …" / "git grep: …"
@@ -735,6 +743,11 @@ pub struct App {
     /// into this list. Populated by [`Self::snippet_pick`], consumed by
     /// [`Self::picker_accept`].
     pending_snippets: Vec<crate::snippets::Snippet>,
+    /// Active snippet placeholder cycle (`$1` → `$2` → … → `$0` / end). `None`
+    /// when no snippet was just inserted, or after the user has tabbed past
+    /// the last placeholder. Tab cycles to the next slot; Esc dismisses; any
+    /// switch to a different pane drops it.
+    pub snippet_session: Option<crate::snippets::SnippetSession>,
     /// Hits accumulated from one or more `workspace/symbol` replies for the
     /// most recent query — multiple servers may each contribute. Cleared on
     /// every new query in [`Self::run_workspace_symbol_query`]; consumed by
@@ -896,6 +909,7 @@ impl App {
             pending_code_action_path: None,
             pending_outline: false,
             pending_snippets: Vec::new(),
+            snippet_session: None,
             pending_workspace_symbols: Vec::new(),
             pending_workspace_symbol_query: None,
             find_regex_default: false,
@@ -2568,7 +2582,8 @@ impl App {
         };
         let text = snip.text.clone();
         let cursor_offset = snip.cursor_offset;
-        self.apply_snippet_edit(prefix_start, cursor, text, cursor_offset);
+        let placeholders = snip.placeholders.clone();
+        self.apply_snippet_edit(prefix_start, cursor, text, cursor_offset, placeholders);
     }
 
     /// `snippet.pick` — open a fuzzy picker of every snippet available for the
@@ -2618,12 +2633,29 @@ impl App {
             return;
         };
         let cursor = b.editor.cursor();
-        self.apply_snippet_edit(cursor, cursor, snip.text, snip.cursor_offset);
+        self.apply_snippet_edit(
+            cursor,
+            cursor,
+            snip.text,
+            snip.cursor_offset,
+            snip.placeholders,
+        );
     }
 
     /// Shared edit path: replace `[start, end)` with `text`, then place the
     /// cursor at `start + cursor_offset` so `$0` lands where the user expects.
-    fn apply_snippet_edit(&mut self, start: usize, end: usize, text: String, cursor_offset: usize) {
+    /// If `placeholders` is non-empty, jump the cursor to the first one
+    /// instead and open a [`crate::snippets::SnippetSession`] so Tab cycles
+    /// through the rest (and finally to the `$0` spot).
+    fn apply_snippet_edit(
+        &mut self,
+        start: usize,
+        end: usize,
+        text: String,
+        cursor_offset: usize,
+        placeholders: Vec<usize>,
+    ) {
+        let pane_id = self.active;
         let Some(b) = self.active_editor_mut() else {
             return;
         };
@@ -2634,23 +2666,80 @@ impl App {
         if !changed {
             return;
         }
-        // After ReplaceRange the cursor sits at `start + inserted_len` (the end
-        // of the inserted text). Walk it back to the `$0` marker spot.
-        if cursor_offset < inserted_len {
-            let back = inserted_len - cursor_offset;
-            for _ in 0..back {
-                let _ = b.editor.apply(
-                    crate::edit_op::EditOp::MoveLeft,
-                    0,
-                    &mut crate::clipboard::Clipboard::new(),
-                );
-            }
+        // The cursor sits at `start + inserted_len` after the replace. First
+        // stop is `placeholders[0]` if any, else the `$0` marker (or end).
+        let first_stop = placeholders
+            .first()
+            .copied()
+            .unwrap_or(cursor_offset.min(inserted_len));
+        let target_cursor = start + first_stop;
+        place_cursor_at_byte(b, target_cursor);
+        // Open a placeholder session if there's anywhere left to tab to —
+        // the rest of `placeholders` plus the `$0` landing spot (when it
+        // differs from "end of insertion", which is the implicit default
+        // anyway and not worth a tab stop on its own).
+        let mut remaining: Vec<usize> = placeholders
+            .iter()
+            .skip(1)
+            .map(|&off| start + off)
+            .collect();
+        if !placeholders.is_empty() && cursor_offset < inserted_len {
+            // `$0` was explicit AND lands somewhere meaningful — append it as
+            // the final stop. When `$0` is absent we let Tab terminate at
+            // the last `$N` rather than yanking the cursor to the end.
+            remaining.push(start + cursor_offset);
         }
-        // Keep LSP in sync (a snippet may contain identifiers the server cares
-        // about) — same shape as buffer-edit paths elsewhere.
-        if let Some(path) = b.path.clone() {
-            let new_text = b.editor.text().to_string();
-            self.lsp.did_change(&path, &new_text);
+        let last_text_len = b.editor.text().len();
+        let path_for_lsp = b.path.clone();
+        let new_text_for_lsp = b.editor.text().to_string();
+        if let (false, Some(pane_id)) = (remaining.is_empty(), pane_id) {
+            self.snippet_session = Some(crate::snippets::SnippetSession {
+                pane_id,
+                remaining,
+                last_text_len,
+            });
+        } else {
+            self.snippet_session = None;
+        }
+        // Keep LSP in sync (a snippet may contain identifiers the server
+        // cares about) — same shape as buffer-edit paths elsewhere.
+        if let Some(path) = path_for_lsp {
+            self.lsp.did_change(&path, &new_text_for_lsp);
+        }
+    }
+
+    /// Tab inside an open snippet session: jump the cursor to the next
+    /// placeholder, accounting for any text the user inserted at the current
+    /// one. Closes the session when the last stop is consumed.
+    pub fn snippet_next_placeholder(&mut self) {
+        // Take the session out of `self` so the editor borrow below is clean.
+        let Some(mut sess) = self.snippet_session.take() else {
+            return;
+        };
+        // If the focused pane drifted away, the session is stale — drop it.
+        if Some(sess.pane_id) != self.active {
+            return;
+        }
+        let Some(b) = self.active_editor_mut() else {
+            return;
+        };
+        let cur_len = b.editor.text().len();
+        // Net chars added (or removed) since we last placed the cursor at a
+        // stop — shifts every later position by the same delta. `i64` to
+        // tolerate net deletions.
+        let delta = cur_len as i64 - sess.last_text_len as i64;
+        let next_raw = sess.remaining.remove(0);
+        let next = ((next_raw as i64 + delta).max(0) as usize).min(cur_len);
+        // Apply the same shift to the still-pending stops so the next Tab
+        // sees the correct (already-shifted) positions.
+        for off in &mut sess.remaining {
+            *off = (*off as i64 + delta).max(0) as usize;
+        }
+        place_cursor_at_byte(b, next);
+        sess.last_text_len = cur_len;
+        // Re-store unless we just consumed the last stop.
+        if !sess.remaining.is_empty() {
+            self.snippet_session = Some(sess);
         }
     }
 

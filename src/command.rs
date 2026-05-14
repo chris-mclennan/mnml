@@ -680,6 +680,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.snippet_pick(),
         },
         Command {
+            id: "snippet.next_placeholder",
+            title: "Snippet: jump to next placeholder",
+            group: "edit",
+            // Tab is reserved for indent/insert in the editor — the binding
+            // is intercepted directly in `tui::dispatch_key` while a session
+            // is active; this entry is here so the palette can see it (and
+            // so future remapping in `[keys.*]` is straightforward).
+            keys: &[],
+            run: |app| app.snippet_next_placeholder(),
+        },
+        Command {
             id: "rqst.send",
             title: "HTTP: send request (.http/.curl) — or re-fire a request pane",
             group: "http",

@@ -1,0 +1,37 @@
+# Snippet placeholders ($1 / $2 / $0) — after expansion the cursor lands at
+# $1; Tab cycles to $2, etc.; the final Tab lands at $0 (or end of insert).
+
+# A snippet with two tab stops + a final $0 landing spot.
+snippet rs forr "for $1 in $2 {\n    $0\n}"
+
+write code.rs ""
+open code.rs
+
+# Trigger the expansion.
+type forr
+command snippet.expand
+
+# The expansion is on screen, with empty placeholders showing as plain spaces
+# (the markers are stripped from the rendered text).
+expect screen contains "for  in  {"
+
+# Cursor sits at $1 — type the loop variable. Confirms the cursor jumped
+# from the end of the inserted text back to where $1 was.
+type i
+
+# Tab to $2.
+key tab
+
+# Fill in the iterable.
+type items
+
+# Tab to $0 (the body indent).
+key tab
+
+# Type the body.
+type println!()
+
+# Final state — all placeholders filled.
+expect screen contains "for i in items {"
+expect screen contains "println!()"
+expect dirty true

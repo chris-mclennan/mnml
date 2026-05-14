@@ -683,6 +683,18 @@ the `[A-Za-z0-9_]*` prefix left of a cursor offset. `App::snippet_expand_at_curs
 back to the `$0` spot, plus an LSP `did_change`). The e2e harness has a new `snippet <scope> <trigger> <expansion>` step
 that seeds an entry on `app.config.snippets`; `tests/e2e/snippets.test` exercises both expansion + the toast + the
 `global`-scope fallthrough.
+**Snippet placeholders** — `$1`..`$9` markers are tab-stops. `Snippet::parse` peels the first occurrence of each `$N`
+out of the expansion text and records its byte offset (`Snippet.placeholders: Vec<usize>`, in tab-stop order — gaps
+tolerated). On insert (`apply_snippet_edit`), the cursor lands at `$1` (or `$0` / end if no placeholders) and an
+`App.snippet_session: Option<SnippetSession{pane_id, remaining: Vec<usize>, last_text_len: usize}>` opens with the
+absolute byte positions of the rest. Tab → `App::snippet_next_placeholder` shifts every remaining position by
+`current_text_len - last_text_len` (so chars typed at the current stop push later stops along by the right amount),
+jumps the cursor via `place_cursor_at_byte`, records the new `last_text_len`. After the last placeholder, `$0` is
+appended as the final stop when present (otherwise Tab terminates at the last `$N`). Esc dismisses; switching panes
+auto-drops the session. Tab/Esc are intercepted in `tui::dispatch_key` (mirrors the completion-popup pattern) — the
+`snippet.next_placeholder` command is registered for the palette but unbound by default since Tab is editor-local.
+`tests/e2e/snippet_placeholders.test` covers the full Tab cycle. Limitation: edits made *outside* the active stop
+still apply the same shift to later positions — keep typing at the stop or Esc out.
 **Signature help** — `textDocument/signatureHelp` (`lsp.signature_help` for explicit fire,
 auto-triggered on `(` / `,` typed in insert mode; `)` dismisses). Reply parsed by
 `client::parse_signature_help` into `Vec<SignatureInfo{label, parameters: Vec<(start_char,end_char)>,

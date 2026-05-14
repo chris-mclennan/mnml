@@ -237,6 +237,23 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => app.completion = None, // fall through, handled normally
         }
     }
+    // A snippet placeholder cycle is active: Tab jumps to the next `$N` /
+    // `$0` stop; Esc dismisses. Anything else falls through (typing, arrows,
+    // etc. all work normally — the session just tracks length deltas so the
+    // next Tab targets the right spot).
+    if app.snippet_session.is_some() {
+        match key.code {
+            KeyCode::Tab => {
+                app.snippet_next_placeholder();
+                return;
+            }
+            KeyCode::Esc => {
+                app.snippet_session = None;
+                return;
+            }
+            _ => {} // fall through, handled normally
+        }
+    }
     // The right-click context menu steals keys: ↑↓/jk move, Enter runs, Esc closes.
     if app.context_menu.is_some() {
         match key.code {
