@@ -11153,6 +11153,32 @@ impl App {
             "QuickFix" | "QF" => {
                 crate::command::run("lsp.quick_fix", self);
             }
+            // Title-case git ex aliases — fugitive.vim conventions. Each
+            // routes to the matching `git.*` command.
+            "G" | "Git" | "Status" => {
+                crate::command::run("git.status_pane", self);
+            }
+            "Gblame" | "Blame" => {
+                crate::command::run("git.blame_toggle", self);
+            }
+            "Gdiff" => {
+                crate::command::run("git.diff_file", self);
+            }
+            "Glog" | "Log" => {
+                crate::command::run("git.graph", self);
+            }
+            "Gcommit" | "Commit" => {
+                crate::command::run("git.commit", self);
+            }
+            "Branch" | "Branches" => {
+                crate::command::run("git.checkout", self);
+            }
+            "Stash" => {
+                crate::command::run("git.stash", self);
+            }
+            "StashPop" => {
+                crate::command::run("git.stash_pop", self);
+            }
             // `:diff` / `:diffs` / `:diffsplit` — open the diff pane for
             // the active file (alias for the existing `git.diff_file`
             // command). Vim users reach for `:diff` reflexively.

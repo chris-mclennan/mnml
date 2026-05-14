@@ -473,6 +473,11 @@ picker), `:Snippets` (snippet picker). Wide adoption among vim users from the fz
 `:Symbols` / `:Diagnostics` / `:Rename` / `:CodeAction` / `:CA` / `:QuickFix` / `:QF` route
 to the corresponding `lsp.*` commands. Friendlier than `:lsp` plumbing for vim users coming
 from ALE / coc / nvim-lspconfig conventions. All also surface in `:` cmdline Tab completion.
+**Fugitive-style git ex aliases** — `:G` / `:Git` / `:Status` (status pane), `:Gblame` /
+`:Blame` (blame gutter toggle), `:Gdiff` (file diff pane), `:Glog` / `:Log` (commit graph),
+`:Gcommit` / `:Commit` (commit prompt), `:Branch` / `:Branches` (branch picker), `:Stash` /
+`:StashPop`. Routes to the corresponding `git.*` commands so fugitive.vim muscle memory
+works in mnml.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.
