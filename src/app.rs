@@ -6656,6 +6656,17 @@ impl App {
         }
     }
 
+    /// vim `Ctrl+W +` / `-` (height grow / shrink) and `Ctrl+W >` / `<`
+    /// (width grow / shrink). Walks the layout for the smallest split of
+    /// the matching direction containing the active leaf, adjusts its
+    /// ratio by `delta` (clamped to 10..=90).
+    pub fn adjust_split(&mut self, dir: crate::layout::SplitDir, delta: i32) {
+        let Some(cur) = self.active else { return };
+        if !self.layout.adjust_split_ratio_for(cur, dir, delta) {
+            self.toast("no enclosing split in that direction");
+        }
+    }
+
     /// `view.about` — pop a hover-style "About mnml" with build sha + a
     /// snapshot of key state (workspace, theme, input style, keymap size,
     /// open buffer count). Esc / mouse-click dismisses. Holds the spot until

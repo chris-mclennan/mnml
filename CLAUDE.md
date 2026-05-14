@@ -163,7 +163,10 @@ the split in that direction (`view.focus_left/right/up/down`); `w` cycles (`view
 `q`/`c` close (`view.close_split`); `s` splits down; `v` splits right; `=` equalizes every split's
 ratio to 50/50 (`view.equalize_splits` → `Layout::equalize_splits`); `o` closes every other pane
 (`view.close_others` — same as `:only`); `r` rotates the active leaf with its sibling
-(`view.rotate_splits` → `Layout::swap_siblings_containing`). Standard mode keeps `Ctrl+W` bound to `buffer.close`
+(`view.rotate_splits` → `Layout::swap_siblings_containing`); `+`/`-` grow/shrink height of the
+nearest enclosing vertical split; `>`/`<` grow/shrink width of the nearest enclosing horizontal
+split (5% step). `Layout::adjust_split_ratio_for(target, dir, grow_delta)` flips the sign based
+on which side `target` is in, so the chord always grows the pane the cursor is in. Standard mode keeps `Ctrl+W` bound to `buffer.close`
 (browser-tab convention) — the vim handler intercepts before the keymap resolver gets a chance.
 `pending_display` shows `^W` in the statusline while the chord is pending.
 **Vim `gqq` paragraph reflow** — greedy word-wrap the cursor's paragraph to `[editor] text_width`

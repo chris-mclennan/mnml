@@ -501,6 +501,10 @@ impl VimInputHandler {
                     KeyCode::Char('=') => "view.equalize_splits",
                     KeyCode::Char('o') => "view.close_others",
                     KeyCode::Char('r') => "view.rotate_splits",
+                    KeyCode::Char('+') => "view.split_grow_height",
+                    KeyCode::Char('-') => "view.split_shrink_height",
+                    KeyCode::Char('>') => "view.split_grow_width",
+                    KeyCode::Char('<') => "view.split_shrink_width",
                     _ => return InputResult::Consumed,
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));

@@ -140,6 +140,53 @@ impl Layout {
         }
     }
 
+    /// Walk the tree, find the smallest `Split` of direction `dir` that
+    /// contains `target` (the active leaf), and adjust its ratio so the
+    /// side `target` is in *grows* by `grow_delta` percent (so the chord
+    /// "Ctrl+W +" always grows whichever pane the cursor is in). Clamped
+    /// to 10..=90. Returns `true` if a matching split was found.
+    pub fn adjust_split_ratio_for(
+        &mut self,
+        target: PaneId,
+        dir: SplitDir,
+        grow_delta: i32,
+    ) -> bool {
+        match self {
+            Layout::Split {
+                dir: this_dir,
+                ratio,
+                first,
+                second,
+            } => {
+                let in_first = first.contains(target);
+                let in_second = second.contains(target);
+                if !in_first && !in_second {
+                    return false;
+                }
+                // Recurse first — find the deepest matching split.
+                let recursed = if in_first {
+                    first.adjust_split_ratio_for(target, dir, grow_delta)
+                } else {
+                    second.adjust_split_ratio_for(target, dir, grow_delta)
+                };
+                if recursed {
+                    return true;
+                }
+                if *this_dir == dir {
+                    // The ratio is the share that goes to `first`. If the
+                    // active leaf is in `first`, grow ⇒ raise the ratio. If
+                    // in `second`, grow ⇒ lower it.
+                    let signed = if in_first { grow_delta } else { -grow_delta };
+                    let new_ratio = (*ratio as i32 + signed).clamp(10, 90) as u16;
+                    *ratio = new_ratio;
+                    return true;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
     /// Swap the two sides of the smallest split that contains `target`.
     /// Vim `Ctrl+W r` rotates the splits at the cursor's level. Returns
     /// `true` if a swap was made (target was in a Split node).
@@ -452,6 +499,53 @@ mod tests {
         };
         assert!(matches!(**f, Layout::Leaf(2)));
         assert!(matches!(**s, Layout::Leaf(1)));
+    }
+
+    #[test]
+    fn adjust_split_grows_first_side_when_target_in_first() {
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::Leaf(0)),
+            second: Box::new(Layout::Leaf(1)),
+        };
+        // Active leaf is 0 (in `first`). Grow by 10 ⇒ ratio rises.
+        assert!(l.adjust_split_ratio_for(0, SplitDir::Horizontal, 10));
+        let Layout::Split { ratio, .. } = &l else {
+            panic!()
+        };
+        assert_eq!(*ratio, 60);
+    }
+
+    #[test]
+    fn adjust_split_grows_second_side_when_target_in_second() {
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::Leaf(0)),
+            second: Box::new(Layout::Leaf(1)),
+        };
+        // Active leaf is 1 (in `second`). Grow by 10 ⇒ ratio FALLS (so
+        // `first` shrinks, `second` grows).
+        assert!(l.adjust_split_ratio_for(1, SplitDir::Horizontal, 10));
+        let Layout::Split { ratio, .. } = &l else {
+            panic!()
+        };
+        assert_eq!(*ratio, 40);
+    }
+
+    #[test]
+    fn adjust_split_skips_wrong_direction() {
+        // Outer is Vertical (stacked); active leaf is 0 (top).
+        // A "grow width" (Horizontal) should miss — no enclosing horizontal split.
+        let mut l = Layout::Split {
+            dir: SplitDir::Vertical,
+            ratio: 50,
+            first: Box::new(Layout::Leaf(0)),
+            second: Box::new(Layout::Leaf(1)),
+        };
+        let res = l.adjust_split_ratio_for(0, SplitDir::Horizontal, 10);
+        assert!(!res);
     }
 
     #[test]
