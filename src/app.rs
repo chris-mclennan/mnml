@@ -334,6 +334,19 @@ struct SavedSession {
     /// invalidation step is needed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     folds: Vec<SavedFolds>,
+    /// Browser-style navigation back stack — `Alt+Left` pops these, jumping
+    /// to the recorded `(path, row, col)`. Persisted oldest-first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    nav_back: Vec<SavedNavPoint>,
+    /// Mirror for `Alt+Right`'s forward stack.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    nav_forward: Vec<SavedNavPoint>,
+    /// Per-file change list (`g;` / `g,`) — every text-changing edit's
+    /// `(row, col)` so the position history survives a relaunch. Restored
+    /// for buffers re-opened in this session; the cursor sits past the
+    /// newest entry so the first `g;` lands on the most recent edit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    edit_history: Vec<SavedEditHistory>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -357,6 +370,22 @@ struct SavedFolds {
     /// `(start_line, end_line)` pairs (both 0-based, inclusive). Mirrors
     /// `Buffer.folds` in flat form because TOML/JSON tuple maps are awkward.
     folds: Vec<(usize, usize)>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct SavedNavPoint {
+    path: String,
+    row: usize,
+    col: usize,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct SavedEditHistory {
+    path: String,
+    /// `(row, col)` pairs (both 0-based) in tab-stop order. Restoring sets
+    /// `Buffer.edit_history_cursor` to `entries.len()` so the next `g;` lands
+    /// on the most recent entry.
+    entries: Vec<(usize, usize)>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -8335,6 +8364,37 @@ impl App {
                     _ => None,
                 })
                 .collect(),
+            nav_back: self
+                .nav_back
+                .iter()
+                .map(|np| SavedNavPoint {
+                    path: np.path.to_string_lossy().into_owned(),
+                    row: np.row,
+                    col: np.col,
+                })
+                .collect(),
+            nav_forward: self
+                .nav_forward
+                .iter()
+                .map(|np| SavedNavPoint {
+                    path: np.path.to_string_lossy().into_owned(),
+                    row: np.row,
+                    col: np.col,
+                })
+                .collect(),
+            edit_history: self
+                .panes
+                .iter()
+                .filter_map(|p| match p {
+                    Pane::Editor(b) if !b.edit_history.is_empty() => {
+                        b.path.as_ref().map(|path| SavedEditHistory {
+                            path: path.to_string_lossy().into_owned(),
+                            entries: b.edit_history.clone(),
+                        })
+                    }
+                    _ => None,
+                })
+                .collect(),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -8449,6 +8509,58 @@ impl App {
                             b.folds.insert(*start, *end);
                         }
                     }
+                    break;
+                }
+            }
+        }
+        // Nav stacks — `Alt+Left` / `Alt+Right` history. Trust the saved
+        // entries' (row, col) blindly; if a file was deleted or edited
+        // externally, the jump just lands at a clamped position. Capped at
+        // the runtime maximum.
+        self.nav_back = saved
+            .nav_back
+            .into_iter()
+            .map(|np| NavPoint {
+                path: PathBuf::from(np.path),
+                row: np.row,
+                col: np.col,
+            })
+            .collect();
+        self.nav_forward = saved
+            .nav_forward
+            .into_iter()
+            .map(|np| NavPoint {
+                path: PathBuf::from(np.path),
+                row: np.row,
+                col: np.col,
+            })
+            .collect();
+        if self.nav_back.len() > NAV_STACK_MAX {
+            let drop_n = self.nav_back.len() - NAV_STACK_MAX;
+            self.nav_back.drain(..drop_n);
+        }
+        if self.nav_forward.len() > NAV_STACK_MAX {
+            let drop_n = self.nav_forward.len() - NAV_STACK_MAX;
+            self.nav_forward.drain(..drop_n);
+        }
+        // Per-file change list — restore for any buffer we just re-opened.
+        // Cursor sits past the newest entry so the first `g;` lands on the
+        // most recent edit (vim convention).
+        for seh in saved.edit_history {
+            let target = PathBuf::from(&seh.path);
+            for p in self.panes.iter_mut() {
+                if let Pane::Editor(b) = p
+                    && b.path.as_deref() == Some(target.as_path())
+                {
+                    let line_count = b.editor.line_count();
+                    let entries: Vec<(usize, usize)> = seh
+                        .entries
+                        .into_iter()
+                        .filter(|(r, _)| *r < line_count)
+                        .collect();
+                    let cap = entries.len();
+                    b.edit_history = entries;
+                    b.edit_history_cursor = cap;
                     break;
                 }
             }

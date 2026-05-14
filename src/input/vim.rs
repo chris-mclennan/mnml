@@ -276,6 +276,12 @@ impl VimInputHandler {
                     KeyCode::Char(',') => {
                         InputResult::App(AppCommand::RunCommand("editor.jump_next_edit".into()))
                     }
+                    // `gJ` — join lines verbatim (no space inserted, no
+                    // whitespace trimmed). vim convention.
+                    KeyCode::Char('J') => {
+                        let times = n.max(1).saturating_sub(1).max(1);
+                        InputResult::Ops(Self::repeated(JoinLines { keep_space: false }, times))
+                    }
                     _ => InputResult::Consumed,
                 };
             }
@@ -626,7 +632,7 @@ impl VimInputHandler {
                 // — `3J` brings two lines up. `JoinLines` is a single op; we
                 // repeat it to get the count right.
                 let times = n.max(1).saturating_sub(1).max(1);
-                InputResult::Ops(Self::repeated(JoinLines, times))
+                InputResult::Ops(Self::repeated(JoinLines { keep_space: true }, times))
             }
             KeyCode::Char('Y') => {
                 // vim `Y` — yank the current line (synonym for `yy`).

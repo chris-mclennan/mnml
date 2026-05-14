@@ -136,11 +136,12 @@ back from the cursor for an unmatched open, then forward for the matching close 
 50k-char budget per side). Spans multiple lines unlike the quote variants.
 **Half-page scroll** — new `EditOp::HalfPageUp` / `HalfPageDown` (interpreted in `editor.rs::apply` with
 `vp / 2`). Bound to `Ctrl+U` / `Ctrl+D` in vim normal mode (vim canonical).
-**Vim `Y` / `J`** — `Y` yanks the current line (alias for `yy`, emits `EditOp::YankLine`). `J` properly
-joins the next line in via new `EditOp::JoinLines` — trims trailing whitespace from the current line,
-trims leading whitespace from the next, inserts a single space (omitted when the current line is empty,
-vim's convention). `[count]J` repeats — `3J` brings two lines up. Cursor lands on the inserted space
-(or at the join boundary when none was inserted).
+**Vim `Y` / `J` / `gJ`** — `Y` yanks the current line (alias for `yy`, emits `EditOp::YankLine`). `J`
+properly joins the next line in via `EditOp::JoinLines{keep_space: true}` — trims trailing whitespace
+from the current line, trims leading whitespace from the next, inserts a single space (omitted when
+the current line is empty, vim's convention). `gJ` joins verbatim (`keep_space: false`) — no space
+inserted, no whitespace trimmed. `[count]J` / `[count]gJ` repeat — `3J` brings two lines up. Cursor
+lands on the inserted space (or at the join boundary when none was inserted).
 **Vim change list (`g;` / `g,`)** — every text-changing edit pushes the cursor's `(row, col)` onto the
 buffer's `edit_history: Vec<(usize, usize)>` (capped at `EDIT_HISTORY_MAX = 100`); consecutive entries
 within a few columns of each other dedupe so a burst of typing doesn't bury the list. `g;` walks back,
@@ -148,7 +149,12 @@ within a few columns of each other dedupe so a burst of typing doesn't bury the 
 chords go through `AppCommand::RunCommand("editor.jump_prev_edit"/"jump_next_edit")` →
 `Buffer::jump_prev_edit` / `jump_next_edit`. `App::jump_prev_edit` also pushes the current position onto
 the nav-back stack so `Alt+Left` returns. Toasts the new `row+1:col+1`. Hooked into both `feed_key`'s and
-`apply_edit_ops`'s "if changed" branches via `Buffer::note_edit_position`.
+`apply_edit_ops`'s "if changed" branches via `Buffer::note_edit_position`. **Persisted across launches**
+via `SavedEditHistory{path, entries}` in `session.json` — restored for any buffer re-opened in the
+session; rows past the file's current line count are dropped silently.
+**Nav stacks (`Alt+Left` / `Alt+Right`)** — `App.nav_back` / `nav_forward: Vec<NavPoint{path, row, col}>`
+are now persisted in `session.json` (capped at `NAV_STACK_MAX = 50` on restore) so browser-style
+back/forward navigation survives a relaunch.
 selection/undo/clipboard; fuzzy file finder (`Ctrl+P`) + command palette
 (`Ctrl+Shift+P` where the terminal supports the kitty protocol, else `F1`) + buffer
 switcher (`src/picker.rs` / `src/fuzzy.rs`); config-driven keymap — app-level chords
