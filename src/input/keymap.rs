@@ -63,6 +63,19 @@ impl Keymap {
                 }
             }
         }
+        // Vim mode reserves a couple of chords the global keymap would
+        // otherwise swallow before the buffer's input handler ever sees
+        // them: `Ctrl+W` (window/split prefix) and `Ctrl+G` (file info).
+        // Standard mode keeps them as `buffer.close` / `editor.goto_line`.
+        // We remove them here, BEFORE applying user `[keys.*]` overlays so
+        // the user can still bind them in `[keys.vim]` if desired.
+        if cfg.editor.input_style == "vim" {
+            for spec in ["ctrl+w", "ctrl+g"] {
+                if let Some(ev) = parse_key_spec(spec) {
+                    km.map.remove(&Chord::of(&ev));
+                }
+            }
+        }
         for section in ["global", cfg.editor.input_style.as_str()] {
             if let Some(table) = cfg.keys.get(section) {
                 for (key, id) in table {

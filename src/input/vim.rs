@@ -614,7 +614,12 @@ impl VimInputHandler {
         }
 
         // ── plain motions ────────────────────────────────────────────
-        if let Some(m) = Self::motion(key.code) {
+        // Skip when ctrl is held — chords like `Ctrl+W` / `Ctrl+H` would
+        // otherwise misfire as `w` / `h` motions before the modifier arms
+        // below get a chance.
+        if !ctrl
+            && let Some(m) = Self::motion(key.code)
+        {
             let n = self.count1();
             self.reset_pending();
             return InputResult::Ops(Self::repeated(m, n));

@@ -1,0 +1,30 @@
+# vim Ctrl+W chord coverage: split + open in new pane, then `:only`
+# collapses back to a single pane.
+
+write a.txt "AAA"
+write b.txt "BBB"
+open a.txt
+
+command editor.use_vim
+
+# Ctrl+W v — vim's "vertical split" chord (panes side-by-side). After
+# the split, both halves still show a.txt (split_active duplicates).
+key ctrl+w
+key v
+
+# Then `:e b.txt` opens b.txt in the active (new) leaf.
+key :
+type "e b.txt"
+key enter
+
+# Both visible: a.txt (AAA) on left, b.txt (BBB) on right.
+expect screen contains "AAA"
+expect screen contains "BBB"
+
+# `:only` collapses to the active pane. b.txt was active after `:e`.
+key :
+type "only"
+key enter
+
+expect screen contains "BBB"
+expect screen lacks "AAA"

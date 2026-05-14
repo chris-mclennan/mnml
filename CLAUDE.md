@@ -153,7 +153,12 @@ whitespace-delimited token around the cursor, strips trailing punctuation (`<>()
 checks for a known scheme (`http`/`https`/`file`/`mailto`/`ftp`), hands off via `open` /
 `xdg-open` / `start` (same opener machinery as the file-tree right-click).
 **Vim `Ctrl+W` split-nav prefix** — in vim normal mode, `Ctrl+W` is intercepted as a window-chord
-prefix (new `Prefix::Window`). Subsequent key picks the action: `h`/`j`/`k`/`l` (or arrows) focus
+prefix (new `Prefix::Window`). Two pieces of plumbing make this work despite the global keymap
+binding `Ctrl+W` to `buffer.close`: (1) `Keymap::build` proactively removes `Ctrl+W` and `Ctrl+G`
+from the resolved chord table when `input_style = "vim"` so the global resolver doesn't swallow
+them — applied *before* user `[keys.*]` overlays so users can still rebind via `[keys.vim]`. (2)
+The vim handler's "plain motions" early-return (which would otherwise treat `w` as `MoveWordRight`
+even with Ctrl) now skips when `ctrl` is held, falling through to the modifier-aware arms below. Subsequent key picks the action: `h`/`j`/`k`/`l` (or arrows) focus
 the split in that direction (`view.focus_left/right/up/down`); `w` cycles (`view.focus_next_split`);
 `q`/`c` close (`view.close_split`); `s` splits down; `v` splits right; `=` equalizes every split's
 ratio to 50/50 (`view.equalize_splits` → `Layout::equalize_splits`); `o` closes every other pane
