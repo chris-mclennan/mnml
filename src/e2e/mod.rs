@@ -18,6 +18,8 @@
 //! expect screen lacks <text>     # …does not
 //! expect dirty <true|false>      # the active editor's dirty flag
 //! expect pane <text>             # the active pane's title contains the substring
+//! expect file <relpath> contains <text>  # the file at <relpath> (workspace-rel) contains it
+//! expect file <relpath> lacks <text>     # …does not
 //! ```
 //! `<text>` may be wrapped in `"…"` (one layer stripped); inside it `\n` `\t` `\\`
 //! `\"` are unescaped.
@@ -59,6 +61,12 @@ enum Check {
     ScreenLacks(String),
     Dirty(bool),
     PaneTitle(String),
+    /// On-disk check — the file at `rel` (relative to the workspace) contains
+    /// the given substring. Useful for save-path tests where the rendered
+    /// screen wouldn't show the result.
+    FileContains { rel: String, text: String },
+    /// On-disk check — the file at `rel` does **not** contain the substring.
+    FileLacks { rel: String, text: String },
 }
 
 #[derive(Debug, Clone)]
@@ -164,6 +172,25 @@ fn parse_expect(ln: usize, rest: &str) -> Result<Stmt, String> {
             _ => return Err(format!("line {ln}: expect dirty <true|false>")),
         },
         "pane" => Check::PaneTitle(unescape(arg)),
+        "file" => {
+            // `expect file <relpath> <contains|lacks> <text>`
+            let (rel, rest1) = split1(arg);
+            if rel.is_empty() {
+                return Err(format!("line {ln}: expect file needs a path"));
+            }
+            let (op, text) = split1(rest1);
+            match op {
+                "contains" => Check::FileContains {
+                    rel: rel.to_string(),
+                    text: unescape(text),
+                },
+                "lacks" => Check::FileLacks {
+                    rel: rel.to_string(),
+                    text: unescape(text),
+                },
+                _ => return Err(format!("line {ln}: expect file <path> <contains|lacks> …")),
+            }
+        }
         _ => return Err(format!("line {ln}: unknown expectation `{what}`")),
     };
     Ok(Stmt::Check(c))
@@ -365,6 +392,26 @@ fn run_check(app: &App, screen: &str, check: &Check) -> Result<(), String> {
                 "no active pane (expected one whose title contains {t:?})"
             )),
         },
+        Check::FileContains { rel, text } => {
+            let path = app.workspace.join(rel);
+            let body = std::fs::read_to_string(&path)
+                .map_err(|e| format!("can't read {}: {e}", path.display()))?;
+            if body.contains(text.as_str()) {
+                Ok(())
+            } else {
+                Err(format!("file {rel} does not contain {text:?}"))
+            }
+        }
+        Check::FileLacks { rel, text } => {
+            let path = app.workspace.join(rel);
+            let body = std::fs::read_to_string(&path)
+                .map_err(|e| format!("can't read {}: {e}", path.display()))?;
+            if body.contains(text.as_str()) {
+                Err(format!("file {rel} unexpectedly contains {text:?}"))
+            } else {
+                Ok(())
+            }
+        }
     }
 }
 

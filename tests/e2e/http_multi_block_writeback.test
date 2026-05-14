@@ -1,0 +1,42 @@
+# Format-preserving multi-block .http writeback. Editing a request from a
+# multi-block source and Ctrl+S should rewrite *just* that block — not
+# clobber the file with a single curl line.
+
+# Seed a 3-block .http file. The blocks are separated by `### name`. Cursor
+# starts at the very top, so we'll move it into block "two" before sending.
+write requests.http "### one\nGET https://example.com/one\n\n### two\nPOST https://example.com/two\nContent-Type: application/json\n\n{\"a\": 1}\n\n### three\nGET https://example.com/three\n"
+
+open requests.http
+
+# Drop the cursor into block "two" (line 4 is `### two` in the file, 0-based).
+# Five Down arrows lands on the body line of block two, comfortably inside it.
+key down
+key down
+key down
+key down
+key down
+
+# Fire the request — opens a Request pane. The send itself will fail (no
+# network) but `send_request_from_active` runs synchronously up to the spawn,
+# capturing `source_block_name = Some("two")` on the new pane.
+command rqst.send
+
+# Tab into Edit mode so we can mutate the URL.
+key tab
+
+# Append " EDIT" to the URL field (focus starts at Url, cursor at end).
+type " EDIT"
+
+# Save. Multi-block path: splices block "two" with the edited request,
+# leaves blocks "one" and "three" alone.
+command file.save
+
+# The other two blocks survived verbatim.
+expect file requests.http contains "### one\nGET https://example.com/one"
+expect file requests.http contains "### three\nGET https://example.com/three"
+
+# Block "two" got edited in place.
+expect file requests.http contains "POST https://example.com/two EDIT"
+
+# We did NOT collapse the file to a single curl line.
+expect file requests.http lacks "curl '"

@@ -91,8 +91,11 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect, cursor: Option<(u16, u16
     }
     let mut lines = vec![Line::from(spans)];
     if multi {
+        // Multi-sig: tell the user where they are AND that ↑↓ cycles. The
+        // chord-hint matters because the popup doesn't capture keyboard
+        // focus; without the hint, the cycle is invisible.
         lines.push(Line::from(Span::styled(
-            format!(" {}/{} signatures", p.active + 1, p.signatures.len()),
+            format!(" {}/{} signatures · ↑↓", p.active + 1, p.signatures.len()),
             Style::default().fg(t.comment).bg(t.bg_darker),
         )));
     }

@@ -577,7 +577,8 @@ spawns the `[startup]` ones. Absorbs `../private-playwright/start-launcher.sh`: 
 startup task instead of running it separately (the Playwright track will grow native equivalents later).
 **`.test` E2E format — done (first cut):** `src/e2e/mod.rs` — a line-based DSL: steps (`write <relpath>
 <content>` seed a fixture, `open <relpath>`, `key <spec>`, `type <text>`, `command <id>`, `wait <ms>`)
-+ expectations (`expect screen contains|lacks <text>`, `expect dirty <bool>`, `expect pane <substr>`),
++ expectations (`expect screen contains|lacks <text>`, `expect dirty <bool>`, `expect pane <substr>`,
+`expect file <relpath> contains|lacks <text>` for on-disk asserts after a save),
 run against the same `App` + `ui::draw` the terminal/headless paths use — with a ratatui `TestBackend`
 and synthesized key events (no real event loop, no file-IPC; deterministic + fast). `<text>` may be
 `"…"`-wrapped (`\n \t \\ \"` unescaped). `mnml test [path…]` runs files/dirs of `.test` (default
@@ -718,8 +719,9 @@ auto-triggered on `(` / `,` typed in insert mode; `)` dismisses). Reply parsed b
 `client::parse_signature_help` into `Vec<SignatureInfo{label, parameters: Vec<(start_char,end_char)>,
 active_parameter}>`. The popup (`src/signature.rs::SignaturePopup` + `src/ui/signature.rs`) anchors
 above the cursor (flipping below when there isn't room), renders the active signature's label with the
-active parameter range bolded + yellow, plus a `1/N signatures` indicator when the server returned
-overloads. **Cycling overloads** — when there's more than one signature, Up / Down inside the popup move
+active parameter range bolded + yellow, plus a `1/N signatures · ↑↓` indicator when the server returned
+overloads (the chord hint matters because the popup doesn't capture focus — without it the cycle is
+invisible). **Cycling overloads** — when there's more than one signature, Up / Down inside the popup move
 between them (`SignaturePopup::cycle` / `cycle_prev`); single-signature popups don't steal arrow keys
 from the editor. Commands `lsp.signature_next` / `lsp.signature_prev` are registered for the palette
 but unbound (the chord lives at the dispatch site since the gating depends on a popup-state condition).
