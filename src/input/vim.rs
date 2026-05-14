@@ -233,6 +233,7 @@ pub(crate) const EX_COMPLETION_NAMES: &[&str] = &[
     "setlocal",
     "Sex",
     "Sexplore",
+    "Snippets",
     "silent",
     "sort",
     "source",

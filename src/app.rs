@@ -11120,6 +11120,7 @@ impl App {
             "Marks" => {
                 crate::command::run("picker.marks", self);
             }
+            "Snippets" => self.snippet_pick(),
             // `:diff` / `:diffs` / `:diffsplit` — open the diff pane for
             // the active file (alias for the existing `git.diff_file`
             // command). Vim users reach for `:diff` reflexively.
