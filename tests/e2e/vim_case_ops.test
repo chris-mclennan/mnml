@@ -1,0 +1,26 @@
+# Vim gu / gU / g~ as operators (doubled-line forms guu / gUU / g~~).
+# Each operator works on a range that the motion/text-object selects;
+# doubling the operator key applies it to the whole current line.
+write words.txt "Hello World\nMixed Case Words\nALL CAPS\nlower case"
+open words.txt
+command editor.use_vim
+
+# `guu` lowercases the cursor's line ("Hello World" → "hello world").
+# After SelectLine, the cursor moves to the start of the next line, so
+# subsequent navigation is from row 1.
+key g
+key u
+key u
+expect screen contains "hello world"
+
+# Cursor sits on row 1 ("Mixed Case Words"). `gUU` uppercases it.
+key g
+key U
+key U
+expect screen contains "MIXED CASE WORDS"
+
+# Cursor sits on row 2 ("ALL CAPS"). `g~~` toggles case.
+key g
+key ~
+key ~
+expect screen contains "all caps"

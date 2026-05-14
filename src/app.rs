@@ -7044,6 +7044,143 @@ impl App {
 
     /// `:retab` — replace every TAB with `[editor] tab_width` spaces in the
     /// whole buffer. One ReplaceRange so undo reverts in a single step.
+    /// `:m N` / `:co N` — move (`copy=false`) or copy (`copy=true`) the
+    /// cursor's current line to right after line N (1-based; `0` ⇒ top of
+    /// buffer). `+K` / `-K` (relative form) ⇒ N = current_row + K. The
+    /// cursor lands on the line in its new home. Single edit op so undo
+    /// restores the original ordering.
+    pub fn run_move_or_copy_line(&mut self, dest: &str, copy: bool) {
+        let dest = dest.trim();
+        let label = if copy { ":copy" } else { ":move" };
+        let Some(b) = self.active_editor_mut() else {
+            self.toast(format!("{label} — no active editor"));
+            return;
+        };
+        let text = b.editor.text();
+        let line_count = b.editor.line_count();
+        let cur_row = b.editor.row_col().0;
+        // Parse destination — `+N`, `-N`, or absolute `N` (1-based; 0 = top).
+        let dest_idx_signed: i64 = if let Some(rest) = dest.strip_prefix('+') {
+            let n: i64 = rest.parse().unwrap_or(0);
+            cur_row as i64 + n
+        } else if let Some(rest) = dest.strip_prefix('-') {
+            let n: i64 = rest.parse().unwrap_or(0);
+            cur_row as i64 - n
+        } else if dest == "$" {
+            // `$` ⇒ end of buffer.
+            line_count as i64
+        } else if dest.is_empty() {
+            self.toast(format!("{label} — destination required"));
+            return;
+        } else {
+            match dest.parse::<i64>() {
+                Ok(n) => n, // absolute (vim 1-based; 0 = top)
+                Err(_) => {
+                    self.toast(format!("{label} — bad destination: {dest:?}"));
+                    return;
+                }
+            }
+        };
+        // Convert vim's 1-based line ref to "insert after this 0-based line"
+        // semantics. `:m 0` ⇒ insert at the very top (before line 0).
+        let dest_after: i64 = dest_idx_signed.clamp(0, line_count as i64);
+        // Find byte ranges of the source line + the destination boundary.
+        let line_start =
+            |row: usize| -> usize { text.split('\n').take(row).map(|s| s.len() + 1).sum() };
+        let src_start = line_start(cur_row);
+        let src_end_excl_nl = src_start
+            + text[src_start..]
+                .find('\n')
+                .unwrap_or(text.len() - src_start);
+        // Destination insertion point: the start of (dest_after)th line.
+        let insert_at: usize = if dest_after == 0 {
+            0
+        } else if (dest_after as usize) >= line_count {
+            text.len()
+        } else {
+            line_start(dest_after as usize)
+        };
+        // The source line text *with* its trailing newline (so we re-insert
+        // it as a complete line).
+        let src_with_nl = if src_end_excl_nl < text.len() {
+            text[src_start..src_end_excl_nl + 1].to_string()
+        } else {
+            // Last line — synthesize a trailing newline so the splice
+            // preserves the line shape.
+            let mut s = text[src_start..].to_string();
+            if !s.ends_with('\n') {
+                s.push('\n');
+            }
+            s
+        };
+        // No-op cases that vim treats as harmless.
+        if !copy && (dest_after as usize == cur_row || dest_after as usize == cur_row + 1) {
+            return;
+        }
+        // Build a single-string buffer rewrite. Cheap (one alloc).
+        let new_text = if copy {
+            // Copy: leave source in place, splice a duplicate at insert_at.
+            let mut s = String::with_capacity(text.len() + src_with_nl.len());
+            s.push_str(&text[..insert_at]);
+            s.push_str(&src_with_nl);
+            s.push_str(&text[insert_at..]);
+            s
+        } else {
+            // Move: cut source first, then splice at the dest boundary
+            // (translating insert_at if it sits past the cut).
+            let cut_end = if src_end_excl_nl < text.len() {
+                src_end_excl_nl + 1
+            } else {
+                text.len()
+            };
+            let translated_insert = if insert_at >= cut_end {
+                insert_at - (cut_end - src_start)
+            } else {
+                insert_at
+            };
+            let mut s = String::with_capacity(text.len());
+            s.push_str(&text[..src_start]);
+            s.push_str(&text[cut_end..]);
+            // Now splice src into the translated position.
+            let mut out = String::with_capacity(s.len() + src_with_nl.len());
+            out.push_str(&s[..translated_insert]);
+            out.push_str(&src_with_nl);
+            out.push_str(&s[translated_insert..]);
+            out
+        };
+        let end = text.len();
+        let ops = vec![crate::edit_op::EditOp::ReplaceRange {
+            start: 0,
+            end,
+            text: new_text,
+        }];
+        let mut clip = crate::clipboard::Clipboard::new();
+        b.apply_edit_ops(ops, &mut clip, 0);
+        // Land cursor on the moved/copied line in its new home.
+        let new_row = if copy {
+            // Inserted right at insert_at — that line's row index.
+            // Cursor was at cur_row; insertion shifts it if before cur_row.
+            if dest_after as usize <= cur_row {
+                cur_row + 1 // duplicate is above us; original shifts down
+            } else {
+                dest_after as usize // duplicate sits at dest_after
+            }
+        } else if dest_after as usize > cur_row {
+            (dest_after as usize).saturating_sub(1)
+        } else {
+            dest_after as usize
+        };
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(new_row, 0);
+        }
+        let verb = if copy { "copied" } else { "moved" };
+        self.toast(format!(
+            "{label} — line {} {verb} → {}",
+            cur_row + 1,
+            new_row + 1
+        ));
+    }
+
     pub fn run_retab(&mut self) {
         let tab_w = self.config.editor.tab_width;
         let Some(b) = self.active_editor_mut() else {
@@ -8963,6 +9100,15 @@ impl App {
             }
             // `:sort [u]` — sort lines (whole buffer if no selection;
             // active selection otherwise). `u` = unique (de-dupe).
+            // `:m N` / `:move N` — move the cursor's current line to right
+            // after line N (1-based). `N=0` moves to the top of the buffer.
+            // `:m -1` moves up by one line; `:m +1` moves down by one (vim
+            // canonical relative form). No selection support yet — operates
+            // on the cursor's line only.
+            "m" | "move" => self.run_move_or_copy_line(rest, false),
+            // `:co N` / `:copy N` / `:t N` — duplicate the cursor's line and
+            // place the copy after line N. Same destination semantics as `:m`.
+            "co" | "copy" | "t" => self.run_move_or_copy_line(rest, true),
             "sort" => self.run_sort_lines(rest.contains('u')),
             // `:retab` — replace tabs with `[editor] tab_width` spaces in
             // the whole buffer.
@@ -8992,6 +9138,71 @@ impl App {
             // `:reg` / `:registers` — toast clipboard contents (we have a
             // single anonymous register for now). Newlines render as `↵`,
             // truncated to keep the toast short.
+            // `:marks` — toast all set marks. Buffer-local (lowercase) for
+            // the active editor; global (uppercase) across the workspace.
+            "marks" => {
+                let mut parts: Vec<String> = Vec::new();
+                if let Some(b) = self.active_editor() {
+                    let mut local: Vec<(char, (usize, usize))> =
+                        b.marks.iter().map(|(&c, &v)| (c, v)).collect();
+                    local.sort_by_key(|(c, _)| *c);
+                    for (c, (row, col)) in local {
+                        parts.push(format!("'{c}@{}:{}", row + 1, col + 1));
+                    }
+                }
+                let mut global: Vec<(char, &(PathBuf, usize, usize))> =
+                    self.global_marks.iter().map(|(&c, v)| (c, v)).collect();
+                global.sort_by_key(|(c, _)| *c);
+                for (c, (path, row, _col)) in global {
+                    let rel = rel_path(&self.workspace, path);
+                    parts.push(format!("'{c}@{rel}:{}", row + 1));
+                }
+                if parts.is_empty() {
+                    self.toast(":marks — none set");
+                } else {
+                    self.toast(format!(":marks · {}", parts.join("  ")));
+                }
+            }
+            // `:jumps` — toast the jumplist (nav_back + nav_forward), newest
+            // first. Capped to 10 entries each side so the toast stays
+            // readable.
+            "jumps" => {
+                let back: Vec<String> = self
+                    .nav_back
+                    .iter()
+                    .rev()
+                    .take(10)
+                    .map(|np| {
+                        let rel = rel_path(&self.workspace, &np.path);
+                        format!("{rel}:{}", np.row + 1)
+                    })
+                    .collect();
+                let fwd: Vec<String> = self
+                    .nav_forward
+                    .iter()
+                    .rev()
+                    .take(10)
+                    .map(|np| {
+                        let rel = rel_path(&self.workspace, &np.path);
+                        format!("{rel}:{}", np.row + 1)
+                    })
+                    .collect();
+                if back.is_empty() && fwd.is_empty() {
+                    self.toast(":jumps — empty");
+                } else {
+                    let b_part = if back.is_empty() {
+                        String::new()
+                    } else {
+                        format!("← {}", back.join("  "))
+                    };
+                    let f_part = if fwd.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  → {}", fwd.join("  "))
+                    };
+                    self.toast(format!(":jumps {}{}", b_part, f_part));
+                }
+            }
             "reg" | "registers" | "di" | "display" => {
                 let s = self.clipboard.text();
                 if s.is_empty() {
@@ -9047,6 +9258,92 @@ impl App {
                 }
             }
             "e!" | "edit!" => self.reload_active(true),
+            // `:r !cmd` / `:read !cmd` — fire `cmd` through the shell, splice
+            // its stdout into the active editor below the cursor's line.
+            // Vim convention: line is added below the *current* line, not at
+            // the cursor's column. Without `!` (`:r path`) read a file (TODO).
+            "r" | "read" => {
+                if let Some(rest) = rest.strip_prefix('!') {
+                    let rest = rest.trim();
+                    if rest.is_empty() {
+                        self.toast(":read ! — command required");
+                    } else {
+                        let shell =
+                            std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+                        let out = std::process::Command::new(&shell)
+                            .arg("-c")
+                            .arg(rest)
+                            .current_dir(&self.workspace)
+                            .output();
+                        match out {
+                            Ok(out) => {
+                                let body = String::from_utf8_lossy(&out.stdout).to_string();
+                                let body = body.trim_end_matches('\n').to_string();
+                                let Some(idx) = self.active else {
+                                    self.toast(":r ! — no active editor");
+                                    return;
+                                };
+                                let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+                                    self.toast(":r ! — no active editor");
+                                    return;
+                                };
+                                let line_no = b.editor.row_col().0;
+                                let eol = b.editor.line_byte_range(line_no).1;
+                                let payload = format!("\n{body}");
+                                let payload_len = payload.len();
+                                b.apply_edit_ops(
+                                    vec![crate::edit_op::EditOp::ReplaceRange {
+                                        start: eol,
+                                        end: eol,
+                                        text: payload,
+                                    }],
+                                    &mut self.clipboard,
+                                    0,
+                                );
+                                self.toast(format!(":r ! — inserted {payload_len}B"));
+                            }
+                            Err(e) => self.toast(format!(":r ! — {e}")),
+                        }
+                    }
+                } else if rest.is_empty() {
+                    self.toast(":r — path or `!cmd` required");
+                } else {
+                    // `:r <path>` — splice file contents below the cursor.
+                    let path = if std::path::Path::new(rest).is_absolute() {
+                        std::path::PathBuf::from(rest)
+                    } else {
+                        self.workspace.join(rest)
+                    };
+                    match std::fs::read_to_string(&path) {
+                        Ok(body) => {
+                            let body = body.trim_end_matches('\n').to_string();
+                            let Some(idx) = self.active else {
+                                self.toast(":r — no active editor");
+                                return;
+                            };
+                            let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+                                self.toast(":r — no active editor");
+                                return;
+                            };
+                            let line_no = b.editor.row_col().0;
+                            let eol = b.editor.line_byte_range(line_no).1;
+                            let payload = format!("\n{body}");
+                            let payload_len = payload.len();
+                            b.apply_edit_ops(
+                                vec![crate::edit_op::EditOp::ReplaceRange {
+                                    start: eol,
+                                    end: eol,
+                                    text: payload,
+                                }],
+                                &mut self.clipboard,
+                                0,
+                            );
+                            self.toast(format!(":r — inserted {payload_len}B"));
+                        }
+                        Err(e) => self.toast(format!(":r — {e}")),
+                    }
+                }
+            }
             "set" => {
                 // `:set` (bare) → list every option's current value as a toast.
                 // `:set input=vim|standard` · `:set theme=…` · `:set tab_width=N`

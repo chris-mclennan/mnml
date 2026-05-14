@@ -37,6 +37,12 @@ enum PendingOp {
     /// `gq` — paragraph reflow. Combined with a text object (currently `ip`
     /// / `ap`) to scope which paragraph(s) to reflow.
     Reflow,
+    /// `gu{motion}` — lowercase the motion's range.
+    Lower,
+    /// `gU{motion}` — uppercase the motion's range.
+    Upper,
+    /// `g~{motion}` — toggle case of the motion's range.
+    ToggleCase,
 }
 
 /// A multi-key prefix that isn't an operator (`g…`, `Z…`, `r…`).
@@ -336,6 +342,23 @@ impl VimInputHandler {
                     }
                     // `g_` — move to last non-blank char of the current line.
                     KeyCode::Char('_') => InputResult::Ops(vec![MoveLineLastNonWs]),
+                    // `gu{motion}` — lowercase. Sets a pending op + waits
+                    // for a motion (or `u` for the doubled "current line"
+                    // form). E.g. `guu` lowercases the line; `guw` the word.
+                    KeyCode::Char('u') => {
+                        self.op = Some(PendingOp::Lower);
+                        InputResult::Consumed
+                    }
+                    // `gU{motion}` — uppercase.
+                    KeyCode::Char('U') => {
+                        self.op = Some(PendingOp::Upper);
+                        InputResult::Consumed
+                    }
+                    // `g~{motion}` — toggle case.
+                    KeyCode::Char('~') => {
+                        self.op = Some(PendingOp::ToggleCase);
+                        InputResult::Consumed
+                    }
                     // `ga` — show character info as a toast (decimal + hex).
                     KeyCode::Char('a') => {
                         InputResult::App(AppCommand::RunCommand("editor.char_info".into()))
@@ -472,6 +495,20 @@ impl VimInputHandler {
                             width: self.text_width,
                         });
                     }
+                    PendingOp::Lower => {
+                        ops.push(TransformSelectionCase(crate::edit_op::CaseTransform::Lower));
+                        ops.push(SelectClear);
+                    }
+                    PendingOp::Upper => {
+                        ops.push(TransformSelectionCase(crate::edit_op::CaseTransform::Upper));
+                        ops.push(SelectClear);
+                    }
+                    PendingOp::ToggleCase => {
+                        ops.push(TransformSelectionCase(
+                            crate::edit_op::CaseTransform::Toggle,
+                        ));
+                        ops.push(SelectClear);
+                    }
                 }
                 return InputResult::Ops(ops);
             }
@@ -555,6 +592,20 @@ impl VimInputHandler {
                             width: self.text_width,
                         });
                     }
+                    PendingOp::Lower => {
+                        ops.push(TransformSelectionCase(crate::edit_op::CaseTransform::Lower));
+                        ops.push(SelectClear);
+                    }
+                    PendingOp::Upper => {
+                        ops.push(TransformSelectionCase(crate::edit_op::CaseTransform::Upper));
+                        ops.push(SelectClear);
+                    }
+                    PendingOp::ToggleCase => {
+                        ops.push(TransformSelectionCase(
+                            crate::edit_op::CaseTransform::Toggle,
+                        ));
+                        ops.push(SelectClear);
+                    }
                 }
                 return InputResult::Ops(ops);
             }
@@ -619,6 +670,9 @@ impl VimInputHandler {
                     | (PendingOp::Yank, KeyCode::Char('y'))
                     | (PendingOp::Indent, KeyCode::Char('>'))
                     | (PendingOp::Outdent, KeyCode::Char('<'))
+                    | (PendingOp::Lower, KeyCode::Char('u'))
+                    | (PendingOp::Upper, KeyCode::Char('U'))
+                    | (PendingOp::ToggleCase, KeyCode::Char('~'))
             );
             let n = self.count1();
             self.reset_pending();
@@ -639,6 +693,21 @@ impl VimInputHandler {
                     PendingOp::Reflow => InputResult::Ops(vec![ReflowParagraph {
                         width: self.text_width,
                     }]),
+                    PendingOp::Lower => InputResult::Ops(vec![
+                        SelectLine,
+                        TransformSelectionCase(crate::edit_op::CaseTransform::Lower),
+                        SelectClear,
+                    ]),
+                    PendingOp::Upper => InputResult::Ops(vec![
+                        SelectLine,
+                        TransformSelectionCase(crate::edit_op::CaseTransform::Upper),
+                        SelectClear,
+                    ]),
+                    PendingOp::ToggleCase => InputResult::Ops(vec![
+                        SelectLine,
+                        TransformSelectionCase(crate::edit_op::CaseTransform::Toggle),
+                        SelectClear,
+                    ]),
                 };
             }
             // operator + `i` / `a` → text-object prefix (`diw`, `daw`, …).
@@ -698,6 +767,20 @@ impl VimInputHandler {
                         ops.push(ReflowParagraph {
                             width: self.text_width,
                         });
+                    }
+                    PendingOp::Lower => {
+                        ops.push(TransformSelectionCase(crate::edit_op::CaseTransform::Lower));
+                        ops.push(SelectClear);
+                    }
+                    PendingOp::Upper => {
+                        ops.push(TransformSelectionCase(crate::edit_op::CaseTransform::Upper));
+                        ops.push(SelectClear);
+                    }
+                    PendingOp::ToggleCase => {
+                        ops.push(TransformSelectionCase(
+                            crate::edit_op::CaseTransform::Toggle,
+                        ));
+                        ops.push(SelectClear);
                     }
                 }
                 return InputResult::Ops(ops);
@@ -1316,6 +1399,9 @@ impl InputHandler for VimInputHandler {
                 PendingOp::Indent => s.push('>'),
                 PendingOp::Outdent => s.push('<'),
                 PendingOp::Reflow => s.push_str("gq"),
+                PendingOp::Lower => s.push_str("gu"),
+                PendingOp::Upper => s.push_str("gU"),
+                PendingOp::ToggleCase => s.push_str("g~"),
             }
         }
         match self.prefix {

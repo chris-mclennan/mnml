@@ -167,6 +167,21 @@ completion popup (in addition to the existing arrows + `Ctrl+N` / `Ctrl+P`). Erg
 users who don't want to leave the home row.
 **Statusline filesize chip** — compact in-memory byte count next to the `Ln/Col` chip
 (`123B` / `4.2K` / `12M`). Reflects unsaved edits; `format_byte_size` helper picks the unit.
+**`:r !cmd`** — fire `cmd` through `$SHELL -c`, splice stdout into the active editor below the
+cursor's line. `:r <path>` (without `!`) reads a file the same way. Vim canonical.
+**`:m N` / `:move N`** and **`:co N` / `:copy N` / `:t N`** — move / duplicate the cursor's
+current line to right after line N (1-based; `0` ⇒ top, `$` ⇒ bottom; `+K` / `-K` relative).
+Single edit op so undo restores the original ordering. `App::run_move_or_copy_line` does the
+splice; cursor follows the line to its new home.
+**`:marks`** — toast all set marks (buffer-local lowercase + global uppercase across the
+workspace), sorted by letter. **`:jumps`** — toast the jumplist (`nav_back` + `nav_forward`,
+newest first, capped at 10 each side).
+**Vim `gu` / `gU` / `g~` operators** — case transforms with motion or text-object scope:
+`guw` lowercases the word, `gUiw` uppercases the inner-word, `guip` lowercases the
+paragraph, etc. New `PendingOp::Lower` / `Upper` / `ToggleCase` variants — emit
+`TransformSelectionCase` after the motion's `SelectStart` + motion seal the range. Doubled
+forms (`guu`, `gUU`, `g~~`) operate on the whole current line via `SelectLine`. Pending-op
+display chips: `gu` / `gU` / `g~`.
 **Vim `gv`** — re-select the last visual selection. The editor remembers `(anchor, cursor)` whenever a
 selection is closed (`SelectClear`, `YankSelection`, `DeleteSelection`); `gv` emits new
 `EditOp::RestoreLastSelection` to put it back and the handler flips into Visual mode.
