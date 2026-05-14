@@ -250,6 +250,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_highlight_word_under_cursor(),
         },
         Command {
+            id: "view.toggle_color_column",
+            title: "Toggle line-length color column (vim :set cc=80)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_color_column(),
+        },
+        Command {
             id: "browser.toggle_headless",
             title: "Toggle CDP headless launch (takes effect on next browser.open)",
             group: "browser",

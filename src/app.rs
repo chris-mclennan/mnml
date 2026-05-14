@@ -9924,6 +9924,19 @@ impl App {
         self.set_highlight_word_under_cursor(!self.config.ui.highlight_word_under_cursor);
     }
 
+    /// `view.toggle_color_column` — flip `[ui] color_column` between 0 (off)
+    /// and 80 (vim's classic line-length hint). The exact column can be set
+    /// via `:set colorcolumn=N`.
+    pub fn toggle_color_column(&mut self) {
+        if self.config.ui.color_column == 0 {
+            self.config.ui.color_column = 80;
+            self.toast("colorcolumn: 80");
+        } else {
+            self.config.ui.color_column = 0;
+            self.toast("colorcolumn: off");
+        }
+    }
+
     /// Toggle CDP headless launch (`:set [no]headless`). Takes effect on the
     /// **next** `browser.open` — an in-flight browser pane is unaffected.
     pub fn set_browser_headless(&mut self, on: bool) {
@@ -11528,6 +11541,24 @@ impl App {
                         self.toast(format!(":set tab_width={v} — not a number"));
                     }
                 } else if let Some(v) = rest
+                    .strip_prefix("colorcolumn=")
+                    .or_else(|| rest.strip_prefix("cc="))
+                {
+                    let s = v.trim();
+                    if s.is_empty() {
+                        self.config.ui.color_column = 0;
+                        self.toast("colorcolumn: off");
+                    } else if let Ok(n) = s.parse::<usize>() {
+                        self.config.ui.color_column = n;
+                        if n == 0 {
+                            self.toast("colorcolumn: off");
+                        } else {
+                            self.toast(format!("colorcolumn: {n}"));
+                        }
+                    } else {
+                        self.toast(format!(":set colorcolumn={v} — not a number"));
+                    }
+                } else if let Some(v) = rest
                     .strip_prefix("scrolloff=")
                     .or_else(|| rest.strip_prefix("so="))
                 {
@@ -11706,6 +11737,11 @@ impl App {
                             "off"
                         }
                     ));
+                } else if matches!(opt, "nocolorcolumn" | "nocc") {
+                    self.config.ui.color_column = 0;
+                    self.toast("colorcolumn: off");
+                } else if matches!(opt, "colorcolumn!" | "cc!" | "invcolorcolumn") {
+                    self.toggle_color_column();
                 } else if matches!(opt, "autoindent" | "ai") {
                     self.config.editor.auto_indent = true;
                     self.toast("auto-indent: on");

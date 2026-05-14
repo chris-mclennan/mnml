@@ -182,6 +182,11 @@ pub struct UiConfig {
     /// right-click → "Preview markdown"). Off by default — opt in via
     /// `[ui] auto_md_preview = true` for a writing-focused workflow.
     pub auto_md_preview: bool,
+    /// Paint a subtle column marker (the theme's `bg2` background) at this
+    /// 1-based column on every line. `0` = off (default); `80` for the
+    /// classic line-length hint. Vim's `:set colorcolumn=N` / `:set cc=N`.
+    /// Toggles at runtime via `view.toggle_color_column`.
+    pub color_column: usize,
 }
 
 impl Default for Config {
@@ -219,6 +224,7 @@ impl Default for Config {
                 clock: true,
                 highlight_word_under_cursor: false,
                 auto_md_preview: false,
+                color_column: 0,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -319,6 +325,7 @@ struct RawUi {
     clock: Option<bool>,
     highlight_word_under_cursor: Option<bool>,
     auto_md_preview: Option<bool>,
+    color_column: Option<usize>,
 }
 
 impl Config {
@@ -440,6 +447,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.auto_md_preview {
             self.ui.auto_md_preview = v;
+        }
+        if let Some(v) = raw.ui.color_column {
+            self.ui.color_column = v;
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;

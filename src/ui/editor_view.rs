@@ -60,6 +60,13 @@ pub fn draw_pane(
     let tab_w = app.config.editor.tab_width.max(1);
     let relnum = app.config.ui.relative_line_numbers;
     let show_ws = app.config.ui.show_whitespace;
+    // `[ui] color_column = N` paints a subtle marker at column N (1-based).
+    // 0 = off. Stored as Option<usize> of the 0-based column index for the
+    // per-cell loop below.
+    let color_col_idx: Option<usize> = match app.config.ui.color_column {
+        0 => None,
+        n => Some(n.saturating_sub(1)),
+    };
     // Git gutter signs for this file (added/modified/removed lines), from the
     // ~3s-cached `git diff HEAD`. `app.git` / `app.panes` / `app.rects` are
     // disjoint fields, so this borrow coexists with the `&mut Buffer` below.
@@ -386,6 +393,7 @@ pub fn draw_pane(
             let in_word_match = word_matches_on_line.iter().any(|&(s, e)| {
                 c >= s && c < e && !(line_no == cur_row && cur_col >= s && cur_col < e)
             });
+            let is_color_col = color_col_idx == Some(c);
             let bg = if in_sel || in_block {
                 sel_bg
             } else if is_bracket {
@@ -402,6 +410,11 @@ pub fn draw_pane(
                     None => {
                         if in_word_match {
                             word_match_bg
+                        } else if is_color_col {
+                            // `[ui] color_column = N` — subtle line-length
+                            // marker. Lowest priority so it doesn't override
+                            // selection / find / cursor-line tints.
+                            theme::cur().bg2
                         } else {
                             base_bg
                         }

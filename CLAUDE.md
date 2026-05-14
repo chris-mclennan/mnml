@@ -437,6 +437,11 @@ adverbs document intent for vim users; behavior matches the bare command.
 **Vim netrw aliases** — `:Explore` / `:E` / `:Sexplore` / `:Sex` / `:Vexplore` / `:Vex` /
 `:Lexplore` / `:Lex` toggle mnml's file tree (closest thing to netrw). **`:browse` / `:bro`**
 opens the `Ctrl+P` file picker (vim canonical "show a file open dialog").
+**Line-length color column** — `[ui] color_column` (0 = off, default; `N` = paint column N).
+`:set colorcolumn=N` / `:set cc=N` sets; `:set cc=` or `:set nocolorcolumn` clears;
+`:set cc!` toggles between 0 and 80 (vim's classic). `view.toggle_color_column` is the
+palette form. Editor view paints the cell at column `N-1` with the theme's `bg2` background
+— priority is just above the base bg, so selection / find / cursor-line tints still win.
 **Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
 Single-key chord in the `g` prefix.
 **`:1,5j` / `:join`** — bare form joins current+next; ranged form collapses the
