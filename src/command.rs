@@ -176,6 +176,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_scrollbar(),
         },
         Command {
+            id: "view.toggle_breadcrumb",
+            title: "Toggle the editor breadcrumb row (path above each pane)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_breadcrumb(),
+        },
+        Command {
+            id: "editor.toggle_auto_pair",
+            title: "Toggle bracket / quote auto-pairing",
+            group: "editor",
+            keys: &[],
+            run: |app| app.toggle_auto_pair(),
+        },
+        Command {
             id: "view.toggle_auto_md_preview",
             title: "Toggle auto-open markdown preview on file open",
             group: "view",

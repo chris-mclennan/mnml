@@ -7795,6 +7795,36 @@ impl App {
         self.set_scrollbar(!self.config.ui.scrollbar);
     }
 
+    /// Toggle the editor breadcrumb row (`:set [no]breadcrumb`).
+    pub fn set_breadcrumb(&mut self, on: bool) {
+        self.config.editor.breadcrumb = on;
+        self.toast(if on {
+            "breadcrumb: on"
+        } else {
+            "breadcrumb: off"
+        });
+    }
+    pub fn toggle_breadcrumb(&mut self) {
+        self.set_breadcrumb(!self.config.editor.breadcrumb);
+    }
+
+    /// Toggle bracket / quote auto-pairing (`:set [no]autopair`).
+    /// Also propagates the new value onto every open editor's editor instance
+    /// so the change takes effect for the buffers already open, not just for
+    /// future opens.
+    pub fn set_auto_pair(&mut self, on: bool) {
+        self.config.editor.auto_pair = on;
+        for p in self.panes.iter_mut() {
+            if let Pane::Editor(b) = p {
+                b.editor.auto_pair = on;
+            }
+        }
+        self.toast(if on { "auto-pair: on" } else { "auto-pair: off" });
+    }
+    pub fn toggle_auto_pair(&mut self) {
+        self.set_auto_pair(!self.config.editor.auto_pair);
+    }
+
     /// Toggle trailing-whitespace highlight (`:set [no]trailing`).
     pub fn set_highlight_trailing_ws(&mut self, on: bool) {
         self.config.ui.highlight_trailing_ws = on;
@@ -8050,6 +8080,18 @@ impl App {
                 } else if matches!(opt, "noendofline" | "noeol") {
                     self.config.editor.ensure_trailing_newline = false;
                     self.toast("ensure_trailing_newline: off");
+                } else if matches!(opt, "breadcrumb") {
+                    self.set_breadcrumb(true);
+                } else if matches!(opt, "nobreadcrumb") {
+                    self.set_breadcrumb(false);
+                } else if matches!(opt, "breadcrumb!" | "invbreadcrumb") {
+                    self.toggle_breadcrumb();
+                } else if matches!(opt, "autopair" | "ap") {
+                    self.set_auto_pair(true);
+                } else if matches!(opt, "noautopair" | "noap") {
+                    self.set_auto_pair(false);
+                } else if matches!(opt, "autopair!" | "invautopair") {
+                    self.toggle_auto_pair();
                 } else if matches!(opt, "relativenumber" | "rnu") {
                     self.set_relative_line_numbers(true);
                 } else if matches!(opt, "norelativenumber" | "nornu") {
