@@ -442,6 +442,12 @@ opens the `Ctrl+P` file picker (vim canonical "show a file open dialog").
 `:set cc!` toggles between 0 and 80 (vim's classic). `view.toggle_color_column` is the
 palette form. Editor view paints the cell at column `N-1` with the theme's `bg2` background
 — priority is just above the base bg, so selection / find / cursor-line tints still win.
+**Statusline macro recording chip** — when `App.macro_state == Recording { register, .. }`,
+the statusline left side renders a red `● rec @<reg>` chip so the user can't forget
+they're recording (vim shows "recording @<reg>" on the bottom; we put it next to the mode
+chip so it's visible even when a toast is up).
+**`:reg <regs>` filter** — `:reg abc` filters the registers list to just `"a` / `"b` / `"c`.
+Include `"` in the arg to also keep the unnamed register. Bare `:reg` still shows them all.
 **`:` cmdline Tab completion** — pressing Tab on a `:`-line cycles through matching
 candidates. FIRST word matches against `EX_COMPLETION_NAMES`. TRAILING arg of a
 path-accepting command (`:e` / `:edit` / `:sp` / `:vsp` / `:tabnew` / `:badd` /

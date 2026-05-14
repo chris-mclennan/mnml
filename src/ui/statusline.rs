@@ -129,6 +129,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     theme::cur().statusline,
                 ));
             }
+            // Macro recording indicator — vim shows "recording @<reg>" along
+            // the bottom row when `q<reg>` is active. We chip it onto the
+            // statusline left side so it's visible across all panes.
+            if let crate::app::MacroState::Recording { register, .. } = &app.macro_state {
+                left.push(Seg::new(
+                    format!(" ● rec @{register} "),
+                    theme::cur().bg_darker,
+                    theme::cur().red,
+                ));
+            }
             // Active find: ` " quoted query "  N/M ` so the user knows what's
             // matched without re-opening the prompt.
             if let Some(f) = b.find.as_ref()

@@ -11646,8 +11646,16 @@ impl App {
                     }
                     out
                 };
+                // `:reg abc` ⇒ filter to only show the named registers in
+                // the arg. Bare `:reg` shows them all. Vim canonical.
+                let filter: Option<std::collections::HashSet<char>> = if rest.trim().is_empty() {
+                    None
+                } else {
+                    Some(rest.chars().filter(|c| !c.is_whitespace()).collect())
+                };
+                let show_unnamed = filter.as_ref().map(|s| s.contains(&'"')).unwrap_or(true);
                 let unnamed = self.clipboard.text();
-                if !unnamed.is_empty() {
+                if show_unnamed && !unnamed.is_empty() {
                     parts.push(format!("\"\"  {}", preview(&unnamed, 40)));
                 }
                 let mut named: Vec<(char, (String, bool))> = self
@@ -11658,6 +11666,11 @@ impl App {
                     .collect();
                 named.sort_by_key(|(c, _)| *c);
                 for (c, (text, _linewise)) in named {
+                    if let Some(f) = &filter
+                        && !f.contains(&c)
+                    {
+                        continue;
+                    }
                     if !text.is_empty() {
                         parts.push(format!("\"{c}  {}", preview(&text, 40)));
                     }
