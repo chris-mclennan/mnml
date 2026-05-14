@@ -522,6 +522,42 @@ pub fn draw_pane(
             }
         }
 
+        // Code lenses: paint as dim chips at end-of-line in a slightly
+        // different color (purple) so they're distinguishable from
+        // inlay hints. Same "overlay into trailing space" approach.
+        let lenses_on_line: Vec<&crate::lsp::CodeLens> = if app.config.editor.code_lens {
+            buf.code_lenses
+                .iter()
+                .filter(|l| (l.line as usize) == line_no)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if !lenses_on_line.is_empty() {
+            let chip = lenses_on_line
+                .iter()
+                .map(|l| l.title.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" | ");
+            let with_lead = format!("  ⚡ {chip}");
+            let start_c = n + 2;
+            let lcolor = theme::cur().purple;
+            for (i, mc) in with_lead.chars().enumerate() {
+                let c = start_c + i;
+                if c < buf.h_scroll {
+                    continue;
+                }
+                let vc = c - buf.h_scroll;
+                if vc >= cells.len() {
+                    break;
+                }
+                if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
+                    cells[vc] = (mc, lcolor, base_bg);
+                }
+            }
+        }
+
         let mut spans: Vec<Span> = vec![sign_span, Span::styled(num_gutter, num_style)];
         let mut i = 0;
         while i < cells.len() {

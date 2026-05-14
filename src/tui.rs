@@ -1161,6 +1161,16 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             // Drive the as-you-type completion popup off the fresh buffer state.
             app.completion_on_edit(typed_char);
+            // Vim abbreviation expansion: if the typed char is a trigger
+            // (whitespace / punctuation) AND the active handler is in
+            // Insert, look back for an abbreviation word.
+            if let Some(c) = typed_char
+                && is_abbreviation_trigger(c)
+                && let Some(Pane::Editor(b)) = app.panes.get(i)
+                && b.input.mode() == crate::input::EditingMode::Insert
+            {
+                app.try_expand_abbreviation(i);
+            }
         }
         BufferEvent::Redraw | BufferEvent::NoOp => {}
         BufferEvent::App(cmd) => apply_app_command(app, cmd),
@@ -1272,6 +1282,17 @@ fn record_dot(
     if before == EditingMode::Visual && after == EditingMode::Normal && edited {
         app.dot_keys = vec![key];
     }
+}
+
+/// Vim abbreviation trigger: chars that "complete" the previous word and
+/// signal expansion. Roughly: whitespace + most punctuation. Letters /
+/// digits / `_` are *not* triggers (they keep the word in flight).
+fn is_abbreviation_trigger(c: char) -> bool {
+    c.is_whitespace()
+        || matches!(
+            c,
+            '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '"' | '\'' | '`'
+        )
 }
 
 fn pane_viewport(app: &App) -> usize {

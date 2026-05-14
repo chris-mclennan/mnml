@@ -187,6 +187,42 @@ impl Layout {
         }
     }
 
+    /// vim `Ctrl+W _` (height) / `Ctrl+W |` (width) — maximize the
+    /// active leaf's allocation in the matching-direction split. Walks
+    /// to the smallest enclosing split whose `dir == dir`, then pushes
+    /// the ratio toward the side that contains `target`. Returns `true`
+    /// when a ratio was changed.
+    pub fn maximize_split_ratio_for(&mut self, target: PaneId, dir: SplitDir) -> bool {
+        match self {
+            Layout::Split {
+                dir: this_dir,
+                ratio,
+                first,
+                second,
+            } => {
+                let in_first = first.contains(target);
+                let in_second = second.contains(target);
+                if !in_first && !in_second {
+                    return false;
+                }
+                let recursed = if in_first {
+                    first.maximize_split_ratio_for(target, dir)
+                } else {
+                    second.maximize_split_ratio_for(target, dir)
+                };
+                if recursed {
+                    return true;
+                }
+                if *this_dir == dir {
+                    *ratio = if in_first { 90 } else { 10 };
+                    return true;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
     /// Swap the two sides of the smallest split that contains `target`.
     /// Vim `Ctrl+W r` rotates the splits at the cursor's level. Returns
     /// `true` if a swap was made (target was in a Split node).

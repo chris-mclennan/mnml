@@ -2266,6 +2266,102 @@ impl App {
         self.pending_macro_register = Some(reg);
     }
 
+    /// `:cnext` / `:cprev` / `:cfirst` / `:clast` / `]q` / `[q` —
+    /// navigate the most-recent grep result list (mnml's stand-in for
+    /// vim's quickfix list). The selection moves inside the open
+    /// `Pane::Grep` and the cursor jumps to that hit's source location.
+    /// `delta=+/-1` (next/prev), `0` doesn't move (jumps current);
+    /// `i32::MAX` ⇒ last; `i32::MIN` ⇒ first.
+    pub fn quickfix_navigate(&mut self, delta: i32) {
+        let Some(grep_idx) = self.panes.iter().position(|p| matches!(p, Pane::Grep(_))) else {
+            self.toast(":cnext — no grep results");
+            return;
+        };
+        let Some(Pane::Grep(g)) = self.panes.get_mut(grep_idx) else {
+            return;
+        };
+        if g.hits.is_empty() {
+            self.toast(":cnext — no hits");
+            return;
+        }
+        let n = g.hits.len();
+        if delta == i32::MAX {
+            g.selected = n - 1;
+        } else if delta == i32::MIN {
+            g.selected = 0;
+        } else if delta != 0 {
+            g.move_selection(delta as isize);
+        }
+        let Some(hit) = g.selected_hit().cloned() else {
+            return;
+        };
+        let cur = g.selected + 1;
+        let total = n;
+        // Jump to source.
+        self.open_path(&hit.path);
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(hit.line as usize, hit.col as usize);
+        }
+        self.toast(format!("qf {cur}/{total} · {}:{}", hit.rel, hit.line + 1));
+    }
+
+    /// Try to expand a vim abbreviation in the active editor. Called from
+    /// `dispatch_key` after a buffer mutation in Insert mode when a
+    /// "trigger" char (whitespace / punctuation) was typed. Walks back
+    /// from the cursor's previous position over identifier chars; if the
+    /// resulting word matches `config.abbreviations`, replaces it with
+    /// the expansion (cursor stays on the trigger char).
+    pub fn try_expand_abbreviation(&mut self, idx: usize) {
+        if self.config.abbreviations.is_empty() {
+            return;
+        }
+        let Some(Pane::Editor(b)) = self.panes.get(idx) else {
+            return;
+        };
+        let cursor = b.editor.cursor();
+        if cursor < 2 {
+            return;
+        }
+        let text = b.editor.text();
+        // The trigger char is the most recent insert — the byte right before
+        // the cursor. Walk back from there to find the start of the
+        // identifier.
+        let trigger_end = cursor - 1;
+        if trigger_end > text.len() || !text.is_char_boundary(trigger_end) {
+            return;
+        }
+        let mut start = trigger_end;
+        while start > 0 {
+            let prev = match text[..start].chars().next_back() {
+                Some(c) => c,
+                None => break,
+            };
+            if !(prev.is_alphanumeric() || prev == '_') {
+                break;
+            }
+            start -= prev.len_utf8();
+        }
+        if start == trigger_end {
+            return;
+        }
+        let word = &text[start..trigger_end];
+        let Some(expansion) = self.config.abbreviations.get(word).cloned() else {
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+            return;
+        };
+        b.apply_edit_ops(
+            vec![crate::edit_op::EditOp::ReplaceRange {
+                start,
+                end: trigger_end,
+                text: expansion,
+            }],
+            &mut self.clipboard,
+            0,
+        );
+    }
+
     /// vim `.` — re-feed the last recorded change through the
     /// dispatcher. Sets `is_replaying_dot = true` so the replay
     /// doesn't re-record itself or recurse on a nested `.` inside
@@ -2414,6 +2510,7 @@ impl App {
                 // Initial inlay-hint request — refreshed on save thereafter.
                 let line_count = text.lines().count().max(1) as u32;
                 self.lsp.inlay_hint(&path, line_count);
+                self.lsp.code_lens(&path);
                 // Auto-open MD preview alongside, if enabled and not yet open.
                 // Passive (focus stays on the editor we just opened).
                 if self.config.ui.auto_md_preview && is_markdown_path(&path) {
@@ -2544,6 +2641,7 @@ impl App {
             self.lsp.did_save(path, &text);
             let line_count = text.lines().count().max(1) as u32;
             self.lsp.inlay_hint(path, line_count);
+            self.lsp.code_lens(path);
         }
     }
 
@@ -3527,6 +3625,16 @@ impl App {
                         && b.path.as_deref() == Some(path.as_path())
                     {
                         b.inlay_hints = hints;
+                        break;
+                    }
+                }
+            }
+            LspEvent::CodeLens { path, lenses } => {
+                for p in self.panes.iter_mut() {
+                    if let Pane::Editor(b) = p
+                        && b.path.as_deref() == Some(path.as_path())
+                    {
+                        b.code_lenses = lenses;
                         break;
                     }
                 }
@@ -7014,6 +7122,29 @@ impl App {
         self.layout.equalize_splits();
     }
 
+    /// `view.maximize_height` — vim `Ctrl+W _`. Push the active leaf's
+    /// share of its enclosing vertical split toward 90% (vim's "max
+    /// height"). No-op if there's no vertical split.
+    pub fn maximize_split_height(&mut self) {
+        let Some(cur) = self.active else { return };
+        if !self
+            .layout
+            .maximize_split_ratio_for(cur, crate::layout::SplitDir::Vertical)
+        {
+            self.toast("no vertical split to maximize");
+        }
+    }
+    /// `view.maximize_width` — vim `Ctrl+W |`. Same but for horizontal.
+    pub fn maximize_split_width(&mut self) {
+        let Some(cur) = self.active else { return };
+        if !self
+            .layout
+            .maximize_split_ratio_for(cur, crate::layout::SplitDir::Horizontal)
+        {
+            self.toast("no horizontal split to maximize");
+        }
+    }
+
     /// vim `Ctrl+W H/J/K/L` — move the active leaf within its immediate
     /// parent split. `(target_dir, to_second)`:
     ///   H ⇒ (Horizontal, false)  active on the left
@@ -7366,7 +7497,7 @@ impl App {
         }
     }
 
-    pub fn run_sort_lines(&mut self, unique: bool) {
+    pub fn run_sort_lines(&mut self, unique: bool, reverse: bool) {
         let Some(b) = self.active_editor_mut() else {
             self.toast("no active editor");
             return;
@@ -7409,6 +7540,9 @@ impl App {
         lines.sort();
         if unique {
             lines.dedup();
+        }
+        if reverse {
+            lines.reverse();
         }
         let new_block = lines.join("\n");
         if new_block == text[start_byte..end_byte] {
@@ -7567,17 +7701,41 @@ impl App {
         ));
     }
 
-    pub fn run_retab(&mut self) {
-        let tab_w = self.config.editor.tab_width;
+    /// `:retab` (`reverse=false`) ⇒ tabs → N spaces. `:retab!`
+    /// (`reverse=true`) ⇒ leading runs of N spaces (per line) → tabs.
+    /// `N = [editor] tab_width`. Single edit op so undo restores.
+    pub fn run_retab(&mut self, reverse: bool) {
+        let tab_w = self.config.editor.tab_width.max(1);
         let Some(b) = self.active_editor_mut() else {
             self.toast("no active editor");
             return;
         };
         let text = b.editor.text();
-        if !text.contains('\t') {
+        let new_text = if reverse {
+            // Per-line: collapse leading runs of `tab_w` spaces into a tab.
+            let pad: String = " ".repeat(tab_w);
+            let mut out = String::with_capacity(text.len());
+            for (i, line) in text.split('\n').enumerate() {
+                if i > 0 {
+                    out.push('\n');
+                }
+                let mut rest = line;
+                while let Some(stripped) = rest.strip_prefix(&pad as &str) {
+                    out.push('\t');
+                    rest = stripped;
+                }
+                out.push_str(rest);
+            }
+            out
+        } else {
+            if !text.contains('\t') {
+                return;
+            }
+            text.replace('\t', &" ".repeat(tab_w))
+        };
+        if new_text == text {
             return;
         }
-        let new_text = text.replace('\t', &" ".repeat(tab_w));
         let end = text.len();
         let ops = vec![crate::edit_op::EditOp::ReplaceRange {
             start: 0,
@@ -7586,7 +7744,11 @@ impl App {
         }];
         let mut clip = crate::clipboard::Clipboard::new();
         b.apply_edit_ops(ops, &mut clip, 0);
-        self.toast(format!(":retab — tabs → {tab_w} spaces"));
+        if reverse {
+            self.toast(format!(":retab! — leading {tab_w}-space runs → tabs"));
+        } else {
+            self.toast(format!(":retab — tabs → {tab_w} spaces"));
+        }
     }
 
     /// vim `Ctrl+E` / `Ctrl+Y` — scroll the buffer one line down / up
@@ -9541,10 +9703,12 @@ impl App {
             // `:co N` / `:copy N` / `:t N` — duplicate the cursor's line and
             // place the copy after line N. Same destination semantics as `:m`.
             "co" | "copy" | "t" => self.run_move_or_copy_line(rest, true),
-            "sort" => self.run_sort_lines(rest.contains('u')),
+            "sort" => self.run_sort_lines(rest.contains('u'), false),
+            "sort!" => self.run_sort_lines(rest.contains('u'), true),
             // `:retab` — replace tabs with `[editor] tab_width` spaces in
             // the whole buffer.
-            "retab" => self.run_retab(),
+            "retab" => self.run_retab(false),
+            "retab!" => self.run_retab(true),
             // `:term` / `:terminal` — open a shell in a new split (alias for
             // `term.shell` / `Ctrl+T`).
             "term" | "terminal" => {
@@ -9669,6 +9833,101 @@ impl App {
                     0,
                 );
                 self.toast(format!(":%d — cut {len}B"));
+            }
+            // `:bufdo <ex>` / `:tabdo <ex>` / `:argdo <ex>` — run `<ex>`
+            // for every editor pane in turn. mnml has buffers, not tabs;
+            // `:tabdo` is just an alias. `:argdo` would iterate the
+            // command-line argument list in vim — we treat it as bufdo
+            // since mnml doesn't track an arglist.
+            // `:cnext` / `:cprev` / `:cfirst` / `:clast` — quickfix
+            // navigation through the most-recent grep results.
+            "cnext" | "cn" => self.quickfix_navigate(1),
+            "cprev" | "cp" | "cN" => self.quickfix_navigate(-1),
+            "cfirst" | "cfir" => self.quickfix_navigate(i32::MIN),
+            "clast" | "cla" => self.quickfix_navigate(i32::MAX),
+            "ccurrent" | "cc" => self.quickfix_navigate(0),
+            "bufdo" | "tabdo" | "argdo" => {
+                let inner = rest.trim();
+                if inner.is_empty() {
+                    self.toast(":bufdo <ex-command>");
+                    return;
+                }
+                let editor_indices: Vec<usize> = self
+                    .panes
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, p)| {
+                        if matches!(p, Pane::Editor(_)) {
+                            Some(i)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if editor_indices.is_empty() {
+                    self.toast(":bufdo — no editor buffers open");
+                    return;
+                }
+                let count = editor_indices.len();
+                let inner = inner.to_string();
+                for idx in editor_indices {
+                    self.reveal_pane(idx);
+                    self.run_ex_command(&inner);
+                }
+                self.toast(format!(":bufdo · ran on {count} buffer(s)"));
+            }
+            // `:cd <path>` — vim's "change current directory". mnml's
+            // workspace is fixed for the session, so we treat this as
+            // a toast-only acknowledgement (vim users get `:pwd` anyway).
+            "cd" | "chdir" => {
+                let path = rest.trim();
+                if path.is_empty() {
+                    self.toast(format!(":cd — workspace is {}", self.workspace.display()));
+                } else {
+                    self.toast(":cd — workspace is per-session; not changed");
+                }
+            }
+            // `:ab[breviate] <key> <expansion>` — set a vim abbreviation
+            // (Insert-mode word that auto-expands when followed by a
+            // trigger char). Bare `:ab` lists current abbreviations.
+            // `:una[bbreviate] <key>` removes one.
+            "ab" | "abbreviate" => {
+                let rest = rest.trim();
+                if rest.is_empty() {
+                    if self.config.abbreviations.is_empty() {
+                        self.toast(":ab — none defined");
+                    } else {
+                        let mut entries: Vec<String> = self
+                            .config
+                            .abbreviations
+                            .iter()
+                            .map(|(k, v)| {
+                                let preview: String = v.chars().take(20).collect();
+                                let suffix = if v.chars().count() > 20 { "…" } else { "" };
+                                format!("{k}={preview}{suffix}")
+                            })
+                            .collect();
+                        entries.sort();
+                        self.toast(format!(":ab · {}", entries.join("  ")));
+                    }
+                } else if let Some((k, v)) = rest.split_once(char::is_whitespace) {
+                    self.config
+                        .abbreviations
+                        .insert(k.trim().to_string(), v.trim().to_string());
+                    self.toast(format!(":ab {} = {}", k.trim(), v.trim()));
+                } else {
+                    self.toast(":ab <key> <expansion>");
+                }
+            }
+            "una" | "unab" | "unabbreviate" => {
+                let key = rest.trim();
+                if key.is_empty() {
+                    self.toast(":una <key>");
+                } else if self.config.abbreviations.remove(key).is_some() {
+                    self.toast(format!(":una {key}"));
+                } else {
+                    self.toast(format!(":una — no abbreviation for {key}"));
+                }
             }
             "reg" | "registers" | "di" | "display" => {
                 let mut parts: Vec<String> = Vec::new();
@@ -9832,6 +10091,44 @@ impl App {
                     }
                 }
             }
+            // `:setlocal` — like `:set`, but only mutates the active
+            // buffer's per-buffer settings (tab_width / ensure_trailing
+            // _newline / trim_trailing_ws_on_save). Buffers without the
+            // setting fall through silently. Vim canonical for
+            // file-specific overrides without touching the global config.
+            "setlocal" | "setl" => {
+                let opt = rest.trim();
+                let Some(idx) = self.active else {
+                    self.toast(":setlocal — no active editor");
+                    return;
+                };
+                let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+                    self.toast(":setlocal — no active editor");
+                    return;
+                };
+                if let Some(v) = opt.strip_prefix("tab_width=") {
+                    if let Ok(n) = v.trim().parse::<usize>() {
+                        b.editor.set_tab_width(n);
+                        self.toast(format!(":setlocal tab_width={n}"));
+                    } else {
+                        self.toast(format!(":setlocal tab_width={v} — not a number"));
+                    }
+                } else if matches!(opt, "eol" | "endofline") {
+                    b.ensure_trailing_newline = true;
+                    self.toast(":setlocal eol");
+                } else if matches!(opt, "noeol" | "noendofline") {
+                    b.ensure_trailing_newline = false;
+                    self.toast(":setlocal noeol");
+                } else if matches!(opt, "trim" | "trim_trailing_whitespace") {
+                    b.trim_trailing_ws_on_save = true;
+                    self.toast(":setlocal trim");
+                } else if matches!(opt, "notrim" | "notrim_trailing_whitespace") {
+                    b.trim_trailing_ws_on_save = false;
+                    self.toast(":setlocal notrim");
+                } else {
+                    self.toast(format!(":setlocal — unknown option: {opt}"));
+                }
+            }
             "set" => {
                 // `:set` (bare) → list every option's current value as a toast.
                 // `:set input=vim|standard` · `:set theme=…` · `:set tab_width=N`
@@ -9948,6 +10245,22 @@ impl App {
                     self.toast(format!(
                         "inlay hints: {}",
                         if self.config.editor.inlay_hints {
+                            "on"
+                        } else {
+                            "off"
+                        }
+                    ));
+                } else if matches!(opt, "codelens") {
+                    self.config.editor.code_lens = true;
+                    self.toast("code lens: on");
+                } else if matches!(opt, "nocodelens") {
+                    self.config.editor.code_lens = false;
+                    self.toast("code lens: off");
+                } else if matches!(opt, "codelens!" | "invcodelens") {
+                    self.config.editor.code_lens = !self.config.editor.code_lens;
+                    self.toast(format!(
+                        "code lens: {}",
+                        if self.config.editor.code_lens {
                             "on"
                         } else {
                             "off"

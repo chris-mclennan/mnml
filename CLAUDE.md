@@ -256,6 +256,35 @@ new prefix variants (`SurroundDelete`, `SurroundChange(char)`, `SurroundAddCharW
 The add-surround flow uses a two-phase build: motion completes ⇒ `pending_surround_ops`
 holds the select-ops, transition to char-wait ⇒ char arrives, emit
 `[…select…, SurroundSelection, SelectClear]`.
+**Vim abbreviations** — `[abbr]` config table or runtime `:ab <key> <expansion>`; in
+Insert mode after a "trigger" char (whitespace / punctuation), the word just before
+the trigger is replaced with the expansion if it matches. `:una <key>` removes; bare
+`:ab` lists. Hooked into `dispatch_key` after `BufferEvent::Edited` via
+`App::try_expand_abbreviation`.
+**`:bufdo` / `:tabdo` / `:argdo`** — run an ex command on every editor pane in turn.
+mnml has buffers (not tabs / arglist); all three aliases route to the same loop.
+**`:cd`** — toasts the workspace path; mnml's workspace is per-session so we don't
+actually change it.
+**`:setlocal tab_width=N` / `[no]eol` / `[no]trim`** — per-buffer overrides for the
+active editor's `editor.tab_width` / `ensure_trailing_newline` / `trim_trailing_ws_on_save`.
+Vim canonical for file-specific settings without modifying the global config.
+**`:retab!`** — mirror of `:retab` (tabs → spaces): leading runs of N spaces per line
+collapse back to tabs (`N = [editor] tab_width`). Single edit op.
+**`:sort!`** — reverse-order sort (vim canonical). Same machinery as `:sort` with a
+`reverse` flag.
+**Quickfix list** (`:cnext`, `:cprev`, `:cfirst`, `:clast`, `:ccurrent`, `]q`, `[q`)
+— navigate the most-recent grep results without leaving the editor. Selection moves
+inside the open `Pane::Grep` and the cursor jumps to the source line.
+**LSP code lens** — `[editor] code_lens = true` (default; `:set [no]codelens` /
+`:set codelens!`). `LspManager::code_lens(path)` fires `textDocument/codeLens` on
+open + save; reply parsed by `parse_code_lenses` into `Vec<CodeLens{line, title}>`.
+Lenses without a `command` (would require `codeLens/resolve`) are dropped. Renderer
+paints them as dim purple `⚡ <title>` chips at end-of-line. Display-only MVP — clicks
+aren't routed back yet. `initialize` advertises the capability.
+**Vim `Ctrl+W p` / `Ctrl+W _` / `Ctrl+W |`** — focus previously-active leaf
+(alias `buffer.last`); maximize active split's height / width by pushing the
+enclosing parent's ratio to 90/10 toward the side containing the active leaf
+(`Layout::maximize_split_ratio_for`).
 **Vim `.` (dot) repeat** — re-feeds the last "change" through the dispatcher. A change
 is bounded by mode + chord state: starts when the user enters Insert from Normal, when
 operator-pending opens a chord, or when a one-shot Normal-mode mutation happens (`p`,

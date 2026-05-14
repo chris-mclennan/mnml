@@ -117,6 +117,13 @@ pub enum LspEvent {
         path: PathBuf,
         hints: Vec<InlayHint>,
     },
+    /// Result of a `textDocument/codeLens` request — actionable annotations
+    /// (like "5 references" or "Run | Debug") attached to specific lines.
+    /// Rendered as dim chips at end-of-line by the editor view.
+    CodeLens {
+        path: PathBuf,
+        lenses: Vec<CodeLens>,
+    },
     /// A server-side message worth surfacing as a toast.
     Message(String),
 }
@@ -129,6 +136,16 @@ pub struct InlayHint {
     pub line: u32,
     pub character: u32,
     pub label: String,
+}
+
+/// A single code lens — an actionable annotation on a line. We keep the
+/// line + the title (the human-readable text shown to the user). The
+/// command to invoke isn't surfaced in the MVP renderer (clicks would
+/// need rect tracking + a click-handler + workspace/executeCommand wiring).
+#[derive(Debug, Clone)]
+pub struct CodeLens {
+    pub line: u32,
+    pub title: String,
 }
 
 /// A single entry in a `textDocument/documentSymbol` reply. We keep just
@@ -503,6 +520,17 @@ impl LspManager {
         for c in self.clients.values_mut() {
             if c.is_open(path) {
                 c.inlay_hint(path, line_count);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send `textDocument/codeLens` — reply arrives as [`LspEvent::CodeLens`].
+    pub fn code_lens(&mut self, path: &Path) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.code_lens(path);
                 sent = true;
             }
         }

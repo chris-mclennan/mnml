@@ -114,6 +114,9 @@ impl LspClient {
                             "dynamicRegistration": false,
                             "resolveSupport": { "properties": ["label.tooltip", "label.location"] }
                         },
+                        "codeLens": {
+                            "dynamicRegistration": false
+                        },
                         "documentSymbol": {
                             "hierarchicalDocumentSymbolSupport": true,
                             "symbolKind": {
@@ -308,6 +311,19 @@ impl LspClient {
                 "command": cmd.command,
                 "arguments": cmd.arguments,
             }),
+        );
+    }
+
+    /// `textDocument/codeLens` — reply is `CodeLens[]`. Each lens has a
+    /// `range` and an optional `command`; we keep just `(line, title)` for
+    /// the end-of-line chip. The `resolve` step (`codeLens/resolve`) is
+    /// skipped — servers that need it would return lenses without
+    /// `command`, which we silently filter out.
+    pub fn code_lens(&mut self, path: &Path) {
+        self.request_with_path(
+            "textDocument/codeLens",
+            json!({ "textDocument": { "uri": path_to_uri(path) } }),
+            Some(path),
         );
     }
 
@@ -551,6 +567,12 @@ fn handle_message(
                 if let Some(path) = req_path {
                     let hints = parse_inlay_hints(result);
                     let _ = tx.send(LspEvent::InlayHints { path, hints });
+                }
+            }
+            "textDocument/codeLens" => {
+                if let Some(path) = req_path {
+                    let lenses = parse_code_lenses(result);
+                    let _ = tx.send(LspEvent::CodeLens { path, lenses });
                 }
             }
             _ => {}
@@ -871,6 +893,36 @@ fn parse_workspace_symbols(result: &serde_json::Value) -> Vec<crate::lsp::Worksp
 /// Parse a `textDocument/signatureHelp` reply into [`crate::lsp::SignatureHelp`].
 /// Returns `None` for null / empty replies so the open popup can stay put
 /// (the spec says null means "no change", not "dismiss").
+/// Parse a `textDocument/codeLens` reply (`CodeLens[]` or null) into our
+/// flat `(line, title)` form. Lenses without a command (i.e., requiring
+/// `codeLens/resolve` to flesh out) are dropped — the renderer needs the
+/// title text up front.
+pub fn parse_code_lenses(result: &serde_json::Value) -> Vec<crate::lsp::CodeLens> {
+    let mut out = Vec::new();
+    let Some(arr) = result.as_array() else {
+        return out;
+    };
+    for lens in arr {
+        let Some(range) = lens.get("range") else {
+            continue;
+        };
+        let Some(start) = range.get("start") else {
+            continue;
+        };
+        let line = start.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let title = lens
+            .get("command")
+            .and_then(|c| c.get("title"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if !title.is_empty() {
+            out.push(crate::lsp::CodeLens { line, title });
+        }
+    }
+    out
+}
+
 /// Parse a `textDocument/inlayHint` reply (`InlayHint[]` or null) into our
 /// flat `(line, char, label)` form. Labels can be either a plain string or
 /// an array of `InlayHintLabelPart` (we concatenate the parts' values).
@@ -1098,6 +1150,24 @@ mod tests {
         assert_eq!(got2[0].1[0].0.start.line, 0);
         // null ⇒ empty
         assert!(parse_workspace_edit(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn parse_code_lenses_keeps_those_with_titles() {
+        let reply = json!([
+            {
+                "range": { "start": {"line": 5, "character": 0}, "end": {"line": 5, "character": 0} },
+                "command": { "title": "5 references", "command": "rust-analyzer.showReferences" }
+            },
+            {
+                // No command yet — would need codeLens/resolve. Drop.
+                "range": { "start": {"line": 10, "character": 0}, "end": {"line": 10, "character": 0} }
+            }
+        ]);
+        let lenses = parse_code_lenses(&reply);
+        assert_eq!(lenses.len(), 1);
+        assert_eq!(lenses[0].line, 5);
+        assert_eq!(lenses[0].title, "5 references");
     }
 
     #[test]

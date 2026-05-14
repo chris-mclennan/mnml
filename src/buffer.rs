@@ -174,6 +174,10 @@ pub struct Buffer {
     /// positions. Refreshed on save (and after the initial `did_open`
     /// reply lands). Rendered as dim chips in the editor view.
     pub inlay_hints: Vec<crate::lsp::InlayHint>,
+    /// LSP code lenses — actionable annotations (like "5 references" or
+    /// "Run | Debug") attached to specific lines. Rendered as dim chips
+    /// at end-of-line. Refreshed on save.
+    pub code_lenses: Vec<crate::lsp::CodeLens>,
     /// Stamp of the last text-changing edit (used by `[editor] autosave_secs`).
     /// `None` until the first edit; cleared back to `None` on save.
     pub last_edited: Option<Instant>,
@@ -242,6 +246,7 @@ impl Buffer {
             blame: None,
             diagnostics: Vec::new(),
             inlay_hints: Vec::new(),
+            code_lenses: Vec::new(),
             last_edited: None,
             disk_mtime: std::fs::metadata(path).and_then(|m| m.modified()).ok(),
             find: None,
@@ -304,6 +309,7 @@ impl Buffer {
             blame: None,
             diagnostics: Vec::new(),
             inlay_hints: Vec::new(),
+            code_lenses: Vec::new(),
             last_edited: None,
             disk_mtime: None,
             find: None,

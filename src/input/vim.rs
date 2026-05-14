@@ -845,6 +845,7 @@ impl VimInputHandler {
                 let cmd = match key.code {
                     KeyCode::Char('c') => "git.jump_prev_change",
                     KeyCode::Char('d') => "lsp.prev_diagnostic",
+                    KeyCode::Char('q') => "qf.prev",
                     _ => return InputResult::Consumed,
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));
@@ -854,6 +855,7 @@ impl VimInputHandler {
                 let cmd = match key.code {
                     KeyCode::Char('c') => "git.jump_next_change",
                     KeyCode::Char('d') => "lsp.next_diagnostic",
+                    KeyCode::Char('q') => "qf.next",
                     _ => return InputResult::Consumed,
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));
@@ -998,6 +1000,14 @@ impl VimInputHandler {
                     KeyCode::Char('L') => "view.move_split_right",
                     KeyCode::Char('K') => "view.move_split_up",
                     KeyCode::Char('J') => "view.move_split_down",
+                    // `Ctrl+W p` — focus the previously-active leaf
+                    // (vim's `:wincmd p`).
+                    KeyCode::Char('p') => "buffer.last",
+                    // `Ctrl+W _` / `Ctrl+W |` — maximize active split's
+                    // height / width by setting the enclosing parent's
+                    // ratio toward the side that contains us.
+                    KeyCode::Char('_') => "view.maximize_height",
+                    KeyCode::Char('|') => "view.maximize_width",
                     _ => return InputResult::Consumed,
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));

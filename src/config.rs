@@ -42,6 +42,11 @@ pub struct Config {
     /// a single `$0` in the expansion picks the cursor landing spot. Resolved
     /// + expanded by [`crate::snippets`].
     pub snippets: BTreeMap<String, BTreeMap<String, String>>,
+    /// `[abbr]` — vim abbreviations. Each entry is `<trigger> = "<expansion>"`;
+    /// after the trigger word is followed by whitespace / punctuation while
+    /// in Insert mode, the word is replaced with the expansion. Runtime
+    /// `:ab` adds; `:una` removes.
+    pub abbreviations: BTreeMap<String, String>,
     pub browser: BrowserConfig,
 }
 
@@ -94,6 +99,10 @@ pub struct EditorConfig {
     /// LSP request is fired on open + save; hints persist on the buffer
     /// until refreshed.
     pub inlay_hints: bool,
+    /// Show LSP code lenses (`5 references` / `Run | Debug`) as dim
+    /// purple end-of-line chips. Default `true`. The MVP renderer is
+    /// display-only — clicks aren't yet routed back to the server.
+    pub code_lens: bool,
     /// Target line width for `editor.reflow_paragraph` (vim `gqq`) — greedy
     /// word-wrap at this many chars. Default 80.
     pub text_width: usize,
@@ -160,6 +169,7 @@ impl Default for Config {
                 auto_indent: true,
                 format_on_save: false,
                 inlay_hints: true,
+                code_lens: true,
                 text_width: 80,
                 ensure_trailing_newline: true,
             },
@@ -183,6 +193,7 @@ impl Default for Config {
             tasks: BTreeMap::new(),
             startup_tasks: Vec::new(),
             snippets: BTreeMap::new(),
+            abbreviations: BTreeMap::new(),
             browser: BrowserConfig { headless: false },
         }
     }
@@ -210,6 +221,8 @@ struct RawConfig {
     session: RawSession,
     #[serde(default)]
     snippets: BTreeMap<String, BTreeMap<String, String>>,
+    #[serde(default)]
+    abbr: BTreeMap<String, String>,
     #[serde(default)]
     browser: RawBrowser,
 }
@@ -247,6 +260,7 @@ struct RawEditor {
     auto_indent: Option<bool>,
     format_on_save: Option<bool>,
     inlay_hints: Option<bool>,
+    code_lens: Option<bool>,
     text_width: Option<usize>,
     ensure_trailing_newline: Option<bool>,
 }
@@ -325,6 +339,9 @@ impl Config {
         if let Some(v) = raw.editor.inlay_hints {
             self.editor.inlay_hints = v;
         }
+        if let Some(v) = raw.editor.code_lens {
+            self.editor.code_lens = v;
+        }
         if let Some(v) = raw.editor.text_width {
             self.editor.text_width = v.max(8);
         }
@@ -388,6 +405,9 @@ impl Config {
         self.startup_tasks.extend(raw.startup.tasks);
         for (scope, map) in raw.snippets {
             self.snippets.entry(scope).or_default().extend(map);
+        }
+        for (k, v) in raw.abbr {
+            self.abbreviations.insert(k, v);
         }
         if let Some(v) = raw.browser.headless {
             self.browser.headless = v;
