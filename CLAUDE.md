@@ -468,7 +468,14 @@ convention).
 **fzf.vim aliases** — `:Files` (Ctrl+P file picker), `:Buffers` (buffer picker), `:Rg` / `:Ag`
 / `:Lines` (workspace grep — with optional inline query: `:Rg foo`), `:BLines` (find in
 current buffer), `:History` (recent-files picker), `:Commands` (palette), `:Marks` (marks
-picker). Wide adoption among vim users from the fzf ecosystem.
+picker), `:Snippets` (snippet picker). Wide adoption among vim users from the fzf ecosystem.
+**Title-case LSP ex aliases** — `:Format` / `:Hover` / `:Definition` / `:References` /
+`:Symbols` / `:Diagnostics` / `:Rename` / `:CodeAction` / `:CA` / `:QuickFix` / `:QF` route
+to the corresponding `lsp.*` commands. Friendlier than `:lsp` plumbing for vim users coming
+from ALE / coc / nvim-lspconfig conventions. All also surface in `:` cmdline Tab completion.
+**`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
+buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
+for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.
 **Visual-block `I` / `A` / `c` / `s` (multi-line edit)** — the long-asked-for vim power tool.
 In VisualBlock mode, `I` enters Insert at the rect's leftmost column; `A` enters at the
 right-of-rightmost column. `c` / `s` first delete the rectangle (via `EditOp::DeleteBlock`,

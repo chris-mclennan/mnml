@@ -418,7 +418,7 @@ impl Buffer {
     /// the trailing newline, clamps the cursor onto the new end-of-line if it
     /// was sitting in trimmed whitespace, and refreshes syntax highlights.
     /// No-op when nothing needs trimming.
-    fn apply_trim_trailing_ws(&mut self) {
+    pub fn apply_trim_trailing_ws(&mut self) {
         let original = self.editor.text();
         let mut out = String::with_capacity(original.len());
         let mut changed = false;

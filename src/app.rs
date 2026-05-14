@@ -11121,6 +11121,38 @@ impl App {
                 crate::command::run("picker.marks", self);
             }
             "Snippets" => self.snippet_pick(),
+            // `:Trim` — one-shot remove trailing whitespace from every line
+            // in the active buffer (single edit op; one Undo restores).
+            "Trim" | "trimws" => {
+                if let Some(b) = self.active_editor_mut() {
+                    b.apply_trim_trailing_ws();
+                }
+            }
+            // LSP ex aliases — title-case "verbs" for vim users coming from
+            // ALE / coc / nvim-lspconfig conventions.
+            "Format" => {
+                crate::command::run("lsp.format", self);
+            }
+            "Hover" => self.lsp_hover(),
+            "Definition" => self.lsp_goto_definition(),
+            "References" => {
+                crate::command::run("lsp.references", self);
+            }
+            "Symbols" => {
+                crate::command::run("lsp.symbols", self);
+            }
+            "Diagnostics" => {
+                crate::command::run("lsp.diagnostics", self);
+            }
+            "Rename" => {
+                crate::command::run("lsp.rename", self);
+            }
+            "CodeAction" | "CA" => {
+                crate::command::run("lsp.code_action", self);
+            }
+            "QuickFix" | "QF" => {
+                crate::command::run("lsp.quick_fix", self);
+            }
             // `:diff` / `:diffs` / `:diffsplit` — open the diff pane for
             // the active file (alias for the existing `git.diff_file`
             // command). Vim users reach for `:diff` reflexively.
