@@ -421,6 +421,15 @@ these reflexively).
 **`:resize +N` / `:resize -N` / `:vert resize ±N`** — adjust the active split's height /
 width by N percent (clamped to the existing 10..=90 range in `Layout::adjust_split_ratio_for`).
 Vim's exact-rows form (`:resize 20`) skipped — mnml uses ratios, not row counts.
+**`:set tabstop=N` / `:set ts=N` / `:set shiftwidth=N` / `:set sw=N` / `:set softtabstop=N` /
+`:set sts=N`** — all alias to mnml's single `tab_width` setter (vim has three knobs; we have
+one). Works at both `:set` and `:setlocal` scope.
+**`:set autoindent` / `:set ai` / `:set noautoindent` / `:set ai!`** — toggle `[editor]
+auto_indent`. Vim canonical.
+**Vim-compat `:set` no-ops** — `:set expandtab` / `et` / `ignorecase` / `ic` / `smartcase` /
+`scs` / `hlsearch` / `hls` / `incsearch` / `is` all toast "already on" (mnml's default).
+Their `no…` variants toast "not supported". `:set wrap` / `nowrap` toast "wrap not implemented".
+Vim users get a friendly hint instead of "unknown option".
 **Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
 Single-key chord in the `g` prefix.
 **`:1,5j` / `:join`** — bare form joins current+next; ranged form collapses the

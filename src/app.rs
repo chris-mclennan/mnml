@@ -11402,7 +11402,15 @@ impl App {
                     self.toast(":setlocal — no active editor");
                     return;
                 };
-                if let Some(v) = opt.strip_prefix("tab_width=") {
+                if let Some(v) = opt
+                    .strip_prefix("tab_width=")
+                    .or_else(|| opt.strip_prefix("tabstop="))
+                    .or_else(|| opt.strip_prefix("ts="))
+                    .or_else(|| opt.strip_prefix("shiftwidth="))
+                    .or_else(|| opt.strip_prefix("sw="))
+                    .or_else(|| opt.strip_prefix("softtabstop="))
+                    .or_else(|| opt.strip_prefix("sts="))
+                {
                     if let Ok(n) = v.trim().parse::<usize>() {
                         b.editor.set_tab_width(n);
                         self.toast(format!(":setlocal tab_width={n}"));
@@ -11467,7 +11475,19 @@ impl App {
                         b.refresh_highlights();
                         self.toast(format!(":set filetype={name}"));
                     }
-                } else if let Some(v) = rest.strip_prefix("tab_width=") {
+                } else if let Some(v) = rest
+                    .strip_prefix("tab_width=")
+                    .or_else(|| rest.strip_prefix("tabstop="))
+                    .or_else(|| rest.strip_prefix("ts="))
+                    .or_else(|| rest.strip_prefix("shiftwidth="))
+                    .or_else(|| rest.strip_prefix("sw="))
+                    .or_else(|| rest.strip_prefix("softtabstop="))
+                    .or_else(|| rest.strip_prefix("sts="))
+                {
+                    // Vim has separate tabstop / shiftwidth / softtabstop knobs;
+                    // mnml has one (`tab_width`). All aliases route to the same
+                    // setter — close enough for the vim users who set them all
+                    // to the same value anyway.
                     if let Ok(n) = v.trim().parse::<usize>() {
                         self.set_tab_width(n);
                     } else {
@@ -11652,6 +11672,56 @@ impl App {
                             "off"
                         }
                     ));
+                } else if matches!(opt, "autoindent" | "ai") {
+                    self.config.editor.auto_indent = true;
+                    self.toast("auto-indent: on");
+                } else if matches!(opt, "noautoindent" | "noai") {
+                    self.config.editor.auto_indent = false;
+                    self.toast("auto-indent: off");
+                } else if matches!(opt, "autoindent!" | "invautoindent" | "ai!" | "invai") {
+                    self.config.editor.auto_indent = !self.config.editor.auto_indent;
+                    self.toast(format!(
+                        "auto-indent: {}",
+                        if self.config.editor.auto_indent {
+                            "on"
+                        } else {
+                            "off"
+                        }
+                    ));
+                // Vim-compat toasts — settings vim users reach for that mnml
+                // either always-honors or doesn't implement yet. Toast the
+                // current state instead of "unknown option" so muscle memory
+                // doesn't get punished.
+                } else if matches!(
+                    opt,
+                    "expandtab"
+                        | "et"
+                        | "ignorecase"
+                        | "ic"
+                        | "smartcase"
+                        | "scs"
+                        | "hlsearch"
+                        | "hls"
+                        | "incsearch"
+                        | "is"
+                ) {
+                    self.toast(format!(":set {opt} — already on (mnml default)"));
+                } else if matches!(
+                    opt,
+                    "noexpandtab"
+                        | "noet"
+                        | "noignorecase"
+                        | "noic"
+                        | "nosmartcase"
+                        | "noscs"
+                        | "nohlsearch"
+                        | "nohls"
+                        | "noincsearch"
+                        | "nois"
+                ) {
+                    self.toast(format!(":set {opt} — not supported in mnml"));
+                } else if matches!(opt, "wrap" | "nowrap") {
+                    self.toast(format!(":set {opt} — wrap not implemented yet"));
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }
