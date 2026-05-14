@@ -404,6 +404,13 @@ bracket-match. `<count>|` jumps to character column N on the current line (1-bas
 **`:close` / `:clo` / `:hide`** — vim canonical "close current window" aliases for
 `:bd` (dirty-prompt path included). **`:e +N <path>`** — open a file and jump to line N
 (vim canonical "open at line"); `:e +<path>` (no N) opens at last line.
+**Vim `W` / `B` / `E` / `ge` / `gE` (WORD motions)** — whitespace-delimited cousins of
+`w` / `b` / `e` (which split on punctuation), plus the end-of-previous-word variants. New
+`EditOp::MoveBigWordRight` / `MoveBigWordLeft` / `MoveBigWordEnd` / `MoveBigWordEndBack`
+and `MoveWordEndBack`. `ge` / `gE` are two-phase scans (back over the current run, then
+back over whitespace, landing on the last char of the prior run); the forward `E` is the
+classic skip-whitespace-then-walk-until-next-is-ws pattern. Compose with operators
+(`dW`, `dge`, `cE`, etc.).
 **Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
 Single-key chord in the `g` prefix.
 **`:1,5j` / `:join`** — bare form joins current+next; ranged form collapses the

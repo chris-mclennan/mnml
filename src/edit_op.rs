@@ -13,6 +13,17 @@ pub enum EditOp {
     MoveWordLeft,
     MoveWordRight,
     MoveWordEnd,
+    /// vim `ge` — move to the END of the previous word (one char left of the
+    /// boundary `MoveWordLeft` lands on, walking past whitespace first).
+    MoveWordEndBack,
+    /// vim `W` — move to the start of the next WORD (whitespace-delimited).
+    MoveBigWordRight,
+    /// vim `B` — move to the start of the previous WORD (whitespace-delimited).
+    MoveBigWordLeft,
+    /// vim `E` — move to the end of the current/next WORD (whitespace-delimited).
+    MoveBigWordEnd,
+    /// vim `gE` — move to the end of the previous WORD (whitespace-delimited).
+    MoveBigWordEndBack,
     MoveLineStart,
     MoveLineFirstNonWs,
     /// vim `+` (or `<CR>` in normal) — move down N lines then to the first
@@ -304,6 +315,11 @@ impl EditOp {
             | MoveWordLeft
             | MoveWordRight
             | MoveWordEnd
+            | MoveWordEndBack
+            | MoveBigWordRight
+            | MoveBigWordLeft
+            | MoveBigWordEnd
+            | MoveBigWordEndBack
             | MoveLineStart
             | MoveLineFirstNonWs
             | MoveDownFirstNonWs

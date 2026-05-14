@@ -822,6 +822,11 @@ impl Editor {
             MoveWordRight => self.move_word_right(),
             MoveWordLeft => self.move_word_left(),
             MoveWordEnd => self.move_word_end(),
+            MoveWordEndBack => self.move_word_end_back(),
+            MoveBigWordRight => self.move_big_word_right(),
+            MoveBigWordLeft => self.move_big_word_left(),
+            MoveBigWordEnd => self.move_big_word_end(),
+            MoveBigWordEndBack => self.move_big_word_end_back(),
             MoveLineStart => self.cursor = self.line_start(self.current_line()),
             MoveLineFirstNonWs => {
                 let line = self.current_line();
@@ -2251,6 +2256,132 @@ impl Editor {
         }
         self.cursor = i;
     }
+    /// vim `ge` — end of the previous word. Two-phase: step back over the
+    /// current word's run (so we're not still on it), then step back over
+    /// whitespace, leaving the cursor on the last char of the prior word.
+    fn move_word_end_back(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let mut i = self.prev_char_boundary(self.cursor);
+        // step back over the current non-whitespace run
+        let cur_class = self.char_at(i).map(class_of);
+        if let Some(cls) = cur_class
+            && cls != CharClass::Space
+        {
+            while i > 0 {
+                match self.char_at(i) {
+                    Some(c) if class_of(c) == cls => i = self.prev_char_boundary(i),
+                    _ => break,
+                }
+            }
+        }
+        // step back over whitespace
+        while i > 0 {
+            match self.char_at(i) {
+                Some(c) if class_of(c) == CharClass::Space => i = self.prev_char_boundary(i),
+                _ => break,
+            }
+        }
+        self.cursor = i;
+    }
+    /// vim `W` — start of next WORD (whitespace-delimited). Skips the current
+    /// non-whitespace run, then any whitespace run, lands at the first char of
+    /// the next non-whitespace run.
+    fn move_big_word_right(&mut self) {
+        let len = self.text.len();
+        if self.cursor >= len {
+            return;
+        }
+        let mut i = self.cursor;
+        // skip current non-whitespace run
+        while i < len {
+            match self.char_at(i) {
+                Some(c) if !c.is_whitespace() => i = self.next_char_boundary(i),
+                _ => break,
+            }
+        }
+        // skip whitespace
+        while i < len {
+            match self.char_at(i) {
+                Some(c) if c.is_whitespace() => i = self.next_char_boundary(i),
+                _ => break,
+            }
+        }
+        self.cursor = i;
+    }
+    /// vim `B` — start of previous WORD (whitespace-delimited).
+    fn move_big_word_left(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let mut i = self.cursor;
+        // step back over whitespace
+        while i > 0 {
+            match self.char_before(i) {
+                Some(c) if c.is_whitespace() => i = self.prev_char_boundary(i),
+                _ => break,
+            }
+        }
+        // step back to the start of the current non-whitespace run
+        while i > 0 {
+            match self.char_before(i) {
+                Some(c) if !c.is_whitespace() => i = self.prev_char_boundary(i),
+                _ => break,
+            }
+        }
+        self.cursor = i;
+    }
+    /// vim `E` — end of current/next WORD (whitespace-delimited). Walks forward
+    /// past any whitespace, then to the last char of the non-whitespace run.
+    fn move_big_word_end(&mut self) {
+        let len = self.text.len();
+        if self.cursor >= len {
+            return;
+        }
+        let mut i = self.next_char_boundary(self.cursor);
+        // skip whitespace
+        while i < len {
+            match self.char_at(i) {
+                Some(c) if c.is_whitespace() => i = self.next_char_boundary(i),
+                _ => break,
+            }
+        }
+        // walk until the cell *after* i is whitespace or EOF
+        while i < len {
+            let nxt = self.next_char_boundary(i);
+            match self.char_at(nxt) {
+                Some(c) if !c.is_whitespace() => i = nxt,
+                _ => break,
+            }
+        }
+        self.cursor = i;
+    }
+    /// vim `gE` — end of previous WORD (whitespace-delimited). Two-phase:
+    /// step back over the current non-whitespace run, then over whitespace,
+    /// landing on the last char of the prior WORD.
+    fn move_big_word_end_back(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let mut i = self.prev_char_boundary(self.cursor);
+        // step back over the current non-whitespace run (we're inside or at
+        // the end of the current WORD)
+        while i > 0 {
+            match self.char_at(i) {
+                Some(c) if !c.is_whitespace() => i = self.prev_char_boundary(i),
+                _ => break,
+            }
+        }
+        // step back over whitespace
+        while i > 0 {
+            match self.char_at(i) {
+                Some(c) if c.is_whitespace() => i = self.prev_char_boundary(i),
+                _ => break,
+            }
+        }
+        self.cursor = i;
+    }
     fn word_left_target(&self) -> usize {
         let mut i = self.cursor;
         while i > 0 {
@@ -3312,5 +3443,40 @@ mod tests {
         let name = p.file_name().unwrap().to_string_lossy().to_string();
         assert!(name.ends_with(".json"));
         assert_eq!(name.len(), 16 + ".json".len());
+    }
+
+    #[test]
+    fn big_word_motions() {
+        // WORDs are whitespace-delimited — "foo.bar" is one WORD; "foo bar"
+        // is two. The (non-big) word motions split on punctuation; the big
+        // ones don't.
+        let (mut e, mut c) = ed("foo.bar baz/qux");
+        // Cursor at 0 ('f'). `W` ⇒ start of next WORD = byte 8 ('b').
+        e.apply(MoveBigWordRight, 10, &mut c);
+        assert_eq!(e.cursor(), 8, "W from 0");
+        // `B` ⇒ start of previous WORD = byte 0.
+        e.apply(MoveBigWordLeft, 10, &mut c);
+        assert_eq!(e.cursor(), 0, "B from 8");
+        // `E` ⇒ end of first WORD ("foo.bar") = byte 6 (the 'r').
+        e.apply(MoveBigWordEnd, 10, &mut c);
+        assert_eq!(e.cursor(), 6, "E from 0");
+        // From byte 6, `E` again ⇒ end of "baz/qux" = byte 14.
+        e.apply(MoveBigWordEnd, 10, &mut c);
+        assert_eq!(e.cursor(), 14, "E from 6");
+        // `gE` from byte 14 ⇒ end of previous WORD = byte 6.
+        e.apply(MoveBigWordEndBack, 10, &mut c);
+        assert_eq!(e.cursor(), 6, "gE from 14");
+    }
+
+    #[test]
+    fn ge_jumps_to_end_of_prev_word() {
+        let (mut e, mut c) = ed("hello world foo");
+        // Cursor on 'f' (start of "foo", byte 12). `ge` ⇒ end of "world" = byte 10.
+        e.cursor = 12;
+        e.apply(MoveWordEndBack, 10, &mut c);
+        assert_eq!(e.cursor(), 10);
+        // From byte 10 ('d'), `ge` again ⇒ end of "hello" = byte 4 ('o').
+        e.apply(MoveWordEndBack, 10, &mut c);
+        assert_eq!(e.cursor(), 4);
     }
 }

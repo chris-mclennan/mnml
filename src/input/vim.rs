@@ -269,6 +269,10 @@ impl VimInputHandler {
             KeyCode::Char('w') => MoveWordRight,
             KeyCode::Char('b') => MoveWordLeft,
             KeyCode::Char('e') => MoveWordEnd,
+            // WORD motions (whitespace-delimited): `W` / `B` / `E`.
+            KeyCode::Char('W') => MoveBigWordRight,
+            KeyCode::Char('B') => MoveBigWordLeft,
+            KeyCode::Char('E') => MoveBigWordEnd,
             KeyCode::Char('0') | KeyCode::Home => MoveLineStart,
             KeyCode::Char('^') | KeyCode::Char('_') => MoveLineFirstNonWs,
             KeyCode::Char('$') | KeyCode::End => MoveLineEnd,
@@ -591,6 +595,11 @@ impl VimInputHandler {
                     }
                     // `g_` — move to last non-blank char of the current line.
                     KeyCode::Char('_') => InputResult::Ops(vec![MoveLineLastNonWs]),
+                    // `ge` / `gE` — end of previous word / WORD. Motions, so
+                    // they compose with operators (`dge` deletes back to the
+                    // end of the prior word).
+                    KeyCode::Char('e') => InputResult::Ops(Self::repeated(MoveWordEndBack, n)),
+                    KeyCode::Char('E') => InputResult::Ops(Self::repeated(MoveBigWordEndBack, n)),
                     // `g0` / `g^` / `g$` / `gj` / `gk` / `gm` — display-line
                     // motions. mnml doesn't wrap (yet), so each is an alias for
                     // the logical-line equivalent. `gm` ⇒ middle of the
