@@ -3586,20 +3586,32 @@ impl App {
         });
         let prior_active = self.active;
         let anchor = near.or(prior_active);
-        let new_id = if let Some(a) = anchor.filter(|&i| i < self.panes.len()) {
-            self.split_leaf_with(a, crate::layout::SplitDir::Horizontal, preview)
-        } else {
-            self.panes.push(preview);
-            let id = self.panes.len() - 1;
-            self.layout = Layout::Leaf(id);
-            id
-        };
+        // Two flows:
+        //   focus_preview = true  ⇒ explicit `markdown.preview` /
+        //     right-click "Preview markdown". Replace the active leaf so the
+        //     preview takes the full pane (no half-screen split). The source
+        //     editor stays in the buffer list as a background tab.
+        //   focus_preview = false ⇒ passive auto-open
+        //     (`[ui] auto_md_preview`). Split alongside so the user can edit
+        //     and read at the same time.
         if focus_preview {
-            self.active = Some(new_id);
-            self.focus = Focus::Pane;
+            self.panes.push(preview);
+            let new_id = self.panes.len() - 1;
+            // `reveal_pane` swaps the active leaf to the preview without
+            // touching the layout's split structure. If there's no active
+            // leaf, it makes the preview the only leaf.
+            self.reveal_pane(new_id);
         } else {
-            // `split_leaf_with` doesn't touch `self.active`, but be explicit
-            // — passive auto-open should leave focus exactly where it was.
+            let new_id = if let Some(a) = anchor.filter(|&i| i < self.panes.len()) {
+                self.split_leaf_with(a, crate::layout::SplitDir::Horizontal, preview)
+            } else {
+                self.panes.push(preview);
+                let id = self.panes.len() - 1;
+                self.layout = Layout::Leaf(id);
+                id
+            };
+            // Passive auto-open: leave focus where it was.
+            let _ = new_id;
             self.active = prior_active;
         }
     }
@@ -8240,6 +8252,12 @@ impl App {
             // `:term` / `:terminal` — open a shell in a new split (alias for
             // `term.shell` / `Ctrl+T`).
             "term" | "terminal" => self.open_shell(),
+            // `:version` — toast the build sha (formerly the bottom-right
+            // statusline chip).
+            "version" | "ver" => {
+                let ver = env!("MNML_GIT_SHA");
+                self.toast(format!("mnml {ver}"));
+            }
             "e" | "edit" => {
                 if rest.is_empty() {
                     self.reload_active(false);

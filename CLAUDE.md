@@ -91,7 +91,7 @@ via `App::run_ex_command` (`:sp [path]` / `:vsp [path]` split + open; `:only` co
 pane; `:pwd` toasts the workspace path; `:tabnew <path>` aliases to `open_path` since mnml has
 buffers, not tabs; `:sort [u]` sorts lines [selection or whole buffer; `u` de-dupes]; `:retab`
 replaces tabs with `[editor] tab_width` spaces buffer-wide; `:term`/`:terminal` opens a shell pty
-in a split [alias for `term.shell` / `Ctrl+T`]);
+in a split [alias for `term.shell` / `Ctrl+T`]; `:version` toasts the build SHA);
 **`:%s/old/new/[flags]`** — vim-style global substitute via `parse_substitute` + `App::run_substitute`:
 splits on unescaped `/` (`\/`/`\\`/`\n`/`\t` understood inside the fields), `g` is implicit (whole buffer
 always), `i` makes the match case-insensitive (`buffer::find_all_ci_ascii` vs `app::find_all_case_sensitive`),
@@ -230,10 +230,11 @@ toml/css/bash/html/md/c/cpp/rb/java/cs/lua/yaml/scala/ex/hs/php/swift/make/zig/n
 languages so fenced code blocks in markdown / embedded HTML·CSS·JS get highlighted too, and the
 markdown `text.*` captures are in `HIGHLIGHT_NAMES`) + indent guides; hybrid relative line numbers (`[ui] relative_line_numbers`,
 `:set [no]relativenumber`, `view.toggle_relative_numbers` — cursor line absolute, others = distance).
-**Build-version chip** — `build.rs::emit_git_sha` reads `git rev-parse --short=9 HEAD` (+ `git status --porcelain` for a
-`-dirty` suffix) and emits it as `cargo:rustc-env=MNML_GIT_SHA=…`; the statusline reads `env!("MNML_GIT_SHA")` and renders
-it as a small chip at the right edge so the user can tell at a glance which build is running (the `./run.sh restart`
-"is it actually picking up my changes?" question). Falls back to `build-<unix-seconds>` if git isn't available.
+**Build version (`MNML_GIT_SHA`)** — `build.rs::emit_git_sha` reads `git rev-parse --short=9 HEAD`
+(+ `git status --porcelain` for a `-dirty` suffix) and emits it as `cargo:rustc-env=MNML_GIT_SHA=…`.
+Surfaced via the `:version` ex-command (toasts `mnml <sha>`); a future settings/about pane will own
+the long-form display. Used to live as a chip at the right edge of the statusline — too cluttered
+for the steady state, so removed. Falls back to `build-<unix-seconds>` if git isn't available.
 **Tree section header** — VS-Code Explorer style: the rail starts with a `> WORKSPACE-NAME` row that's clickable; default
 expanded (`v WORKSPACE-NAME` + file list). Two independent state bits — `tree_visible` (rail in/out, `Ctrl+B` /
 `view.toggle_tree`) and `tree_root_expanded` (the section's collapse, `view.toggle_tree_section` / click on the header).
@@ -404,11 +405,14 @@ markers unwrapped, long lines word-wrapped to the pane width via `md_preview::wr
 live-updated on every edit (any of `.md`/`.markdown`/`.mdx`/`.mkd`). **Right-click "Preview
 markdown"** — entries surface on the file-tree context menu and the bufferline tab context
 menu when the file is markdown; both run `App::open_md_preview_for_path(path, near, focus_preview=true)`
-which focuses an existing preview of the same path, or splits a new one off the clicked pane
-(and pulls the in-memory text from any open editor for that file so the preview tracks unsaved
-edits). **Auto-open** — `[ui] auto_md_preview = true` (off by default; `:set [no]automdpreview`
-runtime toggle): on every `open_path` for a markdown file, also open the preview pane next to it
-in passive mode (`focus_preview=false`, so focus stays on the editor where the user reached).
+which focuses an existing preview of the same path, or **swaps the preview into the active leaf**
+(takes the full pane — the source becomes a background buffer in the bufferline). The in-memory
+text is pulled from any open editor for that file so the preview tracks unsaved edits.
+**Auto-open** — `[ui] auto_md_preview = true` (off by default; `:set [no]automdpreview` runtime
+toggle): on every `open_path` for a markdown file, opens the preview pane *split alongside* in
+passive mode (`focus_preview=false`, so focus stays on the editor — the side-by-side workflow).
+The two flows differ deliberately: explicit triggers replace (full width because that's what the
+user reached for); auto-open splits (you wanted the editor open AND a live preview).
 Idempotent — opening the same file twice doesn't re-split.
 Git: branch + change counts in the statusline + tree tint + per-row git-state badge in the
 tree (`M`/`A`/`?`/`!` right-aligned, colour-matched to the existing tint — modified/staged/

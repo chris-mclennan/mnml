@@ -1,0 +1,17 @@
+# Manual `markdown.preview` (and the right-click "Preview markdown" menu
+# entry, which uses the same path) replaces the active leaf so the preview
+# takes the full pane — not a half-screen split.
+
+write notes.md "# Title\n\nSome **bold** text.\n"
+open notes.md
+
+command markdown.preview
+
+# Preview pane is now active and full-width. Its title chip carries `◳`.
+expect pane "◳"
+expect screen contains "Some bold text"
+
+# The original editor body is hidden (preview replaced the leaf), but the
+# source `notes.md` is still in the buffer list — bufferline shows both
+# tabs (preview + source).
+expect screen contains "notes.md"
