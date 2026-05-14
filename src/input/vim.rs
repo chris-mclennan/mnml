@@ -248,6 +248,18 @@ impl VimInputHandler {
                     KeyCode::Char('R') => {
                         InputResult::App(AppCommand::RunCommand("editor.unfold_all".into()))
                     }
+                    // vim cursor-position scroll chords: `zz` (center),
+                    // `zt` (top), `zb` (bottom). Keep the cursor put,
+                    // shift the viewport.
+                    KeyCode::Char('z') => {
+                        InputResult::App(AppCommand::RunCommand("view.cursor_to_center".into()))
+                    }
+                    KeyCode::Char('t') => {
+                        InputResult::App(AppCommand::RunCommand("view.cursor_to_top".into()))
+                    }
+                    KeyCode::Char('b') => {
+                        InputResult::App(AppCommand::RunCommand("view.cursor_to_bottom".into()))
+                    }
                     _ => InputResult::Consumed,
                 };
             }

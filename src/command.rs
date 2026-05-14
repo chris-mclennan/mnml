@@ -345,6 +345,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.reflow_paragraph_at_cursor(),
         },
         Command {
+            id: "view.cursor_to_center",
+            title: "Scroll cursor to viewport center (vim `zz`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.scroll_cursor_in_view(0.5),
+        },
+        Command {
+            id: "view.cursor_to_top",
+            title: "Scroll cursor to viewport top (vim `zt`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.scroll_cursor_in_view(0.0),
+        },
+        Command {
+            id: "view.cursor_to_bottom",
+            title: "Scroll cursor to viewport bottom (vim `zb`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.scroll_cursor_in_view(1.0),
+        },
+        Command {
             id: "editor.jump_prev_edit",
             title: "Jump to previous edit position (vim `g;`)",
             group: "editor",

@@ -6503,6 +6503,37 @@ impl App {
         }
     }
 
+    /// vim `zz` / `zt` / `zb` — adjust the scroll position so the cursor
+    /// lands at the center / top / bottom of the visible viewport.
+    /// `frac_from_top`: 0.0 = top, 0.5 = middle, 1.0 = bottom (clamped).
+    /// Reads the active pane's rect from `self.rects` for the viewport
+    /// height; no-op when the rect isn't recorded yet (a pane that hasn't
+    /// rendered).
+    pub fn scroll_cursor_in_view(&mut self, frac_from_top: f32) {
+        let Some(cur) = self.active else { return };
+        let h = self
+            .rects
+            .editor_panes
+            .iter()
+            .find(|(_, p)| *p == cur)
+            .map(|(r, _)| r.height as usize)
+            .unwrap_or(0);
+        // Account for the optional breadcrumb row (1 row at the top of the
+        // editor area when the config flag is on).
+        let body_h = h.saturating_sub(if self.config.editor.breadcrumb { 1 } else { 0 });
+        if body_h == 0 {
+            return;
+        }
+        let Some(b) = self.active_editor_mut() else {
+            return;
+        };
+        let cur_row = b.editor.row_col().0;
+        let frac = frac_from_top.clamp(0.0, 1.0);
+        let offset = (body_h as f32 * frac) as usize;
+        // New scroll = cursor - offset, clamped at zero.
+        b.scroll = cur_row.saturating_sub(offset);
+    }
+
     /// `editor.jump_prev_edit` — vim `g;`. Walks back through the active
     /// buffer's change list (per-edit `(row, col)` history) and places the
     /// cursor there. Pushes the *current* position onto the nav-back stack

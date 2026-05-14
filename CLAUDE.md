@@ -152,6 +152,11 @@ to find the range, splits into words, rebuilds with line-wrapping. Preserves the
 whitespace as the indent on every wrapped line so indented prose stays indented. The `gqq` chord routes
 through `editor.reflow_paragraph` (the App method reads `text_width` from config). Operator-pending
 forms (`gqap`, `gq` + motion) aren't wired yet — `gqq` is the bounded MVP.
+**Vim `zz` / `zt` / `zb`** — scroll the viewport so the cursor lands at center / top / bottom (the
+cursor itself doesn't move). New `App::scroll_cursor_in_view(frac)` adjusts `buf.scroll` from the
+cursor row + the active pane's recorded rect height (accounts for the breadcrumb row when on).
+Wired into the `ZFold` prefix; commands `view.cursor_to_center` / `_top` / `_bottom` register them
+for the palette too.
 **Vim `Ctrl+A` / `Ctrl+X`** — increment / decrement the next decimal integer on the cursor's line.
 Counts apply: `5<C-a>` adds 5, `3<C-x>` subtracts 3. New `EditOp::ChangeNumberAtCursor{delta}`
 walks forward from cursor to the next digit, picks up a leading `-` only when it qualifies as a
