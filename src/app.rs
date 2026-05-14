@@ -2267,6 +2267,106 @@ impl App {
     }
 
     /// `:cnext` / `:cprev` / `:cfirst` / `:clast` / `]q` / `[q` —
+    /// vim `Ctrl+W f` — split the active leaf horizontally, then open
+    /// the file under the cursor in the new pane (vim canonical). Reuses
+    /// `open_path_at_cursor` after splitting.
+    pub fn split_open_file_under_cursor(&mut self) {
+        // Pre-split, then route through the existing path-at-cursor logic.
+        self.split_active(crate::layout::SplitDir::Vertical);
+        self.open_path_at_cursor();
+    }
+
+    /// vim `Ctrl+W d` — split the active leaf horizontally then fire
+    /// `lsp.goto_definition`. The reply opens the def in the new pane.
+    pub fn split_goto_definition(&mut self) {
+        self.split_active(crate::layout::SplitDir::Vertical);
+        self.lsp_goto_definition();
+    }
+
+    /// vim `Ctrl+W n` — open a fresh scratch buffer in a horizontal
+    /// split below the active leaf.
+    pub fn split_new_scratch(&mut self) {
+        self.split_active(crate::layout::SplitDir::Vertical);
+        let buf = crate::buffer::Buffer::scratch(&self.config);
+        self.panes.push(Pane::Editor(buf));
+        let new_id = self.panes.len() - 1;
+        self.reveal_pane(new_id);
+    }
+
+    /// vim `Ctrl+R Ctrl+W` (insert) — insert the identifier under the
+    /// cursor at the cursor position.
+    pub fn insert_word_under_cursor(&mut self) {
+        let Some(idx) = self.active else { return };
+        let Some(Pane::Editor(b)) = self.panes.get(idx) else {
+            return;
+        };
+        let word = b.editor.word_under_cursor().to_string();
+        if word.is_empty() {
+            return;
+        }
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+            let cur = b.editor.cursor();
+            b.apply_edit_ops(
+                vec![crate::edit_op::EditOp::ReplaceRange {
+                    start: cur,
+                    end: cur,
+                    text: word,
+                }],
+                &mut self.clipboard,
+                0,
+            );
+        }
+    }
+
+    /// vim `Ctrl+R Ctrl+A` (insert) — like `Ctrl+R Ctrl+W` but uses
+    /// vim's "WORD" definition (whitespace-delimited; punctuation kept).
+    pub fn insert_bigword_under_cursor(&mut self) {
+        let Some(idx) = self.active else { return };
+        let Some(Pane::Editor(b)) = self.panes.get(idx) else {
+            return;
+        };
+        let text = b.editor.text();
+        let cur = b.editor.cursor();
+        let bytes = text.as_bytes();
+        let mut s = cur;
+        while s > 0 {
+            let prev = match text[..s].chars().next_back() {
+                Some(c) => c,
+                None => break,
+            };
+            if prev.is_whitespace() {
+                break;
+            }
+            s -= prev.len_utf8();
+        }
+        let mut e = cur;
+        while e < bytes.len() {
+            let ch = match text[e..].chars().next() {
+                Some(c) => c,
+                None => break,
+            };
+            if ch.is_whitespace() {
+                break;
+            }
+            e += ch.len_utf8();
+        }
+        if s == e {
+            return;
+        }
+        let word = text[s..e].to_string();
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+            b.apply_edit_ops(
+                vec![crate::edit_op::EditOp::ReplaceRange {
+                    start: cur,
+                    end: cur,
+                    text: word,
+                }],
+                &mut self.clipboard,
+                0,
+            );
+        }
+    }
+
     /// navigate the most-recent grep result list (mnml's stand-in for
     /// vim's quickfix list). The selection moves inside the open
     /// `Pane::Grep` and the cursor jumps to that hit's source location.
@@ -9841,6 +9941,37 @@ impl App {
             // since mnml doesn't track an arglist.
             // `:cnext` / `:cprev` / `:cfirst` / `:clast` — quickfix
             // navigation through the most-recent grep results.
+            // `:earlier N` / `:later N` — walk N undo/redo steps. Vim's
+            // duration syntax (`5s`, `10m`) is skipped — we don't
+            // timestamp snapshots yet.
+            "earlier" | "ea" => {
+                let n: usize = rest.trim().parse().unwrap_or(1);
+                let Some(idx) = self.active else { return };
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    let viewport = 20;
+                    for _ in 0..n {
+                        b.editor
+                            .apply(crate::edit_op::EditOp::Undo, viewport, &mut self.clipboard);
+                    }
+                    b.recompute_dirty();
+                    b.refresh_highlights();
+                    self.toast(format!(":earlier {n}"));
+                }
+            }
+            "later" | "lat" => {
+                let n: usize = rest.trim().parse().unwrap_or(1);
+                let Some(idx) = self.active else { return };
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    let viewport = 20;
+                    for _ in 0..n {
+                        b.editor
+                            .apply(crate::edit_op::EditOp::Redo, viewport, &mut self.clipboard);
+                    }
+                    b.recompute_dirty();
+                    b.refresh_highlights();
+                    self.toast(format!(":later {n}"));
+                }
+            }
             "cnext" | "cn" => self.quickfix_navigate(1),
             "cprev" | "cp" | "cN" => self.quickfix_navigate(-1),
             "cfirst" | "cfir" => self.quickfix_navigate(i32::MIN),

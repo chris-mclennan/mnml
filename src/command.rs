@@ -434,6 +434,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.scroll_buffer(-1),
         },
         Command {
+            id: "view.split_goto_definition",
+            title: "Split + jump to definition (vim `Ctrl+W d`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.split_goto_definition(),
+        },
+        Command {
+            id: "view.split_open_file_under_cursor",
+            title: "Split + open file under cursor (vim `Ctrl+W f`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.split_open_file_under_cursor(),
+        },
+        Command {
+            id: "view.split_new_scratch",
+            title: "Split + open a fresh scratch buffer (vim `Ctrl+W n`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.split_new_scratch(),
+        },
+        Command {
             id: "view.maximize_height",
             title: "Maximize active split height (vim `Ctrl+W _`)",
             group: "view",
@@ -537,6 +558,20 @@ fn builtin_commands() -> Vec<Command> {
             group: "go",
             keys: &[],
             run: |app| app.open_marks_picker(),
+        },
+        Command {
+            id: "editor.insert_word_under_cursor",
+            title: "Insert identifier under cursor (vim insert `Ctrl+R Ctrl+W`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.insert_word_under_cursor(),
+        },
+        Command {
+            id: "editor.insert_bigword_under_cursor",
+            title: "Insert WORD under cursor (vim insert `Ctrl+R Ctrl+A`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.insert_bigword_under_cursor(),
         },
         Command {
             id: "qf.next",

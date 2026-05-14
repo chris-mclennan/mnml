@@ -313,6 +313,21 @@ impl VimInputHandler {
                 if valid {
                     return InputResult::Ops(vec![SetRegisterHint(Some(c)), Paste]);
                 }
+                // `Ctrl+R Ctrl+W` — paste the word under the cursor inline
+                // (vim canonical). Routed through an App command since
+                // word-under-cursor isn't an EditOp primitive.
+                if c == 'w' && ctrl {
+                    return InputResult::App(AppCommand::RunCommand(
+                        "editor.insert_word_under_cursor".into(),
+                    ));
+                }
+                // `Ctrl+R Ctrl+A` — paste WORD (whitespace-delimited) under
+                // the cursor.
+                if c == 'a' && ctrl {
+                    return InputResult::App(AppCommand::RunCommand(
+                        "editor.insert_bigword_under_cursor".into(),
+                    ));
+                }
             }
             return InputResult::Consumed;
         }
@@ -499,6 +514,20 @@ impl VimInputHandler {
                     // a linewise paste). Vim convention.
                     KeyCode::Char('p') => InputResult::Ops(vec![PasteAfterEnd]),
                     KeyCode::Char('P') => InputResult::Ops(vec![PasteBeforeEnd]),
+                    // `g*` / `g#` — like `*` / `#` but match the word as a
+                    // substring (no word-boundary requirement). mnml's
+                    // find is already substring-based (no `\b` in literal
+                    // mode) so we route to the same commands.
+                    KeyCode::Char('*') => {
+                        InputResult::App(AppCommand::RunCommand("find.word_forward".into()))
+                    }
+                    KeyCode::Char('#') => {
+                        InputResult::App(AppCommand::RunCommand("find.word_backward".into()))
+                    }
+                    // `gt` / `gT` — vim "next/prev tab". mnml has buffers,
+                    // not tabs; route to next/prev buffer.
+                    KeyCode::Char('t') => InputResult::App(AppCommand::NextBuffer),
+                    KeyCode::Char('T') => InputResult::App(AppCommand::PrevBuffer),
                     KeyCode::Char(c @ ('n' | 'N')) => {
                         let forward = c == 'n';
                         if let Some(op) = pending_op {
@@ -991,6 +1020,9 @@ impl VimInputHandler {
                     KeyCode::Char('=') => "view.equalize_splits",
                     KeyCode::Char('o') => "view.close_others",
                     KeyCode::Char('r') => "view.rotate_splits",
+                    // `Ctrl+W x` — exchange active leaf with sibling (vim
+                    // canonical alias for the same operation).
+                    KeyCode::Char('x') => "view.rotate_splits",
                     KeyCode::Char('+') => "view.split_grow_height",
                     KeyCode::Char('-') => "view.split_shrink_height",
                     KeyCode::Char('>') => "view.split_grow_width",
@@ -1003,6 +1035,14 @@ impl VimInputHandler {
                     // `Ctrl+W p` — focus the previously-active leaf
                     // (vim's `:wincmd p`).
                     KeyCode::Char('p') => "buffer.last",
+                    // `Ctrl+W f` — split + open the file under the cursor.
+                    KeyCode::Char('f') => "view.split_open_file_under_cursor",
+                    // `Ctrl+W d` — split + goto definition (vim canonical
+                    // for tag-stack split).
+                    KeyCode::Char('d') => "view.split_goto_definition",
+                    // `Ctrl+W n` — open a fresh empty buffer in a horizontal
+                    // split below.
+                    KeyCode::Char('n') => "view.split_new_scratch",
                     // `Ctrl+W _` / `Ctrl+W |` — maximize active split's
                     // height / width by setting the enclosing parent's
                     // ratio toward the side that contains us.

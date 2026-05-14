@@ -281,10 +281,23 @@ open + save; reply parsed by `parse_code_lenses` into `Vec<CodeLens{line, title}
 Lenses without a `command` (would require `codeLens/resolve`) are dropped. Renderer
 paints them as dim purple `⚡ <title>` chips at end-of-line. Display-only MVP — clicks
 aren't routed back yet. `initialize` advertises the capability.
-**Vim `Ctrl+W p` / `Ctrl+W _` / `Ctrl+W |`** — focus previously-active leaf
-(alias `buffer.last`); maximize active split's height / width by pushing the
-enclosing parent's ratio to 90/10 toward the side containing the active leaf
-(`Layout::maximize_split_ratio_for`).
+**Vim `Ctrl+W p` / `Ctrl+W _` / `Ctrl+W |` / `Ctrl+W f` / `Ctrl+W n` / `Ctrl+W d` /
+`Ctrl+W x`** — focus previously-active leaf (alias `buffer.last`); maximize active
+split's height / width by pushing the enclosing parent's ratio to 90/10 toward the
+side containing the active leaf (`Layout::maximize_split_ratio_for`); split + open
+file under cursor (`view.split_open_file_under_cursor`); split + scratch buffer
+(`view.split_new_scratch`); split + goto definition (`view.split_goto_definition`);
+exchange siblings (alias for `view.rotate_splits`).
+**Vim `gt` / `gT`** — vim's "next/prev tab"; mnml has buffers, not tabs, so these
+alias to `next_buffer` / `prev_buffer`.
+**Vim `g*` / `g#`** — like `*` / `#` but match the word as a substring (no word-
+boundary requirement). mnml's literal find is already substring-based, so these
+alias to the existing `find.word_forward` / `find.word_backward`.
+**Vim insert `Ctrl+R Ctrl+W` / `Ctrl+R Ctrl+A`** — paste the identifier (Ctrl+W) /
+WORD (Ctrl+A, whitespace-delimited) under the cursor inline. New
+`App::insert_word_under_cursor` / `insert_bigword_under_cursor`.
+**`:earlier N` / `:later N`** — walk N undo / redo steps. Vim's duration syntax
+(`5s`, `10m`) skipped — mnml doesn't timestamp snapshots yet.
 **Vim `.` (dot) repeat** — re-feeds the last "change" through the dispatcher. A change
 is bounded by mode + chord state: starts when the user enters Insert from Normal, when
 operator-pending opens a chord, or when a one-shot Normal-mode mutation happens (`p`,
