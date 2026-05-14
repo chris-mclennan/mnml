@@ -521,6 +521,26 @@ impl LspManager {
         }
         sent
     }
+    /// Same as [`Self::code_action`] but with a `context.only` filter so
+    /// the server returns only actions of those kinds (e.g.
+    /// `["source.organizeImports"]`). Reply still arrives as
+    /// [`LspEvent::CodeAction`].
+    pub fn code_action_with_only(
+        &mut self,
+        path: &Path,
+        range: Range,
+        diagnostics: &[Diagnostic],
+        only: &[String],
+    ) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.code_action_with_only(path, range, diagnostics, only);
+                sent = true;
+            }
+        }
+        sent
+    }
     /// Send a `workspace/executeCommand` request (no reply handling — fire and
     /// forget; the server's effects come back as `applyEdit` / diagnostics).
     pub fn execute_command(&mut self, path: &Path, cmd: &CodeCommand) -> bool {

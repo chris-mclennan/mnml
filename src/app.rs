@@ -2859,6 +2859,51 @@ impl App {
         self.lsp_code_action();
     }
 
+    /// `lsp.organize_imports` — fire `textDocument/codeAction` with the
+    /// `kind: "source.organizeImports"` filter; the auto-apply path picks
+    /// the first matching action (servers typically return only the one).
+    /// Sister to `lsp.quick_fix` but scoped to a specific code-action kind.
+    pub fn lsp_organize_imports(&mut self) {
+        // Same request path as `lsp_code_action` but filtered to imports
+        // via the `only` field. We reuse the auto-apply machinery so the
+        // first returned action is applied without opening a picker.
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("no path for active editor");
+            return;
+        };
+        // Whole-buffer range — vim's `:OrganizeImports` is buffer-scoped
+        // and so is the typical `source.organizeImports` server response.
+        let line_count = b.editor.line_count() as u32;
+        let diagnostics = b.diagnostics.clone();
+        let range = crate::lsp::Range {
+            start: crate::lsp::Pos {
+                line: 0,
+                character: 0,
+            },
+            end: crate::lsp::Pos {
+                line: line_count.saturating_sub(1),
+                character: 0,
+            },
+        };
+        // Ask explicitly with the `only` filter — servers that respect it
+        // return just import-organization actions. We piggyback on
+        // pending_code_action_auto_apply so the first action applies.
+        self.pending_code_action_auto_apply = true;
+        if !self.lsp.code_action_with_only(
+            &path,
+            range,
+            &diagnostics,
+            &["source.organizeImports".to_string()],
+        ) {
+            self.pending_code_action_auto_apply = false;
+            self.toast("no language server for this file");
+        }
+    }
+
     /// Handle a `textDocument/codeAction` reply.
     ///
     /// - With `pending_code_action_auto_apply` set: applies the first action
@@ -7109,6 +7154,97 @@ impl App {
     /// lines (full lines including any partial-line selection); without one,
     /// sorts the whole buffer. `unique` ⇒ de-dupe consecutive equal lines
     /// after sorting. Single edit op so undo restores the original order.
+    /// `:%!cmd` / `:'<,'>!cmd` — pipe the whole buffer (or the active
+    /// selection if `selection_only=true`) through `cmd` via `$SHELL -c`,
+    /// replacing the input range with the command's stdout. Single edit op
+    /// so undo restores. Non-zero exit ⇒ buffer untouched + toast.
+    pub fn run_filter_through_shell(&mut self, cmd: &str, selection_only: bool) {
+        if cmd.is_empty() {
+            self.toast(":%! — command required");
+            return;
+        }
+        let Some(idx) = self.active else {
+            self.toast(":%! — no active editor");
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get(idx) else {
+            self.toast(":%! — no active editor");
+            return;
+        };
+        // Determine the input range.
+        let (start, end) = if selection_only || (b.editor.has_selection() && !cmd.is_empty()) {
+            match b.editor.selection() {
+                Some((lo, hi)) => (lo, hi),
+                None => (0, b.editor.text().len()),
+            }
+        } else {
+            (0, b.editor.text().len())
+        };
+        let buf_len = b.editor.text().len();
+        let input = b.editor.text()[start..end].to_string();
+        // Spawn the shell synchronously, write input to stdin, capture stdout.
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let workspace = self.workspace.clone();
+        let result = std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                use std::io::Write;
+                let mut child = match std::process::Command::new(&shell)
+                    .arg("-c")
+                    .arg(cmd)
+                    .current_dir(&workspace)
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                {
+                    Ok(c) => c,
+                    Err(e) => return Err(format!("spawn: {e}")),
+                };
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(input.as_bytes());
+                }
+                match child.wait_with_output() {
+                    Ok(out) => {
+                        if !out.status.success() {
+                            let stderr = String::from_utf8_lossy(&out.stderr);
+                            let preview: String = stderr.trim().chars().take(120).collect();
+                            return Err(format!(
+                                "exit {} — {preview}",
+                                out.status.code().unwrap_or(-1)
+                            ));
+                        }
+                        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+                    }
+                    Err(e) => Err(format!("wait: {e}")),
+                }
+            });
+            handle.join().unwrap()
+        });
+        match result {
+            Ok(stdout) => {
+                let len = stdout.len();
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    b.apply_edit_ops(
+                        vec![crate::edit_op::EditOp::ReplaceRange {
+                            start,
+                            end,
+                            text: stdout,
+                        }],
+                        &mut self.clipboard,
+                        0,
+                    );
+                }
+                let scope_label = if selection_only || end - start < buf_len {
+                    "selection"
+                } else {
+                    "buffer"
+                };
+                self.toast(format!(":! — {scope_label} ⇐ {len}B"));
+            }
+            Err(e) => self.toast(format!(":! — {e}")),
+        }
+    }
+
     pub fn run_sort_lines(&mut self, unique: bool) {
         let Some(b) = self.active_editor_mut() else {
             self.toast("no active editor");
@@ -9068,6 +9204,18 @@ impl App {
         // ignored for now — applies all without prompting.)
         if let Some(sub) = parse_substitute(line) {
             self.run_substitute(sub);
+            return;
+        }
+        // `:%!cmd` — pipe the whole buffer through `cmd`, replace it
+        // with stdout. With an active selection (no `%` prefix), filters
+        // the selection only. Useful for `jq .`, `sort`, `prettier`, etc.
+        if let Some(rest) = line.strip_prefix("%!") {
+            self.run_filter_through_shell(rest.trim(), false);
+            return;
+        }
+        if let Some(rest) = line.strip_prefix("'<,'>!") {
+            // Vim canonical visual-range form (``:'<,'>!``) — selection-only.
+            self.run_filter_through_shell(rest.trim(), true);
             return;
         }
         // `:!cmd` — fire `cmd` through the shell synchronously, toast a snippet

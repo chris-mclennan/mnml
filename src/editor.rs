@@ -1351,30 +1351,45 @@ impl Editor {
                 out.buffer_changed = true;
             }
             DeleteLine => {
-                self.anchor = None;
-                self.checkpoint();
+                // Yank the line + trailing newline into the unnamed
+                // register before deleting (vim convention — `dd` yanks
+                // the line linewise so a follow-up `p` re-inserts it).
                 let line = self.current_line();
                 let start = self.line_start(line);
+                let line_text = self.line_str(line).to_string();
+                let yanked = format!("{line_text}\n");
+                clip.push_delete(yanked.clone(), true);
+                out.clipboard_set = Some(yanked);
+                out.clipboard_linewise = true;
+                self.anchor = None;
+                self.checkpoint();
                 let has_newline_after = self.line_end(line) < self.text.len();
                 if has_newline_after {
-                    // delete the line and its trailing newline; the line below shifts up to `line`
                     let end = self.line_end(line) + 1;
                     self.text.replace_range(start..end, "");
                     self.cursor = start.min(self.text.len());
                 } else if start > 0 {
-                    // last line, not the first: remove the preceding newline + the line
                     let prev_line_start = self.line_start(line - 1);
                     let cut_from = self.prev_char_boundary(start);
                     self.text.replace_range(cut_from..self.text.len(), "");
                     self.cursor = prev_line_start.min(self.text.len());
                 } else {
-                    // the only line
                     self.text.clear();
                     self.cursor = 0;
                 }
                 out.buffer_changed = true;
             }
             DeleteSelection => {
+                // Yank the deleted text first (vim convention — `d{motion}`
+                // yanks). Standard mode emits this op only via explicit
+                // copy/cut paths, so always-yank is the right default.
+                if let Some((lo, hi)) = self.selection()
+                    && hi > lo
+                {
+                    let s = self.text[lo..hi].to_string();
+                    clip.push_delete(s.clone(), false);
+                    out.clipboard_set = Some(s);
+                }
                 self.delete_selection_if_any(out);
             }
             ReplaceSelection(s) => {
@@ -1823,7 +1838,7 @@ impl Editor {
                         parts.push(self.text[*s..*e].to_string());
                     }
                     let joined = parts.join("\n");
-                    clip.set(joined.clone(), false);
+                    clip.push_delete(joined.clone(), false);
                     out.clipboard_set = Some(joined);
                     // Splice descending so earlier byte offsets stay valid.
                     self.checkpoint();
@@ -1863,7 +1878,7 @@ impl Editor {
             CutSelection => {
                 if let Some((lo, hi)) = self.selection() {
                     let s = self.text[lo..hi].to_string();
-                    clip.set(s.clone(), false);
+                    clip.push_delete(s.clone(), false);
                     out.clipboard_set = Some(s);
                     self.checkpoint();
                     self.text.replace_range(lo..hi, "");

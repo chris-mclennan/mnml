@@ -1001,6 +1001,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_quick_fix(),
         },
         Command {
+            id: "lsp.organize_imports",
+            title: "LSP: organize imports",
+            group: "lsp",
+            keys: &["alt+shift+o"],
+            run: |app| app.lsp_organize_imports(),
+        },
+        Command {
             id: "lsp.symbols",
             title: "LSP: symbols in this file (→ picker)",
             group: "lsp",

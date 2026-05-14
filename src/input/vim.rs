@@ -806,16 +806,15 @@ impl VimInputHandler {
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));
             }
             Prefix::Register => {
-                // Pick the named register (`a`-`z`, `0`, `+`, `_`); the
-                // hint persists for one yank / paste / delete (or operator
-                // combo). `prefix` resets but `op` / `count` are preserved
-                // so `"a3yy` works.
+                // Pick the named register (`a`-`z`, `0`, `1`-`9`, `+`,
+                // `_`); the hint persists for one yank / paste / delete
+                // (or operator combo). `prefix` resets but `op` / `count`
+                // are preserved so `"a3yy` works.
                 self.prefix = Prefix::None;
                 if let KeyCode::Char(c) = key.code {
-                    let valid = c.is_ascii_lowercase() || c == '0' || c == '+' || c == '_';
+                    let valid =
+                        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '+' || c == '_';
                     if valid {
-                        // Lowercase registers are stored verbatim; the named
-                        // pool keys are 'a'-'z' / '0' / '+' / '_'.
                         self.pending_register = Some(c);
                     }
                 }

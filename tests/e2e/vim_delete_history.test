@@ -1,0 +1,33 @@
+# Vim "1-"9 delete history. Each `dd` pushes onto the ring;
+# `"1p` pastes the most-recent delete, `"2p` the one before, etc.
+write data.txt "alpha\nbravo\ncharlie\ndelta\nend"
+open data.txt
+command editor.use_vim
+
+# Delete "alpha" (line 1) — pushes onto "1.
+key d
+key d
+expect screen contains "bravo"
+expect screen lacks "alpha"
+
+# Delete "bravo" (now line 1) — pushes onto "1, shifts old "1→"2.
+key d
+key d
+expect screen lacks "bravo"
+
+# Delete "charlie" — same shift.
+key d
+key d
+expect screen lacks "charlie"
+
+# Now paste from "3 — should be "alpha" (oldest of the three deletes).
+key "
+key 3
+key p
+expect screen contains "alpha"
+
+# Paste from "1 — should be "charlie" (most-recent delete).
+key "
+key 1
+key p
+expect screen contains "charlie"

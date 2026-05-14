@@ -70,6 +70,30 @@ impl Clipboard {
         self.pending_register = reg;
     }
 
+    /// Delete-flavored set: writes to the unnamed register (and system
+    /// clipboard) AND pushes onto vim's `"1`-`"9` delete-history ring
+    /// (most-recent-first; `"1` is shifted to `"2`, etc., dropping the
+    /// oldest beyond `"9`). When a named register is pending, the delete
+    /// only goes to that register and the history is unchanged (vim
+    /// convention — explicit named-register deletes don't pollute "1-"9).
+    pub fn push_delete(&mut self, text: impl Into<String>, linewise: bool) {
+        let text: String = text.into();
+        let reg = self.pending_register;
+        // Set goes through the normal pipeline (honors pending_register).
+        self.set(text.clone(), linewise);
+        if matches!(reg, None | Some('+')) {
+            // Shift "1..="8 → "2..="9, drop "9, write text → "1.
+            for i in (1..=8).rev() {
+                let from = char::from_digit(i as u32, 10).unwrap();
+                let to = char::from_digit((i + 1) as u32, 10).unwrap();
+                if let Some(v) = self.named.remove(&from) {
+                    self.named.insert(to, v);
+                }
+            }
+            self.named.insert('1', (text, linewise));
+        }
+    }
+
     /// Set the clipboard. Writes the register *and* (best-effort) the OS
     /// clipboard. Honors `pending_register` if set:
     /// - `'_'` ⇒ blackhole (no-op, but resets pending)
@@ -133,6 +157,15 @@ impl Clipboard {
             }
             Some('0') => {
                 if let Some((t, linewise)) = self.named.get(&'0') {
+                    self.effective_linewise = *linewise;
+                    return t.clone();
+                }
+                self.effective_linewise = false;
+                String::new()
+            }
+            Some(c) if c.is_ascii_digit() && c != '0' => {
+                // "1-"9 — delete history.
+                if let Some((t, linewise)) = self.named.get(&c) {
                     self.effective_linewise = *linewise;
                     return t.clone();
                 }

@@ -238,6 +238,27 @@ impl LspClient {
 
     /// `textDocument/codeAction` — reply is `(Command | CodeAction)[]`.
     pub fn code_action(&mut self, path: &Path, range: Range, diagnostics: &[Diagnostic]) {
+        self.code_action_inner(path, range, diagnostics, None);
+    }
+    /// Same as [`Self::code_action`] but with `context.only` set so the
+    /// server returns only actions of those kinds. Used by
+    /// `lsp.organize_imports` (`only = ["source.organizeImports"]`).
+    pub fn code_action_with_only(
+        &mut self,
+        path: &Path,
+        range: Range,
+        diagnostics: &[Diagnostic],
+        only: &[String],
+    ) {
+        self.code_action_inner(path, range, diagnostics, Some(only));
+    }
+    fn code_action_inner(
+        &mut self,
+        path: &Path,
+        range: Range,
+        diagnostics: &[Diagnostic],
+        only: Option<&[String]>,
+    ) {
         let diags_json: Vec<serde_json::Value> = diagnostics
             .iter()
             .map(|d| {
@@ -261,6 +282,10 @@ impl LspClient {
                 v
             })
             .collect();
+        let mut context = json!({ "diagnostics": diags_json });
+        if let Some(only) = only {
+            context["only"] = json!(only);
+        }
         self.request(
             "textDocument/codeAction",
             json!({
@@ -269,7 +294,7 @@ impl LspClient {
                     "start": { "line": range.start.line, "character": range.start.character },
                     "end": { "line": range.end.line, "character": range.end.character }
                 },
-                "context": { "diagnostics": diags_json }
+                "context": context,
             }),
         );
     }

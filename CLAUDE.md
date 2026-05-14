@@ -232,6 +232,22 @@ gestures while typing.
 `"`, `'`, `` ` ``. The smallest enclosing range wins. New `SelectInnerSmartQuote` /
 `SelectAroundSmartQuote` ops. Saves a keystroke when you don't care which quote variant
 you're inside.
+**`:%!cmd` / `:'<,'>!cmd`** — pipe the whole buffer (or selection) through `cmd` via
+`$SHELL -c`, replacing the input range with stdout. Single edit op so undo restores;
+non-zero exit ⇒ buffer untouched + toast with stderr preview. Useful for `jq .`, `sort`,
+`prettier`, etc. `App::run_filter_through_shell`.
+**`lsp.organize_imports`** (`Alt+Shift+O`) — fires `textDocument/codeAction` with
+`context.only = ["source.organizeImports"]`; auto-applies the first returned action.
+New `LspManager::code_action_with_only` + client `code_action_inner` factor.
+**Vim `"1`-`"9` delete history** — every delete that goes to the unnamed register also
+pushes onto a 9-deep ring (`"1` = most recent, shifts older entries down to `"2`-`"9`,
+drops past `"9`). Explicit named-register deletes (`"add`) don't pollute the ring (vim
+convention). `Clipboard::push_delete(text, linewise)` is the entry point — wired into
+`DeleteLine`, `DeleteSelection`, `CutSelection`, `DeleteBlock`. (Standard mode ops that
+implicitly delete a selection — InsertChar / Backspace over a selection — still go
+through `delete_selection_if_any` and don't yank.) `DeleteLine` and `DeleteSelection`
+now also yank the deleted text into the unnamed register (vim's `dd` / `d{motion}`
+convention) — was a long-standing missing piece.
 **LSP inlay hints** — `[editor] inlay_hints = true` (default; `:set [no]inlayhints` /
 `:set inlayhints!` runtime toggle). `LspManager::inlay_hint(path, line_count)` fires
 `textDocument/inlayHint` for the whole file on open + on save; reply parsed by
