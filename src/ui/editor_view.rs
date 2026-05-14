@@ -77,9 +77,14 @@ pub fn draw_pane(
     let line_count = buf.editor.line_count();
     // Gutter = [1 sign cell][line number, right-aligned][1 space], or in blame
     // mode [1 sign cell][`<sha> <author>`, BLAME_W wide][1 space].
+    // When `[ui] line_numbers = false` the number column collapses to 0 and
+    // we just keep the 1-cell sign column + 1 space.
     const BLAME_W: usize = 22;
     let blame_on = buf.blame.is_some();
-    let num_w = if blame_on {
+    let nums_on = app.config.ui.line_numbers || blame_on;
+    let num_w = if !nums_on {
+        0
+    } else if blame_on {
         BLAME_W
     } else {
         line_count.to_string().len().max(3)
@@ -220,7 +225,9 @@ pub fn draw_pane(
         // Schedule the next visible line for the next iteration.
         next_line = buf.next_visible_line(line_no + 1).unwrap_or(line_count);
         let is_cur = line_no == cur_row;
-        let base_bg = if is_cur {
+        let base_bg = if is_cur && app.config.ui.cursor_line {
+            // Stronger tint when `[ui] cursor_line = true` (vim's
+            // `:set cursorline`). Theme's `line` is the canonical color.
             theme::cur().line
         } else {
             theme::cur().bg_dark

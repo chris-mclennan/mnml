@@ -388,6 +388,14 @@ position). Useful for prose buffers (markdown / blog drafts).
 **`:ascii`** — alias for `ga` (char info under cursor).
 **`:goto N` / `:go N`** — jump to byte offset N (rough — places cursor at the
 line containing that byte). Vim canonical for byte-position navigation.
+**`:set [no]number` / `:set nu` / `:set nonu`** — toggle the line-number gutter
+entirely. `[ui] line_numbers` config (default `true`). When off, the gutter
+collapses and the editor expands to fill the freed columns. Blame mode wins
+(blame still shows even with `nonumber`).
+**`:set cursorline` / `:set cul`** — paint a stronger background tint on the
+cursor's row. `[ui] cursor_line` config (default `false`). Theme's `line` color
+is the canonical highlight; the existing render path already used it but the
+flag now gates whether the user actually sees it.
 **Persistent ex history** — moved from vim handler to App; survives across sessions
 via `SavedSession.ex_history` (oldest first, capped at 100). New `InputHandler::
 set_ex_history` / `ex_history()` trait methods so the App can sync. Pre-seeded

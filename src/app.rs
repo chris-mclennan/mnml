@@ -11317,6 +11317,38 @@ impl App {
                     self.set_relative_line_numbers(false);
                 } else if matches!(opt, "relativenumber!" | "rnu!" | "invrelativenumber") {
                     self.set_relative_line_numbers(!self.config.ui.relative_line_numbers);
+                } else if matches!(opt, "cursorline" | "cul") {
+                    self.config.ui.cursor_line = true;
+                    self.toast("cursorline: on");
+                } else if matches!(opt, "nocursorline" | "nocul") {
+                    self.config.ui.cursor_line = false;
+                    self.toast("cursorline: off");
+                } else if matches!(opt, "cursorline!" | "cul!" | "invcursorline") {
+                    self.config.ui.cursor_line = !self.config.ui.cursor_line;
+                    self.toast(format!(
+                        "cursorline: {}",
+                        if self.config.ui.cursor_line {
+                            "on"
+                        } else {
+                            "off"
+                        }
+                    ));
+                } else if matches!(opt, "number" | "nu") {
+                    self.config.ui.line_numbers = true;
+                    self.toast("number: on");
+                } else if matches!(opt, "nonumber" | "nonu") {
+                    self.config.ui.line_numbers = false;
+                    self.toast("number: off");
+                } else if matches!(opt, "number!" | "nu!" | "invnumber") {
+                    self.config.ui.line_numbers = !self.config.ui.line_numbers;
+                    self.toast(format!(
+                        "number: {}",
+                        if self.config.ui.line_numbers {
+                            "on"
+                        } else {
+                            "off"
+                        }
+                    ));
                 } else if matches!(opt, "list") {
                     self.set_show_whitespace(true);
                 } else if matches!(opt, "nolist") {

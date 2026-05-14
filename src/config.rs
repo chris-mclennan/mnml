@@ -133,6 +133,13 @@ pub struct UiConfig {
     /// Hybrid relative line numbers — the cursor line shows its absolute number,
     /// every other line the distance from the cursor. `:set relativenumber`.
     pub relative_line_numbers: bool,
+    /// Master switch for the line-number gutter. Default `true`. When
+    /// `false`, the gutter is hidden entirely and the editor expands to
+    /// fill the freed columns. `:set [no]number` runtime toggle.
+    pub line_numbers: bool,
+    /// Paint a subtle background tint on the cursor's row (vim
+    /// `:set cursorline`). Off by default — some users find it noisy.
+    pub cursor_line: bool,
     /// Show visible markers for whitespace (`·` for space, `→` for tab) in the
     /// editor. `:set list` / `:set nolist`. Off by default.
     pub show_whitespace: bool,
@@ -193,6 +200,8 @@ impl Default for Config {
                 ascii_icons: false,
                 tree_width: 30,
                 relative_line_numbers: false,
+                line_numbers: true,
+                cursor_line: false,
                 show_whitespace: false,
                 syntax: true,
                 bracket_rainbow: false,
@@ -289,6 +298,8 @@ struct RawUi {
     ascii_icons: Option<bool>,
     tree_width: Option<u16>,
     relative_line_numbers: Option<bool>,
+    line_numbers: Option<bool>,
+    cursor_line: Option<bool>,
     show_whitespace: Option<bool>,
     syntax: Option<bool>,
     bracket_rainbow: Option<bool>,
@@ -382,6 +393,12 @@ impl Config {
         }
         if let Some(v) = raw.ui.relative_line_numbers {
             self.ui.relative_line_numbers = v;
+        }
+        if let Some(v) = raw.ui.line_numbers {
+            self.ui.line_numbers = v;
+        }
+        if let Some(v) = raw.ui.cursor_line {
+            self.ui.cursor_line = v;
         }
         if let Some(v) = raw.ui.show_whitespace {
             self.ui.show_whitespace = v;
