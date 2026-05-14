@@ -145,6 +145,10 @@ pub struct VimInputHandler {
     /// Insert-mode `Ctrl+R` ⇒ next key is a register letter; paste that
     /// register's contents inline at the cursor (vim canonical).
     insert_waiting_for_register: bool,
+    /// Set by insert-mode `Ctrl+V` / `Ctrl+Q` — the NEXT keystroke is inserted
+    /// verbatim (Tab as `\t`, etc.) instead of going through the usual
+    /// chord lookup.
+    insert_literal_next: bool,
     /// Mirror of the App's macro recording state. Local because the vim
     /// handler needs to decide on `q` whether to enter `MacroRecordTarget`
     /// prefix (idle) or fire the stop toggle (recording). Kept in sync by
@@ -189,6 +193,7 @@ impl VimInputHandler {
             last_find_char: None,
             pending_register: None,
             insert_waiting_for_register: false,
+            insert_literal_next: false,
             is_recording_macro: false,
             pending_surround_ops: Vec::new(),
             insert_oneshot_normal: false,
@@ -382,6 +387,18 @@ impl VimInputHandler {
     fn handle_insert(&mut self, key: KeyEvent, _ctx: &EditCtx) -> InputResult {
         use EditOp::*;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // Insert-mode literal-next (set by `Ctrl+V` / `Ctrl+Q`) — the next
+        // keystroke is inserted verbatim. Tab ⇒ `\t`, Enter ⇒ `\n`, Esc ⇒ no-op.
+        if self.insert_literal_next {
+            self.insert_literal_next = false;
+            return match key.code {
+                KeyCode::Char(c) => InputResult::Ops(vec![InsertChar(c)]),
+                KeyCode::Tab => InputResult::Ops(vec![InsertChar('\t')]),
+                KeyCode::Enter => InputResult::Ops(vec![InsertChar('\n')]),
+                KeyCode::Esc => InputResult::Consumed,
+                _ => InputResult::Consumed,
+            };
+        }
         // Insert-mode `Ctrl+R <reg>` — paste the named register inline.
         // Was set on the previous keystroke (see the Ctrl+R arm below).
         if self.insert_waiting_for_register {
@@ -462,6 +479,17 @@ impl VimInputHandler {
             KeyCode::Char('h') if ctrl => InputResult::Ops(vec![Backspace]),
             KeyCode::Char('t') if ctrl => InputResult::Ops(vec![Indent]),
             KeyCode::Char('d') if ctrl => InputResult::Ops(vec![Outdent]),
+            // Ctrl+V / Ctrl+Q ⇒ literal-next (vim canonical). The next
+            // keystroke is inserted verbatim (Tab as `\t`, etc.) instead of
+            // going through the usual chord / tab-expand path.
+            KeyCode::Char('v') if ctrl => {
+                self.insert_literal_next = true;
+                InputResult::Consumed
+            }
+            KeyCode::Char('q') if ctrl => {
+                self.insert_literal_next = true;
+                InputResult::Consumed
+            }
             KeyCode::Char(c) if !ctrl => InputResult::Ops(vec![InsertChar(c)]),
             KeyCode::Enter => InputResult::Ops(vec![InsertNewline]),
             KeyCode::Tab => InputResult::Ops(vec![InsertStr(" ".repeat(self.tab_width))]),

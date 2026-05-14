@@ -10421,6 +10421,78 @@ impl App {
             "close" | "clo" | "hide" => self.close_active_pane(),
             "bn" | "bnext" => self.next_buffer(),
             "bp" | "bprev" | "bprevious" => self.prev_buffer(),
+            // Tab aliases — mnml has buffers, not tabs, but vim users reach
+            // for these reflexively. Match them to buffer ops.
+            "tabn" | "tabnext" => self.next_buffer(),
+            "tabp" | "tabprev" | "tabprevious" | "tabN" | "tabNext" => self.prev_buffer(),
+            "tabfirst" | "tabfir" | "tabrewind" | "tabr" => {
+                if let Some(idx) = self.panes.iter().position(|p| matches!(p, Pane::Editor(_))) {
+                    self.reveal_pane(idx);
+                }
+            }
+            "tablast" | "tabl" => {
+                if let Some(idx) = self
+                    .panes
+                    .iter()
+                    .rposition(|p| matches!(p, Pane::Editor(_)))
+                {
+                    self.reveal_pane(idx);
+                }
+            }
+            "tabclose" | "tabc" => self.close_active_pane(),
+            "tabonly" | "tabo" => self.close_other_panes(),
+            // `:badd <path>` — load `<path>` as a buffer but keep focus on the
+            // active pane (vim canonical "buffer-add"). Implemented as a
+            // background open that reveals the prior active afterwards.
+            "badd" | "ba" => {
+                if rest.is_empty() {
+                    self.toast(":badd <path> — path required");
+                } else {
+                    let prior = self.active;
+                    let p = self.workspace.join(rest);
+                    self.open_path(&p);
+                    if let Some(idx) = prior
+                        && idx < self.panes.len()
+                    {
+                        self.reveal_pane(idx);
+                    }
+                }
+            }
+            // `:resize +N` / `:resize -N` — adjust the active split's height
+            // by N percent (10..90 clamp inside `adjust_split`). Bare
+            // `:resize` toasts a hint. Vim's exact-rows form (`:resize 20`)
+            // would need a screen-row→ratio conversion that we don't track
+            // — skip for now.
+            "resize" | "res" => {
+                let s = rest.trim();
+                let delta: i32 = if let Some(rest) = s.strip_prefix('+') {
+                    rest.parse().unwrap_or(5)
+                } else if let Some(rest) = s.strip_prefix('-') {
+                    -rest.parse::<i32>().unwrap_or(5)
+                } else {
+                    self.toast(":resize +N or :resize -N (mnml uses ratios)");
+                    return;
+                };
+                self.adjust_split(crate::layout::SplitDir::Vertical, delta);
+            }
+            "vresize" | "vert" => {
+                // `:vert resize +N` / `:vert resize -N` — width adjust.
+                // `vert` may be followed by `resize`; strip it.
+                let s = rest
+                    .strip_prefix("resize ")
+                    .or_else(|| rest.strip_prefix("res "))
+                    .unwrap_or(rest)
+                    .trim();
+                let delta: i32 = if let Some(rest) = s.strip_prefix('+') {
+                    rest.parse().unwrap_or(5)
+                } else if let Some(rest) = s.strip_prefix('-') {
+                    -rest.parse::<i32>().unwrap_or(5)
+                } else {
+                    self.toast(":vert resize +N or :vert resize -N");
+                    return;
+                };
+                self.adjust_split(crate::layout::SplitDir::Horizontal, delta);
+            }
             // `:bfirst` / `:bf` / `:brewind` / `:br` — jump to the first
             // editor pane. `:blast` / `:bl` — jump to the last. Vim canonical.
             "bfirst" | "bf" | "brewind" | "br" => {

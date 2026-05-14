@@ -1,0 +1,40 @@
+# Vim insert `Ctrl+V` (literal-next) and `:tab*` aliases.
+
+write data.txt "hello"
+open data.txt
+command editor.use_vim
+
+# Append at end of line, then Ctrl+V Tab to insert a literal tab.
+key A
+key ctrl+v
+key tab
+key escape
+command file.save
+expect file data.txt contains "hello\t"
+
+# Test `:tabnext` — second buffer.
+write more.txt "world"
+open more.txt
+# Now active is more.txt. :tabp ⇒ data.txt
+key :
+type "tabprev"
+key enter
+expect pane "data.txt"
+
+# :tabnext ⇒ more.txt
+key :
+type "tabnext"
+key enter
+expect pane "more.txt"
+
+# :tabfirst ⇒ data.txt (first editor pane).
+key :
+type "tabfirst"
+key enter
+expect pane "data.txt"
+
+# :tablast ⇒ more.txt.
+key :
+type "tablast"
+key enter
+expect pane "more.txt"

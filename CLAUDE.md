@@ -411,6 +411,16 @@ and `MoveWordEndBack`. `ge` / `gE` are two-phase scans (back over the current ru
 back over whitespace, landing on the last char of the prior run); the forward `E` is the
 classic skip-whitespace-then-walk-until-next-is-ws pattern. Compose with operators
 (`dW`, `dge`, `cE`, etc.).
+**Vim insert `Ctrl+V` / `Ctrl+Q`** — literal-next. The next keystroke is inserted verbatim
+(Tab as `\t`, Enter as `\n`, etc.) instead of going through the usual chord / tab-expand
+path. New `VimInputHandler.insert_literal_next` flag consumed at the top of `handle_insert`.
+**Tab-ex aliases** — `:tabnext` / `:tabprev` / `:tabfirst` / `:tablast` / `:tabclose` /
+`:tabonly` route to mnml's buffer ops (mnml has buffers, not tabs; vim users reach for
+these reflexively).
+**`:badd <path>`** — load a file as a buffer without changing focus (vim canonical buffer-add).
+**`:resize +N` / `:resize -N` / `:vert resize ±N`** — adjust the active split's height /
+width by N percent (clamped to the existing 10..=90 range in `Layout::adjust_split_ratio_for`).
+Vim's exact-rows form (`:resize 20`) skipped — mnml uses ratios, not row counts.
 **Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
 Single-key chord in the `g` prefix.
 **`:1,5j` / `:join`** — bare form joins current+next; ranged form collapses the
