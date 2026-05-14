@@ -298,6 +298,22 @@ WORD (Ctrl+A, whitespace-delimited) under the cursor inline. New
 `App::insert_word_under_cursor` / `insert_bigword_under_cursor`.
 **`:earlier N` / `:later N`** — walk N undo / redo steps. Vim's duration syntax
 (`5s`, `10m`) skipped — mnml doesn't timestamp snapshots yet.
+**`:` cmdline history** — Up / Down on the cmdline walks through the in-session
+history of accepted ex commands (de-duped against the most-recent, capped at
+`EX_HISTORY_MAX = 100`). Volatile (not persisted across relaunches). The handler
+stashes the user's typed text on first Up so Down past the newest restores it.
+**`:[%]norm <keys>`** — for each line in the requested range (whole buffer with
+`%`, selection if active, else current line), place the cursor at line start and
+re-dispatch each char of `<keys>` through the active vim handler. Vim's killer
+power tool for "do this on every line". Pre-captures the row range so edits that
+add/remove lines don't repeat-fire. After each line's keys, force Esc to ensure
+the next line dispatches in Normal mode.
+**`:ls` / `:files` / `:buffers` / `:buf`** — open the buffer-switcher picker.
+**Statusline clock chip** (`HH:MM`, optional) — `[ui] clock = true` (default;
+`:set [no]clock` runtime). UTC by default; `$TZ_OFFSET_HOURS` env var for local
+offset (avoids the libc `localtime_r` dance).
+**`:%s/.../.../n`** — count-only mode (vim canonical). Doesn't touch the buffer;
+toasts the match count.
 **Vim `.` (dot) repeat** — re-feeds the last "change" through the dispatcher. A change
 is bounded by mode + chord state: starts when the user enters Insert from Normal, when
 operator-pending opens a chord, or when a one-shot Normal-mode mutation happens (`p`,

@@ -220,6 +220,8 @@ struct Substitute {
     whole_buffer: bool,
     /// `c` flag — interactive confirmation (y/n/a/q at each match).
     confirm: bool,
+    /// `n` flag — only count matches, don't replace (vim canonical).
+    count_only: bool,
 }
 
 /// In-flight `:%s/.../.../c` (interactive replace) state. The user steps
@@ -290,12 +292,14 @@ fn parse_substitute(line: &str) -> Option<Substitute> {
     }
     let case_insensitive = flags.contains('i');
     let confirm = flags.contains('c');
+    let count_only = flags.contains('n');
     Some(Substitute {
         find,
         replace,
         case_insensitive,
         whole_buffer,
         confirm,
+        count_only,
     })
 }
 
@@ -7506,6 +7510,73 @@ impl App {
     /// lines (full lines including any partial-line selection); without one,
     /// sorts the whole buffer. `unique` ⇒ de-dupe consecutive equal lines
     /// after sorting. Single edit op so undo restores the original order.
+    /// `:[%]norm <keys>` — for each line in the requested range, place
+    /// the cursor at line start, then re-dispatch each char of `<keys>`
+    /// through the active editor's vim handler. `whole=true` ⇒ whole
+    /// buffer (`:%norm`); `whole=false` + selection ⇒ selection's
+    /// lines; `whole=false` + no selection ⇒ current line. Idempotent:
+    /// the loop walks 0-based line indices captured up front (so edits
+    /// that add/remove lines don't repeat-fire the new lines).
+    pub fn run_norm(&mut self, keys: &str, whole: bool) {
+        let keys = keys.trim();
+        if keys.is_empty() {
+            self.toast(":norm <keys>");
+            return;
+        }
+        let Some(idx) = self.active else {
+            self.toast(":norm — no active editor");
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get(idx) else {
+            self.toast(":norm — no active editor");
+            return;
+        };
+        let (start_line, end_line) = if whole {
+            (0, b.editor.line_count().saturating_sub(1))
+        } else if let Some((lo, hi)) = b.editor.selection() {
+            let text = b.editor.text();
+            let line_at = |byte: usize| text[..byte].bytes().filter(|&c| c == b'\n').count();
+            (line_at(lo), line_at(hi))
+        } else {
+            let r = b.editor.row_col().0;
+            (r, r)
+        };
+        // Pre-build the KeyEvents — same parser the e2e harness uses for
+        // raw text, with simple Ctrl/Shift-modifier passthrough.
+        let key_events: Vec<ratatui::crossterm::event::KeyEvent> = keys
+            .chars()
+            .map(|c| {
+                ratatui::crossterm::event::KeyEvent::new(
+                    ratatui::crossterm::event::KeyCode::Char(c),
+                    ratatui::crossterm::event::KeyModifiers::NONE,
+                )
+            })
+            .collect();
+        for row in start_line..=end_line {
+            // Re-check that the line still exists (edits may have shrunk
+            // the buffer).
+            if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                if row >= b.editor.line_count() {
+                    break;
+                }
+                b.editor.place_cursor(row, 0);
+            }
+            for key in &key_events {
+                crate::tui::dispatch_key(self, *key);
+            }
+            // Each line's chord may have entered Insert; force Normal back
+            // so the next line's keystrokes are interpreted right. We do
+            // this by feeding Esc (no-op if already Normal).
+            let esc = ratatui::crossterm::event::KeyEvent::new(
+                ratatui::crossterm::event::KeyCode::Esc,
+                ratatui::crossterm::event::KeyModifiers::NONE,
+            );
+            crate::tui::dispatch_key(self, esc);
+        }
+        let count = end_line.saturating_sub(start_line) + 1;
+        self.toast(format!(":norm · ran on {count} line(s)"));
+    }
+
     /// `:%!cmd` / `:'<,'>!cmd` — pipe the whole buffer (or the active
     /// selection if `selection_only=true`) through `cmd` via `$SHELL -c`,
     /// replacing the input range with the command's stdout. Single edit op
@@ -9404,6 +9475,12 @@ impl App {
             return;
         }
         let n = matches.len();
+        // `:%s/.../.../n` ⇒ count-only mode (vim canonical). Don't touch
+        // the buffer; just toast the count.
+        if sub.count_only {
+            self.toast(format!("{label} — {n} match(es) of {:?}", sub.find));
+            return;
+        }
         // `:%s/.../.../c` ⇒ interactive: pop the confirm overlay and walk
         // through matches one at a time. The overlay's keys do the work.
         if sub.confirm {
@@ -9836,6 +9913,10 @@ impl App {
             // truncated to keep the toast short.
             // `:marks` — toast all set marks. Buffer-local (lowercase) for
             // the active editor; global (uppercase) across the workspace.
+            // `:ls` / `:files` / `:buffers` — vim canonical "list buffers".
+            // Opens the buffer-switcher picker (same as Ctrl+P's buffer
+            // mode).
+            "ls" | "files" | "buffers" | "buf" => self.open_buffer_picker(),
             "marks" => {
                 let mut parts: Vec<String> = Vec::new();
                 if let Some(b) = self.active_editor() {
@@ -9941,6 +10022,13 @@ impl App {
             // since mnml doesn't track an arglist.
             // `:cnext` / `:cprev` / `:cfirst` / `:clast` — quickfix
             // navigation through the most-recent grep results.
+            // `:%norm <keys>` / `:norm <keys>` — for each line in the
+            // range (whole buffer with `%`, selection if active, else
+            // current line), place the cursor at line start and dispatch
+            // each key in `<keys>` through the active vim handler. Vim's
+            // killer power tool for "do this on every line".
+            "norm" | "normal" => self.run_norm(rest, false),
+            "%norm" | "%normal" => self.run_norm(rest, true),
             // `:earlier N` / `:later N` — walk N undo/redo steps. Vim's
             // duration syntax (`5s`, `10m`) is skipped — we don't
             // timestamp snapshots yet.
@@ -10380,6 +10468,18 @@ impl App {
                         } else {
                             "off"
                         }
+                    ));
+                } else if matches!(opt, "clock") {
+                    self.config.ui.clock = true;
+                    self.toast("clock: on");
+                } else if matches!(opt, "noclock") {
+                    self.config.ui.clock = false;
+                    self.toast("clock: off");
+                } else if matches!(opt, "clock!" | "invclock") {
+                    self.config.ui.clock = !self.config.ui.clock;
+                    self.toast(format!(
+                        "clock: {}",
+                        if self.config.ui.clock { "on" } else { "off" }
                     ));
                 } else if matches!(opt, "codelens") {
                     self.config.editor.code_lens = true;

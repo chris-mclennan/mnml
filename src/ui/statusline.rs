@@ -199,6 +199,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             ));
         }
     }
+    // Optional clock chip (HH:MM, local time). On by default — costs
+    // ~0 (a single SystemTime call per render). `[ui] clock = false` to
+    // turn off.
+    if app.config.ui.clock {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let hh = ((now / 3600) % 24) as u8;
+        let mm = ((now / 60) % 60) as u8;
+        // Naive UTC ⇒ local-offset shift via `localtime_r` would be
+        // ideal but we don't have that without libc. Apply a simple
+        // env-based offset: TZ_OFFSET_HOURS, default 0 (UTC).
+        let off = std::env::var("TZ_OFFSET_HOURS")
+            .ok()
+            .and_then(|s| s.parse::<i32>().ok())
+            .unwrap_or(0);
+        let local_hh = ((hh as i32 + off).rem_euclid(24)) as u8;
+        right.push(Seg::new(
+            format!(" {local_hh:02}:{mm:02} "),
+            theme::cur().comment,
+            theme::cur().bg2,
+        ));
+    }
     // workspace / cwd block (the name that used to sit atop the file tree).
     let ws_name = app
         .workspace

@@ -156,7 +156,20 @@ pub struct VimInputHandler {
     /// char arrives). This stash holds the partial selection ops while
     /// `Prefix::SurroundAddCharWait` waits for the surround char.
     pending_surround_ops: Vec<EditOp>,
+    /// `:`-line history — every accepted ex command is pushed (oldest
+    /// first, capped at `EX_HISTORY_MAX`). Up / Down on the cmdline
+    /// walks it. Volatile (not persisted across relaunches; that's a
+    /// follow-up).
+    ex_history: Vec<String>,
+    /// Index past the newest entry while walking history. `None` ⇒ not
+    /// walking. Set on the first Up; cleared on Enter / Esc.
+    ex_history_cursor: Option<usize>,
+    /// What the user had typed before they started walking history; restored
+    /// on Down past the newest.
+    ex_history_typing: Option<String>,
 }
+
+const EX_HISTORY_MAX: usize = 100;
 
 impl VimInputHandler {
     pub fn new(cfg: &Config) -> Self {
@@ -173,6 +186,9 @@ impl VimInputHandler {
             insert_waiting_for_register: false,
             is_recording_macro: false,
             pending_surround_ops: Vec::new(),
+            ex_history: Vec::new(),
+            ex_history_cursor: None,
+            ex_history_typing: None,
         }
     }
 
@@ -267,15 +283,60 @@ impl VimInputHandler {
         match key.code {
             KeyCode::Esc => {
                 self.cmdline = None;
+                self.ex_history_cursor = None;
+                self.ex_history_typing = None;
                 InputResult::Consumed
             }
             KeyCode::Enter => {
                 self.cmdline = None;
+                self.ex_history_cursor = None;
+                self.ex_history_typing = None;
                 if line.is_empty() {
                     InputResult::Consumed
                 } else {
+                    // Push onto history — de-dupe against the most-recent
+                    // entry, cap length.
+                    if self.ex_history.last() != Some(&line) {
+                        self.ex_history.push(line.clone());
+                        if self.ex_history.len() > EX_HISTORY_MAX {
+                            let drop = self.ex_history.len() - EX_HISTORY_MAX;
+                            self.ex_history.drain(..drop);
+                        }
+                    }
                     InputResult::App(AppCommand::ExCommand(line))
                 }
+            }
+            KeyCode::Up => {
+                // Walk backward through history. Set typing-stash on first
+                // Up so Down past the newest restores it.
+                if self.ex_history.is_empty() {
+                    return InputResult::Consumed;
+                }
+                if self.ex_history_cursor.is_none() {
+                    self.ex_history_typing = Some(line);
+                    self.ex_history_cursor = Some(self.ex_history.len());
+                }
+                let cur = self.ex_history_cursor.unwrap_or(self.ex_history.len());
+                let new = cur.saturating_sub(1);
+                self.ex_history_cursor = Some(new);
+                self.cmdline = Some(self.ex_history[new].clone());
+                InputResult::Consumed
+            }
+            KeyCode::Down => {
+                if self.ex_history.is_empty() || self.ex_history_cursor.is_none() {
+                    return InputResult::Consumed;
+                }
+                let cur = self.ex_history_cursor.unwrap();
+                let new = cur + 1;
+                if new >= self.ex_history.len() {
+                    // Past newest — restore typed text.
+                    self.cmdline = Some(self.ex_history_typing.take().unwrap_or_default());
+                    self.ex_history_cursor = None;
+                } else {
+                    self.ex_history_cursor = Some(new);
+                    self.cmdline = Some(self.ex_history[new].clone());
+                }
+                InputResult::Consumed
             }
             KeyCode::Backspace => {
                 if line.is_empty() {
@@ -285,6 +346,8 @@ impl VimInputHandler {
                     let mut s = line;
                     s.pop();
                     self.cmdline = Some(s);
+                    self.ex_history_cursor = None;
+                    self.ex_history_typing = None;
                     InputResult::Consumed
                 }
             }
@@ -292,6 +355,8 @@ impl VimInputHandler {
                 let mut s = line;
                 s.push(c);
                 self.cmdline = Some(s);
+                self.ex_history_cursor = None;
+                self.ex_history_typing = None;
                 InputResult::Consumed
             }
             _ => {

@@ -144,6 +144,10 @@ pub struct UiConfig {
     /// breaks, fixtures). Pair with `[editor] trim_trailing_ws_on_save`
     /// for the full "see and strip" loop.
     pub highlight_trailing_ws: bool,
+    /// Show a `HH:MM` clock chip in the statusline. Default `true`.
+    /// `:set [no]clock` toggles at runtime. Local-time offset is read
+    /// from `$TZ_OFFSET_HOURS` (default 0 = UTC).
+    pub clock: bool,
     /// When the cursor is on an identifier (`[A-Za-z0-9_]+`), paint other
     /// occurrences of the same word in the visible viewport with a subtle
     /// background tint. Off by default — can be noisy in dense files.
@@ -182,6 +186,7 @@ impl Default for Config {
                 bracket_rainbow: false,
                 scrollbar: true,
                 highlight_trailing_ws: false,
+                clock: true,
                 highlight_word_under_cursor: false,
                 auto_md_preview: false,
             },
@@ -275,6 +280,7 @@ struct RawUi {
     bracket_rainbow: Option<bool>,
     scrollbar: Option<bool>,
     highlight_trailing_ws: Option<bool>,
+    clock: Option<bool>,
     highlight_word_under_cursor: Option<bool>,
     auto_md_preview: Option<bool>,
 }
@@ -371,6 +377,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.highlight_trailing_ws {
             self.ui.highlight_trailing_ws = v;
+        }
+        if let Some(v) = raw.ui.clock {
+            self.ui.clock = v;
         }
         if let Some(v) = raw.ui.highlight_word_under_cursor {
             self.ui.highlight_word_under_cursor = v;
