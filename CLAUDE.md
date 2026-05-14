@@ -442,6 +442,12 @@ opens the `Ctrl+P` file picker (vim canonical "show a file open dialog").
 `:set cc!` toggles between 0 and 80 (vim's classic). `view.toggle_color_column` is the
 palette form. Editor view paints the cell at column `N-1` with the theme's `bg2` background
 — priority is just above the base bg, so selection / find / cursor-line tints still win.
+**`:` cmdline Tab completion** — pressing Tab on a `:`-line whose FIRST word is being typed
+cycles through matching ex command names from a curated list (`EX_COMPLETION_NAMES`).
+First Tab swaps in the alphabetically-first match; subsequent Tabs cycle. Any non-Tab key
+clears the cycle state so editing doesn't keep "completing" surprisingly. Trailing-arg
+completion (file paths after `:e`, `:sp` etc.) isn't wired yet — the handler doesn't have
+filesystem access — those Tabs are no-ops.
 **Vim `gI`** — insert at literal column 0 (vs. `I` which goes to first non-blank).
 Single-key chord in the `g` prefix.
 **`:1,5j` / `:join`** — bare form joins current+next; ranged form collapses the

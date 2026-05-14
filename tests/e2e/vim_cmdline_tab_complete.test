@@ -1,0 +1,26 @@
+# `:` cmdline Tab completion — cycles through ex commands.
+
+write data.txt "alpha"
+open data.txt
+command editor.use_vim
+
+# Open the cmdline. Type "wr" — Tab should complete to "write" (the only
+# ex command in EX_COMPLETION_NAMES starting with "wr").
+key :
+type "wr"
+key tab
+# The pending-display in the statusline shows ":<text>" — so we expect to
+# see ":write" rendered somewhere.
+expect screen contains ":write"
+key escape
+
+# "ta" has many matches (tabnew/tabnext/tabprev/...). First Tab picks the
+# first sorted match — "tabclose".
+key :
+type "ta"
+key tab
+expect screen contains ":tabclose"
+# Second Tab cycles to next match — "tabe".
+key tab
+expect screen contains ":tabe"
+key escape

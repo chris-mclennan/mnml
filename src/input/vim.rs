@@ -118,6 +118,138 @@ enum Prefix {
     SurroundAddCharWait,
 }
 
+/// Ex-cmdline Tab completion: the part of the line that survives, the matching
+/// candidates, and the current cycle index (the cmdline currently shows
+/// `head + matches[idx]`).
+#[derive(Debug, Clone)]
+struct CmdlineCompleteState {
+    /// Text before the trailing word being completed (kept verbatim).
+    head: String,
+    /// Candidate completions (sorted, deduped).
+    matches: Vec<String>,
+    /// Which one is currently shown.
+    idx: usize,
+}
+
+/// Ex commands offered for Tab completion on the first word. Curated rather
+/// than dynamically generated — most are matched as prefixes by the dispatcher,
+/// so a few canonical names cover their short forms too.
+const EX_COMPLETION_NAMES: &[&str] = &[
+    "argdo",
+    "ascii",
+    "badd",
+    "bdelete",
+    "bfirst",
+    "blast",
+    "bnext",
+    "bprev",
+    "browse",
+    "buffer",
+    "buffers",
+    "bufdo",
+    "cclose",
+    "cd",
+    "cfirst",
+    "clast",
+    "close",
+    "cnext",
+    "command",
+    "copen",
+    "copy",
+    "cprev",
+    "cwindow",
+    "delcommand",
+    "delete",
+    "diff",
+    "earlier",
+    "edit",
+    "enew",
+    "execute",
+    "files",
+    "first",
+    "Explore",
+    "global",
+    "goto",
+    "grep",
+    "help",
+    "hide",
+    "jumps",
+    "keepa",
+    "keepalt",
+    "keepjumps",
+    "keepmarks",
+    "last",
+    "later",
+    "Lex",
+    "Lexplore",
+    "ls",
+    "make",
+    "marks",
+    "messages",
+    "move",
+    "next",
+    "noautocmd",
+    "nohlsearch",
+    "norm",
+    "normal",
+    "only",
+    "previous",
+    "put",
+    "pwd",
+    "qa",
+    "qall",
+    "quit",
+    "quitall",
+    "read",
+    "redo",
+    "redraw",
+    "registers",
+    "reload",
+    "resize",
+    "retab",
+    "saveas",
+    "set",
+    "setf",
+    "setlocal",
+    "Sex",
+    "Sexplore",
+    "silent",
+    "sort",
+    "source",
+    "split",
+    "sub",
+    "substitute",
+    "syntax",
+    "tabclose",
+    "tabe",
+    "tabedit",
+    "tabfirst",
+    "tablast",
+    "tabnew",
+    "tabnext",
+    "tabonly",
+    "tabprev",
+    "term",
+    "undo",
+    "unique",
+    "version",
+    "Vex",
+    "Vexplore",
+    "view",
+    "vimgrep",
+    "vsplit",
+    "wa",
+    "wall",
+    "wnext",
+    "wprev",
+    "wqa",
+    "wqall",
+    "write",
+    "xall",
+    "xit",
+    "yank",
+];
+
 #[derive(Debug)]
 pub struct VimInputHandler {
     mode: VimMode,
@@ -149,6 +281,10 @@ pub struct VimInputHandler {
     /// verbatim (Tab as `\t`, etc.) instead of going through the usual
     /// chord lookup.
     insert_literal_next: bool,
+    /// Ex-cmdline Tab-completion state. While Tab cycles between matches,
+    /// we remember the prefix of cmdline that's NOT being completed, the
+    /// candidate list, and the current index. Any non-Tab key clears it.
+    cmdline_complete: Option<CmdlineCompleteState>,
     /// Mirror of the App's macro recording state. Local because the vim
     /// handler needs to decide on `q` whether to enter `MacroRecordTarget`
     /// prefix (idle) or fire the stop toggle (recording). Kept in sync by
@@ -194,6 +330,7 @@ impl VimInputHandler {
             pending_register: None,
             insert_waiting_for_register: false,
             insert_literal_next: false,
+            cmdline_complete: None,
             is_recording_macro: false,
             pending_surround_ops: Vec::new(),
             insert_oneshot_normal: false,
@@ -297,8 +434,63 @@ impl VimInputHandler {
         })
     }
 
+    /// Build a Tab-completion cycle for the current `:` line. For now we only
+    /// complete the FIRST word (the ex-command name) against
+    /// [`EX_COMPLETION_NAMES`]; trailing args (file paths etc.) fall through
+    /// to an empty match list so subsequent Tabs are no-ops.
+    fn cmdline_compute_completions(line: &str) -> CmdlineCompleteState {
+        // If the line has a whitespace, we're past the first word.
+        if let Some(space_idx) = line.find(char::is_whitespace) {
+            // Arg position — no completion candidates wired yet.
+            let (head, _) = line.split_at(space_idx);
+            return CmdlineCompleteState {
+                head: format!("{head} "),
+                matches: Vec::new(),
+                idx: 0,
+            };
+        }
+        let prefix = line;
+        let mut matches: Vec<String> = EX_COMPLETION_NAMES
+            .iter()
+            .filter(|name| name.starts_with(prefix))
+            .map(|s| s.to_string())
+            .collect();
+        matches.sort();
+        matches.dedup();
+        CmdlineCompleteState {
+            head: String::new(),
+            matches,
+            idx: 0,
+        }
+    }
+
     fn handle_cmdline(&mut self, key: KeyEvent, line: String) -> InputResult {
+        // Any key that's NOT Tab clears the cycle state (so editing after a
+        // partial Tab-cycle doesn't keep "cycling" surprisingly).
+        if key.code != KeyCode::Tab {
+            self.cmdline_complete = None;
+        }
         match key.code {
+            KeyCode::Tab => {
+                let state = self
+                    .cmdline_complete
+                    .take()
+                    .unwrap_or_else(|| Self::cmdline_compute_completions(&line));
+                if state.matches.is_empty() {
+                    self.cmdline_complete = None;
+                    self.cmdline = Some(line);
+                    return InputResult::Consumed;
+                }
+                let next_idx = (state.idx + 1) % state.matches.len().max(1);
+                let new_line = format!("{}{}", state.head, &state.matches[state.idx]);
+                let next_state = CmdlineCompleteState {
+                    idx: next_idx,
+                    ..state
+                };
+                self.cmdline = Some(new_line);
+                self.cmdline_complete = Some(next_state);
+                InputResult::Consumed
+            }
             KeyCode::Esc => {
                 self.cmdline = None;
                 self.ex_history_cursor = None;
