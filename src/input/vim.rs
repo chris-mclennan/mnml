@@ -23,6 +23,7 @@ enum VimMode {
     Insert,
     Visual,
     VisualLine,
+    VisualBlock,
 }
 
 /// A pending operator awaiting a motion (`d`, `c`, `y`, `>`, `<`, `gq`).
@@ -1025,7 +1026,12 @@ impl VimInputHandler {
                 self.prefix = Prefix::MarkJumpExact;
                 InputResult::Consumed
             }
-            // visual modes
+            // visual modes — Ctrl+V (block) MUST come before bare v.
+            KeyCode::Char('v') if ctrl => {
+                self.mode = VimMode::VisualBlock;
+                self.reset_pending();
+                InputResult::Ops(vec![BlockSelectStart])
+            }
             KeyCode::Char('v') => {
                 self.mode = VimMode::Visual;
                 self.reset_pending();
@@ -1186,6 +1192,77 @@ impl VimInputHandler {
             _ => InputResult::Consumed,
         }
     }
+
+    fn handle_visual_block(&mut self, key: KeyEvent, _ctx: &EditCtx) -> InputResult {
+        use EditOp::*;
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // count prefix
+        if let KeyCode::Char(c @ '1'..='9') = key.code {
+            let d = c as u32 - '0' as u32;
+            self.count = Some(self.count.unwrap_or(0).saturating_mul(10).saturating_add(d));
+            return InputResult::Consumed;
+        }
+        if let KeyCode::Char(c @ '0'..='9') = key.code
+            && self.count.is_some()
+        {
+            let d = c as u32 - '0' as u32;
+            self.count = Some(self.count.unwrap().saturating_mul(10).saturating_add(d));
+            return InputResult::Consumed;
+        }
+        if let Some(m) = Self::motion(key.code) {
+            // Motions extend the rectangle (the cursor moves; the anchor
+            // stays where BlockSelectStart pinned it).
+            let n = self.count1();
+            self.count = None;
+            return InputResult::Ops(Self::repeated(m, n));
+        }
+        self.count = None;
+        match key.code {
+            KeyCode::Esc => {
+                self.enter_normal();
+                InputResult::Ops(vec![BlockSelectClear])
+            }
+            // Cycle: Ctrl+V from block ⇒ exit. Bare v / V ⇒ switch to
+            // charwise / linewise (close enough — clearing the block and
+            // starting fresh charwise from the cursor; vim does smarter
+            // handoff but this MVP keeps the simple invariant).
+            KeyCode::Char('v') if ctrl => {
+                self.enter_normal();
+                InputResult::Ops(vec![BlockSelectClear])
+            }
+            KeyCode::Char('v') => {
+                self.mode = VimMode::Visual;
+                InputResult::Ops(vec![BlockSelectClear, SelectStart])
+            }
+            KeyCode::Char('V') => {
+                self.mode = VimMode::VisualLine;
+                InputResult::Ops(vec![BlockSelectClear, SelectLine])
+            }
+            // Block yank / delete.
+            KeyCode::Char('y') => {
+                self.enter_normal();
+                InputResult::Ops(vec![YankBlock])
+            }
+            KeyCode::Char('d') | KeyCode::Char('x') => {
+                self.enter_normal();
+                InputResult::Ops(vec![DeleteBlock])
+            }
+            // Swap which corner the cursor is in (vim's visual `o` works in
+            // block mode too — but we only have a single anchor so this just
+            // mirrors row/col by moving cursor to the opposite corner; the
+            // simpler semantics — swap anchor and cursor — works because the
+            // rectangle is computed from min/max anyway).
+            KeyCode::Char('o') => {
+                // No-op for block mode in this MVP — the rect is symmetric.
+                InputResult::Consumed
+            }
+            KeyCode::Char(':') => {
+                self.cmdline = Some(String::new());
+                InputResult::Consumed
+            }
+            _ => InputResult::Consumed,
+        }
+    }
 }
 
 impl InputHandler for VimInputHandler {
@@ -1197,6 +1274,7 @@ impl InputHandler for VimInputHandler {
             VimMode::Insert => self.handle_insert(key, ctx),
             VimMode::Normal => self.handle_normal(key, ctx),
             VimMode::Visual | VimMode::VisualLine => self.handle_visual(key, ctx),
+            VimMode::VisualBlock => self.handle_visual_block(key, ctx),
         }
     }
 
@@ -1204,7 +1282,7 @@ impl InputHandler for VimInputHandler {
         match self.mode {
             VimMode::Normal => EditingMode::Normal,
             VimMode::Insert => EditingMode::Insert,
-            VimMode::Visual | VimMode::VisualLine => EditingMode::Visual,
+            VimMode::Visual | VimMode::VisualLine | VimMode::VisualBlock => EditingMode::Visual,
         }
     }
 
@@ -1257,6 +1335,13 @@ impl InputHandler for VimInputHandler {
                 "V-LINE".into()
             } else {
                 format!("V-LINE {s}")
+            });
+        }
+        if self.mode == VimMode::VisualBlock {
+            return Some(if s.is_empty() {
+                "V-BLOCK".into()
+            } else {
+                format!("V-BLOCK {s}")
             });
         }
         if s.is_empty() { None } else { Some(s) }

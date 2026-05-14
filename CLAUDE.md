@@ -125,6 +125,35 @@ an operator is pending so the deleted/changed range matches vim's exclusive vs i
 `tests/e2e/vim_find_char.test` covers `f` + `dt`.
 **Vim Visual `o`** — swap which end of the selection the cursor sits on (so you can extend the *other*
 side without redoing the selection). New `EditOp::SwapAnchorCursor`.
+**Vim Visual Block (`Ctrl+V`)** — rectangular selection. New `VimMode::VisualBlock` + `Editor.block_anchor:
+Option<usize>` (independent of charwise `anchor`). The rect is computed from `block_anchor` and `cursor`
+via `Editor::block_selection() → Option<(rmin, cmin, rmax, cmax)>`; `editor_view.rs` paints every cell in
+the rectangle (vim convention — extends past EOL too). Motions extend the rect (the cursor moves; anchor
+stays). `y` yanks the column slices joined with `\n` (`EditOp::YankBlock`); `d` / `x` deletes them
+(`EditOp::DeleteBlock` — `Editor::block_ranges` enumerates per-row byte ranges, splices descending so
+earlier offsets stay valid). Cursor lands at the rect's top-left after delete. Bare `v` / `V` in
+block mode flip back to charwise / linewise; `Esc` exits. Block insert (`I` / `A` / `c` — true
+multi-cursor "type once across rows") is out of scope for the MVP. V-BLOCK chip in the
+statusline / pending-display.
+**Vim normal `r<c>`** — replace the char under the cursor with `c`. New `EditOp::ReplaceCharAtCursor`
+landing the cursor at the same byte position (vim convention). Visual `r<c>` replaces every non-newline
+char in the selection.
+**Vim `g_`** — move to last non-whitespace char on the current line (new `EditOp::MoveLineLastNonWs`).
+**Vim `ga` / `g8`** — char info toasts. `ga` shows decimal · hex · U+XXXX; `g8` shows the UTF-8 byte
+sequence. New commands `editor.char_info` / `editor.char_utf8`.
+**Vim `Ctrl+O` / `Ctrl+I`** — jumplist back / forward. Aliased onto the `nav.back` / `nav.forward`
+commands (the same machinery as `Alt+Left` / `Alt+Right`). `Tab` in vim normal also routes to
+`nav.forward` (terminals don't distinguish Ctrl+I from Tab).
+**Vim `&`** — repeat the last `:s` payload on the cursor's current line (vim convention: always line
+scope, `c` flag dropped). `App.last_substitute: Option<Substitute>` records every `:s` / `:%s`;
+`editor.repeat_last_substitute` re-fires.
+**`:reg` / `:registers`** — toast the current clipboard contents (single anonymous register MVP;
+newlines render as `↵`, truncated at 80 chars).
+**`:b <substr>`** — switch to the editor pane whose path contains `<substr>` (case-insensitive,
+filename-exact match wins on ambiguity). Bare `:b` toasts the open buffers list.
+**Persisted `closed_buffers`** — `Ctrl+Shift+T` (`buffer.reopen`) survives a relaunch:
+`SavedSession.closed_buffers: Vec<SavedNavPoint>` round-trips the recently-closed buffer paths +
+their last cursor positions, capped at `CLOSED_BUFFERS_MAX` on restore.
 **Vim `gv`** — re-select the last visual selection. The editor remembers `(anchor, cursor)` whenever a
 selection is closed (`SelectClear`, `YankSelection`, `DeleteSelection`); `gv` emits new
 `EditOp::RestoreLastSelection` to put it back and the handler flips into Visual mode.

@@ -143,6 +143,7 @@ pub fn draw_pane(
     }
 
     let selection = buf.editor.selection();
+    let block_sel = buf.editor.block_selection();
     let sel_bg = theme::cur().base16[0x02];
     let match_bg = theme::cur().bg2;
     let cur_match_bg = theme::cur().yellow;
@@ -343,6 +344,15 @@ pub fn draw_pane(
             let c = buf.h_scroll + vc;
             let in_sel =
                 (sel_hi > sel_lo && c >= sel_lo && c < sel_hi) || (extend_eol && c >= sel_lo);
+            // Visual-block rectangle: highlight every cell where row is in
+            // [rmin..=rmax] and col in [cmin..=cmax], regardless of whether
+            // the line actually has text at that column (vim convention —
+            // rectangle paints over EOL too).
+            let in_block = block_sel
+                .map(|(rmin, cmin, rmax, cmax)| {
+                    line_no >= rmin && line_no <= rmax && c >= cmin && c <= cmax
+                })
+                .unwrap_or(false);
             let in_match = line_matches
                 .iter()
                 .find(|(s, e, _)| c >= *s && c < *e)
@@ -357,7 +367,7 @@ pub fn draw_pane(
             let in_word_match = word_matches_on_line.iter().any(|&(s, e)| {
                 c >= s && c < e && !(line_no == cur_row && cur_col >= s && cur_col < e)
             });
-            let bg = if in_sel {
+            let bg = if in_sel || in_block {
                 sel_bg
             } else if is_bracket {
                 bracket_bg

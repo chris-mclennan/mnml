@@ -393,6 +393,11 @@ struct SavedSession {
     /// `FIND_HISTORY_MAX` on restore.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     find_history: Vec<String>,
+    /// `App.closed_buffers` — recently-closed editor buffers so
+    /// `Ctrl+Shift+T` (`buffer.reopen`) survives a relaunch. Stored
+    /// oldest-first; capped at `CLOSED_BUFFERS_MAX` on restore.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    closed_buffers: Vec<SavedNavPoint>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -9626,6 +9631,15 @@ impl App {
                 })
                 .collect(),
             find_history: self.find_history.clone(),
+            closed_buffers: self
+                .closed_buffers
+                .iter()
+                .map(|(p, row, col)| SavedNavPoint {
+                    path: p.to_string_lossy().into_owned(),
+                    row: *row,
+                    col: *col,
+                })
+                .collect(),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -9779,6 +9793,19 @@ impl App {
             let take_from = saved.find_history.len().saturating_sub(FIND_HISTORY_MAX);
             self.find_history = saved.find_history.into_iter().skip(take_from).collect();
             self.find_history_cursor = self.find_history.len();
+        }
+        // Closed-buffer stack — restore the most recent N (oldest first).
+        if !saved.closed_buffers.is_empty() {
+            let take_from = saved
+                .closed_buffers
+                .len()
+                .saturating_sub(CLOSED_BUFFERS_MAX);
+            self.closed_buffers = saved
+                .closed_buffers
+                .into_iter()
+                .skip(take_from)
+                .map(|np| (PathBuf::from(np.path), np.row, np.col))
+                .collect();
         }
         // Per-file change list — restore for any buffer we just re-opened.
         // Cursor sits past the newest entry so the first `g;` lands on the

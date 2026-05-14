@@ -223,6 +223,12 @@ pub struct Editor {
     /// "closed" (cleared, yanked, deleted, or changed). vim's `gv` restores
     /// it. `None` until the user has made at least one selection.
     last_selection: Option<(usize, usize)>,
+    /// Vim visual-block mode anchor (byte position). When `Some`, the
+    /// editor is in block-select mode: the rectangle is computed from
+    /// `(byte_to_rowcol(block_anchor), byte_to_rowcol(cursor))` — min/max
+    /// of rows + cols. The regular `anchor` is independent (block mode
+    /// uses its own state so motions don't conflict with charwise).
+    pub block_anchor: Option<usize>,
 }
 
 impl Editor {
@@ -237,6 +243,7 @@ impl Editor {
             undo: Vec::new(),
             redo: Vec::new(),
             in_insert_run: false,
+            block_anchor: None,
             auto_pair: false,
             auto_indent: false,
             last_selection: None,
@@ -388,6 +395,76 @@ impl Editor {
             .map(|(lo, hi)| self.text[lo..hi].to_string())
             .unwrap_or_default()
     }
+    /// The visual-block rectangle as `(rmin, cmin, rmax, cmax)` (inclusive,
+    /// chars, 0-based). `None` when not in block-select mode.
+    pub fn block_selection(&self) -> Option<(usize, usize, usize, usize)> {
+        let anchor = self.block_anchor?;
+        let (ar, ac) = self.row_col_at(anchor);
+        let (cr, cc) = self.row_col();
+        let (rmin, rmax) = (ar.min(cr), ar.max(cr));
+        let (cmin, cmax) = (ac.min(cc), ac.max(cc));
+        Some((rmin, cmin, rmax, cmax))
+    }
+
+    /// `(row, char_col)` of the byte position `byte` (clamped to text bounds).
+    pub fn row_col_at(&self, byte: usize) -> (usize, usize) {
+        let byte = byte.min(self.text.len());
+        let row = self.text[..byte].bytes().filter(|&c| c == b'\n').count();
+        let bol = self.line_start(row);
+        let col = self.text[bol..byte].chars().count();
+        (row, col)
+    }
+
+    /// Build the per-row byte ranges for the visual-block rectangle. Returns
+    /// `Vec<(start_byte, end_byte)>` — one entry per row in `[rmin..=rmax]`.
+    /// For each row, start is the byte of column `cmin` clamped to the
+    /// line's content (or the line's EOL if the line is shorter than `cmin`),
+    /// and end is the byte of column `cmax + 1` clamped to EOL. Rows shorter
+    /// than `cmin` get an empty `(eol, eol)` entry (vim convention — no
+    /// edit on those rows).
+    pub fn block_ranges(
+        &self,
+        rmin: usize,
+        cmin: usize,
+        rmax: usize,
+        cmax: usize,
+    ) -> Vec<(usize, usize)> {
+        let mut out = Vec::with_capacity(rmax - rmin + 1);
+        let line_count = self.line_count();
+        for r in rmin..=rmax.min(line_count.saturating_sub(1)) {
+            let (s, e) = self.line_byte_range(r);
+            let line_text = &self.text[s..e];
+            let line_chars = line_text.chars().count();
+            // Walk to char col cmin
+            let start = if line_chars <= cmin {
+                e
+            } else {
+                let mut b = s;
+                for (col, ch) in line_text.chars().enumerate() {
+                    if col == cmin {
+                        break;
+                    }
+                    b += ch.len_utf8();
+                }
+                b
+            };
+            let end = if line_chars <= cmax {
+                e
+            } else {
+                let mut b = s;
+                for (col, ch) in line_text.chars().enumerate() {
+                    if col == cmax + 1 {
+                        break;
+                    }
+                    b += ch.len_utf8();
+                }
+                b
+            };
+            out.push((start, end));
+        }
+        out
+    }
+
     pub fn has_selection(&self) -> bool {
         self.anchor.map(|a| a != self.cursor).unwrap_or(false)
     }
@@ -1533,6 +1610,66 @@ impl Editor {
                 out.clipboard_set = Some(s);
                 out.clipboard_linewise = true;
             }
+            BlockSelectStart => {
+                self.block_anchor = Some(self.cursor);
+                // Block mode is independent of charwise; clear any
+                // lingering charwise anchor.
+                self.anchor = None;
+            }
+            BlockSelectClear => {
+                self.block_anchor = None;
+            }
+            YankBlock => {
+                if let Some((rmin, cmin, rmax, cmax)) = self.block_selection() {
+                    let ranges = self.block_ranges(rmin, cmin, rmax, cmax);
+                    let mut parts: Vec<String> = Vec::with_capacity(ranges.len());
+                    for (s, e) in &ranges {
+                        parts.push(self.text[*s..*e].to_string());
+                    }
+                    let joined = parts.join("\n");
+                    clip.set(joined.clone(), false);
+                    out.clipboard_set = Some(joined);
+                    self.block_anchor = None;
+                }
+            }
+            DeleteBlock => {
+                if let Some((rmin, cmin, rmax, cmax)) = self.block_selection() {
+                    let ranges = self.block_ranges(rmin, cmin, rmax, cmax);
+                    // Yank into clipboard first (vim convention — `d` yanks).
+                    let mut parts: Vec<String> = Vec::with_capacity(ranges.len());
+                    for (s, e) in &ranges {
+                        parts.push(self.text[*s..*e].to_string());
+                    }
+                    let joined = parts.join("\n");
+                    clip.set(joined.clone(), false);
+                    out.clipboard_set = Some(joined);
+                    // Splice descending so earlier byte offsets stay valid.
+                    self.checkpoint();
+                    let mut sorted = ranges.clone();
+                    sorted.sort_by_key(|r| std::cmp::Reverse(r.0));
+                    for (s, e) in sorted {
+                        if s < e {
+                            self.text.replace_range(s..e, "");
+                        }
+                    }
+                    // Land cursor at the rectangle's top-left (the byte at
+                    // rmin's start-of-line + cmin chars, clamped to the
+                    // post-edit line content).
+                    let (line_s, line_e) = self.line_byte_range(rmin);
+                    let line_text = &self.text[line_s..line_e];
+                    let mut b = line_s;
+                    for (col, ch) in line_text.chars().enumerate() {
+                        if col == cmin {
+                            break;
+                        }
+                        b += ch.len_utf8();
+                    }
+                    self.cursor = b;
+                    self.block_anchor = None;
+                    self.anchor = None;
+                    out.buffer_changed = true;
+                }
+            }
             YankSelection => {
                 if let Some((lo, hi)) = self.selection() {
                     let s = self.text[lo..hi].to_string();
@@ -2111,6 +2248,35 @@ mod tests {
         assert_eq!(e.cursor(), e.text().len());
         e.apply(MoveBufferStart, 10, &mut c);
         assert_eq!(e.cursor(), 0);
+    }
+
+    #[test]
+    fn block_selection_yank_and_delete() {
+        // 4 lines of "abcdef" — yank the column 1..=2 rectangle on rows 0..=2
+        let (mut e, mut c) = ed("abcdef\nghijkl\nmnopqr\nstuvwx");
+        // Cursor at (0,1)
+        e.apply(MoveRight, 10, &mut c); // → cursor at byte 1, row 0 col 1
+        e.apply(BlockSelectStart, 10, &mut c);
+        // Move down 2 (row 2) and right 1 (col 2)
+        e.apply(MoveDown, 10, &mut c);
+        e.apply(MoveDown, 10, &mut c);
+        e.apply(MoveRight, 10, &mut c);
+        let rect = e.block_selection().unwrap();
+        assert_eq!(rect, (0, 1, 2, 2));
+        // Yank — clipboard should hold "bc\nhi\nno" (rows 0..=2, cols 1..=2)
+        e.apply(YankBlock, 10, &mut c);
+        assert_eq!(c.text(), "bc\nhi\nno");
+        assert!(e.block_selection().is_none()); // cleared after yank
+
+        // Delete: re-establish at (0,1)..(2,2), delete the rectangle
+        let (mut e, mut c) = ed("abcdef\nghijkl\nmnopqr\nstuvwx");
+        e.apply(MoveRight, 10, &mut c);
+        e.apply(BlockSelectStart, 10, &mut c);
+        e.apply(MoveDown, 10, &mut c);
+        e.apply(MoveDown, 10, &mut c);
+        e.apply(MoveRight, 10, &mut c);
+        e.apply(DeleteBlock, 10, &mut c);
+        assert_eq!(e.text(), "adef\ngjkl\nmpqr\nstuvwx");
     }
 
     #[test]

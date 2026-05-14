@@ -86,6 +86,23 @@ pub enum EditOp {
     /// Multi-cursor — stubbed; a no-op until that "later" lands.
     AddCursorBelow,
     AddCursorAbove,
+    /// vim `Ctrl+V` — start visual-block selection. Sets the editor's
+    /// `block_anchor` to the current cursor; subsequent motions (h/j/k/l,
+    /// w/b/e, etc.) extend the rectangle.
+    BlockSelectStart,
+    /// Forget the visual-block rectangle. Mirror of `SelectClear` for the
+    /// block-mode state.
+    BlockSelectClear,
+    /// vim visual-block `y` — yank the rectangle as block-shaped text
+    /// (rows joined by `\n`, every row's slice — including empty slices for
+    /// short rows — included). Stored as charwise + a leading `\n` is NOT
+    /// added (the receiver pastes line-aligned via PasteAfter / Before).
+    YankBlock,
+    /// vim visual-block `d` / `x` — delete the rectangle. Each row in the
+    /// range loses its `[col_min..=col_max]` slice (rows shorter than
+    /// `col_min` keep their content). Cursor lands at the rectangle's
+    /// top-left after.
+    DeleteBlock,
 
     // ── text mutation ──
     InsertChar(char),
@@ -243,8 +260,11 @@ impl EditOp {
             | FindCharOnLine { .. }
             | AddCursorBelow
             | AddCursorAbove
+            | BlockSelectStart
+            | BlockSelectClear
             | YankLine
             | YankSelection
+            | YankBlock
             | Undo
             | Redo => false,
             Repeat(_, inner) => inner.is_mutation(),
