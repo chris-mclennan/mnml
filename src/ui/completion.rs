@@ -48,8 +48,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
         .max()
         .unwrap_or(0);
     let inner_w = label_w + if detail_w > 0 { detail_w + 2 } else { 0 } + 2; // 1-col pad each side
-    let w = (inner_w as u16).clamp(14, screen.width.saturating_sub(2));
-    let h = rows as u16;
+    // Documentation preview for the selected item — single-line, first
+    // non-empty line of the LSP `documentation` field. Rendered as a footer
+    // row when present so the user gets context without firing a hover.
+    let docs_line: Option<String> = p
+        .current()
+        .map(|it| it.documentation.clone())
+        .and_then(|d| {
+            d.lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .map(str::to_string)
+        });
+    let docs_h: u16 = if docs_line.is_some() { 1 } else { 0 };
+    let docs_w = docs_line
+        .as_ref()
+        .map(|s| s.chars().count() + 2)
+        .unwrap_or(0);
+    let w = (inner_w.max(docs_w) as u16).clamp(14, screen.width.saturating_sub(2));
+    let h = rows as u16 + docs_h;
 
     let (cx, cy) = cursor.unwrap_or((screen.x + 2, screen.y + 1));
     let below = cy.saturating_add(1);
@@ -122,6 +139,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
         }
         spans.push(Span::styled(" ", Style::default().bg(bg)));
         lines.push(Line::from(spans));
+    }
+    // Docs footer (dim italic, padded to width). Truncated with `…` when it
+    // exceeds the popup's content width.
+    if let Some(doc) = &docs_line {
+        let usable_w = area.width.saturating_sub(2) as usize;
+        let mut docs: String = doc.chars().take(usable_w).collect();
+        if doc.chars().count() > usable_w && usable_w >= 1 {
+            docs = doc.chars().take(usable_w - 1).collect::<String>() + "…";
+        }
+        let pad = usable_w.saturating_sub(docs.chars().count());
+        lines.push(Line::from(vec![
+            Span::styled(" ", Style::default().bg(t.bg_dark)),
+            Span::styled(
+                docs,
+                Style::default()
+                    .fg(t.grey_fg)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+            Span::styled(" ".repeat(pad + 1), Style::default().bg(t.bg_dark)),
+        ]));
     }
     frame.render_widget(
         Paragraph::new(lines).style(Style::default().bg(t.bg_darker)),

@@ -19,6 +19,12 @@ pub struct CompletionItem {
     pub insert: String,
     /// A dim right-hand hint (a type, a module path, …) — may be empty.
     pub detail: String,
+    /// Hover-style documentation for the candidate (MarkupContent or plain
+    /// string from the server). Empty when the server didn't include any.
+    /// Rendered as a footer line on the popup for the currently selected
+    /// item. Lazy `completionItem/resolve` not yet wired — what the server
+    /// eagerly sent on the initial reply is all we see.
+    pub documentation: String,
 }
 
 #[derive(Debug)]
@@ -113,6 +119,7 @@ mod tests {
             label: label.into(),
             insert: label.into(),
             detail: String::new(),
+            documentation: String::new(),
         }
     }
 

@@ -487,6 +487,12 @@ most-recently-used order with the active pane dropped to the bottom so the picke
 already-cursored on the *previous* buffer (vim's "alternate buffer" idea — Enter swaps).
 New `App.pane_mru: Vec<PaneId>` (newest first) maintained in `reveal_pane`; entries
 removed and re-indexed in `remove_pane_storage`.
+**LSP completion docs footer** — `CompletionItem.documentation` is captured from each
+candidate's `documentation` field (string OR `MarkupContent { kind, value }`); the popup
+renders the selected item's first non-empty doc line as a dim italic footer beneath the
+list. `initialize` now advertises `completionItem.documentationFormat: ["markdown",
+"plaintext"]` so servers send docs eagerly. Lazy `completionItem/resolve` not wired yet
+— what the server returns on the initial reply is all we show.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

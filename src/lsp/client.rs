@@ -93,7 +93,12 @@ impl LspClient {
                         "definition": { "linkSupport": true },
                         "references": {},
                         "rename": {},
-                        "completion": { "completionItem": { "snippetSupport": false } },
+                        "completion": {
+                            "completionItem": {
+                                "snippetSupport": false,
+                                "documentationFormat": ["markdown", "plaintext"],
+                            }
+                        },
                         "signatureHelp": {
                             "signatureInformation": {
                                 "parameterInformation": { "labelOffsetSupport": true }
@@ -651,7 +656,9 @@ fn parse_workspace_edit(result: &serde_json::Value) -> Vec<(PathBuf, Vec<(Range,
 /// `insertText` (then `textEdit.newText`, then `label`) supplies the text to
 /// insert; snippet items (`insertTextFormat == 2`) fall back to the label since
 /// we don't expand placeholders.
-fn parse_completion(result: &serde_json::Value) -> Vec<(String, String, Option<String>)> {
+fn parse_completion(
+    result: &serde_json::Value,
+) -> Vec<(String, String, Option<String>, Option<String>)> {
     let arr = match result {
         serde_json::Value::Array(a) => a,
         serde_json::Value::Object(o) => match o.get("items").and_then(|i| i.as_array()) {
@@ -683,7 +690,16 @@ fn parse_completion(result: &serde_json::Value) -> Vec<(String, String, Option<S
             .get("detail")
             .and_then(|d| d.as_str())
             .map(str::to_string);
-        out.push((label.to_string(), insert, detail));
+        // `documentation` may be a plain string OR `MarkupContent`
+        // (`{ kind, value }`). Both reduce to a plain string for the chip.
+        let documentation = it.get("documentation").and_then(|d| match d {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Object(o) => {
+                o.get("value").and_then(|v| v.as_str()).map(String::from)
+            }
+            _ => None,
+        });
+        out.push((label.to_string(), insert, detail, documentation));
     }
     out
 }
@@ -1210,13 +1226,14 @@ mod tests {
             (
                 "push".into(),
                 "push".into(),
-                Some("fn(&mut self, T)".into())
+                Some("fn(&mut self, T)".into()),
+                None,
             )
         );
         // snippet ⇒ fall back to the label, not the placeholder text
         assert_eq!(got[1].1, "println!");
         // no insertText ⇒ use the label
-        assert_eq!(got[2], ("len".into(), "len".into(), None));
+        assert_eq!(got[2], ("len".into(), "len".into(), None, None));
         // bare array form
         let arr = json!([{"label": "x", "textEdit": {"newText": "x_edited"}}]);
         assert_eq!(parse_completion(&arr)[0].1, "x_edited");

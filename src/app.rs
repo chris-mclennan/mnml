@@ -2766,6 +2766,7 @@ impl App {
                 label: m.clone(),
                 insert: m,
                 detail: "buffer".to_string(),
+                documentation: String::new(),
             })
             .collect();
         let popup = crate::completion::CompletionPopup::new(path, items, &prefix);
@@ -4190,10 +4191,11 @@ impl App {
                 let cis: Vec<CompletionItem> = items
                     .into_iter()
                     .take(500)
-                    .map(|(label, insert, detail)| CompletionItem {
+                    .map(|(label, insert, detail, documentation)| CompletionItem {
                         label,
                         insert,
                         detail: detail.unwrap_or_default(),
+                        documentation: documentation.unwrap_or_default(),
                     })
                     .collect();
                 let popup = CompletionPopup::new(path, cis, &prefix);
