@@ -452,14 +452,14 @@ fn builtin_commands() -> Vec<Command> {
             id: "buffer.next",
             title: "Next buffer",
             group: "buffer",
-            keys: &["ctrl+pagedown"],
+            keys: &["ctrl+pagedown", "ctrl+tab"],
             run: |app| app.next_buffer(),
         },
         Command {
             id: "buffer.prev",
             title: "Previous buffer",
             group: "buffer",
-            keys: &["ctrl+pageup"],
+            keys: &["ctrl+pageup", "ctrl+shift+tab"],
             run: |app| app.prev_buffer(),
         },
         Command {

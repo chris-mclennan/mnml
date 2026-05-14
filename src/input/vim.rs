@@ -259,6 +259,10 @@ impl VimInputHandler {
                     KeyCode::Char('D') => {
                         InputResult::App(AppCommand::RunCommand("lsp.goto_declaration".into()))
                     }
+                    // `gf` — open the path under the cursor (vim convention).
+                    KeyCode::Char('f') => {
+                        InputResult::App(AppCommand::RunCommand("editor.open_at_cursor".into()))
+                    }
                     KeyCode::Char('c') => {
                         self.prefix = Prefix::Gc;
                         self.count = if n > 1 { Some(n) } else { None };

@@ -347,6 +347,11 @@ struct SavedSession {
     /// newest entry so the first `g;` lands on the most recent edit.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     edit_history: Vec<SavedEditHistory>,
+    /// `App.find_history` — recent in-buffer find queries (Up/Down on the
+    /// Find prompt walks through them). Persisted oldest-first; capped at
+    /// `FIND_HISTORY_MAX` on restore.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    find_history: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -8470,6 +8475,7 @@ impl App {
                     _ => None,
                 })
                 .collect(),
+            find_history: self.find_history.clone(),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -8617,6 +8623,15 @@ impl App {
         if self.nav_forward.len() > NAV_STACK_MAX {
             let drop_n = self.nav_forward.len() - NAV_STACK_MAX;
             self.nav_forward.drain(..drop_n);
+        }
+        // Find query history — restore the most recent N (oldest first).
+        if !saved.find_history.is_empty() {
+            let take_from = saved
+                .find_history
+                .len()
+                .saturating_sub(FIND_HISTORY_MAX);
+            self.find_history = saved.find_history.into_iter().skip(take_from).collect();
+            self.find_history_cursor = self.find_history.len();
         }
         // Per-file change list — restore for any buffer we just re-opened.
         // Cursor sits past the newest entry so the first `g;` lands on the

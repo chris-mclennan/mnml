@@ -138,6 +138,8 @@ back from the cursor for an unmatched open, then forward for the matching close 
 50k-char budget per side). Spans multiple lines unlike the quote variants.
 **Half-page scroll** — new `EditOp::HalfPageUp` / `HalfPageDown` (interpreted in `editor.rs::apply` with
 `vp / 2`). Bound to `Ctrl+U` / `Ctrl+D` in vim normal mode (vim canonical).
+**Vim `gf`** — open the path under the cursor (vim `gf`); routes through the `editor.open_at_cursor`
+command (also bound to `Ctrl+Shift+O` in standard mode). Supports `path:line:col` suffixes.
 **Vim `Ctrl+W` split-nav prefix** — in vim normal mode, `Ctrl+W` is intercepted as a window-chord
 prefix (new `Prefix::Window`). Subsequent key picks the action: `h`/`j`/`k`/`l` (or arrows) focus
 the split in that direction (`view.focus_left/right/up/down`); `w` cycles (`view.focus_next_split`);
@@ -322,7 +324,8 @@ query flips them to case-sensitive (ripgrep / fzf convention). Implemented via n
 the most-recent entry, capped at `FIND_HISTORY_MAX = 50`). Up / Down on the open Find prompt walk back
 and forth through history (`find_history_prev` / `find_history_next`); the live input is the entry past
 the newest. Each walk reuses the incremental-find preview path so the editor highlights match the
-recalled query immediately.
+recalled query immediately. **Persisted across launches** in `session.json` (oldest-first, capped at
+`FIND_HISTORY_MAX` on restore).
 **Incremental find** — every keystroke on the open `PromptKind::Find` prompt fires
 `App::update_live_find_preview` which rebuilds the buffer's find state from the partial query (no cursor
 move — just the highlight set + match index). The cursor doesn't jump until Enter; Esc restores the prior
