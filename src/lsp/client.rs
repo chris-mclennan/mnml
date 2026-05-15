@@ -489,9 +489,33 @@ fn handle_message(
     pending: &Pending,
     stdin: &Sink,
 ) {
-    // A server→client request (has both `id` and `method`): reply `null` so a
-    // strict server (registerCapability / configuration / progress create) moves on.
-    if let (Some(id), Some(_method)) = (v.get("id"), v.get("method").and_then(|m| m.as_str())) {
+    // A server→client request (has both `id` and `method`).
+    if let (Some(id), Some(method)) = (v.get("id"), v.get("method").and_then(|m| m.as_str())) {
+        // `workspace/applyEdit` — server wants us to apply a WorkspaceEdit.
+        // Forward via LspEvent so the App can route it through
+        // `apply_rename_edits`, then reply `{applied: true}`.
+        if method == "workspace/applyEdit"
+            && let Some(edit) = v.get("params").and_then(|p| p.get("edit"))
+        {
+            let edits = parse_workspace_edit(edit);
+            let label = v
+                .get("params")
+                .and_then(|p| p.get("label"))
+                .and_then(|l| l.as_str())
+                .map(String::from);
+            if !edits.is_empty() {
+                let _ = tx.send(LspEvent::ApplyEdit { label, edits });
+            }
+            if let Ok(mut w) = stdin.lock() {
+                let _ = write_message(
+                    &mut *w,
+                    &json!({ "jsonrpc": "2.0", "id": id, "result": { "applied": true } }),
+                );
+            }
+            return;
+        }
+        // Default: reply `null` so a strict server (registerCapability /
+        // configuration / progress create) moves on.
         if let Ok(mut w) = stdin.lock() {
             let _ = write_message(
                 &mut *w,

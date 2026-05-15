@@ -79,6 +79,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.body = Some(area);
         app.rects.editor_panes.clear();
         app.rects.fold_chips.clear();
+        app.rects.completion_rows.clear();
         app.rects.split_dividers.clear();
         let layout = app.layout.clone();
         let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {

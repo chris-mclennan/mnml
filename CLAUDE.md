@@ -543,8 +543,18 @@ cursor and advance; at EOL / EOF the chars are inserted. Esc returns to Normal. 
 `VimMode::Replace` + new `handle_replace` + new `EditingMode::Replace` variant (gets its
 own orange `REPLACE` chip on the statusline + underline cursor shape). New
 `EditOp::OverwriteCharAndAdvance(char)` (one op per typed char: replace-or-insert +
-cursor advance). Backspace moves left without restoring the original char — vim's
-"restore" behavior is a follow-up.
+cursor advance). Backspace pops the last overwrite from `Editor.replace_stack` and
+restores the original char (or removes an EOL-inserted one) — vim canonical. New ops
+`ReplaceUndoOne` + `ReplaceSessionBegin`; the vim handler emits the latter on `R`-entry
+so the stack starts fresh.
+**LSP `workspace/applyEdit`** — server-initiated edits (rust-analyzer / some refactors)
+now land. The reader replies `{applied: true}` and forwards the `WorkspaceEdit` via new
+`LspEvent::ApplyEdit { label, edits }`; the App pipes it through `apply_rename_edits` and
+toasts the count.
+**Mouse click on completion popup** — clicking a row in the popup selects + accepts
+that item. `app.rects.completion_rows` is recorded by the renderer; `dispatch_mouse`
+matches click coords against it before the "click anywhere dismisses" path. New
+`CompletionPopup::set_selected`.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

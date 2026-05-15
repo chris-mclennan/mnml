@@ -24,3 +24,15 @@ type "!"
 key escape
 command file.save
 expect file data.txt contains "XYZdef!"
+
+# Backspace in Replace mode restores the original char (vim canonical).
+write back.txt "abcdef"
+open back.txt
+key R
+type "12"
+key backspace
+key backspace
+key escape
+command file.save
+# Both overwrites should be restored — file unchanged.
+expect file back.txt contains "abcdef"

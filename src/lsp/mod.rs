@@ -98,6 +98,12 @@ pub enum LspEvent {
     /// Result of a `textDocument/rename` request — a `WorkspaceEdit` flattened to
     /// `(path, [(range, new_text)])` per affected file.
     Rename(Vec<(PathBuf, Vec<(Range, String)>)>),
+    /// Server-initiated `workspace/applyEdit` — same shape as `Rename`, with
+    /// an optional label the server provides for the user-facing toast.
+    ApplyEdit {
+        label: Option<String>,
+        edits: Vec<(PathBuf, Vec<(Range, String)>)>,
+    },
     /// Result of a `textDocument/completion` request — see
     /// [`CompletionItemTuple`] for the field layout.
     Completion(Vec<CompletionItemTuple>),

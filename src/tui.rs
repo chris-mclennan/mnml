@@ -1374,12 +1374,30 @@ fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
 
-    // A click anywhere dismisses the hover / completion / signature popups
-    // (the click still lands).
+    // A click anywhere dismisses the hover / signature popups (the click
+    // still lands). Completion popup clicks are handled specially: a click
+    // ON a row selects + accepts; a click anywhere else dismisses.
     if matches!(m.kind, MouseEventKind::Down(_)) {
         app.hover = None;
-        app.completion = None;
         app.signature = None;
+        if app.completion.is_some() {
+            if let MouseEventKind::Down(MouseButton::Left) = m.kind {
+                let hit = app
+                    .rects
+                    .completion_rows
+                    .iter()
+                    .find(|(r, _)| contains(*r, x, y))
+                    .map(|(_, fi)| *fi);
+                if let Some(fi) = hit {
+                    if let Some(p) = app.completion.as_mut() {
+                        p.set_selected(fi);
+                    }
+                    app.completion_accept();
+                    return;
+                }
+            }
+            app.completion = None;
+        }
     }
 
     // While the picker is open it owns the mouse.

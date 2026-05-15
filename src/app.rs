@@ -1014,6 +1014,10 @@ pub struct PaneRects {
     /// chip — click on one to unfold that block. Cleared + rebuilt per
     /// editor render.
     pub fold_chips: Vec<(Rect, PaneId, usize)>,
+    /// `(row_rect, filtered_index)` for each visible completion popup row
+    /// (excluding the docs footer). Cleared + rebuilt every render. Click
+    /// on a row ⇒ select + accept.
+    pub completion_rows: Vec<(Rect, usize)>,
     /// One entry per split divider, with enough info to drag-resize it.
     pub split_dividers: Vec<crate::layout::DividerHit>,
     pub statusline: Option<Rect>,
@@ -4267,6 +4271,12 @@ impl App {
                 ));
             }
             LspEvent::Rename(edits) => self.apply_rename_edits(edits),
+            LspEvent::ApplyEdit { label, edits } => {
+                let n = edits.iter().map(|(_, v)| v.len()).sum::<usize>();
+                self.apply_rename_edits(edits);
+                let lbl = label.unwrap_or_else(|| "workspace edit".to_string());
+                self.toast(format!("LSP {lbl} · applied {n} edit(s)"));
+            }
             LspEvent::Completion(items) => {
                 use crate::completion::{CompletionItem, CompletionPopup};
                 if items.is_empty() {

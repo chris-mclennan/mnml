@@ -723,7 +723,9 @@ impl VimInputHandler {
             KeyCode::Char(c) if !ctrl => InputResult::Ops(vec![OverwriteCharAndAdvance(c)]),
             KeyCode::Enter => InputResult::Ops(vec![InsertNewline]),
             KeyCode::Tab => InputResult::Ops(vec![InsertStr(" ".repeat(self.tab_width))]),
-            KeyCode::Backspace => InputResult::Ops(vec![MoveLeft]),
+            // vim canonical: Backspace pops the last Replace overwrite —
+            // restores the original char (or removes an EOL-inserted one).
+            KeyCode::Backspace => InputResult::Ops(vec![ReplaceUndoOne]),
             KeyCode::Delete => InputResult::Ops(vec![DeleteForward]),
             KeyCode::Left => InputResult::Ops(vec![MoveLeft]),
             KeyCode::Right => InputResult::Ops(vec![MoveRight]),
@@ -2066,11 +2068,12 @@ impl VimInputHandler {
                 InputResult::Consumed
             }
             // vim `R` — enter Replace mode (typed chars overwrite and
-            // advance; Esc returns to Normal).
+            // advance; Esc returns to Normal). Emit ReplaceSessionBegin so
+            // the editor's replace-stack starts empty.
             KeyCode::Char('R') => {
                 self.mode = VimMode::Replace;
                 self.reset_pending();
-                InputResult::Consumed
+                InputResult::Ops(vec![ReplaceSessionBegin])
             }
             KeyCode::Char('J') => {
                 let n = self.count1();

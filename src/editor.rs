@@ -229,6 +229,13 @@ pub struct Editor {
     /// of rows + cols. The regular `anchor` is independent (block mode
     /// uses its own state so motions don't conflict with charwise).
     pub block_anchor: Option<usize>,
+    /// Stack of overwrites performed in Replace mode (`R`). Each entry is
+    /// either `Some(c)` (the original char that was overwritten — restore
+    /// on Backspace) or `None` (a chars was inserted past EOL, no
+    /// original — just delete the inserted char on Backspace). Cleared
+    /// on `ReplaceSessionBegin`. The vim Replace handler reads it via
+    /// `ReplaceUndoOne` to implement vim's "Backspace restores" behavior.
+    replace_stack: Vec<Option<char>>,
 }
 
 impl Editor {
@@ -247,6 +254,7 @@ impl Editor {
             auto_pair: false,
             auto_indent: false,
             last_selection: None,
+            replace_stack: Vec::new(),
         }
     }
 
@@ -1556,17 +1564,49 @@ impl Editor {
                 let s = c.encode_utf8(&mut buf).to_string();
                 match next {
                     Some('\n') | None => {
-                        // At EOL or EOF — insert instead of overwrite.
+                        // At EOL or EOF — insert instead of overwrite. Push
+                        // `None` so Backspace knows to just delete-back.
                         self.text.insert_str(cur, &s);
                         self.cursor = cur + s.len();
+                        self.replace_stack.push(None);
                     }
                     Some(target) => {
                         let end = cur + target.len_utf8();
                         self.text.replace_range(cur..end, &s);
                         self.cursor = cur + s.len();
+                        // Remember the original char so Backspace can
+                        // restore it (vim canonical Replace-Backspace).
+                        self.replace_stack.push(Some(target));
                     }
                 }
                 out.buffer_changed = true;
+            }
+            ReplaceUndoOne => {
+                let Some(prev) = self.replace_stack.pop() else {
+                    // Nothing to undo — at the Replace-session origin.
+                    return;
+                };
+                self.checkpoint();
+                // The just-inserted char sits immediately before `cursor`.
+                // Step the cursor back over it and patch the text.
+                let before = self.prev_char_boundary(self.cursor);
+                match prev {
+                    Some(original) => {
+                        // Replace the inserted char with the original.
+                        let mut buf = [0u8; 4];
+                        let s = original.encode_utf8(&mut buf).to_string();
+                        self.text.replace_range(before..self.cursor, &s);
+                    }
+                    None => {
+                        // Inserted-past-EOL — delete the inserted char.
+                        self.text.replace_range(before..self.cursor, "");
+                    }
+                }
+                self.cursor = before;
+                out.buffer_changed = true;
+            }
+            ReplaceSessionBegin => {
+                self.replace_stack.clear();
             }
             ReplaceCharAtCursor(c) => {
                 if let Some((lo, hi)) = self.selection() {

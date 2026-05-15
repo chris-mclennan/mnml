@@ -89,6 +89,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
 
     frame.render_widget(Clear, area);
 
+    // Record per-row click targets for the mouse handler. Rows are indices
+    // into the *filtered* list (`p.scroll + row_offset`).
+    app.rects.completion_rows.clear();
+    for (row_offset, _) in visible.iter().enumerate() {
+        let rect = Rect {
+            x: area.x,
+            y: area.y + row_offset as u16,
+            width: area.width,
+            height: 1,
+        };
+        app.rects
+            .completion_rows
+            .push((rect, p.scroll + row_offset));
+    }
+
     let usable = area.width.saturating_sub(2) as usize; // drop the 1-col pad each side
     let mut lines: Vec<Line> = Vec::with_capacity(rows);
     for (row, it) in &visible {

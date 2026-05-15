@@ -204,8 +204,19 @@ pub enum EditOp {
     ReplaceCharAtCursor(char),
     /// vim Replace mode (`R`) — overwrite the char under the cursor with `c`
     /// (or insert when sitting on a newline / EOF), then advance the cursor
-    /// by one. Coalesced so the input handler emits one op per typed char.
+    /// by one. Pushes the displaced char (or `None` for an EOL insertion)
+    /// onto the editor's `replace_stack` so `ReplaceUndoOne` can roll it back.
     OverwriteCharAndAdvance(char),
+    /// vim Replace mode `Backspace` — pop the most recent
+    /// `OverwriteCharAndAdvance` and undo it: move cursor back one cell;
+    /// either restore the original char (if any) or just delete what was
+    /// inserted. No-op when the stack is empty (cursor at the original
+    /// R-entry position).
+    ReplaceUndoOne,
+    /// Begin a vim Replace mode session — clears the editor's replace stack.
+    /// Emitted by the vim handler on `R`-entry so previous-session entries
+    /// don't leak in.
+    ReplaceSessionBegin,
     /// Replace the bytes `[start, end)` with `text`, leaving the cursor after the
     /// inserted text. Offsets must be valid char boundaries in the *current*
     /// buffer (callers applying several edits should sort them descending by

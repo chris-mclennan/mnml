@@ -93,6 +93,16 @@ impl CompletionPopup {
         self.filtered.is_empty()
     }
 
+    /// Set the highlighted row to `idx` (clamped to the list). Used by the
+    /// mouse handler to align selection with the clicked row before accept.
+    pub fn set_selected(&mut self, idx: usize) {
+        if self.filtered.is_empty() {
+            self.selected = 0;
+        } else {
+            self.selected = idx.min(self.filtered.len() - 1);
+        }
+    }
+
     /// Move the selection by `delta` rows (clamped to the list).
     pub fn move_by(&mut self, delta: isize) {
         if self.filtered.is_empty() {
