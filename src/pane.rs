@@ -20,6 +20,8 @@ use crate::playwright::trace_pane::TracePane;
 use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
 #[cfg(feature = "private")]
+use crate::private::codebuilds_pane::CodeBuildsPane;
+#[cfg(feature = "private")]
 use crate::private::private_executions_pane::TestExecutionsPane;
 
 // `Editor`'s payload (`Buffer`) is much bigger than the others'; boxing it would
@@ -70,6 +72,10 @@ pub enum Pane {
     /// the `private` Cargo feature — the lean build doesn't have this.
     #[cfg(feature = "private")]
     TestExecutions(TestExecutionsPane),
+    /// AWS CodeBuild recent-builds browser (the private integration org build). Behind the
+    /// `private` Cargo feature.
+    #[cfg(feature = "private")]
+    CodeBuilds(CodeBuildsPane),
 }
 
 /// Vim's command-line window — `q:` opens a read-only list of recent ex
@@ -213,6 +219,8 @@ impl Pane {
             Pane::CmdlineHistory(_) => "q:".to_string(),
             #[cfg(feature = "private")]
             Pane::TestExecutions(p) => p.tab_title(),
+            #[cfg(feature = "private")]
+            Pane::CodeBuilds(p) => p.tab_title(),
         }
     }
 
@@ -238,6 +246,8 @@ impl Pane {
             | Pane::CmdlineHistory(_) => false,
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => false,
+            #[cfg(feature = "private")]
+            Pane::CodeBuilds(_) => false,
         }
     }
 

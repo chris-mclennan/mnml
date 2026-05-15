@@ -196,6 +196,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::CmdlineHistory(_) => (if nerd { "\u{eb15}" } else { "❯" }, theme::cur().comment),
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (if nerd { "\u{f0668}" } else { "⏵" }, theme::cur().teal),
+            #[cfg(feature = "private")]
+            Pane::CodeBuilds(_) => (if nerd { "\u{f487}" } else { "⚒" }, theme::cur().orange),
         };
         let badge = if pane.is_dirty() { "●" } else { "×" };
         let diag = &diag_chips[i];

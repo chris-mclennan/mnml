@@ -5238,6 +5238,8 @@ impl App {
             | None => None,
             #[cfg(feature = "private")]
             Some(Pane::TestExecutions(_)) => None,
+            #[cfg(feature = "private")]
+            Some(Pane::CodeBuilds(_)) => None,
         };
         let new_buf = match path {
             Some(p) => {
@@ -11118,6 +11120,8 @@ impl App {
             | Pane::CmdlineHistory(_) => (None, None),
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (None, None),
+            #[cfg(feature = "private")]
+            Pane::CodeBuilds(_) => (None, None),
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -11214,6 +11218,8 @@ impl App {
             Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
             #[cfg(feature = "private")]
             Pane::TestExecutions(p) => Some((p.tab_title(), false)),
+            #[cfg(feature = "private")]
+            Pane::CodeBuilds(p) => Some((p.tab_title(), false)),
         }
     }
 
@@ -15637,6 +15643,8 @@ impl App {
         self.drain_cdp_events();
         #[cfg(feature = "private")]
         self.drain_docdb_events();
+        #[cfg(feature = "private")]
+        self.drain_codebuild_events();
         self.refresh_live_ai_panes();
         self.autosave_idle_buffers();
         self.check_external_file_changes();
@@ -16195,6 +16203,114 @@ impl App {
         }
         self.focus = Focus::Pane;
         self.toast("private: TestExecutions browser (phase 1 stub)");
+    }
+
+    /// Open the AWS CodeBuild builds-list pane for the project configured
+    /// in `[ci] project = "..."`. Re-focuses an existing pane if open;
+    /// otherwise spawns a refresh worker and splits a new pane in below
+    /// the focused leaf.
+    pub fn open_codebuilds_pane(&mut self) {
+        let project = match self.config.ci.project.clone() {
+            Some(p) => p,
+            None => {
+                self.toast("private: configure [ci] project = \"…\" first");
+                return;
+            }
+        };
+        // Re-focus existing pane (refresh worker may still be pumping).
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::CodeBuilds(_)))
+        {
+            // Re-fire the refresh so `r` isn't the only way to get fresh data.
+            let rx =
+                crate::private::codebuild::spawn_refresh(project, self.config.ci.region.clone());
+            if let Some(Pane::CodeBuilds(p)) = self.panes.get_mut(id) {
+                p.pending = Some(rx);
+                p.loading = true;
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let rx = crate::private::codebuild::spawn_refresh(project, self.config.ci.region.clone());
+        let pane = Pane::CodeBuilds(crate::private::codebuilds_pane::CodeBuildsPane::new(rx));
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+        self.toast("private: CodeBuild builds (loading…)");
+    }
+
+    /// Re-fire the CodeBuild refresh worker for the active builds pane.
+    pub fn refresh_active_codebuilds(&mut self) {
+        let project = match self.config.ci.project.clone() {
+            Some(p) => p,
+            None => return,
+        };
+        let region = self.config.ci.region.clone();
+        let Some(id) = self.active else { return };
+        let rx = crate::private::codebuild::spawn_refresh(project, region);
+        if let Some(Pane::CodeBuilds(p)) = self.panes.get_mut(id) {
+            p.pending = Some(rx);
+            p.loading = true;
+        }
+    }
+
+    /// `Enter` on the selected build → open the CloudWatch deep-link in
+    /// the OS default browser. `y` copies the same URL to the clipboard.
+    pub fn open_selected_codebuild_url(&mut self) {
+        let url_opt = self
+            .active
+            .and_then(|i| self.panes.get(i))
+            .and_then(|p| match p {
+                Pane::CodeBuilds(cb) => cb.selected_record(),
+                _ => None,
+            })
+            .and_then(|r| r.logs_deep_link.clone());
+        let Some(url) = url_opt else {
+            self.toast("no logs URL for this build");
+            return;
+        };
+        crate::app::open_url_external(&url);
+        self.toast("opened build logs in browser");
+    }
+
+    /// `y` on the selected build → copy the CloudWatch deep-link.
+    pub fn copy_selected_codebuild_url(&mut self) {
+        let url_opt = self
+            .active
+            .and_then(|i| self.panes.get(i))
+            .and_then(|p| match p {
+                Pane::CodeBuilds(cb) => cb.selected_record(),
+                _ => None,
+            })
+            .and_then(|r| r.logs_deep_link.clone());
+        let Some(url) = url_opt else {
+            self.toast("no logs URL for this build");
+            return;
+        };
+        self.clipboard.set(url, false);
+        self.toast("copied logs URL");
+    }
+
+    /// Drain pending CodeBuild refresh channels into every open
+    /// `Pane::CodeBuilds`. Cheap when channels are idle.
+    fn drain_codebuild_events(&mut self) {
+        for pane in self.panes.iter_mut() {
+            if let Pane::CodeBuilds(p) = pane {
+                p.drain_pending();
+            }
+        }
     }
 
     /// Pull pending records / status updates off the DocDB channel into

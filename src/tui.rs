@@ -912,6 +912,49 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // the private integration CodeBuilds browser (cfg-gated): ↑↓ select, Enter open URL,
+    // y copy URL, r refresh, Esc → tree.
+    #[cfg(feature = "private")]
+    if matches!(app.panes.get(i), Some(Pane::CodeBuilds(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::CodeBuilds(p)) = app.panes.get_mut(i) {
+                    p.move_selection(-1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::CodeBuilds(p)) = app.panes.get_mut(i) {
+                    p.move_selection(1);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::CodeBuilds(p)) = app.panes.get_mut(i) {
+                    p.move_selection(-(viewport as i64));
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::CodeBuilds(p)) = app.panes.get_mut(i) {
+                    p.move_selection(viewport as i64);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::CodeBuilds(p)) = app.panes.get_mut(i) {
+                    p.move_selection(i64::MIN / 2);
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::CodeBuilds(p)) = app.panes.get_mut(i) {
+                    p.move_selection(i64::MAX / 2);
+                }
+            }
+            KeyCode::Enter => app.open_selected_codebuild_url(),
+            KeyCode::Char('y') => app.copy_selected_codebuild_url(),
+            KeyCode::Char('r') => app.refresh_active_codebuilds(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // the private integration TestExecutions browser (cfg-gated): ↑↓ move within the active
     // env column, ←→ cycle column (Dev/Staging/Prod), Esc → tree.
     #[cfg(feature = "private")]
@@ -2120,6 +2163,10 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             }
             #[cfg(feature = "private")]
             Some(Pane::TestExecutions(p)) => {
+                p.move_selection(delta as i64);
+            }
+            #[cfg(feature = "private")]
+            Some(Pane::CodeBuilds(p)) => {
                 p.move_selection(delta as i64);
             }
             None => {}

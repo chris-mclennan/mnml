@@ -1710,6 +1710,13 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.open_private_executions_pane(),
         });
+        cmds.push(Command {
+            id: "private.codebuilds",
+            title: "the private integration: open AWS CodeBuild builds-list pane",
+            group: "private",
+            keys: &[],
+            run: |app| app.open_codebuilds_pane(),
+        });
     }
     cmds
 }

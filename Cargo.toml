@@ -114,6 +114,10 @@ required-features = ["private"]
 name = "private_sample_doc"
 required-features = ["private"]
 
+[[example]]
+name = "private_codebuild_smoke"
+required-features = ["private"]
+
 [profile.release]
 lto = true
 codegen-units = 1

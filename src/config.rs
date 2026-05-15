@@ -49,6 +49,24 @@ pub struct Config {
     pub abbreviations: BTreeMap<String, String>,
     pub browser: BrowserConfig,
     pub playwright: PlaywrightConfig,
+    pub ci: CiConfig,
+}
+
+/// `[ci]` — Continuous-integration provider settings. Consumed by the
+/// `private` Cargo feature's CodeBuild integration (`Pane::CodeBuilds`).
+/// Unconditional in `Config` so lean builds parse it cleanly.
+///
+/// ```toml
+/// [ci]
+/// provider = "codebuild"           # only "codebuild" recognized today
+/// project  = "private-playwright"   # required for codebuild
+/// region   = "us-east-1"           # optional; falls back to AWS CLI defaults
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct CiConfig {
+    pub provider: Option<String>,
+    pub project: Option<String>,
+    pub region: Option<String>,
 }
 
 /// `[playwright]` — settings used by the Playwright integration and (when
@@ -308,6 +326,7 @@ impl Default for Config {
             abbreviations: BTreeMap::new(),
             browser: BrowserConfig { headless: false },
             playwright: PlaywrightConfig::default(),
+            ci: CiConfig::default(),
         }
     }
 }
@@ -340,6 +359,15 @@ struct RawConfig {
     browser: RawBrowser,
     #[serde(default)]
     playwright: RawPlaywright,
+    #[serde(default)]
+    ci: RawCi,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawCi {
+    provider: Option<String>,
+    project: Option<String>,
+    region: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -607,6 +635,15 @@ impl Config {
         }
         if let Some(v) = docdb_raw.mode {
             self.playwright.docdb.mode = Some(v);
+        }
+        if let Some(v) = raw.ci.provider {
+            self.ci.provider = Some(v);
+        }
+        if let Some(v) = raw.ci.project {
+            self.ci.project = Some(v);
+        }
+        if let Some(v) = raw.ci.region {
+            self.ci.region = Some(v);
         }
     }
 }
