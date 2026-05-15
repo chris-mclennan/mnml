@@ -21,6 +21,9 @@ use crate::input::{AppCommand, EditCtx, EditingMode, InputHandler, InputResult};
 enum VimMode {
     Normal,
     Insert,
+    /// vim Replace mode (`R`) — typed chars overwrite existing chars and
+    /// advance the cursor (insert past EOL). Esc returns to Normal.
+    Replace,
     Visual,
     VisualLine,
     VisualBlock,
@@ -697,6 +700,38 @@ impl VimInputHandler {
                 self.cmdline = Some(line);
                 InputResult::Consumed
             }
+        }
+    }
+
+    /// vim Replace mode (`R`) handler — each printable char overwrites the
+    /// char under the cursor and advances. Esc returns to Normal. Arrow
+    /// keys + Backspace move without overwriting (vim canonical behavior
+    /// is "restore the original char on Backspace"; we just move left for
+    /// the MVP).
+    fn handle_replace(&mut self, key: KeyEvent, _ctx: &EditCtx) -> InputResult {
+        use EditOp::*;
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc => {
+                self.enter_normal();
+                InputResult::Ops(vec![MoveLeft])
+            }
+            KeyCode::Char('c') if ctrl => {
+                self.enter_normal();
+                InputResult::Consumed
+            }
+            KeyCode::Char(c) if !ctrl => InputResult::Ops(vec![OverwriteCharAndAdvance(c)]),
+            KeyCode::Enter => InputResult::Ops(vec![InsertNewline]),
+            KeyCode::Tab => InputResult::Ops(vec![InsertStr(" ".repeat(self.tab_width))]),
+            KeyCode::Backspace => InputResult::Ops(vec![MoveLeft]),
+            KeyCode::Delete => InputResult::Ops(vec![DeleteForward]),
+            KeyCode::Left => InputResult::Ops(vec![MoveLeft]),
+            KeyCode::Right => InputResult::Ops(vec![MoveRight]),
+            KeyCode::Up => InputResult::Ops(vec![MoveUp]),
+            KeyCode::Down => InputResult::Ops(vec![MoveDown]),
+            KeyCode::Home => InputResult::Ops(vec![MoveLineStart]),
+            KeyCode::End => InputResult::Ops(vec![MoveLineEnd]),
+            _ => InputResult::Ignored,
         }
     }
 
@@ -2030,6 +2065,13 @@ impl VimInputHandler {
                 self.prefix = Prefix::Replace;
                 InputResult::Consumed
             }
+            // vim `R` — enter Replace mode (typed chars overwrite and
+            // advance; Esc returns to Normal).
+            KeyCode::Char('R') => {
+                self.mode = VimMode::Replace;
+                self.reset_pending();
+                InputResult::Consumed
+            }
             KeyCode::Char('J') => {
                 let n = self.count1();
                 self.reset_pending();
@@ -2449,6 +2491,7 @@ impl InputHandler for VimInputHandler {
         }
         let result = match self.mode {
             VimMode::Insert => self.handle_insert(key, ctx),
+            VimMode::Replace => self.handle_replace(key, ctx),
             VimMode::Normal => self.handle_normal(key, ctx),
             VimMode::Visual | VimMode::VisualLine => self.handle_visual(key, ctx),
             VimMode::VisualBlock => self.handle_visual_block(key, ctx),
@@ -2493,7 +2536,9 @@ impl InputHandler for VimInputHandler {
     fn mode(&self) -> EditingMode {
         match self.mode {
             VimMode::Normal => EditingMode::Normal,
-            VimMode::Insert => EditingMode::Insert,
+            // Replace mode reuses the Insert chip — it's the closest thing
+            // mnml's mode chip recognizes ("you can type into the buffer").
+            VimMode::Insert | VimMode::Replace => EditingMode::Insert,
             VimMode::Visual | VimMode::VisualLine | VimMode::VisualBlock => EditingMode::Visual,
         }
     }

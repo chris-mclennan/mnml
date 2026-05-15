@@ -202,6 +202,10 @@ pub enum EditOp {
     /// on a newline. With a selection, replaces every char in the selection
     /// with `c` (vim visual `r<c>`); newlines inside the selection are kept.
     ReplaceCharAtCursor(char),
+    /// vim Replace mode (`R`) — overwrite the char under the cursor with `c`
+    /// (or insert when sitting on a newline / EOF), then advance the cursor
+    /// by one. Coalesced so the input handler emits one op per typed char.
+    OverwriteCharAndAdvance(char),
     /// Replace the bytes `[start, end)` with `text`, leaving the cursor after the
     /// inserted text. Offsets must be valid char boundaries in the *current*
     /// buffer (callers applying several edits should sort them descending by

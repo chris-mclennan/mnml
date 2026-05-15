@@ -1,0 +1,26 @@
+# Vim normal `R` — Replace mode. Typed chars overwrite existing chars and
+# advance the cursor (inserts past EOL). Esc returns to Normal.
+
+write data.txt "abcdef"
+open data.txt
+command editor.use_vim
+
+# Cursor on 'a'. R enters Replace mode. Type "XYZ" — overwrites "abc"
+# leaving "XYZdef".
+key R
+type "XYZ"
+key escape
+
+command file.save
+expect file data.txt contains "XYZdef"
+
+# Past EOL with `A`, Replace inserts. From "XYZdef", `A` puts cursor in
+# Insert mode past 'f' (vim convention); Esc steps back. Then `R` + `!`
+# at EOF appends past the end.
+key A
+key escape
+key R
+type "!"
+key escape
+command file.save
+expect file data.txt contains "XYZdef!"

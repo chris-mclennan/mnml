@@ -1548,6 +1548,26 @@ impl Editor {
                 self.anchor = None;
                 out.buffer_changed = true;
             }
+            OverwriteCharAndAdvance(c) => {
+                self.checkpoint();
+                let cur = self.cursor;
+                let next = self.text[cur..].chars().next();
+                let mut buf = [0u8; 4];
+                let s = c.encode_utf8(&mut buf).to_string();
+                match next {
+                    Some('\n') | None => {
+                        // At EOL or EOF — insert instead of overwrite.
+                        self.text.insert_str(cur, &s);
+                        self.cursor = cur + s.len();
+                    }
+                    Some(target) => {
+                        let end = cur + target.len_utf8();
+                        self.text.replace_range(cur..end, &s);
+                        self.cursor = cur + s.len();
+                    }
+                }
+                out.buffer_changed = true;
+            }
             ReplaceCharAtCursor(c) => {
                 if let Some((lo, hi)) = self.selection() {
                     // visual r<c>: replace each non-newline char with c
