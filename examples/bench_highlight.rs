@@ -19,7 +19,7 @@ fn main() {
     // Fresh parse, warm the cache and measure cost.
     let t_warm = std::time::Instant::now();
     let mut tree: Option<Tree> = None;
-    let _ = highlight_lines_with_cache(&text, "rs", &mut tree, &[], &[]);
+    let prev_h = highlight_lines_with_cache(&text, "rs", &mut tree, &[], &[], Vec::new());
     println!("first fresh parse:  {:?}", t_warm.elapsed());
 
     let prev_starts: Vec<usize> = std::iter::once(0)
@@ -47,13 +47,14 @@ fn main() {
     for _ in 0..3 {
         let mut t = tree.clone();
         let t_inc = std::time::Instant::now();
-        let _ = highlight_lines_with_cache(&after, "rs", &mut t, &[edit], &prev_starts);
+        let _ =
+            highlight_lines_with_cache(&after, "rs", &mut t, &[edit], &prev_starts, prev_h.clone());
         println!("incremental insert: {:?}", t_inc.elapsed());
     }
     for _ in 0..3 {
         let mut t: Option<Tree> = None;
         let t_fresh = std::time::Instant::now();
-        let _ = highlight_lines_with_cache(&after, "rs", &mut t, &[], &[]);
+        let _ = highlight_lines_with_cache(&after, "rs", &mut t, &[], &[], Vec::new());
         println!("fresh reparse:      {:?}", t_fresh.elapsed());
     }
 }

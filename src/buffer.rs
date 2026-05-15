@@ -393,12 +393,14 @@ impl Buffer {
         }
         let ext = self.language_ext.as_deref().unwrap_or("");
         let edits = std::mem::take(&mut self.pending_tree_edits);
+        let prev_highlights = std::mem::take(&mut self.highlights);
         self.highlights = highlight::highlight_lines_with_cache(
             text,
             ext,
             &mut self.parse_tree,
             &edits,
             &self.prev_line_starts,
+            prev_highlights,
         );
         // Refresh prev_line_starts to match the just-parsed text so the next
         // batch of edits has accurate pre-edit Points.

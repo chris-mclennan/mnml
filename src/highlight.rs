@@ -228,7 +228,19 @@ fn point_at_byte(line_starts: &[usize], byte: usize) -> Point {
 /// editor's hot path.
 pub fn highlight_lines(text: &str, ext: &str) -> Vec<Vec<ColoredSpan>> {
     let mut prev_tree: Option<Tree> = None;
-    highlight_lines_with_cache(text, ext, &mut prev_tree, &[], &[])
+    highlight_lines_with_cache(text, ext, &mut prev_tree, &[], &[], Vec::new())
+}
+
+/// A restriction window for incremental query traversal: re-query only nodes
+/// overlapping `byte_range` (via `QueryCursor::set_byte_range`) and emit
+/// per-line spans only for lines in `dirty_rows` (`[start, end)` exclusive).
+/// Captures that overlap the byte range but whose nodes extend onto unchanged
+/// lines are clipped at output — those lines already have the correct spans
+/// in the preserved `prev_highlights`.
+#[derive(Debug, Clone)]
+struct Restrict {
+    byte_range: std::ops::Range<usize>,
+    dirty_rows: std::ops::Range<usize>,
 }
 
 /// Incremental variant of [`highlight_lines`]. If `prev_tree` is `Some` and
@@ -236,6 +248,15 @@ pub fn highlight_lines(text: &str, ext: &str) -> Vec<Vec<ColoredSpan>> {
 /// (using `prev_line_starts` to compute the pre-edit `Point` halves) and reparses
 /// with `parser.parse(text, Some(&prev_tree))`, letting tree-sitter reuse the
 /// prior tree's structure where the text is unchanged.
+///
+/// **Incremental query traversal:** when there's exactly one tracked edit *and*
+/// `prev_highlights` is non-empty, the function also computes the changed
+/// byte-range set between the prior and freshly reparsed tree, derives a dirty
+/// line range, copies `prev_highlights` for unchanged lines (shifted by the
+/// edit's newline delta), and only re-queries the dirty byte range. Multi-edit
+/// batches fall back to a full query — the line-shift math gets ambiguous when
+/// edits overlap. The shifted prev_highlights for unchanged lines pick up
+/// where the prior frame left off, so visible regions look identical.
 ///
 /// On exit, `*prev_tree` is updated to the freshly produced tree (or cleared on
 /// failure). The caller is responsible for updating its own `prev_line_starts`
@@ -246,12 +267,13 @@ pub fn highlight_lines_with_cache(
     prev_tree: &mut Option<Tree>,
     edits: &[TextEdit],
     prev_line_starts: &[usize],
+    prev_highlights: Vec<Vec<ColoredSpan>>,
 ) -> Vec<Vec<ColoredSpan>> {
     let n_lines = text.bytes().filter(|&b| b == b'\n').count() + 1;
-    let mut out: Vec<Vec<ColoredSpan>> = vec![Vec::new(); n_lines];
+    let empty_out = || vec![Vec::new(); n_lines];
     let Some(cfg) = config_for_ext(ext) else {
         *prev_tree = None;
-        return out;
+        return empty_out();
     };
     let line_starts = build_line_starts(text);
 
@@ -268,18 +290,182 @@ pub fn highlight_lines_with_cache(
     let mut parser = Parser::new();
     if parser.set_language(&cfg.language).is_err() {
         *prev_tree = None;
-        return out;
+        return empty_out();
     }
     let new_tree = parser.parse(text, prev_tree.as_ref());
     let Some(tree) = new_tree else {
         *prev_tree = None;
-        return out;
+        return empty_out();
     };
 
-    apply_query_to_spans(text, &line_starts, cfg, &tree, &mut out);
-    walk_injections(text, &line_starts, cfg, &tree, 0, &mut out);
+    // Decide whether to do incremental query traversal. Constraints:
+    //  - We must have a prior tree to diff against.
+    //  - We need exactly one tracked edit (multi-edit shifts compose, but
+    //    coordinating two-step renumbering of prev_highlights is finicky;
+    //    not worth it for the bounded MVP).
+    //  - We need non-empty prev_highlights to copy from.
+    let do_incremental = edits.len() == 1
+        && !prev_highlights.is_empty()
+        && prev_tree.is_some()
+        && !prev_line_starts.is_empty();
+
+    let mut out = if do_incremental {
+        // Safe to unwrap — the guards above checked these.
+        let old_tree = prev_tree.as_ref().unwrap();
+        let edit = edits[0];
+        match plan_incremental(
+            &edit,
+            prev_line_starts,
+            &line_starts,
+            n_lines,
+            old_tree,
+            &tree,
+            text.len(),
+            prev_highlights,
+        ) {
+            Some((restrict, mut out)) => {
+                // Wipe dirty rows so the re-query refills them clean. Rows
+                // outside the dirty window keep their shifted prev_highlights.
+                for row in restrict.dirty_rows.clone() {
+                    if let Some(line) = out.get_mut(row) {
+                        line.clear();
+                    }
+                }
+                apply_query_to_spans(text, &line_starts, cfg, &tree, &mut out, Some(&restrict));
+                walk_injections(text, &line_starts, cfg, &tree, 0, &mut out, Some(&restrict));
+                out
+            }
+            None => {
+                // Couldn't safely plan an incremental window — full reparse.
+                full_query(text, &line_starts, cfg, &tree, n_lines)
+            }
+        }
+    } else {
+        full_query(text, &line_starts, cfg, &tree, n_lines)
+    };
+
+    if out.len() != n_lines {
+        out.resize(n_lines, Vec::new());
+    }
     *prev_tree = Some(tree);
     out
+}
+
+/// Run the full outer + injection query over `tree`, producing spans for every
+/// line. Used as the fallback path when an incremental window can't be planned.
+fn full_query(
+    text: &str,
+    line_starts: &[usize],
+    cfg: &LangConfig,
+    tree: &Tree,
+    n_lines: usize,
+) -> Vec<Vec<ColoredSpan>> {
+    let mut out = vec![Vec::new(); n_lines];
+    apply_query_to_spans(text, line_starts, cfg, tree, &mut out, None);
+    walk_injections(text, line_starts, cfg, tree, 0, &mut out, None);
+    out
+}
+
+/// Compute the incremental window for a single edit. Returns:
+///   - `Restrict`: byte range to feed `QueryCursor::set_byte_range` + the
+///     new-text line range to wipe + refill.
+///   - `Vec<Vec<ColoredSpan>>`: `prev_highlights` re-indexed onto the new
+///     line count. OLD lines `[old_start_row..=old_end_row]` are dropped
+///     (the edit replaces them); OLD lines past `old_end_row` shift by
+///     `new_end_row - old_end_row` to align with NEW rows.
+///
+/// Returns `None` if the edit is out-of-bounds against the prior line index.
+#[allow(clippy::too_many_arguments)]
+fn plan_incremental(
+    edit: &TextEdit,
+    prev_line_starts: &[usize],
+    new_line_starts: &[usize],
+    new_n_lines: usize,
+    old_tree: &Tree,
+    new_tree: &Tree,
+    text_len: usize,
+    prev_highlights: Vec<Vec<ColoredSpan>>,
+) -> Option<(Restrict, Vec<Vec<ColoredSpan>>)> {
+    let old_start_row = row_of_byte(prev_line_starts, edit.start_byte)?;
+    let old_end_row = row_of_byte(prev_line_starts, edit.old_end_byte)?;
+    let new_end_row = row_of_byte(new_line_starts, edit.new_end_byte)?;
+    if old_end_row < old_start_row || new_end_row < old_start_row {
+        return None;
+    }
+
+    // Dirty rows in NEW coords: start at the edit's first affected line, extend
+    // through `new_end_row` (the literal edit region). Then expand to include
+    // any line overlapping `changed_ranges` — tree-sitter reports structural
+    // propagation beyond the literal edit (e.g. typing `/*` makes the rest of
+    // the file a comment).
+    let mut dirty_lo = old_start_row;
+    let mut dirty_hi = new_end_row;
+    for r in old_tree.changed_ranges(new_tree) {
+        let lo = row_of_byte(new_line_starts, r.start_byte).unwrap_or(0);
+        let hi = if r.end_byte > 0 {
+            row_of_byte(new_line_starts, r.end_byte - 1).unwrap_or(0)
+        } else {
+            lo
+        };
+        dirty_lo = dirty_lo.min(lo);
+        dirty_hi = dirty_hi.max(hi);
+    }
+    if dirty_hi >= new_n_lines {
+        dirty_hi = new_n_lines.saturating_sub(1);
+    }
+    if dirty_lo > dirty_hi {
+        // No structural change AND old_end_row is below old_start_row (unusual).
+        // Bail to full reparse rather than do something subtle.
+        return None;
+    }
+
+    // Shift prev_highlights → onto NEW row indices. Lines below the edit slide
+    // straight over; lines inside the OLD edit range are skipped (the dirty
+    // re-query will refill them); lines past OLD end shift by `line_shift`.
+    let line_shift: isize = new_end_row as isize - old_end_row as isize;
+    let mut shifted: Vec<Vec<ColoredSpan>> = vec![Vec::new(); new_n_lines];
+    for (old_row, spans) in prev_highlights.into_iter().enumerate() {
+        let new_row_signed: isize = if old_row < old_start_row {
+            old_row as isize
+        } else if old_row <= old_end_row {
+            continue; // wiped by the edit; re-query will refill
+        } else {
+            old_row as isize + line_shift
+        };
+        if new_row_signed < 0 {
+            continue;
+        }
+        let new_row = new_row_signed as usize;
+        if new_row < new_n_lines {
+            shifted[new_row] = spans;
+        }
+    }
+
+    let byte_lo = new_line_starts.get(dirty_lo).copied().unwrap_or(0);
+    let byte_hi = if dirty_hi + 1 < new_line_starts.len() {
+        new_line_starts[dirty_hi + 1]
+    } else {
+        text_len
+    };
+    Some((
+        Restrict {
+            byte_range: byte_lo..byte_hi,
+            dirty_rows: dirty_lo..(dirty_hi + 1),
+        },
+        shifted,
+    ))
+}
+
+/// Look up the row containing `byte` via `line_starts`. Returns `None` only
+/// when `line_starts` is empty.
+fn row_of_byte(line_starts: &[usize], byte: usize) -> Option<usize> {
+    if line_starts.is_empty() {
+        return None;
+    }
+    Some(match line_starts.binary_search(&byte) {
+        Ok(i) => i,
+        Err(i) => i.saturating_sub(1),
+    })
 }
 
 /// Walk `edits` in order, applying each to `tree` via `tree_sitter::Tree::edit`.
@@ -396,7 +582,9 @@ fn advance_point_to_byte(
 /// Parse `text` with `cfg`'s grammar (optionally restricted to `included_ranges`
 /// so inner grammars stay in the outer text's coordinate space), append per-line
 /// highlight spans, then walk the injection query and recurse for each
-/// `@injection.content` capture.
+/// `@injection.content` capture. `restrict` (when `Some`) narrows the query to
+/// a byte sub-range and clips emission to a dirty-row window — used by the
+/// incremental hot path.
 fn highlight_recursive(
     text: &str,
     line_starts: &[usize],
@@ -404,6 +592,7 @@ fn highlight_recursive(
     included_ranges: &[Range],
     depth: u32,
     out: &mut [Vec<ColoredSpan>],
+    restrict: Option<&Restrict>,
 ) {
     if depth > MAX_INJECTION_DEPTH {
         return;
@@ -419,20 +608,29 @@ fn highlight_recursive(
         return;
     };
 
-    apply_query_to_spans(text, line_starts, cfg, &tree, out);
-    walk_injections(text, line_starts, cfg, &tree, depth, out);
+    apply_query_to_spans(text, line_starts, cfg, &tree, out, restrict);
+    walk_injections(text, line_starts, cfg, &tree, depth, out, restrict);
 }
 
 /// Run `cfg.highlights_query` over `tree`, append per-line spans to `out`.
+/// When `restrict` is `Some`, the query is limited to `restrict.byte_range`
+/// (via `QueryCursor::set_byte_range`) and spans are emitted only on rows in
+/// `restrict.dirty_rows` — captures whose nodes extend onto unchanged rows
+/// have their out-of-window slices dropped (the caller's shifted
+/// `prev_highlights` already covers those rows).
 fn apply_query_to_spans(
     text: &str,
     line_starts: &[usize],
     cfg: &LangConfig,
     tree: &tree_sitter::Tree,
     out: &mut [Vec<ColoredSpan>],
+    restrict: Option<&Restrict>,
 ) {
     let bytes = text.as_bytes();
     let mut cursor = QueryCursor::new();
+    if let Some(r) = restrict {
+        cursor.set_byte_range(r.byte_range.clone());
+    }
     let mut iter = cursor.captures(&cfg.highlights_query, tree.root_node(), bytes);
 
     // Collect (start_byte, end_byte, color, pattern_idx) for every relevant capture.
@@ -482,7 +680,8 @@ fn apply_query_to_spans(
             };
             let seg_end = end.min(content_end);
             let ls = line_starts[line];
-            if seg_end > b && b >= ls {
+            let in_window = restrict.is_none_or(|r| r.dirty_rows.contains(&line));
+            if in_window && seg_end > b && b >= ls {
                 // Byte offsets → char columns. Slicing `text` (not `bytes`)
                 // is char-boundary-safe because tree-sitter only ever returns
                 // node boundaries that *are* char boundaries.
@@ -505,6 +704,12 @@ fn apply_query_to_spans(
 /// Walk `cfg.injections_query` over `tree`. For each match, find the
 /// `@injection.content` byte range(s) + the language (captured `@injection.language`
 /// or `#set! injection.language "…"`), resolve the inner `LangConfig`, recurse.
+///
+/// When `restrict` is `Some`, the injection query is limited to the dirty byte
+/// window (matches still surface multi-line injection nodes that *overlap* the
+/// window) and injection content ranges that don't touch the window are
+/// skipped — the unchanged inner spans are already in the caller's
+/// `prev_highlights`-derived `out`.
 fn walk_injections(
     text: &str,
     line_starts: &[usize],
@@ -512,6 +717,7 @@ fn walk_injections(
     tree: &tree_sitter::Tree,
     depth: u32,
     out: &mut [Vec<ColoredSpan>],
+    restrict: Option<&Restrict>,
 ) {
     let (Some(query), Some(content_idx)) = (cfg.injections_query.as_ref(), cfg.inj_content_idx)
     else {
@@ -519,6 +725,9 @@ fn walk_injections(
     };
 
     let mut cursor = QueryCursor::new();
+    if let Some(r) = restrict {
+        cursor.set_byte_range(r.byte_range.clone());
+    }
     let mut iter = cursor.matches(query, tree.root_node(), text.as_bytes());
     while let Some(qmatch) = iter.next() {
         let mut content_ranges: Vec<Range> = Vec::new();
@@ -568,6 +777,16 @@ fn walk_injections(
         if has_overlap(&content_ranges) {
             continue;
         }
+        // Under a restrict window, skip injections whose content lives entirely
+        // outside the dirty byte range — the inner spans are already in
+        // prev_highlights for those rows.
+        if let Some(r) = restrict
+            && !content_ranges
+                .iter()
+                .any(|cr| cr.end_byte > r.byte_range.start && cr.start_byte < r.byte_range.end)
+        {
+            continue;
+        }
         highlight_recursive(
             text,
             line_starts,
@@ -575,6 +794,7 @@ fn walk_injections(
             &content_ranges,
             depth + 1,
             out,
+            restrict,
         );
     }
 }
@@ -981,7 +1201,7 @@ mod tests {
         };
 
         let mut tree: Option<Tree> = None;
-        let _ = highlight_lines_with_cache(before, "rs", &mut tree, &[], &[]);
+        let prev_h = highlight_lines_with_cache(before, "rs", &mut tree, &[], &[], Vec::new());
         assert!(tree.is_some(), "fresh parse should produce a tree");
 
         let prev_starts: Vec<usize> = std::iter::once(0)
@@ -993,11 +1213,12 @@ mod tests {
                     .filter_map(|(i, &b)| (b == b'\n').then_some(i + 1)),
             )
             .collect();
-        let incremental = highlight_lines_with_cache(after, "rs", &mut tree, &[edit], &prev_starts);
+        let incremental =
+            highlight_lines_with_cache(after, "rs", &mut tree, &[edit], &prev_starts, prev_h);
         assert!(tree.is_some(), "incremental reparse should update tree");
 
         let mut fresh_tree: Option<Tree> = None;
-        let fresh = highlight_lines_with_cache(after, "rs", &mut fresh_tree, &[], &[]);
+        let fresh = highlight_lines_with_cache(after, "rs", &mut fresh_tree, &[], &[], Vec::new());
         assert_eq!(
             incremental, fresh,
             "incremental and fresh highlights should match"
@@ -1021,7 +1242,7 @@ mod tests {
 
         // Warm: cache the initial tree.
         let mut tree: Option<Tree> = None;
-        let _ = highlight_lines_with_cache(&text, "rs", &mut tree, &[], &[]);
+        let prev_h = highlight_lines_with_cache(&text, "rs", &mut tree, &[], &[], Vec::new());
         assert!(tree.is_some());
         let prev_starts: Vec<usize> = std::iter::once(0)
             .chain(
@@ -1047,12 +1268,12 @@ mod tests {
         };
 
         let t_inc = std::time::Instant::now();
-        let _ = highlight_lines_with_cache(&after, "rs", &mut tree, &[edit], &prev_starts);
+        let _ = highlight_lines_with_cache(&after, "rs", &mut tree, &[edit], &prev_starts, prev_h);
         let inc = t_inc.elapsed();
 
         let mut fresh_tree: Option<Tree> = None;
         let t_fresh = std::time::Instant::now();
-        let _ = highlight_lines_with_cache(&after, "rs", &mut fresh_tree, &[], &[]);
+        let _ = highlight_lines_with_cache(&after, "rs", &mut fresh_tree, &[], &[], Vec::new());
         let fresh = t_fresh.elapsed();
 
         // Looser than the handoff's "< 5ms" — that's a real-machine target.
@@ -1077,12 +1298,13 @@ mod tests {
         };
 
         let mut tree: Option<Tree> = None;
-        let _ = highlight_lines_with_cache(before, "rs", &mut tree, &[], &[]);
+        let prev_h = highlight_lines_with_cache(before, "rs", &mut tree, &[], &[], Vec::new());
         let prev_starts: Vec<usize> = vec![0];
-        let incremental = highlight_lines_with_cache(after, "rs", &mut tree, &[edit], &prev_starts);
+        let incremental =
+            highlight_lines_with_cache(after, "rs", &mut tree, &[edit], &prev_starts, prev_h);
 
         let mut fresh_tree: Option<Tree> = None;
-        let fresh = highlight_lines_with_cache(after, "rs", &mut fresh_tree, &[], &[]);
+        let fresh = highlight_lines_with_cache(after, "rs", &mut fresh_tree, &[], &[], Vec::new());
         assert_eq!(incremental, fresh);
     }
 
