@@ -1870,17 +1870,19 @@ filtered locally after the first reply (no re-request as the prefix grows). Then
 entries → curl, DOM, screenshots, headless), more `.test` coverage, the `private` Cargo feature (DocDB
 `TestExecutions` + CodeBuild + native launcher actions), Git GUI phase 4 (branch rail UI, commit-with-Codex,
 recompose-with-AI, multi-repo); plus queued polish (editable request-pane field tabs). See `.local/PLAN.md`.
-Highlight follow-ups: more grammars; incremental tree-sitter parsing — session 1 of that arc is
-done: `tree_sitter_highlight` is gone, `highlight.rs` now drives raw `tree_sitter::Parser` + `Query`
-directly, and `Buffer.parse_tree: Option<Tree>` is wired (still parsed-from-scratch each refresh
-pending session 3's `InputEdit` hookup). Single-grammar files (rust / python / js / ts / go / json /
-toml / css / html / bash / c / cpp / ruby / java / cs / lua / yaml / scala / elixir / haskell / php /
-swift / make / zig / nix / ocaml / dart / sql / kotlin / regex / markdown-block) highlight as
-before. **Regression to fix in session 2**: markdown's `markdown_inline` injection (emphasis /
-inline code / links) and fenced-code-block injection (` ```rust …` no longer Rust-highlighted)
-both rely on the injection-callback path that tree_sitter_highlight owned — restored in S2 by
-walking the outer grammar's `injections.scm` query and recursively highlighting `@injection.content`
-captures with the resolved inner grammar.
+Highlight follow-ups: more grammars; incremental tree-sitter parsing — sessions 1 + 2 of that
+arc are done. `tree_sitter_highlight` is gone; `highlight.rs` drives raw `tree_sitter::Parser`
++ `Query` directly, with a precomputed capture-index → HIGHLIGHT_NAMES map and an
+innermost-wins span layout that exploits the renderer's `spans.iter().rev().find(...)` order.
+**Injection support is back**: each `LangConfig` carries an `injections_query`; for every
+match the resolver picks the language (via `@injection.language` capture, or a
+`#set! injection.language "..."` property), parses the `@injection.content` byte ranges with
+the inner grammar through `Parser::set_included_ranges` (keeping byte offsets in the outer
+text's coordinate space), and recurses up to `MAX_INJECTION_DEPTH = 3`. Markdown
+fenced-code-blocks (` ```rust …` → Rust-highlighted), markdown_inline (`**bold**`, `_em_`,
+`` `code` ``), HTML embedded `<style>` / `<script>`, plus Rust/JS/PHP/Swift/Zig/Nix/Elixir/
+Haskell injections all work. `Buffer.parse_tree: Option<Tree>` is plumbed but still parsed-
+from-scratch each refresh pending session 3's `InputEdit` hookup.
 
 ## Not set up yet (could add later)
 

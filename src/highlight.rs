@@ -7,25 +7,31 @@
 //! in each line's span list, and the renderer in `ui/editor_view.rs` resolves
 //! cell colors with `spans.iter().rev().find(...)` so the innermost span wins.
 //!
-//! Cached, leaked `'static` per ext (queries are expensive to compile and there
-//! are only a handful of grammars).
+//! Injection support: each `LangConfig` may carry an `injections_query` whose
+//! `@injection.content` captures (with `@injection.language` siblings or
+//! `#set! injection.language "..."` directives) are recursively highlighted by
+//! the inner grammar with `Parser::set_included_ranges` so byte offsets stay in
+//! the outer text's coordinate space. Depth-capped at `MAX_INJECTION_DEPTH` to
+//! prevent runaway nesting (e.g. markdown→markdown_inline→html→…).
 //!
-//! NOTE — session 1 of the tree_sitter_highlight → raw Parser+Query migration.
-//! Markdown's two-grammar setup (block + injected `markdown_inline`) and any
-//! injection-based highlighting (fenced code blocks, embedded `<style>` / `<script>`)
-//! is **not yet wired**. Plain single-grammar files still highlight correctly.
-//! Session 2 restores injection support.
+//! Cached, leaked `'static` per ext — queries are expensive to compile and
+//! there are only a handful of grammars.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use ratatui::style::Color;
-use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator};
+use tree_sitter::{Language, Parser, Point, Query, QueryCursor, Range, StreamingIterator};
 
 use crate::ui::theme;
 
 /// One colored run on a single line: `[start_col, end_col)` in **chars**.
 pub type ColoredSpan = (usize, usize, Color);
+
+/// Recursion bound on injection-driven highlighting. Markdown → markdown_inline
+/// → html is already 3; anything deeper is almost certainly a query bug we
+/// shouldn't follow.
+const MAX_INJECTION_DEPTH: u32 = 3;
 
 /// The highlight-name vocabulary mnml recognizes. Each capture in a grammar's
 /// `highlights.scm` (e.g. `@keyword.return`, `@function.method`) is mapped to
@@ -117,33 +123,57 @@ fn color_for(idx: usize) -> Color {
 }
 
 /// A compiled, leaked `'static` per-language config. Building one means
-/// loading the grammar + compiling its highlight (and later injection) query;
-/// both are expensive, so we keep them around for the process lifetime.
+/// loading the grammar + compiling its queries; both are expensive, so we keep
+/// them around for the process lifetime.
 pub struct LangConfig {
     pub language: Language,
     pub highlights_query: Query,
+    /// Optional `injections.scm`-derived query. `None` when the grammar
+    /// doesn't ship one (or it failed to compile).
+    pub injections_query: Option<Query>,
+    /// Capture index of `@injection.content` in `injections_query` (cached so
+    /// the hot loop doesn't lookup-by-name each match).
+    inj_content_idx: Option<u32>,
+    /// Capture index of `@injection.language` in `injections_query` (the
+    /// dynamic-language form used by fenced code blocks).
+    inj_language_idx: Option<u32>,
     /// Map from `highlights_query` capture index → index into `HIGHLIGHT_NAMES`
-    /// (or `-1` if the capture name doesn't match any entry). Computed once at
-    /// config build so the hot path is a single array lookup.
+    /// (or `-1` if the capture name doesn't match any entry). Built once at
+    /// config creation; hot path is a single array lookup.
     highlight_map: Vec<i32>,
 }
 
 impl LangConfig {
-    fn new(language: Language, highlight_src: &str) -> Option<Self> {
+    fn new(language: Language, highlight_src: &str, injections_src: &str) -> Option<Self> {
         let highlights_query = Query::new(&language, highlight_src).ok()?;
         let highlight_map = build_highlight_map(highlights_query.capture_names());
+        let (injections_query, inj_content_idx, inj_language_idx) = if injections_src.is_empty() {
+            (None, None, None)
+        } else {
+            match Query::new(&language, injections_src) {
+                Ok(q) => {
+                    let c = q.capture_index_for_name("injection.content");
+                    let l = q.capture_index_for_name("injection.language");
+                    (Some(q), c, l)
+                }
+                // A grammar's injections.scm not compiling is non-fatal —
+                // outer highlighting still works.
+                Err(_) => (None, None, None),
+            }
+        };
         Some(LangConfig {
             language,
             highlights_query,
+            injections_query,
+            inj_content_idx,
+            inj_language_idx,
             highlight_map,
         })
     }
 }
 
 /// For each capture name, find the longest entry in `HIGHLIGHT_NAMES` it equals
-/// or has as a `.`-separated prefix. Tree-sitter convention: a capture named
-/// `keyword.return` should pick up `keyword.return`'s color if defined, else
-/// fall back to `keyword`'s; a capture named `foo.bar` with no match returns -1.
+/// or has as a `.`-separated prefix.
 fn build_highlight_map(capture_names: &[&str]) -> Vec<i32> {
     capture_names
         .iter()
@@ -165,6 +195,30 @@ fn build_highlight_map(capture_names: &[&str]) -> Vec<i32> {
         .collect()
 }
 
+/// Cumulative byte offsets of every line start in `text`. `line_starts[i]` is
+/// the byte offset of line `i`'s first char; `line_starts.len() == n_lines`.
+fn build_line_starts(text: &str) -> Vec<usize> {
+    std::iter::once(0)
+        .chain(
+            text.as_bytes()
+                .iter()
+                .enumerate()
+                .filter(|&(_, &b)| b == b'\n')
+                .map(|(i, _)| i + 1),
+        )
+        .collect()
+}
+
+/// Convert a byte offset into a tree-sitter `Point` (row, col-bytes).
+fn point_at_byte(line_starts: &[usize], byte: usize) -> Point {
+    let row = match line_starts.binary_search(&byte) {
+        Ok(i) => i,
+        Err(i) => i.saturating_sub(1),
+    };
+    let col = byte.saturating_sub(line_starts.get(row).copied().unwrap_or(0));
+    Point::new(row, col)
+}
+
 /// Highlight `text` for the file extension `ext`. Returns one span list per
 /// editor line (`'\n'`-count + 1 lines).
 pub fn highlight_lines(text: &str, ext: &str) -> Vec<Vec<ColoredSpan>> {
@@ -173,23 +227,45 @@ pub fn highlight_lines(text: &str, ext: &str) -> Vec<Vec<ColoredSpan>> {
     let Some(cfg) = config_for_ext(ext) else {
         return out;
     };
-
-    let mut parser = Parser::new();
-    if parser.set_language(&cfg.language).is_err() {
-        return out;
-    }
-    let Some(tree) = parser.parse(text, None) else {
-        return out;
-    };
-
-    apply_query_to_spans(text, cfg, &tree, &mut out);
+    let line_starts = build_line_starts(text);
+    highlight_recursive(text, &line_starts, cfg, &[], 0, &mut out);
     out
 }
 
-/// Run `cfg`'s highlight query over `tree`, append per-line spans to `out`.
-/// Factored out so injection logic (session 2) can re-use it for inner trees.
+/// Parse `text` with `cfg`'s grammar (optionally restricted to `included_ranges`
+/// so inner grammars stay in the outer text's coordinate space), append per-line
+/// highlight spans, then walk the injection query and recurse for each
+/// `@injection.content` capture.
+fn highlight_recursive(
+    text: &str,
+    line_starts: &[usize],
+    cfg: &'static LangConfig,
+    included_ranges: &[Range],
+    depth: u32,
+    out: &mut [Vec<ColoredSpan>],
+) {
+    if depth > MAX_INJECTION_DEPTH {
+        return;
+    }
+    let mut parser = Parser::new();
+    if parser.set_language(&cfg.language).is_err() {
+        return;
+    }
+    if !included_ranges.is_empty() && parser.set_included_ranges(included_ranges).is_err() {
+        return;
+    }
+    let Some(tree) = parser.parse(text, None) else {
+        return;
+    };
+
+    apply_query_to_spans(text, line_starts, cfg, &tree, out);
+    walk_injections(text, line_starts, cfg, &tree, depth, out);
+}
+
+/// Run `cfg.highlights_query` over `tree`, append per-line spans to `out`.
 fn apply_query_to_spans(
     text: &str,
+    line_starts: &[usize],
     cfg: &LangConfig,
     tree: &tree_sitter::Tree,
     out: &mut [Vec<ColoredSpan>],
@@ -199,8 +275,6 @@ fn apply_query_to_spans(
     let mut iter = cursor.captures(&cfg.highlights_query, tree.root_node(), bytes);
 
     // Collect (start_byte, end_byte, color, pattern_idx) for every relevant capture.
-    // Skipping captures whose name doesn't map into HIGHLIGHT_NAMES at query-build
-    // time keeps this loop tight.
     let mut caps: Vec<(usize, usize, Color, u32)> = Vec::new();
     while let Some(item) = iter.next() {
         let qmatch = &item.0;
@@ -221,37 +295,22 @@ fn apply_query_to_spans(
     }
 
     // Innermost wins: emit smaller ranges *later* so the renderer's
-    // `spans.iter().rev().find(...)` picks them first. Sort by range size
-    // descending; pattern-index ascending so a later .scm pattern (which by
-    // tree-sitter convention overrides earlier ones at the same node) ends up
-    // later in the Vec too.
+    // `spans.iter().rev().find(...)` picks them first. Pattern-index
+    // ascending → a later .scm pattern (which by tree-sitter convention
+    // overrides earlier ones at the same node) ends up later in the Vec too.
     caps.sort_by(|a, b| {
         let alen = a.1.saturating_sub(a.0);
         let blen = b.1.saturating_sub(b.0);
         blen.cmp(&alen).then(a.3.cmp(&b.3))
     });
 
-    // Build `line_starts` once, reuse for every capture's byte→line walk.
-    let line_starts: Vec<usize> = std::iter::once(0)
-        .chain(
-            bytes
-                .iter()
-                .enumerate()
-                .filter(|&(_, &b)| b == b'\n')
-                .map(|(i, _)| i + 1),
-        )
-        .collect();
-    let line_of = |b: usize| -> usize {
-        match line_starts.binary_search(&b) {
-            Ok(i) => i,
-            Err(i) => i.saturating_sub(1),
-        }
-    };
-
     for &(start, end, color, _) in &caps {
         let mut b = start;
         while b < end {
-            let line = line_of(b);
+            let line = match line_starts.binary_search(&b) {
+                Ok(i) => i,
+                Err(i) => i.saturating_sub(1),
+            };
             if line >= out.len() {
                 break;
             }
@@ -282,6 +341,87 @@ fn apply_query_to_spans(
     }
 }
 
+/// Walk `cfg.injections_query` over `tree`. For each match, find the
+/// `@injection.content` byte range(s) + the language (captured `@injection.language`
+/// or `#set! injection.language "…"`), resolve the inner `LangConfig`, recurse.
+fn walk_injections(
+    text: &str,
+    line_starts: &[usize],
+    cfg: &LangConfig,
+    tree: &tree_sitter::Tree,
+    depth: u32,
+    out: &mut [Vec<ColoredSpan>],
+) {
+    let (Some(query), Some(content_idx)) = (cfg.injections_query.as_ref(), cfg.inj_content_idx)
+    else {
+        return;
+    };
+
+    let mut cursor = QueryCursor::new();
+    let mut iter = cursor.matches(query, tree.root_node(), text.as_bytes());
+    while let Some(qmatch) = iter.next() {
+        let mut content_ranges: Vec<Range> = Vec::new();
+        let mut captured_lang: Option<String> = None;
+        for cap in qmatch.captures {
+            if cap.index == content_idx {
+                let node = cap.node;
+                let sb = node.start_byte();
+                let eb = node.end_byte();
+                if eb > sb {
+                    content_ranges.push(Range {
+                        start_byte: sb,
+                        end_byte: eb,
+                        start_point: point_at_byte(line_starts, sb),
+                        end_point: point_at_byte(line_starts, eb),
+                    });
+                }
+            } else if Some(cap.index) == cfg.inj_language_idx {
+                let node = cap.node;
+                let sb = node.start_byte();
+                let eb = node.end_byte();
+                if eb > sb && eb <= text.len() {
+                    captured_lang = Some(text[sb..eb].to_string());
+                }
+            }
+        }
+
+        // `#set! injection.language "rust"` directive on the pattern.
+        let set_lang = query
+            .property_settings(qmatch.pattern_index)
+            .iter()
+            .find(|p| &*p.key == "injection.language")
+            .and_then(|p| p.value.as_ref().map(|v| v.to_string()));
+
+        let Some(lang_name) = captured_lang.or(set_lang) else {
+            continue;
+        };
+        if content_ranges.is_empty() {
+            continue;
+        }
+        let Some(inner_cfg) = config_for_lang(&lang_name) else {
+            continue;
+        };
+
+        // tree-sitter requires included ranges sorted by start_byte and non-overlapping.
+        content_ranges.sort_by_key(|r| r.start_byte);
+        if has_overlap(&content_ranges) {
+            continue;
+        }
+        highlight_recursive(
+            text,
+            line_starts,
+            inner_cfg,
+            &content_ranges,
+            depth + 1,
+            out,
+        );
+    }
+}
+
+fn has_overlap(ranges: &[Range]) -> bool {
+    ranges.windows(2).any(|w| w[0].end_byte > w[1].start_byte)
+}
+
 fn config_for_ext(ext: &str) -> Option<&'static LangConfig> {
     static CACHE: OnceLock<Mutex<HashMap<String, Option<&'static LangConfig>>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -294,150 +434,235 @@ fn config_for_ext(ext: &str) -> Option<&'static LangConfig> {
     built
 }
 
+/// Resolve an *injection language name* (a code-fence info string like `rust`,
+/// or a literal from an `injections.scm` such as `markdown_inline` / `html`) to
+/// a highlight config — by mapping it onto an extension `build_config` knows.
+fn config_for_lang(name: &str) -> Option<&'static LangConfig> {
+    let name = name.trim().to_ascii_lowercase();
+    // `markdown_inline` is the inline half of tree-sitter-md (no real extension).
+    if name == "markdown_inline" || name == "markdown-inline" {
+        return config_for_ext("markdown_inline");
+    }
+    let ext = match name.as_str() {
+        "rust" | "rs" => "rs",
+        "javascript" | "js" | "node" => "js",
+        "jsx" => "jsx",
+        "typescript" | "ts" => "ts",
+        "tsx" => "tsx",
+        "python" | "py" => "py",
+        "json" | "jsonc" | "json5" => "json",
+        "go" | "golang" => "go",
+        "toml" => "toml",
+        "css" | "scss" => "css",
+        "bash" | "sh" | "shell" | "shellscript" | "zsh" | "console" => "sh",
+        "html" | "htm" | "xml" => "html",
+        "markdown" | "md" => "md",
+        "c" => "c",
+        "cpp" | "c++" | "cxx" | "cc" => "cpp",
+        "ruby" | "rb" => "rb",
+        "java" => "java",
+        "csharp" | "c#" | "cs" | "c_sharp" => "cs",
+        "lua" => "lua",
+        "yaml" | "yml" => "yaml",
+        "scala" | "sbt" => "scala",
+        "elixir" | "ex" | "exs" => "ex",
+        "haskell" | "hs" => "hs",
+        "php" | "php_only" => "php",
+        "swift" => "swift",
+        "zig" => "zig",
+        "nix" => "nix",
+        "ocaml" | "ml" => "ocaml",
+        "ocaml_interface" | "mli" => "mli",
+        "dart" => "dart",
+        "sql" | "psql" | "mysql" => "sql",
+        "make" | "makefile" => "make",
+        "kotlin" | "kt" | "kts" => "kt",
+        "regex" => "regex",
+        _ => return None,
+    };
+    config_for_ext(ext)
+}
+
 fn build_config(ext: &str) -> Option<LangConfig> {
-    let (lang, hl_q): (Language, &str) = match ext {
+    // (language, highlights, injections). Empty injection-source string ⇒ none.
+    let (lang, hl_q, inj_q): (Language, &str, &str) = match ext {
         "rs" => (
             tree_sitter_rust::LANGUAGE.into(),
             tree_sitter_rust::HIGHLIGHTS_QUERY,
+            tree_sitter_rust::INJECTIONS_QUERY,
         ),
         "js" | "cjs" | "mjs" | "jsx" => (
             tree_sitter_javascript::LANGUAGE.into(),
             tree_sitter_javascript::HIGHLIGHT_QUERY,
+            tree_sitter_javascript::INJECTIONS_QUERY,
         ),
         "py" => (
             tree_sitter_python::LANGUAGE.into(),
             tree_sitter_python::HIGHLIGHTS_QUERY,
+            "",
         ),
         "json" => (
             tree_sitter_json::LANGUAGE.into(),
             tree_sitter_json::HIGHLIGHTS_QUERY,
+            "",
         ),
         "go" => (
             tree_sitter_go::LANGUAGE.into(),
             tree_sitter_go::HIGHLIGHTS_QUERY,
+            "",
         ),
         "toml" => (
             tree_sitter_toml_ng::LANGUAGE.into(),
             tree_sitter_toml_ng::HIGHLIGHTS_QUERY,
+            "",
         ),
         "ts" | "cts" | "mts" => (
             tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            "",
         ),
         "tsx" => (
             tree_sitter_typescript::LANGUAGE_TSX.into(),
             tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            "",
         ),
         "css" | "scss" => (
             tree_sitter_css::LANGUAGE.into(),
             tree_sitter_css::HIGHLIGHTS_QUERY,
+            "",
         ),
         "html" | "htm" => (
             tree_sitter_html::LANGUAGE.into(),
             tree_sitter_html::HIGHLIGHTS_QUERY,
+            tree_sitter_html::INJECTIONS_QUERY,
         ),
         "sh" | "bash" | "zsh" => (
             tree_sitter_bash::LANGUAGE.into(),
             tree_sitter_bash::HIGHLIGHT_QUERY,
+            "",
         ),
-        // Markdown is two grammars: the block structure (headings/fences/lists)
-        // and the inline grammar (emphasis, inline code, links) injected via
-        // `INJECTION_QUERY_BLOCK`. Session 2 wires the inline injection back up.
+        // Markdown is two grammars: the block structure (headings/fences/lists/quotes)
+        // and the *inline* grammar (emphasis, inline code, links) injected via
+        // `INJECTION_QUERY_BLOCK` — `config_for_lang("markdown_inline")` resolves to
+        // the arm below. Fenced code blocks inject their own language the same way.
         "md" | "markdown" => (
             tree_sitter_md::LANGUAGE.into(),
             tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
+            tree_sitter_md::INJECTION_QUERY_BLOCK,
         ),
         "markdown_inline" => (
             tree_sitter_md::INLINE_LANGUAGE.into(),
             tree_sitter_md::HIGHLIGHT_QUERY_INLINE,
+            tree_sitter_md::INJECTION_QUERY_INLINE,
         ),
         "c" | "h" => (
             tree_sitter_c::LANGUAGE.into(),
             tree_sitter_c::HIGHLIGHT_QUERY,
+            "",
         ),
         "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => (
             tree_sitter_cpp::LANGUAGE.into(),
             tree_sitter_cpp::HIGHLIGHT_QUERY,
+            "",
         ),
         "rb" | "rake" | "gemspec" => (
             tree_sitter_ruby::LANGUAGE.into(),
             tree_sitter_ruby::HIGHLIGHTS_QUERY,
+            "",
         ),
         "java" => (
             tree_sitter_java::LANGUAGE.into(),
             tree_sitter_java::HIGHLIGHTS_QUERY,
+            "",
         ),
         "cs" => (
             tree_sitter_c_sharp::LANGUAGE.into(),
             tree_sitter_c_sharp::HIGHLIGHTS_QUERY,
+            "",
         ),
         "lua" => (
             tree_sitter_lua::LANGUAGE.into(),
             tree_sitter_lua::HIGHLIGHTS_QUERY,
+            "",
         ),
         "yaml" | "yml" => (
             tree_sitter_yaml::LANGUAGE.into(),
             tree_sitter_yaml::HIGHLIGHTS_QUERY,
+            "",
         ),
         "scala" | "sc" | "sbt" => (
             tree_sitter_scala::LANGUAGE.into(),
             tree_sitter_scala::HIGHLIGHTS_QUERY,
+            "",
         ),
         "ex" | "exs" => (
             tree_sitter_elixir::LANGUAGE.into(),
             tree_sitter_elixir::HIGHLIGHTS_QUERY,
+            tree_sitter_elixir::INJECTIONS_QUERY,
         ),
         "hs" => (
             tree_sitter_haskell::LANGUAGE.into(),
             tree_sitter_haskell::HIGHLIGHTS_QUERY,
+            tree_sitter_haskell::INJECTIONS_QUERY,
         ),
         "php" | "php3" | "php4" | "php5" | "phtml" => (
             tree_sitter_php::LANGUAGE_PHP.into(),
             tree_sitter_php::HIGHLIGHTS_QUERY,
+            tree_sitter_php::INJECTIONS_QUERY,
         ),
         "swift" => (
             tree_sitter_swift::LANGUAGE.into(),
             tree_sitter_swift::HIGHLIGHTS_QUERY,
+            tree_sitter_swift::INJECTIONS_QUERY,
         ),
         "zig" => (
             tree_sitter_zig::LANGUAGE.into(),
             tree_sitter_zig::HIGHLIGHTS_QUERY,
+            tree_sitter_zig::INJECTIONS_QUERY,
         ),
         "nix" => (
             tree_sitter_nix::LANGUAGE.into(),
             tree_sitter_nix::HIGHLIGHTS_QUERY,
+            tree_sitter_nix::INJECTIONS_QUERY,
         ),
         "ocaml" | "ml" => (
             tree_sitter_ocaml::LANGUAGE_OCAML.into(),
             tree_sitter_ocaml::HIGHLIGHTS_QUERY,
+            "",
         ),
         "mli" => (
             tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
             tree_sitter_ocaml::HIGHLIGHTS_QUERY,
+            "",
         ),
         "dart" => (
             tree_sitter_dart::LANGUAGE.into(),
             tree_sitter_dart::HIGHLIGHTS_QUERY,
+            "",
         ),
         "sql" | "psql" | "mysql" => (
             tree_sitter_sequel::LANGUAGE.into(),
             tree_sitter_sequel::HIGHLIGHTS_QUERY,
+            "",
         ),
         "mk" | "make" | "makefile" => (
             tree_sitter_make::LANGUAGE.into(),
             tree_sitter_make::HIGHLIGHTS_QUERY,
+            "",
         ),
         "kt" | "kts" => (
             tree_sitter_kotlin_sg::LANGUAGE.into(),
             tree_sitter_kotlin_sg::HIGHLIGHTS_QUERY,
+            "",
         ),
         "regex" => (
             tree_sitter_regex::LANGUAGE.into(),
             tree_sitter_regex::HIGHLIGHTS_QUERY,
+            "",
         ),
         _ => return None,
     };
-    LangConfig::new(lang, hl_q)
+    LangConfig::new(lang, hl_q, inj_q)
 }
 
 #[cfg(test)]
@@ -449,13 +674,11 @@ mod tests {
         let src = "fn main() {\n    let s = \"hi\";\n}\n";
         let lines = highlight_lines(src, "rs");
         assert_eq!(lines.len(), 4); // 3 '\n' + 1
-        // line 0 has `fn` (a keyword) → some span over its first chars
         assert!(
             lines[0].iter().any(|&(s, e, _)| s == 0 && e >= 2),
             "expected a span over `fn`: {:?}",
             lines[0]
         );
-        // line 1 (`    let s = "hi";`) — the string literal "hi" sits at cols 12..16
         assert!(
             lines[1].iter().any(|&(s, e, _)| s <= 12 && e >= 14),
             "expected a span covering the string literal: {:?}",
@@ -484,7 +707,6 @@ mod tests {
 
     #[test]
     fn json_parses() {
-        // line 1 is `  "a": 1` — expect spans covering the key (cols 2..5) and value (col 7).
         let lines = highlight_lines("{\n  \"a\": 1\n}\n", "json");
         assert_eq!(lines.len(), 4);
         assert!(
@@ -500,8 +722,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "session 2: markdown injection re-wiring restores fenced-code highlighting"]
     fn markdown_injects_fenced_code() {
+        // A ```rust fence's body should be highlighted by the Rust grammar via
+        // the injection-query walk; the heading line gets a `text.title` span.
         let src = "# Title\n\n```rust\nfn x() {}\n```\n";
         let lines = highlight_lines(src, "md");
         assert_eq!(lines.len(), 6);
@@ -518,15 +741,16 @@ mod tests {
     }
 
     #[test]
-    fn markdown_block_still_highlights() {
-        // Block-level features (headings, fences as delimiters) still work
-        // without inline injection; restored in session 2.
-        let src = "# Title\n\n- item\n";
+    fn markdown_injects_inline_emphasis() {
+        // `**bold**` text in a markdown paragraph should receive an
+        // emphasis-style span via the `markdown_inline` injection.
+        let src = "This is **bold** text.\n";
         let lines = highlight_lines(src, "md");
-        assert_eq!(lines.len(), 4);
+        // Some span (the bold emphasis) should cover bytes 8..16 — "**bold**".
         assert!(
-            lines.iter().any(|l| !l.is_empty()),
-            "expected the markdown block grammar to emit some spans"
+            lines[0].iter().any(|&(s, e, _)| s <= 8 && e >= 16),
+            "expected the markdown_inline injection to mark the **bold** run: {:?}",
+            lines[0]
         );
     }
 
@@ -584,13 +808,12 @@ mod tests {
 
     #[test]
     fn highlight_map_picks_longest_prefix() {
-        // Synthetic capture-name list: verify the matching logic directly.
         let caps: &[&str] = &[
-            "keyword",         // exact match
-            "keyword.return",  // exact match, longer than "keyword"
-            "keyword.foo.bar", // prefix-match "keyword" (no "keyword.foo")
-            "made.up",         // no match
-            "string.escape",   // exact (longer than "string")
+            "keyword",
+            "keyword.return",
+            "keyword.foo.bar",
+            "made.up",
+            "string.escape",
         ];
         let map = build_highlight_map(caps);
         let idx_of = |name: &str| HIGHLIGHT_NAMES.iter().position(|n| *n == name);
