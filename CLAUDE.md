@@ -759,6 +759,9 @@ aliased to `:cprev`, so `:Cp` only.)
 **`:Capture <cmd>`** — run the command via `$SHELL -c`, open the combined stdout/stderr
 in a new scratch buffer (split below). Useful for grabbing `cargo test` output, log dumps,
 etc. for grep / highlight without launching a full pty. Cwd is the workspace.
+**`:setlocal [no]readonly` / `:setlocal ro` / `noro` / `readonly!`** — toggle the active
+buffer's `read_only` flag (input handlers ignore text-changing keys when set). Useful for
+"don't let me accidentally edit this" on a file open for reference.
 **Debounced syntax highlighting** — `Buffer.highlights_dirty: bool` flag set on every
 text-changing edit (replaces the immediate `refresh_highlights()` call). `App::tick`'s new
 `refresh_stale_highlights` sweeps editor panes and re-runs tree-sitter on any buffer

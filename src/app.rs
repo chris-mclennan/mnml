@@ -14699,6 +14699,20 @@ impl App {
                 } else if matches!(opt, "notrim" | "notrim_trailing_whitespace") {
                     b.trim_trailing_ws_on_save = false;
                     self.toast(":setlocal notrim");
+                } else if matches!(opt, "readonly" | "ro") {
+                    b.read_only = true;
+                    self.toast(":setlocal readonly");
+                } else if matches!(opt, "noreadonly" | "noro" | "modifiable") {
+                    b.read_only = false;
+                    self.toast(":setlocal modifiable");
+                } else if matches!(opt, "readonly!" | "invreadonly") {
+                    b.read_only = !b.read_only;
+                    let label = if b.read_only {
+                        "readonly"
+                    } else {
+                        "modifiable"
+                    };
+                    self.toast(format!(":setlocal {label}"));
                 } else {
                     self.toast(format!(":setlocal — unknown option: {opt}"));
                 }
