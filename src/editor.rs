@@ -242,6 +242,11 @@ pub struct Editor {
     /// DeleteForward today) apply to the primary AND each extra cursor.
     /// Always sorted, distinct from `cursor`, char-boundary safe.
     pub extra_cursors: Vec<usize>,
+    /// Per-extra-cursor anchor (selection start). Parallel array to
+    /// `extra_cursors` — `extra_anchors[i]` is the anchor (or `None`) for
+    /// the cursor at `extra_cursors[i]`. Maintained by `SelectStart` /
+    /// `SelectClear` and by every delete/insert that shifts cursors.
+    pub extra_anchors: Vec<Option<usize>>,
     /// Stack of overwrites performed in Replace mode (`R`). Each entry is
     /// either `Some(c)` (the original char that was overwritten — restore
     /// on Backspace) or `None` (a chars was inserted past EOL, no
@@ -269,11 +274,16 @@ impl Editor {
             last_selection: None,
             replace_stack: Vec::new(),
             extra_cursors: Vec::new(),
+            extra_anchors: Vec::new(),
         }
     }
 
     /// Add a cursor at byte position `byte` (clamped to a char boundary).
     /// No-op if it'd duplicate the primary cursor or an existing extra.
+    /// If the primary cursor currently has a selection anchor, the new
+    /// extra is anchored at its own position (zero-width selection that
+    /// follows the existing selection model — subsequent motions extend
+    /// it across all cursors).
     pub fn add_extra_cursor(&mut self, byte: usize) {
         let mut b = byte.min(self.text.len());
         while b < self.text.len() && !self.text.is_char_boundary(b) {
@@ -282,24 +292,46 @@ impl Editor {
         if b == self.cursor || self.extra_cursors.contains(&b) {
             return;
         }
+        let anchor_for_new = if self.anchor.is_some() { Some(b) } else { None };
         self.extra_cursors.push(b);
-        self.extra_cursors.sort_unstable();
-        self.extra_cursors.dedup();
+        self.extra_anchors.push(anchor_for_new);
+        self.sort_extras();
+    }
+
+    /// Re-sort `extra_cursors` and keep `extra_anchors` in sync. Public
+    /// helpers that mutate the parallel arrays should call this after.
+    fn sort_extras(&mut self) {
+        if self.extra_cursors.len() < 2 {
+            return;
+        }
+        let mut paired: Vec<(usize, Option<usize>)> = self
+            .extra_cursors
+            .iter()
+            .copied()
+            .zip(self.extra_anchors.iter().copied())
+            .collect();
+        paired.sort_by_key(|&(c, _)| c);
+        paired.dedup_by_key(|p| p.0);
+        let (cs, ans): (Vec<usize>, Vec<Option<usize>>) = paired.into_iter().unzip();
+        self.extra_cursors = cs;
+        self.extra_anchors = ans;
     }
 
     pub fn clear_extra_cursors(&mut self) {
         self.extra_cursors.clear();
+        self.extra_anchors.clear();
     }
 
     /// Move each extra cursor one char left / right (no goal_col since
     /// it's a horizontal motion). Caller has already moved the primary.
-    /// Char-boundary safe; clamped to `[0, text.len()]`.
+    /// Char-boundary safe; clamped to `[0, text.len()]`. Anchors stay put
+    /// so selections extend.
     fn move_extras_horizontal(&mut self, dir: i32) {
         if self.extra_cursors.is_empty() {
             return;
         }
         let len = self.text.len();
-        let mut updated: Vec<usize> = self
+        let updated: Vec<usize> = self
             .extra_cursors
             .iter()
             .map(|&p| {
@@ -310,22 +342,19 @@ impl Editor {
                 }
             })
             .collect();
-        updated.retain(|&p| p != self.cursor);
-        updated.sort_unstable();
-        updated.dedup();
-        self.extra_cursors = updated;
+        self.replace_extra_positions(updated);
     }
 
     /// Move each extra cursor one row up / down at its current visual
     /// column (independent goal_col per extra). Drops any extra that
-    /// runs off the top / bottom of the buffer.
+    /// runs off the top / bottom of the buffer. Anchors stay put.
     fn move_extras_vertical(&mut self, dir: i32) {
         if self.extra_cursors.is_empty() {
             return;
         }
         let lc = self.line_count();
-        let mut updated: Vec<usize> = Vec::with_capacity(self.extra_cursors.len());
-        for &p in &self.extra_cursors {
+        let mut pairs: Vec<(usize, Option<usize>)> = Vec::with_capacity(self.extra_cursors.len());
+        for (idx, &p) in self.extra_cursors.iter().enumerate() {
             let (row, col) = self.row_col_at(p);
             let next_row = if dir < 0 {
                 if row == 0 {
@@ -338,12 +367,45 @@ impl Editor {
                 }
                 row + 1
             };
-            updated.push(self.byte_at_col(next_row, col));
+            pairs.push((self.byte_at_col(next_row, col), self.extra_anchors[idx]));
         }
-        updated.retain(|&p| p != self.cursor);
-        updated.sort_unstable();
-        updated.dedup();
-        self.extra_cursors = updated;
+        self.replace_extra_pairs(pairs);
+    }
+
+    /// Replace `extra_cursors` with `new_positions`, keeping each pair's
+    /// anchor matched by INDEX. Drops cursors that collide with the
+    /// primary and dedups against each other.
+    fn replace_extra_positions(&mut self, new_positions: Vec<usize>) {
+        debug_assert_eq!(new_positions.len(), self.extra_anchors.len());
+        let pairs: Vec<(usize, Option<usize>)> = new_positions
+            .into_iter()
+            .zip(self.extra_anchors.iter().copied())
+            .collect();
+        self.replace_extra_pairs(pairs);
+    }
+
+    fn replace_extra_pairs(&mut self, mut pairs: Vec<(usize, Option<usize>)>) {
+        pairs.retain(|&(c, _)| c != self.cursor);
+        pairs.sort_by_key(|&(c, _)| c);
+        pairs.dedup_by_key(|p| p.0);
+        let (cs, ans): (Vec<usize>, Vec<Option<usize>>) = pairs.into_iter().unzip();
+        self.extra_cursors = cs;
+        self.extra_anchors = ans;
+    }
+
+    /// Commit a multi-cursor edit: `cursors[0]` becomes the primary, the
+    /// rest get re-paired with `anchors` and re-sorted/deduped. `anchors[0]`
+    /// becomes the primary anchor.
+    fn commit_multi(&mut self, cursors: Vec<usize>, anchors: Vec<Option<usize>>) {
+        debug_assert_eq!(cursors.len(), anchors.len());
+        self.cursor = cursors[0];
+        self.anchor = anchors[0];
+        let pairs: Vec<(usize, Option<usize>)> = cursors[1..]
+            .iter()
+            .copied()
+            .zip(anchors[1..].iter().copied())
+            .collect();
+        self.replace_extra_pairs(pairs);
     }
 
     /// Multi-cursor Backspace — each cursor deletes the char before it.
@@ -351,20 +413,23 @@ impl Editor {
     /// all OTHER cursors as each delete shifts the text. Auto-pair is
     /// skipped (semantics get hairy across N cursors).
     fn multi_delete_backward(&mut self) {
-        let mut all: Vec<usize> = std::iter::once(self.cursor)
+        let mut cursors: Vec<usize> = std::iter::once(self.cursor)
             .chain(self.extra_cursors.iter().copied())
             .collect();
-        let mut order: Vec<usize> = (0..all.len()).collect();
-        order.sort_by_key(|&i| std::cmp::Reverse(all[i]));
+        let mut anchors: Vec<Option<usize>> = std::iter::once(self.anchor)
+            .chain(self.extra_anchors.iter().copied())
+            .collect();
+        let mut order: Vec<usize> = (0..cursors.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(cursors[i]));
         for &i in &order {
-            let p = all[i];
+            let p = cursors[i];
             if p == 0 {
                 continue;
             }
             let prev = self.prev_char_boundary(p);
             let removed = p - prev;
             self.text.replace_range(prev..p, "");
-            for (j, c) in all.iter_mut().enumerate() {
+            for (j, c) in cursors.iter_mut().enumerate() {
                 if j == i {
                     *c = prev;
                 } else if *c >= p {
@@ -373,13 +438,15 @@ impl Editor {
                     *c = prev;
                 }
             }
+            for av in anchors.iter_mut().flatten() {
+                if *av >= p {
+                    *av = av.saturating_sub(removed);
+                } else if *av > prev {
+                    *av = prev;
+                }
+            }
         }
-        self.cursor = all[0];
-        let mut extras: Vec<usize> = all[1..].to_vec();
-        extras.retain(|&c| c != self.cursor);
-        extras.sort_unstable();
-        extras.dedup();
-        self.extra_cursors = extras;
+        self.commit_multi(cursors, anchors);
     }
 
     /// Apply a unary position-mapping function to every extra cursor.
@@ -392,11 +459,8 @@ impl Editor {
         if self.extra_cursors.is_empty() {
             return;
         }
-        let mut updated: Vec<usize> = self.extra_cursors.iter().map(|&p| f(self, p)).collect();
-        updated.retain(|&p| p != self.cursor);
-        updated.sort_unstable();
-        updated.dedup();
-        self.extra_cursors = updated;
+        let updated: Vec<usize> = self.extra_cursors.iter().map(|&p| f(self, p)).collect();
+        self.replace_extra_positions(updated);
     }
 
     /// Move every extra cursor to the start / end of its own line.
@@ -404,7 +468,7 @@ impl Editor {
         if self.extra_cursors.is_empty() {
             return;
         }
-        let mut updated: Vec<usize> = self
+        let updated: Vec<usize> = self
             .extra_cursors
             .iter()
             .map(|&p| {
@@ -416,10 +480,7 @@ impl Editor {
                 }
             })
             .collect();
-        updated.retain(|&p| p != self.cursor);
-        updated.sort_unstable();
-        updated.dedup();
-        self.extra_cursors = updated;
+        self.replace_extra_positions(updated);
     }
 
     /// Multi-cursor "delete a per-cursor range". The closure receives each
@@ -431,11 +492,13 @@ impl Editor {
     where
         F: FnMut(&Self, usize) -> (usize, usize),
     {
-        let mut all: Vec<usize> = std::iter::once(self.cursor)
+        let mut cursors: Vec<usize> = std::iter::once(self.cursor)
             .chain(self.extra_cursors.iter().copied())
             .collect();
-        // Compute each cursor's (start, end) range from its CURRENT pos.
-        let mut ranges: Vec<(usize, usize, usize)> = all
+        let mut anchors: Vec<Option<usize>> = std::iter::once(self.anchor)
+            .chain(self.extra_anchors.iter().copied())
+            .collect();
+        let mut ranges: Vec<(usize, usize, usize)> = cursors
             .iter()
             .enumerate()
             .map(|(i, &p)| {
@@ -443,7 +506,6 @@ impl Editor {
                 (i, s.min(e), s.max(e))
             })
             .collect();
-        // Apply in descending start order.
         ranges.sort_by_key(|&(_, s, _)| std::cmp::Reverse(s));
         for (i, s, e) in ranges {
             if s == e {
@@ -451,7 +513,7 @@ impl Editor {
             }
             let removed = e - s;
             self.text.replace_range(s..e, "");
-            for (j, c) in all.iter_mut().enumerate() {
+            for (j, c) in cursors.iter_mut().enumerate() {
                 if j == i {
                     *c = s;
                 } else if *c >= e {
@@ -460,61 +522,74 @@ impl Editor {
                     *c = s;
                 }
             }
+            for av in anchors.iter_mut().flatten() {
+                if *av >= e {
+                    *av = av.saturating_sub(removed);
+                } else if *av > s {
+                    *av = s;
+                }
+            }
         }
-        self.cursor = all[0];
-        let mut extras: Vec<usize> = all[1..].to_vec();
-        extras.retain(|&c| c != self.cursor);
-        extras.sort_unstable();
-        extras.dedup();
-        self.extra_cursors = extras;
+        self.commit_multi(cursors, anchors);
     }
 
     /// Multi-cursor InsertStr — insert `s` at every cursor and advance each
-    /// by `s.len()`. Same descending-order trick as `InsertChar`.
+    /// by `s.len()`. Anchors are similarly shifted by the number of inserts
+    /// at-or-before them.
     fn multi_insert_str(&mut self, s: &str) {
-        let mut positions: Vec<usize> = std::iter::once(self.cursor)
+        let mut cursors: Vec<usize> = std::iter::once(self.cursor)
             .chain(self.extra_cursors.iter().copied())
             .collect();
+        let mut anchors: Vec<Option<usize>> = std::iter::once(self.anchor)
+            .chain(self.extra_anchors.iter().copied())
+            .collect();
+        // Stable cursor positions sorted ascending — used to compute the
+        // post-insert shift for both cursors and anchors.
+        let mut positions: Vec<usize> = cursors.clone();
         positions.sort_unstable();
         positions.dedup();
-        let primary_idx = positions
-            .iter()
-            .position(|&p| p == self.cursor)
-            .unwrap_or(0);
         let bytes = s.len();
         for &p in positions.iter().rev() {
             self.text.insert_str(p, s);
         }
-        let advanced: Vec<usize> = positions
-            .iter()
-            .enumerate()
-            .map(|(i, p)| p + (i + 1) * bytes)
-            .collect();
-        self.cursor = advanced[primary_idx];
-        self.extra_cursors = advanced
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != primary_idx)
-            .map(|(_, &p)| p)
-            .collect();
+        // Each cursor at original position `p` shifts by
+        //   `(count of insertion points <= p) * bytes`.
+        for c in cursors.iter_mut() {
+            let inserts_at_or_before = positions.iter().filter(|&&pp| pp <= *c).count();
+            *c += inserts_at_or_before * bytes;
+        }
+        // Anchors shift by (count of insertion points STRICTLY before them)
+        // so the anchor stays "left of" any insertion that landed at the
+        // anchor's exact position — that's where the cursor was at
+        // SelectStart time, so the inserted text goes between anchor and
+        // cursor, growing the selection. (Anchors at-or-after a higher
+        // insertion point shift by that one too.)
+        for av in anchors.iter_mut().flatten() {
+            let n = positions.iter().filter(|&&pp| pp < *av).count();
+            *av += n * bytes;
+        }
+        self.commit_multi(cursors, anchors);
     }
 
     /// Multi-cursor DeleteForward — each cursor deletes the char at it.
     fn multi_delete_forward(&mut self) {
-        let mut all: Vec<usize> = std::iter::once(self.cursor)
+        let mut cursors: Vec<usize> = std::iter::once(self.cursor)
             .chain(self.extra_cursors.iter().copied())
             .collect();
-        let mut order: Vec<usize> = (0..all.len()).collect();
-        order.sort_by_key(|&i| std::cmp::Reverse(all[i]));
+        let mut anchors: Vec<Option<usize>> = std::iter::once(self.anchor)
+            .chain(self.extra_anchors.iter().copied())
+            .collect();
+        let mut order: Vec<usize> = (0..cursors.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(cursors[i]));
         for &i in &order {
-            let p = all[i];
+            let p = cursors[i];
             if p >= self.text.len() {
                 continue;
             }
             let next = self.next_char_boundary(p);
             let removed = next - p;
             self.text.replace_range(p..next, "");
-            for (j, c) in all.iter_mut().enumerate() {
+            for (j, c) in cursors.iter_mut().enumerate() {
                 if j == i {
                     // Cursor stays at p — the deleted char was AT cursor.
                 } else if *c > next {
@@ -523,13 +598,15 @@ impl Editor {
                     *c = p;
                 }
             }
+            for av in anchors.iter_mut().flatten() {
+                if *av > next {
+                    *av = av.saturating_sub(removed);
+                } else if *av >= p {
+                    *av = p;
+                }
+            }
         }
-        self.cursor = all[0];
-        let mut extras: Vec<usize> = all[1..].to_vec();
-        extras.retain(|&c| c != self.cursor);
-        extras.sort_unstable();
-        extras.dedup();
-        self.extra_cursors = extras;
+        self.commit_multi(cursors, anchors);
     }
 
     /// Capture the current selection as `last_selection` (the buffer's "gv
@@ -1401,10 +1478,22 @@ impl Editor {
             }
 
             // ── selection ──
-            SelectStart => self.anchor = Some(self.cursor),
+            SelectStart => {
+                self.anchor = Some(self.cursor);
+                // Multi-cursor: anchor each extra at its own position too,
+                // so a subsequent motion extends N parallel selections.
+                for i in 0..self.extra_cursors.len() {
+                    self.extra_anchors[i] = Some(self.extra_cursors[i]);
+                }
+            }
             SelectClear => {
                 self.remember_selection();
                 self.anchor = None;
+                // Drop per-cursor anchors too — `Esc` from visual / yank-
+                // closing should reset every cursor's selection state.
+                for a in self.extra_anchors.iter_mut() {
+                    *a = None;
+                }
             }
             SelectAll => {
                 self.anchor = Some(0);
@@ -2056,6 +2145,64 @@ impl Editor {
                 // Yank the deleted text first (vim convention — `d{motion}`
                 // yanks). Standard mode emits this op only via explicit
                 // copy/cut paths, so always-yank is the right default.
+                let has_extras_sel = self
+                    .extra_anchors
+                    .iter()
+                    .any(|a| a.is_some_and(|av| av != self.cursor));
+                if has_extras_sel {
+                    // Multi-cursor: gather every (anchor, cursor) range,
+                    // join the texts with `\n`, then delete all in one go.
+                    let mut ranges: Vec<(usize, usize)> = Vec::new();
+                    if let Some(a) = self.anchor
+                        && a != self.cursor
+                    {
+                        let (lo, hi) = if a < self.cursor {
+                            (a, self.cursor)
+                        } else {
+                            (self.cursor, a)
+                        };
+                        ranges.push((lo, hi));
+                    }
+                    for (i, c) in self.extra_cursors.iter().enumerate() {
+                        if let Some(a) = self.extra_anchors[i]
+                            && a != *c
+                        {
+                            let (lo, hi) = if a < *c { (a, *c) } else { (*c, a) };
+                            ranges.push((lo, hi));
+                        }
+                    }
+                    ranges.sort_unstable();
+                    let texts: Vec<String> = ranges
+                        .iter()
+                        .map(|&(lo, hi)| self.text[lo..hi].to_string())
+                        .collect();
+                    let joined = texts.join("\n");
+                    if !joined.is_empty() {
+                        clip.push_delete(joined.clone(), false);
+                        out.clipboard_set = Some(joined);
+                    }
+                    self.checkpoint();
+                    self.multi_delete_range_per_cursor(|ed, p| {
+                        // Recompute each cursor's range from CURRENT state —
+                        // the closure runs against an editor that hasn't
+                        // been mutated yet, but anchors are tracked.
+                        let idx = if p == ed.cursor {
+                            None
+                        } else {
+                            ed.extra_cursors.iter().position(|&c| c == p)
+                        };
+                        let anchor = match idx {
+                            None => ed.anchor,
+                            Some(i) => ed.extra_anchors.get(i).copied().flatten(),
+                        };
+                        match anchor {
+                            Some(a) if a != p => (a.min(p), a.max(p)),
+                            _ => (p, p),
+                        }
+                    });
+                    out.buffer_changed = true;
+                    return;
+                }
                 if let Some((lo, hi)) = self.selection()
                     && hi > lo
                 {

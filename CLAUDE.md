@@ -652,6 +652,18 @@ the existing primary stays put.
 selection lines + the primary cursor's line + each extra cursor's line.
 Same `>iw` / `<<` / `gcc` muscle memory; the change is per-line so multi-
 cursor across rows just works.
+**Per-cursor anchor (multi-cursor visual selection)** — new
+`Editor.extra_anchors: Vec<Option<usize>>` parallel to `extra_cursors`.
+`SelectStart` anchors each cursor at its own position (primary + every extra);
+motions then extend each selection independently. `SelectClear` drops all
+anchors. Editor view paints every cursor's selection bg (not just the
+primary's). `DeleteSelection` fans out: each cursor's (anchor, cursor) range
+gets deleted in one batched checkpoint; the joined text lands on the
+delete-history clipboard. New helpers `replace_extra_positions` /
+`replace_extra_pairs` / `commit_multi` keep cursor↔anchor pairing intact when
+extras are re-sorted or shifted by edits. `add_extra_cursor` carries an
+anchor if the primary already has one — so "v + AddCursorBelow" gives each
+new cursor a zero-width selection that extends with motion.
 **Multi-cursor `editor.add_cursor_at_next_word`** — VS Code's `Ctrl+D` shape. Word at
 the primary cursor is the rename target; first press snaps the primary to end-of-
 word; each subsequent press finds the next whole-word occurrence after the bottom-

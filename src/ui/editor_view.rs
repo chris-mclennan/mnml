@@ -163,6 +163,25 @@ pub fn draw_pane(
     }
 
     let selection = buf.editor.selection();
+    // Per-extra-cursor selections (each `(anchor, cursor)` pair where they
+    // differ). Used by the per-cell paint to highlight every selection,
+    // not just the primary's.
+    let extra_selections: Vec<(usize, usize)> = buf
+        .editor
+        .extra_cursors
+        .iter()
+        .zip(buf.editor.extra_anchors.iter())
+        .filter_map(|(&c, &a_opt)| {
+            let a = a_opt?;
+            if a == c {
+                None
+            } else if a < c {
+                Some((a, c))
+            } else {
+                Some((c, a))
+            }
+        })
+        .collect();
     let block_sel = buf.editor.block_selection();
     let sel_bg = theme::cur().base16[0x02];
     let match_bg = theme::cur().bg2;
@@ -326,6 +345,21 @@ pub fn draw_pane(
             ),
             _ => (0, 0, false),
         };
+        // Per-extra-cursor selections that touch this line, converted to
+        // char-column ranges. Each entry is `(col_lo, col_hi, extend_eol)`.
+        let extra_line_sels: Vec<(usize, usize, bool)> = extra_selections
+            .iter()
+            .filter_map(|&(lo, hi)| {
+                if hi <= ls || lo > le {
+                    return None;
+                }
+                Some((
+                    buf.editor.byte_to_col(lo.clamp(ls, le)),
+                    buf.editor.byte_to_col(hi.clamp(ls, le)),
+                    hi > le,
+                ))
+            })
+            .collect();
 
         // Find-match ranges (in char columns) on this line — assumes single-line
         // matches (the find prompt is single-line, so queries can't contain '\n').
@@ -376,8 +410,11 @@ pub fn draw_pane(
         let mut cells: Vec<(char, Color, Color)> = Vec::with_capacity(tw);
         for vc in 0..tw {
             let c = buf.h_scroll + vc;
-            let in_sel =
-                (sel_hi > sel_lo && c >= sel_lo && c < sel_hi) || (extend_eol && c >= sel_lo);
+            let in_sel = (sel_hi > sel_lo && c >= sel_lo && c < sel_hi)
+                || (extend_eol && c >= sel_lo)
+                || extra_line_sels
+                    .iter()
+                    .any(|&(lo, hi, eol)| (hi > lo && c >= lo && c < hi) || (eol && c >= lo));
             // Visual-block rectangle: highlight every cell where row is in
             // [rmin..=rmax] and col in [cmin..=cmax], regardless of whether
             // the line actually has text at that column (vim convention —

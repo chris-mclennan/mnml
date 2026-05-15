@@ -67,3 +67,26 @@ key escape
 command file.save
 expect file words.txt contains " one\n two\n three"
 
+# Multi-cursor visual selection — each cursor has its own anchor, and
+# DeleteSelection removes every range.
+write sel.txt "AAAxxxBBB\nAAAyyyBBB\nAAAzzzBBB"
+open sel.txt
+# Position at col 3 (start of xxx / yyy / zzz on each line).
+key l
+key l
+key l
+# Enter visual mode (drops anchor at primary cursor + each extra).
+key v
+# Add cursors below (the v is in visual; we ran `v` THEN add_cursor).
+# Move right 3 chars to select "xxx" on row 0; extras select their rows.
+command editor.add_cursor_below
+command editor.add_cursor_below
+key l
+key l
+key l
+# Delete every selection (vim visual `d`).
+key d
+key escape
+command file.save
+expect file sel.txt contains "AAABBB\nAAABBB\nAAABBB"
+
