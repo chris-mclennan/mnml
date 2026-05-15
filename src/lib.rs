@@ -34,6 +34,7 @@ pub mod editorconfig;
 pub mod focus;
 pub mod fuzzy;
 pub mod git;
+pub mod github;
 pub mod grep_pane;
 pub mod headless;
 pub mod highlight;

@@ -51,6 +51,7 @@ pub struct Config {
     pub playwright: PlaywrightConfig,
     pub ci: CiConfig,
     pub bitbucket: BitbucketConfig,
+    pub github: GithubConfig,
 }
 
 /// `[bitbucket]` — Bitbucket Cloud REST API integration. Powers the
@@ -89,6 +90,51 @@ pub struct BitbucketConfig {
 pub struct BitbucketRepo {
     pub workspace: String,
     pub slug: String,
+}
+
+/// `[github]` — GitHub Actions / Pull Requests integration. Mirrors the
+/// shape of [`BitbucketConfig`] — the worker, panes, and view are parallel
+/// modules so the two hosts can evolve independently without forcing a
+/// premature shared abstraction.
+///
+/// ```toml
+/// [github]
+/// auth_env  = "GITHUB_TOKEN"   # optional, defaults to GITHUB_TOKEN
+/// poll_secs = 30                # optional, defaults to 30
+///
+/// [[github.repos]]
+/// owner = "exampleorg"
+/// repo  = "private-claude-knowledge"
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct GithubConfig {
+    /// Env var name to read the API token from. `None` ⇒ `"GITHUB_TOKEN"`.
+    /// Classic PATs (`ghp_*`), fine-grained PATs (`github_pat_*`), app
+    /// tokens (`ghs_*`), and OAuth tokens (`gho_*`) all use the same
+    /// `Authorization: Bearer <token>` shape.
+    pub auth_env: Option<String>,
+    /// Seconds between poll cycles per repo. `None` ⇒ 30.
+    pub poll_secs: Option<u64>,
+    /// Repos to watch. Order is meaningful — picker / pane lists render in this order.
+    pub repos: Vec<GithubRepo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GithubRepo {
+    pub owner: String,
+    pub repo: String,
+}
+
+impl GithubConfig {
+    pub fn any_configured(&self) -> bool {
+        !self.repos.is_empty()
+    }
+    pub fn auth_env_name(&self) -> &str {
+        self.auth_env.as_deref().unwrap_or("GITHUB_TOKEN")
+    }
+    pub fn poll_secs_or_default(&self) -> u64 {
+        self.poll_secs.unwrap_or(30).max(5)
+    }
 }
 
 impl BitbucketConfig {
@@ -382,6 +428,7 @@ impl Default for Config {
             playwright: PlaywrightConfig::default(),
             ci: CiConfig::default(),
             bitbucket: BitbucketConfig::default(),
+            github: GithubConfig::default(),
         }
     }
 }
@@ -418,6 +465,8 @@ struct RawConfig {
     ci: RawCi,
     #[serde(default)]
     bitbucket: RawBitbucket,
+    #[serde(default)]
+    github: RawGithub,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -432,6 +481,20 @@ struct RawBitbucket {
 struct RawBitbucketRepo {
     workspace: String,
     slug: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawGithub {
+    auth_env: Option<String>,
+    poll_secs: Option<u64>,
+    #[serde(default)]
+    repos: Vec<RawGithubRepo>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawGithubRepo {
+    owner: String,
+    repo: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -731,6 +794,19 @@ impl Config {
                 slug: r.slug,
             });
         }
+        // `[github]` — same per-field overlay shape as `[bitbucket]`.
+        if let Some(v) = raw.github.auth_env {
+            self.github.auth_env = Some(v);
+        }
+        if let Some(v) = raw.github.poll_secs {
+            self.github.poll_secs = Some(v);
+        }
+        for r in raw.github.repos {
+            self.github.repos.push(GithubRepo {
+                owner: r.owner,
+                repo: r.repo,
+            });
+        }
     }
 }
 
@@ -850,6 +926,42 @@ slug      = "private-playwright"
         assert_eq!(cfg.poll_secs_or_default(), 5);
         cfg.poll_secs = Some(30);
         assert_eq!(cfg.poll_secs_or_default(), 30);
+    }
+
+    #[test]
+    fn github_config_parses_multi_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&cfg_path).unwrap();
+        writeln!(
+            f,
+            r#"
+[github]
+auth_env  = "GH_TOKEN"
+poll_secs = 45
+
+[[github.repos]]
+owner = "exampleorg"
+repo  = "private-claude-knowledge"
+"#
+        )
+        .unwrap();
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&cfg_path);
+        assert_eq!(cfg.github.auth_env_name(), "GH_TOKEN");
+        assert_eq!(cfg.github.poll_secs_or_default(), 45);
+        assert_eq!(cfg.github.repos.len(), 1);
+        assert_eq!(cfg.github.repos[0].owner, "exampleorg");
+        assert_eq!(cfg.github.repos[0].repo, "private-claude-knowledge");
+        assert!(cfg.github.any_configured());
+    }
+
+    #[test]
+    fn github_default_is_empty_with_safe_defaults() {
+        let cfg = Config::default();
+        assert!(!cfg.github.any_configured());
+        assert_eq!(cfg.github.auth_env_name(), "GITHUB_TOKEN");
+        assert_eq!(cfg.github.poll_secs_or_default(), 30);
     }
 
     #[test]

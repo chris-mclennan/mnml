@@ -1734,6 +1734,36 @@ fn builtin_commands() -> Vec<Command> {
         keys: &[],
         run: |app| app.copy_selected_bitbucket_pipeline_url(),
     });
+    // GitHub: sibling commands. `<leader>C g` chord (in the +ci whichkey
+    // group) is the muscle-memory entry point.
+    cmds.push(Command {
+        id: "github.actions",
+        title: "GitHub: open Actions dashboard",
+        group: "github",
+        keys: &[],
+        run: |app| app.open_github_actions_pane(),
+    });
+    cmds.push(Command {
+        id: "github.refresh_active",
+        title: "GitHub: refresh the active Actions pane",
+        group: "github",
+        keys: &[],
+        run: |app| app.refresh_active_github_pane(),
+    });
+    cmds.push(Command {
+        id: "github.open_selected_url",
+        title: "GitHub: open selected run in browser",
+        group: "github",
+        keys: &[],
+        run: |app| app.open_selected_github_run_url(),
+    });
+    cmds.push(Command {
+        id: "github.copy_selected_url",
+        title: "GitHub: copy selected run URL",
+        group: "github",
+        keys: &[],
+        run: |app| app.copy_selected_github_run_url(),
+    });
     #[cfg(feature = "private")]
     {
         cmds.push(Command {

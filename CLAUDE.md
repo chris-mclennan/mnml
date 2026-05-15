@@ -1987,7 +1987,41 @@ resolve the selection. Phase 3 adds `Pane::BitbucketPr` (per-PR view with
 reviewers + build statuses + comment count); phase 4 polish covers a PR
 list picker, cross-nav (PR ↔ its pipelines), branch-rail "open PRs"
 subsection, and live log tail in pty. GitHub Actions / GitLab CI / Azure
-DevOps will mirror this pattern as future phases (5/6/opt-in).
+DevOps will mirror this pattern as future phases (GH ✓ done, GitLab next,
+AzDevOps opt-in).
+**GitHub Actions dashboard (phases 1–2 done)** — `src/github/` mirrors
+`src/bitbucket/` deliberately: separate module + parallel pane so each
+host's REST quirks stay flat (GH has workflow names, PER_PAGE pagination,
+two-step status+conclusion state; BB has per-step state, pagelen
+pagination, nested state.result). Worker hits
+`GET /repos/{owner}/{repo}/actions/runs?per_page=20` with Bearer auth
+(works for every PAT shape — classic `ghp_*`, fine-grained `github_pat_*`,
+app `ghs_*`, OAuth `gho_*`); `Accept: application/vnd.github+json` +
+`X-GitHub-Api-Version: 2022-11-28` mandatory headers. `WorkflowRunRecord
+{owner, repo, id, run_number, workflow_name, state, target_ref,
+commit_hash, creator, event, created_at_ms, started_at_ms, updated_at_ms,
+duration_secs, web_url}` is the projected shape. `WorkflowRunState` folds
+GH's two-step `{status, conclusion}` into one enum
+(`Success | Failed | Cancelled | Skipped | TimedOut | ActionRequired |
+Neutral | Stale | InProgress | Queued | Pending | Unknown`); status wins
+over a stale conclusion (the same outer-wins rule as Bitbucket's
+state.name). `Pane::GithubActions` reads from `App.github_workflow_runs`
+(per-tick-drained cache, keyed by `(owner, repo)`); same flat-list-with-
+headers UX as the Bitbucket pane, same color mapping by state, same
+keys (↑↓/jk navigate, Enter→browse, y→copy URL, r→refresh, Esc→tree).
+`<leader>C g` chord in the +ci leader group; `<leader>C R` (capital)
+force-refreshes the GH pane. Config:
+```
+[github]
+auth_env  = "GITHUB_TOKEN"           # optional
+poll_secs = 30                        # optional
+
+[[github.repos]]
+owner = "exampleorg"
+repo  = "private-claude-knowledge"
+```
+`examples/github_smoke.rs` (`cargo run --example github_smoke`) verifies
+the API call shape against the real service.
 
 ## Not set up yet (could add later)
 

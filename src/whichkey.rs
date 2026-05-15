@@ -204,11 +204,12 @@ pub fn root() -> &'static Leader {
                     group(
                         "+ci",
                         vec![
-                            // Bitbucket pipelines dashboard. GH Actions /
-                            // GitLab CI panes will join this group as
-                            // they land (planned: `g` GitHub, `l` GitLab).
+                            // Bitbucket pipelines, GitHub Actions. GitLab CI
+                            // will join as `l` when its phase lands.
                             ('p', cmd("bitbucket.pipelines", "bitbucket pipelines")),
-                            ('r', cmd("bitbucket.refresh_active", "refresh ci pane")),
+                            ('g', cmd("github.actions", "github actions")),
+                            ('r', cmd("bitbucket.refresh_active", "refresh bb pane")),
+                            ('R', cmd("github.refresh_active", "refresh gh pane")),
                         ],
                     ),
                 ),

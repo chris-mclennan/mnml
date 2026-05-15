@@ -35,6 +35,7 @@ pub mod editor_view;
 pub mod flaky_view;
 pub mod git_graph_view;
 pub mod git_status_view;
+pub mod github_actions_view;
 pub mod grep_view;
 pub mod hover;
 pub mod icons;
@@ -290,6 +291,7 @@ fn render_layout(
                 #[cfg(feature = "private")]
                 Some(crate::pane::Pane::CodeBuilds(_)) => 18,
                 Some(crate::pane::Pane::BitbucketPipelines(_)) => 19,
+                Some(crate::pane::Pane::GithubActions(_)) => 20,
                 _ => 0,
             };
             match kind {
@@ -316,6 +318,7 @@ fn render_layout(
                 #[cfg(feature = "private")]
                 18 => codebuilds_view::draw(frame, app, *id, area, focused),
                 19 => bitbucket_pipelines_view::draw(frame, app, *id, area, focused),
+                20 => github_actions_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

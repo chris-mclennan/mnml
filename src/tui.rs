@@ -972,6 +972,60 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // GitHub Actions browser: ↑↓/jk/PgUp/PgDn/g/G navigate (header rows
+    // auto-skipped), Enter → open in browser, y → copy URL, r → refresh,
+    // Esc → tree. Symmetric to the Bitbucket pane above.
+    if matches!(app.panes.get(i), Some(Pane::GithubActions(_))) {
+        let flat = crate::ui::github_actions_view::flatten_runs(app);
+        let max_idx = flat.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::GithubActions(p)) = app.panes.get_mut(i) {
+                    p.move_selection(-1, max_idx);
+                    while p.selected > 0
+                        && flat
+                            .get(p.selected)
+                            .map(|r| r.kind == crate::ui::github_actions_view::RowKind::Header)
+                            .unwrap_or(false)
+                    {
+                        p.move_selection(-1, max_idx);
+                    }
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::GithubActions(p)) = app.panes.get_mut(i) {
+                    p.move_selection(1, max_idx);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::GithubActions(p)) = app.panes.get_mut(i) {
+                    p.move_selection(-(viewport as i64), max_idx);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::GithubActions(p)) = app.panes.get_mut(i) {
+                    p.move_selection(viewport as i64, max_idx);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::GithubActions(p)) = app.panes.get_mut(i) {
+                    p.move_selection(i64::MIN / 2, max_idx);
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::GithubActions(p)) = app.panes.get_mut(i) {
+                    p.move_selection(i64::MAX / 2, max_idx);
+                }
+            }
+            KeyCode::Enter => app.open_selected_github_run_url(),
+            KeyCode::Char('y') => app.copy_selected_github_run_url(),
+            KeyCode::Char('r') => app.refresh_active_github_pane(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
+
     // the private integration CodeBuilds browser (cfg-gated): ↑↓ select, Enter open URL,
     // y copy URL, r refresh, Esc → tree.
     #[cfg(feature = "private")]
@@ -2231,18 +2285,24 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             Some(Pane::CodeBuilds(p)) => {
                 p.move_selection(delta as i64);
             }
-            Some(Pane::BitbucketPipelines(_)) => {
+            Some(Pane::BitbucketPipelines(_)) | Some(Pane::GithubActions(_)) => {
                 // Wheel-scroll handled below the match so the borrow on
                 // `app.panes` releases first — we need an immutable read of
                 // `app.config` to compute the flat-list max index.
             }
             None => {}
         }
-        // Post-match handling for BitbucketPipelines (see comment above).
+        // Post-match handling for the SCM panes (see comment above).
         if matches!(app.panes.get(pid), Some(Pane::BitbucketPipelines(_))) {
             let flat = crate::ui::bitbucket_pipelines_view::flatten_pipelines(app);
             let max_idx = flat.len();
             if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(pid) {
+                p.move_selection(delta as i64, max_idx);
+            }
+        } else if matches!(app.panes.get(pid), Some(Pane::GithubActions(_))) {
+            let flat = crate::ui::github_actions_view::flatten_runs(app);
+            let max_idx = flat.len();
+            if let Some(Pane::GithubActions(p)) = app.panes.get_mut(pid) {
                 p.move_selection(delta as i64, max_idx);
             }
         }

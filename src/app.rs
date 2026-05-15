@@ -1740,6 +1740,17 @@ pub struct App {
     /// `true` once the Bitbucket worker has sent at least one successful
     /// response — the pane drops its "loading…" chip on first receipt.
     pub(crate) bitbucket_connected: bool,
+    /// GitHub Actions REST worker handle — sibling of `bitbucket_handle`.
+    github_handle: Option<crate::github::GithubHandle>,
+    /// Per-repo cache of the latest workflow runs. Keyed by `(owner, repo)`.
+    pub(crate) github_workflow_runs:
+        std::collections::HashMap<(String, String), Vec<crate::github::WorkflowRunRecord>>,
+    /// Last error string from the GitHub worker. Cleared on the next
+    /// successful event.
+    pub(crate) github_last_error: Option<String>,
+    /// `true` once the GitHub worker has sent at least one successful
+    /// response.
+    pub(crate) github_connected: bool,
     /// Job id of an in-flight "AI: write me a commit message" run (it shares
     /// `ai_chan`; when it lands, the commit prompt opens pre-seeded instead of an
     /// answer landing in a `Pane::Ai`).
@@ -1888,6 +1899,10 @@ impl App {
             bitbucket_pipelines: std::collections::HashMap::new(),
             bitbucket_last_error: None,
             bitbucket_connected: false,
+            github_handle: None,
+            github_workflow_runs: std::collections::HashMap::new(),
+            github_last_error: None,
+            github_connected: false,
             pending_commit_msg_job: None,
             pending_amend_msg_job: None,
             next_job_id: 1,
@@ -5348,6 +5363,7 @@ impl App {
             | Some(Pane::Quickfix(_))
             | Some(Pane::CmdlineHistory(_))
             | Some(Pane::BitbucketPipelines(_))
+            | Some(Pane::GithubActions(_))
             | None => None,
             #[cfg(feature = "private")]
             Some(Pane::TestExecutions(_)) => None,
@@ -11231,7 +11247,8 @@ impl App {
             | Pane::Outline(_)
             | Pane::Quickfix(_)
             | Pane::CmdlineHistory(_)
-            | Pane::BitbucketPipelines(_) => (None, None),
+            | Pane::BitbucketPipelines(_)
+            | Pane::GithubActions(_) => (None, None),
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (None, None),
             #[cfg(feature = "private")]
@@ -11331,6 +11348,7 @@ impl App {
             Pane::Quickfix(g) => Some((format!("Quickfix · {}", g.hits.len()), false)),
             Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
             Pane::BitbucketPipelines(p) => Some((p.tab_title(), false)),
+            Pane::GithubActions(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "private")]
             Pane::TestExecutions(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "private")]
@@ -15761,6 +15779,7 @@ impl App {
         #[cfg(feature = "private")]
         self.drain_codebuild_events();
         self.drain_bitbucket_events();
+        self.drain_github_events();
         self.refresh_live_ai_panes();
         self.autosave_idle_buffers();
         self.check_external_file_changes();
@@ -16677,6 +16696,106 @@ impl App {
             return None;
         };
         crate::ui::bitbucket_pipelines_view::selected_pipeline(self, pane).map(|r| r.web_url)
+    }
+
+    // ── GitHub Actions — sibling of the Bitbucket methods above. ──────
+
+    pub fn ensure_github_worker(&mut self) {
+        if self.github_handle.is_some() {
+            return;
+        }
+        if !self.config.github.any_configured() {
+            return;
+        }
+        self.github_handle = Some(crate::github::spawn(self.config.github.clone()));
+    }
+
+    pub fn open_github_actions_pane(&mut self) {
+        if !self.config.github.any_configured() {
+            self.toast("github: add a [[github.repos]] entry to ~/.config/mnml/config.toml first");
+            return;
+        }
+        self.ensure_github_worker();
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::GithubActions(_)))
+        {
+            if let Some(h) = &self.github_handle {
+                h.force_refresh();
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::GithubActions(crate::github::GithubActionsPane::new());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+        self.toast("github: actions (loading…)");
+    }
+
+    pub fn refresh_active_github_pane(&mut self) {
+        if let Some(h) = &self.github_handle {
+            h.force_refresh();
+            self.toast("github: refreshing…");
+        }
+    }
+
+    pub fn open_selected_github_run_url(&mut self) {
+        let Some(url) = self.selected_github_run_url() else {
+            self.toast("no run selected");
+            return;
+        };
+        crate::app::open_url_external(&url);
+        self.toast("opened run in browser");
+    }
+
+    pub fn copy_selected_github_run_url(&mut self) {
+        let Some(url) = self.selected_github_run_url() else {
+            self.toast("no run selected");
+            return;
+        };
+        self.clipboard.set_yank(url, false);
+        self.toast("copied run URL");
+    }
+
+    fn selected_github_run_url(&self) -> Option<String> {
+        let id = self.active?;
+        let Pane::GithubActions(pane) = self.panes.get(id)? else {
+            return None;
+        };
+        crate::ui::github_actions_view::selected_run(self, pane).map(|r| r.web_url)
+    }
+
+    fn drain_github_events(&mut self) {
+        use crate::github::GithubEvent;
+        let Some(handle) = &self.github_handle else {
+            return;
+        };
+        while let Ok(ev) = handle.rx.try_recv() {
+            match ev {
+                GithubEvent::WorkflowRuns { owner, repo, runs } => {
+                    self.github_workflow_runs.insert((owner, repo), runs);
+                    self.github_last_error = None;
+                }
+                GithubEvent::Connected => {
+                    self.github_connected = true;
+                }
+                GithubEvent::Failed(msg) => {
+                    self.github_last_error = Some(msg);
+                }
+            }
+        }
     }
 
     /// Pull pending pipeline updates off the Bitbucket channel into the

@@ -9,6 +9,7 @@ use crate::ai::AiPane;
 use crate::bitbucket::BitbucketPipelinesPane;
 use crate::browser_pane::BrowserPane;
 use crate::buffer::Buffer;
+use crate::github::GithubActionsPane;
 use crate::git::diff::Hunk;
 use crate::git::graph::GitGraphPane;
 use crate::git::stage::GitStatusPane;
@@ -72,6 +73,8 @@ pub enum Pane {
     /// Bitbucket Cloud pipelines list — recent CI runs across every
     /// configured `[[bitbucket.repos]]` entry, grouped by repo.
     BitbucketPipelines(BitbucketPipelinesPane),
+    /// GitHub Actions workflow runs list — symmetric to the Bitbucket pane.
+    GithubActions(GithubActionsPane),
     /// DocumentDB live `TestExecutions` browser (the private integration org build). Behind
     /// the `private` Cargo feature — the lean build doesn't have this.
     #[cfg(feature = "private")]
@@ -222,6 +225,7 @@ impl Pane {
             Pane::Quickfix(g) => format!("Quickfix · {}", g.hits.len()),
             Pane::CmdlineHistory(_) => "q:".to_string(),
             Pane::BitbucketPipelines(p) => p.tab_title(),
+            Pane::GithubActions(p) => p.tab_title(),
             #[cfg(feature = "private")]
             Pane::TestExecutions(p) => p.tab_title(),
             #[cfg(feature = "private")]
@@ -249,7 +253,8 @@ impl Pane {
             | Pane::Grep(_)
             | Pane::Quickfix(_)
             | Pane::CmdlineHistory(_)
-            | Pane::BitbucketPipelines(_) => false,
+            | Pane::BitbucketPipelines(_)
+            | Pane::GithubActions(_) => false,
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => false,
             #[cfg(feature = "private")]
