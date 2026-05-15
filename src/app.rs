@@ -963,6 +963,51 @@ fn parse_path_with_position(token: &str) -> Option<(&str, usize, usize)> {
     None
 }
 
+/// Compute candidate alternate paths for vim's `:A`. We try common
+/// test ↔ source pairings: stem suffixed with `_test` / `_spec`, dotted
+/// `.test.` / `.spec.` (TS / JS convention), and a parallel `tests/`
+/// directory sibling. The first candidate that exists on disk wins.
+fn alternate_paths(path: &std::path::Path) -> Vec<PathBuf> {
+    let Some(parent) = path.parent() else {
+        return Vec::new();
+    };
+    let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
+        return Vec::new();
+    };
+    // Split into `stem.ext` (or just `stem` when no extension).
+    let (stem, ext) = match file_name.rsplit_once('.') {
+        Some((s, e)) => (s.to_string(), Some(e.to_string())),
+        None => (file_name.to_string(), None),
+    };
+    let mut out: Vec<PathBuf> = Vec::new();
+    let with_ext = |stem: &str| -> String {
+        match &ext {
+            Some(e) => format!("{stem}.{e}"),
+            None => stem.to_string(),
+        }
+    };
+    // `_test` / `_spec` suffix on the stem.
+    for suffix in ["_test", "_spec"] {
+        if let Some(base) = stem.strip_suffix(suffix) {
+            out.push(parent.join(with_ext(base)));
+        } else {
+            out.push(parent.join(with_ext(&format!("{stem}{suffix}"))));
+        }
+    }
+    // `.test.<ext>` / `.spec.<ext>` (TS/JS).
+    if let Some(e) = &ext {
+        for marker in [".test", ".spec"] {
+            let stripped = stem.strip_suffix(marker);
+            if let Some(base) = stripped {
+                out.push(parent.join(format!("{base}.{e}")));
+            } else {
+                out.push(parent.join(format!("{stem}{marker}.{e}")));
+            }
+        }
+    }
+    out
+}
+
 /// Open a URL string in the OS's default browser. Best-effort. Used by
 /// the GitHub-browse command + LSP gx URL opener.
 pub fn open_url_external(url: &str) {
@@ -12663,6 +12708,28 @@ impl App {
             // confirmation, plugin debugging.
             "Echo" | "echo" => {
                 self.toast(rest.to_string());
+            }
+            // `:A` — alternate file. Tries common test ↔ source pairings
+            // for the active file: `_test`, `.test.`, `.spec.`, `_spec`,
+            // `Tests`. Strips when present, adds when absent.
+            // `:Refresh` — manually rescan the file tree + git status.
+            // Useful after external file ops (cloning a submodule, etc.).
+            "Refresh" => {
+                self.tree.refresh();
+                self.git.refresh();
+                self.toast("refreshed");
+            }
+            "A" | "Alternate" => {
+                let Some(path) = self.active_editor().and_then(|b| b.path.clone()) else {
+                    self.toast(":A — no active file");
+                    return;
+                };
+                let candidates = alternate_paths(&path);
+                let hit = candidates.into_iter().find(|p| p.exists());
+                match hit {
+                    Some(p) => self.open_path(&p),
+                    None => self.toast(":A — no alternate file found"),
+                }
             }
             "Stat" | "stat" => {
                 let Some(b) = self.active_editor() else {

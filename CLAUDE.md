@@ -732,6 +732,11 @@ supports it (vscode-css-language-server, vscode-html-language-server, tailwindcs
 **`[ui] wrap` survives a relaunch** — the user's runtime `:set wrap` choice now persists in
 `session.json` (`SavedSession.wrap: Option<bool>`). Config-file changes still take precedence
 on a fresh workspace.
+**`:A` / `:Alternate`** — vim's "jump to alternate file". Tries common test ↔ source
+pairings (`_test` / `_spec` suffix on the stem, `.test.<ext>` / `.spec.<ext>` for
+TS/JS). First candidate that exists wins. Stripped when present, added when absent.
+**`:Refresh`** — manually rescan the file tree + git status. Useful after external
+file operations (cloning a submodule, fetching a branch in another terminal, etc.).
 **Middle-click in editor pane** pastes the unnamed register at the click position (X11 /
 GTK convention — "primary selection" paste). Focuses the leaf + places the cursor first.
 Bufferline-tab middle-click still closes the tab as before.
