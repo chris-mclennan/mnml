@@ -47,6 +47,8 @@ enum Step {
     Key(KeyEvent),
     Type(String),
     Command(String),
+    /// Run an ex command via `App::run_ex_command` — `ex bd!` runs `:bd!`.
+    Ex(String),
     Wait(u64),
     Snippet {
         scope: String,
@@ -131,6 +133,12 @@ fn parse(text: &str) -> Result<Vec<Line>, String> {
                     return Err(format!("line {ln}: `command` needs an id"));
                 }
                 Stmt::Step(Step::Command(rest.trim().to_string()))
+            }
+            "ex" => {
+                if rest.is_empty() {
+                    return Err(format!("line {ln}: `ex` needs an ex command"));
+                }
+                Stmt::Step(Step::Ex(rest.trim().to_string()))
             }
             "wait" => {
                 let ms = rest
@@ -344,6 +352,10 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
             } else {
                 Err(format!("no such command `{id}`"))
             }
+        }
+        Step::Ex(cmd) => {
+            app.run_ex_command(cmd);
+            Ok(())
         }
         Step::Wait(ms) => {
             std::thread::sleep(Duration::from_millis(*ms));

@@ -1,0 +1,14 @@
+# `:A` — alternate file (test ↔ source jumping). Tries common pairings:
+# `_test` / `_spec` suffix, `.test.<ext>` / `.spec.<ext>` (TS/JS).
+
+write src/foo.rs "fn foo() {}"
+write src/foo_test.rs "// test for foo"
+open src/foo.rs
+
+# `:A` from a source file ⇒ jump to its `_test.rs`.
+ex A
+expect pane "foo_test.rs"
+
+# `:A` from the test file ⇒ jump back to source.
+ex A
+expect pane "foo.rs"
