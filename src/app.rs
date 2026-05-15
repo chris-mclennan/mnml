@@ -957,6 +957,25 @@ fn parse_path_with_position(token: &str) -> Option<(&str, usize, usize)> {
     None
 }
 
+/// Open a URL string in the OS's default browser. Best-effort. Used by
+/// the GitHub-browse command + LSP gx URL opener.
+pub fn open_url_external(url: &str) {
+    let (cmd, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
+        ("open", &[])
+    } else if cfg!(target_os = "windows") {
+        ("cmd", &["/C", "start", ""])
+    } else {
+        ("xdg-open", &[])
+    };
+    let _ = std::process::Command::new(cmd)
+        .args(args)
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 /// Hand `path` to the OS's default app — `open <path>` on macOS, `xdg-open` on
 /// Linux, `cmd /C start` on Windows. Best-effort: errors are swallowed (so a
 /// headless / sandboxed env where none of those are available is fine).
@@ -7187,6 +7206,47 @@ impl App {
         }
     }
 
+    /// `git.browse` (`:GBrowse` from fugitive convention) — open the active
+    /// file at the cursor's line on the remote's web host (GitHub / GitLab /
+    /// Bitbucket). With a multi-line selection active, links the range. URL
+    /// uses HEAD's short SHA so the link is stable.
+    pub fn open_on_remote_host(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("browse needs a saved file");
+            return;
+        };
+        let rel = match path.strip_prefix(&self.workspace) {
+            Ok(r) => r.to_string_lossy().to_string(),
+            Err(_) => {
+                self.toast("file is outside the workspace");
+                return;
+            }
+        };
+        let (lo, hi) = if b.editor.has_selection() {
+            let (s, e) = b.editor.selection().unwrap_or((0, 0));
+            let s_line = b.editor.row_col_at(s).0 as u32 + 1;
+            let mut e_line = b.editor.row_col_at(e.saturating_sub(1)).0 as u32 + 1;
+            if e_line < s_line {
+                e_line = s_line;
+            }
+            (s_line, e_line)
+        } else {
+            let line = b.editor.row_col().0 as u32 + 1;
+            (line, line)
+        };
+        match crate::git::browse::url_for(&self.workspace, &rel, lo, hi) {
+            Some(url) => {
+                open_url_external(&url);
+                self.toast(format!("→ {url}"));
+            }
+            None => self.toast("browse: no recognized remote (check `git remote -v`)"),
+        }
+    }
+
     /// `git.file_history` — fuzzy picker over commits that touched the active
     /// file (`git log --follow`, capped at 200). Accept opens a diff pane for
     /// the chosen commit.
@@ -12461,6 +12521,9 @@ impl App {
             }
             "Gflog" | "FileHistory" => {
                 crate::command::run("git.file_history", self);
+            }
+            "GBrowse" | "Gbrowse" | "Browse" => {
+                crate::command::run("git.browse", self);
             }
             "Gcommit" | "Commit" => {
                 crate::command::run("git.commit", self);

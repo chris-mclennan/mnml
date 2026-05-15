@@ -6,6 +6,7 @@
 
 pub mod blame;
 pub mod branch;
+pub mod browse;
 pub mod commit;
 pub mod diff;
 pub mod graph;

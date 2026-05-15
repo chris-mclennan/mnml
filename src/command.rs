@@ -1122,6 +1122,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_file_history_picker(),
         },
         Command {
+            id: "git.browse",
+            title: "Git: open file at cursor on remote (GitHub / GitLab / Bitbucket)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_on_remote_host(),
+        },
+        Command {
             id: "git.status_pane",
             title: "Git: status / staging view",
             group: "git",

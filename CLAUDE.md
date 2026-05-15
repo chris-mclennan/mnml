@@ -729,6 +729,13 @@ alpha dropped) on `Buffer.color_decorations`. `parse_document_color` clamps each
 to `[0,1]` × 255. Multi-line ranges dropped (renderer is per-line). `initialize` advertises
 `colorProvider`. CSS / SCSS / Tailwind / HTML stylesheets light up immediately when the LSP
 supports it (vscode-css-language-server, vscode-html-language-server, tailwindcss, etc.).
+**`git.browse`** (`:GBrowse` / `:Gbrowse` / `:Browse` from fugitive convention) — open the
+active file at the cursor's line on the remote's web host (GitHub / GitLab / Bitbucket). With
+a multi-line selection, links the range as `#L<lo>-L<hi>`. URL uses HEAD's short SHA so the
+link is stable. New `crate::git::browse` module — `parse_remote` handles `git@host:o/r.git`
+SSH and `https://[user@]host/o/r[.git]` HTTPS forms; Bitbucket uses `/src/<rev>/` instead of
+GitHub/GitLab's `/blob/<rev>/`. New `crate::app::open_url_external` (extracted from the path
+opener). Toast on success / "no recognized remote" miss.
 **`git.file_history`** (also `:Gflog` / `:FileHistory`) — fuzzy picker over commits that touched
 the active file (`git log --follow -- <rel>`, capped at 200, newest first). Each row shows
 `<short>  <subject>` with `<age> · <author>` as the dim detail. Accept opens a diff pane for the
