@@ -143,9 +143,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         (None, upper)
     };
 
-    // right column: bufferline (h1) over the body
-    let r = RLayout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(right);
-    let (bufferline_area, body_area) = (r[0], r[1]);
+    // right column: optionally a 1-row bufferline above the body.
+    // `app.bufferline_visible = false` ⇒ skip the strip; the body grows.
+    let (bufferline_area, body_area) = if app.bufferline_visible {
+        let r = RLayout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(right);
+        (Some(r[0]), r[1])
+    } else {
+        (None, right)
+    };
 
     // ── tree rail (full height of `upper`) ──
     // (tree_view records `app.rects.tree` itself — it's the inner rect below the
@@ -160,8 +165,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // ── bufferline ──
-    bufferline::draw(frame, app, bufferline_area);
-    app.rects.bufferline = Some(bufferline_area);
+    if let Some(ba) = bufferline_area {
+        bufferline::draw(frame, app, ba);
+        app.rects.bufferline = Some(ba);
+    } else {
+        app.rects.bufferline = None;
+        app.rects.bufferline_tabs.clear();
+        app.rects.bufferline_tab_close.clear();
+    }
 
     // ── the split-tree of pane bodies ──
     app.rects.body = Some(body_area);

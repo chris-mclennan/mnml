@@ -1300,6 +1300,11 @@ pub struct App {
     /// visibility flags, which are remembered separately. Not persisted —
     /// always starts off so a fresh launch is a normal IDE view.
     pub zen_mode: bool,
+    /// When false, the bufferline (the open-tabs strip above the editor) is
+    /// hidden — useful in single-buffer workflows. Toggled via
+    /// `view.toggle_bufferline` / `:set [no]bufferline` / `:set bufferline!`.
+    /// Default true.
+    pub bufferline_visible: bool,
     /// Most-recently-opened files, newest first, capped at `RECENT_FILES_MAX`.
     /// Updated every time `open_path` opens a file. Persisted in session.json.
     pub recent_files: Vec<PathBuf>,
@@ -1676,6 +1681,7 @@ impl App {
             dragging_tree_edge: false,
             bufferline_first_visible: 0,
             zen_mode: false,
+            bufferline_visible: true,
             recent_files: Vec::new(),
             closed_buffers: Vec::new(),
             last_active: None,
@@ -11260,6 +11266,18 @@ impl App {
         self.set_wrap(!self.config.ui.wrap);
     }
 
+    /// `:set [no]bufferline` / `view.toggle_bufferline` — hide/show the
+    /// open-tabs strip above the editor body. Useful for single-buffer
+    /// workflows.
+    pub fn toggle_bufferline(&mut self) {
+        self.bufferline_visible = !self.bufferline_visible;
+        self.toast(if self.bufferline_visible {
+            "bufferline: on"
+        } else {
+            "bufferline: off"
+        });
+    }
+
     /// Toggle the editor breadcrumb row (`:set [no]breadcrumb`).
     pub fn set_breadcrumb(&mut self, on: bool) {
         self.config.editor.breadcrumb = on;
@@ -14196,6 +14214,14 @@ impl App {
                     self.set_wrap(false);
                 } else if matches!(opt, "wrap!" | "invwrap") {
                     self.toggle_wrap();
+                } else if matches!(opt, "bufferline" | "bl") {
+                    self.bufferline_visible = true;
+                    self.toast("bufferline: on");
+                } else if matches!(opt, "nobufferline" | "nobl") {
+                    self.bufferline_visible = false;
+                    self.toast("bufferline: off");
+                } else if matches!(opt, "bufferline!" | "invbufferline") {
+                    self.toggle_bufferline();
                 } else if matches!(opt, "formatontype" | "fot") {
                     self.config.editor.format_on_type = true;
                     self.toast(":set formatontype");
