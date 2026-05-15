@@ -487,12 +487,19 @@ most-recently-used order with the active pane dropped to the bottom so the picke
 already-cursored on the *previous* buffer (vim's "alternate buffer" idea — Enter swaps).
 New `App.pane_mru: Vec<PaneId>` (newest first) maintained in `reveal_pane`; entries
 removed and re-indexed in `remove_pane_storage`.
-**LSP completion docs footer** — `CompletionItem.documentation` is captured from each
-candidate's `documentation` field (string OR `MarkupContent { kind, value }`); the popup
-renders the selected item's first non-empty doc line as a dim italic footer beneath the
-list. `initialize` now advertises `completionItem.documentationFormat: ["markdown",
-"plaintext"]` so servers send docs eagerly. Lazy `completionItem/resolve` not wired yet
-— what the server returns on the initial reply is all we show.
+**LSP completion docs footer + lazy `completionItem/resolve`** — `CompletionItem.documentation`
+is captured from each candidate's `documentation` field (string OR `MarkupContent`); the
+popup renders the selected item's first non-empty doc line as a dim italic footer beneath
+the list. When the highlighted item has no docs but the server gave us the original item
+JSON (`CompletionItem.raw`), the App fires `completionItem/resolve` and merges the reply's
+`documentation` + `detail` back into the row. `initialize` advertises
+`completionItem.documentationFormat` + `resolveSupport: { properties: ["documentation",
+"detail"] }`. New `LspEvent::CompletionResolve`, new `LspClient::completion_resolve` /
+`LspManager::completion_resolve`. Pending-request stash carries an `Option<String>` opaque
+slot so the reply can find the popup row by label. New
+`CompletionPopup::{current_index_mut, item_at_mut, item_index_by_label}`. The first item's
+resolve fires on initial popup open; subsequent items resolve when the user navigates to
+them (one resolve per item — `resolved` flag prevents repeat requests).
 **`:retab N` / `:retab! N`** — vim's optional N override; if the arg is a positive integer
 it's used as the tab width for this retab only (the global `[editor] tab_width` is
 restored after). Bare `:retab` still uses the global setting.

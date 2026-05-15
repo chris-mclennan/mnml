@@ -65,6 +65,18 @@ pub struct Diagnostic {
     pub source: Option<String>,
 }
 
+/// One candidate as parsed from a `textDocument/completion` reply:
+/// `(label, insert_text, detail, documentation, raw_json)`. `raw_json` is
+/// the original server item — kept so the App can round-trip it on a
+/// `completionItem/resolve` request.
+pub type CompletionItemTuple = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    serde_json::Value,
+);
+
 /// What the reader thread sends to the event loop.
 #[derive(Debug)]
 pub enum LspEvent {
@@ -86,9 +98,18 @@ pub enum LspEvent {
     /// Result of a `textDocument/rename` request — a `WorkspaceEdit` flattened to
     /// `(path, [(range, new_text)])` per affected file.
     Rename(Vec<(PathBuf, Vec<(Range, String)>)>),
-    /// Result of a `textDocument/completion` request —
-    /// `(label, insert_text, detail, documentation)` per candidate.
-    Completion(Vec<(String, String, Option<String>, Option<String>)>),
+    /// Result of a `textDocument/completion` request — see
+    /// [`CompletionItemTuple`] for the field layout.
+    Completion(Vec<CompletionItemTuple>),
+    /// Result of a `completionItem/resolve` request — the resolved item's
+    /// `(label, documentation, detail)`. `label` is the lookup key on the
+    /// popup side; documentation may still be empty if the server didn't
+    /// have anything to add.
+    CompletionResolve {
+        label: String,
+        detail: Option<String>,
+        documentation: Option<String>,
+    },
     /// Result of a `textDocument/formatting` request — the `TextEdit[]` for `path`.
     Formatting {
         path: PathBuf,
@@ -472,6 +493,24 @@ impl LspManager {
     /// Send a `textDocument/completion` request — the reply arrives as [`LspEvent::Completion`].
     pub fn completion(&mut self, path: &Path, line: u32, character: u32) -> bool {
         self.request_at("textDocument/completion", path, line, character)
+    }
+    /// Send a `completionItem/resolve` for `item` against whichever server
+    /// has `path` open. Reply arrives as [`LspEvent::CompletionResolve`] tagged
+    /// with `label` so the popup can find the row.
+    pub fn completion_resolve(
+        &mut self,
+        path: &Path,
+        label: &str,
+        item: serde_json::Value,
+    ) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.completion_resolve(item.clone(), label);
+                sent = true;
+            }
+        }
+        sent
     }
     /// Send a `textDocument/formatting` request — the reply arrives as [`LspEvent::Formatting`].
     pub fn formatting(&mut self, path: &Path, tab_size: u32, insert_spaces: bool) -> bool {

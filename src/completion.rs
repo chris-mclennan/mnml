@@ -20,11 +20,18 @@ pub struct CompletionItem {
     /// A dim right-hand hint (a type, a module path, …) — may be empty.
     pub detail: String,
     /// Hover-style documentation for the candidate (MarkupContent or plain
-    /// string from the server). Empty when the server didn't include any.
-    /// Rendered as a footer line on the popup for the currently selected
-    /// item. Lazy `completionItem/resolve` not yet wired — what the server
-    /// eagerly sent on the initial reply is all we see.
+    /// string from the server). May start empty if the server only sends
+    /// docs lazily via `completionItem/resolve`; the App populates it
+    /// when the resolve reply lands.
     pub documentation: String,
+    /// Server's original item JSON, kept so we can round-trip the exact
+    /// payload back on `completionItem/resolve`. `None` for synthetic items
+    /// (e.g. mnml's buffer keyword-completion path) — those never resolve.
+    pub raw: Option<serde_json::Value>,
+    /// `true` once a `completionItem/resolve` request has been sent for this
+    /// item. Prevents the popup from spamming the server when the user
+    /// jumps back and forth.
+    pub resolved: bool,
 }
 
 #[derive(Debug)]
@@ -100,6 +107,25 @@ impl CompletionPopup {
         self.filtered.get(self.selected).map(|&i| &self.all[i])
     }
 
+    /// Index into [`Self::all`] of the currently-selected item (`None`
+    /// when the filter is empty). Used by the resolve plumbing to mutate
+    /// the underlying item without going through the filtered view.
+    pub fn current_index_mut(&self) -> Option<usize> {
+        self.filtered.get(self.selected).copied()
+    }
+
+    /// Mutable handle to an item by its index into [`Self::all`].
+    pub fn item_at_mut(&mut self, idx: usize) -> &mut CompletionItem {
+        &mut self.all[idx]
+    }
+
+    /// Find an item by label (linear scan). Used by the
+    /// `completionItem/resolve` reply path to merge fields back without
+    /// having to remember which row was requested.
+    pub fn item_index_by_label(&self, label: &str) -> Option<usize> {
+        self.all.iter().position(|it| it.label == label)
+    }
+
     /// `(row_index, item)` for every currently-matching candidate, best first.
     pub fn rows(&self) -> impl Iterator<Item = (usize, &CompletionItem)> {
         self.filtered
@@ -120,6 +146,8 @@ mod tests {
             insert: label.into(),
             detail: String::new(),
             documentation: String::new(),
+            raw: None,
+            resolved: false,
         }
     }
 

@@ -2292,6 +2292,30 @@ impl App {
         if let Some(p) = &mut self.completion {
             p.move_by(delta);
         }
+        self.completion_request_resolve_if_needed();
+    }
+
+    /// If the popup's currently selected item has no documentation yet AND
+    /// is backed by a server item we can round-trip, fire
+    /// `completionItem/resolve`. The reply arrives as
+    /// [`crate::lsp::LspEvent::CompletionResolve`] and is merged back into
+    /// the popup. Marked `resolved = true` immediately so we don't spam.
+    pub fn completion_request_resolve_if_needed(&mut self) {
+        let Some(popup) = self.completion.as_mut() else {
+            return;
+        };
+        let Some(it_idx) = popup.current_index_mut() else {
+            return;
+        };
+        let path = popup.path.clone();
+        let item = popup.item_at_mut(it_idx);
+        if item.resolved || !item.documentation.is_empty() || item.raw.is_none() {
+            return;
+        }
+        let raw = item.raw.clone().unwrap();
+        let label = item.label.clone();
+        item.resolved = true;
+        self.lsp.completion_resolve(&path, &label, raw);
     }
 
     /// Accept the highlighted completion: replace the identifier prefix left of
@@ -2767,6 +2791,8 @@ impl App {
                 insert: m,
                 detail: "buffer".to_string(),
                 documentation: String::new(),
+                raw: None,
+                resolved: true,
             })
             .collect();
         let popup = crate::completion::CompletionPopup::new(path, items, &prefix);
@@ -4191,16 +4217,47 @@ impl App {
                 let cis: Vec<CompletionItem> = items
                     .into_iter()
                     .take(500)
-                    .map(|(label, insert, detail, documentation)| CompletionItem {
-                        label,
-                        insert,
-                        detail: detail.unwrap_or_default(),
-                        documentation: documentation.unwrap_or_default(),
-                    })
+                    .map(
+                        |(label, insert, detail, documentation, raw)| CompletionItem {
+                            label,
+                            insert,
+                            detail: detail.unwrap_or_default(),
+                            documentation: documentation.unwrap_or_default(),
+                            raw: Some(raw),
+                            resolved: false,
+                        },
+                    )
                     .collect();
                 let popup = CompletionPopup::new(path, cis, &prefix);
                 if !popup.is_empty() {
                     self.completion = Some(popup);
+                    // Eagerly ask the server to resolve the FIRST item's docs
+                    // (no docs ⇒ likely a server that withholds them; the
+                    // resolve fills the footer before the user navigates).
+                    self.completion_request_resolve_if_needed();
+                }
+            }
+            LspEvent::CompletionResolve {
+                label,
+                detail,
+                documentation,
+            } => {
+                let Some(popup) = self.completion.as_mut() else {
+                    return;
+                };
+                let Some(idx) = popup.item_index_by_label(&label) else {
+                    return;
+                };
+                let it = popup.item_at_mut(idx);
+                if let Some(d) = documentation
+                    && it.documentation.is_empty()
+                {
+                    it.documentation = d;
+                }
+                if let Some(d) = detail
+                    && it.detail.is_empty()
+                {
+                    it.detail = d;
                 }
             }
             LspEvent::Formatting { path, edits } => self.apply_formatting_edits(path, edits),
@@ -11241,6 +11298,18 @@ impl App {
             }
             "lprev" | "lp" | "lprevious" => {
                 crate::command::run("lsp.prev_diagnostic", self);
+            }
+            // `:colorscheme <name>` / `:colo <name>` — vim canonical theme
+            // switcher. mnml's existing `:set theme=…` does the same; this
+            // is just the muscle-memory form.
+            "colorscheme" | "colo" => {
+                let name = rest.trim();
+                if name.is_empty() {
+                    let cur = crate::ui::theme::cur().name;
+                    self.toast(format!(":colorscheme · current: {cur}"));
+                } else {
+                    self.set_theme(name);
+                }
             }
             "Rename" => {
                 crate::command::run("lsp.rename", self);

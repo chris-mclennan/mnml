@@ -22,10 +22,12 @@ use super::{
 };
 
 /// Tracks each in-flight request: the LSP method (so the reply parser
-/// knows what shape to expect) + an optional path (so methods whose reply
+/// knows what shape to expect), an optional path (so methods whose reply
 /// doesn't include the file — like `textDocument/formatting` — can be
-/// routed back to the right buffer).
-type Pending = Arc<Mutex<HashMap<i64, (String, Option<PathBuf>)>>>;
+/// routed back to the right buffer), and an optional opaque string
+/// (used by `completionItem/resolve` to remember the original label so
+/// the popup can match the reply to a row).
+type Pending = Arc<Mutex<HashMap<i64, (String, Option<PathBuf>, Option<String>)>>>;
 type Sink = Arc<Mutex<ChildStdin>>;
 
 pub struct LspClient {
@@ -97,6 +99,9 @@ impl LspClient {
                             "completionItem": {
                                 "snippetSupport": false,
                                 "documentationFormat": ["markdown", "plaintext"],
+                                "resolveSupport": {
+                                    "properties": ["documentation", "detail"]
+                                }
                             }
                         },
                         "signatureHelp": {
@@ -200,6 +205,21 @@ impl LspClient {
                 "textDocument": { "uri": path_to_uri(path) },
                 "position": { "line": line, "character": character }
             }),
+        );
+    }
+
+    /// `completionItem/resolve` — round-trip the original item back to the
+    /// server, which fills in any docs / detail it withheld from the initial
+    /// `textDocument/completion` reply. The reply arrives as
+    /// `LspEvent::CompletionResolve`; the `label` is stashed in the pending
+    /// table so the popup can match it without grovelling through the raw
+    /// item.
+    pub fn completion_resolve(&mut self, item: serde_json::Value, label: &str) {
+        self.request_with_context(
+            "completionItem/resolve",
+            item,
+            None,
+            Some(label.to_string()),
         );
     }
 
@@ -372,10 +392,22 @@ impl LspClient {
         self.request_with_path(method, params, None);
     }
     fn request_with_path(&mut self, method: &str, params: serde_json::Value, path: Option<&Path>) {
+        self.request_with_context(method, params, path, None);
+    }
+    fn request_with_context(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+        path: Option<&Path>,
+        opaque: Option<String>,
+    ) {
         let id = self.next_id;
         self.next_id += 1;
         if let Ok(mut p) = self.pending.lock() {
-            p.insert(id, (method.to_string(), path.map(|p| p.to_path_buf())));
+            p.insert(
+                id,
+                (method.to_string(), path.map(|p| p.to_path_buf()), opaque),
+            );
         }
         self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
     }
@@ -499,7 +531,7 @@ fn handle_message(
     // A response to one of our requests.
     if let Some(id) = v.get("id").and_then(|i| i.as_i64()) {
         let pend = pending.lock().ok().and_then(|mut p| p.remove(&id));
-        let Some((method, req_path)) = pend else {
+        let Some((method, req_path, req_opaque)) = pend else {
             return;
         };
         let Some(result) = v.get("result") else {
@@ -541,6 +573,18 @@ fn handle_message(
                 let items = parse_completion(result);
                 if !items.is_empty() {
                     let _ = tx.send(LspEvent::Completion(items));
+                }
+            }
+            "completionItem/resolve" => {
+                let (detail, documentation) = parse_completion_resolve(result);
+                if let Some(label) = req_opaque
+                    && (detail.is_some() || documentation.is_some())
+                {
+                    let _ = tx.send(LspEvent::CompletionResolve {
+                        label,
+                        detail,
+                        documentation,
+                    });
                 }
             }
             "textDocument/formatting" => {
@@ -656,9 +700,7 @@ fn parse_workspace_edit(result: &serde_json::Value) -> Vec<(PathBuf, Vec<(Range,
 /// `insertText` (then `textEdit.newText`, then `label`) supplies the text to
 /// insert; snippet items (`insertTextFormat == 2`) fall back to the label since
 /// we don't expand placeholders.
-fn parse_completion(
-    result: &serde_json::Value,
-) -> Vec<(String, String, Option<String>, Option<String>)> {
+fn parse_completion(result: &serde_json::Value) -> Vec<super::CompletionItemTuple> {
     let arr = match result {
         serde_json::Value::Array(a) => a,
         serde_json::Value::Object(o) => match o.get("items").and_then(|i| i.as_array()) {
@@ -690,18 +732,34 @@ fn parse_completion(
             .get("detail")
             .and_then(|d| d.as_str())
             .map(str::to_string);
-        // `documentation` may be a plain string OR `MarkupContent`
-        // (`{ kind, value }`). Both reduce to a plain string for the chip.
-        let documentation = it.get("documentation").and_then(|d| match d {
-            serde_json::Value::String(s) => Some(s.clone()),
-            serde_json::Value::Object(o) => {
-                o.get("value").and_then(|v| v.as_str()).map(String::from)
-            }
-            _ => None,
-        });
-        out.push((label.to_string(), insert, detail, documentation));
+        let documentation = parse_completion_doc(it.get("documentation"));
+        out.push((label.to_string(), insert, detail, documentation, it.clone()));
     }
     out
+}
+
+/// Extract doc text from a `documentation` field — handles plain-string
+/// and `MarkupContent { kind, value }` shapes.
+fn parse_completion_doc(v: Option<&serde_json::Value>) -> Option<String> {
+    v.and_then(|d| match d {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Object(o) => o.get("value").and_then(|v| v.as_str()).map(String::from),
+        _ => None,
+    })
+}
+
+/// Parse a `completionItem/resolve` reply — `(detail, documentation)` from
+/// the resolved item. The label is matched on the App side from the
+/// pending-request stash so the popup can find which row to update.
+pub(crate) fn parse_completion_resolve(
+    result: &serde_json::Value,
+) -> (Option<String>, Option<String>) {
+    let detail = result
+        .get("detail")
+        .and_then(|d| d.as_str())
+        .map(String::from);
+    let documentation = parse_completion_doc(result.get("documentation"));
+    (detail, documentation)
 }
 
 /// Parse a `TextEdit[]` (the shape `textDocument/formatting` returns).
@@ -1221,19 +1279,17 @@ mod tests {
         ]});
         let got = parse_completion(&cl);
         assert_eq!(got.len(), 3);
-        assert_eq!(
-            got[0],
-            (
-                "push".into(),
-                "push".into(),
-                Some("fn(&mut self, T)".into()),
-                None,
-            )
-        );
+        assert_eq!(got[0].0, "push");
+        assert_eq!(got[0].1, "push");
+        assert_eq!(got[0].2, Some("fn(&mut self, T)".to_string()));
+        assert_eq!(got[0].3, None);
         // snippet ⇒ fall back to the label, not the placeholder text
         assert_eq!(got[1].1, "println!");
         // no insertText ⇒ use the label
-        assert_eq!(got[2], ("len".into(), "len".into(), None, None));
+        assert_eq!(got[2].0, "len");
+        assert_eq!(got[2].1, "len");
+        assert_eq!(got[2].2, None);
+        assert_eq!(got[2].3, None);
         // bare array form
         let arr = json!([{"label": "x", "textEdit": {"newText": "x_edited"}}]);
         assert_eq!(parse_completion(&arr)[0].1, "x_edited");

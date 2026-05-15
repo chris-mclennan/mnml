@@ -170,6 +170,8 @@ pub(crate) const EX_COMPLETION_NAMES: &[&str] = &[
     "clast",
     "close",
     "cnext",
+    "colorscheme",
+    "colo",
     "command",
     "copen",
     "copy",
