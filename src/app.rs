@@ -12747,6 +12747,37 @@ impl App {
             "Echo" | "echo" => {
                 self.toast(rest.to_string());
             }
+            // `:Macros` — toast each recorded macro register + key count.
+            // `:Macro <reg>` — replay a specific register (alt: `@<reg>` in vim).
+            "Macros" => {
+                if self.macro_buffer.is_empty() {
+                    self.toast("no macros recorded");
+                } else {
+                    let mut entries: Vec<(char, usize)> = self
+                        .macro_buffer
+                        .iter()
+                        .map(|(k, v)| (*k, v.len()))
+                        .collect();
+                    entries.sort_by_key(|(k, _)| *k);
+                    let line: String = entries
+                        .iter()
+                        .map(|(k, n)| format!("@{k}={n}"))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    self.toast(line);
+                }
+            }
+            "Macro" => {
+                let reg = rest.trim().chars().next();
+                match reg {
+                    Some(c) if self.macro_buffer.contains_key(&c) => {
+                        self.pending_macro_register = Some(c);
+                        self.macro_replay();
+                    }
+                    Some(c) => self.toast(format!(":Macro — register @{c} is empty")),
+                    None => self.toast(":Macro <reg> — needs a register letter"),
+                }
+            }
             // `:A` — alternate file. Tries common test ↔ source pairings
             // for the active file: `_test`, `.test.`, `.spec.`, `_spec`,
             // `Tests`. Strips when present, adds when absent.
