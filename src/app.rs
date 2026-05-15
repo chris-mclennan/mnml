@@ -1439,6 +1439,11 @@ pub struct App {
     /// `current` index walks down (expand) / up (shrink). Cleared on any
     /// non-expand/shrink action.
     selection_range_ladder: Option<SelectionRangeLadder>,
+    /// Most recent prepared call-hierarchy items, kept so a follow-up
+    /// `incoming`/`outgoing` request can be re-fired without re-asking
+    /// the server. MVP uses the first item; a disambiguation picker is
+    /// a follow-up.
+    pending_call_hierarchy_items: Vec<crate::lsp::CallHierarchyItem>,
     /// Snippets backing the open `PickerKind::Snippets` picker — items index
     /// into this list. Populated by [`Self::snippet_pick`], consumed by
     /// [`Self::picker_accept`].
@@ -1640,6 +1645,7 @@ impl App {
             pending_code_action_auto_apply: false,
             pending_outline: false,
             selection_range_ladder: None,
+            pending_call_hierarchy_items: Vec::new(),
             pending_snippets: Vec::new(),
             snippet_session: None,
             pending_workspace_symbols: Vec::new(),
@@ -4687,6 +4693,16 @@ impl App {
                         break;
                     }
                 }
+            }
+            LspEvent::CallHierarchyPrepared { direction, items } => {
+                self.apply_call_hierarchy_prepared(direction, items);
+            }
+            LspEvent::CallHierarchyCalls {
+                direction,
+                origin_name,
+                hits,
+            } => {
+                self.apply_call_hierarchy_calls(direction, origin_name, hits);
             }
             LspEvent::CodeAction(actions) => self.apply_code_action_reply(actions),
             LspEvent::DocumentSymbols(symbols) => {
@@ -8230,6 +8246,99 @@ impl App {
                 self.toast(format!("unfolded {n} fold(s)"));
             }
         }
+    }
+
+    /// `lsp.incoming_calls` — "who calls this function". Two-step:
+    /// `prepareCallHierarchy` at the cursor → first item → `incomingCalls`.
+    /// The final reply opens a fuzzy picker of call sites.
+    pub fn lsp_incoming_calls(&mut self) {
+        let direction = crate::lsp::CallHierarchyDirection::Incoming;
+        self.lsp_request_at_cursor(
+            move |lsp, p, l, c| lsp.prepare_call_hierarchy(p, l, c, direction),
+            "incoming-calls",
+        );
+    }
+
+    /// `lsp.outgoing_calls` — "what does this function call". Same shape
+    /// as `lsp_incoming_calls`, opposite direction.
+    pub fn lsp_outgoing_calls(&mut self) {
+        let direction = crate::lsp::CallHierarchyDirection::Outgoing;
+        self.lsp_request_at_cursor(
+            move |lsp, p, l, c| lsp.prepare_call_hierarchy(p, l, c, direction),
+            "outgoing-calls",
+        );
+    }
+
+    /// Handle `LspEvent::CallHierarchyPrepared` — take the first item and
+    /// fire the follow-up `{incoming,outgoing}Calls` request. Multi-item
+    /// disambiguation (when the cursor straddles overloads) is a follow-up.
+    fn apply_call_hierarchy_prepared(
+        &mut self,
+        direction: crate::lsp::CallHierarchyDirection,
+        items: Vec<crate::lsp::CallHierarchyItem>,
+    ) {
+        if items.is_empty() {
+            self.toast("call hierarchy: nothing under cursor");
+            return;
+        }
+        let item = items.into_iter().next().unwrap();
+        match direction {
+            crate::lsp::CallHierarchyDirection::Incoming => {
+                self.lsp.call_hierarchy_incoming(&item);
+            }
+            crate::lsp::CallHierarchyDirection::Outgoing => {
+                self.lsp.call_hierarchy_outgoing(&item);
+            }
+        }
+        // Stash the chosen item so a future "re-fire with opposite
+        // direction" can avoid a fresh prepare. Not used yet but cheap.
+        self.pending_call_hierarchy_items = vec![item];
+    }
+
+    /// Handle `LspEvent::CallHierarchyCalls` — open the call sites as a
+    /// `PickerKind::Locations` picker so accept jumps to the source line.
+    fn apply_call_hierarchy_calls(
+        &mut self,
+        direction: crate::lsp::CallHierarchyDirection,
+        origin_name: String,
+        hits: Vec<crate::lsp::CallHit>,
+    ) {
+        if hits.is_empty() {
+            let label = match direction {
+                crate::lsp::CallHierarchyDirection::Incoming => "incoming",
+                crate::lsp::CallHierarchyDirection::Outgoing => "outgoing",
+            };
+            self.toast(format!("call hierarchy: no {label} calls"));
+            return;
+        }
+        let items: Vec<crate::picker::PickerItem> = hits
+            .into_iter()
+            .map(|h| {
+                let rel = h
+                    .path
+                    .strip_prefix(&self.workspace)
+                    .unwrap_or(h.path.as_path())
+                    .to_string_lossy()
+                    .to_string();
+                let id = format!("{}\t{}\t{}", h.path.display(), h.line, h.character);
+                let label = format!("{}  {}", h.name, rel);
+                let detail = format!("{}:{}", h.line + 1, h.character + 1);
+                crate::picker::PickerItem::new(id, label, detail)
+            })
+            .collect();
+        let title = match direction {
+            crate::lsp::CallHierarchyDirection::Incoming => {
+                format!("Incoming calls — {origin_name}")
+            }
+            crate::lsp::CallHierarchyDirection::Outgoing => {
+                format!("Outgoing calls — {origin_name}")
+            }
+        };
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Locations,
+            title,
+            items,
+        ));
     }
 
     /// `lsp.highlight_symbol` — fire `textDocument/documentHighlight` at the
@@ -12184,6 +12293,8 @@ impl App {
             "Declaration" => self.lsp_goto_declaration(),
             "TypeDefinition" => self.lsp_goto_type_definition(),
             "Implementation" => self.lsp_goto_implementation(),
+            "IncomingCalls" | "Callers" => self.lsp_incoming_calls(),
+            "OutgoingCalls" | "Callees" => self.lsp_outgoing_calls(),
             "References" => {
                 crate::command::run("lsp.references", self);
             }

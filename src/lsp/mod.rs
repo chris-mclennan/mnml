@@ -191,8 +191,57 @@ pub enum LspEvent {
         path: PathBuf,
         ranges: Vec<(u32, u32, u32, u32)>,
     },
+    /// Result of a `textDocument/prepareCallHierarchy` request — items
+    /// the server thinks the cursor is on (typically one). The App
+    /// re-fires `callHierarchy/incomingCalls` or `outgoingCalls` using
+    /// the first item; multi-item disambiguation is a follow-up.
+    CallHierarchyPrepared {
+        direction: CallHierarchyDirection,
+        items: Vec<CallHierarchyItem>,
+    },
+    /// Result of `callHierarchy/{incoming,outgoing}Calls` — each entry is
+    /// a `(name, path, line, character)` for the call site (incoming) or
+    /// the callee (outgoing).
+    CallHierarchyCalls {
+        direction: CallHierarchyDirection,
+        origin_name: String,
+        hits: Vec<CallHit>,
+    },
     /// A server-side message worth surfacing as a toast.
     Message(String),
+}
+
+/// Direction of a call-hierarchy walk. Incoming = "callers of this fn";
+/// outgoing = "callees from this fn".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallHierarchyDirection {
+    Incoming,
+    Outgoing,
+}
+
+/// A `CallHierarchyItem` from `textDocument/prepareCallHierarchy`. We
+/// keep the original JSON in `raw` so the follow-up
+/// `callHierarchy/{incoming,outgoing}Calls` request can hand it back to
+/// the server without re-parsing.
+#[derive(Debug, Clone)]
+pub struct CallHierarchyItem {
+    pub name: String,
+    pub kind: u32,
+    pub path: PathBuf,
+    pub line: u32,
+    pub character: u32,
+    pub raw: serde_json::Value,
+}
+
+/// One call site / callee returned by `callHierarchy/{incoming,outgoing}Calls`.
+/// For incoming: `name` is the caller, `path/line/character` is the call's
+/// source position in the caller. For outgoing: `name` is the callee.
+#[derive(Debug, Clone)]
+pub struct CallHit {
+    pub name: String,
+    pub path: PathBuf,
+    pub line: u32,
+    pub character: u32,
 }
 
 /// One color literal the server recognized. We keep just enough to paint
@@ -739,6 +788,47 @@ impl LspManager {
             }
         }
         sent
+    }
+    /// Send `textDocument/prepareCallHierarchy` at `(line, character)`. The
+    /// `direction` is stashed so the reply (carried as
+    /// [`LspEvent::CallHierarchyPrepared`]) tells the App which follow-up
+    /// to fire (`incomingCalls` vs `outgoingCalls`).
+    pub fn prepare_call_hierarchy(
+        &mut self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        direction: CallHierarchyDirection,
+    ) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.prepare_call_hierarchy(path, line, character, direction);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send `callHierarchy/incomingCalls` for a previously-prepared item.
+    /// `origin_name` is the prepared item's name — round-tripped back in
+    /// [`LspEvent::CallHierarchyCalls`] so the picker title reads
+    /// `"Incoming calls — fn foo"` without an extra lookup.
+    pub fn call_hierarchy_incoming(&mut self, item: &CallHierarchyItem) {
+        for c in self.clients.values_mut() {
+            if c.is_open(&item.path) {
+                c.call_hierarchy_calls(item, CallHierarchyDirection::Incoming);
+                return;
+            }
+        }
+    }
+    /// Send `callHierarchy/outgoingCalls` for a previously-prepared item.
+    pub fn call_hierarchy_outgoing(&mut self, item: &CallHierarchyItem) {
+        for c in self.clients.values_mut() {
+            if c.is_open(&item.path) {
+                c.call_hierarchy_calls(item, CallHierarchyDirection::Outgoing);
+                return;
+            }
+        }
     }
     /// Send `textDocument/codeLens` — reply arrives as [`LspEvent::CodeLens`].
     pub fn code_lens(&mut self, path: &Path) -> bool {

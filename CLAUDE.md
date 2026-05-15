@@ -699,6 +699,15 @@ of the open files, the statusline right side shows a `LSP N` chip (count of `(ro
 pairs). `:LspStatus` / `:LspInfo` toasts each running server with its workspace-relative root —
 the breakdown when "wait, which servers do I have?" hits. New `LspManager::server_count` +
 `servers_running()`.
+**LSP call hierarchy** — `lsp.incoming_calls` / `lsp.outgoing_calls` (ex aliases `:Callers` /
+`:Callees` / `:IncomingCalls` / `:OutgoingCalls`). Two-step: `textDocument/prepareCallHierarchy`
+at the cursor → reply lands as `LspEvent::CallHierarchyPrepared` → the App fires
+`callHierarchy/{incoming,outgoing}Calls` using the first item → reply lands as
+`LspEvent::CallHierarchyCalls` → opens a `PickerKind::Locations` picker titled
+`Incoming/Outgoing calls — <name>`; accept jumps to the call site (incoming) or callee
+(outgoing). New `crate::lsp::CallHierarchyItem` (keeps the original JSON as `raw` so the
+follow-up request hands it back verbatim — per spec). `initialize` advertises `callHierarchy`.
+Multi-item disambiguation (overloaded fn under cursor) is a follow-up.
 **LSP `documentHighlight`** — `lsp.highlight_symbol` (no default chord; `lsp.clear_highlights`
 to drop): fires `textDocument/documentHighlight` at the cursor; the scope-aware reply tints
 every same-symbol usage with `bg2` (the same tint used by `[ui] highlight_word_under_cursor`).

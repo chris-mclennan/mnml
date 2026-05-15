@@ -98,6 +98,7 @@ impl LspClient {
                         "implementation": { "linkSupport": true },
                         "references": {},
                         "documentHighlight": {},
+                        "callHierarchy": { "dynamicRegistration": false },
                         "rename": {},
                         "completion": {
                             "completionItem": {
@@ -448,6 +449,57 @@ impl LspClient {
         );
     }
 
+    /// `textDocument/prepareCallHierarchy` — reply is
+    /// `CallHierarchyItem[]`. The opaque slot encodes which direction
+    /// (`"i"`/`"o"`) the App wants for the follow-up `incomingCalls` /
+    /// `outgoingCalls` request.
+    pub fn prepare_call_hierarchy(
+        &mut self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        direction: super::CallHierarchyDirection,
+    ) {
+        let dir = match direction {
+            super::CallHierarchyDirection::Incoming => "i",
+            super::CallHierarchyDirection::Outgoing => "o",
+        };
+        self.request_with_context(
+            "textDocument/prepareCallHierarchy",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "position": { "line": line, "character": character }
+            }),
+            Some(path),
+            Some(dir.to_string()),
+        );
+    }
+
+    /// `callHierarchy/incomingCalls` or `outgoingCalls`. The opaque slot
+    /// carries `"i:<name>"` / `"o:<name>"` so the reply parser knows
+    /// the direction and the origin name (for the picker title) without
+    /// stashing the whole item.
+    pub fn call_hierarchy_calls(
+        &mut self,
+        item: &super::CallHierarchyItem,
+        direction: super::CallHierarchyDirection,
+    ) {
+        let (method, tag) = match direction {
+            super::CallHierarchyDirection::Incoming => {
+                ("callHierarchy/incomingCalls", format!("i:{}", item.name))
+            }
+            super::CallHierarchyDirection::Outgoing => {
+                ("callHierarchy/outgoingCalls", format!("o:{}", item.name))
+            }
+        };
+        self.request_with_context(
+            method,
+            json!({ "item": item.raw }),
+            Some(&item.path),
+            Some(tag),
+        );
+    }
+
     /// `textDocument/formatting` — reply is a `TextEdit[]` (possibly null).
     /// The path is stashed so we can route the reply to the right buffer.
     pub fn formatting(&mut self, path: &Path, tab_size: u32, insert_spaces: bool) {
@@ -763,9 +815,144 @@ fn handle_message(
                     let _ = tx.send(LspEvent::DocumentHighlights { path, ranges });
                 }
             }
+            "textDocument/prepareCallHierarchy" => {
+                // `req_opaque` is "i" or "o" — the direction of the
+                // follow-up call the App wants.
+                let direction = match req_opaque.as_deref() {
+                    Some("o") => super::CallHierarchyDirection::Outgoing,
+                    _ => super::CallHierarchyDirection::Incoming,
+                };
+                let items = parse_call_hierarchy_items(result);
+                let _ = tx.send(LspEvent::CallHierarchyPrepared { direction, items });
+            }
+            "callHierarchy/incomingCalls" | "callHierarchy/outgoingCalls" => {
+                // `req_opaque` is "i:<name>" / "o:<name>".
+                let (direction, origin_name) = match req_opaque.as_deref() {
+                    Some(s) if s.starts_with("o:") => {
+                        (super::CallHierarchyDirection::Outgoing, s[2..].to_string())
+                    }
+                    Some(s) if s.starts_with("i:") => {
+                        (super::CallHierarchyDirection::Incoming, s[2..].to_string())
+                    }
+                    _ => (super::CallHierarchyDirection::Incoming, String::new()),
+                };
+                let hits = parse_call_hierarchy_calls(result, direction);
+                let _ = tx.send(LspEvent::CallHierarchyCalls {
+                    direction,
+                    origin_name,
+                    hits,
+                });
+            }
             _ => {}
         }
     }
+}
+
+/// Parse a `textDocument/prepareCallHierarchy` reply
+/// (`CallHierarchyItem[]`). Each item's full JSON is preserved as `raw`
+/// so the follow-up `incomingCalls` / `outgoingCalls` request can hand
+/// it back to the server verbatim (the spec requires this round-trip).
+pub fn parse_call_hierarchy_items(result: &serde_json::Value) -> Vec<super::CallHierarchyItem> {
+    let arr = match result.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for it in arr {
+        let Some(name) = it.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let kind = it.get("kind").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let Some(uri) = it.get("uri").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(path) = uri_to_path(uri) else {
+            continue;
+        };
+        let line = it
+            .get("selectionRange")
+            .and_then(|r| r.get("start"))
+            .and_then(|s| s.get("line"))
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0) as u32;
+        let character = it
+            .get("selectionRange")
+            .and_then(|r| r.get("start"))
+            .and_then(|s| s.get("character"))
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0) as u32;
+        out.push(super::CallHierarchyItem {
+            name: name.to_string(),
+            kind,
+            path,
+            line,
+            character,
+            raw: it.clone(),
+        });
+    }
+    out
+}
+
+/// Parse a `callHierarchy/{incoming,outgoing}Calls` reply. The reply
+/// is an array of `CallHierarchyIncomingCall` / `CallHierarchyOutgoingCall`
+/// objects. For incoming: `from` is the caller, `fromRanges` are the
+/// call sites in the caller's file. For outgoing: `to` is the callee
+/// (use its own `range` / `selectionRange`).
+pub fn parse_call_hierarchy_calls(
+    result: &serde_json::Value,
+    direction: super::CallHierarchyDirection,
+) -> Vec<super::CallHit> {
+    let arr = match result.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for it in arr {
+        let (item_key, range_key) = match direction {
+            super::CallHierarchyDirection::Incoming => ("from", "fromRanges"),
+            super::CallHierarchyDirection::Outgoing => ("to", "fromRanges"),
+        };
+        let Some(item) = it.get(item_key) else {
+            continue;
+        };
+        let Some(name) = item.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(uri) = item.get("uri").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(path) = uri_to_path(uri) else {
+            continue;
+        };
+        // For incoming we'd like to land on the *call site* in the caller;
+        // for outgoing the call site list `fromRanges` is again in the
+        // *caller* (the prepared item) — but pointing the user at the
+        // callee's `selectionRange` is what they expect. Pick accordingly.
+        let pos = match direction {
+            super::CallHierarchyDirection::Incoming => it
+                .get(range_key)
+                .and_then(|a| a.as_array())
+                .and_then(|a| a.first())
+                .and_then(|r| r.get("start")),
+            super::CallHierarchyDirection::Outgoing => {
+                item.get("selectionRange").and_then(|r| r.get("start"))
+            }
+        };
+        let (Some(line), Some(character)) = (
+            pos.and_then(|p| p.get("line")).and_then(|n| n.as_u64()),
+            pos.and_then(|p| p.get("character"))
+                .and_then(|n| n.as_u64()),
+        ) else {
+            continue;
+        };
+        out.push(super::CallHit {
+            name: name.to_string(),
+            path,
+            line: line as u32,
+            character: character as u32,
+        });
+    }
+    out
 }
 
 /// Parse a `textDocument/documentHighlight` reply

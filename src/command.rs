@@ -470,6 +470,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_clear_highlights(),
         },
         Command {
+            id: "lsp.incoming_calls",
+            title: "LSP: incoming calls (who calls this)",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_incoming_calls(),
+        },
+        Command {
+            id: "lsp.outgoing_calls",
+            title: "LSP: outgoing calls (what this calls)",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_outgoing_calls(),
+        },
+        Command {
             id: "editor.reflow_paragraph",
             title: "Reflow current paragraph to text_width (vim `gqq`)",
             group: "editor",
