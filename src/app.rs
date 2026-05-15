@@ -13621,6 +13621,96 @@ impl App {
             // `:Notes` — open / create `<workspace>/.mnml/notes.md` as
             // a workspace-local notepad. Markdown so the existing
             // highlight + preview auto-open behavior kicks in.
+            // `:OpenAt <path>:<line>[:<col>]` — open the file and jump to
+            // the given 1-based position. Useful for pasting in
+            // `path:row:col` strings from grep / clippy / etc.
+            "OpenAt" | "openat" => {
+                let arg = rest.trim();
+                if arg.is_empty() {
+                    self.toast(":OpenAt <path>:<line>[:<col>] — needs args");
+                    return;
+                }
+                let mut parts = arg.splitn(3, ':');
+                let path_str = parts.next().unwrap_or("");
+                let line = parts.next().and_then(|s| s.parse::<usize>().ok());
+                let col = parts.next().and_then(|s| s.parse::<usize>().ok());
+                if path_str.is_empty() || line.is_none() {
+                    self.toast(":OpenAt — bad format (need <path>:<line>)");
+                    return;
+                }
+                let path = if std::path::Path::new(path_str).is_absolute() {
+                    std::path::PathBuf::from(path_str)
+                } else {
+                    self.workspace.join(path_str)
+                };
+                self.open_path(&path);
+                let row = line.unwrap_or(1).saturating_sub(1);
+                let c = col.unwrap_or(1).saturating_sub(1);
+                if let Some(b) = self.active_editor_mut() {
+                    b.editor.place_cursor(row, c);
+                }
+            }
+            // `:Fn` — toast just the active editor's filename (no path).
+            // Friendlier than `:Path` for quick "what file is this".
+            "Fn" => {
+                let name = self
+                    .active_editor()
+                    .and_then(|b| b.path.as_ref().and_then(|p| p.file_name()))
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "(unsaved buffer)".into());
+                self.toast(name);
+            }
+            // `:Args` / `:Files` — list every open editor pane's
+            // workspace-relative path. Vim canonical `:args` shows the
+            // arglist; mnml has buffers, so we just list them.
+            "Args" | "args" => {
+                let mut names: Vec<String> = self
+                    .panes
+                    .iter()
+                    .filter_map(|p| match p {
+                        Pane::Editor(b) => b.path.as_ref().map(|p| {
+                            p.strip_prefix(&self.workspace)
+                                .unwrap_or(p)
+                                .to_string_lossy()
+                                .into_owned()
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+                if names.is_empty() {
+                    self.toast(":Args — no open files");
+                } else {
+                    names.sort();
+                    self.toast(format!(":Args — {}", names.join(" · ")));
+                }
+            }
+            // `:Mtime` — toast the active file's mtime (when readable).
+            "Mtime" => {
+                let Some(path) = self.active_editor().and_then(|b| b.path.clone()) else {
+                    self.toast(":Mtime — no saved file");
+                    return;
+                };
+                match std::fs::metadata(&path).and_then(|m| m.modified()) {
+                    Ok(t) => {
+                        let secs = t
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0);
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0);
+                        let age = crate::ui::git_graph_view::humanize_age(now.saturating_sub(secs));
+                        self.toast(format!(
+                            ":Mtime — {} (age {age})",
+                            path.file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default()
+                        ));
+                    }
+                    Err(e) => self.toast(format!(":Mtime: {e}")),
+                }
+            }
             "Notes" | "notes" => {
                 let dir = self.workspace.join(".mnml");
                 if let Err(e) = std::fs::create_dir_all(&dir) {

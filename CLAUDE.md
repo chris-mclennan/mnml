@@ -759,6 +759,13 @@ aliased to `:cprev`, so `:Cp` only.)
 **`:Capture <cmd>`** — run the command via `$SHELL -c`, open the combined stdout/stderr
 in a new scratch buffer (split below). Useful for grabbing `cargo test` output, log dumps,
 etc. for grep / highlight without launching a full pty. Cwd is the workspace.
+**`:OpenAt <path>:<line>[:<col>]`** — open the file and jump to a 1-based position.
+Friendly for pasted `path:row:col` strings from grep / clippy / etc.
+**`:Fn`** — toast just the active editor's filename (no path). Quicker than `:Path` when
+all you need is "what file am I in".
+**`:Args`** — list every open editor pane's workspace-relative path. Vim canonical
+`:args` shows the arglist; mnml has buffers, so we list those.
+**`:Mtime`** — toast the active file's modification time + humanized age.
 **`:Notes`** — open / create `<workspace>/.mnml/notes.md` as a workspace-local notepad
 (markdown so the auto-md-preview behavior kicks in).
 **`:Reflow [N]`** — reflow the paragraph at cursor to width N (default `[editor]
