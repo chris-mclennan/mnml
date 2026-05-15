@@ -759,6 +759,8 @@ aliased to `:cprev`, so `:Cp` only.)
 **`:Capture <cmd>`** — run the command via `$SHELL -c`, open the combined stdout/stderr
 in a new scratch buffer (split below). Useful for grabbing `cargo test` output, log dumps,
 etc. for grep / highlight without launching a full pty. Cwd is the workspace.
+**`:Wc` / `:WordCount`** — classic `wc -lwc` shape: lines / words / chars / bytes for the
+active buffer or selection. Sibling to `:Stat` which focuses on file metadata.
 **`:Messages!` / `:MessageLog`** — open the full toast/message log in a fresh scratch
 buffer (split below). `:messages` toasts the recent 8 inline; the bang form is for "show
 me all ~200 entries" so you can scroll / grep.

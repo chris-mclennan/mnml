@@ -13618,6 +13618,32 @@ impl App {
                     None => self.toast(":A — no alternate file found"),
                 }
             }
+            // `:WordCount` / `:Wc` — count chars / words / lines in the
+            // active buffer (or selection). The classic `wc -lwc` shape.
+            "WordCount" | "Wc" | "wc" => {
+                let text = self.active_editor().map(|b| {
+                    if let Some((s, e)) = b.editor.selection() {
+                        b.editor.text()[s..e].to_string()
+                    } else {
+                        b.editor.text().to_string()
+                    }
+                });
+                let Some(text) = text else {
+                    self.toast("no active editor");
+                    return;
+                };
+                let lines = if text.is_empty() {
+                    0
+                } else {
+                    text.matches('\n').count() + 1
+                };
+                let words = text.split_whitespace().count();
+                let chars = text.chars().count();
+                let bytes = text.len();
+                self.toast(format!(
+                    "{lines} lines · {words} words · {chars} chars · {bytes}B"
+                ));
+            }
             "Stat" | "stat" => {
                 let Some(b) = self.active_editor() else {
                     self.toast("no active editor");
