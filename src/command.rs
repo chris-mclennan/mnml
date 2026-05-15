@@ -390,6 +390,15 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_editor_op(crate::edit_op::EditOp::ClearExtraCursors),
         },
         Command {
+            id: "editor.add_cursor_at_next_word",
+            title: "Add cursor at next occurrence of word (VSCode `Ctrl+D`)",
+            group: "editor",
+            // No default chord — vim's Ctrl+D is HalfPageDown and we don't
+            // want to override that. Users can bind via `[keys.standard]`.
+            keys: &[],
+            run: |app| app.run_editor_op(crate::edit_op::EditOp::AddCursorAtNextWord),
+        },
+        Command {
             id: "editor.delete_line",
             title: "Delete the current line (VSCode `Ctrl+Shift+K`)",
             group: "editor",

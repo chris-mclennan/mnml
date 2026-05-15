@@ -157,6 +157,10 @@ pub enum EditOp {
     /// Drop every extra cursor; the primary stays put. Vim Normal-mode Esc
     /// emits this so the user has a quick "back to single cursor" gesture.
     ClearExtraCursors,
+    /// VS Code's `Ctrl+D` — add a cursor at the next occurrence of the word
+    /// under the bottom-most existing cursor. Word boundaries match the
+    /// "highlight word under cursor" semantics. No-op when there's no word.
+    AddCursorAtNextWord,
     /// vim `Ctrl+V` — start visual-block selection. Sets the editor's
     /// `block_anchor` to the current cursor; subsequent motions (h/j/k/l,
     /// w/b/e, etc.) extend the rectangle.
@@ -378,6 +382,7 @@ impl EditOp {
             | AddCursorBelow
             | AddCursorAbove
             | ClearExtraCursors
+            | AddCursorAtNextWord
             | BlockSelectStart
             | BlockSelectClear
             | SetRegisterHint(_)

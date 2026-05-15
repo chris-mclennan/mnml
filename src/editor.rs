@@ -382,6 +382,36 @@ impl Editor {
         self.extra_cursors = extras;
     }
 
+    /// Multi-cursor InsertStr — insert `s` at every cursor and advance each
+    /// by `s.len()`. Same descending-order trick as `InsertChar`.
+    fn multi_insert_str(&mut self, s: &str) {
+        let mut positions: Vec<usize> = std::iter::once(self.cursor)
+            .chain(self.extra_cursors.iter().copied())
+            .collect();
+        positions.sort_unstable();
+        positions.dedup();
+        let primary_idx = positions
+            .iter()
+            .position(|&p| p == self.cursor)
+            .unwrap_or(0);
+        let bytes = s.len();
+        for &p in positions.iter().rev() {
+            self.text.insert_str(p, s);
+        }
+        let advanced: Vec<usize> = positions
+            .iter()
+            .enumerate()
+            .map(|(i, p)| p + (i + 1) * bytes)
+            .collect();
+        self.cursor = advanced[primary_idx];
+        self.extra_cursors = advanced
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != primary_idx)
+            .map(|(_, &p)| p)
+            .collect();
+    }
+
     /// Multi-cursor DeleteForward — each cursor deletes the char at it.
     fn multi_delete_forward(&mut self) {
         let mut all: Vec<usize> = std::iter::once(self.cursor)
@@ -1572,6 +1602,61 @@ impl Editor {
             ClearExtraCursors => {
                 self.extra_cursors.clear();
             }
+            AddCursorAtNextWord => {
+                // Word at the PRIMARY cursor is the rename target. Pick the
+                // identifier the cursor sits on; if the cursor is one past
+                // the last id char, prefer the word that ends there (same
+                // rule as `word_under_cursor`).
+                let bytes_all = self.text.as_bytes();
+                let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+                let probe = if self.cursor < bytes_all.len() && is_id(bytes_all[self.cursor]) {
+                    self.cursor
+                } else if self.cursor > 0 && is_id(bytes_all[self.cursor - 1]) {
+                    self.cursor - 1
+                } else {
+                    return;
+                };
+                let (ws, we) = self.word_bounds_at(probe);
+                if ws == we {
+                    return;
+                }
+                let word = self.text[ws..we].to_string();
+                // On the first call (no extras yet), snap the primary cursor
+                // to the END of its word so subsequent inserts land after
+                // every occurrence consistently (VSCode behavior).
+                if self.extra_cursors.is_empty() {
+                    self.cursor = we;
+                }
+                let mut bottom = self.cursor;
+                for &b in &self.extra_cursors {
+                    if b > bottom {
+                        bottom = b;
+                    }
+                }
+                let bytes = self.text.as_bytes();
+                let len = self.text.len();
+                let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+                let target = word.as_bytes();
+                let mut start = bottom;
+                while start < len {
+                    if let Some(off) = self.text[start..].find(&word) {
+                        let pos = start + off;
+                        let after = pos + target.len();
+                        let before_ok = pos == 0 || !is_id(bytes[pos - 1]);
+                        let after_ok = after == len || !is_id(bytes[after]);
+                        // Skip the word that contains `bottom` itself (the
+                        // cursor we last added is sitting at the end of its
+                        // own match; we want the NEXT one).
+                        if before_ok && after_ok && after > bottom {
+                            self.add_extra_cursor(after);
+                            return;
+                        }
+                        start = pos + 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
 
             // ── text mutation ──
             InsertChar(c) => {
@@ -1643,6 +1728,11 @@ impl Editor {
                 }
                 self.delete_selection_if_any(out);
                 self.checkpoint();
+                if !self.extra_cursors.is_empty() {
+                    self.multi_insert_str(&s);
+                    out.buffer_changed = true;
+                    return;
+                }
                 self.text.insert_str(self.cursor, &s);
                 self.cursor += s.len();
                 out.buffer_changed = true;

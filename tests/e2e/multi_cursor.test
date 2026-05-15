@@ -33,3 +33,22 @@ key escape
 command file.save
 expect file more.txt contains "one\ntwo\nthree"
 
+# Add-cursor-at-next-word: a quick rename across all occurrences of a
+# token via Ctrl+D-style chaining.
+write rename.txt "foo bar foo baz foo"
+open rename.txt
+# Place cursor inside the first `foo`.
+key l
+# Add cursors at the next two `foo` occurrences (after primary's foo).
+command editor.add_cursor_at_next_word
+command editor.add_cursor_at_next_word
+# Enter Insert at the cursors, type "X" — each is right after a `foo`.
+key i
+key X
+key escape
+command file.save
+# Primary cursor was after "foo" (col 3), first add went to byte ~10 (after
+# the second foo, then add_cursor lands after the matched word), second to
+# ~18. Typing X at each ⇒ "fooX bar fooX baz fooX".
+expect file rename.txt contains "fooX bar fooX baz fooX"
+

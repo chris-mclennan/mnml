@@ -632,9 +632,15 @@ Multi-cursor fan-out expanded: `Backspace` / `DeleteForward` / `MoveLeft` /
 `Editor::multi_delete_backward` / `multi_delete_forward` (each cursor deletes its
 char in descending-position order; other cursors' positions are updated as the
 text shrinks), and `move_extras_horizontal` / `move_extras_vertical` (each extra
-walks one boundary or one row independently; out-of-range rows drop). Word-level
-deletes (`DeleteWordLeft` etc.) and `InsertStr` (paste) still operate only on the
-primary — that's the next step.
+walks one boundary or one row independently; out-of-range rows drop). `InsertStr` (paste) now fans out too — new `multi_insert_str` mirrors the
+`InsertChar` algorithm but with the full byte length. Word-level deletes
+(`DeleteWordLeft` etc.) still operate only on the primary — next step.
+**Multi-cursor `editor.add_cursor_at_next_word`** — VS Code's `Ctrl+D` shape. Word at
+the primary cursor is the rename target; first press snaps the primary to end-of-
+word; each subsequent press finds the next whole-word occurrence after the bottom-
+most cursor and drops an extra there. Then typing fans out: `iX<Esc>` becomes
+"insert X at every occurrence" — quick rename via multi-cursor. No default chord
+(vim's `Ctrl+D` is HalfPageDown); users can bind via `[keys.standard]`.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.
