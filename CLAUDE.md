@@ -744,6 +744,12 @@ ops accessible from ex. Mkdir creates parents too. Touch creates the file (and a
 parent dirs) but won't truncate. Mv renames / moves (refuses to overwrite an existing
 destination); also re-points any open editor on `from` to `to` and fires the LSP
 close/open pair. All three refresh the tree.
+**`git.diff_orig`** (`:DiffOrig`) — open a diff pane comparing the active buffer's in-
+memory text against its on-disk version. Vim canonical "what have I changed since save?"
+New `DiffScope::BufferVsDisk(path)` variant. Implementation: writes buffer text to
+`.mnml/tmp/<filename>.diffview`, shells out to `git diff --no-index <orig> <tmp>`,
+parses the result through the existing `parse_hunks`. Read-only — the diff pane's
+stage/unstage doesn't apply to this scope.
 **`picker.clipboard`** — fuzzy picker over the named-register history (`"0` last yank,
 `"1`-`"9` delete ring, `"a`-`"z` named). Each row shows `"<reg>  <preview>` (newlines as
 `↵`, truncated at 80 chars) with `linewise` as the dim detail. Accept inserts the chosen

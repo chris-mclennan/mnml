@@ -140,6 +140,9 @@ pub enum DiffScope {
     Staged,
     /// The diff a commit introduced — `git show <hash>` (read-only, no staging).
     Commit(String),
+    /// Buffer text vs its on-disk version (vim `:DiffOrig` shape).
+    /// Read-only — hunks can't be staged.
+    BufferVsDisk(PathBuf),
 }
 
 pub struct DiffView {
@@ -171,6 +174,12 @@ impl DiffView {
             DiffScope::Unstaged(None) => "diff: worktree".to_string(),
             DiffScope::Staged => "diff: staged".to_string(),
             DiffScope::Commit(h) => format!("commit {}", h.chars().take(9).collect::<String>()),
+            DiffScope::BufferVsDisk(p) => format!(
+                "buffer vs disk: {}",
+                p.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            ),
         }
     }
 }

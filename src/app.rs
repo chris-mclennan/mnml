@@ -7375,7 +7375,52 @@ impl App {
             DiffScope::Unstaged(None) => crate::git::diff::diff_worktree(&self.workspace),
             DiffScope::Staged => crate::git::diff::diff_staged(&self.workspace),
             DiffScope::Commit(h) => crate::git::diff::show_commit(&self.workspace, h),
+            DiffScope::BufferVsDisk(path) => self.diff_buffer_vs_disk(path),
         }
+    }
+
+    /// Compute the diff between the in-memory buffer for `path` and its
+    /// on-disk version. Shell out to `git diff --no-index` (uses the same
+    /// parser the regular diff pane needs); fall back to empty if it
+    /// can't be run. Writes the buffer text to a tempfile in
+    /// `.mnml/tmp/` so the `--no-index` invocation has two real paths.
+    fn diff_buffer_vs_disk(&self, path: &Path) -> Vec<crate::git::diff::Hunk> {
+        let mem_text = self
+            .panes
+            .iter()
+            .find_map(|p| match p {
+                Pane::Editor(b) if b.path.as_deref() == Some(path) => {
+                    Some(b.editor.text().to_string())
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+        let tmp_dir = self.workspace.join(".mnml").join("tmp");
+        if std::fs::create_dir_all(&tmp_dir).is_err() {
+            return Vec::new();
+        }
+        let stem = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "buffer".to_string());
+        let tmp = tmp_dir.join(format!("{stem}.diffview"));
+        if std::fs::write(&tmp, &mem_text).is_err() {
+            return Vec::new();
+        }
+        let out = std::process::Command::new("git")
+            .args(["diff", "--no-index", "--no-color", "--"])
+            .arg(path)
+            .arg(&tmp)
+            .current_dir(&self.workspace)
+            .output();
+        let stdout = match out {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+            Err(_) => String::new(),
+        };
+        // `git diff --no-index` exits non-zero when files differ — that's
+        // expected, so we don't check `.status.success()`.
+        let _ = std::fs::remove_file(&tmp);
+        crate::git::diff::parse_hunks(&stdout, &self.workspace)
     }
     /// Open a `git diff` view of the active editor's file, in a split to the right.
     pub fn open_diff_file(&mut self) {
@@ -7388,6 +7433,7 @@ impl App {
             Some(Pane::Diff(d)) => match &d.scope {
                 crate::pane::DiffScope::Unstaged(p) => p.clone(),
                 crate::pane::DiffScope::Staged | crate::pane::DiffScope::Commit(_) => None,
+                crate::pane::DiffScope::BufferVsDisk(p) => Some(p.clone()),
             },
             _ => None,
         };
@@ -7546,6 +7592,34 @@ impl App {
             }
             None => self.toast("browse: no recognized remote (check `git remote -v`)"),
         }
+    }
+
+    /// `git.diff_orig` (`:DiffOrig`) — open a diff pane comparing the
+    /// active buffer's in-memory text against its on-disk version. Vim
+    /// canonical for "what have I changed since I last saved". Read-only
+    /// (the diff pane's stage/unstage doesn't apply to this scope).
+    pub fn open_diff_buffer_vs_disk(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("no active buffer");
+            return;
+        };
+        let Some(path) = self.active_editor().and_then(|b| b.path.clone()) else {
+            self.toast(":DiffOrig needs a saved file");
+            return;
+        };
+        let scope = crate::pane::DiffScope::BufferVsDisk(path);
+        let hunks = self.fetch_diff(&scope);
+        if hunks.is_empty() {
+            self.toast("no unsaved changes");
+            return;
+        }
+        let new_id = self.split_leaf_with(
+            cur,
+            crate::layout::SplitDir::Horizontal,
+            Pane::Diff(crate::pane::DiffView::new(scope, hunks)),
+        );
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
     }
 
     /// `git.file_history` — fuzzy picker over commits that touched the active
@@ -12960,6 +13034,9 @@ impl App {
             }
             "Gflog" | "FileHistory" => {
                 crate::command::run("git.file_history", self);
+            }
+            "DiffOrig" => {
+                crate::command::run("git.diff_orig", self);
             }
             "GBrowse" | "Gbrowse" | "Browse" => {
                 if let Some(arg) = rest.split_whitespace().next() {

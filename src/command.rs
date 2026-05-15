@@ -1158,6 +1158,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_file_history_picker(),
         },
         Command {
+            id: "git.diff_orig",
+            title: "Git: diff active buffer against on-disk version (vim :DiffOrig)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_diff_buffer_vs_disk(),
+        },
+        Command {
             id: "git.browse",
             title: "Git: open file at cursor on remote (GitHub / GitLab / Bitbucket)",
             group: "git",
