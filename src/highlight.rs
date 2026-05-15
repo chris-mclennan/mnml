@@ -1005,6 +1005,67 @@ mod tests {
     }
 
     #[test]
+    fn incremental_reparse_faster_than_fresh_on_big_file() {
+        // Synthesize a ~600 KB Rust file and verify that an incremental
+        // one-char insertion is meaningfully faster than a fresh parse.
+        // Not a strict perf guarantee (CI machines vary) — we just assert
+        // incremental ≤ fresh, which catches regressions where the cached
+        // tree isn't actually being reused.
+        let chunk = "fn item_NNNN() { let s = \"hello\"; let n = 42; }\n";
+        let mut text = String::with_capacity(700_000);
+        let mut idx = 0u32;
+        while text.len() < 600_000 {
+            text.push_str(&chunk.replace("NNNN", &format!("{idx:04}")));
+            idx += 1;
+        }
+
+        // Warm: cache the initial tree.
+        let mut tree: Option<Tree> = None;
+        let _ = highlight_lines_with_cache(&text, "rs", &mut tree, &[], &[]);
+        assert!(tree.is_some());
+        let prev_starts: Vec<usize> = std::iter::once(0)
+            .chain(
+                text.as_bytes()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &b)| (b == b'\n').then_some(i + 1)),
+            )
+            .collect();
+
+        // Insert a single char near the middle.
+        let insert_at = text.len() / 2;
+        // Snap to a char boundary just to be safe.
+        let insert_at = (insert_at..text.len())
+            .find(|&i| text.is_char_boundary(i))
+            .unwrap_or(insert_at);
+        let mut after = text.clone();
+        after.insert(insert_at, 'X');
+        let edit = TextEdit {
+            start_byte: insert_at,
+            old_end_byte: insert_at,
+            new_end_byte: insert_at + 1,
+        };
+
+        let t_inc = std::time::Instant::now();
+        let _ = highlight_lines_with_cache(&after, "rs", &mut tree, &[edit], &prev_starts);
+        let inc = t_inc.elapsed();
+
+        let mut fresh_tree: Option<Tree> = None;
+        let t_fresh = std::time::Instant::now();
+        let _ = highlight_lines_with_cache(&after, "rs", &mut fresh_tree, &[], &[]);
+        let fresh = t_fresh.elapsed();
+
+        // Looser than the handoff's "< 5ms" — that's a real-machine target.
+        // We just want a confidence floor that incremental is doing *something*
+        // useful, so allow it to be up to fresh's time. In practice it's much
+        // less (the parse is the dominant cost; query traversal is similar).
+        assert!(
+            inc <= fresh,
+            "incremental ({inc:?}) should not be slower than fresh ({fresh:?})"
+        );
+    }
+
+    #[test]
     fn incremental_reparse_handles_backspace() {
         // Buffer "fn main() {}", backspace deletes the trailing brace.
         let before = "fn main() {}";
