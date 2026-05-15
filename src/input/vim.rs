@@ -1019,14 +1019,26 @@ impl VimInputHandler {
                     KeyCode::Char('e') => InputResult::Ops(Self::repeated(MoveWordEndBack, n)),
                     KeyCode::Char('E') => InputResult::Ops(Self::repeated(MoveBigWordEndBack, n)),
                     // `g0` / `g^` / `g$` / `gj` / `gk` / `gm` — display-line
-                    // motions. mnml doesn't wrap (yet), so each is an alias for
-                    // the logical-line equivalent. `gm` ⇒ middle of the
-                    // (single) line — half the line width.
-                    KeyCode::Char('0') => InputResult::Ops(vec![MoveLineStart]),
+                    // motions. With `[ui] wrap` on, walk one visual row;
+                    // otherwise alias to the logical-line equivalent. `gm`
+                    // ⇒ middle of the (single) line — half the line width.
+                    KeyCode::Char('0') => match ctx.wrap_width {
+                        Some(w) => InputResult::Ops(vec![MoveVisualLineStart(w)]),
+                        None => InputResult::Ops(vec![MoveLineStart]),
+                    },
                     KeyCode::Char('^') => InputResult::Ops(vec![MoveLineFirstNonWs]),
-                    KeyCode::Char('$') => InputResult::Ops(vec![MoveLineEnd]),
-                    KeyCode::Char('j') => InputResult::Ops(Self::repeated(EditOp::MoveDown, n)),
-                    KeyCode::Char('k') => InputResult::Ops(Self::repeated(EditOp::MoveUp, n)),
+                    KeyCode::Char('$') => match ctx.wrap_width {
+                        Some(w) => InputResult::Ops(vec![MoveVisualLineEnd(w)]),
+                        None => InputResult::Ops(vec![MoveLineEnd]),
+                    },
+                    KeyCode::Char('j') => match ctx.wrap_width {
+                        Some(w) => InputResult::Ops(Self::repeated(EditOp::MoveVisualDown(w), n)),
+                        None => InputResult::Ops(Self::repeated(EditOp::MoveDown, n)),
+                    },
+                    KeyCode::Char('k') => match ctx.wrap_width {
+                        Some(w) => InputResult::Ops(Self::repeated(EditOp::MoveVisualUp(w), n)),
+                        None => InputResult::Ops(Self::repeated(EditOp::MoveUp, n)),
+                    },
                     // `gu{motion}` — lowercase. Sets a pending op + waits
                     // for a motion (or `u` for the doubled "current line"
                     // form). E.g. `guu` lowercases the line; `guw` the word.
@@ -2721,6 +2733,7 @@ mod tests {
             has_selection: false,
             next_find_match: None,
             prev_find_match: None,
+            wrap_width: None,
         }
     }
     fn k(c: char) -> KeyEvent {

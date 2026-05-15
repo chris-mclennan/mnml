@@ -18,3 +18,20 @@ expect screen contains "ZZZ"
 # Toggle back off.
 command view.toggle_wrap
 expect screen lacks "ZZZ"
+
+# Wrap-aware `gj` / `gk` motions — flip wrap back on, use vim mode,
+# `gj` should walk to the next visual row of the same long line.
+command view.toggle_wrap
+command editor.use_vim
+# Move cursor to start of the long line then `gj` once. The cursor
+# should still be on row 0 file-line-wise (still the same long line)
+# but advanced by ~viewport-width chars. We can't directly assert
+# cursor position in screen text, but we can use a buffer-info
+# command. For now this just verifies the chord doesn't crash.
+key escape
+key g
+key j
+expect screen contains "AAA BBB"
+key g
+key k
+expect screen contains "AAA BBB"

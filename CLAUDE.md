@@ -676,15 +676,24 @@ same file line. Char-break MVP — no word-boundary heuristic. `h_scroll` is for
 wrap is on. Implementation: `editor_view` precomputes a `Vec<VisRow {line_no, char_start,
 is_continuation}>` of `text_h` entries from `buf.scroll`, then the existing per-row loop walks
 that vector instead of `next_visible_line`; the inner cell loop uses `view_col_start + vc`
-instead of `buf.h_scroll + vc` (all overlay paints — folds chip / inline diag / inlay hints /
-code lens / color decorations — sed'd over too). Cursor placement uses wrap math when wrap is
-on (visual_y = sum of wrap-heights from buf.scroll + cur_col / tw; visual_x = cur_col % tw).
-Vertical scroll gets a wrap-aware correction loop that bumps `buf.scroll` forward when the
-cursor's visual offset would fall past `text_h`. **Known limitations**: click-to-place under
-wrap maps the click row → file line via the file-line-only logic (clicking inside a wrapped
-continuation lands on the line's start); wrap-aware motions (vim `gj` / `gk` / display-line
-`0`/`$`) still walk file lines; long lines + horizontal scroll math interplay isn't gracefully
-handled when toggling wrap mid-file. All follow-ups.
+instead of `buf.h_scroll + vc`. Cursor placement uses wrap math (visual_y = sum of wrap-heights
+from buf.scroll + cur_col / tw; visual_x = cur_col % tw). Vertical scroll gets a wrap-aware
+correction loop that bumps `buf.scroll` forward when the cursor's visual offset would fall past
+`text_h`.
+**Wrap-aware click-to-place** — clicks (and alt-click, drag-select) inside a wrapped
+continuation row land on the right `(file_line, char_col)` instead of snapping to the line's
+start. New `Buffer::wrap_to_file_pos(scroll, visible_row, tw)` walks visual rows from
+`buf.scroll` (skipping folds, counting wrap chunks); `tui.rs` factors the click-translation
+into a `click_to_file_pos` helper used at the three click sites (alt-click add-cursor, plain
+click place-cursor, drag-select extend).
+**Wrap-aware vim motions `gj` / `gk` / `g0` / `g$`** — under wrap these walk one *visual*
+row / move to the visual row's start / end (vim canonical display-line motions). Implemented
+via new `EditCtx.wrap_width: Option<usize>` (passed from `tui.rs` from `app.rects.editor_panes`
+when `[ui] wrap` is on) + new `EditOp::MoveVisualDown(width)` / `MoveVisualUp` /
+`MoveVisualLineStart` / `MoveVisualLineEnd`. Editor::apply: down advances `width` chars on the
+same line if room, else jumps to the next line at `cur_col % width`; up is the mirror; line
+start / end snap to the segment boundary `(col / width) * width [+ width - 1]`. Compose with
+counts (`3gj`). When wrap is off, the chords still alias to logical-line motions.
 **Statusline LSP chip + `:LspStatus`** — when one or more language servers are running for any
 of the open files, the statusline right side shows a `LSP N` chip (count of `(root, server-name)`
 pairs). `:LspStatus` / `:LspInfo` toasts each running server with its workspace-relative root —

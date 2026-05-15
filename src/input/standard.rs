@@ -153,6 +153,7 @@ mod tests {
             has_selection: has_sel,
             next_find_match: None,
             prev_find_match: None,
+            wrap_width: None,
         }
     }
     fn key(code: KeyCode, mods: KeyModifiers) -> KeyEvent {

@@ -145,6 +145,11 @@ pub struct EditCtx {
     /// Mirror for vim's `gN` (closest match strictly *before* the cursor;
     /// wraps to last).
     pub prev_find_match: Option<(usize, usize)>,
+    /// When `[ui] wrap` is on, the active editor pane's text width in
+    /// columns (so vim's display-line chords `gj` / `gk` / `g0` / `g$`
+    /// can walk visual rows). `None` ⇒ wrap is off; those chords alias
+    /// to their logical-line equivalents.
+    pub wrap_width: Option<usize>,
 }
 
 pub trait InputHandler: Send {

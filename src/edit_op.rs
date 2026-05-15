@@ -49,6 +49,21 @@ pub enum EditOp {
         forward: bool,
     },
     MoveLineEnd,
+    /// vim `gj` — move down one visual row under wrap. `usize` is the
+    /// viewport text width (char cells). When the cursor's col + width
+    /// would stay on the same file line, the cursor moves forward by
+    /// `width` chars; otherwise advances to the next visible line at the
+    /// column `cur_col % width`.
+    MoveVisualDown(usize),
+    /// vim `gk` — inverse of `MoveVisualDown`.
+    MoveVisualUp(usize),
+    /// vim `g0` — start of the current *visual* row (`(cur_col / width) *
+    /// width`). When the cursor is already in the first visual segment
+    /// this is the same as `MoveLineStart`.
+    MoveVisualLineStart(usize),
+    /// vim `g$` — end of the current *visual* row (`(cur_col / width) *
+    /// width + width - 1`, clamped to line length).
+    MoveVisualLineEnd(usize),
     MoveBufferStart,
     MoveBufferEnd,
     /// 1-based line; clamps.
@@ -352,6 +367,10 @@ impl EditOp {
             | MoveParagraph { .. }
             | MoveSentence { .. }
             | MoveLineEnd
+            | MoveVisualDown(_)
+            | MoveVisualUp(_)
+            | MoveVisualLineStart(_)
+            | MoveVisualLineEnd(_)
             | MoveBufferStart
             | MoveBufferEnd
             | MoveToLine(_)

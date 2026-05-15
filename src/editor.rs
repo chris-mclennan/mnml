@@ -1378,6 +1378,67 @@ impl Editor {
                 self.cursor = self.line_end(self.current_line());
                 self.move_extras_to_line_edge(true);
             }
+            MoveVisualDown(width) => {
+                let w = width.max(1);
+                let line = self.current_line();
+                let col = self.col_at_byte(self.cursor);
+                let line_chars = self.line_str(line).chars().count();
+                if col + w < line_chars {
+                    // Forward `w` chars on the same line — under wrap this
+                    // is the next visual row of the same file line.
+                    self.cursor = self.byte_at_col(line, col + w);
+                    self.goal_col = self.col_at_byte(self.cursor);
+                } else if line + 1 < self.line_count() {
+                    // Past the line's last visual row — jump down one file
+                    // line at `col % w`.
+                    let target_col = col % w;
+                    self.cursor = self.byte_at_col(line + 1, target_col);
+                    self.goal_col = self.col_at_byte(self.cursor);
+                } else {
+                    // Already on last line's last visual row — end of file.
+                    self.cursor = self.line_end(line);
+                    self.goal_col = self.col_at_byte(self.cursor);
+                }
+            }
+            MoveVisualUp(width) => {
+                let w = width.max(1);
+                let line = self.current_line();
+                let col = self.col_at_byte(self.cursor);
+                if col >= w {
+                    self.cursor = self.byte_at_col(line, col - w);
+                    self.goal_col = self.col_at_byte(self.cursor);
+                } else if line > 0 {
+                    // Up one file line, landing on its last visual row at
+                    // the same intra-row column.
+                    let prev = line - 1;
+                    let prev_chars = self.line_str(prev).chars().count();
+                    let last_segment_start = (prev_chars / w) * w;
+                    let target_col = (last_segment_start + col).min(prev_chars);
+                    self.cursor = self.byte_at_col(prev, target_col);
+                    self.goal_col = self.col_at_byte(self.cursor);
+                } else {
+                    self.cursor = self.line_start(line);
+                    self.goal_col = 0;
+                }
+            }
+            MoveVisualLineStart(width) => {
+                let w = width.max(1);
+                let line = self.current_line();
+                let col = self.col_at_byte(self.cursor);
+                let target_col = (col / w) * w;
+                self.cursor = self.byte_at_col(line, target_col);
+                self.goal_col = target_col;
+            }
+            MoveVisualLineEnd(width) => {
+                let w = width.max(1);
+                let line = self.current_line();
+                let col = self.col_at_byte(self.cursor);
+                let line_chars = self.line_str(line).chars().count();
+                let segment_start = (col / w) * w;
+                let target_col = (segment_start + w - 1).min(line_chars.saturating_sub(1));
+                self.cursor = self.byte_at_col(line, target_col);
+                self.goal_col = target_col;
+            }
             MoveParagraph { forward } => {
                 let cur_row = self.current_line();
                 let line_count = self.line_count();

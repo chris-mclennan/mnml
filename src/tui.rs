@@ -1198,9 +1198,22 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         || matches!(key.code, KeyCode::Char('.'))
             && mode_before == Some(crate::input::EditingMode::Normal)
             && pending_before.is_none();
+    // Pass the active pane's text width to `feed_key` so the input
+    // handler's wrap-aware chords (vim `gj`/`gk`/`g0`/`g$`) can compute
+    // visual rows. `None` ⇒ wrap is off.
+    let wrap_width: Option<usize> = if app.config.ui.wrap {
+        app.rects
+            .editor_panes
+            .iter()
+            .find(|(_, pid)| *pid == i)
+            .map(|(r, _)| r.width as usize)
+            .filter(|w| *w > 0)
+    } else {
+        None
+    };
     // `b` borrows app.panes; `&mut app.clipboard` is a disjoint field — fine.
     let ev = match app.panes.get_mut(i) {
-        Some(Pane::Editor(b)) => b.feed_key(key, &mut app.clipboard, viewport),
+        Some(Pane::Editor(b)) => b.feed_key(key, &mut app.clipboard, viewport, wrap_width),
         _ => return,
     };
     let edited = matches!(ev, BufferEvent::Edited);
@@ -1455,6 +1468,34 @@ fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
 }
 
 // ─── mouse dispatch (shared with headless/IPC) ──────────────────────
+
+/// Translate a click within an editor pane's text rect to a `(file_row,
+/// file_col)`. Wrap-aware: when `[ui] wrap` is on, the visible row is
+/// walked via [`Buffer::wrap_to_file_pos`] so clicks inside a wrapped
+/// continuation land on the right char column. With wrap off this is
+/// the classic `visible_to_file_row` + `h_scroll` mapping.
+fn click_to_file_pos(
+    b: &crate::buffer::Buffer,
+    tr: Rect,
+    wrap: bool,
+    x: u16,
+    y: u16,
+) -> (usize, usize) {
+    let visible_row = (y.saturating_sub(tr.y)) as usize;
+    let click_col = (x.saturating_sub(tr.x)) as usize;
+    let tw = tr.width as usize;
+    if wrap && tw > 0 {
+        let (row, char_start) = b
+            .wrap_to_file_pos(b.scroll, visible_row, tw)
+            .unwrap_or((b.scroll, 0));
+        (row, char_start + click_col)
+    } else {
+        let row = b
+            .visible_to_file_row(b.scroll, visible_row)
+            .unwrap_or(b.scroll);
+        (row, b.h_scroll + click_col)
+    }
+}
 
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
@@ -1718,12 +1759,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 // (VS Code convention). Skips the focus / drag-arm path so
                 // the existing primary stays put.
                 if m.modifiers.contains(KeyModifiers::ALT) {
+                    let wrap = app.config.ui.wrap;
                     if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
-                        let visible_row = (y - tr.y) as usize;
-                        let row = b
-                            .visible_to_file_row(b.scroll, visible_row)
-                            .unwrap_or(b.scroll);
-                        let col = b.h_scroll + (x - tr.x) as usize;
+                        let (row, col) = click_to_file_pos(b, tr, wrap, x, y);
                         let byte = b.editor.byte_at_col_pub(row, col);
                         b.editor.add_extra_cursor(byte);
                     }
@@ -1743,12 +1781,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     _ => 1,
                 };
                 app.last_click = Some((now, x, y, count));
+                let wrap = app.config.ui.wrap;
                 if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
-                    let visible_row = (y - tr.y) as usize;
-                    let row = b
-                        .visible_to_file_row(b.scroll, visible_row)
-                        .unwrap_or(b.scroll);
-                    let col = b.h_scroll + (x - tr.x) as usize;
+                    let (row, col) = click_to_file_pos(b, tr, wrap, x, y);
                     b.editor.place_cursor(row, col);
                     if count >= 2 {
                         let clip = &mut app.clipboard;
@@ -1783,6 +1818,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 // Editor drag-select: drop the anchor at the click origin
                 // (first drag only), then extend the cursor to the current
                 // mouse position.
+                let wrap = app.config.ui.wrap;
                 if let Some(&(tr, p2)) = app
                     .rects
                     .editor_panes
@@ -1791,11 +1827,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     && p2 == pid
                     && let Some(Pane::Editor(b)) = app.panes.get_mut(pid)
                 {
-                    let visible_row = (y.saturating_sub(tr.y)) as usize;
-                    let row = b
-                        .visible_to_file_row(b.scroll, visible_row)
-                        .unwrap_or(b.scroll);
-                    let col = b.h_scroll + (x.saturating_sub(tr.x)) as usize;
+                    let (row, col) = click_to_file_pos(b, tr, wrap, x, y);
                     if !armed {
                         b.editor.place_cursor(oy, ox);
                         b.editor.apply(

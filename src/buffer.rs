@@ -482,7 +482,7 @@ impl Buffer {
         self.input.mode()
     }
 
-    fn make_ctx(&self) -> EditCtx {
+    fn make_ctx(&self, wrap_width: Option<usize>) -> EditCtx {
         let (row, col) = self.editor.row_col();
         let line = self.editor.line_str(row);
         let cur = self.editor.cursor();
@@ -523,21 +523,24 @@ impl Buffer {
             has_selection: self.editor.has_selection(),
             next_find_match: next_match,
             prev_find_match: prev_match,
+            wrap_width,
         }
     }
 
     /// Feed one key through the handler → editor. `viewport_rows` is the editor
-    /// body height (for page motions).
+    /// body height (for page motions); `wrap_width` is `Some(tw)` when
+    /// `[ui] wrap` is on so the handler can compute visual-row motions.
     pub fn feed_key(
         &mut self,
         key: KeyEvent,
         clipboard: &mut Clipboard,
         viewport_rows: usize,
+        wrap_width: Option<usize>,
     ) -> BufferEvent {
         if self.read_only {
             return BufferEvent::Unhandled(key);
         }
-        let ctx = self.make_ctx();
+        let ctx = self.make_ctx(wrap_width);
         match self.input.handle_key(key, &ctx) {
             InputResult::Ops(ops) => {
                 let mut changed = false;
@@ -747,6 +750,43 @@ impl Buffer {
                 }
                 visible += 1;
             }
+            line += 1;
+        }
+        None
+    }
+
+    /// Wrap-aware version of [`Self::visible_to_file_row`] — given a visual
+    /// row index (the terminal row past the gutter), return the
+    /// `(file_line, char_start)` that visual row maps to under char-break
+    /// wrapping with width `tw`. Long lines emit multiple visual rows
+    /// where `char_start` advances by `tw`; folded bodies are skipped.
+    /// Returns `None` if the visual row falls past the file's end.
+    pub fn wrap_to_file_pos(
+        &self,
+        start_file_line: usize,
+        visible_row: usize,
+        tw: usize,
+    ) -> Option<(usize, usize)> {
+        if tw == 0 {
+            return self
+                .visible_to_file_row(start_file_line, visible_row)
+                .map(|l| (l, 0));
+        }
+        let n = self.editor.line_count();
+        let mut walked: usize = 0;
+        let mut line = start_file_line;
+        while line < n {
+            if self.is_line_folded_body(line) {
+                line += 1;
+                continue;
+            }
+            let chars = self.editor.line_str(line).chars().count();
+            let chunks = chars.div_ceil(tw).max(1);
+            if visible_row < walked + chunks {
+                let chunk = visible_row - walked;
+                return Some((line, chunk * tw));
+            }
+            walked += chunks;
             line += 1;
         }
         None
