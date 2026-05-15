@@ -13624,6 +13624,18 @@ impl App {
             // `:OpenAt <path>:<line>[:<col>]` — open the file and jump to
             // the given 1-based position. Useful for pasting in
             // `path:row:col` strings from grep / clippy / etc.
+            // `:Filetypes` — toast the tree-sitter grammars / filetypes
+            // mnml ships with. Helpful for "is X supported?" without
+            // grepping the source.
+            "Filetypes" | "filetypes" => {
+                let exts = [
+                    "rs", "js", "jsx", "ts", "tsx", "py", "json", "go", "toml", "css", "bash",
+                    "html", "md", "c", "cpp", "rb", "java", "cs", "lua", "yaml", "scala", "ex",
+                    "hs", "php", "swift", "zig", "nix", "ocaml", "dart", "sql", "make", "kt",
+                    "regex",
+                ];
+                self.toast(format!("filetypes ({}): {}", exts.len(), exts.join(" ")));
+            }
             "OpenAt" | "openat" => {
                 let arg = rest.trim();
                 if arg.is_empty() {

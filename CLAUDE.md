@@ -759,6 +759,8 @@ aliased to `:cprev`, so `:Cp` only.)
 **`:Capture <cmd>`** — run the command via `$SHELL -c`, open the combined stdout/stderr
 in a new scratch buffer (split below). Useful for grabbing `cargo test` output, log dumps,
 etc. for grep / highlight without launching a full pty. Cwd is the workspace.
+**`:Filetypes`** — toast the tree-sitter grammars mnml ships with (rs / js / py / …).
+Quick "is X supported?" without grepping.
 **`:OpenAt <path>:<line>[:<col>]`** — open the file and jump to a 1-based position.
 Friendly for pasted `path:row:col` strings from grep / clippy / etc.
 **`:Fn`** — toast just the active editor's filename (no path). Quicker than `:Path` when
