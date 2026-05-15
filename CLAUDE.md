@@ -499,6 +499,11 @@ restored after). Bare `:retab` still uses the global setting.
 **`:sort i`** — case-insensitive sort (vim canonical). Combines with `u` and `!` as
 expected. `run_sort_lines` now delegates to `run_sort_lines_opts(unique, reverse,
 case_insensitive)`.
+**`:Maps [filter]` / `:Keys [filter]`** — toast the resolved keymap (chord → command id),
+optionally narrowed by a substring that matches either side. Vim users reach for `:map`
+for this; mnml's keymap is config-driven so the listing is read-only discovery. Backed by
+new `Keymap::iter` + `Chord::to_spec()` (pretty-prints chords back to key-spec strings
+that round-trip through `parse_key_spec`).
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

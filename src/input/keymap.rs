@@ -41,6 +41,44 @@ impl Chord {
         // it consistent. We *don't* strip SHIFT otherwise (Ctrl+Shift+P needs it).
         Chord { code, mods }
     }
+
+    /// Pretty-print as a key spec (`ctrl+shift+p`, `enter`, `f5`, etc.). Round-
+    /// trips through [`parse_key_spec`] for the chord forms we use.
+    pub fn to_spec(&self) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        if self.mods.contains(KeyModifiers::CONTROL) {
+            parts.push("ctrl");
+        }
+        if self.mods.contains(KeyModifiers::ALT) {
+            parts.push("alt");
+        }
+        if self.mods.contains(KeyModifiers::SHIFT) {
+            parts.push("shift");
+        }
+        let name = match self.code {
+            KeyCode::Enter => "enter".to_string(),
+            KeyCode::Tab => "tab".to_string(),
+            KeyCode::BackTab => "backtab".to_string(),
+            KeyCode::Esc => "esc".to_string(),
+            KeyCode::Backspace => "backspace".to_string(),
+            KeyCode::Delete => "delete".to_string(),
+            KeyCode::Insert => "insert".to_string(),
+            KeyCode::Up => "up".to_string(),
+            KeyCode::Down => "down".to_string(),
+            KeyCode::Left => "left".to_string(),
+            KeyCode::Right => "right".to_string(),
+            KeyCode::Home => "home".to_string(),
+            KeyCode::End => "end".to_string(),
+            KeyCode::PageUp => "pageup".to_string(),
+            KeyCode::PageDown => "pagedown".to_string(),
+            KeyCode::F(n) => format!("f{n}"),
+            KeyCode::Char(' ') => "space".to_string(),
+            KeyCode::Char(c) => c.to_string(),
+            other => format!("{other:?}"),
+        };
+        parts.push(&name);
+        parts.join("+")
+    }
 }
 
 /// The resolved binding table. `resolve` is the hot path (one hashmap lookup per
@@ -104,6 +142,12 @@ impl Keymap {
     /// Number of bound chords. Used by the About / Settings display.
     pub fn binding_count(&self) -> usize {
         self.map.len()
+    }
+
+    /// Iterate `(chord, command_id)` pairs. Useful for `:Maps` discovery
+    /// and similar listings. Order is undefined (HashMap-backed).
+    pub fn iter(&self) -> impl Iterator<Item = (&Chord, &str)> {
+        self.map.iter().map(|(c, s)| (c, s.as_str()))
     }
 
     /// Bind one keyspec → command id (used for plugin-registered commands). A

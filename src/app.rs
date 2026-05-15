@@ -11289,6 +11289,40 @@ impl App {
                     self.toast(rest.trim().to_string());
                 }
             }
+            // `:Maps [filter]` — toast the resolved keymap (chord → command).
+            // With a filter, narrows to specs / command ids containing the
+            // substring. Vim users reach for `:map`; mnml's keymap is
+            // config-driven so this is read-only discovery.
+            "Maps" | "Keys" => {
+                let filter = rest.trim().to_lowercase();
+                let mut rows: Vec<(String, String)> = self
+                    .keymap
+                    .iter()
+                    .map(|(c, id)| (c.to_spec(), id.to_string()))
+                    .filter(|(spec, id)| {
+                        filter.is_empty()
+                            || spec.to_lowercase().contains(&filter)
+                            || id.to_lowercase().contains(&filter)
+                    })
+                    .collect();
+                rows.sort();
+                if rows.is_empty() {
+                    self.toast(format!(":Maps — no matches for {filter:?}"));
+                } else {
+                    let preview = rows
+                        .iter()
+                        .take(20)
+                        .map(|(spec, id)| format!("{spec}→{id}"))
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                    let more = if rows.len() > 20 {
+                        format!(" (…{} more)", rows.len() - 20)
+                    } else {
+                        String::new()
+                    };
+                    self.toast(format!(":Maps · {preview}{more}"));
+                }
+            }
             // `:diff` / `:diffs` / `:diffsplit` — open the diff pane for
             // the active file (alias for the existing `git.diff_file`
             // command). Vim users reach for `:diff` reflexively.
