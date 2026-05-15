@@ -759,6 +759,9 @@ aliased to `:cprev`, so `:Cp` only.)
 **`:Capture <cmd>`** — run the command via `$SHELL -c`, open the combined stdout/stderr
 in a new scratch buffer (split below). Useful for grabbing `cargo test` output, log dumps,
 etc. for grep / highlight without launching a full pty. Cwd is the workspace.
+**`:Wipeout <substr>` / `:Wipe <substr>`** — close every editor pane whose workspace-
+relative path contains `<substr>` (case-insensitive). Dirty buffers are kept + toasted
+in the count. Useful for "drop everything under `tests/`" after a refactor.
 **`:NextDirty` / `:PrevDirty`** (`buffer.next_dirty` / `buffer.prev_dirty`) — jump to the
 next / previous editor pane with unsaved changes. Cycles. Useful pre-quit to find what's
 still dirty when many buffers are open.

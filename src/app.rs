@@ -13463,6 +13463,51 @@ impl App {
             // buffers and want to find what's still dirty before quitting.
             "NextDirty" => self.jump_dirty_pane(true),
             "PrevDirty" => self.jump_dirty_pane(false),
+            // `:Wipeout <substr>` — close every editor pane whose
+            // workspace-relative path contains `<substr>`. Skips dirty
+            // buffers (toasts the count). Useful for "drop everything
+            // under `tests/` after a refactor".
+            "Wipeout" | "Wipe" => {
+                let sub = rest.trim();
+                if sub.is_empty() {
+                    self.toast(":Wipeout <substr> — needs a substring");
+                    return;
+                }
+                let sub_lower = sub.to_lowercase();
+                let workspace = self.workspace.clone();
+                let to_close: Vec<usize> = self
+                    .panes
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, p)| match p {
+                        Pane::Editor(b) => {
+                            let path = b.path.as_ref()?;
+                            let rel = path
+                                .strip_prefix(&workspace)
+                                .unwrap_or(path)
+                                .to_string_lossy()
+                                .to_lowercase();
+                            if rel.contains(&sub_lower) && !b.dirty {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if to_close.is_empty() {
+                    self.toast(format!(":Wipeout — no clean buffers match {sub:?}"));
+                    return;
+                }
+                // Close in reverse index order so earlier indices stay
+                // valid as we work backward.
+                let n = to_close.len();
+                for i in to_close.into_iter().rev() {
+                    self.close_pane(i);
+                }
+                self.toast(format!(":Wipeout — closed {n} buffer(s)"));
+            }
             "Bonly" | "bonly" => {
                 if let Some(id) = self.active {
                     self.close_panes_except(Some(id));
