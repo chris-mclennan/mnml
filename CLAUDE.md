@@ -1870,10 +1870,17 @@ filtered locally after the first reply (no re-request as the prefix grows). Then
 entries → curl, DOM, screenshots, headless), more `.test` coverage, the `private` Cargo feature (DocDB
 `TestExecutions` + CodeBuild + native launcher actions), Git GUI phase 4 (branch rail UI, commit-with-Codex,
 recompose-with-AI, multi-repo); plus queued polish (editable request-pane field tabs). See `.local/PLAN.md`.
-Highlight follow-ups: more grammars; incremental tree-sitter parsing (needs dropping
-`tree-sitter-highlight` for raw `Parser`/`Query` so an old `Tree` can be reused — not bounded);
-markdown's `markdown_inline` injection (the callback fires but emphasis/inline-code spans don't
-land — some `tree-sitter-md` split-grammar quirk; fenced code blocks DO highlight).
+Highlight follow-ups: more grammars; incremental tree-sitter parsing — session 1 of that arc is
+done: `tree_sitter_highlight` is gone, `highlight.rs` now drives raw `tree_sitter::Parser` + `Query`
+directly, and `Buffer.parse_tree: Option<Tree>` is wired (still parsed-from-scratch each refresh
+pending session 3's `InputEdit` hookup). Single-grammar files (rust / python / js / ts / go / json /
+toml / css / html / bash / c / cpp / ruby / java / cs / lua / yaml / scala / elixir / haskell / php /
+swift / make / zig / nix / ocaml / dart / sql / kotlin / regex / markdown-block) highlight as
+before. **Regression to fix in session 2**: markdown's `markdown_inline` injection (emphasis /
+inline code / links) and fenced-code-block injection (` ```rust …` no longer Rust-highlighted)
+both rely on the injection-callback path that tree_sitter_highlight owned — restored in S2 by
+walking the outer grammar's `injections.scm` query and recursively highlighting `@injection.content`
+captures with the resolved inner grammar.
 
 ## Not set up yet (could add later)
 

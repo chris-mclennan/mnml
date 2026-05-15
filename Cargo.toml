@@ -33,7 +33,6 @@ regex = "1"
 # HIGHLIGHT_QUERY, presence of INJECTIONS_QUERY / LOCALS_QUERY) — quirks are isolated in
 # highlight.rs::build_config. Start with a handful; more (typescript/css/html/c/bash/md) come later.
 tree-sitter = "0.26"
-tree-sitter-highlight = "0.26"
 tree-sitter-rust = "0.24"
 tree-sitter-javascript = "0.25"
 tree-sitter-python = "0.25"
