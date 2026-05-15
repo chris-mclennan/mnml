@@ -292,6 +292,69 @@ fn expand_mark_refs(line: &str, lookup: &dyn Fn(char) -> Option<usize>) -> Strin
 /// - FIRST word ⇒ match against [`crate::input::vim::EX_COMPLETION_NAMES`].
 /// - Trailing arg of a path-accepting command ⇒ workspace-rooted file/dir
 ///   lookup using the user's typed prefix.
+fn compute_cmdline_completions_for_app(app: &App, line: &str) -> Option<CmdlineCompleteState> {
+    use crate::input::vim::EX_COMPLETION_NAMES;
+    let split_at = line.rfind(char::is_whitespace).map(|i| i + 1).unwrap_or(0);
+    let head = &line[..split_at];
+    let token = &line[split_at..];
+    let first_word = head.split_whitespace().next().unwrap_or("");
+    // `:b` / `:buffer <prefix>` — complete from open buffer display names.
+    if !head.is_empty() && matches!(first_word, "b" | "buffer") {
+        let token_lc = token.to_lowercase();
+        let mut matches: Vec<String> = app
+            .panes
+            .iter()
+            .filter_map(|p| match p {
+                Pane::Editor(b) => Some(b.display_name().to_string()),
+                _ => None,
+            })
+            .filter(|n| n.to_lowercase().contains(&token_lc) || token.is_empty())
+            .collect();
+        matches.sort();
+        matches.dedup();
+        return Some(CmdlineCompleteState {
+            head: head.to_string(),
+            matches,
+            idx: 0,
+            last_shown: String::new(),
+        });
+    }
+    // Theme completion stays out of compute_cmdline_completions (which has
+    // no App access) — handled here.
+    if !head.is_empty() && matches!(first_word, "colorscheme" | "colo") {
+        let mut matches: Vec<String> = crate::ui::theme::names()
+            .into_iter()
+            .filter(|n| n.starts_with(token))
+            .map(String::from)
+            .collect();
+        matches.sort();
+        matches.dedup();
+        return Some(CmdlineCompleteState {
+            head: head.to_string(),
+            matches,
+            idx: 0,
+            last_shown: String::new(),
+        });
+    }
+    // First word + path completers handled below.
+    if head.is_empty() {
+        let mut matches: Vec<String> = EX_COMPLETION_NAMES
+            .iter()
+            .filter(|name| name.starts_with(token))
+            .map(|s| s.to_string())
+            .collect();
+        matches.sort();
+        matches.dedup();
+        return Some(CmdlineCompleteState {
+            head: String::new(),
+            matches,
+            idx: 0,
+            last_shown: String::new(),
+        });
+    }
+    compute_cmdline_completions(line, &app.workspace)
+}
+
 fn compute_cmdline_completions(line: &str, workspace: &Path) -> Option<CmdlineCompleteState> {
     use crate::input::vim::EX_COMPLETION_NAMES;
     // Identify the trailing whitespace-separated token; everything before is
@@ -315,25 +378,11 @@ fn compute_cmdline_completions(line: &str, workspace: &Path) -> Option<CmdlineCo
             last_shown: String::new(),
         });
     }
-    // Trailing arg — different completion sets per command.
+    // Trailing arg — only path-takers are handled here. Buffer-name
+    // completion (`:b <prefix>`) and theme completion (`:colorscheme`)
+    // live in `compute_cmdline_completions_for_app` because they need App
+    // state this stateless helper doesn't have.
     let first_word = head.split_whitespace().next().unwrap_or("");
-    // `:colorscheme <prefix>` / `:colo <prefix>` — complete against the
-    // built-in theme catalog.
-    if matches!(first_word, "colorscheme" | "colo") {
-        let mut matches: Vec<String> = crate::ui::theme::names()
-            .into_iter()
-            .filter(|n| n.starts_with(token))
-            .map(String::from)
-            .collect();
-        matches.sort();
-        matches.dedup();
-        return Some(CmdlineCompleteState {
-            head: head.to_string(),
-            matches,
-            idx: 0,
-            last_shown: String::new(),
-        });
-    }
     let path_takers = [
         "e", "edit", "sp", "split", "vs", "vsp", "vsplit", "tabnew", "tabe", "tabedit", "badd",
         "ba", "saveas", "w", "write", "source", "so", "r", "read", "Files",
@@ -10294,7 +10343,7 @@ impl App {
             st.idx = (st.idx + 1) % st.matches.len();
             st
         } else {
-            let Some(state) = compute_cmdline_completions(&line, &self.workspace) else {
+            let Some(state) = compute_cmdline_completions_for_app(self, &line) else {
                 return;
             };
             if state.matches.is_empty() {
