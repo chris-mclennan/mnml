@@ -315,8 +315,25 @@ fn compute_cmdline_completions(line: &str, workspace: &Path) -> Option<CmdlineCo
             last_shown: String::new(),
         });
     }
-    // Trailing arg — only complete paths for known path-accepting commands.
+    // Trailing arg — different completion sets per command.
     let first_word = head.split_whitespace().next().unwrap_or("");
+    // `:colorscheme <prefix>` / `:colo <prefix>` — complete against the
+    // built-in theme catalog.
+    if matches!(first_word, "colorscheme" | "colo") {
+        let mut matches: Vec<String> = crate::ui::theme::names()
+            .into_iter()
+            .filter(|n| n.starts_with(token))
+            .map(String::from)
+            .collect();
+        matches.sort();
+        matches.dedup();
+        return Some(CmdlineCompleteState {
+            head: head.to_string(),
+            matches,
+            idx: 0,
+            last_shown: String::new(),
+        });
+    }
     let path_takers = [
         "e", "edit", "sp", "split", "vs", "vsp", "vsplit", "tabnew", "tabe", "tabedit", "badd",
         "ba", "saveas", "w", "write", "source", "so", "r", "read", "Files",

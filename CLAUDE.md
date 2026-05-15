@@ -532,6 +532,9 @@ final `Replace` so the cursor lands on the last replaced char.
 **`:set list` EOL marker** — when `[ui] show_whitespace` is on, the editor view now paints
 a dim `$` glyph at the cell immediately past each line's last char (vim canonical
 `listchars=eol:$`). Joins the existing `·` (space) / `→` (tab) glyphs.
+**Cmdline Tab completion for `:colorscheme`** — the trailing-arg completer now offers
+theme names from `crate::ui::theme::names()` when the first word is `colorscheme` or
+`colo`. Cycles like the file-path completer.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.
