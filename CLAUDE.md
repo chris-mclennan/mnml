@@ -669,6 +669,15 @@ joins every range with `\n` and writes to the unnamed clipboard; replace
 deletes every range then inserts `s` at each cursor's resting position via
 the existing `multi_insert_str`. So `v…c<text><Esc>` does "change every
 selection to `<text>`" — the most useful multi-cursor edit shape.
+**LSP `folding_range`** — `lsp.fold_all` (no default chord): asks the active buffer's language
+server for its suggested fold ranges (`textDocument/foldingRange`); the reply installs each
+`(start, end)` as a `Buffer.folds` entry (replaces existing folds — the server is authoritative).
+Toasts the count. Works for languages where bracket-based folding doesn't (Python, YAML, plain
+text outline) since the server understands the structural shape. `initialize` advertises
+`lineFoldingOnly: true` so servers return line-based ranges (mnml's fold model is line-based);
+multi-line ranges with `end <= start` dropped. New `LspEvent::FoldingRanges{path, ranges}` +
+`parse_folding_ranges` + `LspClient::folding_range` + `LspManager::folding_range` +
+`App::lsp_fold_all` / `apply_folding_ranges`.
 **LSP `goto_declaration` / `goto_type_definition` / `goto_implementation`** — three siblings of
 `goto_definition`. `Declaration` is "the type/forward decl" (vs definition = "where bound") — diverges
 from `definition` mainly in C/C++ headers + JS imports; `TypeDefinition` jumps from a value to the type

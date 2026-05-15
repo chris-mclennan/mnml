@@ -164,6 +164,13 @@ pub enum LspEvent {
         path: PathBuf,
         links: Vec<DocumentLink>,
     },
+    /// Result of a `textDocument/foldingRange` request — line-based fold
+    /// ranges the server suggests (`(start_line, end_line)`, inclusive,
+    /// 0-based file lines).
+    FoldingRanges {
+        path: PathBuf,
+        ranges: Vec<(u32, u32)>,
+    },
     /// A server-side message worth surfacing as a toast.
     Message(String),
 }
@@ -631,6 +638,18 @@ impl LspManager {
         for c in self.clients.values_mut() {
             if c.is_open(path) {
                 c.document_link(path);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send `textDocument/foldingRange` — reply arrives as
+    /// [`LspEvent::FoldingRanges`].
+    pub fn folding_range(&mut self, path: &Path) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.folding_range(path);
                 sent = true;
             }
         }

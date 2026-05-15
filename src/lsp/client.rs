@@ -133,6 +133,10 @@ impl LspClient {
                         "codeLens": {
                             "dynamicRegistration": false
                         },
+                        "foldingRange": {
+                            "dynamicRegistration": false,
+                            "lineFoldingOnly": true
+                        },
                         "documentSymbol": {
                             "hierarchicalDocumentSymbolSupport": true,
                             "symbolKind": {
@@ -387,6 +391,16 @@ impl LspClient {
     pub fn document_link(&mut self, path: &Path) {
         self.request_with_path(
             "textDocument/documentLink",
+            json!({ "textDocument": { "uri": path_to_uri(path) } }),
+            Some(path),
+        );
+    }
+
+    /// `textDocument/foldingRange` — reply is `FoldingRange[]`. Path is
+    /// stashed so the reply routes back to the right buffer.
+    pub fn folding_range(&mut self, path: &Path) {
+        self.request_with_path(
+            "textDocument/foldingRange",
             json!({ "textDocument": { "uri": path_to_uri(path) } }),
             Some(path),
         );
@@ -683,9 +697,44 @@ fn handle_message(
                     }
                 }
             }
+            "textDocument/foldingRange" => {
+                if let Some(path) = req_path {
+                    let ranges = parse_folding_ranges(result);
+                    let _ = tx.send(LspEvent::FoldingRanges { path, ranges });
+                }
+            }
             _ => {}
         }
     }
+}
+
+/// Parse a `textDocument/foldingRange` reply (`FoldingRange[]`).
+/// Returns `(start_line, end_line)` pairs, inclusive on both ends.
+/// Ranges where end <= start are dropped (vim convention — a fold must
+/// have at least one hidden line).
+pub fn parse_folding_ranges(result: &serde_json::Value) -> Vec<(u32, u32)> {
+    let arr = match result.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for it in arr {
+        let Some(start) = it
+            .get("startLine")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32)
+        else {
+            continue;
+        };
+        let Some(end) = it.get("endLine").and_then(|v| v.as_u64()).map(|n| n as u32) else {
+            continue;
+        };
+        if end <= start {
+            continue;
+        }
+        out.push((start, end));
+    }
+    out
 }
 
 /// Parse a `textDocument/documentLink` reply (`DocumentLink[]`). Drops any

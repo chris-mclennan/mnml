@@ -4637,6 +4637,9 @@ impl App {
                     }
                 }
             }
+            LspEvent::FoldingRanges { path, ranges } => {
+                self.apply_folding_ranges(&path, ranges);
+            }
             LspEvent::CodeAction(actions) => self.apply_code_action_reply(actions),
             LspEvent::DocumentSymbols(symbols) => {
                 if self.pending_outline {
@@ -8114,6 +8117,55 @@ impl App {
                 self.toast(format!("unfolded {n} fold(s)"));
             }
         }
+    }
+
+    /// `lsp.fold_all` — ask the active buffer's language server for its
+    /// suggested fold ranges (`textDocument/foldingRange`); when the reply
+    /// arrives, `apply_folding_ranges` installs every range as a fold on
+    /// the buffer. Works for languages where bracket-based folding doesn't
+    /// (Python / YAML / etc.).
+    pub fn lsp_fold_all(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("buffer has no path");
+            return;
+        };
+        if !self.lsp.folding_range(&path) {
+            self.toast("no language server for this buffer");
+        }
+    }
+
+    /// Install server-supplied folding ranges on the matching open buffer.
+    /// Toasts the count and replaces any existing bracket-based folds —
+    /// the server's view is authoritative once requested.
+    fn apply_folding_ranges(&mut self, path: &Path, ranges: Vec<(u32, u32)>) {
+        if ranges.is_empty() {
+            self.toast("no fold ranges returned");
+            return;
+        }
+        let mut applied = 0usize;
+        for p in self.panes.iter_mut() {
+            if let Pane::Editor(b) = p
+                && b.path.as_deref() == Some(path)
+            {
+                let line_count = b.editor.text().matches('\n').count() + 1;
+                b.folds.clear();
+                for (s, e) in &ranges {
+                    let s = *s as usize;
+                    let e = *e as usize;
+                    if s >= line_count || e >= line_count || e <= s {
+                        continue;
+                    }
+                    b.folds.insert(s, e);
+                    applied += 1;
+                }
+                break;
+            }
+        }
+        self.toast(format!("folded {applied} range(s)"));
     }
 
     /// `editor.reflow_paragraph` — vim `gqq`. Greedy word-wrap the cursor's
