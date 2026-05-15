@@ -69,6 +69,16 @@ fn main() {
                     ));
                 }
             }
+            Ok(GithubEvent::PullRequests {
+                owner,
+                repo,
+                pull_requests,
+            }) => {
+                samples.push(format!(
+                    "  ⇄  {owner}/{repo}  →  {n} open PR(s)",
+                    n = pull_requests.len(),
+                ));
+            }
             Ok(GithubEvent::Connected) => connected = true,
             Ok(GithubEvent::Failed(msg)) => failures.push(msg),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}

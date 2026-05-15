@@ -1740,11 +1740,19 @@ pub struct App {
     /// `true` once the Bitbucket worker has sent at least one successful
     /// response — the pane drops its "loading…" chip on first receipt.
     pub(crate) bitbucket_connected: bool,
+    /// Per-repo cache of the latest open pull requests (Bitbucket). Keyed
+    /// by `(workspace, slug)`. Filled alongside `bitbucket_pipelines` by
+    /// the same worker — each pass fetches both surfaces.
+    pub(crate) bitbucket_pull_requests:
+        std::collections::HashMap<(String, String), Vec<crate::bitbucket::PullRequestRecord>>,
     /// GitHub Actions REST worker handle — sibling of `bitbucket_handle`.
     github_handle: Option<crate::github::GithubHandle>,
     /// Per-repo cache of the latest workflow runs. Keyed by `(owner, repo)`.
     pub(crate) github_workflow_runs:
         std::collections::HashMap<(String, String), Vec<crate::github::WorkflowRunRecord>>,
+    /// Per-repo cache of the latest open pull requests (GitHub).
+    pub(crate) github_pull_requests:
+        std::collections::HashMap<(String, String), Vec<crate::github::PullRequestRecord>>,
     /// Last error string from the GitHub worker. Cleared on the next
     /// successful event.
     pub(crate) github_last_error: Option<String>,
@@ -1897,10 +1905,12 @@ impl App {
             docdb_handle: None,
             bitbucket_handle: None,
             bitbucket_pipelines: std::collections::HashMap::new(),
+            bitbucket_pull_requests: std::collections::HashMap::new(),
             bitbucket_last_error: None,
             bitbucket_connected: false,
             github_handle: None,
             github_workflow_runs: std::collections::HashMap::new(),
+            github_pull_requests: std::collections::HashMap::new(),
             github_last_error: None,
             github_connected: false,
             pending_commit_msg_job: None,
@@ -5363,7 +5373,9 @@ impl App {
             | Some(Pane::Quickfix(_))
             | Some(Pane::CmdlineHistory(_))
             | Some(Pane::BitbucketPipelines(_))
+            | Some(Pane::BitbucketPullRequests(_))
             | Some(Pane::GithubActions(_))
+            | Some(Pane::GithubPullRequests(_))
             | None => None,
             #[cfg(feature = "private")]
             Some(Pane::TestExecutions(_)) => None,
@@ -11248,7 +11260,9 @@ impl App {
             | Pane::Quickfix(_)
             | Pane::CmdlineHistory(_)
             | Pane::BitbucketPipelines(_)
-            | Pane::GithubActions(_) => (None, None),
+            | Pane::BitbucketPullRequests(_)
+            | Pane::GithubActions(_)
+            | Pane::GithubPullRequests(_) => (None, None),
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (None, None),
             #[cfg(feature = "private")]
@@ -11348,7 +11362,9 @@ impl App {
             Pane::Quickfix(g) => Some((format!("Quickfix · {}", g.hits.len()), false)),
             Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
             Pane::BitbucketPipelines(p) => Some((p.tab_title(), false)),
+            Pane::BitbucketPullRequests(p) => Some((p.tab_title(), false)),
             Pane::GithubActions(p) => Some((p.tab_title(), false)),
+            Pane::GithubPullRequests(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "private")]
             Pane::TestExecutions(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "private")]
@@ -16698,6 +16714,72 @@ impl App {
         crate::ui::bitbucket_pipelines_view::selected_pipeline(self, pane).map(|r| r.web_url)
     }
 
+    /// Open / focus the Bitbucket pull requests pane. Shares the worker
+    /// with the pipelines pane — both surfaces are fetched on the same
+    /// poll cycle.
+    pub fn open_bitbucket_pull_requests_pane(&mut self) {
+        if !self.config.bitbucket.any_configured() {
+            self.toast(
+                "bitbucket: add a [[bitbucket.repos]] entry to ~/.config/mnml/config.toml first",
+            );
+            return;
+        }
+        self.ensure_bitbucket_worker();
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::BitbucketPullRequests(_)))
+        {
+            if let Some(h) = &self.bitbucket_handle {
+                h.force_refresh();
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane =
+            Pane::BitbucketPullRequests(crate::bitbucket::BitbucketPullRequestsPane::new());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+        self.toast("bitbucket: pull requests (loading…)");
+    }
+
+    pub fn open_selected_bitbucket_pr_url(&mut self) {
+        let Some(url) = self.selected_bitbucket_pr_url() else {
+            self.toast("no PR selected");
+            return;
+        };
+        crate::app::open_url_external(&url);
+        self.toast("opened PR in browser");
+    }
+
+    pub fn copy_selected_bitbucket_pr_url(&mut self) {
+        let Some(url) = self.selected_bitbucket_pr_url() else {
+            self.toast("no PR selected");
+            return;
+        };
+        self.clipboard.set_yank(url, false);
+        self.toast("copied PR URL");
+    }
+
+    fn selected_bitbucket_pr_url(&self) -> Option<String> {
+        let id = self.active?;
+        let Pane::BitbucketPullRequests(pane) = self.panes.get(id)? else {
+            return None;
+        };
+        crate::ui::bitbucket_pull_requests_view::selected_pr(self, pane).map(|r| r.web_url)
+    }
+
     // ── GitHub Actions — sibling of the Bitbucket methods above. ──────
 
     pub fn ensure_github_worker(&mut self) {
@@ -16777,6 +16859,66 @@ impl App {
         crate::ui::github_actions_view::selected_run(self, pane).map(|r| r.web_url)
     }
 
+    pub fn open_github_pull_requests_pane(&mut self) {
+        if !self.config.github.any_configured() {
+            self.toast("github: add a [[github.repos]] entry to ~/.config/mnml/config.toml first");
+            return;
+        }
+        self.ensure_github_worker();
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::GithubPullRequests(_)))
+        {
+            if let Some(h) = &self.github_handle {
+                h.force_refresh();
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::GithubPullRequests(crate::github::GithubPullRequestsPane::new());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+        self.toast("github: pull requests (loading…)");
+    }
+
+    pub fn open_selected_github_pr_url(&mut self) {
+        let Some(url) = self.selected_github_pr_url() else {
+            self.toast("no PR selected");
+            return;
+        };
+        crate::app::open_url_external(&url);
+        self.toast("opened PR in browser");
+    }
+
+    pub fn copy_selected_github_pr_url(&mut self) {
+        let Some(url) = self.selected_github_pr_url() else {
+            self.toast("no PR selected");
+            return;
+        };
+        self.clipboard.set_yank(url, false);
+        self.toast("copied PR URL");
+    }
+
+    fn selected_github_pr_url(&self) -> Option<String> {
+        let id = self.active?;
+        let Pane::GithubPullRequests(pane) = self.panes.get(id)? else {
+            return None;
+        };
+        crate::ui::github_pull_requests_view::selected_pr(self, pane).map(|r| r.web_url)
+    }
+
     fn drain_github_events(&mut self) {
         use crate::github::GithubEvent;
         let Some(handle) = &self.github_handle else {
@@ -16786,6 +16928,15 @@ impl App {
             match ev {
                 GithubEvent::WorkflowRuns { owner, repo, runs } => {
                     self.github_workflow_runs.insert((owner, repo), runs);
+                    self.github_last_error = None;
+                }
+                GithubEvent::PullRequests {
+                    owner,
+                    repo,
+                    pull_requests,
+                } => {
+                    self.github_pull_requests
+                        .insert((owner, repo), pull_requests);
                     self.github_last_error = None;
                 }
                 GithubEvent::Connected => {
@@ -16816,9 +16967,15 @@ impl App {
                 } => {
                     self.bitbucket_pipelines
                         .insert((workspace, slug), pipelines);
-                    // A fresh successful response — clear any prior failure
-                    // banner for that repo. (Phase 2 will key errors by
-                    // repo too; phase 1 just keeps a single last-error.)
+                    self.bitbucket_last_error = None;
+                }
+                BitbucketEvent::PullRequests {
+                    workspace,
+                    slug,
+                    pull_requests,
+                } => {
+                    self.bitbucket_pull_requests
+                        .insert((workspace, slug), pull_requests);
                     self.bitbucket_last_error = None;
                 }
                 BitbucketEvent::Connected => {

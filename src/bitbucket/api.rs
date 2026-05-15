@@ -1,13 +1,14 @@
 //! Bitbucket Cloud REST API plumbing. Plain HTTPS via `reqwest::blocking`
 //! (already in the dep tree for the `http` track) — no Bitbucket SDK.
 //!
-//! Endpoints used in phase 1:
-//! * `GET /2.0/repositories/{workspace}/{slug}/pipelines/?sort=-created_on&pagelen=N`
+//! Endpoints used so far:
+//! * `GET /2.0/repositories/{workspace}/{slug}/pipelines/?sort=-created_on&pagelen=N` (phase 1)
+//! * `GET /2.0/repositories/{workspace}/{slug}/pullrequests?state=OPEN&pagelen=N` (phase 3)
 //!
-//! Endpoints planned for phase 3 (kept here as reference, not yet wired):
-//! * `GET /2.0/repositories/{ws}/{slug}/pullrequests?state=OPEN&pagelen=50`
-//! * `GET /2.0/repositories/{ws}/{slug}/pullrequests/{id}`
-//! * `GET /2.0/repositories/{ws}/{slug}/pullrequests/{id}/statuses`
+//! Endpoints planned for phase 4 polish (not yet wired):
+//! * `GET /2.0/repositories/{ws}/{slug}/pullrequests/{id}/statuses` — build
+//!   status chips on the PR's head commit (Bitbucket Pipelines build state
+//!   per check).
 //!
 //! Auth: `Bearer <token>` for the modern API-token format (recommended
 //! after Bitbucket's 2024 deprecation of App Passwords). Values containing
@@ -56,6 +57,125 @@ pub fn auth_header_value(token: &str) -> String {
         format!("Basic {}", BASE64.encode(trimmed))
     } else {
         format!("Bearer {trimmed}")
+    }
+}
+
+/// Pull every open pull request for one repo (most teams have ≤50 open
+/// at a time; we cap at `PAGELEN` to keep payloads small). Newest-first
+/// by `updated_on` (Bitbucket's default sort for pullrequests).
+pub fn fetch_open_pull_requests(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    repo: &BitbucketRepo,
+) -> Result<Vec<PullRequestRecord>, String> {
+    let url = format!(
+        "{API_BASE}/repositories/{ws}/{slug}/pullrequests?state=OPEN&pagelen={PAGELEN}",
+        ws = repo.workspace,
+        slug = repo.slug,
+    );
+    let resp = client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/json")
+        .send()
+        .map_err(|e| format!("send: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        let snippet = body.chars().take(200).collect::<String>();
+        return Err(format!("HTTP {status} — {snippet}"));
+    }
+    let body = resp.text().map_err(|e| format!("read body: {e}"))?;
+    parse_pull_requests_response(&body, &repo.workspace, &repo.slug)
+}
+
+pub fn parse_pull_requests_response(
+    body: &str,
+    workspace: &str,
+    slug: &str,
+) -> Result<Vec<PullRequestRecord>, String> {
+    let raw: RawPrPage =
+        serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
+    let out = raw
+        .values
+        .into_iter()
+        .map(|p| project_pr(p, workspace, slug))
+        .collect();
+    Ok(out)
+}
+
+fn project_pr(p: RawPullRequest, workspace: &str, slug: &str) -> PullRequestRecord {
+    let state = PullRequestState::from_raw(p.state.as_deref());
+    let updated_on_ms = p.updated_on.as_deref().and_then(parse_iso_ms);
+    let created_on_ms = p.created_on.as_deref().and_then(parse_iso_ms);
+    let source_branch = p
+        .source
+        .as_ref()
+        .and_then(|s| s.branch.as_ref())
+        .and_then(|b| b.name.clone());
+    let dest_branch = p
+        .destination
+        .as_ref()
+        .and_then(|d| d.branch.as_ref())
+        .and_then(|b| b.name.clone());
+    let author = p
+        .author
+        .as_ref()
+        .and_then(|a| a.display_name.clone());
+    // Bitbucket's "participants" list carries per-reviewer state. We surface:
+    //   - approved_count   — `approved: true`
+    //   - changes_count    — `state: "changes_requested"`
+    //   - reviewer_count   — every participant whose role is "REVIEWER"
+    let mut approved_count = 0u32;
+    let mut changes_count = 0u32;
+    let mut reviewer_count = 0u32;
+    for part in p.participants.iter().flatten() {
+        let role = part.role.as_deref().unwrap_or("").to_ascii_uppercase();
+        if role == "REVIEWER" {
+            reviewer_count += 1;
+        }
+        if part.approved.unwrap_or(false) {
+            approved_count += 1;
+        }
+        if part
+            .state
+            .as_deref()
+            .map(|s| s.eq_ignore_ascii_case("changes_requested"))
+            .unwrap_or(false)
+        {
+            changes_count += 1;
+        }
+    }
+    let web_url = p
+        .links
+        .as_ref()
+        .and_then(|l| l.html.as_ref())
+        .and_then(|h| h.href.clone())
+        .unwrap_or_else(|| {
+            format!(
+                "https://bitbucket.org/{ws}/{slug}/pull-requests/{n}",
+                ws = workspace,
+                slug = slug,
+                n = p.id.unwrap_or(0),
+            )
+        });
+    PullRequestRecord {
+        workspace: workspace.to_string(),
+        slug: slug.to_string(),
+        id: p.id.unwrap_or(0),
+        title: p.title.unwrap_or_default(),
+        state,
+        author,
+        source_branch,
+        dest_branch,
+        reviewer_count,
+        approved_count,
+        changes_count,
+        comment_count: p.comment_count.unwrap_or(0),
+        task_count: p.task_count.unwrap_or(0),
+        created_on_ms,
+        updated_on_ms,
+        web_url,
     }
 }
 
@@ -284,6 +404,69 @@ impl PipelineState {
     }
 }
 
+// ─── Pull-request types ────────────────────────────────────────────────
+
+/// One row in `Pane::BitbucketPullRequests`. Projects the
+/// `/pullrequests/` v2 payload to the fields the pane renders.
+#[derive(Debug, Clone)]
+pub struct PullRequestRecord {
+    pub workspace: String,
+    pub slug: String,
+    pub id: u64,
+    pub title: String,
+    pub state: PullRequestState,
+    pub author: Option<String>,
+    /// PR's source branch — what's *being* merged.
+    pub source_branch: Option<String>,
+    /// PR's target branch — what it's merging *into*.
+    pub dest_branch: Option<String>,
+    /// Total reviewers (everyone whose participant `role` is `"REVIEWER"`).
+    pub reviewer_count: u32,
+    /// Reviewers who flipped `approved: true`.
+    pub approved_count: u32,
+    /// Reviewers whose participant state is `"changes_requested"`.
+    pub changes_count: u32,
+    pub comment_count: u32,
+    pub task_count: u32,
+    pub created_on_ms: Option<i64>,
+    pub updated_on_ms: Option<i64>,
+    pub web_url: String,
+}
+
+/// Unified PR state for both list-shape and per-PR-shape consumers.
+/// Bitbucket only returns OPEN/MERGED/DECLINED/SUPERSEDED — we filter
+/// the list call to `state=OPEN` but keep the enum exhaustive for the
+/// per-PR phase-4 view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullRequestState {
+    Open,
+    Merged,
+    Declined,
+    Superseded,
+    Unknown,
+}
+
+impl PullRequestState {
+    fn from_raw(s: Option<&str>) -> Self {
+        match s.unwrap_or("").to_ascii_uppercase().as_str() {
+            "OPEN" => Self::Open,
+            "MERGED" => Self::Merged,
+            "DECLINED" => Self::Declined,
+            "SUPERSEDED" => Self::Superseded,
+            _ => Self::Unknown,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Merged => "merged",
+            Self::Declined => "declined",
+            Self::Superseded => "superseded",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 // ─── Raw deserialization shapes ────────────────────────────────────────
 //
 // These mirror the Bitbucket Cloud `pipelines/` v2 payload but only keep
@@ -356,6 +539,45 @@ struct RawLinks {
 #[derive(Debug, Deserialize)]
 struct RawHrefHolder {
     href: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawPrPage {
+    #[serde(default)]
+    values: Vec<RawPullRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawPullRequest {
+    id: Option<u64>,
+    title: Option<String>,
+    state: Option<String>,
+    author: Option<RawCreator>,
+    source: Option<RawPrEnd>,
+    destination: Option<RawPrEnd>,
+    participants: Option<Vec<RawParticipant>>,
+    comment_count: Option<u32>,
+    task_count: Option<u32>,
+    created_on: Option<String>,
+    updated_on: Option<String>,
+    links: Option<RawLinks>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawPrEnd {
+    branch: Option<RawBranch>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawBranch {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawParticipant {
+    role: Option<String>,
+    approved: Option<bool>,
+    state: Option<String>,
 }
 
 // ─── ISO-8601 → ms parser ──────────────────────────────────────────────
@@ -608,5 +830,62 @@ mod tests {
         let utc = parse_iso_ms("2026-05-15T14:37:02.559Z").unwrap();
         let east = parse_iso_ms("2026-05-15T20:07:02.559+05:30").unwrap();
         assert_eq!(utc, east);
+    }
+
+    #[test]
+    fn parses_real_world_pull_requests_response() {
+        let body = r#"{
+          "values": [{
+            "id": 4521,
+            "title": "Add Safari fallback for auth middleware",
+            "state": "OPEN",
+            "author": { "display_name": "Chris McLennan" },
+            "source":      { "branch": { "name": "feature/safari-auth" } },
+            "destination": { "branch": { "name": "main" } },
+            "participants": [
+              { "role": "REVIEWER", "approved": true,  "state": "approved" },
+              { "role": "REVIEWER", "approved": false, "state": "changes_requested" },
+              { "role": "REVIEWER", "approved": false, "state": null }
+            ],
+            "comment_count": 7,
+            "task_count":    1,
+            "created_on": "2026-05-10T14:37:02Z",
+            "updated_on": "2026-05-15T09:00:00Z",
+            "links": {
+              "html": { "href": "https://bitbucket.org/exampleorg/example-api/pull-requests/4521" }
+            }
+          }]
+        }"#;
+        let rows = parse_pull_requests_response(body, "exampleorg", "example-api").unwrap();
+        assert_eq!(rows.len(), 1);
+        let p = &rows[0];
+        assert_eq!(p.id, 4521);
+        assert_eq!(p.state, PullRequestState::Open);
+        assert_eq!(p.author.as_deref(), Some("Chris McLennan"));
+        assert_eq!(p.source_branch.as_deref(), Some("feature/safari-auth"));
+        assert_eq!(p.dest_branch.as_deref(), Some("main"));
+        assert_eq!(p.reviewer_count, 3);
+        assert_eq!(p.approved_count, 1);
+        assert_eq!(p.changes_count, 1);
+        assert_eq!(p.comment_count, 7);
+        assert!(p.web_url.contains("pull-requests/4521"));
+    }
+
+    #[test]
+    fn pr_state_classification() {
+        assert_eq!(PullRequestState::from_raw(Some("OPEN")), PullRequestState::Open);
+        assert_eq!(PullRequestState::from_raw(Some("merged")), PullRequestState::Merged);
+        assert_eq!(PullRequestState::from_raw(Some("DECLINED")), PullRequestState::Declined);
+        assert_eq!(PullRequestState::from_raw(Some("SUPERSEDED")), PullRequestState::Superseded);
+        assert_eq!(PullRequestState::from_raw(None), PullRequestState::Unknown);
+    }
+
+    #[test]
+    fn pr_falls_back_to_synthesized_url() {
+        let body = r#"{
+          "values": [{ "id": 99, "state": "OPEN", "title": "t" }]
+        }"#;
+        let rows = parse_pull_requests_response(body, "ws", "repo").unwrap();
+        assert_eq!(rows[0].web_url, "https://bitbucket.org/ws/repo/pull-requests/99");
     }
 }

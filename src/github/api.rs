@@ -1,12 +1,14 @@
 //! GitHub REST API plumbing for the Actions / Pull Requests panes.
 //!
-//! Endpoints used in phase 1:
-//! * `GET /repos/{owner}/{repo}/actions/runs?per_page=N` — recent workflow runs.
+//! Endpoints used so far:
+//! * `GET /repos/{owner}/{repo}/actions/runs?per_page=N` (phase 1)
+//! * `GET /repos/{owner}/{repo}/pulls?state=open&per_page=N` (phase 3)
 //!
-//! Endpoints planned for phase 3 (kept here as reference):
-//! * `GET /repos/{owner}/{repo}/pulls?state=open&per_page=N`
-//! * `GET /repos/{owner}/{repo}/pulls/{number}`
-//! * `GET /repos/{owner}/{repo}/commits/{sha}/check-runs`
+//! Endpoints planned for phase 4 polish:
+//! * `GET /repos/{owner}/{repo}/pulls/{number}` — per-PR detail (review
+//!   request list with names, file count, mergeable flag).
+//! * `GET /repos/{owner}/{repo}/commits/{sha}/check-runs` — CI status
+//!   chips on the head commit.
 //!
 //! Auth: `Authorization: Bearer <token>`. All four current PAT shapes
 //! (classic `ghp_*`, fine-grained `github_pat_*`, app installation `ghs_*`,
@@ -42,6 +44,101 @@ pub fn build_client() -> Result<reqwest::blocking::Client, String> {
 /// every PAT variant. Computed once per spawn.
 pub fn auth_header_value(token: &str) -> String {
     format!("Bearer {}", token.trim())
+}
+
+/// Pull every open pull request for one repo. Sorted newest-first by
+/// `updated_at` — same default as GitHub's web UI.
+pub fn fetch_open_pull_requests(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    repo: &GithubRepo,
+) -> Result<Vec<PullRequestRecord>, String> {
+    let url = format!(
+        "{API_BASE}/repos/{owner}/{repo}/pulls?state=open&per_page={PER_PAGE}&sort=updated&direction=desc",
+        owner = repo.owner,
+        repo = repo.repo,
+    );
+    let resp = client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .map_err(|e| format!("send: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        let snippet = body.chars().take(200).collect::<String>();
+        return Err(format!("HTTP {status} — {snippet}"));
+    }
+    let body = resp.text().map_err(|e| format!("read body: {e}"))?;
+    parse_pulls_response(&body, &repo.owner, &repo.repo)
+}
+
+pub fn parse_pulls_response(
+    body: &str,
+    owner: &str,
+    repo: &str,
+) -> Result<Vec<PullRequestRecord>, String> {
+    // GitHub's `/pulls` endpoint returns the array directly (no envelope).
+    let raw: Vec<RawPullRequest> =
+        serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
+    let out = raw
+        .into_iter()
+        .map(|p| project_pr(p, owner, repo))
+        .collect();
+    Ok(out)
+}
+
+fn project_pr(p: RawPullRequest, owner: &str, repo: &str) -> PullRequestRecord {
+    let state = PullRequestState::from_raw(p.state.as_deref(), p.draft.unwrap_or(false));
+    let updated_at_ms = p.updated_at.as_deref().and_then(parse_iso_ms);
+    let created_at_ms = p.created_at.as_deref().and_then(parse_iso_ms);
+    let source_branch = p.head.as_ref().and_then(|h| h.ref_field.clone());
+    let dest_branch = p.base.as_ref().and_then(|b| b.ref_field.clone());
+    let author = p.user.as_ref().and_then(|u| u.login.clone());
+    // GitHub's `/pulls` list endpoint surfaces `requested_reviewers` (people
+    // tagged for review who haven't yet responded). Approval counts need a
+    // separate `/reviews` call which we defer to phase 4 polish — for the
+    // list view, surfacing the request count + tagged team count is enough
+    // signal for "is anyone watching this PR".
+    let reviewer_count = p
+        .requested_reviewers
+        .as_ref()
+        .map(|v| v.len() as u32)
+        .unwrap_or(0)
+        + p.requested_teams
+            .as_ref()
+            .map(|v| v.len() as u32)
+            .unwrap_or(0);
+    let web_url = p.html_url.unwrap_or_else(|| {
+        format!(
+            "https://github.com/{owner}/{repo}/pull/{n}",
+            n = p.number.unwrap_or(0)
+        )
+    });
+    PullRequestRecord {
+        owner: owner.to_string(),
+        repo: repo.to_string(),
+        number: p.number.unwrap_or(0),
+        title: p.title.unwrap_or_default(),
+        state,
+        author,
+        source_branch,
+        dest_branch,
+        reviewer_count,
+        // Phase 3 list view doesn't fetch /reviews — approved/changes counts
+        // stay 0 here. Phase 4 will populate them via a per-PR follow-up.
+        approved_count: 0,
+        changes_count: 0,
+        comment_count: p.comments.unwrap_or(0),
+        // GH splits "issue comments" and "review comments" — surface their sum
+        // as `comment_count` for parity with BB's totals.
+        review_comment_count: p.review_comments.unwrap_or(0),
+        created_at_ms,
+        updated_at_ms,
+        web_url,
+    }
 }
 
 pub fn fetch_recent_workflow_runs(
@@ -250,6 +347,70 @@ impl WorkflowRunState {
     }
 }
 
+// ─── Pull-request types ────────────────────────────────────────────────
+
+/// One row in `Pane::GithubPullRequests`.
+#[derive(Debug, Clone)]
+pub struct PullRequestRecord {
+    pub owner: String,
+    pub repo: String,
+    /// GitHub's "PR number" (the path segment in `pull/{n}`).
+    pub number: u64,
+    pub title: String,
+    pub state: PullRequestState,
+    pub author: Option<String>,
+    pub source_branch: Option<String>,
+    pub dest_branch: Option<String>,
+    /// `requested_reviewers.len() + requested_teams.len()` from the list
+    /// endpoint. Approval / change-request counts arrive in phase 4 polish
+    /// when we follow up with a `/reviews` call.
+    pub reviewer_count: u32,
+    pub approved_count: u32,
+    pub changes_count: u32,
+    /// "Issue comments" on the PR — equivalent to BB's `comment_count`.
+    pub comment_count: u32,
+    /// "Review comments" — inline file/line discussions. GitHub-specific.
+    pub review_comment_count: u32,
+    pub created_at_ms: Option<i64>,
+    pub updated_at_ms: Option<i64>,
+    pub web_url: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullRequestState {
+    Open,
+    Draft,
+    Merged,
+    Closed,
+    Unknown,
+}
+
+impl PullRequestState {
+    fn from_raw(s: Option<&str>, draft: bool) -> Self {
+        // GH's `state` is just "open" or "closed". Whether a closed PR
+        // merged is encoded by a separate `merged` field — but that field
+        // isn't always populated on the list endpoint, so we coalesce to
+        // "closed" and let phase 4 disambiguate.
+        if draft {
+            return Self::Draft;
+        }
+        match s.unwrap_or("").to_ascii_lowercase().as_str() {
+            "open" => Self::Open,
+            "closed" => Self::Closed,
+            _ => Self::Unknown,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Draft => "draft",
+            Self::Merged => "merged",
+            Self::Closed => "closed",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 // ─── Raw deserialization shapes ────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -278,6 +439,38 @@ struct RawWorkflowRun {
 #[derive(Debug, Deserialize)]
 struct RawActor {
     login: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawPullRequest {
+    number: Option<u64>,
+    title: Option<String>,
+    state: Option<String>,
+    draft: Option<bool>,
+    user: Option<RawActor>,
+    head: Option<RawPrEnd>,
+    base: Option<RawPrEnd>,
+    requested_reviewers: Option<Vec<RawActor>>,
+    requested_teams: Option<Vec<RawTeam>>,
+    comments: Option<u32>,
+    review_comments: Option<u32>,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+    html_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawPrEnd {
+    /// GitHub's API field is literally named `ref`, which clashes with the
+    /// Rust keyword — rename it for serde.
+    #[serde(rename = "ref")]
+    ref_field: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawTeam {
+    #[allow(dead_code)] // shape-only — we just count entries
+    slug: Option<String>,
 }
 
 // ─── ISO-8601 → epoch ms (same parser as the bitbucket sibling) ────────
@@ -487,5 +680,72 @@ mod tests {
     fn malformed_json_is_caught() {
         let err = parse_runs_response("not json", "ws", "repo").unwrap_err();
         assert!(err.contains("parse json"));
+    }
+
+    #[test]
+    fn parses_real_world_pulls_response() {
+        // `/pulls` returns the array at the top level (no envelope).
+        let body = r#"[
+          {
+            "number": 4521,
+            "title": "Add Safari fallback for auth",
+            "state": "open",
+            "draft": false,
+            "user": { "login": "chrismclennan" },
+            "head": { "ref": "feature/safari-auth" },
+            "base": { "ref": "main" },
+            "requested_reviewers": [{ "login": "alice" }, { "login": "bob" }],
+            "requested_teams":     [{ "slug": "core-eng" }],
+            "comments": 7,
+            "review_comments": 12,
+            "created_at": "2026-05-10T14:37:02Z",
+            "updated_at": "2026-05-15T09:00:00Z",
+            "html_url": "https://github.com/exampleorg/private-claude-knowledge/pull/4521"
+          },
+          {
+            "number": 4522,
+            "title": "WIP: refactor pipeline cache",
+            "state": "open",
+            "draft": true,
+            "user": { "login": "chrismclennan" },
+            "head": { "ref": "wip/cache" },
+            "base": { "ref": "main" },
+            "comments": 0,
+            "review_comments": 0,
+            "created_at": "2026-05-15T10:00:00Z",
+            "updated_at": "2026-05-15T10:00:00Z"
+          }
+        ]"#;
+        let rows = parse_pulls_response(body, "exampleorg", "private-claude-knowledge").unwrap();
+        assert_eq!(rows.len(), 2);
+        let p = &rows[0];
+        assert_eq!(p.number, 4521);
+        assert_eq!(p.state, PullRequestState::Open);
+        assert_eq!(p.source_branch.as_deref(), Some("feature/safari-auth"));
+        assert_eq!(p.dest_branch.as_deref(), Some("main"));
+        // 2 reviewers + 1 team = 3 total
+        assert_eq!(p.reviewer_count, 3);
+        assert_eq!(p.comment_count, 7);
+        assert_eq!(p.review_comment_count, 12);
+        assert!(p.web_url.contains("/pull/4521"));
+
+        let q = &rows[1];
+        // Draft flag wins over `state`.
+        assert_eq!(q.state, PullRequestState::Draft);
+    }
+
+    #[test]
+    fn pr_state_classification() {
+        assert_eq!(PullRequestState::from_raw(Some("open"), false), PullRequestState::Open);
+        assert_eq!(PullRequestState::from_raw(Some("open"), true), PullRequestState::Draft);
+        assert_eq!(PullRequestState::from_raw(Some("closed"), false), PullRequestState::Closed);
+        assert_eq!(PullRequestState::from_raw(None, false), PullRequestState::Unknown);
+    }
+
+    #[test]
+    fn pr_falls_back_to_synthesized_url() {
+        let body = r#"[{ "number": 99, "state": "open", "title": "t" }]"#;
+        let rows = parse_pulls_response(body, "ws", "repo").unwrap();
+        assert_eq!(rows[0].web_url, "https://github.com/ws/repo/pull/99");
     }
 }

@@ -213,6 +213,16 @@ pub fn root() -> &'static Leader {
                         ],
                     ),
                 ),
+                (
+                    'P',
+                    group(
+                        "+pr",
+                        vec![
+                            ('b', cmd("bitbucket.pull_requests", "bitbucket PRs")),
+                            ('g', cmd("github.pull_requests", "github PRs")),
+                        ],
+                    ),
+                ),
                 ('w', cmd("file.save", "write/save")),
                 ('B', cmd("browser.open", "open browser (Chrome/CDP)")),
                 ('q', cmd("buffer.close", "close buffer")),

@@ -1734,6 +1734,27 @@ fn builtin_commands() -> Vec<Command> {
         keys: &[],
         run: |app| app.copy_selected_bitbucket_pipeline_url(),
     });
+    cmds.push(Command {
+        id: "bitbucket.pull_requests",
+        title: "Bitbucket: open pull-requests dashboard",
+        group: "bitbucket",
+        keys: &[],
+        run: |app| app.open_bitbucket_pull_requests_pane(),
+    });
+    cmds.push(Command {
+        id: "bitbucket.open_selected_pr_url",
+        title: "Bitbucket: open selected PR in browser",
+        group: "bitbucket",
+        keys: &[],
+        run: |app| app.open_selected_bitbucket_pr_url(),
+    });
+    cmds.push(Command {
+        id: "bitbucket.copy_selected_pr_url",
+        title: "Bitbucket: copy selected PR URL",
+        group: "bitbucket",
+        keys: &[],
+        run: |app| app.copy_selected_bitbucket_pr_url(),
+    });
     // GitHub: sibling commands. `<leader>C g` chord (in the +ci whichkey
     // group) is the muscle-memory entry point.
     cmds.push(Command {
@@ -1763,6 +1784,27 @@ fn builtin_commands() -> Vec<Command> {
         group: "github",
         keys: &[],
         run: |app| app.copy_selected_github_run_url(),
+    });
+    cmds.push(Command {
+        id: "github.pull_requests",
+        title: "GitHub: open pull-requests dashboard",
+        group: "github",
+        keys: &[],
+        run: |app| app.open_github_pull_requests_pane(),
+    });
+    cmds.push(Command {
+        id: "github.open_selected_pr_url",
+        title: "GitHub: open selected PR in browser",
+        group: "github",
+        keys: &[],
+        run: |app| app.open_selected_github_pr_url(),
+    });
+    cmds.push(Command {
+        id: "github.copy_selected_pr_url",
+        title: "GitHub: copy selected PR URL",
+        group: "github",
+        keys: &[],
+        run: |app| app.copy_selected_github_pr_url(),
     });
     #[cfg(feature = "private")]
     {

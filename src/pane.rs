@@ -6,10 +6,10 @@
 use std::path::PathBuf;
 
 use crate::ai::AiPane;
-use crate::bitbucket::BitbucketPipelinesPane;
+use crate::bitbucket::{BitbucketPipelinesPane, BitbucketPullRequestsPane};
 use crate::browser_pane::BrowserPane;
 use crate::buffer::Buffer;
-use crate::github::GithubActionsPane;
+use crate::github::{GithubActionsPane, GithubPullRequestsPane};
 use crate::git::diff::Hunk;
 use crate::git::graph::GitGraphPane;
 use crate::git::stage::GitStatusPane;
@@ -73,8 +73,12 @@ pub enum Pane {
     /// Bitbucket Cloud pipelines list — recent CI runs across every
     /// configured `[[bitbucket.repos]]` entry, grouped by repo.
     BitbucketPipelines(BitbucketPipelinesPane),
+    /// Bitbucket Cloud open pull requests list — sibling of the pipelines pane.
+    BitbucketPullRequests(BitbucketPullRequestsPane),
     /// GitHub Actions workflow runs list — symmetric to the Bitbucket pane.
     GithubActions(GithubActionsPane),
+    /// GitHub open pull requests list.
+    GithubPullRequests(GithubPullRequestsPane),
     /// DocumentDB live `TestExecutions` browser (the private integration org build). Behind
     /// the `private` Cargo feature — the lean build doesn't have this.
     #[cfg(feature = "private")]
@@ -225,7 +229,9 @@ impl Pane {
             Pane::Quickfix(g) => format!("Quickfix · {}", g.hits.len()),
             Pane::CmdlineHistory(_) => "q:".to_string(),
             Pane::BitbucketPipelines(p) => p.tab_title(),
+            Pane::BitbucketPullRequests(p) => p.tab_title(),
             Pane::GithubActions(p) => p.tab_title(),
+            Pane::GithubPullRequests(p) => p.tab_title(),
             #[cfg(feature = "private")]
             Pane::TestExecutions(p) => p.tab_title(),
             #[cfg(feature = "private")]
@@ -254,7 +260,9 @@ impl Pane {
             | Pane::Quickfix(_)
             | Pane::CmdlineHistory(_)
             | Pane::BitbucketPipelines(_)
-            | Pane::GithubActions(_) => false,
+            | Pane::BitbucketPullRequests(_)
+            | Pane::GithubActions(_)
+            | Pane::GithubPullRequests(_) => false,
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => false,
             #[cfg(feature = "private")]

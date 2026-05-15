@@ -33,9 +33,11 @@ use crate::config::{BitbucketConfig, BitbucketRepo};
 
 pub mod api;
 pub mod pipelines_pane;
+pub mod pull_requests_pane;
 
-pub use api::{PipelineRecord, PipelineState};
+pub use api::{PipelineRecord, PipelineState, PullRequestRecord, PullRequestState};
 pub use pipelines_pane::BitbucketPipelinesPane;
+pub use pull_requests_pane::BitbucketPullRequestsPane;
 
 /// Backoff after a per-repo fetch failure before we visit the next repo
 /// in the same pass. Keeps a flaky repo from spinning at full speed.
@@ -51,6 +53,12 @@ pub enum BitbucketEvent {
         workspace: String,
         slug: String,
         pipelines: Vec<PipelineRecord>,
+    },
+    /// Latest open pull requests for a single repo. Replaces the cache.
+    PullRequests {
+        workspace: String,
+        slug: String,
+        pull_requests: Vec<PullRequestRecord>,
     },
     /// At least one successful response has landed. Pane drops the
     /// "loading…" chip on first receipt.
@@ -154,6 +162,7 @@ fn run_thread(
             if cancel.load(Ordering::Relaxed) {
                 return;
             }
+            // Pipelines first — the more interactive surface.
             match api::fetch_recent_pipelines(&client, &auth_header, repo) {
                 Ok(pipelines) => {
                     if !have_sent_connected {
@@ -168,13 +177,32 @@ fn run_thread(
                 }
                 Err(e) => {
                     let _ = tx.send(BitbucketEvent::Failed(format!(
-                        "{ws}/{slug}: {e}",
+                        "{ws}/{slug}: pipelines: {e}",
                         ws = repo.workspace,
                         slug = repo.slug,
                     )));
-                    // Brief inter-repo backoff so a single broken repo
-                    // doesn't make us hammer the API for the rest of the
-                    // list at no-delay.
+                    sleep_cancellable_with_wake(PER_REPO_ERROR_BACKOFF, &cancel, &wake);
+                }
+            }
+            // Then PRs. A failure here doesn't abort the loop — we'll try
+            // again next pass.
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            match api::fetch_open_pull_requests(&client, &auth_header, repo) {
+                Ok(pull_requests) => {
+                    let _ = tx.send(BitbucketEvent::PullRequests {
+                        workspace: repo.workspace.clone(),
+                        slug: repo.slug.clone(),
+                        pull_requests,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(BitbucketEvent::Failed(format!(
+                        "{ws}/{slug}: prs: {e}",
+                        ws = repo.workspace,
+                        slug = repo.slug,
+                    )));
                     sleep_cancellable_with_wake(PER_REPO_ERROR_BACKOFF, &cancel, &wake);
                 }
             }

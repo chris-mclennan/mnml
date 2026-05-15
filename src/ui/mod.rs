@@ -21,6 +21,7 @@
 
 pub mod ai_view;
 pub mod bitbucket_pipelines_view;
+pub mod bitbucket_pull_requests_view;
 pub mod browser_view;
 pub mod bufferline;
 pub mod close_prompt;
@@ -36,6 +37,7 @@ pub mod flaky_view;
 pub mod git_graph_view;
 pub mod git_status_view;
 pub mod github_actions_view;
+pub mod github_pull_requests_view;
 pub mod grep_view;
 pub mod hover;
 pub mod icons;
@@ -292,6 +294,8 @@ fn render_layout(
                 Some(crate::pane::Pane::CodeBuilds(_)) => 18,
                 Some(crate::pane::Pane::BitbucketPipelines(_)) => 19,
                 Some(crate::pane::Pane::GithubActions(_)) => 20,
+                Some(crate::pane::Pane::BitbucketPullRequests(_)) => 21,
+                Some(crate::pane::Pane::GithubPullRequests(_)) => 22,
                 _ => 0,
             };
             match kind {
@@ -319,6 +323,8 @@ fn render_layout(
                 18 => codebuilds_view::draw(frame, app, *id, area, focused),
                 19 => bitbucket_pipelines_view::draw(frame, app, *id, area, focused),
                 20 => github_actions_view::draw(frame, app, *id, area, focused),
+                21 => bitbucket_pull_requests_view::draw(frame, app, *id, area, focused),
+                22 => github_pull_requests_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

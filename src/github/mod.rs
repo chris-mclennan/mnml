@@ -19,9 +19,11 @@ use crate::config::{GithubConfig, GithubRepo};
 
 pub mod actions_pane;
 pub mod api;
+pub mod pull_requests_pane;
 
 pub use actions_pane::GithubActionsPane;
-pub use api::{WorkflowRunRecord, WorkflowRunState};
+pub use api::{PullRequestRecord, PullRequestState, WorkflowRunRecord, WorkflowRunState};
+pub use pull_requests_pane::GithubPullRequestsPane;
 
 /// Backoff after a per-repo fetch failure before moving to the next repo
 /// in the same pass. Keeps a flaky repo from accelerating the rest.
@@ -34,6 +36,12 @@ pub enum GithubEvent {
         owner: String,
         repo: String,
         runs: Vec<WorkflowRunRecord>,
+    },
+    /// Latest open pull requests for one repo.
+    PullRequests {
+        owner: String,
+        repo: String,
+        pull_requests: Vec<PullRequestRecord>,
     },
     /// At least one successful poll has landed — the pane drops "loading…".
     Connected,
@@ -136,7 +144,27 @@ fn run_thread(
                 }
                 Err(e) => {
                     let _ = tx.send(GithubEvent::Failed(format!(
-                        "{owner}/{repo}: {e}",
+                        "{owner}/{repo}: actions: {e}",
+                        owner = repo.owner,
+                        repo = repo.repo,
+                    )));
+                    sleep_cancellable_with_wake(PER_REPO_ERROR_BACKOFF, &cancel, &wake);
+                }
+            }
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            match api::fetch_open_pull_requests(&client, &auth_header, repo) {
+                Ok(pull_requests) => {
+                    let _ = tx.send(GithubEvent::PullRequests {
+                        owner: repo.owner.clone(),
+                        repo: repo.repo.clone(),
+                        pull_requests,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(GithubEvent::Failed(format!(
+                        "{owner}/{repo}: prs: {e}",
                         owner = repo.owner,
                         repo = repo.repo,
                     )));

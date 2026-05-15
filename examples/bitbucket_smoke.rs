@@ -78,6 +78,18 @@ fn main() {
                     ));
                 }
             }
+            Ok(BitbucketEvent::PullRequests {
+                workspace,
+                slug,
+                pull_requests,
+            }) => {
+                samples.push(format!(
+                    "  ⇄  {ws}/{slug}  →  {n} open PR(s)",
+                    ws = workspace,
+                    slug = slug,
+                    n = pull_requests.len(),
+                ));
+            }
             Ok(BitbucketEvent::Connected) => connected = true,
             Ok(BitbucketEvent::Failed(msg)) => failures.push(msg),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {} // keep looping

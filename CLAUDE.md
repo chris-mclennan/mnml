@@ -1928,7 +1928,7 @@ workers exit cleanly. Phase 4b (queued) adds change streams selectable via
 `[playwright.docdb] mode = "stream"` (DocumentDB 5.0 cluster `private-docdb5-0`
 has them enabled, 3-day resume window), with polling as the auto-fallback.
 CodeBuild + launcher absorption (separate tracks) come after.
-**Bitbucket terminal dashboard (phases 1–2 done)** — `src/bitbucket/`
+**Bitbucket terminal dashboard (phases 1–3 done)** — `src/bitbucket/`
 (unconditional in the lean build; reuses `reqwest::blocking` from the `http` track,
 no Bitbucket SDK). One worker thread polls every configured `[[bitbucket.repos]]`
 workspace/slug in turn (`api.rs` hits `GET /2.0/repositories/{ws}/{slug}/pipelines/?sort=-created_on&pagelen=20`),
@@ -1983,10 +1983,19 @@ its poll-interval sleep via a new `BitbucketHandle::force_refresh` /
 both cancel + wake every 250ms), Esc → tree. `src/ui/bitbucket_pipelines_view.rs`
 flattens config-order repos × cached pipelines into a `Vec<FlatRow>`;
 `selected_pipeline(app, pane)` is the helper App-side commands call to
-resolve the selection. Phase 3 adds `Pane::BitbucketPr` (per-PR view with
-reviewers + build statuses + comment count); phase 4 polish covers a PR
-list picker, cross-nav (PR ↔ its pipelines), branch-rail "open PRs"
-subsection, and live log tail in pty. GitHub Actions / GitLab CI / Azure
+resolve the selection. **Phase 3 landed:** `Pane::BitbucketPullRequests`
++ the worker now fetches PRs alongside pipelines each pass (one extra
+endpoint per repo per cycle — well within Bitbucket's 1000 req/hr limit).
+`PullRequestRecord{ws, slug, id, title, state, author, source_branch,
+dest_branch, reviewer_count, approved_count, changes_count, comment_count,
+task_count, created_on_ms, updated_on_ms, web_url}` projects
+`/pullrequests?state=OPEN&pagelen=20`; participants are walked to count
+reviewers, approvals, and change-requested states. Same UX pattern as
+the pipelines pane — flat grouped list, ↑↓/Enter→browse/y/r, header
+auto-skip. PR rows render `<state> #ID title 👀N ✓A ✗C · 💬N · source →
+dest · age · author`. `<leader>P b` chord (new `+pr` leader group).
+Phase 4 polish covers a PR list picker, cross-nav (PR ↔ its pipelines),
+branch-rail "open PRs" subsection, and live log tail in pty. GitHub Actions / GitLab CI / Azure
 DevOps will mirror this pattern as future phases (GH ✓ done, GitLab next,
 AzDevOps opt-in).
 **GitHub Actions dashboard (phases 1–2 done)** — `src/github/` mirrors
@@ -2021,7 +2030,18 @@ owner = "exampleorg"
 repo  = "private-claude-knowledge"
 ```
 `examples/github_smoke.rs` (`cargo run --example github_smoke`) verifies
-the API call shape against the real service.
+the API call shape against the real service. **Phase 3 (PR list)
+landed alongside the BB equivalent:** `Pane::GithubPullRequests` reads
+from `App.github_pull_requests`, fed by the GH worker which now also
+hits `/repos/{owner}/{repo}/pulls?state=open&sort=updated`.
+`PullRequestRecord` projects the GH-specific shape — `draft` flag is
+hoisted into the state enum (`Open | Draft | Merged | Closed | Unknown`,
+draft beats raw state), comment counts are split into "issue comments"
++ "review comments" (the inline kind), reviewer count comes from
+`requested_reviewers` + `requested_teams` on the list endpoint. Phase 4
+will follow up with a per-PR `/reviews` call to populate approved /
+changes-requested counts the way BB's participant list already does.
+`<leader>P g` chord.
 
 ## Not set up yet (could add later)
 
