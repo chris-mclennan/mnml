@@ -44,6 +44,10 @@ pub enum PickerKind {
     /// `id` = `"local:<letter>"` (current buffer) or `"global:<letter>"`
     /// (cross-file). Accept ⇒ jump to the mark (open the file if needed).
     Marks,
+    /// `id` = `"apply"` or `"cancel"`. Confirmation step for LSP rename:
+    /// shows a per-file summary of the pending edits; Apply commits them,
+    /// Cancel drops the stash on `App.pending_rename_preview`.
+    RenamePreview,
 }
 
 #[derive(Debug, Clone)]

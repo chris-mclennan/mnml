@@ -158,8 +158,24 @@ pub enum LspEvent {
         path: PathBuf,
         lenses: Vec<CodeLens>,
     },
+    /// Result of a `textDocument/documentLink` request — clickable links
+    /// (URLs / file paths) the server identified in the buffer.
+    DocumentLinks {
+        path: PathBuf,
+        links: Vec<DocumentLink>,
+    },
     /// A server-side message worth surfacing as a toast.
     Message(String),
+}
+
+/// One link the server says is clickable — `range` is where it sits in the
+/// source, `target` is the URL / path to open.
+#[derive(Debug, Clone)]
+pub struct DocumentLink {
+    pub line: u32,
+    pub start_char: u32,
+    pub end_char: u32,
+    pub target: String,
 }
 
 /// A single inlay hint — virtual text the server wants displayed at a
@@ -588,6 +604,18 @@ impl LspManager {
         for c in self.clients.values_mut() {
             if c.is_open(path) {
                 c.inlay_hint(path, line_count);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send `textDocument/documentLink` — reply arrives as
+    /// [`LspEvent::DocumentLinks`].
+    pub fn document_link(&mut self, path: &Path) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.document_link(path);
                 sent = true;
             }
         }

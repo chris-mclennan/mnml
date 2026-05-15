@@ -1745,6 +1745,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                             };
                             b.apply_edit_ops(vec![op], clip, 0);
                         }
+                    } else {
+                        // Arm a potential drag-select. If the user actually
+                        // drags, the first Drag event will SelectStart at
+                        // the origin and move the cursor.
+                        app.drag_select = Some((pid, row, col, false));
                     }
                 }
             }
@@ -1759,6 +1764,34 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     .or_else(|| app.rects.statusline.map(|r| r.x + r.width))
                     .unwrap_or(120);
                 app.drag_tree_edge_to(x, screen_w);
+            } else if let Some((pid, ox, oy, armed)) = app.drag_select {
+                // Editor drag-select: drop the anchor at the click origin
+                // (first drag only), then extend the cursor to the current
+                // mouse position.
+                if let Some(&(tr, p2)) = app
+                    .rects
+                    .editor_panes
+                    .iter()
+                    .find(|(r, _)| contains(*r, x, y))
+                    && p2 == pid
+                    && let Some(Pane::Editor(b)) = app.panes.get_mut(pid)
+                {
+                    let visible_row = (y.saturating_sub(tr.y)) as usize;
+                    let row = b
+                        .visible_to_file_row(b.scroll, visible_row)
+                        .unwrap_or(b.scroll);
+                    let col = b.h_scroll + (x.saturating_sub(tr.x)) as usize;
+                    if !armed {
+                        b.editor.place_cursor(oy, ox);
+                        b.editor.apply(
+                            crate::edit_op::EditOp::SelectStart,
+                            tr.height as usize,
+                            &mut app.clipboard,
+                        );
+                        app.drag_select = Some((pid, ox, oy, true));
+                    }
+                    b.editor.place_cursor(row, col);
+                }
             } else {
                 app.drag_divider_to(x, y);
             }
@@ -1766,6 +1799,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         MouseEventKind::Up(MouseButton::Left) => {
             app.end_tree_edge_drag();
             app.end_divider_drag();
+            app.drag_select = None;
         }
         MouseEventKind::ScrollUp => scroll_under(app, x, y, -3),
         MouseEventKind::ScrollDown => scroll_under(app, x, y, 3),

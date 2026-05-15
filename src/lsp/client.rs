@@ -379,6 +379,16 @@ impl LspClient {
         );
     }
 
+    /// `textDocument/documentLink` — reply is `DocumentLink[]`. Path is
+    /// stashed so we can route the reply to the right buffer.
+    pub fn document_link(&mut self, path: &Path) {
+        self.request_with_path(
+            "textDocument/documentLink",
+            json!({ "textDocument": { "uri": path_to_uri(path) } }),
+            Some(path),
+        );
+    }
+
     /// `textDocument/formatting` — reply is a `TextEdit[]` (possibly null).
     /// The path is stashed so we can route the reply to the right buffer.
     pub fn formatting(&mut self, path: &Path, tab_size: u32, insert_spaces: bool) {
@@ -661,9 +671,65 @@ fn handle_message(
                     let _ = tx.send(LspEvent::CodeLens { path, lenses });
                 }
             }
+            "textDocument/documentLink" => {
+                if let Some(path) = req_path {
+                    let links = parse_document_links(result);
+                    if !links.is_empty() {
+                        let _ = tx.send(LspEvent::DocumentLinks { path, links });
+                    }
+                }
+            }
             _ => {}
         }
     }
+}
+
+/// Parse a `textDocument/documentLink` reply (`DocumentLink[]`). Drops any
+/// entry without a `target` (mnml doesn't resolve lazily yet). Multi-line
+/// ranges are dropped — the renderer is per-line.
+fn parse_document_links(result: &serde_json::Value) -> Vec<super::DocumentLink> {
+    let arr = match result.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for it in arr {
+        let target = match it.get("target").and_then(|t| t.as_str()) {
+            Some(t) => t.to_string(),
+            None => continue,
+        };
+        let Some(range) = it.get("range") else {
+            continue;
+        };
+        let Some(start) = range.get("start") else {
+            continue;
+        };
+        let Some(end) = range.get("end") else {
+            continue;
+        };
+        let (Some(s_line), Some(s_char)) = (
+            start.get("line").and_then(|l| l.as_u64()),
+            start.get("character").and_then(|c| c.as_u64()),
+        ) else {
+            continue;
+        };
+        let (Some(e_line), Some(e_char)) = (
+            end.get("line").and_then(|l| l.as_u64()),
+            end.get("character").and_then(|c| c.as_u64()),
+        ) else {
+            continue;
+        };
+        if s_line != e_line {
+            continue;
+        }
+        out.push(super::DocumentLink {
+            line: s_line as u32,
+            start_char: s_char as u32,
+            end_char: e_char as u32,
+            target,
+        });
+    }
+    out
 }
 
 /// Pull the first `(path, line, character)` out of a `definition` result, which

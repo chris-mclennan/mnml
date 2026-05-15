@@ -16,6 +16,13 @@ struct Snapshot {
     text: String,
     cursor: usize,
     anchor: Option<usize>,
+    /// Seconds since UNIX epoch when this snapshot was taken. Used by vim's
+    /// `:earlier <N><unit>` / `:later <N><unit>` to walk the undo/redo
+    /// stacks by elapsed wall-clock. `#[serde(default)]` so old persisted
+    /// histories without the field still load (they'll just lack the
+    /// time-walk ability for older snapshots).
+    #[serde(default)]
+    timestamp: u64,
 }
 
 /// On-disk shape of [`Editor`]'s undo + redo stacks plus the text those stacks
@@ -546,6 +553,42 @@ impl Editor {
         !self.redo.is_empty()
     }
 
+    /// How many undo steps go back to a snapshot at least `secs` old. Used
+    /// by `:earlier <N><unit>` — caller multiplies the result by Undo to
+    /// walk that far back. Walks newest→oldest until it finds a snapshot
+    /// whose timestamp is older than `cutoff_secs`.
+    pub fn undo_steps_for_age(&self, secs: u64) -> usize {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let cutoff = now.saturating_sub(secs);
+        // Newest first.
+        for (i, snap) in self.undo.iter().rev().enumerate() {
+            if snap.timestamp <= cutoff {
+                return i + 1;
+            }
+        }
+        self.undo.len()
+    }
+    /// Mirror for `:later <N><unit>` — count redo entries newer than the
+    /// `secs` cutoff (the user wants to move forward N seconds of edits).
+    pub fn redo_steps_for_age(&self, secs: u64) -> usize {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let cutoff = now.saturating_sub(secs);
+        // redo is in oldest→newest order; walk back until we find one
+        // older than cutoff.
+        for (i, snap) in self.redo.iter().rev().enumerate() {
+            if snap.timestamp <= cutoff {
+                return i + 1;
+            }
+        }
+        self.redo.len()
+    }
+
     // ─── line geometry helpers ──────────────────────────────────────
     fn current_line(&self) -> usize {
         self.text[..self.cursor]
@@ -762,6 +805,10 @@ impl Editor {
             text: self.text.clone(),
             cursor: self.cursor,
             anchor: self.anchor,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
         }
     }
     /// Begin a fresh undo group for a mutation that is *about* to change text.

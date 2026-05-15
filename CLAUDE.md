@@ -581,6 +581,40 @@ since the populator is external). New `App::open_quickfix(title, hits)`. New
 populates a fresh Quickfix pane. `:copen` / `:cclose` / `:cnext` / `:cprev` now prefer
 the Quickfix pane and fall back to Grep so vim users get muscle-memory behavior either
 way.
+**LSP references → Quickfix** — `lsp.references` now opens a `Pane::Quickfix` (browse
+with `:cnext` / `:cprev`, jump with Enter) instead of the Locations picker.
+**Code-action picker grouping** — actions sorted by kind (`quickfix` → `refactor` →
+`source` → other) in `apply_code_action_reply` before opening the picker. Server order
+preserved within a group.
+**`:cdo <cmd>` / `:cfdo <cmd>`** — run an ex command on every quickfix entry (or once
+per unique file). Saves after each. Falls back to `Pane::Grep` when there's no Quickfix
+open.
+**`:command -nargs=…`** — vim canonical argspec on user commands. `0` / `1` / `?` /
+`+` / `*`; default `Any`. New `UserExCommand` struct + `ExCommandNargs` enum;
+invocation tail validated; bad arity ⇒ refuse with toast.
+**Markdown preview cursor sync** — any open `Pane::MdPreview` scrolls to roughly match
+the source buffer's cursor row. Heading-aware heuristic (`#…` lines count as 2
+rendered rows). Fires on edits and on cursor-only `Redraw` paths.
+**Editor drag-select** — click-and-drag in an editor pane drops the anchor at the
+origin and extends the cursor to the drag point. `App.drag_select: Option<(PaneId, row,
+col, armed)>` records the click; the first `Drag(Left)` event arms the selection.
+Releasing Left clears the state but the selection stays.
+**LSP `textDocument/documentLink`** — fired on open + save alongside inlay hints and
+code lens; reply parsed by new `parse_document_links` and stored on
+`Buffer.document_links`. `editor.open_url_at_cursor` (vim `gx`) consults the link list
+first, so server-recognized URLs / paths in comments work even when they aren't
+whitespace-delimited. `file://` targets open as buffers; everything else goes to the
+OS opener.
+**LSP rename preview** — `textDocument/rename` no longer applies the `WorkspaceEdit`
+silently. The reply opens a confirmation picker (new `PickerKind::RenamePreview`)
+showing total edits + per-file breakdown; Apply commits, Cancel drops the stash on
+`App.pending_rename_preview`.
+**`:earlier <N><unit>` / `:later <N><unit>` duration form** — vim canonical time
+syntax (`5s` / `10m` / `2h` / `1d`). Each undo `Snapshot` now carries a
+`timestamp: u64` (UNIX epoch seconds, `#[serde(default)]` so old persisted histories
+still load). `Editor::undo_steps_for_age` / `redo_steps_for_age` count how many steps
+go back / forward to a snapshot at least `secs` old. Bare `:earlier N` still walks N
+steps (no unit suffix).
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

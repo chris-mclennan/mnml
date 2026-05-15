@@ -178,6 +178,11 @@ pub struct Buffer {
     /// "Run | Debug") attached to specific lines. Rendered as dim chips
     /// at end-of-line. Refreshed on save.
     pub code_lenses: Vec<crate::lsp::CodeLens>,
+    /// LSP document links — clickable URLs / paths the server identified.
+    /// Refreshed on save (and after `did_open` if the server returns
+    /// eagerly). `editor.open_url_at_cursor` consults these so `gx` works
+    /// on server-recognized links too.
+    pub document_links: Vec<crate::lsp::DocumentLink>,
     /// Stamp of the last text-changing edit (used by `[editor] autosave_secs`).
     /// `None` until the first edit; cleared back to `None` on save.
     pub last_edited: Option<Instant>,
@@ -247,6 +252,7 @@ impl Buffer {
             diagnostics: Vec::new(),
             inlay_hints: Vec::new(),
             code_lenses: Vec::new(),
+            document_links: Vec::new(),
             last_edited: None,
             disk_mtime: std::fs::metadata(path).and_then(|m| m.modified()).ok(),
             find: None,
@@ -310,6 +316,7 @@ impl Buffer {
             diagnostics: Vec::new(),
             inlay_hints: Vec::new(),
             code_lenses: Vec::new(),
+            document_links: Vec::new(),
             last_edited: None,
             disk_mtime: None,
             find: None,

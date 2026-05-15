@@ -440,6 +440,26 @@ fn compute_cmdline_completions(line: &str, workspace: &Path) -> Option<CmdlineCo
     })
 }
 
+/// Parse vim's `:earlier` / `:later` duration suffix into seconds.
+/// `5s` → 5; `10m` → 600; `2h` → 7200; `1d` → 86400. Returns `None`
+/// when there's no unit suffix (caller falls back to "step count").
+fn parse_undo_age_spec(arg: &str) -> Option<u64> {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        return None;
+    }
+    let unit = arg.chars().last()?;
+    let mult = match unit {
+        's' => 1u64,
+        'm' => 60,
+        'h' => 3600,
+        'd' => 86_400,
+        _ => return None,
+    };
+    let num_part = &arg[..arg.len() - unit.len_utf8()];
+    num_part.parse::<u64>().ok().map(|n| n * mult)
+}
+
 fn parse_line_range(
     line: &str,
     current_line: usize,
@@ -1055,6 +1075,11 @@ pub struct CmdlineCompleteState {
     pub last_shown: String,
 }
 
+/// Flattened `WorkspaceEdit` shape — `(path, [(range, new_text)])` per
+/// affected file. Used by the rename-preview stash and any future
+/// confirmation flow.
+pub type PendingRenameEdits = Vec<(PathBuf, Vec<(crate::lsp::Range, String)>)>;
+
 /// `:command <Name>` entry — the expansion string plus the optional `nargs`
 /// arity check (vim canonical). Default `nargs = Any` (the rest of the line
 /// is appended verbatim, matching mnml's prior behavior).
@@ -1221,6 +1246,15 @@ pub struct App {
     /// the count-prefixed gesture; consumed in `App::tick` when the handler
     /// returns to Normal mode (Esc out of Insert).
     pub repeat_insert_state: Option<RepeatInsertState>,
+    /// Mouse drag-select in an editor pane: `(pane_id, origin_row,
+    /// origin_col, armed)`. Set on `Down(Left)` over an editor; the first
+    /// `Drag(Left)` jumps the cursor back to the origin, drops the anchor,
+    /// and jumps to the drag point; subsequent drags just move the cursor.
+    pub drag_select: Option<(PaneId, usize, usize, bool)>,
+    /// Pending `textDocument/rename` edits awaiting Apply/Cancel from the
+    /// preview picker. `Some` ⇒ the picker is open and the edits are
+    /// stashed. Cancel drops them; Apply runs `apply_rename_edits`.
+    pub pending_rename_preview: Option<PendingRenameEdits>,
     /// Ex-cmdline Tab-completion cycle state. `head` = the part of the
     /// cmdline that stays put; `matches` = candidate completions; `idx` =
     /// the match index currently displayed. Cleared by any non-Tab cmdline
@@ -1531,6 +1565,8 @@ impl App {
             macro_state: MacroState::default(),
             block_insert_state: None,
             repeat_insert_state: None,
+            drag_select: None,
+            pending_rename_preview: None,
             cmdline_complete_state: None,
             macro_buffer: std::collections::HashMap::new(),
             pending_macro_register: None,
@@ -2400,6 +2436,16 @@ impl App {
             PickerKind::CodeActions => {
                 if let Ok(idx) = item.id.parse::<usize>() {
                     self.apply_code_action(idx);
+                }
+            }
+            PickerKind::RenamePreview => {
+                let edits = self.pending_rename_preview.take();
+                if item.id == "apply"
+                    && let Some(edits) = edits
+                {
+                    self.apply_rename_edits(edits);
+                } else {
+                    self.toast("rename: cancelled");
                 }
             }
             PickerKind::Symbols => {
@@ -3275,10 +3321,12 @@ impl App {
                 let new_id = self.panes.len() - 1;
                 self.reveal_pane(new_id);
                 self.lsp.did_open(&path, &text);
-                // Initial inlay-hint request — refreshed on save thereafter.
+                // Initial inlay-hint / code-lens / document-link requests —
+                // refreshed on save thereafter.
                 let line_count = text.lines().count().max(1) as u32;
                 self.lsp.inlay_hint(&path, line_count);
                 self.lsp.code_lens(&path);
+                self.lsp.document_link(&path);
                 // Auto-open MD preview alongside, if enabled and not yet open.
                 // Passive (focus stays on the editor we just opened).
                 if self.config.ui.auto_md_preview && is_markdown_path(&path) {
@@ -3411,6 +3459,7 @@ impl App {
             let line_count = text.lines().count().max(1) as u32;
             self.lsp.inlay_hint(path, line_count);
             self.lsp.code_lens(path);
+            self.lsp.document_link(path);
         }
     }
 
@@ -4395,7 +4444,39 @@ impl App {
                     .collect();
                 self.open_quickfix(&format!("References ({n})"), hits);
             }
-            LspEvent::Rename(edits) => self.apply_rename_edits(edits),
+            LspEvent::Rename(edits) => {
+                if edits.is_empty() {
+                    self.toast("rename: no edits");
+                    return;
+                }
+                // Show a confirmation picker — Apply or Cancel — listing
+                // each file + its edit count so the user can see what's
+                // about to change before committing.
+                use crate::picker::PickerItem;
+                let n_edits: usize = edits.iter().map(|(_, v)| v.len()).sum();
+                let n_files = edits.len();
+                let mut items: Vec<PickerItem> = Vec::with_capacity(n_files + 2);
+                items.push(PickerItem::new(
+                    "apply",
+                    format!("✓ Apply {n_edits} edit(s) across {n_files} file(s)"),
+                    String::new(),
+                ));
+                items.push(PickerItem::new("cancel", "✗ Cancel", String::new()));
+                for (path, ranges) in &edits {
+                    let rel = rel_path(&self.workspace, path);
+                    items.push(PickerItem::new(
+                        format!("info:{}", path.display()),
+                        format!("  {rel}"),
+                        format!("{} edit(s)", ranges.len()),
+                    ));
+                }
+                self.pending_rename_preview = Some(edits);
+                self.open_picker(crate::picker::Picker::new(
+                    crate::picker::PickerKind::RenamePreview,
+                    format!("Rename preview · {n_edits} edits"),
+                    items,
+                ));
+            }
             LspEvent::ApplyEdit { label, edits } => {
                 let n = edits.iter().map(|(_, v)| v.len()).sum::<usize>();
                 self.apply_rename_edits(edits);
@@ -4516,6 +4597,16 @@ impl App {
                         && b.path.as_deref() == Some(path.as_path())
                     {
                         b.code_lenses = lenses;
+                        break;
+                    }
+                }
+            }
+            LspEvent::DocumentLinks { path, links } => {
+                for p in self.panes.iter_mut() {
+                    if let Pane::Editor(b) = p
+                        && b.path.as_deref() == Some(path.as_path())
+                    {
+                        b.document_links = links;
                         break;
                     }
                 }
@@ -8129,6 +8220,26 @@ impl App {
             self.toast("no active editor");
             return;
         };
+        // LSP document-link hit at the cursor wins — those are
+        // server-recognized URLs / paths and may not be whitespace-delimited.
+        let (cur_row, cur_col) = b.editor.row_col();
+        if let Some(link) = b.document_links.iter().find(|l| {
+            l.line as usize == cur_row
+                && (l.start_char as usize) <= cur_col
+                && cur_col <= (l.end_char as usize)
+        }) {
+            let target = link.target.clone();
+            // `file://` paths open as files in mnml; everything else (http,
+            // mailto, ftp, …) goes to the OS opener.
+            if let Some(local) = target.strip_prefix("file://") {
+                let p = std::path::PathBuf::from(local);
+                self.open_path(&p);
+            } else {
+                open_path_external(std::path::Path::new(&target));
+                self.toast(format!("open: {target}"));
+            }
+            return;
+        }
         let text = b.editor.text();
         let cursor = b.editor.cursor();
         // Bounds of the current line.
@@ -12230,36 +12341,45 @@ impl App {
             // killer power tool for "do this on every line".
             "norm" | "normal" => self.run_norm(rest, false),
             "%norm" | "%normal" => self.run_norm(rest, true),
-            // `:earlier N` / `:later N` — walk N undo/redo steps. Vim's
-            // duration syntax (`5s`, `10m`) is skipped — we don't
-            // timestamp snapshots yet.
+            // `:earlier N` — walk N undo steps. `:earlier 5s` / `5m` / `2h` /
+            // `1d` — walk back to the most recent snapshot at least that
+            // wall-clock old (vim canonical; relies on the per-snapshot
+            // timestamp added in this round). Bare N (no unit) is steps.
             "earlier" | "ea" => {
-                let n: usize = rest.trim().parse().unwrap_or(1);
                 let Some(idx) = self.active else { return };
-                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
-                    let viewport = 20;
-                    for _ in 0..n {
-                        b.editor
-                            .apply(crate::edit_op::EditOp::Undo, viewport, &mut self.clipboard);
-                    }
-                    b.recompute_dirty();
-                    b.refresh_highlights();
-                    self.toast(format!(":earlier {n}"));
+                let arg = rest.trim();
+                let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+                    return;
+                };
+                let steps = match parse_undo_age_spec(arg) {
+                    Some(secs) => b.editor.undo_steps_for_age(secs),
+                    None => arg.parse::<usize>().unwrap_or(1),
+                };
+                for _ in 0..steps {
+                    b.editor
+                        .apply(crate::edit_op::EditOp::Undo, 20, &mut self.clipboard);
                 }
+                b.recompute_dirty();
+                b.refresh_highlights();
+                self.toast(format!(":earlier · {steps} step(s)"));
             }
             "later" | "lat" => {
-                let n: usize = rest.trim().parse().unwrap_or(1);
                 let Some(idx) = self.active else { return };
-                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
-                    let viewport = 20;
-                    for _ in 0..n {
-                        b.editor
-                            .apply(crate::edit_op::EditOp::Redo, viewport, &mut self.clipboard);
-                    }
-                    b.recompute_dirty();
-                    b.refresh_highlights();
-                    self.toast(format!(":later {n}"));
+                let arg = rest.trim();
+                let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+                    return;
+                };
+                let steps = match parse_undo_age_spec(arg) {
+                    Some(secs) => b.editor.redo_steps_for_age(secs),
+                    None => arg.parse::<usize>().unwrap_or(1),
+                };
+                for _ in 0..steps {
+                    b.editor
+                        .apply(crate::edit_op::EditOp::Redo, 20, &mut self.clipboard);
                 }
+                b.recompute_dirty();
+                b.refresh_highlights();
+                self.toast(format!(":later · {steps} step(s)"));
             }
             // `:copen` / `:cclose` / `:cwin[dow]` — focus / close the
             // grep ("quickfix") pane. mnml has one such pane per session.
