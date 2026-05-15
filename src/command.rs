@@ -484,6 +484,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_outgoing_calls(),
         },
         Command {
+            id: "lsp.supertypes",
+            title: "LSP: supertypes of type at cursor",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_supertypes(),
+        },
+        Command {
+            id: "lsp.subtypes",
+            title: "LSP: subtypes of type at cursor",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_subtypes(),
+        },
+        Command {
             id: "editor.reflow_paragraph",
             title: "Reflow current paragraph to text_width (vim `gqq`)",
             group: "editor",

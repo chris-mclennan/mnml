@@ -207,6 +207,20 @@ pub enum LspEvent {
         origin_name: String,
         hits: Vec<CallHit>,
     },
+    /// Result of a `textDocument/prepareTypeHierarchy` request — same
+    /// shape as call hierarchy's prepare. Direction tells the App which
+    /// follow-up to fire (`supertypes` vs `subtypes`).
+    TypeHierarchyPrepared {
+        direction: TypeHierarchyDirection,
+        items: Vec<CallHierarchyItem>,
+    },
+    /// Result of `typeHierarchy/{super,sub}types` — same `(name, path,
+    /// line, character)` shape as call hits, reusing [`CallHit`].
+    TypeHierarchyTypes {
+        direction: TypeHierarchyDirection,
+        origin_name: String,
+        hits: Vec<CallHit>,
+    },
     /// A server-side message worth surfacing as a toast.
     Message(String),
 }
@@ -217,6 +231,14 @@ pub enum LspEvent {
 pub enum CallHierarchyDirection {
     Incoming,
     Outgoing,
+}
+
+/// Direction of a type-hierarchy walk. Super = "parent classes / traits";
+/// sub = "subclasses / impls".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeHierarchyDirection {
+    Supertypes,
+    Subtypes,
 }
 
 /// A `CallHierarchyItem` from `textDocument/prepareCallHierarchy`. We
@@ -826,6 +848,42 @@ impl LspManager {
         for c in self.clients.values_mut() {
             if c.is_open(&item.path) {
                 c.call_hierarchy_calls(item, CallHierarchyDirection::Outgoing);
+                return;
+            }
+        }
+    }
+
+    /// Send `textDocument/prepareTypeHierarchy` at `(line, character)`.
+    pub fn prepare_type_hierarchy(
+        &mut self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        direction: TypeHierarchyDirection,
+    ) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.prepare_type_hierarchy(path, line, character, direction);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send `typeHierarchy/supertypes` for a previously-prepared item.
+    pub fn type_hierarchy_supertypes(&mut self, item: &CallHierarchyItem) {
+        for c in self.clients.values_mut() {
+            if c.is_open(&item.path) {
+                c.type_hierarchy_types(item, TypeHierarchyDirection::Supertypes);
+                return;
+            }
+        }
+    }
+    /// Send `typeHierarchy/subtypes` for a previously-prepared item.
+    pub fn type_hierarchy_subtypes(&mut self, item: &CallHierarchyItem) {
+        for c in self.clients.values_mut() {
+            if c.is_open(&item.path) {
+                c.type_hierarchy_types(item, TypeHierarchyDirection::Subtypes);
                 return;
             }
         }

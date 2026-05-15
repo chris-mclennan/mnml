@@ -699,6 +699,12 @@ of the open files, the statusline right side shows a `LSP N` chip (count of `(ro
 pairs). `:LspStatus` / `:LspInfo` toasts each running server with its workspace-relative root —
 the breakdown when "wait, which servers do I have?" hits. New `LspManager::server_count` +
 `servers_running()`.
+**LSP type hierarchy** — `lsp.supertypes` / `lsp.subtypes` (ex aliases `:Supertypes` /
+`:Subtypes` / `:ParentTypes` / `:ChildTypes`). Same two-step shape as call hierarchy
+(`prepareTypeHierarchy` → `{super,sub}types` → Locations picker titled
+`Supertypes/Subtypes — <name>`). Reuses `CallHierarchyItem` for the prepared item and
+`CallHit` for the result. `initialize` advertises `typeHierarchy`. Most useful for
+rust-analyzer / Java / C# where class / trait hierarchies are the navigation primitive.
 **LSP call hierarchy** — `lsp.incoming_calls` / `lsp.outgoing_calls` (ex aliases `:Callers` /
 `:Callees` / `:IncomingCalls` / `:OutgoingCalls`). Two-step: `textDocument/prepareCallHierarchy`
 at the cursor → reply lands as `LspEvent::CallHierarchyPrepared` → the App fires

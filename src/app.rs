@@ -4704,6 +4704,16 @@ impl App {
             } => {
                 self.apply_call_hierarchy_calls(direction, origin_name, hits);
             }
+            LspEvent::TypeHierarchyPrepared { direction, items } => {
+                self.apply_type_hierarchy_prepared(direction, items);
+            }
+            LspEvent::TypeHierarchyTypes {
+                direction,
+                origin_name,
+                hits,
+            } => {
+                self.apply_type_hierarchy_types(direction, origin_name, hits);
+            }
             LspEvent::CodeAction(actions) => self.apply_code_action_reply(actions),
             LspEvent::DocumentSymbols(symbols) => {
                 if self.pending_outline {
@@ -8267,6 +8277,91 @@ impl App {
             move |lsp, p, l, c| lsp.prepare_call_hierarchy(p, l, c, direction),
             "outgoing-calls",
         );
+    }
+
+    /// `lsp.supertypes` — parent classes / traits / supertypes of the
+    /// type at the cursor. Two-step: prepareTypeHierarchy → supertypes.
+    pub fn lsp_supertypes(&mut self) {
+        let direction = crate::lsp::TypeHierarchyDirection::Supertypes;
+        self.lsp_request_at_cursor(
+            move |lsp, p, l, c| lsp.prepare_type_hierarchy(p, l, c, direction),
+            "supertypes",
+        );
+    }
+    /// `lsp.subtypes` — subclasses / implementations / subtypes.
+    pub fn lsp_subtypes(&mut self) {
+        let direction = crate::lsp::TypeHierarchyDirection::Subtypes;
+        self.lsp_request_at_cursor(
+            move |lsp, p, l, c| lsp.prepare_type_hierarchy(p, l, c, direction),
+            "subtypes",
+        );
+    }
+
+    /// Handle `LspEvent::TypeHierarchyPrepared` — take the first item and
+    /// fire the follow-up `{super,sub}types` request.
+    fn apply_type_hierarchy_prepared(
+        &mut self,
+        direction: crate::lsp::TypeHierarchyDirection,
+        items: Vec<crate::lsp::CallHierarchyItem>,
+    ) {
+        if items.is_empty() {
+            self.toast("type hierarchy: nothing under cursor");
+            return;
+        }
+        let item = items.into_iter().next().unwrap();
+        match direction {
+            crate::lsp::TypeHierarchyDirection::Supertypes => {
+                self.lsp.type_hierarchy_supertypes(&item);
+            }
+            crate::lsp::TypeHierarchyDirection::Subtypes => {
+                self.lsp.type_hierarchy_subtypes(&item);
+            }
+        }
+    }
+
+    /// Handle `LspEvent::TypeHierarchyTypes` — open a Locations picker.
+    fn apply_type_hierarchy_types(
+        &mut self,
+        direction: crate::lsp::TypeHierarchyDirection,
+        origin_name: String,
+        hits: Vec<crate::lsp::CallHit>,
+    ) {
+        if hits.is_empty() {
+            let label = match direction {
+                crate::lsp::TypeHierarchyDirection::Supertypes => "supertypes",
+                crate::lsp::TypeHierarchyDirection::Subtypes => "subtypes",
+            };
+            self.toast(format!("type hierarchy: no {label}"));
+            return;
+        }
+        let items: Vec<crate::picker::PickerItem> = hits
+            .into_iter()
+            .map(|h| {
+                let rel = h
+                    .path
+                    .strip_prefix(&self.workspace)
+                    .unwrap_or(h.path.as_path())
+                    .to_string_lossy()
+                    .to_string();
+                let id = format!("{}\t{}\t{}", h.path.display(), h.line, h.character);
+                let label = format!("{}  {}", h.name, rel);
+                let detail = format!("{}:{}", h.line + 1, h.character + 1);
+                crate::picker::PickerItem::new(id, label, detail)
+            })
+            .collect();
+        let title = match direction {
+            crate::lsp::TypeHierarchyDirection::Supertypes => {
+                format!("Supertypes — {origin_name}")
+            }
+            crate::lsp::TypeHierarchyDirection::Subtypes => {
+                format!("Subtypes — {origin_name}")
+            }
+        };
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Locations,
+            title,
+            items,
+        ));
     }
 
     /// Handle `LspEvent::CallHierarchyPrepared` — take the first item and
@@ -12295,6 +12390,8 @@ impl App {
             "Implementation" => self.lsp_goto_implementation(),
             "IncomingCalls" | "Callers" => self.lsp_incoming_calls(),
             "OutgoingCalls" | "Callees" => self.lsp_outgoing_calls(),
+            "Supertypes" | "ParentTypes" => self.lsp_supertypes(),
+            "Subtypes" | "ChildTypes" => self.lsp_subtypes(),
             "References" => {
                 crate::command::run("lsp.references", self);
             }

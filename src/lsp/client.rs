@@ -99,6 +99,7 @@ impl LspClient {
                         "references": {},
                         "documentHighlight": {},
                         "callHierarchy": { "dynamicRegistration": false },
+                        "typeHierarchy": { "dynamicRegistration": false },
                         "rename": {},
                         "completion": {
                             "completionItem": {
@@ -500,6 +501,52 @@ impl LspClient {
         );
     }
 
+    /// `textDocument/prepareTypeHierarchy`.
+    pub fn prepare_type_hierarchy(
+        &mut self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        direction: super::TypeHierarchyDirection,
+    ) {
+        let dir = match direction {
+            super::TypeHierarchyDirection::Supertypes => "s",
+            super::TypeHierarchyDirection::Subtypes => "b",
+        };
+        self.request_with_context(
+            "textDocument/prepareTypeHierarchy",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "position": { "line": line, "character": character }
+            }),
+            Some(path),
+            Some(dir.to_string()),
+        );
+    }
+
+    /// `typeHierarchy/supertypes` / `subtypes`. Opaque tag is `"s:<name>"`
+    /// / `"b:<name>"` so the reply knows direction + origin name.
+    pub fn type_hierarchy_types(
+        &mut self,
+        item: &super::CallHierarchyItem,
+        direction: super::TypeHierarchyDirection,
+    ) {
+        let (method, tag) = match direction {
+            super::TypeHierarchyDirection::Supertypes => {
+                ("typeHierarchy/supertypes", format!("s:{}", item.name))
+            }
+            super::TypeHierarchyDirection::Subtypes => {
+                ("typeHierarchy/subtypes", format!("b:{}", item.name))
+            }
+        };
+        self.request_with_context(
+            method,
+            json!({ "item": item.raw }),
+            Some(&item.path),
+            Some(tag),
+        );
+    }
+
     /// `textDocument/formatting` — reply is a `TextEdit[]` (possibly null).
     /// The path is stashed so we can route the reply to the right buffer.
     pub fn formatting(&mut self, path: &Path, tab_size: u32, insert_spaces: bool) {
@@ -843,6 +890,32 @@ fn handle_message(
                     hits,
                 });
             }
+            "textDocument/prepareTypeHierarchy" => {
+                let direction = match req_opaque.as_deref() {
+                    Some("b") => super::TypeHierarchyDirection::Subtypes,
+                    _ => super::TypeHierarchyDirection::Supertypes,
+                };
+                let items = parse_call_hierarchy_items(result);
+                let _ = tx.send(LspEvent::TypeHierarchyPrepared { direction, items });
+            }
+            "typeHierarchy/supertypes" | "typeHierarchy/subtypes" => {
+                let (direction, origin_name) = match req_opaque.as_deref() {
+                    Some(s) if s.starts_with("b:") => {
+                        (super::TypeHierarchyDirection::Subtypes, s[2..].to_string())
+                    }
+                    Some(s) if s.starts_with("s:") => (
+                        super::TypeHierarchyDirection::Supertypes,
+                        s[2..].to_string(),
+                    ),
+                    _ => (super::TypeHierarchyDirection::Supertypes, String::new()),
+                };
+                let hits = parse_type_hierarchy_types(result);
+                let _ = tx.send(LspEvent::TypeHierarchyTypes {
+                    direction,
+                    origin_name,
+                    hits,
+                });
+            }
             _ => {}
         }
     }
@@ -888,6 +961,48 @@ pub fn parse_call_hierarchy_items(result: &serde_json::Value) -> Vec<super::Call
             line,
             character,
             raw: it.clone(),
+        });
+    }
+    out
+}
+
+/// Parse a `typeHierarchy/{super,sub}types` reply. The reply is a flat
+/// array of `TypeHierarchyItem` (same shape as `CallHierarchyItem`).
+/// We surface only `(name, path, line, character)` since the picker
+/// only needs a location.
+pub fn parse_type_hierarchy_types(result: &serde_json::Value) -> Vec<super::CallHit> {
+    let arr = match result.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for it in arr {
+        let Some(name) = it.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(uri) = it.get("uri").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(path) = uri_to_path(uri) else {
+            continue;
+        };
+        let line = it
+            .get("selectionRange")
+            .and_then(|r| r.get("start"))
+            .and_then(|s| s.get("line"))
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0) as u32;
+        let character = it
+            .get("selectionRange")
+            .and_then(|r| r.get("start"))
+            .and_then(|s| s.get("character"))
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0) as u32;
+        out.push(super::CallHit {
+            name: name.to_string(),
+            path,
+            line,
+            character,
         });
     }
     out
