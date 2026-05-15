@@ -759,6 +759,15 @@ aliased to `:cprev`, so `:Cp` only.)
 **`:Capture <cmd>`** — run the command via `$SHELL -c`, open the combined stdout/stderr
 in a new scratch buffer (split below). Useful for grabbing `cargo test` output, log dumps,
 etc. for grep / highlight without launching a full pty. Cwd is the workspace.
+**`:Notes`** — open / create `<workspace>/.mnml/notes.md` as a workspace-local notepad
+(markdown so the auto-md-preview behavior kicks in).
+**`:Reflow [N]`** — reflow the paragraph at cursor to width N (default `[editor]
+text_width`). Vim canonical `gqq` with an optional width arg.
+**`:Sleep <ms>`** — block the event loop for `<ms>` ms (e2e / scripting). Clamps at 10 s.
+**`:Encoding` / `:enc`** — toast `utf-8` (mnml is UTF-8 only). For vim muscle memory.
+**`:RootFor [path]`** — toast the LSP root for `<path>` (or the active buffer): walks
+ancestors for `Cargo.toml` / `package.json` / `go.mod` / `pyproject.toml` / `.git`.
+**`:Newer <N>` / `:Older <N>`** — friendlier vim aliases for `:later` / `:earlier`.
 **`:setlocal [no]readonly` / `:setlocal ro` / `noro` / `readonly!`** — toggle the active
 buffer's `read_only` flag (input handlers ignore text-changing keys when set). Useful for
 "don't let me accidentally edit this" on a file open for reference.

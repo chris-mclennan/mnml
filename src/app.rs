@@ -13618,6 +13618,109 @@ impl App {
                     None => self.toast(":A — no alternate file found"),
                 }
             }
+            // `:Notes` — open / create `<workspace>/.mnml/notes.md` as
+            // a workspace-local notepad. Markdown so the existing
+            // highlight + preview auto-open behavior kicks in.
+            "Notes" | "notes" => {
+                let dir = self.workspace.join(".mnml");
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    self.toast(format!(":Notes: cannot create dir: {e}"));
+                    return;
+                }
+                let path = dir.join("notes.md");
+                if !path.exists() {
+                    let seed = "# Workspace notes\n\n";
+                    if let Err(e) = std::fs::write(&path, seed) {
+                        self.toast(format!(":Notes: cannot create file: {e}"));
+                        return;
+                    }
+                }
+                self.open_path(&path);
+            }
+            // `:Reflow [N]` — reflow the paragraph at cursor to width N
+            // (default `[editor] text_width`). Vim canonical is `gqq`;
+            // this is the ex form with an optional width arg.
+            "Reflow" => {
+                let arg = rest.trim();
+                let prev_width = self.config.editor.text_width;
+                let mut restore = None;
+                if !arg.is_empty()
+                    && let Ok(n) = arg.parse::<usize>()
+                    && n > 0
+                {
+                    restore = Some(prev_width);
+                    self.config.editor.text_width = n;
+                }
+                self.reflow_paragraph_at_cursor();
+                if let Some(prev) = restore {
+                    self.config.editor.text_width = prev;
+                }
+            }
+            // `:Sleep <ms>` — block the event loop for `<ms>` ms.
+            // Mostly for scripting / e2e. Clamps at 10 000 ms.
+            "Sleep" | "sleep" => {
+                let ms = rest.trim().parse::<u64>().unwrap_or(0).min(10_000);
+                if ms == 0 {
+                    self.toast(":Sleep <ms> — needs a positive number");
+                } else {
+                    std::thread::sleep(std::time::Duration::from_millis(ms));
+                }
+            }
+            // `:Encoding` / `:enc` — mnml is UTF-8 only. Toast for vim
+            // muscle memory.
+            "Encoding" | "enc" => {
+                self.toast(":Encoding — utf-8 (mnml is UTF-8 only)");
+            }
+            // `:RootFor [path]` — toast the LSP root for `<path>` (or
+            // the active buffer). Walks ancestors for Cargo.toml /
+            // package.json / etc.
+            "RootFor" | "rootfor" => {
+                let arg = rest.trim();
+                let path = if arg.is_empty() {
+                    self.active_editor().and_then(|b| b.path.clone())
+                } else {
+                    let p = std::path::PathBuf::from(arg);
+                    if p.is_absolute() {
+                        Some(p)
+                    } else {
+                        Some(self.workspace.join(p))
+                    }
+                };
+                let Some(path) = path else {
+                    self.toast(":RootFor <path> — needs a path");
+                    return;
+                };
+                let markers = [
+                    "Cargo.toml",
+                    "package.json",
+                    "go.mod",
+                    "pyproject.toml",
+                    ".git",
+                ];
+                let mut cur = path.parent();
+                let mut found: Option<std::path::PathBuf> = None;
+                while let Some(dir) = cur {
+                    if markers.iter().any(|m| dir.join(m).exists()) {
+                        found = Some(dir.to_path_buf());
+                        break;
+                    }
+                    cur = dir.parent();
+                }
+                match found {
+                    Some(p) => self.toast(format!(":RootFor → {}", p.display())),
+                    None => self.toast(":RootFor — no recognized root marker"),
+                }
+            }
+            // `:Newer <N>` / `:Older <N>` — aliases for `:later` /
+            // `:earlier`. Walks N undo steps forward / back.
+            "Newer" => {
+                let alias = format!("later {rest}");
+                self.run_ex_command(&alias);
+            }
+            "Older" => {
+                let alias = format!("earlier {rest}");
+                self.run_ex_command(&alias);
+            }
             // `:WordCount` / `:Wc` — count chars / words / lines in the
             // active buffer (or selection). The classic `wc -lwc` shape.
             "WordCount" | "Wc" | "wc" => {
