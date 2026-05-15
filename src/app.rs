@@ -7612,6 +7612,63 @@ impl App {
         }
     }
 
+    /// `:Diffsplit <other>` — diff the active buffer's text against
+    /// `<other>` on disk. Always opens a fresh diff pane; doesn't try
+    /// to reuse the buffer-vs-disk scope (the buffer's own path may
+    /// be unrelated to `<other>`). Read-only.
+    pub fn open_diff_buffer_vs_file(&mut self, other: PathBuf) {
+        let Some(cur) = self.active else {
+            self.toast("no active buffer");
+            return;
+        };
+        let mem_text = match self.active_editor() {
+            Some(b) => b.editor.text().to_string(),
+            None => {
+                self.toast(":Diffsplit needs an editor pane");
+                return;
+            }
+        };
+        // Write the buffer text to a tempfile and shell out the diff.
+        let tmp_dir = self.workspace.join(".mnml").join("tmp");
+        if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
+            self.toast(format!(":Diffsplit: tmp dir: {e}"));
+            return;
+        }
+        let stem = "buffer";
+        let tmp = tmp_dir.join(format!("{stem}.diffwith"));
+        if let Err(e) = std::fs::write(&tmp, &mem_text) {
+            self.toast(format!(":Diffsplit: write tmp: {e}"));
+            return;
+        }
+        let out = std::process::Command::new("git")
+            .args(["diff", "--no-index", "--no-color", "--"])
+            .arg(&other)
+            .arg(&tmp)
+            .current_dir(&self.workspace)
+            .output();
+        let stdout = match out {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+            Err(e) => {
+                self.toast(format!(":Diffsplit failed: {e}"));
+                return;
+            }
+        };
+        let _ = std::fs::remove_file(&tmp);
+        let hunks = crate::git::diff::parse_hunks(&stdout, &self.workspace);
+        if hunks.is_empty() {
+            self.toast("no differences");
+            return;
+        }
+        let scope = crate::pane::DiffScope::BufferVsDisk(other);
+        let new_id = self.split_leaf_with(
+            cur,
+            crate::layout::SplitDir::Horizontal,
+            Pane::Diff(crate::pane::DiffView::new(scope, hunks)),
+        );
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+    }
+
     /// `git.diff_orig` (`:DiffOrig`) — open a diff pane comparing the
     /// active buffer's in-memory text against its on-disk version. Vim
     /// canonical for "what have I changed since I last saved". Read-only
@@ -13055,6 +13112,32 @@ impl App {
             }
             "DiffOrig" => {
                 crate::command::run("git.diff_orig", self);
+            }
+            // `:Diffsplit <other>` / `:Diffwith <other>` — open a diff
+            // pane comparing the *active editor's buffer* against
+            // `<other>` (workspace-relative). Reuses
+            // DiffScope::BufferVsDisk by pointing it at `<other>`, but
+            // the on-disk read is for `<other>` and the in-memory side
+            // is the active buffer's text via active_editor — so the
+            // helper sees the right text either way (it matches by
+            // path; if the active buffer's path != <other>, we route
+            // through a temp comparison).
+            "Diffsplit" | "Diffwith" => {
+                let other = rest.trim();
+                if other.is_empty() {
+                    self.toast(":Diffsplit <file> — needs a path");
+                    return;
+                }
+                let other_path = if std::path::Path::new(other).is_absolute() {
+                    std::path::PathBuf::from(other)
+                } else {
+                    self.workspace.join(other)
+                };
+                if !other_path.exists() {
+                    self.toast(format!(":Diffsplit — no such file: {other}"));
+                    return;
+                }
+                self.open_diff_buffer_vs_file(other_path);
             }
             "GBrowse" | "Gbrowse" | "Browse" => {
                 if let Some(arg) = rest.split_whitespace().next() {

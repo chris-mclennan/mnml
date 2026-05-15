@@ -759,6 +759,11 @@ aliased to `:cprev`, so `:Cp` only.)
 **`:Capture <cmd>`** — run the command via `$SHELL -c`, open the combined stdout/stderr
 in a new scratch buffer (split below). Useful for grabbing `cargo test` output, log dumps,
 etc. for grep / highlight without launching a full pty. Cwd is the workspace.
+**`:Diffsplit <file>` / `:Diffwith <file>`** — open a diff pane comparing the active buffer's
+text against `<file>` (workspace-relative). Same `git diff --no-index` plumbing as
+`:DiffOrig` but with `<file>` as the "other" side instead of the buffer's own on-disk
+version. Useful for "diff this branch's foo.rs against main's snapshot I just
+checked out". Read-only.
 **`git.diff_orig`** (`:DiffOrig`) — open a diff pane comparing the active buffer's in-
 memory text against its on-disk version. Vim canonical "what have I changed since save?"
 New `DiffScope::BufferVsDisk(path)` variant. Implementation: writes buffer text to
