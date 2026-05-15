@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use crate::ai::AiPane;
+use crate::bitbucket::BitbucketPipelinesPane;
 use crate::browser_pane::BrowserPane;
 use crate::buffer::Buffer;
 use crate::git::diff::Hunk;
@@ -68,6 +69,9 @@ pub enum Pane {
     /// Vim's `q:` — a scrollable list of recent `:` cmdline entries.
     /// Enter re-fires the highlighted entry; Esc closes.
     CmdlineHistory(CmdlineHistoryPane),
+    /// Bitbucket Cloud pipelines list — recent CI runs across every
+    /// configured `[[bitbucket.repos]]` entry, grouped by repo.
+    BitbucketPipelines(BitbucketPipelinesPane),
     /// DocumentDB live `TestExecutions` browser (the private integration org build). Behind
     /// the `private` Cargo feature — the lean build doesn't have this.
     #[cfg(feature = "private")]
@@ -217,6 +221,7 @@ impl Pane {
             Pane::Grep(g) => g.tab_title(),
             Pane::Quickfix(g) => format!("Quickfix · {}", g.hits.len()),
             Pane::CmdlineHistory(_) => "q:".to_string(),
+            Pane::BitbucketPipelines(p) => p.tab_title(),
             #[cfg(feature = "private")]
             Pane::TestExecutions(p) => p.tab_title(),
             #[cfg(feature = "private")]
@@ -243,7 +248,8 @@ impl Pane {
             | Pane::Diagnostics(_)
             | Pane::Grep(_)
             | Pane::Quickfix(_)
-            | Pane::CmdlineHistory(_) => false,
+            | Pane::CmdlineHistory(_)
+            | Pane::BitbucketPipelines(_) => false,
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => false,
             #[cfg(feature = "private")]

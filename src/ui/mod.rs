@@ -20,6 +20,7 @@
 //! palette / which-key / popups) draw on top.
 
 pub mod ai_view;
+pub mod bitbucket_pipelines_view;
 pub mod browser_view;
 pub mod bufferline;
 pub mod close_prompt;
@@ -288,6 +289,7 @@ fn render_layout(
                 Some(crate::pane::Pane::TestExecutions(_)) => 17,
                 #[cfg(feature = "private")]
                 Some(crate::pane::Pane::CodeBuilds(_)) => 18,
+                Some(crate::pane::Pane::BitbucketPipelines(_)) => 19,
                 _ => 0,
             };
             match kind {
@@ -313,6 +315,7 @@ fn render_layout(
                 17 => test_executions_view::draw(frame, app, *id, area, focused),
                 #[cfg(feature = "private")]
                 18 => codebuilds_view::draw(frame, app, *id, area, focused),
+                19 => bitbucket_pipelines_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

@@ -912,6 +912,66 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // Bitbucket pipelines browser: ↑↓/jk/PgUp/PgDn/g/G navigate (header
+    // rows auto-skipped), Enter → open in browser, y → copy URL,
+    // r → refresh, Esc → tree.
+    if matches!(app.panes.get(i), Some(Pane::BitbucketPipelines(_))) {
+        // Compute the max index *before* taking a mutable borrow on the pane.
+        let flat = crate::ui::bitbucket_pipelines_view::flatten_pipelines(app);
+        let max_idx = flat.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
+                    // Skip over header rows by jumping in pairs when needed.
+                    // The view's snap_selection_to_data fixes the final
+                    // resting spot if we land on a header.
+                    p.move_selection(-1, max_idx);
+                    while p.selected > 0
+                        && flat
+                            .get(p.selected)
+                            .map(|r| r.kind == crate::ui::bitbucket_pipelines_view::RowKind::Header)
+                            .unwrap_or(false)
+                    {
+                        p.move_selection(-1, max_idx);
+                    }
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
+                    p.move_selection(1, max_idx);
+                    // The view's snap_selection_to_data handles header skip
+                    // on the down-direction at render time.
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
+                    p.move_selection(-(viewport as i64), max_idx);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
+                    p.move_selection(viewport as i64, max_idx);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
+                    p.move_selection(i64::MIN / 2, max_idx);
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
+                    p.move_selection(i64::MAX / 2, max_idx);
+                }
+            }
+            KeyCode::Enter => app.open_selected_bitbucket_pipeline_url(),
+            KeyCode::Char('y') => app.copy_selected_bitbucket_pipeline_url(),
+            KeyCode::Char('r') => app.refresh_active_bitbucket_pane(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
+
     // the private integration CodeBuilds browser (cfg-gated): ↑↓ select, Enter open URL,
     // y copy URL, r refresh, Esc → tree.
     #[cfg(feature = "private")]
@@ -2171,7 +2231,20 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             Some(Pane::CodeBuilds(p)) => {
                 p.move_selection(delta as i64);
             }
+            Some(Pane::BitbucketPipelines(_)) => {
+                // Wheel-scroll handled below the match so the borrow on
+                // `app.panes` releases first — we need an immutable read of
+                // `app.config` to compute the flat-list max index.
+            }
             None => {}
+        }
+        // Post-match handling for BitbucketPipelines (see comment above).
+        if matches!(app.panes.get(pid), Some(Pane::BitbucketPipelines(_))) {
+            let flat = crate::ui::bitbucket_pipelines_view::flatten_pipelines(app);
+            let max_idx = flat.len();
+            if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(pid) {
+                p.move_selection(delta as i64, max_idx);
+            }
         }
     }
 }

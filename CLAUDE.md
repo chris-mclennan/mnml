@@ -1928,7 +1928,7 @@ workers exit cleanly. Phase 4b (queued) adds change streams selectable via
 `[playwright.docdb] mode = "stream"` (DocumentDB 5.0 cluster `private-docdb5-0`
 has them enabled, 3-day resume window), with polling as the auto-fallback.
 CodeBuild + launcher absorption (separate tracks) come after.
-**Bitbucket terminal dashboard (phase 1 done — worker skeleton)** — `src/bitbucket/`
+**Bitbucket terminal dashboard (phases 1–2 done)** — `src/bitbucket/`
 (unconditional in the lean build; reuses `reqwest::blocking` from the `http` track,
 no Bitbucket SDK). One worker thread polls every configured `[[bitbucket.repos]]`
 workspace/slug in turn (`api.rs` hits `GET /2.0/repositories/{ws}/{slug}/pipelines/?sort=-created_on&pagelen=20`),
@@ -1967,11 +1967,27 @@ workspace = "exampleorg"
 slug      = "private-playwright"
 ```
 Repos *append* across config files (homedir + workspace .mnml/config.toml), so a
-workspace-local override adds rather than replaces. Phase 2 wires
-`Pane::BitbucketPipelines` (list view, ↑↓ select, Enter→browse, `r`→refresh,
-`t`→live log tail in pty); phase 3 adds `Pane::BitbucketPr` (per-PR view with
-reviewers + build statuses + comment count); phase 4 polish covers a PR list
-picker, cross-nav (PR ↔ its pipelines), and a branch-rail "open PRs" subsection.
+workspace-local override adds rather than replaces. **Phase 2 landed:**
+`Pane::BitbucketPipelines` (`bitbucket.pipelines` command, `<leader>C p` chord via
+new "+ci" leader group): a multi-repo grouped list of recent pipelines reading
+from `App.bitbucket_pipelines` at render time (no per-pane data store — the
+pane is stateless beyond `{selected, scroll}`). Header rows show `▸ ws/slug
+(N)`; data rows are `<glyph> #build <ref> <duration> <age ago> <creator>
+<trigger>` color-coded by state (green ✓ successful, red ✗ failed/error,
+yellow ⏵ running, cyan · pending/paused, dim ⊘ stopped/halted/expired,
+fg ? unknown). ↑↓/jk/PgUp/PgDn/g/G navigate (header rows auto-skipped),
+Enter opens the pipeline's Bitbucket dashboard URL via `open_url_external`,
+`y` copies it, `r` triggers an immediate refresh (wakes the worker out of
+its poll-interval sleep via a new `BitbucketHandle::force_refresh` /
+`AtomicBool` wake flag — the worker's `sleep_cancellable_with_wake` checks
+both cancel + wake every 250ms), Esc → tree. `src/ui/bitbucket_pipelines_view.rs`
+flattens config-order repos × cached pipelines into a `Vec<FlatRow>`;
+`selected_pipeline(app, pane)` is the helper App-side commands call to
+resolve the selection. Phase 3 adds `Pane::BitbucketPr` (per-PR view with
+reviewers + build statuses + comment count); phase 4 polish covers a PR
+list picker, cross-nav (PR ↔ its pipelines), branch-rail "open PRs"
+subsection, and live log tail in pty. GitHub Actions / GitLab CI / Azure
+DevOps will mirror this pattern as future phases (5/6/opt-in).
 
 ## Not set up yet (could add later)
 

@@ -1728,18 +1728,18 @@ pub struct App {
     /// leaves this `None` until a pane is opened.
     bitbucket_handle: Option<crate::bitbucket::BitbucketHandle>,
     /// Per-repo cache of the latest pipelines fetched by the Bitbucket
-    /// worker. Keyed by `(workspace, slug)`. The future
-    /// `Pane::BitbucketPipelines` (phase 2) reads from this on every
-    /// render; the App refreshes it from the channel each `tick`.
-    bitbucket_pipelines:
+    /// worker. Keyed by `(workspace, slug)`. `Pane::BitbucketPipelines`
+    /// reads from this on every render; the App refreshes it from the
+    /// channel each `tick`. `pub(crate)` so the view module can flatten it.
+    pub(crate) bitbucket_pipelines:
         std::collections::HashMap<(String, String), Vec<crate::bitbucket::PipelineRecord>>,
     /// Last error string reported by the Bitbucket worker (auth failed,
     /// repo 404, …). Cleared on the next successful event. Surfaced as a
     /// banner by the pane.
-    bitbucket_last_error: Option<String>,
+    pub(crate) bitbucket_last_error: Option<String>,
     /// `true` once the Bitbucket worker has sent at least one successful
     /// response — the pane drops its "loading…" chip on first receipt.
-    bitbucket_connected: bool,
+    pub(crate) bitbucket_connected: bool,
     /// Job id of an in-flight "AI: write me a commit message" run (it shares
     /// `ai_chan`; when it lands, the commit prompt opens pre-seeded instead of an
     /// answer landing in a `Pane::Ai`).
@@ -5347,6 +5347,7 @@ impl App {
             | Some(Pane::Outline(_))
             | Some(Pane::Quickfix(_))
             | Some(Pane::CmdlineHistory(_))
+            | Some(Pane::BitbucketPipelines(_))
             | None => None,
             #[cfg(feature = "private")]
             Some(Pane::TestExecutions(_)) => None,
@@ -11229,7 +11230,8 @@ impl App {
             | Pane::Flaky(_)
             | Pane::Outline(_)
             | Pane::Quickfix(_)
-            | Pane::CmdlineHistory(_) => (None, None),
+            | Pane::CmdlineHistory(_)
+            | Pane::BitbucketPipelines(_) => (None, None),
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (None, None),
             #[cfg(feature = "private")]
@@ -11328,6 +11330,7 @@ impl App {
             Pane::Outline(o) => Some((o.tab_title(), false)),
             Pane::Quickfix(g) => Some((format!("Quickfix · {}", g.hits.len()), false)),
             Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
+            Pane::BitbucketPipelines(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "private")]
             Pane::TestExecutions(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "private")]
@@ -16593,6 +16596,87 @@ impl App {
             return;
         }
         self.bitbucket_handle = Some(crate::bitbucket::spawn(self.config.bitbucket.clone()));
+    }
+
+    /// Open (or focus) the Bitbucket pipelines pane. Spawns the worker
+    /// thread lazily if it's not already running. Lands the pane as a
+    /// vertical split off the active leaf — same layout shape as the
+    /// other dashboard panes.
+    pub fn open_bitbucket_pipelines_pane(&mut self) {
+        if !self.config.bitbucket.any_configured() {
+            self.toast(
+                "bitbucket: add a [[bitbucket.repos]] entry to ~/.config/mnml/config.toml first",
+            );
+            return;
+        }
+        self.ensure_bitbucket_worker();
+        // Re-focus an existing pane if open.
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::BitbucketPipelines(_)))
+        {
+            // Pulse a refresh so re-opening is the easy way to get fresh data.
+            if let Some(h) = &self.bitbucket_handle {
+                h.force_refresh();
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::BitbucketPipelines(crate::bitbucket::BitbucketPipelinesPane::new());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+        self.toast("bitbucket: pipelines (loading…)");
+    }
+
+    /// `r` in a Bitbucket pane — wake the worker so the next poll fires
+    /// immediately instead of waiting for the regular interval. No-op if
+    /// no worker is running.
+    pub fn refresh_active_bitbucket_pane(&mut self) {
+        if let Some(h) = &self.bitbucket_handle {
+            h.force_refresh();
+            self.toast("bitbucket: refreshing…");
+        }
+    }
+
+    /// `Enter` on the selected pipeline row — open its Bitbucket dashboard
+    /// URL in the OS default browser.
+    pub fn open_selected_bitbucket_pipeline_url(&mut self) {
+        let Some(url) = self.selected_bitbucket_pipeline_url() else {
+            self.toast("no pipeline selected");
+            return;
+        };
+        crate::app::open_url_external(&url);
+        self.toast("opened pipeline in browser");
+    }
+
+    /// `y` on the selected pipeline row — copy the URL to the clipboard.
+    pub fn copy_selected_bitbucket_pipeline_url(&mut self) {
+        let Some(url) = self.selected_bitbucket_pipeline_url() else {
+            self.toast("no pipeline selected");
+            return;
+        };
+        self.clipboard.set_yank(url, false);
+        self.toast("copied pipeline URL");
+    }
+
+    fn selected_bitbucket_pipeline_url(&self) -> Option<String> {
+        let id = self.active?;
+        let Pane::BitbucketPipelines(pane) = self.panes.get(id)? else {
+            return None;
+        };
+        crate::ui::bitbucket_pipelines_view::selected_pipeline(self, pane).map(|r| r.web_url)
     }
 
     /// Pull pending pipeline updates off the Bitbucket channel into the

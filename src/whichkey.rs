@@ -199,6 +199,19 @@ pub fn root() -> &'static Leader {
                         ],
                     ),
                 ),
+                (
+                    'C',
+                    group(
+                        "+ci",
+                        vec![
+                            // Bitbucket pipelines dashboard. GH Actions /
+                            // GitLab CI panes will join this group as
+                            // they land (planned: `g` GitHub, `l` GitLab).
+                            ('p', cmd("bitbucket.pipelines", "bitbucket pipelines")),
+                            ('r', cmd("bitbucket.refresh_active", "refresh ci pane")),
+                        ],
+                    ),
+                ),
                 ('w', cmd("file.save", "write/save")),
                 ('B', cmd("browser.open", "open browser (Chrome/CDP)")),
                 ('q', cmd("buffer.close", "close buffer")),

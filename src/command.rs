@@ -1701,6 +1701,39 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.close_active_pane(),
         },
     ];
+    // Bitbucket: lean-build-safe — the worker only spins up when
+    // `[[bitbucket.repos]]` is non-empty, so the command is harmless to
+    // surface in every build.
+    cmds.push(Command {
+        id: "bitbucket.pipelines",
+        title: "Bitbucket: open pipelines dashboard",
+        group: "bitbucket",
+        // No global default key — opens via `<leader>B p` (wired in whichkey.rs)
+        // or the palette / `:BB`.
+        keys: &[],
+        run: |app| app.open_bitbucket_pipelines_pane(),
+    });
+    cmds.push(Command {
+        id: "bitbucket.refresh_active",
+        title: "Bitbucket: refresh the active pipelines pane",
+        group: "bitbucket",
+        keys: &[],
+        run: |app| app.refresh_active_bitbucket_pane(),
+    });
+    cmds.push(Command {
+        id: "bitbucket.open_selected_url",
+        title: "Bitbucket: open selected pipeline in browser",
+        group: "bitbucket",
+        keys: &[],
+        run: |app| app.open_selected_bitbucket_pipeline_url(),
+    });
+    cmds.push(Command {
+        id: "bitbucket.copy_selected_url",
+        title: "Bitbucket: copy selected pipeline URL",
+        group: "bitbucket",
+        keys: &[],
+        run: |app| app.copy_selected_bitbucket_pipeline_url(),
+    });
     #[cfg(feature = "private")]
     {
         cmds.push(Command {

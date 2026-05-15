@@ -32,8 +32,10 @@ use std::time::Duration;
 use crate::config::{BitbucketConfig, BitbucketRepo};
 
 pub mod api;
+pub mod pipelines_pane;
 
 pub use api::{PipelineRecord, PipelineState};
+pub use pipelines_pane::BitbucketPipelinesPane;
 
 /// Backoff after a per-repo fetch failure before we visit the next repo
 /// in the same pass. Keeps a flaky repo from spinning at full speed.
@@ -64,7 +66,20 @@ pub enum BitbucketEvent {
 pub struct BitbucketHandle {
     pub rx: Receiver<BitbucketEvent>,
     cancel: Arc<AtomicBool>,
+    /// Wake the worker out of its sleep early — set by [`Self::force_refresh`]
+    /// when the user presses `r` in the pane. Cleared by the worker on the
+    /// next pass start.
+    wake: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
+}
+
+impl BitbucketHandle {
+    /// Wake the worker so it issues a fresh poll *now* rather than at the
+    /// next `poll_secs` boundary. Returns immediately; results land on the
+    /// channel as usual. Called from the pane's `r` key handler.
+    pub fn force_refresh(&self) {
+        self.wake.store(true, Ordering::Relaxed);
+    }
 }
 
 impl Drop for BitbucketHandle {
@@ -82,16 +97,24 @@ impl Drop for BitbucketHandle {
 pub fn spawn(cfg: BitbucketConfig) -> BitbucketHandle {
     let (tx, rx) = channel();
     let cancel = Arc::new(AtomicBool::new(false));
+    let wake = Arc::new(AtomicBool::new(false));
     let cancel_for_thread = cancel.clone();
-    let join = thread::spawn(move || run_thread(cfg, tx, cancel_for_thread));
+    let wake_for_thread = wake.clone();
+    let join = thread::spawn(move || run_thread(cfg, tx, cancel_for_thread, wake_for_thread));
     BitbucketHandle {
         rx,
         cancel,
+        wake,
         join: Some(join),
     }
 }
 
-fn run_thread(cfg: BitbucketConfig, tx: Sender<BitbucketEvent>, cancel: Arc<AtomicBool>) {
+fn run_thread(
+    cfg: BitbucketConfig,
+    tx: Sender<BitbucketEvent>,
+    cancel: Arc<AtomicBool>,
+    wake: Arc<AtomicBool>,
+) {
     if !cfg.any_configured() {
         let _ = tx.send(BitbucketEvent::Failed(
             "no [[bitbucket.repos]] configured — add a workspace/slug pair in \
@@ -123,6 +146,10 @@ fn run_thread(cfg: BitbucketConfig, tx: Sender<BitbucketEvent>, cancel: Arc<Atom
 
     let mut have_sent_connected = false;
     while !cancel.load(Ordering::Relaxed) {
+        // Clear at pass start — a wake set *during* the pass will fire the
+        // next iteration anyway, and we want a fresh latch for the
+        // post-pass sleep below.
+        wake.store(false, Ordering::Relaxed);
         for repo in &cfg.repos {
             if cancel.load(Ordering::Relaxed) {
                 return;
@@ -148,22 +175,22 @@ fn run_thread(cfg: BitbucketConfig, tx: Sender<BitbucketEvent>, cancel: Arc<Atom
                     // Brief inter-repo backoff so a single broken repo
                     // doesn't make us hammer the API for the rest of the
                     // list at no-delay.
-                    sleep_cancellable(PER_REPO_ERROR_BACKOFF, &cancel);
+                    sleep_cancellable_with_wake(PER_REPO_ERROR_BACKOFF, &cancel, &wake);
                 }
             }
         }
-        sleep_cancellable(poll_interval, &cancel);
+        sleep_cancellable_with_wake(poll_interval, &cancel, &wake);
     }
 }
 
-/// Sleep `dur`, waking early if `cancel` flips. Keeps shutdown responsive
-/// — the worker can exit within `CHECK_INTERVAL` of the App dropping the
-/// handle, regardless of poll interval.
-fn sleep_cancellable(dur: Duration, cancel: &Arc<AtomicBool>) {
+/// Sleep `dur`, waking early on either `cancel` or `wake`. Keeps shutdown
+/// responsive (cancel fires within `CHECK_INTERVAL` of the App dropping
+/// the handle) AND lets the pane's `r` key trigger an immediate refresh.
+fn sleep_cancellable_with_wake(dur: Duration, cancel: &Arc<AtomicBool>, wake: &Arc<AtomicBool>) {
     const CHECK_INTERVAL: Duration = Duration::from_millis(250);
     let mut remaining = dur;
     while remaining > Duration::ZERO {
-        if cancel.load(Ordering::Relaxed) {
+        if cancel.load(Ordering::Relaxed) || wake.load(Ordering::Relaxed) {
             return;
         }
         let chunk = remaining.min(CHECK_INTERVAL);
