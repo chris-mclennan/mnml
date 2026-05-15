@@ -337,6 +337,15 @@ pub fn draw_pane(
             .filter(|(s, e)| *s >= ls && *e <= le)
             .map(|(s, e)| (buf.editor.byte_to_col(*s), buf.editor.byte_to_col(*e)))
             .collect();
+        // LSP document-highlight ranges on this line (`(start_col, end_col)`).
+        // We trust the server to give us single-line ranges (multi-line were
+        // dropped at parse time).
+        let doc_highlights_on_line: Vec<(usize, usize)> = buf
+            .document_highlights
+            .iter()
+            .filter(|(l, _, el, _)| (*l as usize) == line_no && (*el as usize) == line_no)
+            .map(|&(_, s, _, e)| (s as usize, e as usize))
+            .collect();
         let (sel_lo, sel_hi, extend_eol) = match selection {
             Some((lo, hi)) if hi > ls && lo <= le => (
                 buf.editor.byte_to_col(lo.clamp(ls, le)),
@@ -438,6 +447,7 @@ pub fn draw_pane(
             let in_word_match = word_matches_on_line.iter().any(|&(s, e)| {
                 c >= s && c < e && !(line_no == cur_row && cur_col >= s && cur_col < e)
             });
+            let in_doc_highlight = doc_highlights_on_line.iter().any(|&(s, e)| c >= s && c < e);
             let is_color_col = color_col_idx == Some(c);
             let is_extra_cursor = extra_cursor_cells
                 .iter()
@@ -461,7 +471,7 @@ pub fn draw_pane(
                     Some(true) => cur_match_bg,
                     Some(false) => match_bg,
                     None => {
-                        if in_word_match {
+                        if in_word_match || in_doc_highlight {
                             word_match_bg
                         } else if is_color_col {
                             // `[ui] color_column = N` — subtle line-length

@@ -449,6 +449,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_selection_shrink(),
         },
         Command {
+            id: "lsp.highlight_symbol",
+            title: "LSP: highlight all usages of symbol at cursor",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_highlight_symbol(),
+        },
+        Command {
+            id: "lsp.clear_highlights",
+            title: "LSP: clear symbol highlights",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_clear_highlights(),
+        },
+        Command {
             id: "editor.reflow_paragraph",
             title: "Reflow current paragraph to text_width (vim `gqq`)",
             group: "editor",

@@ -669,6 +669,13 @@ joins every range with `\n` and writes to the unnamed clipboard; replace
 deletes every range then inserts `s` at each cursor's resting position via
 the existing `multi_insert_str`. So `v…c<text><Esc>` does "change every
 selection to `<text>`" — the most useful multi-cursor edit shape.
+**LSP `documentHighlight`** — `lsp.highlight_symbol` (no default chord; `lsp.clear_highlights`
+to drop): fires `textDocument/documentHighlight` at the cursor; the scope-aware reply tints
+every same-symbol usage with `bg2` (the same tint used by `[ui] highlight_word_under_cursor`).
+Unlike the text-match version, the server knows about scopes / shadowing / types, so `let x; ...
+fn f(x: usize) { x }` highlights only one of the two `x`s. New `Buffer.document_highlights:
+Vec<(u32, u32, u32, u32)>` (single-line ranges; multi-line dropped at parse). On-demand only —
+wiring it into every cursor move would chatter the server.
 **LSP `documentColor`** — server-supplied color literals get their foreground painted in their
 actual color so `#ff0000` literally renders red, `rgb(0,255,0)` renders green, `hsl(...)` shows
 the resolved hue. Fired on open + on save (same cadence as inlay hints / code lens). New

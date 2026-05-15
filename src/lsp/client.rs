@@ -97,6 +97,7 @@ impl LspClient {
                         "typeDefinition": { "linkSupport": true },
                         "implementation": { "linkSupport": true },
                         "references": {},
+                        "documentHighlight": {},
                         "rename": {},
                         "completion": {
                             "completionItem": {
@@ -434,6 +435,19 @@ impl LspClient {
         );
     }
 
+    /// `textDocument/documentHighlight` — reply is `DocumentHighlight[]`.
+    /// Path is stashed so the reply routes back to the right buffer.
+    pub fn document_highlight(&mut self, path: &Path, line: u32, character: u32) {
+        self.request_with_path(
+            "textDocument/documentHighlight",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "position": { "line": line, "character": character }
+            }),
+            Some(path),
+        );
+    }
+
     /// `textDocument/formatting` — reply is a `TextEdit[]` (possibly null).
     /// The path is stashed so we can route the reply to the right buffer.
     pub fn formatting(&mut self, path: &Path, tab_size: u32, insert_spaces: bool) {
@@ -743,9 +757,56 @@ fn handle_message(
                     let _ = tx.send(LspEvent::DocumentColor { path, colors });
                 }
             }
+            "textDocument/documentHighlight" => {
+                if let Some(path) = req_path {
+                    let ranges = parse_document_highlights(result);
+                    let _ = tx.send(LspEvent::DocumentHighlights { path, ranges });
+                }
+            }
             _ => {}
         }
     }
+}
+
+/// Parse a `textDocument/documentHighlight` reply
+/// (`DocumentHighlight[]`). Each entry has a `range`; the `kind` field
+/// (read/write/text) is dropped — the renderer paints them uniformly.
+pub fn parse_document_highlights(result: &serde_json::Value) -> Vec<(u32, u32, u32, u32)> {
+    let arr = match result.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for it in arr {
+        let Some(range) = it.get("range") else {
+            continue;
+        };
+        let (Some(s_line), Some(s_char), Some(e_line), Some(e_char)) = (
+            range
+                .get("start")
+                .and_then(|s| s.get("line"))
+                .and_then(|n| n.as_u64()),
+            range
+                .get("start")
+                .and_then(|s| s.get("character"))
+                .and_then(|n| n.as_u64()),
+            range
+                .get("end")
+                .and_then(|e| e.get("line"))
+                .and_then(|n| n.as_u64()),
+            range
+                .get("end")
+                .and_then(|e| e.get("character"))
+                .and_then(|n| n.as_u64()),
+        ) else {
+            continue;
+        };
+        if s_line != e_line {
+            continue;
+        }
+        out.push((s_line as u32, s_char as u32, e_line as u32, e_char as u32));
+    }
+    out
 }
 
 /// Parse a `textDocument/documentColor` reply (`ColorInformation[]`).

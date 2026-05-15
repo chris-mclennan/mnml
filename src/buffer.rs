@@ -187,6 +187,11 @@ pub struct Buffer {
     /// per recognized color literal. Painted as a `◆` glyph in that color
     /// just before the literal. Refreshed on save.
     pub color_decorations: Vec<crate::lsp::ColorDecoration>,
+    /// LSP document highlights — single-line ranges
+    /// `(line, start_char, end_line, end_char)` of usages of the symbol at
+    /// the cursor's last position. Refreshed when the cursor moves to a
+    /// new identifier. Painted with a subtle `bg2` tint.
+    pub document_highlights: Vec<(u32, u32, u32, u32)>,
     /// Stamp of the last text-changing edit (used by `[editor] autosave_secs`).
     /// `None` until the first edit; cleared back to `None` on save.
     pub last_edited: Option<Instant>,
@@ -258,6 +263,7 @@ impl Buffer {
             code_lenses: Vec::new(),
             document_links: Vec::new(),
             color_decorations: Vec::new(),
+            document_highlights: Vec::new(),
             last_edited: None,
             disk_mtime: std::fs::metadata(path).and_then(|m| m.modified()).ok(),
             find: None,
@@ -323,6 +329,7 @@ impl Buffer {
             code_lenses: Vec::new(),
             document_links: Vec::new(),
             color_decorations: Vec::new(),
+            document_highlights: Vec::new(),
             last_edited: None,
             disk_mtime: None,
             find: None,

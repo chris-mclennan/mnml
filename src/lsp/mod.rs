@@ -184,6 +184,13 @@ pub enum LspEvent {
         path: PathBuf,
         colors: Vec<ColorDecoration>,
     },
+    /// Result of a `textDocument/documentHighlight` request — usages of
+    /// the symbol at the requested position, scope-aware. Each entry is
+    /// `(start_line, start_char, end_line, end_char)`.
+    DocumentHighlights {
+        path: PathBuf,
+        ranges: Vec<(u32, u32, u32, u32)>,
+    },
     /// A server-side message worth surfacing as a toast.
     Message(String),
 }
@@ -699,6 +706,18 @@ impl LspManager {
         for c in self.clients.values_mut() {
             if c.is_open(path) {
                 c.document_color(path);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send `textDocument/documentHighlight` at `(line, character)` —
+    /// reply arrives as [`LspEvent::DocumentHighlights`].
+    pub fn document_highlight(&mut self, path: &Path, line: u32, character: u32) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.document_highlight(path, line, character);
                 sent = true;
             }
         }

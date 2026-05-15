@@ -4678,6 +4678,16 @@ impl App {
                     }
                 }
             }
+            LspEvent::DocumentHighlights { path, ranges } => {
+                for p in self.panes.iter_mut() {
+                    if let Pane::Editor(b) = p
+                        && b.path.as_deref() == Some(path.as_path())
+                    {
+                        b.document_highlights = ranges;
+                        break;
+                    }
+                }
+            }
             LspEvent::CodeAction(actions) => self.apply_code_action_reply(actions),
             LspEvent::DocumentSymbols(symbols) => {
                 if self.pending_outline {
@@ -8219,6 +8229,25 @@ impl App {
             if n > 0 {
                 self.toast(format!("unfolded {n} fold(s)"));
             }
+        }
+    }
+
+    /// `lsp.highlight_symbol` — fire `textDocument/documentHighlight` at the
+    /// cursor; the reply tints every same-symbol usage with `bg2`. Scope-
+    /// aware (unlike the text-match `highlight_word_under_cursor`). Refresh
+    /// on demand only — wiring it into every cursor move would chatter the
+    /// server.
+    pub fn lsp_highlight_symbol(&mut self) {
+        self.lsp_request_at_cursor(
+            |lsp, p, l, c| lsp.document_highlight(p, l, c),
+            "document-highlight",
+        );
+    }
+
+    /// `lsp.clear_highlights` — drop the active buffer's highlight set.
+    pub fn lsp_clear_highlights(&mut self) {
+        if let Some(b) = self.active_editor_mut() {
+            b.document_highlights.clear();
         }
     }
 
