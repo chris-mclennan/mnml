@@ -900,7 +900,10 @@ impl VimInputHandler {
                     KeyCode::Char('a') | KeyCode::Char('o') | KeyCode::Char('c') => {
                         InputResult::App(AppCommand::RunCommand("editor.toggle_fold".into()))
                     }
-                    KeyCode::Char('R') => {
+                    // `zR` opens all folds; `zE` removes every fold (vim
+                    // canon — same effect in mnml since folds are line-based
+                    // and unfold = drop the entry).
+                    KeyCode::Char('R') | KeyCode::Char('E') => {
                         InputResult::App(AppCommand::RunCommand("editor.unfold_all".into()))
                     }
                     // `zM` — fold all (mnml uses server-suggested ranges via

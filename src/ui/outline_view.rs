@@ -32,6 +32,22 @@ pub fn draw(
     );
     app.rects.editor_panes.push((area, pane_id));
 
+    // The cursor's current file row in the outline's target editor — used
+    // to highlight the closest enclosing symbol. Take this BEFORE the
+    // mutable borrow of the outline pane.
+    let target_cursor_row: Option<u32> = {
+        let target = match app.panes.get(pane_id) {
+            Some(Pane::Outline(o)) => o.target.clone(),
+            _ => return None,
+        };
+        app.panes.iter().find_map(|p| match p {
+            Pane::Editor(b) if b.path.as_deref() == Some(target.as_path()) => {
+                Some(b.editor.row_col().0 as u32)
+            }
+            _ => None,
+        })
+    };
+
     let Some(Pane::Outline(o)) = app.panes.get_mut(pane_id) else {
         return None;
     };
@@ -39,6 +55,21 @@ pub fn draw(
     let visible = o.visible_indices();
     let total_items = o.items.len();
     let visible_count = visible.len();
+
+    // The closest enclosing symbol — the last item whose `line` is at-or-
+    // before the cursor row. Approximation: documentSymbol doesn't carry
+    // an end-line in mnml's struct, so we use the next symbol's start as
+    // the implicit end. The result is the symbol the cursor is "inside"
+    // most of the time.
+    let current_item: Option<usize> = target_cursor_row.and_then(|row| {
+        let mut best: Option<usize> = None;
+        for (i, sym) in o.items.iter().enumerate() {
+            if sym.line <= row {
+                best = Some(i);
+            }
+        }
+        best
+    });
 
     let mut lines: Vec<Line> = Vec::new();
     let name = o
@@ -128,10 +159,11 @@ pub fn draw(
     for (vi, &idx) in visible.iter().enumerate() {
         let sym = &o.items[idx];
         let sel = vi == o.selected;
+        let current = current_item == Some(idx);
         if sel {
             selected_row = lines.len();
         }
-        lines.push(item_line(&t, sym, sel));
+        lines.push(item_line(&t, sym, sel, current));
     }
 
     // Keep selected on-screen — same shape as the other list panes.
@@ -152,9 +184,17 @@ pub fn draw(
     None
 }
 
-fn item_line(t: &Theme, sym: &DocumentSymbol, sel: bool) -> Line<'static> {
+fn item_line(t: &Theme, sym: &DocumentSymbol, sel: bool, current: bool) -> Line<'static> {
     let bg = if sel { t.bg2 } else { t.bg_dark };
-    let arrow = if sel { "▶ " } else { "  " };
+    // Selected wins; current-but-not-selected gets a yellow `●` so the
+    // user can see where the cursor sits in the file at a glance.
+    let arrow = if sel {
+        "▶ "
+    } else if current {
+        "● "
+    } else {
+        "  "
+    };
     let indent = "  ".repeat(sym.depth as usize);
     let mut name_style = Style::default().fg(t.fg).bg(bg);
     if sel {
@@ -167,8 +207,9 @@ fn item_line(t: &Theme, sym: &DocumentSymbol, sel: bool) -> Line<'static> {
         "module" | "namespace" | "package" => t.green,
         _ => t.comment,
     };
+    let arrow_fg = if !sel && current { t.yellow } else { t.purple };
     Line::from(vec![
-        Span::styled(arrow.to_string(), Style::default().fg(t.purple).bg(bg)),
+        Span::styled(arrow.to_string(), Style::default().fg(arrow_fg).bg(bg)),
         Span::styled(
             format!("{:>10} ", sym.kind),
             Style::default().fg(kind_color).bg(bg),

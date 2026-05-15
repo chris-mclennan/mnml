@@ -739,6 +739,13 @@ across the prompt; consumed one-shot. New `find.find_backward` command.
 **Persisted vim macros** — `q<reg>...q` recordings now survive a relaunch. Saved as
 `(register, Vec<key_spec>)` via `Chord::to_spec` (the same format `[keys.global]` config
 uses); restored on launch with `parse_key_spec`. Empty macros are dropped on save.
+**Outline pane "current symbol" indicator** — the row matching the cursor's enclosing
+symbol (closest one whose `line` is at-or-before the cursor row) gets a yellow `●` glyph
+in front of the kind chip. Selection-arrow still wins when both are the same row.
+Approximation: `DocumentSymbol` doesn't carry an end-line, so deeply-nested cursors will
+point to the *innermost* preceding symbol — fine for the typical "what fn am I in" use.
+**Vim `zE`** — alias for `editor.unfold_all` (vim canon "eliminate every fold"; same
+effect in mnml since folds are line-pair entries and unfold = drop).
 **Vim Visual `S<c>` (vim-surround)** — wrap the visual selection with `<c>` (quote / bracket
 variants). Selection is already live in Visual, so no prefix ops are needed — the handler
 clears `pending_surround_ops`, transitions to `Prefix::SurroundAddCharWait`, and bounces back
