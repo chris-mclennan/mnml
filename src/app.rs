@@ -2609,6 +2609,7 @@ impl App {
                 }
             }
             PickerKind::FileHistory => self.open_commit_diff(&item.id),
+            PickerKind::AiSessions => self.open_ai_session_mirror(&item.id),
         }
     }
 
@@ -5425,6 +5426,17 @@ impl App {
             self.workspace.clone(),
         )));
     }
+
+    /// `term.focus_or_open_shell` — VS Code's `Ctrl+`` shape: if there's
+    /// already a terminal pane open, focus it; otherwise open a new shell.
+    /// Quicker for "show me the terminal" gestures than always-open-new.
+    pub fn focus_or_open_shell(&mut self) {
+        if let Some(idx) = self.panes.iter().position(|p| matches!(p, Pane::Pty(_))) {
+            self.reveal_pane(idx);
+        } else {
+            self.open_shell();
+        }
+    }
     pub fn open_claude_code(&mut self) {
         self.open_pty(crate::pty_pane::BinaryProfile::claude_code(
             self.workspace.clone(),
@@ -5572,6 +5584,73 @@ impl App {
             self.workspace.clone(),
             sid,
         ));
+    }
+
+    /// `ai.session_picker` — pick from past Claude sessions in this
+    /// workspace (`~/.claude/projects/<dashed-cwd>/*.jsonl`, newest
+    /// first). Accept opens a live mirror — read-only follow. Useful
+    /// for revisiting prior conversations without spinning up a new
+    /// pty.
+    pub fn open_ai_session_picker(&mut self) {
+        let sessions = crate::ai::transcript::list_sessions(&self.workspace);
+        if sessions.is_empty() {
+            self.toast("no Claude sessions found for this workspace");
+            return;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let items: Vec<crate::picker::PickerItem> = sessions
+            .into_iter()
+            .map(|s| {
+                let age = crate::ui::git_graph_view::humanize_age(now.saturating_sub(s.mtime));
+                let preview = if s.preview.is_empty() {
+                    "(no user message)".to_string()
+                } else {
+                    s.preview
+                };
+                let short_id: String = s.session_id.chars().take(8).collect();
+                crate::picker::PickerItem::new(s.session_id, format!("{short_id}  {preview}"), age)
+            })
+            .collect();
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::AiSessions,
+            "Claude sessions",
+            items,
+        ));
+    }
+
+    /// Accept handler for `PickerKind::AiSessions` — open a live mirror
+    /// for the chosen session id.
+    pub fn open_ai_session_mirror(&mut self, session_id: &str) {
+        let Some(path) = crate::ai::transcript::session_path(&self.workspace, session_id) else {
+            self.toast("can't locate session transcript ($HOME unset?)");
+            return;
+        };
+        // Focus an existing mirror if one is open.
+        if let Some(i) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Ai(a) if a.is_live() && a.session_id == session_id))
+        {
+            self.reveal_pane(i);
+            return;
+        }
+        let pane = Pane::Ai(crate::ai::AiPane::live(session_id.to_string(), path));
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
     }
 
     /// `ai.session_view` — open a live transcript mirror for the active `Pane::Pty`'s
@@ -12842,6 +12921,14 @@ impl App {
             // Vim has `:%bd <bang>` for similar; this is the friendlier alias.
             // Dirty buffers are kept + counted (matches the tab context-menu's
             // "Close others" semantics).
+            // `:Outline` / `:Toc` / `:Symbols` — open the outline pane for
+            // the active file (LSP / regex / markdown symbols).
+            // `:Outline` / `:Toc` — open the outline pane for the active
+            // file (LSP / regex / markdown symbols). `:Symbols` already
+            // opens the picker variant earlier in this match arm.
+            "Outline" | "Toc" | "TOC" => {
+                crate::command::run("outline.show", self);
+            }
             "Bonly" | "bonly" => {
                 if let Some(id) = self.active {
                     self.close_panes_except(Some(id));

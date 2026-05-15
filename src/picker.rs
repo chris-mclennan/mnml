@@ -51,6 +51,10 @@ pub enum PickerKind {
     /// `id` = a commit hash. Accept ⇒ open a diff pane for that commit.
     /// Populated by `git.file_history` for commits touching the active file.
     FileHistory,
+    /// `id` = a Claude Code session id. Accept ⇒ open a live transcript
+    /// mirror for the session (read-only follow of `~/.claude/projects/
+    /// <dashed-cwd>/<id>.jsonl`).
+    AiSessions,
 }
 
 #[derive(Debug, Clone)]

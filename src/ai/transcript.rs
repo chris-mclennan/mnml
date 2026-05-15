@@ -30,6 +30,93 @@ pub enum Turn {
     ToolResult(String),
 }
 
+/// A single past session — the `<session-id>.jsonl` filename's stem,
+/// the file's mtime (unix seconds), and the first user turn (up to
+/// ~80 chars) as a label preview.
+#[derive(Debug, Clone)]
+pub struct PastSession {
+    pub session_id: String,
+    pub path: PathBuf,
+    pub mtime: i64,
+    pub preview: String,
+}
+
+/// Scan `~/.claude/projects/<dashed-cwd>/` for `*.jsonl` transcripts and
+/// return a list newest-first. Each entry's `preview` is the first user
+/// message (truncated). Best-effort — returns empty when $HOME isn't
+/// set or the directory doesn't exist.
+pub fn list_sessions(workspace: &Path) -> Vec<PastSession> {
+    let Some(home) = std::env::var_os("HOME") else {
+        return Vec::new();
+    };
+    let dashed = workspace.to_string_lossy().replace(['/', '.'], "-");
+    let dir = Path::new(&home)
+        .join(".claude")
+        .join("projects")
+        .join(dashed);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PastSession> = Vec::new();
+    for e in entries.flatten() {
+        let path = e.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let mtime = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let preview = first_user_message(&path).unwrap_or_default();
+        out.push(PastSession {
+            session_id: stem.to_string(),
+            path: path.clone(),
+            mtime,
+            preview,
+        });
+    }
+    out.sort_by_key(|s| std::cmp::Reverse(s.mtime));
+    out
+}
+
+fn first_user_message(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        if v.get("type").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+        let content = v.get("message").and_then(|m| m.get("content"))?;
+        let text = match content {
+            Value::String(s) => s.clone(),
+            Value::Array(blocks) => blocks
+                .iter()
+                .filter_map(|b| {
+                    if b.get("type").and_then(Value::as_str)? != "text" {
+                        return None;
+                    }
+                    b.get("text").and_then(Value::as_str).map(String::from)
+                })
+                .next()?,
+            _ => continue,
+        };
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        return Some(trimmed.chars().take(80).collect());
+    }
+    None
+}
+
 /// The expected transcript path for `session_id` run from `workspace`, or `None`
 /// if `$HOME` isn't set. (Claude Code's project dir is the absolute cwd with `/`
 /// and `.` turned into `-`.)

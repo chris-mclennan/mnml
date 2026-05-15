@@ -739,6 +739,18 @@ across the prompt; consumed one-shot. New `find.find_backward` command.
 **Persisted vim macros** — `q<reg>...q` recordings now survive a relaunch. Saved as
 `(register, Vec<key_spec>)` via `Chord::to_spec` (the same format `[keys.global]` config
 uses); restored on launch with `parse_key_spec`. Empty macros are dropped on save.
+**`ai.session_picker`** — pick from past Claude sessions for this workspace. Scans
+`~/.claude/projects/<dashed-cwd>/*.jsonl` newest-first; each row shows a short id +
+the first user message preview + age. Accept opens a live transcript mirror (the same
+read-only follow that `ai.session_view` opens for an active `claude` pty). New
+`crate::ai::transcript::list_sessions` + `PickerKind::AiSessions`. Lets you revisit
+prior conversations without spinning up a new pty.
+**`term.focus_or_open_shell`** — VS Code's `Ctrl+`` shape: focuses an existing terminal
+pane if one is open, else opens a new shell. `term.shell` keeps the always-open-new
+semantics for users who explicitly want a fresh shell. `Ctrl+T` now binds to the
+focus-or-open variant.
+**`:Outline` / `:Toc` / `:TOC`** — open the outline pane for the active file (alias
+for `outline.show`; sibling to `:Symbols` which opens the picker variant).
 **Outline pane "current symbol" indicator** — the row matching the cursor's enclosing
 symbol (closest one whose `line` is at-or-before the cursor row) gets a yellow `●` glyph
 in front of the kind chip. Selection-arrow still wins when both are the same row.

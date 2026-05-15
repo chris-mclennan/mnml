@@ -1447,10 +1447,24 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "term.shell",
-            title: "Terminal: open a shell (split below)",
+            title: "Terminal: open a NEW shell (split below)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_shell(),
+        },
+        Command {
+            id: "term.focus_or_open_shell",
+            title: "Terminal: focus existing shell or open one (VS Code Ctrl+`)",
             group: "ai",
             keys: &["ctrl+t"],
-            run: |app| app.open_shell(),
+            run: |app| app.focus_or_open_shell(),
+        },
+        Command {
+            id: "ai.session_picker",
+            title: "AI: pick from past Claude sessions for this workspace",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_ai_session_picker(),
         },
         Command {
             id: "ai.claude_code",
