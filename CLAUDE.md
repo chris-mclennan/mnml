@@ -729,6 +729,9 @@ alpha dropped) on `Buffer.color_decorations`. `parse_document_color` clamps each
 to `[0,1]` × 255. Multi-line ranges dropped (renderer is per-line). `initialize` advertises
 `colorProvider`. CSS / SCSS / Tailwind / HTML stylesheets light up immediately when the LSP
 supports it (vscode-css-language-server, vscode-html-language-server, tailwindcss, etc.).
+**`[ui] wrap` survives a relaunch** — the user's runtime `:set wrap` choice now persists in
+`session.json` (`SavedSession.wrap: Option<bool>`). Config-file changes still take precedence
+on a fresh workspace.
 **Middle-click in editor pane** pastes the unnamed register at the click position (X11 /
 GTK convention — "primary selection" paste). Focuses the leaf + places the cursor first.
 Bufferline-tab middle-click still closes the tab as before.

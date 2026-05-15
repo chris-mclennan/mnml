@@ -660,6 +660,12 @@ struct SavedSession {
     /// (or whatever `[ui] theme` in the config file says).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     theme: Option<String>,
+    /// Was `[ui] wrap` on when we quit? `None` ⇒ launch keeps the config
+    /// default; `Some(b)` overrides it. So a user who flipped it at runtime
+    /// gets that preference back, but a config-file change is still the
+    /// source of truth for fresh workspaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wrap: Option<bool>,
     /// Per-file last `(cursor_byte, scroll)`. Files dropped from the worktree
     /// just silently fail to restore; over-large positions clamp.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -14589,6 +14595,7 @@ impl App {
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect(),
             theme: Some(crate::ui::theme::cur().name.to_string()),
+            wrap: Some(self.config.ui.wrap),
             file_cursors: merged_cursors
                 .iter()
                 .map(|(p, &(c, s))| SavedFileCursor {
@@ -14748,6 +14755,9 @@ impl App {
             // file) just leave the launch-default in place. Silent so the
             // restore doesn't toast on every cold start.
             let _ = self.set_theme_silent(name);
+        }
+        if let Some(w) = saved.wrap {
+            self.config.ui.wrap = w;
         }
         for fc in saved.file_cursors {
             self.file_cursors
