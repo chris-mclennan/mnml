@@ -1904,19 +1904,30 @@ query otherwise. Bench on 600 KB / 12.4k-line synthetic Rust: fresh **~95ms**,
 incremental-parse-only ~58ms, **incremental-parse-plus-query ~7ms** (~13× speedup, hitting
 the handoff's "<5ms" ballpark). Unit tests verify incremental output equals fresh for
 typing and backspace.
-**`private` Cargo feature (phases 1–3 done; phase 4 = real DocDB connection)** — off
+**`private` Cargo feature (phases 1–4a done; phase 4b = change-stream upgrade)** — off
 by default. `cargo build --features private` drags in `mongodb = "3"` + `tokio`
-(contained-runtime form). Three phases shipped so far: (1) module skeleton +
-worker-thread channel + stub DocDB worker emitting 5 canned `TestExecutionRecord`s;
-(2) `Pane::TestExecutions` enum variant (cfg-gated) + `ui/test_executions_view.rs`
-renderer (env-color-coded rows · ✓✗⊘≈ tally · branch + duration) + opener command
-`private.test_executions` (palette group "private") + `App.docdb_handle` + per-tick
-drain into open panes; (3) `[playwright.docdb]` config section (unconditional in
-`Config` so lean builds still parse it) with `{dev,staging,prod}_uri` + optional
-`database` / `collection`; the worker spawns with that config and toasts "configure
-[playwright.docdb]" when no URIs are set. Phase 4 (queued) replaces the stub with a
-real `mongodb::Client` connection + change-stream `.watch()`. CodeBuild + launcher
-absorption (separate tracks) come after.
+(contained-runtime form) + `futures-util` + `bson`. Four phases shipped so far:
+(1) module skeleton + worker-thread channel; (2) `Pane::TestExecutions` enum
+variant (cfg-gated) + `ui/test_executions_view.rs` renderer (env-color-coded rows
+· ✓✗⊘≈ tally · branch + duration) + opener command `private.test_executions`
+(palette group "private") + `App.docdb_handle` + per-tick drain into open panes;
+(3) `[playwright.docdb]` config section (unconditional in `Config` so lean builds
+still parse it) with `{dev,staging,prod}_uri` + optional `database` /
+`collection`; (4a) **real DocumentDB connection** — `private/docdb.rs` spawns a
+`tokio::runtime::Builder::new_current_thread` runtime inside the worker thread
+and fans out one async task per configured env URI. Each task connects via
+`mongodb::Client::with_uri_str` (TLS / `tlsCAFile` / auth read from the URI),
+runs a `BACKFILL_LIMIT = 100` initial backfill sorted by `startedAt` desc, then
+enters a 5-second poll loop fetching `{ startedAt: { $gt: last_seen } }`. BSON
+docs project to `TestExecutionRecord` via a tolerant `parse_doc` that accepts
+ObjectId-or-string `_id`, BSON-datetime-or-epoch-ms `startedAt`, top-level or
+nested-under-`stats` counts, and a `sourceVersion` alias for `branch`. Errors
+surface as `DocDbEvent::Failed` banners and the loop retries after a 30s
+backoff. `DocDbHandle`'s `Drop` flips an `AtomicBool` + joins the thread so
+workers exit cleanly. Phase 4b (queued) adds change streams selectable via
+`[playwright.docdb] mode = "stream"` (DocumentDB 5.0 cluster `private-docdb5-0`
+has them enabled, 3-day resume window), with polling as the auto-fallback.
+CodeBuild + launcher absorption (separate tracks) come after.
 
 ## Not set up yet (could add later)
 

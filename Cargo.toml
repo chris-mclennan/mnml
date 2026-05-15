@@ -87,15 +87,20 @@ tree-sitter-regex = "0.24"
 mongodb = { version = "3", optional = true }
 # `mongodb` needs a tokio runtime. We don't want a global one in the lean
 # build, so the worker thread spawns a contained `Runtime` (see
-# `src/private/docdb.rs`).
-tokio = { version = "1", features = ["rt", "macros"], optional = true }
+# `src/private/docdb.rs`). `rt` for `Runtime::new_current_thread`, `time` for
+# `sleep` between polls, `sync` for `mpsc`.
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"], optional = true }
+# `mongodb`'s cursor results are async streams; we need `StreamExt::try_next`.
+# Pulled in only with the private feature so the lean build stays slim.
+futures-util = { version = "0.3", optional = true }
+bson = { version = "2", optional = true }
 
 [features]
 default = []
 # The the private integration org build: DocDB live `TestExecutions` browser + CodeBuild
 # builds pane + native launcher actions. Drags in `mongodb` and a contained
 # tokio runtime. Plain `cargo build` is the lean editor.
-private = ["dep:mongodb", "dep:tokio"]
+private = ["dep:mongodb", "dep:tokio", "dep:futures-util", "dep:bson"]
 
 [profile.release]
 lto = true

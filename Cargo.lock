@@ -1411,6 +1411,8 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "base64",
+ "bson",
+ "futures-util",
  "ignore",
  "mongodb",
  "portable-pty",
