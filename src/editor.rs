@@ -382,6 +382,46 @@ impl Editor {
         self.extra_cursors = extras;
     }
 
+    /// Apply a unary position-mapping function to every extra cursor.
+    /// Used by motion ops (word-left / word-right / etc.) to fan out the
+    /// motion across all cursors. Caller has already moved the primary.
+    fn move_extras_with<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&Self, usize) -> usize,
+    {
+        if self.extra_cursors.is_empty() {
+            return;
+        }
+        let mut updated: Vec<usize> = self.extra_cursors.iter().map(|&p| f(self, p)).collect();
+        updated.retain(|&p| p != self.cursor);
+        updated.sort_unstable();
+        updated.dedup();
+        self.extra_cursors = updated;
+    }
+
+    /// Move every extra cursor to the start / end of its own line.
+    fn move_extras_to_line_edge(&mut self, to_end: bool) {
+        if self.extra_cursors.is_empty() {
+            return;
+        }
+        let mut updated: Vec<usize> = self
+            .extra_cursors
+            .iter()
+            .map(|&p| {
+                let row = self.row_col_at(p).0;
+                if to_end {
+                    self.line_end(row)
+                } else {
+                    self.line_start(row)
+                }
+            })
+            .collect();
+        updated.retain(|&p| p != self.cursor);
+        updated.sort_unstable();
+        updated.dedup();
+        self.extra_cursors = updated;
+    }
+
     /// Multi-cursor "delete a per-cursor range". The closure receives each
     /// cursor's CURRENT position and returns the `(start, end)` byte range
     /// to remove. Ranges are applied in descending start-position order so
@@ -1135,15 +1175,24 @@ impl Editor {
                     self.move_vertical(1);
                 }
             }
-            MoveWordRight => self.move_word_right(),
-            MoveWordLeft => self.move_word_left(),
+            MoveWordRight => {
+                self.move_word_right();
+                self.move_extras_with(Self::word_right_target_from);
+            }
+            MoveWordLeft => {
+                self.move_word_left();
+                self.move_extras_with(Self::word_left_target_from);
+            }
             MoveWordEnd => self.move_word_end(),
             MoveWordEndBack => self.move_word_end_back(),
             MoveBigWordRight => self.move_big_word_right(),
             MoveBigWordLeft => self.move_big_word_left(),
             MoveBigWordEnd => self.move_big_word_end(),
             MoveBigWordEndBack => self.move_big_word_end_back(),
-            MoveLineStart => self.cursor = self.line_start(self.current_line()),
+            MoveLineStart => {
+                self.cursor = self.line_start(self.current_line());
+                self.move_extras_to_line_edge(false);
+            }
             MoveLineFirstNonWs => {
                 let line = self.current_line();
                 let (s, e) = (self.line_start(line), self.line_end(line));
@@ -1196,7 +1245,10 @@ impl Editor {
                     self.cursor = prev;
                 }
             }
-            MoveLineEnd => self.cursor = self.line_end(self.current_line()),
+            MoveLineEnd => {
+                self.cursor = self.line_end(self.current_line());
+                self.move_extras_to_line_edge(true);
+            }
             MoveParagraph { forward } => {
                 let cur_row = self.current_line();
                 let line_count = self.line_count();

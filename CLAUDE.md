@@ -642,7 +642,11 @@ supplies a closure that maps each cursor's current position to a `(start, end)`
 byte range; the helper applies them descending so earlier offsets stay valid
 and shifts the other cursors as each delete lands. New
 `word_left_target_from` / `word_right_target_from` helpers take a starting
-byte so the closure can compute per-cursor ranges.
+byte so the closure can compute per-cursor ranges. Motions also extended:
+`MoveWordRight` / `MoveWordLeft` / `MoveLineStart` / `MoveLineEnd` fan out
+across cursors. **Alt+click in an editor pane** adds an extra cursor at the
+clicked position (VS Code convention) — bypasses the focus / drag-arm path so
+the existing primary stays put.
 **Multi-cursor `editor.add_cursor_at_next_word`** — VS Code's `Ctrl+D` shape. Word at
 the primary cursor is the rename target; first press snaps the primary to end-of-
 word; each subsequent press finds the next whole-word occurrence after the bottom-

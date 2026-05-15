@@ -1714,6 +1714,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .iter()
                 .find(|(r, _)| contains(*r, x, y))
             {
+                // Alt+click → add an extra cursor at the clicked position
+                // (VS Code convention). Skips the focus / drag-arm path so
+                // the existing primary stays put.
+                if m.modifiers.contains(KeyModifiers::ALT) {
+                    if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+                        let visible_row = (y - tr.y) as usize;
+                        let row = b
+                            .visible_to_file_row(b.scroll, visible_row)
+                            .unwrap_or(b.scroll);
+                        let col = b.h_scroll + (x - tr.x) as usize;
+                        let byte = b.editor.byte_at_col_pub(row, col);
+                        b.editor.add_extra_cursor(byte);
+                    }
+                    return;
+                }
                 app.active = Some(pid);
                 app.focus_pane();
                 let now = std::time::Instant::now();
