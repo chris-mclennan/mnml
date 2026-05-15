@@ -12652,6 +12652,12 @@ impl App {
             }
             // `:Stat` — toast file size on disk, mtime, line/byte counts,
             // language. Combines `:Path` + `g Ctrl+G` + disk facts.
+            // `:Echo <text>` — toast the rest of the line verbatim (vim
+            // canonical `:echo`). Tiny utility — useful for keymap
+            // confirmation, plugin debugging.
+            "Echo" | "echo" => {
+                self.toast(rest.to_string());
+            }
             "Stat" | "stat" => {
                 let Some(b) = self.active_editor() else {
                     self.toast("no active editor");

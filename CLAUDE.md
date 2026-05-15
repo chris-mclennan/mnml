@@ -729,6 +729,11 @@ alpha dropped) on `Buffer.color_decorations`. `parse_document_color` clamps each
 to `[0,1]` × 255. Multi-line ranges dropped (renderer is per-line). `initialize` advertises
 `colorProvider`. CSS / SCSS / Tailwind / HTML stylesheets light up immediately when the LSP
 supports it (vscode-css-language-server, vscode-html-language-server, tailwindcss, etc.).
+**Middle-click in editor pane** pastes the unnamed register at the click position (X11 /
+GTK convention — "primary selection" paste). Focuses the leaf + places the cursor first.
+Bufferline-tab middle-click still closes the tab as before.
+**`:Echo <text>`** — vim canonical toast of arbitrary text. Useful for keymap confirmation
+and plugin debugging.
 **LSP `$/progress` busy chip** — long-running server tasks (rust-analyzer indexing,
 prettier discovery, etc.) surface as a `⟳ <title>` chip on the statusline right side.
 Client parses `$/progress` notifications (`begin` / `report` / `end` kinds);

@@ -1632,6 +1632,33 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
 
+    // Middle-click in an editor pane pastes the clipboard at the clicked
+    // position (X11 / GTK convention — "primary selection" paste). Helps
+    // for terminal users coming from xterm. The press also focuses the
+    // leaf + places the cursor first.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Middle))
+        && let Some(&(tr, pid)) = app
+            .rects
+            .editor_panes
+            .iter()
+            .find(|(r, _)| contains(*r, x, y))
+    {
+        app.active = Some(pid);
+        app.focus_pane();
+        let wrap = app.config.ui.wrap;
+        let vp = tr.height as usize;
+        if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+            let (row, col) = click_to_file_pos(b, tr, wrap, x, y);
+            b.editor.place_cursor(row, col);
+            b.apply_edit_ops(
+                vec![crate::edit_op::EditOp::PasteAfter],
+                &mut app.clipboard,
+                vp,
+            );
+        }
+        return;
+    }
+
     match m.kind {
         MouseEventKind::Down(MouseButton::Right) => {
             // Right-click → a context menu on the bufferline tab / tree row under it.
