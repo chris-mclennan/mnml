@@ -129,6 +129,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     theme::cur().statusline,
                 ));
             }
+            // Current symbol chip — the closest enclosing fn / struct /
+            // class name for the cursor. Uses regex_outline (cheap per
+            // render for typical files). Only paints when the buffer has
+            // a recognized language and at least one symbol.
+            if let Some(ext) = b.language_ext.as_deref() {
+                let symbols = crate::regex_outline::extract_symbols(b.editor.text(), ext);
+                let row = b.editor.row_col().0 as u32;
+                if let Some(s) = symbols.iter().rev().find(|s| s.line <= row) {
+                    let label: String = s.name.chars().take(40).collect();
+                    left.push(Seg::new(
+                        format!(" › {label} "),
+                        theme::cur().purple,
+                        theme::cur().statusline,
+                    ));
+                }
+            }
             // Macro recording indicator — vim shows "recording @<reg>" along
             // the bottom row when `q<reg>` is active. We chip it onto the
             // statusline left side so it's visible across all panes.

@@ -744,6 +744,12 @@ ops accessible from ex. Mkdir creates parents too. Touch creates the file (and a
 parent dirs) but won't truncate. Mv renames / moves (refuses to overwrite an existing
 destination); also re-points any open editor on `from` to `to` and fires the LSP
 close/open pair. All three refresh the tree.
+**Statusline current-symbol chip** — `› <name>` chip painted on the left side showing the
+cursor's closest enclosing symbol (fn / struct / class / etc.) for the active buffer.
+Driven by `crate::regex_outline::extract_symbols` — one regex pass per frame for the
+active buffer's text. Languages covered by regex_outline (rs/py/js/jsx/ts/tsx/go/rb/c/cpp)
+get the chip; others render nothing. Approximation: shows the *last preceding* symbol
+since regex_outline doesn't carry end-lines.
 **`:Scratch [ft]`** — open a fresh scratch buffer split below, optionally tagged with a
 filetype so syntax highlighting kicks in (`:Scratch md`, `:Scratch json`, …). Empty arg
 ⇒ plain scratch.
