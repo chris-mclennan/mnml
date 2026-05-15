@@ -1502,6 +1502,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_clipboard_picker(),
         },
         Command {
+            id: "buffer.next_dirty",
+            title: "Jump to next unsaved buffer",
+            group: "buffer",
+            keys: &[],
+            run: |app| app.jump_dirty_pane(true),
+        },
+        Command {
+            id: "buffer.prev_dirty",
+            title: "Jump to previous unsaved buffer",
+            group: "buffer",
+            keys: &[],
+            run: |app| app.jump_dirty_pane(false),
+        },
+        Command {
             id: "ai.claude_code",
             title: "AI: open Claude Code (split below)",
             group: "ai",

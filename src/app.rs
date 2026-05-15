@@ -5605,6 +5605,40 @@ impl App {
         ));
     }
 
+    /// `:NextDirty` / `:PrevDirty` — jump to the next / prev editor pane
+    /// with `dirty == true`. Cycles. Toasts when nothing is dirty.
+    pub fn jump_dirty_pane(&mut self, forward: bool) {
+        let active = self.active.unwrap_or(0);
+        let dirty: Vec<usize> = self
+            .panes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| match p {
+                Pane::Editor(b) if b.dirty => Some(i),
+                _ => None,
+            })
+            .collect();
+        if dirty.is_empty() {
+            self.toast("no unsaved buffers");
+            return;
+        }
+        let target = if forward {
+            dirty
+                .iter()
+                .find(|&&i| i > active)
+                .copied()
+                .unwrap_or(dirty[0])
+        } else {
+            dirty
+                .iter()
+                .rev()
+                .find(|&&i| i < active)
+                .copied()
+                .unwrap_or_else(|| *dirty.last().unwrap())
+        };
+        self.reveal_pane(target);
+    }
+
     /// `picker.clipboard` — pick from the named-register history
     /// (`"a`-`"z`, `"0` last yank, `"1`-`"9` delete history) and paste
     /// the chosen entry at the cursor. Useful for "pull back something I
@@ -13424,6 +13458,11 @@ impl App {
             "Outline" | "Toc" | "TOC" => {
                 crate::command::run("outline.show", self);
             }
+            // `:NextDirty` / `:PrevDirty` — jump to the next / previous
+            // editor pane with unsaved changes. Useful when you have many
+            // buffers and want to find what's still dirty before quitting.
+            "NextDirty" => self.jump_dirty_pane(true),
+            "PrevDirty" => self.jump_dirty_pane(false),
             "Bonly" | "bonly" => {
                 if let Some(id) = self.active {
                     self.close_panes_except(Some(id));

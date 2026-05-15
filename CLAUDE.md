@@ -759,6 +759,9 @@ aliased to `:cprev`, so `:Cp` only.)
 **`:Capture <cmd>`** — run the command via `$SHELL -c`, open the combined stdout/stderr
 in a new scratch buffer (split below). Useful for grabbing `cargo test` output, log dumps,
 etc. for grep / highlight without launching a full pty. Cwd is the workspace.
+**`:NextDirty` / `:PrevDirty`** (`buffer.next_dirty` / `buffer.prev_dirty`) — jump to the
+next / previous editor pane with unsaved changes. Cycles. Useful pre-quit to find what's
+still dirty when many buffers are open.
 **`:Diffsplit <file>` / `:Diffwith <file>`** — open a diff pane comparing the active buffer's
 text against `<file>` (workspace-relative). Same `git diff --no-index` plumbing as
 `:DiffOrig` but with `<file>` as the "other" side instead of the buffer's own on-disk
