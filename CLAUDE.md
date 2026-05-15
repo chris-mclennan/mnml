@@ -513,6 +513,9 @@ that round-trip through `parse_key_spec`).
 / `x` / `R` (rotate), `+` / `-` / `>` / `<` (resize), `H` / `J` / `K` / `L` (move), `p`
 (last buffer), `_` / `|` (maximize), `f` (split + open under cursor), `d` (split + goto
 def), `n` (split + new scratch).
+**Location-list ex aliases** — `:lopen` / `:lwindow` (open diagnostics pane), `:lclose`
+(close it), `:lnext` / `:lne` (next diagnostic in active buffer), `:lprev` / `:lp` /
+`:lprevious`. Vim's location list maps to mnml's `Pane::Diagnostics`.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

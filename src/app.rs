@@ -11219,6 +11219,29 @@ impl App {
             "Diagnostics" => {
                 crate::command::run("lsp.diagnostics", self);
             }
+            // `:lopen` / `:lclose` / `:lwindow` — vim's location list. mnml's
+            // closest analog is the LSP diagnostics pane. Open it via
+            // :lopen; close via :lclose. Same handler — pane toggles.
+            "lopen" | "lwindow" => {
+                crate::command::run("lsp.diagnostics", self);
+            }
+            "lclose" => {
+                if let Some(i) = self
+                    .panes
+                    .iter()
+                    .position(|p| matches!(p, Pane::Diagnostics(_)))
+                {
+                    self.force_close_pane(i);
+                }
+            }
+            // `:lnext` / `:lprev` — walk the location list. Routes to
+            // `lsp.next_diagnostic` / `lsp.prev_diagnostic`.
+            "lnext" | "lne" => {
+                crate::command::run("lsp.next_diagnostic", self);
+            }
+            "lprev" | "lp" | "lprevious" => {
+                crate::command::run("lsp.prev_diagnostic", self);
+            }
             "Rename" => {
                 crate::command::run("lsp.rename", self);
             }
