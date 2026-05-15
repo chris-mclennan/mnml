@@ -16165,7 +16165,9 @@ impl App {
     /// five canned rows; phase 4 swaps in the real `mongodb::Client`.
     pub fn open_private_executions_pane(&mut self) {
         if self.docdb_handle.is_none() {
-            self.docdb_handle = Some(crate::private::docdb::spawn());
+            self.docdb_handle = Some(crate::private::docdb::spawn(
+                self.config.playwright.docdb.clone(),
+            ));
         }
         // Re-focus an existing pane if one is open; the new worker's events
         // will flow into it on the next tick.

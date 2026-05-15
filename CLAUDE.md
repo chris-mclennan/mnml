@@ -1904,6 +1904,19 @@ query otherwise. Bench on 600 KB / 12.4k-line synthetic Rust: fresh **~95ms**,
 incremental-parse-only ~58ms, **incremental-parse-plus-query ~7ms** (~13× speedup, hitting
 the handoff's "<5ms" ballpark). Unit tests verify incremental output equals fresh for
 typing and backspace.
+**`private` Cargo feature (phases 1–3 done; phase 4 = real DocDB connection)** — off
+by default. `cargo build --features private` drags in `mongodb = "3"` + `tokio`
+(contained-runtime form). Three phases shipped so far: (1) module skeleton +
+worker-thread channel + stub DocDB worker emitting 5 canned `TestExecutionRecord`s;
+(2) `Pane::TestExecutions` enum variant (cfg-gated) + `ui/test_executions_view.rs`
+renderer (env-color-coded rows · ✓✗⊘≈ tally · branch + duration) + opener command
+`private.test_executions` (palette group "private") + `App.docdb_handle` + per-tick
+drain into open panes; (3) `[playwright.docdb]` config section (unconditional in
+`Config` so lean builds still parse it) with `{dev,staging,prod}_uri` + optional
+`database` / `collection`; the worker spawns with that config and toasts "configure
+[playwright.docdb]" when no URIs are set. Phase 4 (queued) replaces the stub with a
+real `mongodb::Client` connection + change-stream `.watch()`. CodeBuild + launcher
+absorption (separate tracks) come after.
 
 ## Not set up yet (could add later)
 
