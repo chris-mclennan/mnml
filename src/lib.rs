@@ -52,6 +52,8 @@ pub mod regex_outline;
 pub mod request_pane;
 pub mod signature;
 pub mod snippets;
+#[cfg(feature = "private")]
+pub mod private;
 pub mod tree;
 pub mod tui;
 pub mod ui;

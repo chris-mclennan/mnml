@@ -82,6 +82,21 @@ tree-sitter-regex = "0.24"
 #   tungstenite        — Chrome DevTools Protocol                 [CDP track]
 #   lsp-types          — LSP client types                        [LSP track]
 
+# Async DocumentDB client for the `private` feature (live `TestExecutions`
+# browser). Optional — the lean build doesn't drag in `mongodb` / `tokio`.
+mongodb = { version = "3", optional = true }
+# `mongodb` needs a tokio runtime. We don't want a global one in the lean
+# build, so the worker thread spawns a contained `Runtime` (see
+# `src/private/docdb.rs`).
+tokio = { version = "1", features = ["rt", "macros"], optional = true }
+
+[features]
+default = []
+# The the private integration org build: DocDB live `TestExecutions` browser + CodeBuild
+# builds pane + native launcher actions. Drags in `mongodb` and a contained
+# tokio runtime. Plain `cargo build` is the lean editor.
+private = ["dep:mongodb", "dep:tokio"]
+
 [profile.release]
 lto = true
 codegen-units = 1

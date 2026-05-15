@@ -26,8 +26,7 @@ use tree_sitter::Tree;
 fn main() {
     let para = "This is a paragraph with **bold** and *emphasis* and a `code` span.\n\
                 It continues on a second line with some [a link](https://example.com).\n\n";
-    let rust_block =
-        "```rust\nfn hello() {\n    println!(\"hi\");\n    let x = 42;\n}\n```\n\n";
+    let rust_block = "```rust\nfn hello() {\n    println!(\"hi\");\n    let x = 42;\n}\n```\n\n";
 
     let mut text = String::with_capacity(700_000);
     while text.len() < 600_000 {
@@ -60,9 +59,7 @@ fn main() {
     let mid = text.len() / 2;
     let insert_at = (mid..text.len())
         .find(|&i| {
-            text.is_char_boundary(i)
-                && !text[i..].starts_with('`')
-                && !text[i..].starts_with('#')
+            text.is_char_boundary(i) && !text[i..].starts_with('`') && !text[i..].starts_with('#')
         })
         .unwrap_or(mid);
     let mut after = text.clone();
