@@ -201,6 +201,12 @@ pub struct Buffer {
     /// highlights while the user is typing rapidly (avoids re-parsing the
     /// whole buffer on every keystroke for large files).
     pub highlights_dirty: bool,
+    /// Cached tree-sitter parse tree for incremental reparse. `None` until the
+    /// first successful parse; cleared if the language changes. Plumbing-only
+    /// today — populated by `refresh_highlights` so future edits can call
+    /// `Tree::edit(InputEdit)` + `parser.parse(text, Some(&old_tree))` instead
+    /// of re-parsing from scratch.
+    pub parse_tree: Option<tree_sitter::Tree>,
     /// Last-known on-disk modification time for `path`. Captured on open
     /// and refreshed on save. The App's tick compares this to the file's
     /// current mtime and toasts (clean buffer ⇒ auto-reload; dirty ⇒
@@ -272,6 +278,7 @@ impl Buffer {
             document_highlights: Vec::new(),
             last_edited: None,
             highlights_dirty: false,
+            parse_tree: None,
             disk_mtime: std::fs::metadata(path).and_then(|m| m.modified()).ok(),
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
@@ -339,6 +346,7 @@ impl Buffer {
             document_highlights: Vec::new(),
             last_edited: None,
             highlights_dirty: false,
+            parse_tree: None,
             disk_mtime: None,
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
