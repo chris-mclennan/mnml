@@ -221,6 +221,15 @@ pub enum LspEvent {
         origin_name: String,
         hits: Vec<CallHit>,
     },
+    /// `$/progress` with `kind: begin` — a long-running server task started.
+    /// `token` is the server-assigned id; `title` is the user-facing label.
+    /// Used by the statusline busy chip.
+    ProgressBegin { token: String, title: String },
+    /// `$/progress` with `kind: report` — same task, possibly updated
+    /// label / percentage. `title` is the latest message.
+    ProgressReport { token: String, title: String },
+    /// `$/progress` with `kind: end` — task done. Drop the token.
+    ProgressEnd { token: String },
     /// A server-side message worth surfacing as a toast.
     Message(String),
 }

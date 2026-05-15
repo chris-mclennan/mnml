@@ -180,6 +180,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             theme::cur().blue,
         ));
     }
+    // `$/progress` busy chip — shows when a long-running LSP task is
+    // active (rust-analyzer indexing, etc.). Pick any one title; the
+    // ordering is arbitrary but stable per-render.
+    if let Some(title) = app.lsp_progress.values().next()
+        && !title.is_empty()
+    {
+        let label: String = title.chars().take(28).collect();
+        right.push(Seg::new(
+            format!(" ⟳ {label} "),
+            theme::cur().bg_darker,
+            theme::cur().cyan,
+        ));
+    }
     // `WRAP` chip when `[ui] wrap` is on. Easy to forget the mode is
     // active when the file's lines aren't actually long; this gives a
     // quiet visible confirmation.

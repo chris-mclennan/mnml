@@ -1463,6 +1463,10 @@ pub struct App {
     /// the server. MVP uses the first item; a disambiguation picker is
     /// a follow-up.
     pending_call_hierarchy_items: Vec<crate::lsp::CallHierarchyItem>,
+    /// Active `$/progress` tasks keyed by token. Statusline renders a
+    /// `⟳ <title>` chip when this is non-empty (showing the most recent
+    /// title). Begin / report update; end removes.
+    pub lsp_progress: std::collections::HashMap<String, String>,
     /// Snippets backing the open `PickerKind::Snippets` picker — items index
     /// into this list. Populated by [`Self::snippet_pick`], consumed by
     /// [`Self::picker_accept`].
@@ -1665,6 +1669,7 @@ impl App {
             pending_outline: false,
             selection_range_ladder: None,
             pending_call_hierarchy_items: Vec::new(),
+            lsp_progress: std::collections::HashMap::new(),
             pending_snippets: Vec::new(),
             snippet_session: None,
             pending_workspace_symbols: Vec::new(),
@@ -4751,6 +4756,17 @@ impl App {
             LspEvent::WorkspaceSymbols(syms) => self.apply_workspace_symbols(syms),
             LspEvent::SignatureHelp(sh) => {
                 self.signature = crate::signature::SignaturePopup::from_reply(sh);
+            }
+            LspEvent::ProgressBegin { token, title } => {
+                self.lsp_progress.insert(token, title);
+            }
+            LspEvent::ProgressReport { token, title } => {
+                if !title.is_empty() {
+                    self.lsp_progress.insert(token, title);
+                }
+            }
+            LspEvent::ProgressEnd { token } => {
+                self.lsp_progress.remove(&token);
             }
             LspEvent::Message(m) => self.toast(m),
         }

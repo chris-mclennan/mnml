@@ -729,6 +729,13 @@ alpha dropped) on `Buffer.color_decorations`. `parse_document_color` clamps each
 to `[0,1]` × 255. Multi-line ranges dropped (renderer is per-line). `initialize` advertises
 `colorProvider`. CSS / SCSS / Tailwind / HTML stylesheets light up immediately when the LSP
 supports it (vscode-css-language-server, vscode-html-language-server, tailwindcss, etc.).
+**LSP `$/progress` busy chip** — long-running server tasks (rust-analyzer indexing,
+prettier discovery, etc.) surface as a `⟳ <title>` chip on the statusline right side.
+Client parses `$/progress` notifications (`begin` / `report` / `end` kinds);
+`LspEvent::Progress{Begin,Report,End}` → `App.lsp_progress: HashMap<token, title>`;
+statusline renders any one title (truncated at 28 chars). `initialize` advertises
+`window.workDoneProgress: true`. Bumped crate `recursion_limit` to 256 since the
+`json!` macro on `initialize` capabilities was hitting the default 128.
 **`project.todos`** (`:Todos` / `:TODO` / `:FIXME`) — workspace-wide grep for
 `\b(TODO|FIXME|HACK|XXX)\b`; results land in the existing `Pane::Grep` so they're
 browseable with the regular grep-pane keys (`n`/`p`, Enter jumps, `r` re-runs).

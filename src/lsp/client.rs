@@ -88,6 +88,9 @@ impl LspClient {
                 "rootUri": root_uri,
                 "workspaceFolders": [ { "uri": root_uri, "name": "workspace" } ],
                 "capabilities": {
+                    "window": {
+                        "workDoneProgress": true
+                    },
                     "textDocument": {
                         "synchronization": { "didSave": true },
                         "publishDiagnostics": {},
@@ -758,6 +761,37 @@ fn handle_message(
             && method == "window/showMessage"
         {
             let _ = tx.send(LspEvent::Message(format!("LSP: {m}")));
+        }
+        // `$/progress` — long-running task indicator. Routes to the
+        // statusline busy chip via three events (begin / report / end).
+        if method == "$/progress"
+            && let Some(params) = v.get("params")
+            && let Some(token) = params.get("token").and_then(|t| {
+                t.as_str()
+                    .map(String::from)
+                    .or_else(|| t.as_i64().map(|n| n.to_string()))
+            })
+            && let Some(value) = params.get("value")
+            && let Some(kind) = value.get("kind").and_then(|k| k.as_str())
+        {
+            let title = value
+                .get("title")
+                .and_then(|s| s.as_str())
+                .or_else(|| value.get("message").and_then(|s| s.as_str()))
+                .unwrap_or("")
+                .to_string();
+            match kind {
+                "begin" => {
+                    let _ = tx.send(LspEvent::ProgressBegin { token, title });
+                }
+                "report" => {
+                    let _ = tx.send(LspEvent::ProgressReport { token, title });
+                }
+                "end" => {
+                    let _ = tx.send(LspEvent::ProgressEnd { token });
+                }
+                _ => {}
+            }
         }
         return;
     }

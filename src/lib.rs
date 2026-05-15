@@ -1,3 +1,8 @@
+// The LSP client builds a deeply-nested `serde_json::json!` literal for
+// `initialize` capabilities; the macro can recurse past the default 128
+// frames. 256 is comfortable.
+#![recursion_limit = "256"]
+
 //! mnml — a NvChad-style terminal IDE.
 //!
 //! Crate layout (P0 — the editor-shell skeleton; later tracks add modules):
