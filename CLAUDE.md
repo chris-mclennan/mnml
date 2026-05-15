@@ -507,6 +507,12 @@ that round-trip through `parse_key_spec`).
 **`:history` / `:his` / `:hist`** — toast the ex-command history (newest first, capped at
 20, with overflow count). Vim canonical for "what did I just run".
 **`:abclear` / `:abc`** — drop every abbreviation. Vim canonical.
+**`:wincmd <c>` / `:winc <c>`** — run a `Ctrl+W <c>` chord as an ex command (vim canonical
+"do window-cmd from cmdline"). Mirrors every Prefix::Window arm: `h` / `j` / `k` / `l` /
+`w` (cycle), `q` / `c` (close), `s` / `v` (split), `=` (equalize), `o` (close others), `r`
+/ `x` / `R` (rotate), `+` / `-` / `>` / `<` (resize), `H` / `J` / `K` / `L` (move), `p`
+(last buffer), `_` / `|` (maximize), `f` (split + open under cursor), `d` (split + goto
+def), `n` (split + new scratch).
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

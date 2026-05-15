@@ -11293,6 +11293,45 @@ impl App {
             // With a filter, narrows to specs / command ids containing the
             // substring. Vim users reach for `:map`; mnml's keymap is
             // config-driven so this is read-only discovery.
+            // `:wincmd <c>` — run the `Ctrl+W <c>` chord as an ex command
+            // (vim canonical for "do window-cmd from cmdline"). Mirrors the
+            // Prefix::Window arms in the vim handler.
+            "wincmd" | "winc" => {
+                let arg = rest.trim().chars().next();
+                let cmd = match arg {
+                    Some('h') => Some("view.focus_left"),
+                    Some('l') => Some("view.focus_right"),
+                    Some('k') => Some("view.focus_up"),
+                    Some('j') => Some("view.focus_down"),
+                    Some('w') => Some("view.focus_next_split"),
+                    Some('q') | Some('c') => Some("view.close_split"),
+                    Some('s') => Some("view.split_down"),
+                    Some('v') => Some("view.split_right"),
+                    Some('=') => Some("view.equalize_splits"),
+                    Some('o') => Some("view.close_others"),
+                    Some('r') | Some('x') | Some('R') => Some("view.rotate_splits"),
+                    Some('+') => Some("view.split_grow_height"),
+                    Some('-') => Some("view.split_shrink_height"),
+                    Some('>') => Some("view.split_grow_width"),
+                    Some('<') => Some("view.split_shrink_width"),
+                    Some('H') => Some("view.move_split_left"),
+                    Some('L') => Some("view.move_split_right"),
+                    Some('K') => Some("view.move_split_up"),
+                    Some('J') => Some("view.move_split_down"),
+                    Some('p') => Some("buffer.last"),
+                    Some('_') => Some("view.maximize_height"),
+                    Some('|') => Some("view.maximize_width"),
+                    Some('f') => Some("view.split_open_file_under_cursor"),
+                    Some('d') => Some("view.split_goto_definition"),
+                    Some('n') => Some("view.split_new_scratch"),
+                    _ => None,
+                };
+                if let Some(id) = cmd {
+                    crate::command::run(id, self);
+                } else {
+                    self.toast(":wincmd <c> — unknown chord");
+                }
+            }
             "Maps" | "Keys" => {
                 let filter = rest.trim().to_lowercase();
                 let mut rows: Vec<(String, String)> = self

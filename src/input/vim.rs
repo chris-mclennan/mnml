@@ -297,6 +297,8 @@ pub(crate) const EX_COMPLETION_NAMES: &[&str] = &[
     "view",
     "vimgrep",
     "vsplit",
+    "wincmd",
+    "winc",
     "wa",
     "wall",
     "wnext",
