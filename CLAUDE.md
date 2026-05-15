@@ -739,6 +739,10 @@ across the prompt; consumed one-shot. New `find.find_backward` command.
 **Persisted vim macros** — `q<reg>...q` recordings now survive a relaunch. Saved as
 `(register, Vec<key_spec>)` via `Chord::to_spec` (the same format `[keys.global]` config
 uses); restored on launch with `parse_key_spec`. Empty macros are dropped on save.
+**`:Hidden` / `:ToggleHidden`** — flip the file tree's hidden-file visibility (dotfiles +
+`.gitignored` entries). Re-scans the tree.
+**`:Bonly` / `:bonly`** — close every editor pane except the active one (vim's `:%bd`
+equivalent; dirty buffers kept + counted).
 **`:Macros` / `:Macro <reg>`** — list all recorded vim macros with their key counts /
 replay a specific register's macro. Sibling to `@<reg>` for users who think in ex commands.
 **`:A` / `:Alternate`** — vim's "jump to alternate file". Tries common test ↔ source

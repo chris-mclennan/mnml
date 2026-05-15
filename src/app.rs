@@ -12788,6 +12788,27 @@ impl App {
                 self.git.refresh();
                 self.toast("refreshed");
             }
+            // `:Hidden` / `:ToggleHidden` — flip the file tree's hidden-file
+            // visibility (dotfiles, `.gitignored` entries skipped by the
+            // initial scan). Re-scans the tree.
+            // `:Bonly` — close every editor pane except the active one.
+            // Vim has `:%bd <bang>` for similar; this is the friendlier alias.
+            // Dirty buffers are kept + counted (matches the tab context-menu's
+            // "Close others" semantics).
+            "Bonly" | "bonly" => {
+                if let Some(id) = self.active {
+                    self.close_panes_except(Some(id));
+                }
+            }
+            "Hidden" | "ToggleHidden" => {
+                self.tree.show_hidden = !self.tree.show_hidden;
+                self.tree.refresh();
+                self.toast(if self.tree.show_hidden {
+                    "tree: show hidden"
+                } else {
+                    "tree: hide hidden"
+                });
+            }
             "A" | "Alternate" => {
                 let Some(path) = self.active_editor().and_then(|b| b.path.clone()) else {
                     self.toast(":A — no active file");

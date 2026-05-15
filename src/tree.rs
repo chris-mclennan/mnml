@@ -35,7 +35,7 @@ pub struct Tree {
     cursor: usize,
     /// First visible row to render (set by the view to keep the cursor on screen).
     pub scroll: usize,
-    show_hidden: bool,
+    pub show_hidden: bool,
     /// Optional fuzzy filter — when non-empty, [`Self::visible_rows`] returns
     /// only entries whose `file_name` fuzzy-matches, plus every ancestor dir
     /// on their path (so the hierarchy stays readable). Empty ⇒ no filter.
