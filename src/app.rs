@@ -12925,6 +12925,61 @@ impl App {
             "Echo" | "echo" => {
                 self.toast(rest.to_string());
             }
+            // `:Mkdir <path>` — create the directory (+ missing parents)
+            // under the workspace. Relative paths join onto self.workspace.
+            "Mkdir" | "mkdir" => {
+                let arg = rest.trim();
+                if arg.is_empty() {
+                    self.toast(":Mkdir <path> — needs a path");
+                } else {
+                    let target = std::path::Path::new(arg);
+                    let abs = if target.is_absolute() {
+                        target.to_path_buf()
+                    } else {
+                        self.workspace.join(target)
+                    };
+                    match std::fs::create_dir_all(&abs) {
+                        Ok(_) => {
+                            self.tree.refresh();
+                            self.toast(format!("mkdir: {}", abs.display()));
+                        }
+                        Err(e) => self.toast(format!("mkdir failed: {e}")),
+                    }
+                }
+            }
+            // `:Touch <path>` — create an empty file (creating parents).
+            "Touch" | "touch" => {
+                let arg = rest.trim();
+                if arg.is_empty() {
+                    self.toast(":Touch <path> — needs a path");
+                } else {
+                    let target = std::path::Path::new(arg);
+                    let abs = if target.is_absolute() {
+                        target.to_path_buf()
+                    } else {
+                        self.workspace.join(target)
+                    };
+                    let parent_ok = abs
+                        .parent()
+                        .is_none_or(|p| p.exists() || std::fs::create_dir_all(p).is_ok());
+                    if !parent_ok {
+                        self.toast("touch: parent dir create failed");
+                    } else {
+                        match std::fs::OpenOptions::new()
+                            .write(true)
+                            .create(true)
+                            .truncate(false)
+                            .open(&abs)
+                        {
+                            Ok(_) => {
+                                self.tree.refresh();
+                                self.toast(format!("touch: {}", abs.display()));
+                            }
+                            Err(e) => self.toast(format!("touch failed: {e}")),
+                        }
+                    }
+                }
+            }
             // `:Macros` — toast each recorded macro register + key count.
             // `:Macro <reg>` — replay a specific register (alt: `@<reg>` in vim).
             "Macros" => {
