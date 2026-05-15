@@ -136,6 +136,7 @@ impl LspClient {
                         "codeLens": {
                             "dynamicRegistration": false
                         },
+                        "onTypeFormatting": { "dynamicRegistration": false },
                         "foldingRange": {
                             "dynamicRegistration": false,
                             "lineFoldingOnly": true
@@ -547,6 +548,38 @@ impl LspClient {
         );
     }
 
+    /// `textDocument/onTypeFormatting` — fired when the user types a
+    /// trigger char (`}` / `;` / `\n`). Reply is a `TextEdit[]` to apply
+    /// in the surrounding area. We hand back the trigger char + cursor
+    /// position; the server decides what to format.
+    pub fn on_type_formatting(
+        &mut self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        trigger: char,
+        tab_size: u32,
+        insert_spaces: bool,
+    ) {
+        let mut buf = [0u8; 4];
+        let ch = trigger.encode_utf8(&mut buf).to_string();
+        self.request_with_path(
+            "textDocument/onTypeFormatting",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "position": { "line": line, "character": character },
+                "ch": ch,
+                "options": {
+                    "tabSize": tab_size,
+                    "insertSpaces": insert_spaces,
+                    "trimTrailingWhitespace": true,
+                    "insertFinalNewline": true,
+                }
+            }),
+            Some(path),
+        );
+    }
+
     /// `textDocument/formatting` — reply is a `TextEdit[]` (possibly null).
     /// The path is stashed so we can route the reply to the right buffer.
     pub fn formatting(&mut self, path: &Path, tab_size: u32, insert_spaces: bool) {
@@ -789,7 +822,7 @@ fn handle_message(
                     });
                 }
             }
-            "textDocument/formatting" => {
+            "textDocument/formatting" | "textDocument/onTypeFormatting" => {
                 let edits = parse_text_edits(result);
                 if let (false, Some(path)) = (edits.is_empty(), req_path) {
                     let _ = tx.send(LspEvent::Formatting { path, edits });

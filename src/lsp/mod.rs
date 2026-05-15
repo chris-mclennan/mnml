@@ -831,6 +831,28 @@ impl LspManager {
         }
         sent
     }
+    /// Send `textDocument/onTypeFormatting` at `(line, char)` with a
+    /// trigger char. Reply is delivered as [`LspEvent::Formatting`]
+    /// (shape is identical to `textDocument/formatting`).
+    pub fn on_type_formatting(
+        &mut self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        trigger: char,
+        tab_size: u32,
+        insert_spaces: bool,
+    ) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.on_type_formatting(path, line, character, trigger, tab_size, insert_spaces);
+                sent = true;
+            }
+        }
+        sent
+    }
+
     /// Send `callHierarchy/incomingCalls` for a previously-prepared item.
     /// `origin_name` is the prepared item's name — round-tripped back in
     /// [`LspEvent::CallHierarchyCalls`] so the picker title reads

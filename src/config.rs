@@ -94,6 +94,12 @@ pub struct EditorConfig {
     /// per-workspace when you do. If the LSP isn't attached (or doesn't
     /// implement formatting), the save proceeds normally.
     pub format_on_save: bool,
+    /// When true, fire `textDocument/onTypeFormatting` after each typed
+    /// trigger char (`}` / `;` / `\n`) and apply the resulting edits.
+    /// Off by default — can be surprising to have an LSP rewrite your
+    /// half-typed code. Vim canonical name is `formatoptions`; we keep
+    /// the explicit `format_on_type` for parity with `format_on_save`.
+    pub format_on_type: bool,
     /// Save dirty buffers automatically when they lose focus (switching
     /// to another buffer / pane). Off by default. Useful for the "never
     /// lose work" workflow but surprising for users who use buffer-switching
@@ -207,6 +213,7 @@ impl Default for Config {
                 auto_pair: false,
                 auto_indent: true,
                 format_on_save: false,
+                format_on_type: false,
                 autosave_on_focus_loss: false,
                 inlay_hints: true,
                 code_lens: true,
@@ -307,6 +314,7 @@ struct RawEditor {
     auto_pair: Option<bool>,
     auto_indent: Option<bool>,
     format_on_save: Option<bool>,
+    format_on_type: Option<bool>,
     autosave_on_focus_loss: Option<bool>,
     inlay_hints: Option<bool>,
     code_lens: Option<bool>,
@@ -389,6 +397,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.auto_indent {
             self.editor.auto_indent = v;
+        }
+        if let Some(v) = raw.editor.format_on_type {
+            self.editor.format_on_type = v;
         }
         if let Some(v) = raw.editor.format_on_save {
             self.editor.format_on_save = v;

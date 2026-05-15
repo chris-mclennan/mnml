@@ -8643,6 +8643,25 @@ impl App {
         b.input.request_visual_mode();
     }
 
+    /// `lsp.on_type_format` — fire `textDocument/onTypeFormatting` at the
+    /// cursor with the typed `trigger`. Reply lands as
+    /// [`crate::lsp::LspEvent::Formatting`] and goes through the existing
+    /// `apply_formatting_edits` path. Called from `tui::dispatch_key` only
+    /// when `[editor] format_on_type` is true.
+    pub fn lsp_on_type_format(&mut self, trigger: char) {
+        let Some(b) = self.active_editor() else {
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            return;
+        };
+        let (row, col) = b.editor.row_col();
+        let tab_size = self.config.editor.tab_width as u32;
+        // mnml writes spaces (no tabs) for new indents — match that.
+        self.lsp
+            .on_type_formatting(&path, row as u32, col as u32, trigger, tab_size, true);
+    }
+
     /// `lsp.fold_all` — ask the active buffer's language server for its
     /// suggested fold ranges (`textDocument/foldingRange`); when the reply
     /// arrives, `apply_folding_ranges` installs every range as a fold on
@@ -13903,6 +13922,18 @@ impl App {
                     self.set_wrap(false);
                 } else if matches!(opt, "wrap!" | "invwrap") {
                     self.toggle_wrap();
+                } else if matches!(opt, "formatontype" | "fot") {
+                    self.config.editor.format_on_type = true;
+                    self.toast(":set formatontype");
+                } else if matches!(opt, "noformatontype" | "nofot") {
+                    self.config.editor.format_on_type = false;
+                    self.toast(":set noformatontype");
+                } else if matches!(opt, "formatonsave" | "fos") {
+                    self.config.editor.format_on_save = true;
+                    self.toast(":set formatonsave");
+                } else if matches!(opt, "noformatonsave" | "nofos") {
+                    self.config.editor.format_on_save = false;
+                    self.toast(":set noformatonsave");
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }

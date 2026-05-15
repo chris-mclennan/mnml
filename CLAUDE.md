@@ -729,6 +729,13 @@ alpha dropped) on `Buffer.color_decorations`. `parse_document_color` clamps each
 to `[0,1]` × 255. Multi-line ranges dropped (renderer is per-line). `initialize` advertises
 `colorProvider`. CSS / SCSS / Tailwind / HTML stylesheets light up immediately when the LSP
 supports it (vscode-css-language-server, vscode-html-language-server, tailwindcss, etc.).
+**LSP `onTypeFormatting`** — `[editor] format_on_type = true` (default off; `:set
+formatontype` / `:set noformatontype` runtime toggle, also `fot` / `nofot`). On each typed
+trigger char (`}` / `;` / `\n`), fire `textDocument/onTypeFormatting` at the cursor and
+apply the reply via the existing `apply_formatting_edits` path (the reply shape is identical
+to `textDocument/formatting`, so the client.rs match arm just joins them). `initialize`
+advertises `onTypeFormatting`. Off by default — an LSP rewriting half-typed code is
+surprising.
 **Ctrl+Click / Ctrl+Shift+Click** in an editor pane — plain `Ctrl+Click` places the cursor at
 the click and fires `lsp.goto_definition` (VS Code's "click through"); `Ctrl+Shift+Click`
 fires `lsp.references` (peek-references-style gesture). Modifier check happens in

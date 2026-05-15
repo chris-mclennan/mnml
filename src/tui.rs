@@ -1245,6 +1245,18 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             // Drive the as-you-type completion popup off the fresh buffer state.
             app.completion_on_edit(typed_char);
+            // `[editor] format_on_type` — fire `textDocument/onTypeFormatting`
+            // when a trigger char lands. `}`, `;`, `\n` cover the canonical
+            // formatters' triggers (rustfmt-ish, prettier, etc.).
+            if app.config.editor.format_on_type
+                && let Some(c) = typed_char
+                && matches!(c, '}' | ';')
+            {
+                app.lsp_on_type_format(c);
+            }
+            if app.config.editor.format_on_type && matches!(key.code, KeyCode::Enter) {
+                app.lsp_on_type_format('\n');
+            }
             // Vim abbreviation expansion: if the typed char is a trigger
             // (whitespace / punctuation) AND the active handler is in
             // Insert, look back for an abbreviation word.
