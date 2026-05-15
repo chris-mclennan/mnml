@@ -236,6 +236,12 @@ pub struct Editor {
     /// of rows + cols. The regular `anchor` is independent (block mode
     /// uses its own state so motions don't conflict with charwise).
     pub block_anchor: Option<usize>,
+    /// Additional cursor positions for multi-cursor editing. `self.cursor`
+    /// stays the "primary" cursor (the one motions/selection-based ops
+    /// continue to work on); ops that opt in (InsertChar, Backspace,
+    /// DeleteForward today) apply to the primary AND each extra cursor.
+    /// Always sorted, distinct from `cursor`, char-boundary safe.
+    pub extra_cursors: Vec<usize>,
     /// Stack of overwrites performed in Replace mode (`R`). Each entry is
     /// either `Some(c)` (the original char that was overwritten — restore
     /// on Backspace) or `None` (a chars was inserted past EOL, no
@@ -262,7 +268,27 @@ impl Editor {
             auto_indent: false,
             last_selection: None,
             replace_stack: Vec::new(),
+            extra_cursors: Vec::new(),
         }
+    }
+
+    /// Add a cursor at byte position `byte` (clamped to a char boundary).
+    /// No-op if it'd duplicate the primary cursor or an existing extra.
+    pub fn add_extra_cursor(&mut self, byte: usize) {
+        let mut b = byte.min(self.text.len());
+        while b < self.text.len() && !self.text.is_char_boundary(b) {
+            b += 1;
+        }
+        if b == self.cursor || self.extra_cursors.contains(&b) {
+            return;
+        }
+        self.extra_cursors.push(b);
+        self.extra_cursors.sort_unstable();
+        self.extra_cursors.dedup();
+    }
+
+    pub fn clear_extra_cursors(&mut self) {
+        self.extra_cursors.clear();
     }
 
     /// Capture the current selection as `last_selection` (the buffer's "gv
@@ -1377,12 +1403,79 @@ impl Editor {
                 self.anchor = Some(lo_new);
                 self.cursor = hi;
             }
-            AddCursorBelow | AddCursorAbove => { /* multi-cursor: not yet */ }
+            AddCursorBelow => {
+                // Add a cursor on the line BELOW the bottom-most existing
+                // cursor (primary or extra). Chained presses extend
+                // downward by one row each.
+                let mut bottom_row = self.row_col().0;
+                for &b in &self.extra_cursors {
+                    let (r, _) = self.row_col_at(b);
+                    if r > bottom_row {
+                        bottom_row = r;
+                    }
+                }
+                let lc = self.line_count();
+                if bottom_row + 1 < lc {
+                    let target = self.byte_at_col(bottom_row + 1, self.goal_col);
+                    self.add_extra_cursor(target);
+                }
+            }
+            AddCursorAbove => {
+                let mut top_row = self.row_col().0;
+                for &b in &self.extra_cursors {
+                    let (r, _) = self.row_col_at(b);
+                    if r < top_row {
+                        top_row = r;
+                    }
+                }
+                if top_row > 0 {
+                    let target = self.byte_at_col(top_row - 1, self.goal_col);
+                    self.add_extra_cursor(target);
+                }
+            }
+            ClearExtraCursors => {
+                self.extra_cursors.clear();
+            }
 
             // ── text mutation ──
             InsertChar(c) => {
                 self.delete_selection_if_any(out);
                 self.checkpoint_insert_run();
+                if !self.extra_cursors.is_empty() {
+                    // Multi-cursor insert: insert `c` at every cursor and
+                    // advance each by char_len. Auto-pair is skipped here
+                    // — the semantics get hairy across N cursors.
+                    let mut positions: Vec<usize> = std::iter::once(self.cursor)
+                        .chain(self.extra_cursors.iter().copied())
+                        .collect();
+                    positions.sort_unstable();
+                    positions.dedup();
+                    let primary_idx = positions
+                        .iter()
+                        .position(|&p| p == self.cursor)
+                        .unwrap_or(0);
+                    let char_len = c.len_utf8();
+                    let mut tmp = [0u8; 4];
+                    let s = c.encode_utf8(&mut tmp).to_string();
+                    // Insert in descending order so earlier offsets stay valid.
+                    for &p in positions.iter().rev() {
+                        self.text.insert_str(p, &s);
+                    }
+                    let advanced: Vec<usize> = positions
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| p + (i + 1) * char_len)
+                        .collect();
+                    self.cursor = advanced[primary_idx];
+                    self.extra_cursors = advanced
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| *i != primary_idx)
+                        .map(|(_, &p)| p)
+                        .collect();
+                    out.buffer_changed = true;
+                    return;
+                }
                 // Auto-pair: typing `(` / `[` / `{` / `"` / `'` / `` ` `` inserts
                 // the close char after the cursor when it makes sense (the next
                 // char is end-of-line, whitespace, or another closer). When the

@@ -2294,7 +2294,9 @@ impl VimInputHandler {
             }
             KeyCode::Esc => {
                 self.reset_pending();
-                InputResult::Consumed
+                // Drop any extra multi-cursors on Esc — vim's "back to one
+                // cursor" gesture. Cheap when there are none.
+                InputResult::Ops(vec![EditOp::ClearExtraCursors])
             }
             _ => {
                 self.reset_pending();

@@ -369,6 +369,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.bracket_match_jump(),
         },
         Command {
+            id: "editor.add_cursor_below",
+            title: "Add cursor on the line below (VSCode `Ctrl+Alt+Down`)",
+            group: "editor",
+            keys: &["ctrl+alt+down", "ctrl+alt+j"],
+            run: |app| app.run_editor_op(crate::edit_op::EditOp::AddCursorBelow),
+        },
+        Command {
+            id: "editor.add_cursor_above",
+            title: "Add cursor on the line above (VSCode `Ctrl+Alt+Up`)",
+            group: "editor",
+            keys: &["ctrl+alt+up", "ctrl+alt+k"],
+            run: |app| app.run_editor_op(crate::edit_op::EditOp::AddCursorAbove),
+        },
+        Command {
+            id: "editor.clear_extra_cursors",
+            title: "Drop all extra cursors (keep the primary)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.run_editor_op(crate::edit_op::EditOp::ClearExtraCursors),
+        },
+        Command {
             id: "editor.delete_line",
             title: "Delete the current line (VSCode `Ctrl+Shift+K`)",
             group: "editor",

@@ -149,9 +149,14 @@ pub enum EditOp {
         before: bool,
         inclusive: bool,
     },
-    /// Multi-cursor — stubbed; a no-op until that "later" lands.
+    /// Multi-cursor — add a cursor at the same char-column as the primary
+    /// on the row below / above. No-op if there's no row that direction.
+    /// Multiple presses add a chain.
     AddCursorBelow,
     AddCursorAbove,
+    /// Drop every extra cursor; the primary stays put. Vim Normal-mode Esc
+    /// emits this so the user has a quick "back to single cursor" gesture.
+    ClearExtraCursors,
     /// vim `Ctrl+V` — start visual-block selection. Sets the editor's
     /// `block_anchor` to the current cursor; subsequent motions (h/j/k/l,
     /// w/b/e, etc.) extend the rectangle.
@@ -372,6 +377,7 @@ impl EditOp {
             | FindCharOnLine { .. }
             | AddCursorBelow
             | AddCursorAbove
+            | ClearExtraCursors
             | BlockSelectStart
             | BlockSelectClear
             | SetRegisterHint(_)

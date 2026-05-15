@@ -10956,6 +10956,18 @@ impl App {
     /// `view.toggle_color_column` — flip `[ui] color_column` between 0 (off)
     /// and 80 (vim's classic line-length hint). The exact column can be set
     /// via `:set colorcolumn=N`.
+    /// Apply a single `EditOp` to the active editor's buffer. Used by
+    /// command-registry entries that just want to fire an op without
+    /// going through the input handler (multi-cursor chords, etc.).
+    pub fn run_editor_op(&mut self, op: crate::edit_op::EditOp) {
+        let Some(idx) = self.active else { return };
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+            b.editor.apply(op, 20, &mut self.clipboard);
+            b.recompute_dirty();
+            b.refresh_highlights();
+        }
+    }
+
     pub fn toggle_color_column(&mut self) {
         if self.config.ui.color_column == 0 {
             self.config.ui.color_column = 80;

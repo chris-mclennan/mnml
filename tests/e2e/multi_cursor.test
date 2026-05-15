@@ -1,0 +1,20 @@
+# Multi-cursor MVP — Ctrl+Alt+Down adds a cursor on the line below;
+# typing at the primary insert position fires at every cursor.
+
+write data.txt "alpha\nbeta\ngamma"
+open data.txt
+command editor.use_vim
+
+# Append at end of line — primary cursor on `a` of alpha.
+key i
+
+# Add a cursor on the line below (Ctrl+Alt+Down). And another below that.
+command editor.add_cursor_below
+command editor.add_cursor_below
+
+# Insert "X" — should fire at all three cursors.
+key X
+
+key escape
+command file.save
+expect file data.txt contains "Xalpha\nXbeta\nXgamma"

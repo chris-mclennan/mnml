@@ -615,6 +615,20 @@ syntax (`5s` / `10m` / `2h` / `1d`). Each undo `Snapshot` now carries a
 still load). `Editor::undo_steps_for_age` / `redo_steps_for_age` count how many steps
 go back / forward to a snapshot at least `secs` old. Bare `:earlier N` still walks N
 steps (no unit suffix).
+**Multi-cursor — first cut** — `Editor.extra_cursors: Vec<usize>` (sorted byte
+offsets, distinct from the primary `cursor`). New `EditOp::AddCursorBelow` /
+`AddCursorAbove` / `ClearExtraCursors`. `editor.add_cursor_below` /
+`add_cursor_above` are bound to `Ctrl+Alt+Down` / `Up` (with `Ctrl+Alt+J` / `K`
+duplicates). Chained presses walk further from the bottom-most / top-most existing
+cursor. The editor view paints each extra cursor's cell with the theme's `fg` bg +
+`bg_dark` fg so it stands out from the primary cursor (which ratatui sets via the
+terminal cursor). `InsertChar` is the one mutating op so far that fans out to all
+cursors — inserts at every position descending so earlier offsets stay valid, then
+advances each cursor by `char_len * (count ≤ position)`. Auto-pair is skipped on
+multi-cursor inserts (semantics get hairy with N cursors). Esc in vim Normal mode
+emits `ClearExtraCursors` so the gesture matches vim's "back to one cursor". Other
+mutating ops (Backspace, DeleteForward, etc.) only operate on the primary cursor
+for now — fanning them out is the obvious next step.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

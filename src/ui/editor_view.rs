@@ -169,6 +169,14 @@ pub fn draw_pane(
     let cur_match_bg = theme::cur().yellow;
     let cur_match_idx = buf.find.as_ref().and_then(|f| f.current);
     let guide_fg = theme::cur().base16[0x03];
+    // Multi-cursor: precompute extra cursor (row, col) so the per-cell loop
+    // can paint a block-style cursor at each.
+    let extra_cursor_cells: Vec<(usize, usize)> = buf
+        .editor
+        .extra_cursors
+        .iter()
+        .map(|&b| buf.editor.row_col_at(b))
+        .collect();
     // Bracket-match highlight: when the cursor sits on a bracket char, find
     // its matching counterpart and remember both positions so the render loop
     // can paint them with a contrasting bg. `None` ⇒ no highlight this frame.
@@ -394,7 +402,15 @@ pub fn draw_pane(
                 c >= s && c < e && !(line_no == cur_row && cur_col >= s && cur_col < e)
             });
             let is_color_col = color_col_idx == Some(c);
-            let bg = if in_sel || in_block {
+            let is_extra_cursor = extra_cursor_cells
+                .iter()
+                .any(|&(r, cc)| r == line_no && cc == c);
+            let bg = if is_extra_cursor {
+                // Paint the extra cursor as a bright block — easy to spot
+                // and visually distinct from the primary cursor (which
+                // ratatui sets via the terminal cursor).
+                theme::cur().fg
+            } else if in_sel || in_block {
                 sel_bg
             } else if is_bracket {
                 bracket_bg
@@ -456,6 +472,11 @@ pub fn draw_pane(
             // The "current" find match: force dark fg so it stays readable on
             // the bright bg.
             if matches!(in_match, Some(true)) {
+                fg = theme::cur().bg_dark;
+            }
+            // Extra-cursor cells: invert fg so the char stays readable on
+            // the bright bg.
+            if is_extra_cursor {
                 fg = theme::cur().bg_dark;
             }
             cells.push((ch, fg, bg));
