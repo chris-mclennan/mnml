@@ -516,6 +516,9 @@ def), `n` (split + new scratch).
 **Location-list ex aliases** — `:lopen` / `:lwindow` (open diagnostics pane), `:lclose`
 (close it), `:lnext` / `:lne` (next diagnostic in active buffer), `:lprev` / `:lp` /
 `:lprevious`. Vim's location list maps to mnml's `Pane::Diagnostics`.
+**Vim `<count>gg`** — go to line `<count>` (vim canonical: same as `<count>G`). Bare `gg`
+still goes to the first line. The Prefix::G arm now snapshots `self.count.is_some()`
+before `reset_pending` so it can branch.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

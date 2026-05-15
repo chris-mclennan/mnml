@@ -881,6 +881,7 @@ impl VimInputHandler {
             }
             Prefix::G => {
                 let n = self.count1();
+                let count_was_explicit = self.count.is_some();
                 // Stash the pending op (if any) — `reset_pending` would
                 // clear it, but op-pending `gn` / `gN` etc. need it.
                 let pending_op = self.op;
@@ -893,7 +894,15 @@ impl VimInputHandler {
                     KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         InputResult::App(AppCommand::RunCommand("editor.file_stats".into()))
                     }
-                    KeyCode::Char('g') => InputResult::Ops(vec![MoveBufferStart]),
+                    KeyCode::Char('g') => {
+                        // `gg` ⇒ first line. `<count>gg` ⇒ go to line `<count>`
+                        // (vim canonical: same as `<count>G`).
+                        if count_was_explicit {
+                            InputResult::Ops(vec![EditOp::MoveToLine(n as usize)])
+                        } else {
+                            InputResult::Ops(vec![MoveBufferStart])
+                        }
+                    }
                     KeyCode::Char('d') => {
                         InputResult::App(AppCommand::RunCommand("lsp.goto_definition".into()))
                     }
