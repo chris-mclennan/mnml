@@ -9,6 +9,7 @@ use ratatui::crossterm::event::KeyEvent;
 
 use crate::clipboard::Clipboard;
 use crate::config::Config;
+use crate::edit_op::TextEdit;
 use crate::editor::Editor;
 use crate::highlight::{self, ColoredSpan};
 use crate::input::{self, AppCommand, EditCtx, EditingMode, InputHandler, InputResult};
@@ -202,11 +203,19 @@ pub struct Buffer {
     /// whole buffer on every keystroke for large files).
     pub highlights_dirty: bool,
     /// Cached tree-sitter parse tree for incremental reparse. `None` until the
-    /// first successful parse; cleared if the language changes. Plumbing-only
-    /// today — populated by `refresh_highlights` so future edits can call
-    /// `Tree::edit(InputEdit)` + `parser.parse(text, Some(&old_tree))` instead
-    /// of re-parsing from scratch.
+    /// first successful parse; cleared when an untracked edit happens (see
+    /// `pending_tree_edits` below).
     pub parse_tree: Option<tree_sitter::Tree>,
+    /// Byte-position line-starts of the text that produced [`Self::parse_tree`].
+    /// Used by `refresh_highlights` to compute the `Point` half of each
+    /// `InputEdit` (tree-sitter wants byte AND (row, col) for each edit; the
+    /// byte offsets come from the editor, the points are derived from the
+    /// pre-edit line-start index). Refreshed alongside `parse_tree`.
+    pub prev_line_starts: Vec<usize>,
+    /// Byte-extent hints accumulated since the last `refresh_highlights`. On
+    /// refresh, applied to `parse_tree` via `Tree::edit` so the reparse can
+    /// reuse the prior tree as a hint. Cleared on every refresh.
+    pub pending_tree_edits: Vec<TextEdit>,
     /// Last-known on-disk modification time for `path`. Captured on open
     /// and refreshed on save. The App's tick compares this to the file's
     /// current mtime and toasts (clean buffer ⇒ auto-reload; dirty ⇒
@@ -279,6 +288,8 @@ impl Buffer {
             last_edited: None,
             highlights_dirty: false,
             parse_tree: None,
+            prev_line_starts: Vec::new(),
+            pending_tree_edits: Vec::new(),
             disk_mtime: std::fs::metadata(path).and_then(|m| m.modified()).ok(),
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
@@ -347,6 +358,8 @@ impl Buffer {
             last_edited: None,
             highlights_dirty: false,
             parse_tree: None,
+            prev_line_starts: Vec::new(),
+            pending_tree_edits: Vec::new(),
             disk_mtime: None,
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
@@ -361,15 +374,42 @@ impl Buffer {
     /// Re-run tree-sitter over the current text (no-op for unknown languages /
     /// huge files). Call after any edit that changes the text, or via
     /// `App::tick`'s debouncer.
+    ///
+    /// Uses incremental reparse when [`Self::parse_tree`] is `Some` and
+    /// [`Self::pending_tree_edits`] is non-empty: each edit's `InputEdit` is
+    /// applied to the cached tree (with `Point` halves derived from
+    /// [`Self::prev_line_starts`]) and the parser is given the tree as a
+    /// hint. Untracked edits drop `parse_tree` to `None` at the time the edit
+    /// is processed, so this method falls back to a full reparse.
     pub fn refresh_highlights(&mut self) {
         self.highlights_dirty = false;
         let text = self.editor.text();
         if text.len() > HIGHLIGHT_BYTE_LIMIT {
             self.highlights.clear();
+            self.parse_tree = None;
+            self.pending_tree_edits.clear();
+            self.prev_line_starts.clear();
             return;
         }
         let ext = self.language_ext.as_deref().unwrap_or("");
-        self.highlights = highlight::highlight_lines(text, ext);
+        let edits = std::mem::take(&mut self.pending_tree_edits);
+        self.highlights = highlight::highlight_lines_with_cache(
+            text,
+            ext,
+            &mut self.parse_tree,
+            &edits,
+            &self.prev_line_starts,
+        );
+        // Refresh prev_line_starts to match the just-parsed text so the next
+        // batch of edits has accurate pre-edit Points.
+        self.prev_line_starts.clear();
+        self.prev_line_starts.push(0);
+        self.prev_line_starts.extend(
+            text.as_bytes()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &b)| (b == b'\n').then_some(i + 1)),
+        );
     }
 
     /// Spans for editor line `line`, or `&[]` if unhighlighted.
@@ -574,6 +614,14 @@ impl Buffer {
                         if delta != 0 {
                             self.shift_folds_after(cursor_line_before, delta);
                         }
+                        if out.text_edits.is_empty() {
+                            // Untracked op — drop the cached parse tree so the
+                            // next refresh reparses from scratch.
+                            self.parse_tree = None;
+                            self.pending_tree_edits.clear();
+                        } else {
+                            self.pending_tree_edits.extend(out.text_edits);
+                        }
                     }
                     changed |= out.buffer_changed;
                 }
@@ -624,10 +672,16 @@ impl Buffer {
                 },
                 _ => None,
             };
-            changed |= self
-                .editor
-                .apply(op, viewport_rows, clipboard)
-                .buffer_changed;
+            let out = self.editor.apply(op, viewport_rows, clipboard);
+            if out.buffer_changed {
+                if out.text_edits.is_empty() {
+                    self.parse_tree = None;
+                    self.pending_tree_edits.clear();
+                } else {
+                    self.pending_tree_edits.extend(out.text_edits);
+                }
+            }
+            changed |= out.buffer_changed;
             if let Some(going_down) = direction {
                 self.snap_cursor_out_of_fold(going_down);
             }

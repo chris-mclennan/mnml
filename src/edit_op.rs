@@ -416,6 +416,19 @@ impl EditOp {
     }
 }
 
+/// A byte-range edit hint for incremental tree-sitter reparse.
+/// Each `(start_byte, old_end_byte, new_end_byte)` triple matches the shape of
+/// `tree_sitter::InputEdit`; the points are derived later from the buffer's
+/// line-start index. Offsets are in the **pre-edit** text's coordinate space
+/// (each edit's "before" state is the text after the previous edit in the same
+/// batch was applied).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TextEdit {
+    pub start_byte: usize,
+    pub old_end_byte: usize,
+    pub new_end_byte: usize,
+}
+
 /// What `Editor::apply` reports back so the caller (`Buffer`) can sync dirty
 /// state, the system clipboard, scroll, and (later) the LSP.
 #[derive(Debug, Default, Clone)]
@@ -426,4 +439,13 @@ pub struct EditOutcome {
     pub clipboard_set: Option<String>,
     /// True when the clipboard was set linewise (`YankLine`/`CutLine`).
     pub clipboard_linewise: bool,
+    /// Byte-range hints for the caller to fold into a cached tree-sitter
+    /// `Tree` via `Tree::edit` before reparsing. **Convention:** when
+    /// `buffer_changed` is `true` but `text_edits` is empty, the op modified
+    /// the text in a way the editor doesn't track (multi-cursor fan-out,
+    /// auto-pair insert that adds two chars but moves the cursor by one,
+    /// indent/outdent across N lines, etc.) — the caller should drop any
+    /// cached parse tree and reparse from scratch. When `text_edits` is
+    /// non-empty, the parser can reuse the prior tree.
+    pub text_edits: Vec<TextEdit>,
 }

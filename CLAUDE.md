@@ -1870,19 +1870,30 @@ filtered locally after the first reply (no re-request as the prefix grows). Then
 entries → curl, DOM, screenshots, headless), more `.test` coverage, the `private` Cargo feature (DocDB
 `TestExecutions` + CodeBuild + native launcher actions), Git GUI phase 4 (branch rail UI, commit-with-Codex,
 recompose-with-AI, multi-repo); plus queued polish (editable request-pane field tabs). See `.local/PLAN.md`.
-Highlight follow-ups: more grammars; incremental tree-sitter parsing — sessions 1 + 2 of that
-arc are done. `tree_sitter_highlight` is gone; `highlight.rs` drives raw `tree_sitter::Parser`
-+ `Query` directly, with a precomputed capture-index → HIGHLIGHT_NAMES map and an
-innermost-wins span layout that exploits the renderer's `spans.iter().rev().find(...)` order.
-**Injection support is back**: each `LangConfig` carries an `injections_query`; for every
-match the resolver picks the language (via `@injection.language` capture, or a
-`#set! injection.language "..."` property), parses the `@injection.content` byte ranges with
-the inner grammar through `Parser::set_included_ranges` (keeping byte offsets in the outer
-text's coordinate space), and recurses up to `MAX_INJECTION_DEPTH = 3`. Markdown
-fenced-code-blocks (` ```rust …` → Rust-highlighted), markdown_inline (`**bold**`, `_em_`,
-`` `code` ``), HTML embedded `<style>` / `<script>`, plus Rust/JS/PHP/Swift/Zig/Nix/Elixir/
-Haskell injections all work. `Buffer.parse_tree: Option<Tree>` is plumbed but still parsed-
-from-scratch each refresh pending session 3's `InputEdit` hookup.
+Incremental tree-sitter parsing — full arc landed. `tree_sitter_highlight` is gone;
+`highlight.rs` drives raw `tree_sitter::Parser` + `Query` directly, with a precomputed
+capture-index → HIGHLIGHT_NAMES map and an innermost-wins span layout that exploits the
+renderer's `spans.iter().rev().find(...)` order. **Injection support**: each `LangConfig`
+carries an `injections_query`; for every match the resolver picks the language (via
+`@injection.language` capture, or a `#set! injection.language "..."` property), parses the
+`@injection.content` byte ranges with the inner grammar through `Parser::set_included_ranges`
+(byte offsets stay in the outer text's coordinate space), and recurses up to
+`MAX_INJECTION_DEPTH = 3`. Markdown fenced-code-blocks (` ```rust …` → Rust-highlighted),
+markdown_inline (`**bold**`, `_em_`, `` `code` ``), HTML embedded `<style>` / `<script>`,
+plus Rust/JS/PHP/Swift/Zig/Nix/Elixir/Haskell injections all work. **Incremental reparse**:
+`Editor::apply` now reports `EditOutcome.text_edits: Vec<TextEdit>` (start/old_end/new_end
+bytes). For ops where `extra_cursors.is_empty()` and the buffer changed, an inference
+function deduces the single-edit shape from the before/after `(len, cursor)` snapshot —
+catches typing, backspace, delete-forward, paste, selection-delete, and InsertNewline
+with auto-indent in ~one match arm without instrumenting every mutation site.
+`ReplaceRange` is handled explicitly (LSP rename / find-replace). Multi-cursor / indent /
+auto-pair / JoinLines fall through with `text_edits` empty ⇒ caller drops the cached
+parse tree. `Buffer.pending_tree_edits` accumulates between refreshes;
+`Buffer.prev_line_starts` snapshots the parsed text's line-start index so the next
+batch's `InputEdit::*_point` halves can be derived. `highlight_lines_with_cache(text, ext,
+&mut prev_tree, &edits, &prev_line_starts)` applies each `Tree::edit` and reparses with
+`parser.parse(text, Some(&prev_tree))` so unchanged regions are reused. Unit tests
+verify the incremental path matches a fresh parse for typing + backspace.
 
 ## Not set up yet (could add later)
 

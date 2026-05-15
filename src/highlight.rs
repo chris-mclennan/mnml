@@ -21,8 +21,11 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use ratatui::style::Color;
-use tree_sitter::{Language, Parser, Point, Query, QueryCursor, Range, StreamingIterator};
+use tree_sitter::{
+    InputEdit, Language, Parser, Point, Query, QueryCursor, Range, StreamingIterator, Tree,
+};
 
+use crate::edit_op::TextEdit;
 use crate::ui::theme;
 
 /// One colored run on a single line: `[start_col, end_col)` in **chars**.
@@ -220,16 +223,174 @@ fn point_at_byte(line_starts: &[usize], byte: usize) -> Point {
 }
 
 /// Highlight `text` for the file extension `ext`. Returns one span list per
-/// editor line (`'\n'`-count + 1 lines).
+/// editor line (`'\n'`-count + 1 lines). Always parses from scratch — see
+/// [`highlight_lines_with_cache`] for the incremental variant used by the
+/// editor's hot path.
 pub fn highlight_lines(text: &str, ext: &str) -> Vec<Vec<ColoredSpan>> {
+    let mut prev_tree: Option<Tree> = None;
+    highlight_lines_with_cache(text, ext, &mut prev_tree, &[], &[])
+}
+
+/// Incremental variant of [`highlight_lines`]. If `prev_tree` is `Some` and
+/// `edits` is non-empty, applies each edit to the cached tree via `Tree::edit`
+/// (using `prev_line_starts` to compute the pre-edit `Point` halves) and reparses
+/// with `parser.parse(text, Some(&prev_tree))`, letting tree-sitter reuse the
+/// prior tree's structure where the text is unchanged.
+///
+/// On exit, `*prev_tree` is updated to the freshly produced tree (or cleared on
+/// failure). The caller is responsible for updating its own `prev_line_starts`
+/// to match `text`.
+pub fn highlight_lines_with_cache(
+    text: &str,
+    ext: &str,
+    prev_tree: &mut Option<Tree>,
+    edits: &[TextEdit],
+    prev_line_starts: &[usize],
+) -> Vec<Vec<ColoredSpan>> {
     let n_lines = text.bytes().filter(|&b| b == b'\n').count() + 1;
     let mut out: Vec<Vec<ColoredSpan>> = vec![Vec::new(); n_lines];
     let Some(cfg) = config_for_ext(ext) else {
+        *prev_tree = None;
         return out;
     };
     let line_starts = build_line_starts(text);
-    highlight_recursive(text, &line_starts, cfg, &[], 0, &mut out);
+
+    // Apply each edit's `InputEdit` to the cached tree so tree-sitter knows
+    // which bytes shifted before reparsing. Bail to full reparse if anything
+    // looks off (out-of-range offsets, etc.).
+    if let Some(tree) = prev_tree.as_mut()
+        && !edits.is_empty()
+        && let Err(()) = apply_edits_to_tree(tree, edits, &line_starts, prev_line_starts)
+    {
+        *prev_tree = None;
+    }
+
+    let mut parser = Parser::new();
+    if parser.set_language(&cfg.language).is_err() {
+        *prev_tree = None;
+        return out;
+    }
+    let new_tree = parser.parse(text, prev_tree.as_ref());
+    let Some(tree) = new_tree else {
+        *prev_tree = None;
+        return out;
+    };
+
+    apply_query_to_spans(text, &line_starts, cfg, &tree, &mut out);
+    walk_injections(text, &line_starts, cfg, &tree, 0, &mut out);
+    *prev_tree = Some(tree);
     out
+}
+
+/// Walk `edits` in order, applying each to `tree` via `tree_sitter::Tree::edit`.
+///
+/// Each edit's byte offsets are in *its own pre-state* coordinate space (the
+/// state after the previous edit in the same batch was applied). To compute
+/// the `start_point` / `old_end_point` we need the line-starts of that pre-state;
+/// `prev_line_starts` seeds the iteration and is rolled forward locally per edit.
+/// `new_line_starts` (the current post-all-edits text) is used as the source of
+/// truth for `new_end_point`.
+///
+/// Returns `Err(())` if any edit looks malformed (out-of-range, non-monotonic
+/// rebuild); the caller should drop the cached tree and reparse fresh.
+fn apply_edits_to_tree(
+    tree: &mut Tree,
+    edits: &[TextEdit],
+    new_line_starts: &[usize],
+    prev_line_starts: &[usize],
+) -> Result<(), ()> {
+    let mut cur_starts: Vec<usize> = if prev_line_starts.is_empty() {
+        new_line_starts.to_vec()
+    } else {
+        prev_line_starts.to_vec()
+    };
+    for edit in edits {
+        if edit.old_end_byte < edit.start_byte || edit.new_end_byte < edit.start_byte {
+            return Err(());
+        }
+        let start_point = point_at_byte(&cur_starts, edit.start_byte);
+        let old_end_point = point_at_byte(&cur_starts, edit.old_end_byte);
+        // `new_end_point` references the post-edit state of *this* edit.
+        // We can't compute it directly from new_line_starts (which is
+        // post-all-edits), but we *can* derive it relative to start_point
+        // by counting newlines + trailing-col in the new content. We trust
+        // new_line_starts at start_byte (unchanged) and walk forward.
+        let new_end_point =
+            advance_point_to_byte(&cur_starts, edit.start_byte, start_point, edit.new_end_byte);
+        tree.edit(&InputEdit {
+            start_byte: edit.start_byte,
+            old_end_byte: edit.old_end_byte,
+            new_end_byte: edit.new_end_byte,
+            start_position: start_point,
+            old_end_position: old_end_point,
+            new_end_position: new_end_point,
+        });
+        roll_line_starts_forward(&mut cur_starts, edit, new_line_starts);
+    }
+    Ok(())
+}
+
+/// Update `line_starts` in place to reflect that `edit` was applied. The newly
+/// inserted line breaks are read off `new_line_starts` (the post-all-edits
+/// index) — for a single edit this is exact; for multi-edit batches the later
+/// edits' positions may not line up with `new_line_starts` directly. We accept
+/// some imprecision: tree-sitter uses Points as hints, not load-bearing data.
+fn roll_line_starts_forward(
+    line_starts: &mut Vec<usize>,
+    edit: &TextEdit,
+    new_line_starts: &[usize],
+) {
+    // Drop entries that fall inside the deleted range `[start_byte, old_end_byte)`.
+    line_starts.retain(|&b| b <= edit.start_byte || b >= edit.old_end_byte);
+    // Shift entries past the deleted range by the byte delta.
+    let delta = edit.new_end_byte as i64 - edit.old_end_byte as i64;
+    for b in line_starts.iter_mut() {
+        if *b >= edit.old_end_byte {
+            *b = ((*b as i64) + delta).max(0) as usize;
+        }
+    }
+    // Insert any new line breaks inside `[start_byte, new_end_byte)` by reading
+    // them off `new_line_starts`. For a single-edit batch this is exact.
+    let mut inserts: Vec<usize> = new_line_starts
+        .iter()
+        .copied()
+        .filter(|&b| b > edit.start_byte && b <= edit.new_end_byte)
+        .collect();
+    inserts.sort_unstable();
+    for b in inserts.into_iter().rev() {
+        // Insert in sorted position. Since we filtered + sorted ascending and
+        // then iterate in reverse, we can binary-search for the insertion point.
+        let pos = match line_starts.binary_search(&b) {
+            Ok(_) => continue, // already present
+            Err(i) => i,
+        };
+        line_starts.insert(pos, b);
+    }
+}
+
+/// Compute a `Point` for `target_byte` given a known `(anchor_byte, anchor_point)`
+/// and the line_starts index that contains anchor's row. Used to derive
+/// `new_end_point` when we have the start_point but not the full post-edit
+/// line-start index handy.
+fn advance_point_to_byte(
+    line_starts: &[usize],
+    anchor_byte: usize,
+    anchor_point: Point,
+    target_byte: usize,
+) -> Point {
+    if target_byte <= anchor_byte {
+        return anchor_point;
+    }
+    // Approximation: walk forward through `line_starts` from anchor's row,
+    // adding rows until we cross target_byte. The column on the final row is
+    // `target_byte - last_row_start`.
+    let mut row = anchor_point.row;
+    while row + 1 < line_starts.len() && line_starts[row + 1] <= target_byte {
+        row += 1;
+    }
+    let row_start = line_starts.get(row).copied().unwrap_or(0);
+    let col = target_byte.saturating_sub(row_start);
+    Point::new(row, col)
 }
 
 /// Parse `text` with `cfg`'s grammar (optionally restricted to `included_ranges`
@@ -804,6 +965,64 @@ mod tests {
                 "{ext}: expected some highlight spans, got {lines:?}"
             );
         }
+    }
+
+    #[test]
+    fn incremental_reparse_matches_fresh_for_typing() {
+        // Simulate typing "X" between "main" and "()" in `fn main() {}`.
+        // Incremental reparse with a one-char InputEdit should produce the
+        // same per-line spans as a fresh parse of the post-edit text.
+        let before = "fn main() {}\n";
+        let after = "fn mainX() {}\n";
+        let edit = TextEdit {
+            start_byte: 7,
+            old_end_byte: 7,
+            new_end_byte: 8,
+        };
+
+        let mut tree: Option<Tree> = None;
+        let _ = highlight_lines_with_cache(before, "rs", &mut tree, &[], &[]);
+        assert!(tree.is_some(), "fresh parse should produce a tree");
+
+        let prev_starts: Vec<usize> = std::iter::once(0)
+            .chain(
+                before
+                    .as_bytes()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &b)| (b == b'\n').then_some(i + 1)),
+            )
+            .collect();
+        let incremental = highlight_lines_with_cache(after, "rs", &mut tree, &[edit], &prev_starts);
+        assert!(tree.is_some(), "incremental reparse should update tree");
+
+        let mut fresh_tree: Option<Tree> = None;
+        let fresh = highlight_lines_with_cache(after, "rs", &mut fresh_tree, &[], &[]);
+        assert_eq!(
+            incremental, fresh,
+            "incremental and fresh highlights should match"
+        );
+    }
+
+    #[test]
+    fn incremental_reparse_handles_backspace() {
+        // Buffer "fn main() {}", backspace deletes the trailing brace.
+        let before = "fn main() {}";
+        let after = "fn main() {";
+        let edit = TextEdit {
+            start_byte: 11,
+            old_end_byte: 12,
+            new_end_byte: 11,
+        };
+
+        let mut tree: Option<Tree> = None;
+        let _ = highlight_lines_with_cache(before, "rs", &mut tree, &[], &[]);
+        let prev_starts: Vec<usize> = vec![0];
+        let incremental = highlight_lines_with_cache(after, "rs", &mut tree, &[edit], &prev_starts);
+
+        let mut fresh_tree: Option<Tree> = None;
+        let fresh = highlight_lines_with_cache(after, "rs", &mut fresh_tree, &[], &[]);
+        assert_eq!(incremental, fresh);
     }
 
     #[test]

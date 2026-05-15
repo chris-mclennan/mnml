@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::clipboard::Clipboard;
-use crate::edit_op::{CaseTransform, EditOp, EditOutcome};
+use crate::edit_op::{CaseTransform, EditOp, EditOutcome, TextEdit};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Snapshot {
@@ -227,6 +227,66 @@ fn op_is_insert_char(op: &EditOp) -> bool {
         EditOp::InsertChar(_) => true,
         EditOp::Repeat(_, inner) => op_is_insert_char(inner),
         _ => false,
+    }
+}
+
+/// Infer a single `TextEdit` for an op whose shape we don't explicitly track,
+/// using only the before/after `(len, cursor)` snapshot. Returns `Some` when
+/// the shape matches one of the canonical single-edit patterns (insert at
+/// cursor, backspace-style, forward-delete-style, cursor-on-right selection
+/// delete, cursor-on-left selection delete). `None` for anything else —
+/// callers treat that as "untracked; drop the cached parse tree."
+///
+/// This catches ~95% of edits during typing without needing to instrument every
+/// `apply_one` arm. The remaining ops (multi-cursor fan-out, indent/outdent
+/// across N lines, auto-pair inserting two chars while cursor advances by one,
+/// JoinLines, etc.) fall through to a full reparse.
+fn infer_single_edit(
+    before_len: usize,
+    after_len: usize,
+    before_cursor: usize,
+    after_cursor: usize,
+) -> Option<TextEdit> {
+    if before_len == after_len {
+        return None;
+    }
+    let len_delta = after_len as i64 - before_len as i64;
+    let cur_delta = after_cursor as i64 - before_cursor as i64;
+    if len_delta > 0 {
+        // Pure insertion. Cursor advanced by exactly `len_delta` ⇒ insertion
+        // happened at the pre-edit cursor position. Inserts that don't move
+        // the cursor (rare: `InsertNewlineBelow` etc.) bail to None.
+        if cur_delta == len_delta {
+            Some(TextEdit {
+                start_byte: before_cursor,
+                old_end_byte: before_cursor,
+                new_end_byte: after_cursor,
+            })
+        } else {
+            None
+        }
+    } else {
+        let n = (-len_delta) as usize;
+        if cur_delta == len_delta {
+            // Backspace-style or selection-delete with cursor at the right
+            // end of the selection: deleted range was `[after_cursor, before_cursor)`.
+            Some(TextEdit {
+                start_byte: after_cursor,
+                old_end_byte: before_cursor,
+                new_end_byte: after_cursor,
+            })
+        } else if cur_delta == 0 {
+            // Forward-delete-style or selection-delete with cursor at the
+            // left end of the selection: deleted range was
+            // `[before_cursor, before_cursor + n)`.
+            Some(TextEdit {
+                start_byte: before_cursor,
+                old_end_byte: before_cursor + n,
+                new_end_byte: before_cursor,
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -1267,6 +1327,16 @@ impl Editor {
     pub fn apply(&mut self, op: EditOp, viewport_rows: usize, clip: &mut Clipboard) -> EditOutcome {
         let before_cursor = self.cursor;
         let before_len = self.text.len();
+        let had_multicursor = !self.extra_cursors.is_empty();
+        // Capture `ReplaceRange`'s explicit fields before the op moves out of `op`.
+        // The post-op inference below can't recover them — cursor lands at
+        // `start + text.len()`, which is the new_end but says nothing about
+        // `start`.
+        let replace_range_info = if let EditOp::ReplaceRange { start, end, text } = &op {
+            Some((*start, *end, text.len()))
+        } else {
+            None
+        };
         let keep_goal_col = op_preserves_goal_col(&op);
         // Anything that isn't a typed character ends the coalescing undo run, so
         // a motion between two typing bursts splits them into separate undo steps.
@@ -1281,6 +1351,34 @@ impl Editor {
         if !keep_goal_col {
             self.goal_col = self.col_at_byte(self.cursor);
         }
+
+        // Tracked text-edit hint for incremental tree-sitter reparse.
+        // Skip when multi-cursor was active either before or after the op —
+        // those fan-out edits aren't single-extent.
+        if out.buffer_changed
+            && !had_multicursor
+            && self.extra_cursors.is_empty()
+            && out.text_edits.is_empty()
+        {
+            if let Some((s, e, new_len)) = replace_range_info {
+                let len = self.text.len();
+                let s = s.min(len);
+                let e = e.min(len).max(s);
+                if self.text.is_char_boundary(s) && self.text.is_char_boundary(e) {
+                    out.text_edits.push(TextEdit {
+                        start_byte: s,
+                        old_end_byte: e,
+                        new_end_byte: s + new_len,
+                    });
+                }
+            } else if let Some(edit) =
+                infer_single_edit(before_len, self.text.len(), before_cursor, self.cursor)
+            {
+                out.text_edits.push(edit);
+            }
+            // Else: untracked. `text_edits` stays empty; caller drops the tree.
+        }
+
         out
     }
 
