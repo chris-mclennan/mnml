@@ -11374,6 +11374,17 @@ impl App {
         self.set_wrap(!self.config.ui.wrap);
     }
 
+    /// `:set [no]todohl` / `view.toggle_todo_highlight` — paint
+    /// TODO/FIXME/HACK/XXX keywords in bright red across the editor.
+    pub fn toggle_todo_highlight(&mut self) {
+        self.config.ui.highlight_todo_keywords = !self.config.ui.highlight_todo_keywords;
+        self.toast(if self.config.ui.highlight_todo_keywords {
+            "todo highlight: on"
+        } else {
+            "todo highlight: off"
+        });
+    }
+
     /// `:set [no]bufferline` / `view.toggle_bufferline` — hide/show the
     /// open-tabs strip above the editor body. Useful for single-buffer
     /// workflows.
@@ -14330,6 +14341,14 @@ impl App {
                     self.set_wrap(false);
                 } else if matches!(opt, "wrap!" | "invwrap") {
                     self.toggle_wrap();
+                } else if matches!(opt, "todohl" | "todohighlight") {
+                    self.config.ui.highlight_todo_keywords = true;
+                    self.toast("todo highlight: on");
+                } else if matches!(opt, "notodohl" | "notodohighlight") {
+                    self.config.ui.highlight_todo_keywords = false;
+                    self.toast("todo highlight: off");
+                } else if matches!(opt, "todohl!" | "invtodohl") {
+                    self.toggle_todo_highlight();
                 } else if matches!(opt, "bufferline" | "bl") {
                     self.bufferline_visible = true;
                     self.toast("bufferline: on");

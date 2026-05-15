@@ -739,6 +739,10 @@ across the prompt; consumed one-shot. New `find.find_backward` command.
 **Persisted vim macros** — `q<reg>...q` recordings now survive a relaunch. Saved as
 `(register, Vec<key_spec>)` via `Chord::to_spec` (the same format `[keys.global]` config
 uses); restored on launch with `parse_key_spec`. Empty macros are dropped on save.
+**TODO / FIXME / HACK / XXX inline highlight** — `[ui] highlight_todo_keywords` (default
+off; `:set [no]todohl` / `:set todohl!` / `view.toggle_todo_highlight`). When on, those
+four whole-word keywords render in bright red across every visible line. Buffer-wide single
+scan per render via `find_whole_word_occurrences` (reused from the cursor-word highlight).
 **`ai.session_picker`** — pick from past Claude sessions for this workspace. Scans
 `~/.claude/projects/<dashed-cwd>/*.jsonl` newest-first; each row shows a short id +
 the first user message preview + age. Accept opens a live transcript mirror (the same

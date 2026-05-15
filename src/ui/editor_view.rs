@@ -284,6 +284,21 @@ pub fn draw_pane(
         Vec::new()
     };
     let word_match_bg = theme::cur().bg2;
+    // TODO/FIXME/HACK/XXX highlights — a buffer-wide scan when the flag's
+    // on. Each entry is a (start_byte, end_byte) for the keyword's range.
+    // Cheap — single pass over the whole text per render.
+    let todo_ranges: Vec<(usize, usize)> = if app.config.ui.highlight_todo_keywords {
+        let mut out = Vec::new();
+        for kw in ["TODO", "FIXME", "HACK", "XXX"] {
+            out.extend(crate::editor::find_whole_word_occurrences(
+                buf.editor.text(),
+                kw,
+            ));
+        }
+        out
+    } else {
+        Vec::new()
+    };
     let sign_color = |k: SignKind| match k {
         SignKind::Added => theme::cur().green,
         SignKind::Modified => theme::cur().blue,
@@ -424,6 +439,12 @@ pub fn draw_pane(
         // list; non-cursor cells in these ranges get a subtle bg tint.
         let (ls, le) = buf.editor.line_byte_range(line_no);
         let word_matches_on_line: Vec<(usize, usize)> = word_match_ranges
+            .iter()
+            .filter(|(s, e)| *s >= ls && *e <= le)
+            .map(|(s, e)| (buf.editor.byte_to_col(*s), buf.editor.byte_to_col(*e)))
+            .collect();
+        // TODO/FIXME keyword ranges on this line (in char cols).
+        let todo_on_line: Vec<(usize, usize)> = todo_ranges
             .iter()
             .filter(|(s, e)| *s >= ls && *e <= le)
             .map(|(s, e)| (buf.editor.byte_to_col(*s), buf.editor.byte_to_col(*e)))
@@ -621,6 +642,12 @@ pub fn draw_pane(
             // the bright bg.
             if is_extra_cursor {
                 fg = theme::cur().bg_dark;
+            }
+            // TODO/FIXME/HACK/XXX — force a bright red fg so the keywords
+            // pop. Applied after rainbow/syntax so it wins. Cells in
+            // selection / cursor-line still keep their bg.
+            if todo_on_line.iter().any(|&(s, e)| c >= s && c < e) {
+                fg = theme::cur().red;
             }
             cells.push((ch, fg, bg));
         }

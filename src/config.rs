@@ -199,6 +199,11 @@ pub struct UiConfig {
     /// heuristic) — the simplest correct mode. `h_scroll` is forced to
     /// 0 when wrap is on.
     pub wrap: bool,
+    /// When true, paint `TODO` / `FIXME` / `HACK` / `XXX` keywords in
+    /// bright red/bold across every visible line. Whole-word match. Off
+    /// by default (some users find it noisy). `:set [no]todohl` /
+    /// `view.toggle_todo_highlight`.
+    pub highlight_todo_keywords: bool,
 }
 
 impl Default for Config {
@@ -239,6 +244,7 @@ impl Default for Config {
                 auto_md_preview: false,
                 color_column: 0,
                 wrap: false,
+                highlight_todo_keywords: false,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -342,6 +348,7 @@ struct RawUi {
     auto_md_preview: Option<bool>,
     color_column: Option<usize>,
     wrap: Option<bool>,
+    highlight_todo_keywords: Option<bool>,
 }
 
 impl Config {
@@ -472,6 +479,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.wrap {
             self.ui.wrap = v;
+        }
+        if let Some(v) = raw.ui.highlight_todo_keywords {
+            self.ui.highlight_todo_keywords = v;
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;

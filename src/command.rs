@@ -271,6 +271,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_bufferline(),
         },
         Command {
+            id: "view.toggle_todo_highlight",
+            title: "Toggle TODO/FIXME/HACK/XXX keyword highlight",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_todo_highlight(),
+        },
+        Command {
             id: "view.cmdline_history",
             title: "Open cmdline-history pane (vim q:)",
             group: "view",
