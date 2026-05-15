@@ -169,6 +169,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // ── right ──
     let mut right: Vec<Seg> = Vec::new();
+    // LSP indicator — `LSP {N}` chip when there's at least one running
+    // language server in the workspace. Tells the user at a glance that
+    // LSP features are available; `:LspStatus` for the breakdown.
+    let lsp_n = app.lsp.server_count();
+    if lsp_n > 0 {
+        right.push(Seg::new(
+            format!(" LSP {lsp_n} "),
+            theme::cur().bg_darker,
+            theme::cur().blue,
+        ));
+    }
     // Autosave indicator — `[AS Ns]` chip when `[editor] autosave_secs > 0`.
     // Lets the user see at a glance that idle saves are armed.
     let autosave = app.config.editor.autosave_secs;

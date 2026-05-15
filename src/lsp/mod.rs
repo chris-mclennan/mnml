@@ -474,6 +474,23 @@ impl LspManager {
         self.clients.is_empty()
     }
 
+    /// Count of running servers (each `(root, server-name)` pair counts once).
+    pub fn server_count(&self) -> usize {
+        self.clients.len()
+    }
+
+    /// `(server-name, root)` for each running server. Used by the statusline
+    /// chip + `:LspStatus` ex command.
+    pub fn servers_running(&self) -> Vec<(String, PathBuf)> {
+        let mut v: Vec<_> = self
+            .clients
+            .keys()
+            .map(|(root, name)| (name.clone(), root.clone()))
+            .collect();
+        v.sort();
+        v
+    }
+
     fn server_for_ext(&self, ext: &str) -> Option<ServerConfig> {
         self.servers
             .iter()

@@ -669,6 +669,11 @@ joins every range with `\n` and writes to the unnamed clipboard; replace
 deletes every range then inserts `s` at each cursor's resting position via
 the existing `multi_insert_str`. So `v…c<text><Esc>` does "change every
 selection to `<text>`" — the most useful multi-cursor edit shape.
+**Statusline LSP chip + `:LspStatus`** — when one or more language servers are running for any
+of the open files, the statusline right side shows a `LSP N` chip (count of `(root, server-name)`
+pairs). `:LspStatus` / `:LspInfo` toasts each running server with its workspace-relative root —
+the breakdown when "wait, which servers do I have?" hits. New `LspManager::server_count` +
+`servers_running()`.
 **LSP `documentHighlight`** — `lsp.highlight_symbol` (no default chord; `lsp.clear_highlights`
 to drop): fires `textDocument/documentHighlight` at the cursor; the scope-aware reply tints
 every same-symbol usage with `bg2` (the same tint used by `[ui] highlight_word_under_cursor`).

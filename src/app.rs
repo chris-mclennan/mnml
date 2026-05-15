@@ -12148,6 +12148,26 @@ impl App {
             "Format" => {
                 crate::command::run("lsp.format", self);
             }
+            // `:LspStatus` / `:LspInfo` — toast each running server.
+            "LspStatus" | "LspInfo" => {
+                let servers = self.lsp.servers_running();
+                if servers.is_empty() {
+                    self.toast("LSP: no servers running");
+                } else {
+                    let lines: Vec<String> = servers
+                        .iter()
+                        .map(|(name, root)| {
+                            let rel = root
+                                .strip_prefix(&self.workspace)
+                                .unwrap_or(root.as_path())
+                                .to_string_lossy();
+                            let rel = if rel.is_empty() { ".".into() } else { rel };
+                            format!("{name} ({rel})")
+                        })
+                        .collect();
+                    self.toast(format!("LSP: {}", lines.join(" · ")));
+                }
+            }
             "Hover" => self.lsp_hover(),
             "Definition" => self.lsp_goto_definition(),
             "Declaration" => self.lsp_goto_declaration(),
