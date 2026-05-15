@@ -180,6 +180,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             theme::cur().blue,
         ));
     }
+    // `WRAP` chip when `[ui] wrap` is on. Easy to forget the mode is
+    // active when the file's lines aren't actually long; this gives a
+    // quiet visible confirmation.
+    if app.config.ui.wrap {
+        right.push(Seg::new(
+            " WRAP ".to_string(),
+            theme::cur().bg_darker,
+            theme::cur().purple,
+        ));
+    }
     // Autosave indicator — `[AS Ns]` chip when `[editor] autosave_secs > 0`.
     // Lets the user see at a glance that idle saves are armed.
     let autosave = app.config.editor.autosave_secs;

@@ -729,6 +729,11 @@ alpha dropped) on `Buffer.color_decorations`. `parse_document_color` clamps each
 to `[0,1]` × 255. Multi-line ranges dropped (renderer is per-line). `initialize` advertises
 `colorProvider`. CSS / SCSS / Tailwind / HTML stylesheets light up immediately when the LSP
 supports it (vscode-css-language-server, vscode-html-language-server, tailwindcss, etc.).
+**Statusline `WRAP` chip** — quiet visible confirmation that `[ui] wrap` is on; easy to forget
+the mode is active when the file's lines aren't actually long.
+**`:reveal` / `:Reveal` / `:Finder`** (`view.reveal_active`) — show the active file in the OS
+Finder / Explorer / file manager. macOS uses `open -R`; Windows uses `explorer /select,<path>`;
+Linux opens the parent dir via `xdg-open` (closest portable form — no "select" gesture).
 **`git.browse`** (`:GBrowse` / `:Gbrowse` / `:Browse` from fugitive convention) — open the
 active file at the cursor's line on the remote's web host (GitHub / GitLab / Bitbucket). With
 a multi-line selection, links the range as `#L<lo>-L<hi>`. URL uses HEAD's short SHA so the

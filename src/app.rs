@@ -7206,6 +7206,33 @@ impl App {
         }
     }
 
+    /// `view.reveal_active` (`:reveal`) — show the active file in the OS
+    /// Finder / Explorer / file manager. macOS uses `open -R`; Linux opens
+    /// the file's parent dir via `xdg-open` (the closest portable form —
+    /// no "select" gesture); Windows uses `explorer /select,<path>`.
+    pub fn reveal_active_file(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("reveal needs a saved file");
+            return;
+        };
+        if cfg!(target_os = "macos") {
+            let _ = std::process::Command::new("open")
+                .arg("-R")
+                .arg(&path)
+                .spawn();
+        } else if cfg!(target_os = "windows") {
+            let _ = std::process::Command::new("explorer")
+                .arg(format!("/select,{}", path.display()))
+                .spawn();
+        } else if let Some(parent) = path.parent() {
+            open_path_external(parent);
+        }
+    }
+
     /// `git.browse` (`:GBrowse` from fugitive convention) — open the active
     /// file at the cursor's line on the remote's web host (GitHub / GitLab /
     /// Bitbucket). With a multi-line selection active, links the range. URL
@@ -12524,6 +12551,9 @@ impl App {
             }
             "GBrowse" | "Gbrowse" | "Browse" => {
                 crate::command::run("git.browse", self);
+            }
+            "reveal" | "Reveal" | "Finder" => {
+                crate::command::run("view.reveal_active", self);
             }
             "Gcommit" | "Commit" => {
                 crate::command::run("git.commit", self);
