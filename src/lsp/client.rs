@@ -93,6 +93,9 @@ impl LspClient {
                         "publishDiagnostics": {},
                         "hover": { "contentFormat": ["markdown", "plaintext"] },
                         "definition": { "linkSupport": true },
+                        "declaration": { "linkSupport": true },
+                        "typeDefinition": { "linkSupport": true },
+                        "implementation": { "linkSupport": true },
                         "references": {},
                         "rename": {},
                         "completion": {
@@ -583,7 +586,8 @@ fn handle_message(
         match method.as_str() {
             "textDocument/definition"
             | "textDocument/declaration"
-            | "textDocument/typeDefinition" => {
+            | "textDocument/typeDefinition"
+            | "textDocument/implementation" => {
                 if let Some((path, line, ch)) = first_location(result) {
                     let _ = tx.send(LspEvent::GotoDefinition {
                         path,

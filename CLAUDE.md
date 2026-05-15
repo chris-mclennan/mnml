@@ -669,6 +669,15 @@ joins every range with `\n` and writes to the unnamed clipboard; replace
 deletes every range then inserts `s` at each cursor's resting position via
 the existing `multi_insert_str`. So `v…c<text><Esc>` does "change every
 selection to `<text>`" — the most useful multi-cursor edit shape.
+**LSP `goto_declaration` / `goto_type_definition` / `goto_implementation`** — three siblings of
+`goto_definition`. `Declaration` is "the type/forward decl" (vs definition = "where bound") — diverges
+from `definition` mainly in C/C++ headers + JS imports; `TypeDefinition` jumps from a value to the type
+its bound to (`let x: Foo = …` → `Foo`); `Implementation` jumps from an interface/trait method to one
+of its concrete impls. All three reuse `LspEvent::GotoDefinition` for the reply since the response
+shape is identical (`Location | LocationLink | (Location|LocationLink)[]`). `initialize` advertises
+`linkSupport` on each. Commands `lsp.goto_declaration` / `_type_definition` / `_implementation` (no
+default chord — these are less-used than `goto_definition`'s F12); ex aliases `:Declaration` /
+`:TypeDefinition` / `:Implementation`.
 **Multi-cursor distributed paste** — vim block-paste convention: when the unnamed register
 holds N lines and there are N cursors (primary + extras), `p` / `P` distribute one line per
 cursor in *visual order* (topmost cursor → first line, bottommost → last). Mismatched line

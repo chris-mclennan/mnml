@@ -1108,6 +1108,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_goto_definition(),
         },
         Command {
+            id: "lsp.goto_declaration",
+            title: "LSP: go to declaration",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_goto_declaration(),
+        },
+        Command {
+            id: "lsp.goto_type_definition",
+            title: "LSP: go to type definition",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_goto_type_definition(),
+        },
+        Command {
+            id: "lsp.goto_implementation",
+            title: "LSP: go to implementation",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_goto_implementation(),
+        },
+        Command {
             id: "lsp.hover",
             title: "LSP: hover (docs at cursor)",
             group: "lsp",

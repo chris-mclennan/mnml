@@ -3472,6 +3472,32 @@ impl App {
             "go-to-definition",
         );
     }
+    /// `lsp.goto_declaration` — ask the server for the *declaration* of the
+    /// symbol under the cursor (vs `definition` which is "where it's bound").
+    /// For many languages these are the same; C/C++ headers + JS imports
+    /// are where they diverge.
+    pub fn lsp_goto_declaration(&mut self) {
+        self.lsp_request_at_cursor(
+            |lsp, p, l, c| lsp.goto_declaration(p, l, c),
+            "go-to-declaration",
+        );
+    }
+    /// `lsp.goto_type_definition` — jump to the *type* of the symbol under
+    /// the cursor (e.g. `let x: Foo = …` jumps to `Foo`'s definition).
+    pub fn lsp_goto_type_definition(&mut self) {
+        self.lsp_request_at_cursor(
+            |lsp, p, l, c| lsp.goto_type_definition(p, l, c),
+            "go-to-type-definition",
+        );
+    }
+    /// `lsp.goto_implementation` — jump to (one of) the concrete
+    /// implementations of an interface / trait method under the cursor.
+    pub fn lsp_goto_implementation(&mut self) {
+        self.lsp_request_at_cursor(
+            |lsp, p, l, c| lsp.goto_implementation(p, l, c),
+            "go-to-implementation",
+        );
+    }
     /// `lsp.hover` — ask the server for hover docs at the cursor (`tick` toasts them).
     pub fn lsp_hover(&mut self) {
         self.lsp_request_at_cursor(|lsp, p, l, c| lsp.hover(p, l, c), "hover");
@@ -11839,6 +11865,9 @@ impl App {
             }
             "Hover" => self.lsp_hover(),
             "Definition" => self.lsp_goto_definition(),
+            "Declaration" => self.lsp_goto_declaration(),
+            "TypeDefinition" => self.lsp_goto_type_definition(),
+            "Implementation" => self.lsp_goto_implementation(),
             "References" => {
                 crate::command::run("lsp.references", self);
             }

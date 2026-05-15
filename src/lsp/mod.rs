@@ -497,6 +497,21 @@ impl LspManager {
     pub fn goto_definition(&mut self, path: &Path, line: u32, character: u32) -> bool {
         self.request_at("textDocument/definition", path, line, character)
     }
+    /// Send a `textDocument/declaration` request — reply routes through
+    /// [`LspEvent::GotoDefinition`] (same shape).
+    pub fn goto_declaration(&mut self, path: &Path, line: u32, character: u32) -> bool {
+        self.request_at("textDocument/declaration", path, line, character)
+    }
+    /// Send a `textDocument/typeDefinition` request — reply routes through
+    /// [`LspEvent::GotoDefinition`] (same shape).
+    pub fn goto_type_definition(&mut self, path: &Path, line: u32, character: u32) -> bool {
+        self.request_at("textDocument/typeDefinition", path, line, character)
+    }
+    /// Send a `textDocument/implementation` request — reply routes through
+    /// [`LspEvent::GotoDefinition`] (same shape).
+    pub fn goto_implementation(&mut self, path: &Path, line: u32, character: u32) -> bool {
+        self.request_at("textDocument/implementation", path, line, character)
+    }
     /// Send a `textDocument/hover` request for the cursor position.
     pub fn hover(&mut self, path: &Path, line: u32, character: u32) -> bool {
         self.request_at("textDocument/hover", path, line, character)
