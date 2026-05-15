@@ -13499,6 +13499,17 @@ impl App {
                     Err(e) => self.toast(format!(":CountMatches — bad regex: {e}")),
                 }
             }
+            // `:Messages!` — open the full toast/message log in a fresh
+            // scratch buffer below. `:messages` (already wired) toasts
+            // the recent 8; the bang form is "show me all 200".
+            "Messages!" | "MessageLog" | "messageslog" => {
+                if self.message_log.is_empty() {
+                    self.toast(":Messages! — empty log");
+                    return;
+                }
+                let text = self.message_log.join("\n");
+                self.open_scratch_with_text("[messages]".into(), text);
+            }
             "Sum" | "sum" => {
                 let text = self.active_editor().map(|b| {
                     if let Some((s, e)) = b.editor.selection() {

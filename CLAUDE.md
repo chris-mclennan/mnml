@@ -759,6 +759,9 @@ aliased to `:cprev`, so `:Cp` only.)
 **`:Capture <cmd>`** — run the command via `$SHELL -c`, open the combined stdout/stderr
 in a new scratch buffer (split below). Useful for grabbing `cargo test` output, log dumps,
 etc. for grep / highlight without launching a full pty. Cwd is the workspace.
+**`:Messages!` / `:MessageLog`** — open the full toast/message log in a fresh scratch
+buffer (split below). `:messages` toasts the recent 8 inline; the bang form is for "show
+me all ~200 entries" so you can scroll / grep.
 **`:Sum`** — extract every integer/decimal from the visual selection (or whole buffer)
 and toast the count + total. Spreadsheet-y "what does this column add up to" gesture.
 **`:CountMatches <pattern>` / `:CountMatch`** — toast the count of regex matches for
