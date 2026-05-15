@@ -1066,6 +1066,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_git_graph(),
         },
         Command {
+            id: "git.file_history",
+            title: "Git: file history (commits touching this file)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_file_history_picker(),
+        },
+        Command {
             id: "git.status_pane",
             title: "Git: status / staging view",
             group: "git",

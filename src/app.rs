@@ -2502,6 +2502,7 @@ impl App {
                     }
                 }
             }
+            PickerKind::FileHistory => self.open_commit_diff(&item.id),
         }
     }
 
@@ -7136,6 +7137,71 @@ impl App {
             Some(h) => self.hover = Some(h),
             None => self.toast("peek: (empty)"),
         }
+    }
+
+    /// `git.file_history` — fuzzy picker over commits that touched the active
+    /// file (`git log --follow`, capped at 200). Accept opens a diff pane for
+    /// the chosen commit.
+    pub fn open_file_history_picker(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("file history needs a saved file");
+            return;
+        };
+        let rel = match path.strip_prefix(&self.workspace) {
+            Ok(r) => r.to_string_lossy().to_string(),
+            Err(_) => {
+                self.toast("file is outside the workspace");
+                return;
+            }
+        };
+        let commits = crate::git::log::commits_for_file(&self.workspace, &rel);
+        if commits.is_empty() {
+            self.toast("no commits touched this file");
+            return;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let items: Vec<crate::picker::PickerItem> = commits
+            .into_iter()
+            .map(|c| {
+                let age = crate::ui::git_graph_view::humanize_age(now.saturating_sub(c.time));
+                crate::picker::PickerItem::new(
+                    c.hash,
+                    format!("{}  {}", c.short, c.subject),
+                    format!("{age} · {}", c.author),
+                )
+            })
+            .collect();
+        let title = format!("File history — {rel}");
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::FileHistory,
+            title,
+            items,
+        ));
+    }
+
+    /// Open a diff pane for `hash` (one commit). Helper for the file-history
+    /// picker accept path.
+    pub fn open_commit_diff(&mut self, hash: &str) {
+        let scope = crate::pane::DiffScope::Commit(hash.to_string());
+        let hunks = self.fetch_diff(&scope);
+        if hunks.is_empty() {
+            self.toast(format!(
+                "{} — empty diff",
+                &hash.chars().take(9).collect::<String>()
+            ));
+            return;
+        }
+        self.panes
+            .push(Pane::Diff(crate::pane::DiffView::new(scope, hunks)));
+        let id = self.panes.len() - 1;
+        self.reveal_pane(id);
     }
 
     /// Open a `git diff` view of the whole worktree, in the focused leaf.
@@ -12112,6 +12178,9 @@ impl App {
             }
             "Glog" | "Log" => {
                 crate::command::run("git.graph", self);
+            }
+            "Gflog" | "FileHistory" => {
+                crate::command::run("git.file_history", self);
             }
             "Gcommit" | "Commit" => {
                 crate::command::run("git.commit", self);

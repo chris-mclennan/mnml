@@ -293,6 +293,57 @@ pub fn full_message(workspace: &Path, hash: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Compact commit entry for the per-file history picker — just enough
+/// to render a fuzzy-pickable row and open the commit's diff.
+#[derive(Debug, Clone)]
+pub struct FileCommit {
+    pub hash: String,
+    pub short: String,
+    pub author: String,
+    pub time: i64,
+    pub subject: String,
+}
+
+/// `git log --follow --pretty=… -- <path>` — commits that touched `rel`
+/// (workspace-relative). `--follow` traces renames. Newest first. Capped
+/// at 200 — past that, the picker becomes a wall of noise.
+pub fn commits_for_file(workspace: &Path, rel: &str) -> Vec<FileCommit> {
+    let fmt = "%H%x1f%an%x1f%at%x1f%s";
+    let out = match Command::new("git")
+        .args([
+            "log",
+            "--follow",
+            "-n200",
+            &format!("--pretty=format:{fmt}"),
+            "--",
+            rel,
+        ])
+        .current_dir(workspace)
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut f = line.split('\u{1f}');
+            let hash = f.next()?.to_string();
+            let author = f.next().unwrap_or("").to_string();
+            let time = f.next().unwrap_or("0").parse().unwrap_or(0);
+            let subject = f.next().unwrap_or("").to_string();
+            let short: String = hash.chars().take(9).collect();
+            Some(FileCommit {
+                hash,
+                short,
+                author,
+                time,
+                subject,
+            })
+        })
+        .collect()
+}
+
 /// `git show --name-status --format= <hash>` — `(status, path)` per changed file.
 /// `status` is the porcelain letter (`M`/`A`/`D`/`R…`/`C…`).
 pub fn changed_files(workspace: &Path, hash: &str) -> Vec<(String, String)> {

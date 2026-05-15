@@ -669,6 +669,12 @@ joins every range with `\n` and writes to the unnamed clipboard; replace
 deletes every range then inserts `s` at each cursor's resting position via
 the existing `multi_insert_str`. So `v…c<text><Esc>` does "change every
 selection to `<text>`" — the most useful multi-cursor edit shape.
+**`git.file_history`** (also `:Gflog` / `:FileHistory`) — fuzzy picker over commits that touched
+the active file (`git log --follow -- <rel>`, capped at 200, newest first). Each row shows
+`<short>  <subject>` with `<age> · <author>` as the dim detail. Accept opens a diff pane for the
+chosen commit (`DiffScope::Commit(hash)` → `git show`). New `crate::git::log::commits_for_file` +
+`crate::git::log::FileCommit` + `PickerKind::FileHistory` + `App::open_file_history_picker` /
+`open_commit_diff`. `humanize_age` was hoisted from `git_graph_view` to be reused.
 **LSP `selectionRange`** — vim-style smart-expand selection driven by the server.
 `lsp.selection_expand` fires `textDocument/selectionRange` at the cursor; the reply
 (parsed as a linked list of `(start, end)` byte ranges from smallest → largest by

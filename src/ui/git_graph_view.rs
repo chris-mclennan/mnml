@@ -248,7 +248,7 @@ fn lane_color(t: &Theme, idx: u8) -> Color {
 }
 
 /// "3m" / "5h" / "2d" / "7w" / "4mo" / "2y" from a delta in seconds (≥0).
-fn humanize_age(secs: i64) -> String {
+pub fn humanize_age(secs: i64) -> String {
     let s = secs.max(0);
     if s < 60 {
         return "now".to_string();

@@ -48,6 +48,9 @@ pub enum PickerKind {
     /// shows a per-file summary of the pending edits; Apply commits them,
     /// Cancel drops the stash on `App.pending_rename_preview`.
     RenamePreview,
+    /// `id` = a commit hash. Accept ⇒ open a diff pane for that commit.
+    /// Populated by `git.file_history` for commits touching the active file.
+    FileHistory,
 }
 
 #[derive(Debug, Clone)]
