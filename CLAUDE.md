@@ -744,6 +744,9 @@ ops accessible from ex. Mkdir creates parents too. Touch creates the file (and a
 parent dirs) but won't truncate. Mv renames / moves (refuses to overwrite an existing
 destination); also re-points any open editor on `from` to `to` and fires the LSP
 close/open pair. All three refresh the tree.
+**`:Capture <cmd>`** — run the command via `$SHELL -c`, open the combined stdout/stderr
+in a new scratch buffer (split below). Useful for grabbing `cargo test` output, log dumps,
+etc. for grep / highlight without launching a full pty. Cwd is the workspace.
 **`git.diff_orig`** (`:DiffOrig`) — open a diff pane comparing the active buffer's in-
 memory text against its on-disk version. Vim canonical "what have I changed since save?"
 New `DiffScope::BufferVsDisk(path)` variant. Implementation: writes buffer text to

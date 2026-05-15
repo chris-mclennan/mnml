@@ -2995,6 +2995,24 @@ impl App {
         self.reveal_pane(new_id);
     }
 
+    /// Open a scratch buffer pre-seeded with `text` in a horizontal split
+    /// below the active leaf. `_title` is decorative — scratch buffers
+    /// have no path. Used by `:Capture <cmd>` to surface command output.
+    pub fn open_scratch_with_text(&mut self, _title: String, text: String) {
+        self.split_active(crate::layout::SplitDir::Vertical);
+        let mut buf = crate::buffer::Buffer::scratch(&self.config);
+        // Seed the scratch buffer with `text` via a single InsertStr op
+        // (the only public mutation path on Editor outside of EditOp).
+        let mut clip = crate::clipboard::Clipboard::detached();
+        let _ = buf
+            .editor
+            .apply(crate::edit_op::EditOp::InsertStr(text), 24, &mut clip);
+        buf.editor.place_cursor(0, 0);
+        self.panes.push(Pane::Editor(buf));
+        let new_id = self.panes.len() - 1;
+        self.reveal_pane(new_id);
+    }
+
     /// Track the just-run command id for `picker.recent_commands`.
     /// Moves an existing entry to the front (de-dupes), caps at 50.
     pub fn note_recent_command(&mut self, id: &str) {
@@ -13078,6 +13096,38 @@ impl App {
             }
             // `:Mkdir <path>` — create the directory (+ missing parents)
             // under the workspace. Relative paths join onto self.workspace.
+            // `:Capture <cmd>` — run `<cmd>` via $SHELL -c, open the
+            // combined stdout/stderr in a new scratch buffer. Useful for
+            // grabbing `cargo test` output for grep/highlight without
+            // launching a full pty. Cwd is the workspace.
+            "Capture" | "capture" => {
+                let cmd = rest.trim();
+                if cmd.is_empty() {
+                    self.toast(":Capture <cmd> — needs a command");
+                    return;
+                }
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+                let out = std::process::Command::new(&shell)
+                    .args(["-c", cmd])
+                    .current_dir(&self.workspace)
+                    .output();
+                match out {
+                    Ok(o) => {
+                        let mut text = String::from_utf8_lossy(&o.stdout).into_owned();
+                        let err = String::from_utf8_lossy(&o.stderr);
+                        if !err.trim().is_empty() {
+                            if !text.is_empty() && !text.ends_with('\n') {
+                                text.push('\n');
+                            }
+                            text.push_str("---stderr---\n");
+                            text.push_str(&err);
+                        }
+                        let title = format!("[capture: {cmd}]");
+                        self.open_scratch_with_text(title, text);
+                    }
+                    Err(e) => self.toast(format!("capture failed: {e}")),
+                }
+            }
             "Mkdir" | "mkdir" => {
                 let arg = rest.trim();
                 if arg.is_empty() {
