@@ -50,6 +50,60 @@ pub struct Config {
     pub browser: BrowserConfig,
     pub playwright: PlaywrightConfig,
     pub ci: CiConfig,
+    pub bitbucket: BitbucketConfig,
+}
+
+/// `[bitbucket]` — Bitbucket Cloud REST API integration. Powers the
+/// `Pane::BitbucketPipelines` and `Pane::BitbucketPr` live dashboards
+/// (phases 2–3); phase 1 just wires the worker so the API call shape
+/// is verifiable in isolation.
+///
+/// ```toml
+/// [bitbucket]
+/// auth_env  = "BITBUCKET_TOKEN"   # optional, defaults to BITBUCKET_TOKEN
+/// poll_secs = 30                  # optional, defaults to 30
+///
+/// [[bitbucket.repos]]
+/// workspace = "exampleorg"
+/// slug      = "example-api"
+///
+/// [[bitbucket.repos]]
+/// workspace = "exampleorg"
+/// slug      = "private-playwright"
+/// ```
+///
+/// The worker reads the auth token from `$<auth_env>` at spawn time —
+/// the value never lands in config files. With no `[[bitbucket.repos]]`
+/// entries, the worker stays idle.
+#[derive(Debug, Clone, Default)]
+pub struct BitbucketConfig {
+    /// Env var name to read the API token from. `None` ⇒ `"BITBUCKET_TOKEN"`.
+    pub auth_env: Option<String>,
+    /// Seconds between poll cycles per repo. `None` ⇒ 30.
+    pub poll_secs: Option<u64>,
+    /// Repos to watch. Order is meaningful — picker / pane lists render in this order.
+    pub repos: Vec<BitbucketRepo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BitbucketRepo {
+    pub workspace: String,
+    pub slug: String,
+}
+
+impl BitbucketConfig {
+    /// `true` when at least one repo is configured — the worker can start.
+    pub fn any_configured(&self) -> bool {
+        !self.repos.is_empty()
+    }
+    /// Env var name to source the API token from. Defaults to `BITBUCKET_TOKEN`.
+    pub fn auth_env_name(&self) -> &str {
+        self.auth_env.as_deref().unwrap_or("BITBUCKET_TOKEN")
+    }
+    /// Poll interval in seconds. Defaults to 30.
+    pub fn poll_secs_or_default(&self) -> u64 {
+        self.poll_secs.unwrap_or(30).max(5)
+    }
 }
 
 /// `[ci]` — Continuous-integration provider settings. Consumed by the
@@ -327,6 +381,7 @@ impl Default for Config {
             browser: BrowserConfig { headless: false },
             playwright: PlaywrightConfig::default(),
             ci: CiConfig::default(),
+            bitbucket: BitbucketConfig::default(),
         }
     }
 }
@@ -361,6 +416,22 @@ struct RawConfig {
     playwright: RawPlaywright,
     #[serde(default)]
     ci: RawCi,
+    #[serde(default)]
+    bitbucket: RawBitbucket,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawBitbucket {
+    auth_env: Option<String>,
+    poll_secs: Option<u64>,
+    #[serde(default)]
+    repos: Vec<RawBitbucketRepo>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawBitbucketRepo {
+    workspace: String,
+    slug: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -645,6 +716,21 @@ impl Config {
         if let Some(v) = raw.ci.region {
             self.ci.region = Some(v);
         }
+        // `[bitbucket]` — per-field overlay so workspace files can refine
+        // home defaults. Repos *append* (rather than replace) so a
+        // workspace-local file can add repos without re-listing the homedir set.
+        if let Some(v) = raw.bitbucket.auth_env {
+            self.bitbucket.auth_env = Some(v);
+        }
+        if let Some(v) = raw.bitbucket.poll_secs {
+            self.bitbucket.poll_secs = Some(v);
+        }
+        for r in raw.bitbucket.repos {
+            self.bitbucket.repos.push(BitbucketRepo {
+                workspace: r.workspace,
+                slug: r.slug,
+            });
+        }
     }
 }
 
@@ -709,5 +795,92 @@ database    = "playwright"
     fn playwright_docdb_default_is_empty() {
         let cfg = Config::default();
         assert!(!cfg.playwright.docdb.any_configured());
+    }
+
+    #[test]
+    fn bitbucket_config_parses_multi_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&cfg_path).unwrap();
+        writeln!(
+            f,
+            r#"
+[bitbucket]
+auth_env  = "BB_TOKEN"
+poll_secs = 60
+
+[[bitbucket.repos]]
+workspace = "exampleorg"
+slug      = "example-api"
+
+[[bitbucket.repos]]
+workspace = "exampleorg"
+slug      = "private-playwright"
+"#
+        )
+        .unwrap();
+
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&cfg_path);
+        assert_eq!(cfg.bitbucket.auth_env_name(), "BB_TOKEN");
+        assert_eq!(cfg.bitbucket.poll_secs_or_default(), 60);
+        assert_eq!(cfg.bitbucket.repos.len(), 2);
+        assert_eq!(cfg.bitbucket.repos[0].workspace, "exampleorg");
+        assert_eq!(cfg.bitbucket.repos[0].slug, "example-api");
+        assert_eq!(cfg.bitbucket.repos[1].slug, "private-playwright");
+        assert!(cfg.bitbucket.any_configured());
+    }
+
+    #[test]
+    fn bitbucket_default_is_empty_with_safe_defaults() {
+        let cfg = Config::default();
+        assert!(!cfg.bitbucket.any_configured());
+        // Defaults so the worker has sensible values even without a config.
+        assert_eq!(cfg.bitbucket.auth_env_name(), "BITBUCKET_TOKEN");
+        assert_eq!(cfg.bitbucket.poll_secs_or_default(), 30);
+    }
+
+    #[test]
+    fn bitbucket_poll_secs_floor_5() {
+        // Don't let the user accidentally hammer the API at 1s intervals.
+        let mut cfg = BitbucketConfig {
+            poll_secs: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(cfg.poll_secs_or_default(), 5);
+        cfg.poll_secs = Some(30);
+        assert_eq!(cfg.poll_secs_or_default(), 30);
+    }
+
+    #[test]
+    fn bitbucket_repos_append_across_files() {
+        // Workspace-local file should add to the homedir list, not replace it.
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home.toml");
+        let mut f = std::fs::File::create(&home).unwrap();
+        writeln!(
+            f,
+            r#"
+[[bitbucket.repos]]
+workspace = "exampleorg"
+slug      = "example-api"
+"#
+        )
+        .unwrap();
+        let ws = dir.path().join("ws.toml");
+        let mut f = std::fs::File::create(&ws).unwrap();
+        writeln!(
+            f,
+            r#"
+[[bitbucket.repos]]
+workspace = "exampleorg"
+slug      = "private-playwright"
+"#
+        )
+        .unwrap();
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&home);
+        cfg.apply_file_pub(&ws);
+        assert_eq!(cfg.bitbucket.repos.len(), 2);
     }
 }

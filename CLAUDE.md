@@ -1928,6 +1928,50 @@ workers exit cleanly. Phase 4b (queued) adds change streams selectable via
 `[playwright.docdb] mode = "stream"` (DocumentDB 5.0 cluster `private-docdb5-0`
 has them enabled, 3-day resume window), with polling as the auto-fallback.
 CodeBuild + launcher absorption (separate tracks) come after.
+**Bitbucket terminal dashboard (phase 1 done — worker skeleton)** — `src/bitbucket/`
+(unconditional in the lean build; reuses `reqwest::blocking` from the `http` track,
+no Bitbucket SDK). One worker thread polls every configured `[[bitbucket.repos]]`
+workspace/slug in turn (`api.rs` hits `GET /2.0/repositories/{ws}/{slug}/pipelines/?sort=-created_on&pagelen=20`),
+projects each pipeline to a flat `PipelineRecord{workspace, slug, uuid, build_number, state, target_ref, target_kind,
+commit_hash, creator, trigger, created_on_ms, completed_on_ms, duration_secs, web_url}`,
+emits over an `mpsc` channel as `BitbucketEvent::Pipelines{ws, slug, pipelines}`. State
+folds Bitbucket's two-level `state.name` + `state.result.name` into one enum
+(`PipelineState::{Successful, Failed, Error, Stopped, Expired, InProgress, Pending,
+Paused, Halted, Unknown}` — outer-state wins over a stale `result` field) with
+`glyph()` + `label()` + `is_terminal()` helpers. Auth: token read from
+`$BITBUCKET_TOKEN` (or whatever `[bitbucket] auth_env` names) at spawn time —
+never persisted to config; values containing `:` use Basic (legacy app-password),
+otherwise Bearer (the modern API-token format Bitbucket pushed in 2024). Poll
+interval `[bitbucket] poll_secs` (default 30, floor 5 to keep us off the rate
+limit). On per-repo fetch failure, the worker emits a `Failed("ws/slug: …")`
+and continues with the next repo after a brief 5s inter-repo backoff so one
+broken repo doesn't kill the whole loop. `BitbucketHandle::Drop` flips an
+`AtomicBool` + joins the thread so workers exit cleanly. `App.bitbucket_handle`
+is the lazy-spawn slot (`App::ensure_bitbucket_worker`); `App.bitbucket_pipelines:
+HashMap<(workspace, slug), Vec<PipelineRecord>>` is the per-tick-drained cache the
+phase 2 `Pane::BitbucketPipelines` reads from; `App.bitbucket_last_error` /
+`App.bitbucket_connected` surface the loading / banner state. `examples/bitbucket_smoke.rs`
+(`cargo run --example bitbucket_smoke`) verifies the real API call shape against
+the configured repos. Multi-repo config from a TOML array:
+```
+[bitbucket]
+auth_env  = "BITBUCKET_TOKEN"        # optional
+poll_secs = 30                        # optional, floor 5
+
+[[bitbucket.repos]]
+workspace = "exampleorg"
+slug      = "example-api"
+
+[[bitbucket.repos]]
+workspace = "exampleorg"
+slug      = "private-playwright"
+```
+Repos *append* across config files (homedir + workspace .mnml/config.toml), so a
+workspace-local override adds rather than replaces. Phase 2 wires
+`Pane::BitbucketPipelines` (list view, ↑↓ select, Enter→browse, `r`→refresh,
+`t`→live log tail in pty); phase 3 adds `Pane::BitbucketPr` (per-PR view with
+reviewers + build statuses + comment count); phase 4 polish covers a PR list
+picker, cross-nav (PR ↔ its pipelines), and a branch-rail "open PRs" subsection.
 
 ## Not set up yet (could add later)
 

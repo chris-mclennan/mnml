@@ -1722,6 +1722,24 @@ pub struct App {
     /// channel survives pane open/close churn.
     #[cfg(feature = "private")]
     docdb_handle: Option<crate::private::docdb::DocDbHandle>,
+    /// Bitbucket REST worker handle. `Some` while a worker thread is alive
+    /// polling the configured `[[bitbucket.repos]]` for recent pipelines.
+    /// Spawned lazily on first `bitbucket.*` command (phase 2+); phase 1
+    /// leaves this `None` until a pane is opened.
+    bitbucket_handle: Option<crate::bitbucket::BitbucketHandle>,
+    /// Per-repo cache of the latest pipelines fetched by the Bitbucket
+    /// worker. Keyed by `(workspace, slug)`. The future
+    /// `Pane::BitbucketPipelines` (phase 2) reads from this on every
+    /// render; the App refreshes it from the channel each `tick`.
+    bitbucket_pipelines:
+        std::collections::HashMap<(String, String), Vec<crate::bitbucket::PipelineRecord>>,
+    /// Last error string reported by the Bitbucket worker (auth failed,
+    /// repo 404, …). Cleared on the next successful event. Surfaced as a
+    /// banner by the pane.
+    bitbucket_last_error: Option<String>,
+    /// `true` once the Bitbucket worker has sent at least one successful
+    /// response — the pane drops its "loading…" chip on first receipt.
+    bitbucket_connected: bool,
     /// Job id of an in-flight "AI: write me a commit message" run (it shares
     /// `ai_chan`; when it lands, the commit prompt opens pre-seeded instead of an
     /// answer landing in a `Pane::Ai`).
@@ -1866,6 +1884,10 @@ impl App {
             cdp_chan: None,
             #[cfg(feature = "private")]
             docdb_handle: None,
+            bitbucket_handle: None,
+            bitbucket_pipelines: std::collections::HashMap::new(),
+            bitbucket_last_error: None,
+            bitbucket_connected: false,
             pending_commit_msg_job: None,
             pending_amend_msg_job: None,
             next_job_id: 1,
@@ -15735,6 +15757,7 @@ impl App {
         self.drain_docdb_events();
         #[cfg(feature = "private")]
         self.drain_codebuild_events();
+        self.drain_bitbucket_events();
         self.refresh_live_ai_panes();
         self.autosave_idle_buffers();
         self.check_external_file_changes();
@@ -16541,6 +16564,65 @@ impl App {
                             p.loading = false;
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+// ── Bitbucket integration (lean-build-safe — no Cargo-feature gate) ───
+//
+// Lives in its own `impl App` block so the private-feature-gated block
+// above stays self-contained and the lean build picks up the Bitbucket
+// methods unconditionally. Phase 1 is just spawn + drain; phase 2 wires
+// these into a `Pane::BitbucketPipelines` opener.
+
+impl App {
+    /// Lazily spawn the Bitbucket worker thread. No-op if one is already
+    /// running, or if `[[bitbucket.repos]]` is empty (the worker would
+    /// just exit with a `Failed` event — phase 2's pane handles the
+    /// "configure this" banner instead). Called by future
+    /// `bitbucket.pipelines` / `bitbucket.pr` commands before opening
+    /// their panes.
+    #[allow(dead_code)] // Phase 1: built but not called until phase 2.
+    pub fn ensure_bitbucket_worker(&mut self) {
+        if self.bitbucket_handle.is_some() {
+            return;
+        }
+        if !self.config.bitbucket.any_configured() {
+            return;
+        }
+        self.bitbucket_handle = Some(crate::bitbucket::spawn(self.config.bitbucket.clone()));
+    }
+
+    /// Pull pending pipeline updates off the Bitbucket channel into the
+    /// per-repo cache. Phase 2 panes read from `self.bitbucket_pipelines`
+    /// + `self.bitbucket_last_error` directly. Cheap when the channel is
+    ///   idle (a no-op when no worker has been spawned).
+    fn drain_bitbucket_events(&mut self) {
+        use crate::bitbucket::BitbucketEvent;
+        let Some(handle) = &self.bitbucket_handle else {
+            return;
+        };
+        while let Ok(ev) = handle.rx.try_recv() {
+            match ev {
+                BitbucketEvent::Pipelines {
+                    workspace,
+                    slug,
+                    pipelines,
+                } => {
+                    self.bitbucket_pipelines
+                        .insert((workspace, slug), pipelines);
+                    // A fresh successful response — clear any prior failure
+                    // banner for that repo. (Phase 2 will key errors by
+                    // repo too; phase 1 just keeps a single last-error.)
+                    self.bitbucket_last_error = None;
+                }
+                BitbucketEvent::Connected => {
+                    self.bitbucket_connected = true;
+                }
+                BitbucketEvent::Failed(msg) => {
+                    self.bitbucket_last_error = Some(msg);
                 }
             }
         }

@@ -18,6 +18,7 @@
 
 pub mod ai;
 pub mod app;
+pub mod bitbucket;
 pub mod browser_pane;
 pub mod buffer;
 pub mod cdp;
