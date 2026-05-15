@@ -540,10 +540,11 @@ App-aware wrapper (`compute_cmdline_completions_for_app`) layers theme + buffer
 completion on top.
 **Vim Replace mode (`R`)** — full Replace mode. Typed chars overwrite the char under the
 cursor and advance; at EOL / EOF the chars are inserted. Esc returns to Normal. New
-`VimMode::Replace` + new `handle_replace`; the mode reuses the Insert chip on the status
-line. New `EditOp::OverwriteCharAndAdvance(char)` (one op per typed char: replace-or-
-insert + cursor advance). Backspace moves left without restoring the original char —
-vim's "restore" behavior is a follow-up.
+`VimMode::Replace` + new `handle_replace` + new `EditingMode::Replace` variant (gets its
+own orange `REPLACE` chip on the statusline + underline cursor shape). New
+`EditOp::OverwriteCharAndAdvance(char)` (one op per typed char: replace-or-insert +
+cursor advance). Backspace moves left without restoring the original char — vim's
+"restore" behavior is a follow-up.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

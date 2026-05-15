@@ -24,6 +24,10 @@ pub enum EditingMode {
     None,
     Normal,
     Insert,
+    /// vim Replace mode (`R`) — overwrite under cursor. Cursor is an
+    /// underline. Distinct from Insert so the mode chip can render
+    /// `REPLACE`.
+    Replace,
     Visual,
 }
 
@@ -38,6 +42,7 @@ impl EditingMode {
     pub fn cursor_shape(self) -> CursorShape {
         match self {
             EditingMode::Insert | EditingMode::None => CursorShape::Bar,
+            EditingMode::Replace => CursorShape::Underline,
             EditingMode::Normal | EditingMode::Visual => CursorShape::Block,
         }
     }
@@ -47,6 +52,7 @@ impl EditingMode {
             EditingMode::None => None,
             EditingMode::Normal => Some("NORMAL"),
             EditingMode::Insert => Some("INSERT"),
+            EditingMode::Replace => Some("REPLACE"),
             EditingMode::Visual => Some("VISUAL"),
         }
     }

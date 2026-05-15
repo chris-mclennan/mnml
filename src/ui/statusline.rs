@@ -348,6 +348,7 @@ fn render_right(segs: &[Seg], arrows: bool, head_bg: Color) -> (Vec<Span<'static
 fn mode_chip(app: &App) -> (&'static str, Color) {
     match app.editing_mode() {
         EditingMode::Insert => ("INSERT", theme::cur().green),
+        EditingMode::Replace => ("REPLACE", theme::cur().orange),
         EditingMode::Visual => ("VISUAL", theme::cur().purple),
         EditingMode::Normal => ("NORMAL", theme::cur().red),
         EditingMode::None => match app.focus {

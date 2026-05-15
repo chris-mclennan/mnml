@@ -2536,9 +2536,8 @@ impl InputHandler for VimInputHandler {
     fn mode(&self) -> EditingMode {
         match self.mode {
             VimMode::Normal => EditingMode::Normal,
-            // Replace mode reuses the Insert chip — it's the closest thing
-            // mnml's mode chip recognizes ("you can type into the buffer").
-            VimMode::Insert | VimMode::Replace => EditingMode::Insert,
+            VimMode::Insert => EditingMode::Insert,
+            VimMode::Replace => EditingMode::Replace,
             VimMode::Visual | VimMode::VisualLine | VimMode::VisualBlock => EditingMode::Visual,
         }
     }
