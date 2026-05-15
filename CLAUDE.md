@@ -529,6 +529,9 @@ before `reset_pending` so it can branch.
 **Vim `<count>r<c>`** — replace the next `<count>` characters with `<c>` (vim canonical;
 bare `r<c>` still replaces just one). Emits `Replace, MoveRight` × (n-1) followed by a
 final `Replace` so the cursor lands on the last replaced char.
+**`:set list` EOL marker** — when `[ui] show_whitespace` is on, the editor view now paints
+a dim `$` glyph at the cell immediately past each line's last char (vim canonical
+`listchars=eol:$`). Joins the existing `·` (space) / `→` (tab) glyphs.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

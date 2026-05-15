@@ -435,6 +435,11 @@ pub fn draw_pane(
                         syntax_color(spans_for_line, c).unwrap_or(theme::cur().fg),
                     )
                 }
+            } else if show_ws && c == n {
+                // `:set list` end-of-line marker (vim canonical `$`). Paint
+                // it in the same dim guide color as the other whitespace
+                // glyphs so it doesn't shout.
+                ('$', guide_fg)
             } else {
                 (' ', theme::cur().fg)
             };
