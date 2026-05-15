@@ -1624,6 +1624,14 @@ pub struct App {
     /// [`Self::tick`] drains them into the `Pane::Browser`. `None` when no browser
     /// pane is open (only one at a time in the first cut).
     cdp_chan: Option<std::sync::mpsc::Receiver<crate::cdp::CdpEvent>>,
+    /// DocumentDB worker channel for the `private` feature's
+    /// [`crate::pane::Pane::TestExecutions`] pane. `Some` while a worker
+    /// thread is alive. Drained by [`Self::tick`] into the open
+    /// `TestExecutions` pane(s) — there's only one of these at a time in
+    /// the first cut, but the field is shared (not pane-local) so the
+    /// channel survives pane open/close churn.
+    #[cfg(feature = "private")]
+    docdb_handle: Option<crate::private::docdb::DocDbHandle>,
     /// Job id of an in-flight "AI: write me a commit message" run (it shares
     /// `ai_chan`; when it lands, the commit prompt opens pre-seeded instead of an
     /// answer landing in a `Pane::Ai`).
@@ -1766,6 +1774,8 @@ impl App {
             ai_chan: None,
             tests_chan: None,
             cdp_chan: None,
+            #[cfg(feature = "private")]
+            docdb_handle: None,
             pending_commit_msg_job: None,
             pending_amend_msg_job: None,
             next_job_id: 1,
@@ -5226,6 +5236,8 @@ impl App {
             | Some(Pane::Quickfix(_))
             | Some(Pane::CmdlineHistory(_))
             | None => None,
+            #[cfg(feature = "private")]
+            Some(Pane::TestExecutions(_)) => None,
         };
         let new_buf = match path {
             Some(p) => {
@@ -11104,6 +11116,8 @@ impl App {
             | Pane::Outline(_)
             | Pane::Quickfix(_)
             | Pane::CmdlineHistory(_) => (None, None),
+            #[cfg(feature = "private")]
+            Pane::TestExecutions(_) => (None, None),
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -11198,6 +11212,8 @@ impl App {
             Pane::Outline(o) => Some((o.tab_title(), false)),
             Pane::Quickfix(g) => Some((format!("Quickfix · {}", g.hits.len()), false)),
             Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
+            #[cfg(feature = "private")]
+            Pane::TestExecutions(p) => Some((p.tab_title(), false)),
         }
     }
 
@@ -15619,6 +15635,8 @@ impl App {
         self.drain_tests_jobs();
         self.drain_lsp_events();
         self.drain_cdp_events();
+        #[cfg(feature = "private")]
+        self.drain_docdb_events();
         self.refresh_live_ai_panes();
         self.autosave_idle_buffers();
         self.check_external_file_changes();
@@ -16132,6 +16150,80 @@ impl App {
         let fallback = idx_to_pane.iter().rev().flatten().next().copied();
         if let Some(p) = active_pane.or(fallback) {
             self.reveal_pane(p);
+        }
+    }
+}
+
+/// the private integration-feature plumbing — opener for `Pane::TestExecutions` + the
+/// DocDB-channel drain. Kept in its own `cfg`-gated impl block so the rest
+/// of `app.rs` stays attribute-free.
+#[cfg(feature = "private")]
+impl App {
+    /// Open the DocumentDB live-executions browser. Spawns the worker
+    /// thread if it isn't already running, then drops the pane in a split
+    /// below the focused leaf. Phase 1: the worker is a stub that emits
+    /// five canned rows; phase 4 swaps in the real `mongodb::Client`.
+    pub fn open_private_executions_pane(&mut self) {
+        if self.docdb_handle.is_none() {
+            self.docdb_handle = Some(crate::private::docdb::spawn());
+        }
+        // Re-focus an existing pane if one is open; the new worker's events
+        // will flow into it on the next tick.
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::TestExecutions(_)))
+        {
+            self.reveal_pane(id);
+            return;
+        }
+        let pane =
+            Pane::TestExecutions(crate::private::private_executions_pane::TestExecutionsPane::new());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+        self.toast("private: TestExecutions browser (phase 1 stub)");
+    }
+
+    /// Pull pending records / status updates off the DocDB channel into
+    /// every open `Pane::TestExecutions`. Cheap when the channel is idle.
+    fn drain_docdb_events(&mut self) {
+        use crate::private::docdb::DocDbEvent;
+        let Some(handle) = &self.docdb_handle else {
+            return;
+        };
+        // Collect all pending events first so the borrow on `handle` ends
+        // before we mutate the panes Vec.
+        let mut events: Vec<DocDbEvent> = Vec::new();
+        while let Ok(ev) = handle.rx.try_recv() {
+            events.push(ev);
+        }
+        if events.is_empty() {
+            return;
+        }
+        for pane in self.panes.iter_mut() {
+            if let Pane::TestExecutions(p) = pane {
+                for ev in &events {
+                    match ev {
+                        DocDbEvent::Record(r) => p.push_record(r.clone()),
+                        DocDbEvent::Connected => p.loading = false,
+                        DocDbEvent::Failed(msg) => {
+                            p.last_error = Some(msg.clone());
+                            p.loading = false;
+                        }
+                    }
+                }
+            }
         }
     }
 }

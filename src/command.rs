@@ -108,7 +108,8 @@ pub fn run(id: &str, app: &mut App) -> bool {
 }
 
 fn builtin_commands() -> Vec<Command> {
-    vec![
+    #[allow(unused_mut)]
+    let mut cmds = vec![
         Command {
             id: "app.quit",
             title: "Quit mnml",
@@ -1699,5 +1700,16 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.close_active_pane(),
         },
-    ]
+    ];
+    #[cfg(feature = "private")]
+    {
+        cmds.push(Command {
+            id: "private.test_executions",
+            title: "the private integration: open DocumentDB live TestExecutions browser",
+            group: "private",
+            keys: &[],
+            run: |app| app.open_private_executions_pane(),
+        });
+    }
+    cmds
 }

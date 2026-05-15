@@ -43,6 +43,8 @@ pub mod pty_view;
 pub mod request_view;
 pub mod signature;
 pub mod statusline;
+#[cfg(feature = "private")]
+pub mod test_executions_view;
 pub mod tests_view;
 pub mod theme;
 pub mod trace_view;
@@ -280,6 +282,8 @@ fn render_layout(
                 Some(crate::pane::Pane::Outline(_)) => 14,
                 Some(crate::pane::Pane::CmdlineHistory(_)) => 15,
                 Some(crate::pane::Pane::Quickfix(_)) => 16,
+                #[cfg(feature = "private")]
+                Some(crate::pane::Pane::TestExecutions(_)) => 17,
                 _ => 0,
             };
             match kind {
@@ -301,6 +305,8 @@ fn render_layout(
                 // Quickfix shares the Grep view — same shape, different
                 // pane identity so `:grep` results don't clobber it.
                 16 => grep_view::draw(frame, app, *id, area, focused),
+                #[cfg(feature = "private")]
+                17 => test_executions_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

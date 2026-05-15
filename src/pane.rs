@@ -19,6 +19,8 @@ use crate::playwright::flaky_pane::FlakyPane;
 use crate::playwright::trace_pane::TracePane;
 use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
+#[cfg(feature = "private")]
+use crate::private::private_executions_pane::TestExecutionsPane;
 
 // `Editor`'s payload (`Buffer`) is much bigger than the others'; boxing it would
 // ripple a `Box` through every `Pane::Editor(b)` site for a handful of bytes of
@@ -64,6 +66,10 @@ pub enum Pane {
     /// Vim's `q:` — a scrollable list of recent `:` cmdline entries.
     /// Enter re-fires the highlighted entry; Esc closes.
     CmdlineHistory(CmdlineHistoryPane),
+    /// DocumentDB live `TestExecutions` browser (the private integration org build). Behind
+    /// the `private` Cargo feature — the lean build doesn't have this.
+    #[cfg(feature = "private")]
+    TestExecutions(TestExecutionsPane),
 }
 
 /// Vim's command-line window — `q:` opens a read-only list of recent ex
@@ -205,6 +211,8 @@ impl Pane {
             Pane::Grep(g) => g.tab_title(),
             Pane::Quickfix(g) => format!("Quickfix · {}", g.hits.len()),
             Pane::CmdlineHistory(_) => "q:".to_string(),
+            #[cfg(feature = "private")]
+            Pane::TestExecutions(p) => p.tab_title(),
         }
     }
 
@@ -228,6 +236,8 @@ impl Pane {
             | Pane::Grep(_)
             | Pane::Quickfix(_)
             | Pane::CmdlineHistory(_) => false,
+            #[cfg(feature = "private")]
+            Pane::TestExecutions(_) => false,
         }
     }
 

@@ -2068,6 +2068,10 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     delta.unsigned_abs() as isize
                 });
             }
+            #[cfg(feature = "private")]
+            Some(Pane::TestExecutions(p)) => {
+                p.move_selection(delta as i64);
+            }
             None => {}
         }
     }
