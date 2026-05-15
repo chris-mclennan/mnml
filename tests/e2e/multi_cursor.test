@@ -18,3 +18,18 @@ key X
 key escape
 command file.save
 expect file data.txt contains "Xalpha\nXbeta\nXgamma"
+
+# Backspace fans out too — position cursors at col 1, Backspace removes
+# the leading char on each row.
+write more.txt "Yone\nYtwo\nYthree"
+open more.txt
+# In Normal, l → col 1. Then i (Insert at col 1) + add cursors below.
+key l
+key i
+command editor.add_cursor_below
+command editor.add_cursor_below
+key backspace
+key escape
+command file.save
+expect file more.txt contains "one\ntwo\nthree"
+

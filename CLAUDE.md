@@ -626,9 +626,15 @@ terminal cursor). `InsertChar` is the one mutating op so far that fans out to al
 cursors — inserts at every position descending so earlier offsets stay valid, then
 advances each cursor by `char_len * (count ≤ position)`. Auto-pair is skipped on
 multi-cursor inserts (semantics get hairy with N cursors). Esc in vim Normal mode
-emits `ClearExtraCursors` so the gesture matches vim's "back to one cursor". Other
-mutating ops (Backspace, DeleteForward, etc.) only operate on the primary cursor
-for now — fanning them out is the obvious next step.
+emits `ClearExtraCursors` so the gesture matches vim's "back to one cursor".
+Multi-cursor fan-out expanded: `Backspace` / `DeleteForward` / `MoveLeft` /
+`MoveRight` / `MoveUp` / `MoveDown` now all apply at every cursor. New helpers
+`Editor::multi_delete_backward` / `multi_delete_forward` (each cursor deletes its
+char in descending-position order; other cursors' positions are updated as the
+text shrinks), and `move_extras_horizontal` / `move_extras_vertical` (each extra
+walks one boundary or one row independently; out-of-range rows drop). Word-level
+deletes (`DeleteWordLeft` etc.) and `InsertStr` (paste) still operate only on the
+primary — that's the next step.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

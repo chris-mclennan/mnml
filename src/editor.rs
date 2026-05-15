@@ -291,6 +291,130 @@ impl Editor {
         self.extra_cursors.clear();
     }
 
+    /// Move each extra cursor one char left / right (no goal_col since
+    /// it's a horizontal motion). Caller has already moved the primary.
+    /// Char-boundary safe; clamped to `[0, text.len()]`.
+    fn move_extras_horizontal(&mut self, dir: i32) {
+        if self.extra_cursors.is_empty() {
+            return;
+        }
+        let len = self.text.len();
+        let mut updated: Vec<usize> = self
+            .extra_cursors
+            .iter()
+            .map(|&p| {
+                if dir < 0 {
+                    self.prev_char_boundary(p)
+                } else {
+                    self.next_char_boundary(p).min(len)
+                }
+            })
+            .collect();
+        updated.retain(|&p| p != self.cursor);
+        updated.sort_unstable();
+        updated.dedup();
+        self.extra_cursors = updated;
+    }
+
+    /// Move each extra cursor one row up / down at its current visual
+    /// column (independent goal_col per extra). Drops any extra that
+    /// runs off the top / bottom of the buffer.
+    fn move_extras_vertical(&mut self, dir: i32) {
+        if self.extra_cursors.is_empty() {
+            return;
+        }
+        let lc = self.line_count();
+        let mut updated: Vec<usize> = Vec::with_capacity(self.extra_cursors.len());
+        for &p in &self.extra_cursors {
+            let (row, col) = self.row_col_at(p);
+            let next_row = if dir < 0 {
+                if row == 0 {
+                    continue;
+                }
+                row - 1
+            } else {
+                if row + 1 >= lc {
+                    continue;
+                }
+                row + 1
+            };
+            updated.push(self.byte_at_col(next_row, col));
+        }
+        updated.retain(|&p| p != self.cursor);
+        updated.sort_unstable();
+        updated.dedup();
+        self.extra_cursors = updated;
+    }
+
+    /// Multi-cursor Backspace — each cursor deletes the char before it.
+    /// Apply in descending order so earlier offsets stay valid; update
+    /// all OTHER cursors as each delete shifts the text. Auto-pair is
+    /// skipped (semantics get hairy across N cursors).
+    fn multi_delete_backward(&mut self) {
+        let mut all: Vec<usize> = std::iter::once(self.cursor)
+            .chain(self.extra_cursors.iter().copied())
+            .collect();
+        let mut order: Vec<usize> = (0..all.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(all[i]));
+        for &i in &order {
+            let p = all[i];
+            if p == 0 {
+                continue;
+            }
+            let prev = self.prev_char_boundary(p);
+            let removed = p - prev;
+            self.text.replace_range(prev..p, "");
+            for (j, c) in all.iter_mut().enumerate() {
+                if j == i {
+                    *c = prev;
+                } else if *c >= p {
+                    *c = c.saturating_sub(removed);
+                } else if *c > prev {
+                    *c = prev;
+                }
+            }
+        }
+        self.cursor = all[0];
+        let mut extras: Vec<usize> = all[1..].to_vec();
+        extras.retain(|&c| c != self.cursor);
+        extras.sort_unstable();
+        extras.dedup();
+        self.extra_cursors = extras;
+    }
+
+    /// Multi-cursor DeleteForward — each cursor deletes the char at it.
+    fn multi_delete_forward(&mut self) {
+        let mut all: Vec<usize> = std::iter::once(self.cursor)
+            .chain(self.extra_cursors.iter().copied())
+            .collect();
+        let mut order: Vec<usize> = (0..all.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(all[i]));
+        for &i in &order {
+            let p = all[i];
+            if p >= self.text.len() {
+                continue;
+            }
+            let next = self.next_char_boundary(p);
+            let removed = next - p;
+            self.text.replace_range(p..next, "");
+            for (j, c) in all.iter_mut().enumerate() {
+                if j == i {
+                    // Cursor stays at p — the deleted char was AT cursor.
+                } else if *c > next {
+                    *c = c.saturating_sub(removed);
+                } else if *c >= p {
+                    *c = p;
+                }
+            }
+        }
+        self.cursor = all[0];
+        let mut extras: Vec<usize> = all[1..].to_vec();
+        extras.retain(|&c| c != self.cursor);
+        extras.sort_unstable();
+        extras.dedup();
+        self.extra_cursors = extras;
+    }
+
     /// Capture the current selection as `last_selection` (the buffer's "gv
     /// memory"). Called by `Editor::apply` on ops that close the selection
     /// — Yank, Cut, ReplaceSelection, DeleteSelection, SelectClear.
@@ -898,10 +1022,22 @@ impl Editor {
             }
 
             // ── motion ──
-            MoveLeft => self.move_horizontal(-1, false),
-            MoveRight => self.move_horizontal(1, false),
-            MoveUp => self.move_vertical(-1),
-            MoveDown => self.move_vertical(1),
+            MoveLeft => {
+                self.move_horizontal(-1, false);
+                self.move_extras_horizontal(-1);
+            }
+            MoveRight => {
+                self.move_horizontal(1, false);
+                self.move_extras_horizontal(1);
+            }
+            MoveUp => {
+                self.move_vertical(-1);
+                self.move_extras_vertical(-1);
+            }
+            MoveDown => {
+                self.move_vertical(1);
+                self.move_extras_vertical(1);
+            }
             PageUp => {
                 for _ in 0..vp.max(1) {
                     self.move_vertical(-1);
@@ -1558,6 +1694,12 @@ impl Editor {
                 if self.delete_selection_if_any(out) {
                     return;
                 }
+                if !self.extra_cursors.is_empty() {
+                    self.checkpoint();
+                    self.multi_delete_backward();
+                    out.buffer_changed = true;
+                    return;
+                }
                 if self.cursor == 0 {
                     return;
                 }
@@ -1588,6 +1730,12 @@ impl Editor {
             }
             DeleteForward => {
                 if self.delete_selection_if_any(out) {
+                    return;
+                }
+                if !self.extra_cursors.is_empty() {
+                    self.checkpoint();
+                    self.multi_delete_forward();
+                    out.buffer_changed = true;
                     return;
                 }
                 if self.cursor >= self.text.len() {
