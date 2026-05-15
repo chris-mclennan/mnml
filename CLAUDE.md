@@ -729,6 +729,18 @@ alpha dropped) on `Buffer.color_decorations`. `parse_document_color` clamps each
 to `[0,1]` × 255. Multi-line ranges dropped (renderer is per-line). `initialize` advertises
 `colorProvider`. CSS / SCSS / Tailwind / HTML stylesheets light up immediately when the LSP
 supports it (vscode-css-language-server, vscode-html-language-server, tailwindcss, etc.).
+**`project.todos`** (`:Todos` / `:TODO` / `:FIXME`) — workspace-wide grep for
+`\b(TODO|FIXME|HACK|XXX)\b`; results land in the existing `Pane::Grep` so they're
+browseable with the regular grep-pane keys (`n`/`p`, Enter jumps, `r` re-runs).
+**`:GBrowse <commit>`** — open the commit's URL on the remote (GitHub / GitLab /
+Bitbucket). Resolves short hashes / branch names / `HEAD` via `git rev-parse`. Bare
+`:GBrowse` still opens the active file at cursor.
+**`:Stat`** — toast the active file's line count, in-memory byte count, on-disk size
+(B / KB / MB), and detected language. Combines `g Ctrl+G` + file metadata.
+**`:LspRestart`** / **`:LspReset`** — kill every running language server (each
+`LspClient` kills its child on Drop), clear the "dead" set, then re-fire `did_open` for
+every open editor pane so the servers respawn immediately. The "LSP got stuck" recovery
+gesture; otherwise mnml would only respawn the next time a buffer is opened.
 **LSP `onTypeFormatting`** — `[editor] format_on_type = true` (default off; `:set
 formatontype` / `:set noformatontype` runtime toggle, also `fot` / `nofot`). On each typed
 trigger char (`}` / `;` / `\n`), fire `textDocument/onTypeFormatting` at the cursor and

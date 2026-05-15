@@ -1136,6 +1136,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.reveal_active_file(),
         },
         Command {
+            id: "project.todos",
+            title: "Project: scan for TODO / FIXME / HACK / XXX comments",
+            group: "project",
+            keys: &[],
+            run: |app| app.open_todos_pane(),
+        },
+        Command {
             id: "git.status_pane",
             title: "Git: status / staging view",
             group: "git",

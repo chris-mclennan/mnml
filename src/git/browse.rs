@@ -33,6 +33,15 @@ pub fn url_for(workspace: &Path, rel_path: &str, line_lo: u32, line_hi: u32) -> 
     ))
 }
 
+/// Build the commit-URL for `hash` on the remote (no line range).
+pub fn commit_url(workspace: &Path, hash: &str) -> Option<String> {
+    let remote_url = git_config(workspace, "remote.origin.url")?;
+    let (host, owner, repo) = parse_remote(&remote_url)?;
+    // GitHub/GitLab/Bitbucket all use `/commit/<hash>` (Bitbucket also
+    // accepts `/commits/<hash>` but `/commit/` redirects there). Simple.
+    Some(format!("https://{host}/{owner}/{repo}/commit/{hash}"))
+}
+
 fn parse_remote(url: &str) -> Option<(String, String, String)> {
     // SSH: `git@github.com:owner/repo.git` or `git@github.com:owner/repo`.
     if let Some(rest) = url.strip_prefix("git@") {

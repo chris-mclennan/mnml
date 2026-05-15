@@ -550,6 +550,14 @@ impl LspManager {
         self.clients.len()
     }
 
+    /// Drop every running server (each `LspClient` kills its child on Drop).
+    /// `dead` is cleared too so a new `did_open` can respawn them. Used by
+    /// `:LspRestart` — a "the LSP got stuck" recovery gesture.
+    pub fn restart_all(&mut self) {
+        self.clients.clear();
+        self.dead.clear();
+    }
+
     /// `(server-name, root)` for each running server. Used by the statusline
     /// chip + `:LspStatus` ex command.
     pub fn servers_running(&self) -> Vec<(String, PathBuf)> {

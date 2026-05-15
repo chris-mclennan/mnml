@@ -8041,6 +8041,16 @@ impl App {
         self.focus = Focus::Pane;
     }
 
+    /// `project.todos` (`:Todos`) — workspace-wide scan for `TODO` / `FIXME`
+    /// / `HACK` / `XXX` comments. Implemented as a fixed-pattern workspace
+    /// grep so the results land in the existing `Pane::Grep` (browseable
+    /// with `n`/`p`, jumpable via Enter, etc.). Pattern matches the
+    /// uppercase form with a word boundary so `today` etc. don't hit.
+    pub fn open_todos_pane(&mut self) {
+        let q = "\\b(TODO|FIXME|HACK|XXX)\\b".to_string();
+        self.run_workspace_grep(q);
+    }
+
     /// Re-run the grep that produced the active `Pane::Grep` (the `r` key).
     pub fn rerun_active_grep(&mut self) {
         let q = match self.active.and_then(|i| self.panes.get(i)) {
@@ -12469,6 +12479,32 @@ impl App {
             "Format" => {
                 crate::command::run("lsp.format", self);
             }
+            // `:LspRestart` — kill every running server; subsequent
+            // `did_open` calls (e.g. opening a file in that language) spawn
+            // fresh ones. "The LSP got stuck" recovery gesture.
+            "LspRestart" | "LspReset" => {
+                let n_before = self.lsp.server_count();
+                self.lsp.restart_all();
+                // Re-fire did_open for every open editor pane so the
+                // language servers respawn immediately (otherwise the user
+                // would have to switch buffers / save to trigger it).
+                let opens: Vec<(PathBuf, String, String)> = self
+                    .panes
+                    .iter()
+                    .filter_map(|p| match p {
+                        Pane::Editor(b) => {
+                            let path = b.path.clone()?;
+                            let lang = b.language_ext.clone()?;
+                            Some((path, lang, b.editor.text().to_string()))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                for (path, _lang, text) in opens {
+                    self.lsp.did_open(&path, &text);
+                }
+                self.toast(format!("LSP restarted ({n_before} server(s) dropped)"));
+            }
             // `:LspStatus` / `:LspInfo` — toast each running server.
             "LspStatus" | "LspInfo" => {
                 let servers = self.lsp.servers_running();
@@ -12569,10 +12605,63 @@ impl App {
                 crate::command::run("git.file_history", self);
             }
             "GBrowse" | "Gbrowse" | "Browse" => {
-                crate::command::run("git.browse", self);
+                if let Some(arg) = rest.split_whitespace().next() {
+                    // `:GBrowse <commit>` — open the commit URL on remote.
+                    // Resolve `arg` to a full SHA via `git rev-parse`.
+                    let workspace = self.workspace.clone();
+                    let resolved = std::process::Command::new("git")
+                        .args(["rev-parse", arg])
+                        .current_dir(&workspace)
+                        .output()
+                        .ok()
+                        .filter(|o| o.status.success())
+                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                        .filter(|s| !s.is_empty());
+                    match resolved.and_then(|h| crate::git::browse::commit_url(&workspace, &h)) {
+                        Some(url) => {
+                            open_url_external(&url);
+                            self.toast(format!("→ {url}"));
+                        }
+                        None => self.toast(format!("GBrowse: cannot resolve commit {arg:?}")),
+                    }
+                } else {
+                    crate::command::run("git.browse", self);
+                }
             }
             "reveal" | "Reveal" | "Finder" => {
                 crate::command::run("view.reveal_active", self);
+            }
+            "Todos" | "TODO" | "FIXME" | "todos" => {
+                crate::command::run("project.todos", self);
+            }
+            // `:Stat` — toast file size on disk, mtime, line/byte counts,
+            // language. Combines `:Path` + `g Ctrl+G` + disk facts.
+            "Stat" | "stat" => {
+                let Some(b) = self.active_editor() else {
+                    self.toast("no active editor");
+                    return;
+                };
+                let text = b.editor.text();
+                let line_count = b.editor.line_count();
+                let byte_count = text.len();
+                let lang = b.language_ext.as_deref().unwrap_or("?").to_string();
+                let mut on_disk = String::from("(unsaved)");
+                if let Some(p) = &b.path
+                    && let Ok(md) = std::fs::metadata(p)
+                {
+                    let bytes = md.len();
+                    let kb = (bytes as f64) / 1024.0;
+                    on_disk = if bytes < 1024 {
+                        format!("{bytes}B")
+                    } else if kb < 1024.0 {
+                        format!("{kb:.1}KB")
+                    } else {
+                        format!("{:.1}MB", kb / 1024.0)
+                    };
+                }
+                self.toast(format!(
+                    "{line_count} lines · {byte_count}B in memory · disk={on_disk} · lang={lang}"
+                ));
             }
             // `:Path` / `:pwd` already toasts workspace; `:Path` toasts the
             // active file's full path. Useful for "where is this file".
