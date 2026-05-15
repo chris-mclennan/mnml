@@ -949,6 +949,8 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Enter => app.open_selected_codebuild_url(),
             KeyCode::Char('y') => app.copy_selected_codebuild_url(),
+            KeyCode::Char('t') => app.tail_selected_codebuild_logs(),
+            KeyCode::Char('x') => app.show_test_executions_for_selected_build(),
             KeyCode::Char('r') => app.refresh_active_codebuilds(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}

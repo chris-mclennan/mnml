@@ -1904,7 +1904,7 @@ query otherwise. Bench on 600 KB / 12.4k-line synthetic Rust: fresh **~95ms**,
 incremental-parse-only ~58ms, **incremental-parse-plus-query ~7ms** (~13× speedup, hitting
 the handoff's "<5ms" ballpark). Unit tests verify incremental output equals fresh for
 typing and backspace.
-**`private` Cargo feature (phases 1–6 done)** — off
+**`private` Cargo feature (phases 1–7 done; sub-phases 5b/6b cross-nav + log tail too)** — off
 by default. `cargo build --features private` drags in `mongodb = "3"` + `tokio`
 (contained-runtime form) + `futures-util` + `bson`. Four phases shipped so far:
 (1) module skeleton + worker-thread channel; (2) `Pane::TestExecutions` enum

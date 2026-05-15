@@ -1717,6 +1717,13 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.open_codebuilds_pane(),
         });
+        cmds.push(Command {
+            id: "private.run_tests",
+            title: "the private integration: run playwright tests with settings.json defaults",
+            group: "private",
+            keys: &[],
+            run: |app| app.run_private_tests(),
+        });
     }
     cmds
 }

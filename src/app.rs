@@ -1022,6 +1022,96 @@ fn alternate_paths(path: &std::path::Path) -> Vec<PathBuf> {
     out
 }
 
+/// Read `playwright.env.{BRANCH,ENVIRONMENT,LOG_LEVEL}` from a settings.json,
+/// mirroring `start-launcher.sh`'s resolution order: `$SETTINGS_FILE` env
+/// var first, then `<workspace>/.vscode/settings.json`. Returns
+/// `(branch, env, log_level, source_label)`. Source is `"$SETTINGS_FILE"`,
+/// `"<workspace>/.vscode/settings.json"`, or `"defaults"`.
+///
+/// Defaults match the launcher: develop / dev / info.
+#[cfg(feature = "private")]
+pub(crate) fn load_playwright_settings(
+    workspace: &std::path::Path,
+) -> (String, String, String, String) {
+    const DEFAULTS: (&str, &str, &str) = ("develop", "dev", "info");
+    // 1. $SETTINGS_FILE env var (the launcher's source of truth).
+    let env_path = std::env::var("SETTINGS_FILE")
+        .ok()
+        .map(std::path::PathBuf::from);
+    let fallback_path = workspace.join(".vscode").join("settings.json");
+    let (path, source_label) = match env_path {
+        Some(p) if p.exists() => (Some(p.clone()), p.display().to_string()),
+        _ if fallback_path.exists() => (
+            Some(fallback_path.clone()),
+            fallback_path.display().to_string(),
+        ),
+        _ => (None, "defaults".to_string()),
+    };
+    let Some(path) = path else {
+        return (
+            DEFAULTS.0.to_string(),
+            DEFAULTS.1.to_string(),
+            DEFAULTS.2.to_string(),
+            source_label,
+        );
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return (
+            DEFAULTS.0.to_string(),
+            DEFAULTS.1.to_string(),
+            DEFAULTS.2.to_string(),
+            "defaults".to_string(),
+        );
+    };
+    let json: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => {
+            return (
+                DEFAULTS.0.to_string(),
+                DEFAULTS.1.to_string(),
+                DEFAULTS.2.to_string(),
+                "defaults".to_string(),
+            );
+        }
+    };
+    let pw_env = json.get("playwright.env");
+    let branch = pw_env
+        .and_then(|p| p.get("BRANCH"))
+        .and_then(|s| s.as_str())
+        .unwrap_or(DEFAULTS.0)
+        .to_string();
+    let env = pw_env
+        .and_then(|p| p.get("ENVIRONMENT"))
+        .and_then(|s| s.as_str())
+        .unwrap_or(DEFAULTS.1)
+        .to_string();
+    let log_level = pw_env
+        .and_then(|p| p.get("LOG_LEVEL"))
+        .and_then(|s| s.as_str())
+        .unwrap_or(DEFAULTS.2)
+        .to_string();
+    (branch, env, log_level, source_label)
+}
+
+/// Single-quote a string for safe interpolation into a `$SHELL -c "..."`
+/// command. Wraps in `'…'` and replaces interior single quotes with the
+/// canonical `'\''` escape. Suitable for log-group names, CloudWatch
+/// stream IDs, region strings — strings that don't contain control bytes.
+#[cfg(feature = "private")]
+pub(crate) fn single_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
 /// Open a URL string in the OS's default browser. Best-effort. Used by
 /// the GitHub-browse command + LSP gx URL opener.
 pub fn open_url_external(url: &str) {
@@ -16285,6 +16375,41 @@ impl App {
         self.toast("opened build logs in browser");
     }
 
+    /// `t` on the selected build → live-tail its CloudWatch logs in a pty
+    /// pane (`aws logs tail --follow`). Each invocation opens a new tail
+    /// pane; close with `Ctrl+W`.
+    pub fn tail_selected_codebuild_logs(&mut self) {
+        let logs_info = self
+            .active
+            .and_then(|i| self.panes.get(i))
+            .and_then(|p| match p {
+                Pane::CodeBuilds(cb) => cb.selected_record(),
+                _ => None,
+            })
+            .and_then(|r| Some((r.logs_group.clone()?, r.logs_stream.clone()?)));
+        let Some((group, stream)) = logs_info else {
+            self.toast("no logs group/stream for this build");
+            return;
+        };
+        let region_flag = self
+            .config
+            .ci
+            .region
+            .as_deref()
+            .map(|r| format!(" --region {}", crate::app::single_quote(r)))
+            .unwrap_or_default();
+        let cmd = format!(
+            "aws logs tail --follow --log-group-name {} --log-stream-names {}{}",
+            crate::app::single_quote(&group),
+            crate::app::single_quote(&stream),
+            region_flag
+        );
+        let title = format!("logs · {}", &stream[..stream.len().min(8)]);
+        let profile = crate::pty_pane::BinaryProfile::task(&title, &cmd, self.workspace.clone());
+        self.open_pty(profile);
+        self.toast("tailing build logs (Ctrl+W to close)");
+    }
+
     /// `y` on the selected build → copy the CloudWatch deep-link.
     pub fn copy_selected_codebuild_url(&mut self) {
         let url_opt = self
@@ -16301,6 +16426,82 @@ impl App {
         };
         self.clipboard.set(url, false);
         self.toast("copied logs URL");
+    }
+
+    /// Phase 7: native equivalent of the launcher's "Run Tests" action.
+    /// Reads `playwright.env.{BRANCH,ENVIRONMENT,LOG_LEVEL}` from a
+    /// settings.json (`$SETTINGS_FILE` env var > workspace `.vscode/settings.json`)
+    /// and spawns `npx playwright test` in a pty pane with those as env
+    /// vars. No interactive pickers — user edits settings.json (or runs the
+    /// original launcher script) for one-off overrides.
+    pub fn run_private_tests(&mut self) {
+        let (branch, env, log_level, source) = load_playwright_settings(&self.workspace);
+        let cwd = self.workspace.clone();
+        // Mirror the launcher's env-var construction.
+        let cmd = format!(
+            "BRANCH={} ENVIRONMENT={} LOG_LEVEL={} npx playwright test",
+            crate::app::single_quote(&branch),
+            crate::app::single_quote(&env),
+            crate::app::single_quote(&log_level),
+        );
+        let title = format!("playwright · {env}/{branch}");
+        let profile = crate::pty_pane::BinaryProfile::task(&title, &cmd, cwd);
+        self.open_pty(profile);
+        self.toast(format!(
+            "running playwright ({env}/{branch}/{log_level}) — source: {source}"
+        ));
+    }
+
+    /// `x` on the selected build → cross-navigate to its matching
+    /// `TestExecutions` document. Opens the TestExecutions pane (or
+    /// refocuses it) and switches the active env + selection to the
+    /// matching record (`record.build_id == build_number.to_string()`).
+    pub fn show_test_executions_for_selected_build(&mut self) {
+        let build_num = self
+            .active
+            .and_then(|i| self.panes.get(i))
+            .and_then(|p| match p {
+                Pane::CodeBuilds(cb) => cb.selected_record(),
+                _ => None,
+            })
+            .map(|r| r.build_number)
+            .unwrap_or(0);
+        if build_num == 0 {
+            self.toast("no build number for this build");
+            return;
+        }
+        // Make sure the TestExecutions pane exists. open_private_executions_pane
+        // is a no-op-refocus when one's already open.
+        self.open_private_executions_pane();
+        let build_id_str = build_num.to_string();
+        let target = self.panes.iter().find_map(|p| match p {
+            Pane::TestExecutions(te) => te
+                .records
+                .iter()
+                .find(|r| r.build_id.as_deref() == Some(&build_id_str))
+                .map(|r| (r.env, r.id.clone())),
+            _ => None,
+        });
+        let Some((env, id)) = target else {
+            self.toast(format!("no TestExecutions record for build #{build_num}"));
+            return;
+        };
+        if let Some(pane) = self.panes.iter_mut().find_map(|p| match p {
+            Pane::TestExecutions(te) => Some(te),
+            _ => None,
+        }) {
+            pane.selected_env = env;
+            let idx = pane
+                .records_for(env)
+                .iter()
+                .position(|r| r.id == id)
+                .unwrap_or(0);
+            pane.selected_row.insert(env, idx);
+        }
+        self.toast(format!(
+            "jumped to TestExecution for build #{build_num} ({})",
+            env.label()
+        ));
     }
 
     /// Drain pending CodeBuild refresh channels into every open
@@ -16404,6 +16605,63 @@ fn layout_from_saved(saved: &SavedLayout, idx_to_pane: &[Option<PaneId>]) -> Opt
 mod tests {
     use super::*;
     use std::fs;
+
+    #[cfg(feature = "private")]
+    #[test]
+    fn load_playwright_settings_reads_workspace_vscode() {
+        let d = tempfile::tempdir().unwrap();
+        let vscode = d.path().join(".vscode");
+        fs::create_dir(&vscode).unwrap();
+        fs::write(
+            vscode.join("settings.json"),
+            r#"{
+  "playwright.env": {
+    "BRANCH": "feature/foo",
+    "ENVIRONMENT": "staging",
+    "LOG_LEVEL": "debug"
+  }
+}"#,
+        )
+        .unwrap();
+        // Clear $SETTINGS_FILE for the test so workspace fallback fires.
+        // SAFETY: tests in the same process share env; tolerate races for this
+        // case by setting then restoring.
+        let prior = std::env::var("SETTINGS_FILE").ok();
+        // SAFETY: not setting env vars from multiple threads in this test.
+        unsafe { std::env::remove_var("SETTINGS_FILE") };
+        let (branch, env, log_level, source) = load_playwright_settings(d.path());
+        if let Some(p) = prior {
+            unsafe { std::env::set_var("SETTINGS_FILE", p) };
+        }
+        assert_eq!(branch, "feature/foo");
+        assert_eq!(env, "staging");
+        assert_eq!(log_level, "debug");
+        assert!(source.ends_with("settings.json"));
+    }
+
+    #[cfg(feature = "private")]
+    #[test]
+    fn load_playwright_settings_falls_back_to_defaults() {
+        let d = tempfile::tempdir().unwrap();
+        let prior = std::env::var("SETTINGS_FILE").ok();
+        unsafe { std::env::remove_var("SETTINGS_FILE") };
+        let (branch, env, log_level, source) = load_playwright_settings(d.path());
+        if let Some(p) = prior {
+            unsafe { std::env::set_var("SETTINGS_FILE", p) };
+        }
+        assert_eq!(branch, "develop");
+        assert_eq!(env, "dev");
+        assert_eq!(log_level, "info");
+        assert_eq!(source, "defaults");
+    }
+
+    #[cfg(feature = "private")]
+    #[test]
+    fn single_quote_handles_interior_quotes() {
+        assert_eq!(single_quote("plain"), "'plain'");
+        assert_eq!(single_quote("with'quote"), "'with'\\''quote'");
+        assert_eq!(single_quote(""), "''");
+    }
 
     fn app_with_files() -> (tempfile::TempDir, App) {
         let d = tempfile::tempdir().unwrap();
