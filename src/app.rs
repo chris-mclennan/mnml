@@ -10824,6 +10824,17 @@ impl App {
         self.set_scrollbar(!self.config.ui.scrollbar);
     }
 
+    /// `:set wrap` / `:set nowrap` — toggle visual line wrapping for long
+    /// lines. Char-break MVP (no word-boundary heuristic); h_scroll is
+    /// forced to 0 in `editor_view` when wrap is on.
+    pub fn set_wrap(&mut self, on: bool) {
+        self.config.ui.wrap = on;
+        self.toast(if on { "wrap: on" } else { "wrap: off" });
+    }
+    pub fn toggle_wrap(&mut self) {
+        self.set_wrap(!self.config.ui.wrap);
+    }
+
     /// Toggle the editor breadcrumb row (`:set [no]breadcrumb`).
     pub fn set_breadcrumb(&mut self, on: bool) {
         self.config.editor.breadcrumb = on;
@@ -13575,8 +13586,12 @@ impl App {
                         | "nois"
                 ) {
                     self.toast(format!(":set {opt} — not supported in mnml"));
-                } else if matches!(opt, "wrap" | "nowrap") {
-                    self.toast(format!(":set {opt} — wrap not implemented yet"));
+                } else if opt == "wrap" {
+                    self.set_wrap(true);
+                } else if opt == "nowrap" {
+                    self.set_wrap(false);
+                } else if matches!(opt, "wrap!" | "invwrap") {
+                    self.toggle_wrap();
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }

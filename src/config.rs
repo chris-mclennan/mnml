@@ -187,6 +187,12 @@ pub struct UiConfig {
     /// classic line-length hint. Vim's `:set colorcolumn=N` / `:set cc=N`.
     /// Toggles at runtime via `view.toggle_color_column`.
     pub color_column: usize,
+    /// When true, render long lines wrapped to multiple visual rows
+    /// instead of clipping at the viewport's right edge. Vim's `:set wrap`
+    /// / `:set nowrap` / `:set wrap!`. Char-break (no word-boundary
+    /// heuristic) — the simplest correct mode. `h_scroll` is forced to
+    /// 0 when wrap is on.
+    pub wrap: bool,
 }
 
 impl Default for Config {
@@ -225,6 +231,7 @@ impl Default for Config {
                 highlight_word_under_cursor: false,
                 auto_md_preview: false,
                 color_column: 0,
+                wrap: false,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -326,6 +333,7 @@ struct RawUi {
     highlight_word_under_cursor: Option<bool>,
     auto_md_preview: Option<bool>,
     color_column: Option<usize>,
+    wrap: Option<bool>,
 }
 
 impl Config {
@@ -450,6 +458,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.color_column {
             self.ui.color_column = v;
+        }
+        if let Some(v) = raw.ui.wrap {
+            self.ui.wrap = v;
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;

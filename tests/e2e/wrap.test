@@ -1,0 +1,20 @@
+# Word wrap — `:set wrap` makes long lines wrap to multiple visual rows;
+# `:set nowrap` clips at the right edge again. Char-break MVP — no word
+# boundary heuristic. The continuation rows show a blank gutter.
+
+write longline.txt "AAA BBB CCC DDD EEE FFF GGG HHH III JJJ KKK LLL MMM NNN OOO PPP QQQ RRR SSS TTT UUU VVV WWW XXX YYY ZZZ"
+open longline.txt
+
+# Wrap off: only the head of the line shows on row 0 — the tail past the
+# viewport is clipped.
+expect screen contains "AAA BBB"
+expect screen lacks "ZZZ"
+
+# Flip wrap on. The continuation chars should now be on screen.
+command view.toggle_wrap
+expect screen contains "AAA BBB"
+expect screen contains "ZZZ"
+
+# Toggle back off.
+command view.toggle_wrap
+expect screen lacks "ZZZ"

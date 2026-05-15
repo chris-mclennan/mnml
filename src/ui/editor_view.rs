@@ -150,10 +150,59 @@ pub fn draw_pane(
         .scroll
         .min(line_count.saturating_sub(text_h.min(line_count)));
 
+    // Wrap-aware vertical scroll correction: when wrap is on, the
+    // file-line based scroll math above doesn't know that long lines
+    // take multiple visual rows. Walk the visual rows from `buf.scroll`
+    // and bump `buf.scroll` forward until the cursor's visual offset
+    // fits in `text_h`. Pure correction — never moves scroll above
+    // what the file-line logic computed.
+    if app.config.ui.wrap && tw > 0 && text_h > 0 {
+        loop {
+            let mut vy: usize = 0;
+            let mut line = buf.scroll;
+            let mut found = false;
+            while line < line_count {
+                if line == cur_row {
+                    vy += cur_col / tw;
+                    found = true;
+                    break;
+                }
+                let h = if buf.is_line_folded_body(line) {
+                    0
+                } else {
+                    buf.editor
+                        .line_str(line)
+                        .chars()
+                        .count()
+                        .div_ceil(tw)
+                        .max(1)
+                };
+                vy += h;
+                line += 1;
+                if vy >= text_h {
+                    break;
+                }
+            }
+            if !found || vy >= text_h {
+                if buf.scroll >= cur_row {
+                    break;
+                }
+                buf.scroll += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
     // Horizontal scroll — keep the cursor column in view. Honors
     // `[ui] sidescrolloff` (vim canonical): keep cursor ≥ N cols from
-    // the viewport's left/right edge.
-    if tw > 0 {
+    // the viewport's left/right edge. Skipped when `[ui] wrap` is on —
+    // wrapping eliminates the need for horizontal scroll (and would
+    // fight the wrap math), so we force `h_scroll = 0` there.
+    let wrap_on = app.config.ui.wrap && tw > 0;
+    if wrap_on {
+        buf.h_scroll = 0;
+    } else if tw > 0 {
         let side = app.config.ui.sidescrolloff.min(tw / 2);
         if cur_col < buf.h_scroll + side {
             buf.h_scroll = cur_col.saturating_sub(side);
@@ -252,11 +301,49 @@ pub fn draw_pane(
     // `app.rects.fold_chips` after the `buf` borrow ends. Lets the click
     // handler find which fold to unfold.
     let mut chip_rects: Vec<(u16, usize)> = Vec::new();
-    // Walk visible file lines starting at buf.scroll, skipping any folded
-    // body. `next_line` is the file line for the next render row.
-    let mut next_line = buf.next_visible_line(buf.scroll).unwrap_or(line_count);
-    for r in 0..text_h {
-        let line_no = next_line;
+    // Build the per-visual-row plan: each entry is (line_no, char_start,
+    // is_continuation). With wrap off, every file-line takes exactly one
+    // visual row; with wrap on, long lines emit multiple rows where each
+    // continuation reuses the same `line_no` with `char_start` advancing
+    // by `tw` and `is_continuation = true`.
+    struct VisRow {
+        line_no: usize,
+        char_start: usize,
+        is_continuation: bool,
+    }
+    let mut vis_rows: Vec<VisRow> = Vec::with_capacity(text_h);
+    let mut walk_line = buf.next_visible_line(buf.scroll).unwrap_or(line_count);
+    while vis_rows.len() < text_h && walk_line < line_count {
+        let chunks = if wrap_on {
+            let nchars = buf.editor.line_str(walk_line).chars().count();
+            nchars.div_ceil(tw.max(1)).max(1)
+        } else {
+            1
+        };
+        for chunk in 0..chunks {
+            if vis_rows.len() >= text_h {
+                break;
+            }
+            vis_rows.push(VisRow {
+                line_no: walk_line,
+                char_start: chunk * tw,
+                is_continuation: chunk > 0,
+            });
+        }
+        walk_line = buf.next_visible_line(walk_line + 1).unwrap_or(line_count);
+    }
+    while vis_rows.len() < text_h {
+        vis_rows.push(VisRow {
+            line_no: line_count,
+            char_start: 0,
+            is_continuation: false,
+        });
+    }
+
+    for (r, vis_row) in vis_rows.iter().enumerate() {
+        let line_no = vis_row.line_no;
+        let view_col_start = vis_row.char_start;
+        let is_continuation = vis_row.is_continuation;
         if line_no >= line_count {
             lines.push(Line::from(Span::styled(
                 " ".repeat(area.width as usize),
@@ -264,8 +351,6 @@ pub fn draw_pane(
             )));
             continue;
         }
-        // Schedule the next visible line for the next iteration.
-        next_line = buf.next_visible_line(line_no + 1).unwrap_or(line_count);
         let is_cur = line_no == cur_row;
         let base_bg = if is_cur && app.config.ui.cursor_line {
             // Stronger tint when `[ui] cursor_line = true` (vim's
@@ -274,7 +359,11 @@ pub fn draw_pane(
         } else {
             theme::cur().bg_dark
         };
-        let num_gutter = if blame_on {
+        let num_gutter = if is_continuation {
+            // Continuation rows of a wrapped line — blank gutter so the
+            // user can tell it's the same file line as the row above.
+            format!("{} ", " ".repeat(num_w))
+        } else if blame_on {
             match buf.blame.as_ref().and_then(|v| v.get(line_no)) {
                 Some(bl) => format!("{} ", bl.label(num_w)),
                 None => format!("{} ", " ".repeat(num_w)),
@@ -319,7 +408,9 @@ pub fn draw_pane(
                 .ok()
                 .map(|i| v[i].1)
         });
-        let sign_span = if let Some(s) = diag_sev {
+        let sign_span = if is_continuation {
+            Span::styled(" ", Style::default().bg(base_bg))
+        } else if let Some(s) = diag_sev {
             Span::styled("●", Style::default().fg(diag_color(s)).bg(base_bg))
         } else {
             match sign {
@@ -418,7 +509,7 @@ pub fn draw_pane(
         // Per-visible-cell (char, fg, bg), then coalesce into spans.
         let mut cells: Vec<(char, Color, Color)> = Vec::with_capacity(tw);
         for vc in 0..tw {
-            let c = buf.h_scroll + vc;
+            let c = view_col_start + vc;
             let in_sel = (sel_hi > sel_lo && c >= sel_lo && c < sel_hi)
                 || (extend_eol && c >= sel_lo)
                 || extra_line_sels
@@ -486,7 +577,12 @@ pub fn draw_pane(
             };
             let (ch, mut fg) = if c < n {
                 let raw_ch = chars[c];
-                if raw_ch == ' ' && has_content && c >= tab_w && c % tab_w == 0 && c < indent_cols {
+                if raw_ch == ' '
+                    && has_content
+                    && c >= tab_w
+                    && c.is_multiple_of(tab_w)
+                    && c < indent_cols
+                {
                     ('│', guide_fg)
                 } else if show_ws && raw_ch == ' ' {
                     ('·', guide_fg)
@@ -539,10 +635,10 @@ pub fn draw_pane(
             let mcolor = theme::cur().purple;
             for (i, mc) in chip.chars().enumerate() {
                 let c = start_c + i;
-                if c < buf.h_scroll {
+                if c < view_col_start {
                     continue;
                 }
-                let vc = c - buf.h_scroll;
+                let vc = c - view_col_start;
                 if vc >= cells.len() {
                     break;
                 }
@@ -575,10 +671,10 @@ pub fn draw_pane(
             let dcolor = diag_color(sev);
             for (i, mc) in msg.chars().enumerate() {
                 let c = start_c + i;
-                if c < buf.h_scroll {
+                if c < view_col_start {
                     continue;
                 }
-                let vc = c - buf.h_scroll;
+                let vc = c - view_col_start;
                 if vc >= cells.len() {
                     break;
                 }
@@ -605,10 +701,10 @@ pub fn draw_pane(
             );
             for cc in cd.start_char..cd.end_char {
                 let c = n + (cc as usize);
-                if c < buf.h_scroll {
+                if c < view_col_start {
                     continue;
                 }
-                let vc = c - buf.h_scroll;
+                let vc = c - view_col_start;
                 if vc >= cells.len() {
                     break;
                 }
@@ -640,10 +736,10 @@ pub fn draw_pane(
             let hcolor = theme::cur().comment;
             for (i, mc) in with_lead.chars().enumerate() {
                 let c = start_c + i;
-                if c < buf.h_scroll {
+                if c < view_col_start {
                     continue;
                 }
-                let vc = c - buf.h_scroll;
+                let vc = c - view_col_start;
                 if vc >= cells.len() {
                     break;
                 }
@@ -676,10 +772,10 @@ pub fn draw_pane(
             let lcolor = theme::cur().purple;
             for (i, mc) in with_lead.chars().enumerate() {
                 let c = start_c + i;
-                if c < buf.h_scroll {
+                if c < view_col_start {
                     continue;
                 }
-                let vc = c - buf.h_scroll;
+                let vc = c - view_col_start;
                 if vc >= cells.len() {
                     break;
                 }
@@ -798,8 +894,38 @@ pub fn draw_pane(
     if !focused {
         return None;
     }
-    let cy = area.y + buf.file_to_visible_row(buf.scroll, cur_row) as u16;
-    let cx = text_x + (cur_col.saturating_sub(buf.h_scroll)) as u16;
+    let (cy, cx) = if wrap_on {
+        // Wrap-aware cursor: walk visible rows from buf.scroll, summing
+        // wrap heights of each file line; on the cursor's line, add
+        // `cur_col / tw` for the wrap offset within that line.
+        let mut visual_y: usize = 0;
+        let mut line = buf.scroll;
+        let mut found = false;
+        while line < line_count {
+            if line == cur_row {
+                visual_y += cur_col / tw.max(1);
+                found = true;
+                break;
+            }
+            if !buf.is_line_folded_body(line) {
+                let nchars = buf.editor.line_str(line).chars().count();
+                visual_y += nchars.div_ceil(tw.max(1)).max(1);
+            }
+            line += 1;
+        }
+        if !found {
+            // Cursor is above the viewport — render the cell off-screen so
+            // ratatui hides the caret rather than placing it incorrectly.
+            return None;
+        }
+        let cy = area.y + visual_y as u16;
+        let cx = text_x + (cur_col % tw.max(1)) as u16;
+        (cy, cx)
+    } else {
+        let cy = area.y + buf.file_to_visible_row(buf.scroll, cur_row) as u16;
+        let cx = text_x + (cur_col.saturating_sub(buf.h_scroll)) as u16;
+        (cy, cx)
+    };
     if cy < area.y + area.height && cx < area.x.saturating_add(area.width) {
         Some((cx, cy))
     } else {

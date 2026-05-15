@@ -669,6 +669,22 @@ joins every range with `\n` and writes to the unnamed clipboard; replace
 deletes every range then inserts `s` at each cursor's resting position via
 the existing `multi_insert_str`. So `v…c<text><Esc>` does "change every
 selection to `<text>`" — the most useful multi-cursor edit shape.
+**Word wrap (char-break)** — `[ui] wrap` config (default false; `:set wrap` / `:set nowrap` /
+`:set wrap!` / `view.toggle_wrap`). When on, long lines wrap to multiple visual rows; the
+continuation rows show a blank gutter (no line number, no sign) so the user can tell it's the
+same file line. Char-break MVP — no word-boundary heuristic. `h_scroll` is forced to 0 when
+wrap is on. Implementation: `editor_view` precomputes a `Vec<VisRow {line_no, char_start,
+is_continuation}>` of `text_h` entries from `buf.scroll`, then the existing per-row loop walks
+that vector instead of `next_visible_line`; the inner cell loop uses `view_col_start + vc`
+instead of `buf.h_scroll + vc` (all overlay paints — folds chip / inline diag / inlay hints /
+code lens / color decorations — sed'd over too). Cursor placement uses wrap math when wrap is
+on (visual_y = sum of wrap-heights from buf.scroll + cur_col / tw; visual_x = cur_col % tw).
+Vertical scroll gets a wrap-aware correction loop that bumps `buf.scroll` forward when the
+cursor's visual offset would fall past `text_h`. **Known limitations**: click-to-place under
+wrap maps the click row → file line via the file-line-only logic (clicking inside a wrapped
+continuation lands on the line's start); wrap-aware motions (vim `gj` / `gk` / display-line
+`0`/`$`) still walk file lines; long lines + horizontal scroll math interplay isn't gracefully
+handled when toggling wrap mid-file. All follow-ups.
 **Statusline LSP chip + `:LspStatus`** — when one or more language servers are running for any
 of the open files, the statusline right side shows a `LSP N` chip (count of `(root, server-name)`
 pairs). `:LspStatus` / `:LspInfo` toasts each running server with its workspace-relative root —

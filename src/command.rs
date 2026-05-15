@@ -257,6 +257,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_color_column(),
         },
         Command {
+            id: "view.toggle_wrap",
+            title: "Toggle line wrapping (vim :set wrap)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_wrap(),
+        },
+        Command {
             id: "view.cmdline_history",
             title: "Open cmdline-history pane (vim q:)",
             group: "view",
