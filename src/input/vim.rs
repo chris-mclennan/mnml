@@ -2304,6 +2304,12 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("find.find".into()))
             }
+            // vim `?` — open the find prompt with reverse-search direction
+            // (the first accept jumps to the closest match BEFORE the cursor).
+            KeyCode::Char('?') => {
+                self.reset_pending();
+                InputResult::App(AppCommand::RunCommand("find.find_backward".into()))
+            }
             KeyCode::Esc => {
                 self.reset_pending();
                 // Drop any extra multi-cursors on Esc — vim's "back to one

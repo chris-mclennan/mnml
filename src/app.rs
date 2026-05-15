@@ -666,6 +666,11 @@ struct SavedSession {
     /// source of truth for fresh workspaces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     wrap: Option<bool>,
+    /// Vim macros recorded with `q<reg>...q`, serialized as
+    /// `(register_letter, Vec<key_spec>)`. Lets `@a` work across
+    /// restarts. Each spec round-trips through `parse_key_spec`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    macros: Vec<SavedMacro>,
     /// Per-file last `(cursor_byte, scroll)`. Files dropped from the worktree
     /// just silently fail to restore; over-large positions clamp.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -738,6 +743,15 @@ struct SavedNavPoint {
     path: String,
     row: usize,
     col: usize,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct SavedMacro {
+    /// Register letter (`a`-`z` typically, or `'@'` for the anonymous).
+    register: char,
+    /// Keystrokes as key-spec strings — same format that `[keys.global]`
+    /// config entries use. Round-trips via `parse_key_spec`.
+    keys: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -1548,6 +1562,10 @@ pub struct App {
     /// with a multi-line selection active). Consumed by `accept_find` and
     /// `update_live_find_preview`. `None` ⇒ search the whole buffer.
     pub find_pending_range: Option<(usize, usize)>,
+    /// Vim `?` reverse search — when true, the next `accept_find` jumps to
+    /// the closest match BEFORE the cursor instead of after. One-shot:
+    /// consumed by `accept_find`. Set by `open_find_prompt_backward`.
+    pub find_pending_reverse: bool,
     /// In-flight `:%s/.../.../c` interactive replace (vim's confirm flag).
     /// Steals keys until the user finishes (y/n/a/q at each match).
     pub replace_confirm: Option<ReplaceConfirm>,
@@ -1728,6 +1746,7 @@ impl App {
             find_regex_default: false,
             find_preview_snapshot: None,
             find_pending_range: None,
+            find_pending_reverse: false,
             replace_confirm: None,
             find_preview_cursor: 0,
             find_history: Vec::new(),
@@ -7715,6 +7734,15 @@ impl App {
     // ─── find in buffer ─────────────────────────────────────────────
     /// `find.find` (`Ctrl+F`) — prompt for a search string. Seeded with the
     /// active editor's selection if any, else its current find query.
+    /// `find.find_backward` (vim `?`) — same as `find.find`, but flag the
+    /// next `accept_find` to land on the closest match BEFORE the cursor.
+    /// `n` / `N` after still walk forward/back; only the initial jump
+    /// differs.
+    pub fn open_find_prompt_backward(&mut self) {
+        self.find_pending_reverse = true;
+        self.open_find_prompt();
+    }
+
     pub fn open_find_prompt(&mut self) {
         let Some(cur) = self.active else { return };
         let Some(Pane::Editor(b)) = self.panes.get(cur) else {
@@ -7898,13 +7926,23 @@ impl App {
             ));
             return;
         }
-        // Jump to the first match at-or-after the cursor (wrap).
+        // Direction: forward (vim `/`) lands on the first match at-or-after
+        // the cursor; backward (vim `?`) on the closest before. Both wrap.
+        let reverse = std::mem::take(&mut self.find_pending_reverse);
         let cur_byte = b.editor.cursor();
-        let idx = state
-            .matches
-            .iter()
-            .position(|(s, _)| *s >= cur_byte)
-            .unwrap_or(0);
+        let idx = if reverse {
+            state
+                .matches
+                .iter()
+                .rposition(|(s, _)| *s < cur_byte)
+                .unwrap_or(state.matches.len() - 1)
+        } else {
+            state
+                .matches
+                .iter()
+                .position(|(s, _)| *s >= cur_byte)
+                .unwrap_or(0)
+        };
         state.current = Some(idx);
         let (start, _end) = state.matches[idx];
         let total = state.matches.len();
@@ -14663,6 +14701,18 @@ impl App {
                 .collect(),
             theme: Some(crate::ui::theme::cur().name.to_string()),
             wrap: Some(self.config.ui.wrap),
+            macros: self
+                .macro_buffer
+                .iter()
+                .filter(|(_, keys)| !keys.is_empty())
+                .map(|(reg, keys)| SavedMacro {
+                    register: *reg,
+                    keys: keys
+                        .iter()
+                        .map(|k| crate::input::keymap::Chord::of(k).to_spec())
+                        .collect(),
+                })
+                .collect(),
             file_cursors: merged_cursors
                 .iter()
                 .map(|(p, &(c, s))| SavedFileCursor {
@@ -14825,6 +14875,16 @@ impl App {
         }
         if let Some(w) = saved.wrap {
             self.config.ui.wrap = w;
+        }
+        for m in saved.macros {
+            let keys: Vec<_> = m
+                .keys
+                .iter()
+                .filter_map(|spec| crate::input::keymap::parse_key_spec(spec))
+                .collect();
+            if !keys.is_empty() {
+                self.macro_buffer.insert(m.register, keys);
+            }
         }
         for fc in saved.file_cursors {
             self.file_cursors

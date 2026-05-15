@@ -732,6 +732,13 @@ supports it (vscode-css-language-server, vscode-html-language-server, tailwindcs
 **`[ui] wrap` survives a relaunch** — the user's runtime `:set wrap` choice now persists in
 `session.json` (`SavedSession.wrap: Option<bool>`). Config-file changes still take precedence
 on a fresh workspace.
+**Vim `?` reverse search** — opens the find prompt with the next `accept_find` flagged
+to jump to the closest match BEFORE the cursor (vim canon). After the initial accept,
+`n` / `N` still walk forward/back normally. `App.find_pending_reverse` carries the flag
+across the prompt; consumed one-shot. New `find.find_backward` command.
+**Persisted vim macros** — `q<reg>...q` recordings now survive a relaunch. Saved as
+`(register, Vec<key_spec>)` via `Chord::to_spec` (the same format `[keys.global]` config
+uses); restored on launch with `parse_key_spec`. Empty macros are dropped on save.
 **`:A` / `:Alternate`** — vim's "jump to alternate file". Tries common test ↔ source
 pairings (`_test` / `_spec` suffix on the stem, `.test.<ext>` / `.spec.<ext>` for
 TS/JS). First candidate that exists wins. Stripped when present, added when absent.

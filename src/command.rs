@@ -1143,6 +1143,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_todos_pane(),
         },
         Command {
+            id: "find.find_backward",
+            title: "Find (reverse — vim ?)",
+            group: "find",
+            keys: &[],
+            run: |app| app.open_find_prompt_backward(),
+        },
+        Command {
             id: "git.status_pane",
             title: "Git: status / staging view",
             group: "git",
