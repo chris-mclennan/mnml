@@ -903,6 +903,13 @@ impl VimInputHandler {
                     KeyCode::Char('R') => {
                         InputResult::App(AppCommand::RunCommand("editor.unfold_all".into()))
                     }
+                    // `zM` — fold all (mnml uses server-suggested ranges via
+                    // textDocument/foldingRange; falls back to no-op when no
+                    // LSP). Vim's `zM` closes every fold; ours installs +
+                    // closes the server's recommended set.
+                    KeyCode::Char('M') => {
+                        InputResult::App(AppCommand::RunCommand("lsp.fold_all".into()))
+                    }
                     // vim cursor-position scroll chords: `zz` (center),
                     // `zt` (top), `zb` (bottom). Keep the cursor put,
                     // shift the viewport.
@@ -2437,6 +2444,19 @@ impl VimInputHandler {
             }
             KeyCode::Char(':') => {
                 self.open_cmdline();
+                InputResult::Consumed
+            }
+            // Visual `S<c>` — vim-surround "wrap selection with <c>". The
+            // selection is already live, so no prefix ops are needed; we
+            // just wait for the surround char and then emit
+            // [SurroundSelection, SelectClear]. Char-wait flow reused.
+            KeyCode::Char('S') => {
+                self.pending_surround_ops.clear();
+                self.prefix = Prefix::SurroundAddCharWait;
+                // Drop the user back to Normal once the surround completes
+                // (vim convention). The SurroundAddCharWait arm does that
+                // implicitly via reset_pending.
+                self.mode = VimMode::Normal;
                 InputResult::Consumed
             }
             _ => InputResult::Consumed,

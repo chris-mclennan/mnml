@@ -739,6 +739,14 @@ across the prompt; consumed one-shot. New `find.find_backward` command.
 **Persisted vim macros** — `q<reg>...q` recordings now survive a relaunch. Saved as
 `(register, Vec<key_spec>)` via `Chord::to_spec` (the same format `[keys.global]` config
 uses); restored on launch with `parse_key_spec`. Empty macros are dropped on save.
+**Vim Visual `S<c>` (vim-surround)** — wrap the visual selection with `<c>` (quote / bracket
+variants). Selection is already live in Visual, so no prefix ops are needed — the handler
+clears `pending_surround_ops`, transitions to `Prefix::SurroundAddCharWait`, and bounces back
+to Normal once the char arrives.
+**Vim `zM`** — alias for `lsp.fold_all` (server-suggested fold ranges). Vim's strict
+"fold every block" semantics would need a from-scratch syntactic fold computation; using the
+LSP's suggestions is what users want anyway and works on languages where bracket-folding
+doesn't (Python, YAML).
 **Standard `Ctrl+Enter` / `Ctrl+Shift+Enter`** — VS Code convention for "open new line below /
 above". `Ctrl+Enter` goes to end-of-line + newline; `Ctrl+Shift+Enter` goes to start-of-line +
 newline + move up. Cursor stays in Insert (standard mode is always editable).
