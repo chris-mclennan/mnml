@@ -568,6 +568,19 @@ above}`, new `App.repeat_insert_state: Option<RepeatInsertState>`. The App handl
 initial line + Insert-mode entry; `App::tick` polls for the Normal-mode transition and
 splices `(count-1)` copies of the typed text in below the first. Single `apply_edit_ops`
 so one Undo reverts.
+**Vim `q:` cmdline-history pane** — new `Pane::CmdlineHistory(CmdlineHistoryPane)`,
+new `src/ui/cmdline_history_view.rs`. Opened by the chord `q:` (handled in
+`Prefix::MacroRecordTarget` as a special case before the register-letter rule) or by
+`view.cmdline_history`. ↑↓ / jk / PgUp / PgDn / g / G navigate; Enter re-fires the
+selected entry; Esc closes.
+**`Pane::Quickfix` (vim quickfix list)** — distinct pane variant from `Pane::Grep` so
+workspace-grep results don't get clobbered when something else fills the quickfix.
+Shares the `GrepPane` struct + `grep_view::draw`; key handler is its own (no `r` rerun
+since the populator is external). New `App::open_quickfix(title, hits)`. New
+`:cexpr <text>` ex command (vim canonical) parses `file:line:col:message` lines and
+populates a fresh Quickfix pane. `:copen` / `:cclose` / `:cnext` / `:cprev` now prefer
+the Quickfix pane and fall back to Grep so vim users get muscle-memory behavior either
+way.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

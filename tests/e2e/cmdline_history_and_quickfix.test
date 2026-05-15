@@ -1,0 +1,30 @@
+# Vim `q:` opens a pane listing recent `:` commands; Enter re-fires the
+# highlighted entry. Also covers `:cexpr` populating a separate quickfix
+# pane.
+
+write data.txt "alpha\nbeta"
+open data.txt
+command editor.use_vim
+
+# Record a couple of ex commands so q: has something to show.
+key :
+type "pwd"
+key enter
+
+# Open the cmdline-history pane.
+key q
+key :
+expect screen contains "cmdline history"
+expect screen contains "pwd"
+key escape
+
+# :cexpr populates the quickfix pane.
+write more.txt "one\ntwo"
+open more.txt
+key :
+type "cexpr more.txt:2:1:found-it"
+key enter
+expect screen contains "Quickfix"
+# The Enter key opens the file at the row and the cursor lands there.
+key enter
+expect pane "more.txt"

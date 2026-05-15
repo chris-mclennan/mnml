@@ -949,6 +949,71 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // Quickfix pane — same nav as Grep but no `r` rerun / `R` replace
+    // (the population path is external — `:cexpr`, LSP references, etc.).
+    if matches!(app.panes.get(i), Some(Pane::Quickfix(_))) {
+        let delta = match key.code {
+            KeyCode::Up | KeyCode::Char('k') => Some(-1isize),
+            KeyCode::Down | KeyCode::Char('j') => Some(1),
+            KeyCode::PageUp => Some(-(viewport as isize)),
+            KeyCode::PageDown => Some(viewport as isize),
+            KeyCode::Home | KeyCode::Char('g') => Some(isize::MIN / 2),
+            KeyCode::End | KeyCode::Char('G') => Some(isize::MAX / 2),
+            _ => None,
+        };
+        if let Some(d) = delta
+            && let Some(Pane::Quickfix(g)) = app.panes.get_mut(i)
+        {
+            g.move_selection(d);
+            return;
+        }
+        match key.code {
+            KeyCode::Enter => app.jump_to_selected_quickfix_hit(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
+    // The cmdline-history pane (vim `q:`): ↑↓ / jk / PgUp/PgDn move the
+    // selection, Enter re-fires the highlighted command, Esc closes the pane.
+    if matches!(app.panes.get(i), Some(Pane::CmdlineHistory(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::CmdlineHistory(h)) = app.panes.get_mut(i) {
+                    h.move_selection(-1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::CmdlineHistory(h)) = app.panes.get_mut(i) {
+                    h.move_selection(1);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::CmdlineHistory(h)) = app.panes.get_mut(i) {
+                    h.move_selection(-(viewport as isize));
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::CmdlineHistory(h)) = app.panes.get_mut(i) {
+                    h.move_selection(viewport as isize);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::CmdlineHistory(h)) = app.panes.get_mut(i) {
+                    h.move_selection(isize::MIN / 2);
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::CmdlineHistory(h)) = app.panes.get_mut(i) {
+                    h.move_selection(isize::MAX / 2);
+                }
+            }
+            KeyCode::Enter => app.cmdline_history_accept(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // The git-graph pane: ↑↓ select a commit, Enter → open that commit's diff,
     // `r` refresh (re-run `git log`), `y` copy the commit hash, Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::GitGraph(_))) {
@@ -1832,6 +1897,20 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             }
             Some(Pane::Outline(o)) => {
                 o.move_selection(if delta < 0 {
+                    -(delta.unsigned_abs() as isize)
+                } else {
+                    delta.unsigned_abs() as isize
+                });
+            }
+            Some(Pane::CmdlineHistory(h)) => {
+                h.move_selection(if delta < 0 {
+                    -(delta.unsigned_abs() as isize)
+                } else {
+                    delta.unsigned_abs() as isize
+                });
+            }
+            Some(Pane::Quickfix(g)) => {
+                g.move_selection(if delta < 0 {
                     -(delta.unsigned_abs() as isize)
                 } else {
                     delta.unsigned_abs() as isize

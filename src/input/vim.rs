@@ -1452,6 +1452,13 @@ impl VimInputHandler {
                 // routes to "stop" instead of re-entering this prefix.
                 self.prefix = Prefix::None;
                 if let KeyCode::Char(c) = key.code {
+                    // `q:` — open the cmdline-history pane (vim's
+                    // command-line window).
+                    if c == ':' {
+                        return InputResult::App(AppCommand::RunCommand(
+                            "view.cmdline_history".into(),
+                        ));
+                    }
                     if c == 'q' {
                         self.is_recording_macro = true;
                         return InputResult::App(AppCommand::RunCommand("vim.macro_toggle".into()));

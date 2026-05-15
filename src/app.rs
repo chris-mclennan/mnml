@@ -2983,12 +2983,20 @@ impl App {
     /// `delta=+/-1` (next/prev), `0` doesn't move (jumps current);
     /// `i32::MAX` ⇒ last; `i32::MIN` ⇒ first.
     pub fn quickfix_navigate(&mut self, delta: i32) {
-        let Some(grep_idx) = self.panes.iter().position(|p| matches!(p, Pane::Grep(_))) else {
-            self.toast(":cnext — no grep results");
+        // Prefer a Quickfix pane; fall back to Grep (mnml's `:grep` populates
+        // Grep — vim users reach for `:cnext` after either).
+        let qf_idx = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Quickfix(_)))
+            .or_else(|| self.panes.iter().position(|p| matches!(p, Pane::Grep(_))));
+        let Some(grep_idx) = qf_idx else {
+            self.toast(":cnext — no quickfix / grep results");
             return;
         };
-        let Some(Pane::Grep(g)) = self.panes.get_mut(grep_idx) else {
-            return;
+        let g = match self.panes.get_mut(grep_idx) {
+            Some(Pane::Grep(g)) | Some(Pane::Quickfix(g)) => g,
+            _ => return,
         };
         if g.hits.is_empty() {
             self.toast(":cnext — no hits");
@@ -4817,6 +4825,8 @@ impl App {
             | Some(Pane::Grep(_))
             | Some(Pane::Flaky(_))
             | Some(Pane::Outline(_))
+            | Some(Pane::Quickfix(_))
+            | Some(Pane::CmdlineHistory(_))
             | None => None,
         };
         let new_buf = match path {
@@ -9787,7 +9797,9 @@ impl App {
             | Pane::Diagnostics(_)
             | Pane::Grep(_)
             | Pane::Flaky(_)
-            | Pane::Outline(_) => (None, None),
+            | Pane::Outline(_)
+            | Pane::Quickfix(_)
+            | Pane::CmdlineHistory(_) => (None, None),
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -9880,6 +9892,8 @@ impl App {
             Pane::Grep(g) => Some((g.tab_title(), false)),
             Pane::Flaky(f) => Some((f.tab_title(), false)),
             Pane::Outline(o) => Some((o.tab_title(), false)),
+            Pane::Quickfix(g) => Some((format!("Quickfix · {}", g.hits.len()), false)),
+            Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
         }
     }
 
@@ -10453,6 +10467,106 @@ impl App {
             b.input.cmdline_set(Some(new_line));
         }
         self.cmdline_complete_state = Some(stored);
+    }
+
+    /// Populate / open a `Pane::Quickfix`. `hits` are the entries to show.
+    /// Vim canonical drivers: `:cexpr <text>` parses `file:line:col:text`,
+    /// LSP references could also route here in a future change.
+    pub fn open_quickfix(&mut self, title: &str, hits: Vec<crate::grep_pane::GrepHit>) {
+        let pane = Pane::Quickfix(crate::grep_pane::GrepPane::new(
+            title.to_string(),
+            "quickfix",
+            hits,
+        ));
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Quickfix(_)))
+        {
+            if let Some(Pane::Quickfix(g)) = self.panes.get_mut(id)
+                && let Pane::Quickfix(replacement) = pane
+            {
+                *g = replacement;
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// Jump to the file:line of the highlighted quickfix entry.
+    pub fn jump_to_selected_quickfix_hit(&mut self) {
+        let Some(i) = self.active else { return };
+        let Some(Pane::Quickfix(g)) = self.panes.get(i) else {
+            return;
+        };
+        let Some(hit) = g.hits.get(g.selected).cloned() else {
+            return;
+        };
+        self.open_path(&hit.path);
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(hit.line as usize, hit.col as usize);
+        }
+    }
+
+    /// `view.cmdline_history` (vim `q:`) — open a pane listing recent `:`
+    /// commands. Selecting one + Enter re-fires it.
+    pub fn open_cmdline_history(&mut self) {
+        let pane = Pane::CmdlineHistory(crate::pane::CmdlineHistoryPane::from_history(
+            &self.ex_history,
+        ));
+        // Reveal an existing pane if one's open; otherwise split below the
+        // active pane (like the outline / grep panes).
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::CmdlineHistory(_)))
+        {
+            if let Some(Pane::CmdlineHistory(h)) = self.panes.get_mut(id) {
+                *h = crate::pane::CmdlineHistoryPane::from_history(&self.ex_history);
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// Re-fire the highlighted entry in the active cmdline-history pane,
+    /// then close the pane.
+    pub fn cmdline_history_accept(&mut self) {
+        let Some(i) = self.active else { return };
+        let Some(Pane::CmdlineHistory(h)) = self.panes.get(i) else {
+            return;
+        };
+        let Some(entry) = h.selected_entry().map(String::from) else {
+            return;
+        };
+        self.force_close_pane(i);
+        self.run_ex_command(&entry);
     }
 
     /// vim `<count>o` / `<count>O` ⇒ open one new line (the rest get
@@ -12071,17 +12185,68 @@ impl App {
                 }
             }
             "copen" | "cope" | "cwindow" | "cwin" => {
-                if let Some(idx) = self.panes.iter().position(|p| matches!(p, Pane::Grep(_))) {
+                // Prefer an existing Quickfix pane; fall back to Grep
+                // (mnml's `:grep` populates Grep).
+                if let Some(idx) = self
+                    .panes
+                    .iter()
+                    .position(|p| matches!(p, Pane::Quickfix(_)))
+                {
+                    self.reveal_pane(idx);
+                } else if let Some(idx) = self.panes.iter().position(|p| matches!(p, Pane::Grep(_)))
+                {
                     self.reveal_pane(idx);
                 } else {
-                    self.toast(":copen — no grep results yet");
+                    self.toast(":copen — no quickfix / grep results yet");
                 }
             }
             "cclose" | "ccl" => {
-                if let Some(idx) = self.panes.iter().position(|p| matches!(p, Pane::Grep(_))) {
+                if let Some(idx) = self
+                    .panes
+                    .iter()
+                    .position(|p| matches!(p, Pane::Quickfix(_)))
+                {
+                    self.force_close_pane(idx);
+                } else if let Some(idx) = self.panes.iter().position(|p| matches!(p, Pane::Grep(_)))
+                {
                     self.force_close_pane(idx);
                 } else {
-                    self.toast(":cclose — no grep pane");
+                    self.toast(":cclose — no quickfix / grep pane");
+                }
+            }
+            // `:cexpr <text>` — populate the quickfix list from a
+            // `file:line:col:message` string (vim canonical). Each newline-
+            // separated line that parses becomes one entry.
+            "cexpr" | "cex" => {
+                let mut hits: Vec<crate::grep_pane::GrepHit> = Vec::new();
+                for ln in rest.lines() {
+                    let parts: Vec<&str> = ln.splitn(4, ':').collect();
+                    if parts.len() < 3 {
+                        continue;
+                    }
+                    let Ok(line) = parts[1].parse::<u32>() else {
+                        continue;
+                    };
+                    let col = parts[2].parse::<u32>().ok();
+                    let (col, text_idx) = match col {
+                        Some(c) => (c, 3),
+                        None => (1, 2),
+                    };
+                    let path = self.workspace.join(parts[0]);
+                    let rel = parts[0].to_string();
+                    let text = parts.get(text_idx).copied().unwrap_or("").to_string();
+                    hits.push(crate::grep_pane::GrepHit {
+                        path,
+                        rel,
+                        line: line.saturating_sub(1),
+                        col: col.saturating_sub(1),
+                        text,
+                    });
+                }
+                if hits.is_empty() {
+                    self.toast(":cexpr — no parseable entries");
+                } else {
+                    self.open_quickfix("cexpr", hits);
                 }
             }
             "cnext" | "cn" => self.quickfix_navigate(1),

@@ -257,6 +257,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_color_column(),
         },
         Command {
+            id: "view.cmdline_history",
+            title: "Open cmdline-history pane (vim q:)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_cmdline_history(),
+        },
+        Command {
             id: "browser.toggle_headless",
             title: "Toggle CDP headless launch (takes effect on next browser.open)",
             group: "browser",

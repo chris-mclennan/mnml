@@ -33,8 +33,9 @@ pub fn draw(
     );
     app.rects.editor_panes.push((area, pane_id));
 
-    let Some(Pane::Grep(g)) = app.panes.get_mut(pane_id) else {
-        return None;
+    let g = match app.panes.get_mut(pane_id) {
+        Some(Pane::Grep(g)) | Some(Pane::Quickfix(g)) => g,
+        _ => return None,
     };
     g.clamp();
 

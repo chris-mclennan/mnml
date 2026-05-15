@@ -57,6 +57,44 @@ pub enum Pane {
     Diagnostics(DiagnosticsPane),
     /// A workspace-grep results list — browsable, jump-and-stay.
     Grep(GrepPane),
+    /// Vim's quickfix list — same UI as `Grep` but a distinct pane so
+    /// `:grep` results aren't clobbered when something else (an LSP
+    /// references call, `:cexpr`, …) populates the quickfix.
+    Quickfix(GrepPane),
+    /// Vim's `q:` — a scrollable list of recent `:` cmdline entries.
+    /// Enter re-fires the highlighted entry; Esc closes.
+    CmdlineHistory(CmdlineHistoryPane),
+}
+
+/// Vim's command-line window — `q:` opens a read-only list of recent ex
+/// commands. Up/Down navigate; Enter re-fires the selected entry.
+#[derive(Debug, Clone, Default)]
+pub struct CmdlineHistoryPane {
+    pub entries: Vec<String>,
+    pub selected: usize,
+    pub scroll: usize,
+}
+
+impl CmdlineHistoryPane {
+    pub fn from_history(entries: &[String]) -> Self {
+        // Newest entries first.
+        let entries: Vec<String> = entries.iter().rev().cloned().collect();
+        CmdlineHistoryPane {
+            entries,
+            selected: 0,
+            scroll: 0,
+        }
+    }
+    pub fn move_selection(&mut self, delta: isize) {
+        if self.entries.is_empty() {
+            return;
+        }
+        let max = self.entries.len() as isize - 1;
+        self.selected = ((self.selected as isize + delta).clamp(0, max)) as usize;
+    }
+    pub fn selected_entry(&self) -> Option<&str> {
+        self.entries.get(self.selected).map(String::as_str)
+    }
 }
 
 pub struct MdPreview {
@@ -139,6 +177,8 @@ impl Pane {
             Pane::Browser(b) => b.tab_title(),
             Pane::Diagnostics(d) => d.tab_title(),
             Pane::Grep(g) => g.tab_title(),
+            Pane::Quickfix(g) => format!("Quickfix · {}", g.hits.len()),
+            Pane::CmdlineHistory(_) => "q:".to_string(),
         }
     }
 
@@ -159,7 +199,9 @@ impl Pane {
             | Pane::Outline(_)
             | Pane::Browser(_)
             | Pane::Diagnostics(_)
-            | Pane::Grep(_) => false,
+            | Pane::Grep(_)
+            | Pane::Quickfix(_)
+            | Pane::CmdlineHistory(_) => false,
         }
     }
 

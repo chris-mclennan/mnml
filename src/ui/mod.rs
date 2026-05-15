@@ -23,6 +23,7 @@ pub mod ai_view;
 pub mod browser_view;
 pub mod bufferline;
 pub mod close_prompt;
+pub mod cmdline_history_view;
 pub mod completion;
 pub mod context_menu;
 pub mod diagnostics_view;
@@ -266,6 +267,8 @@ fn render_layout(
                 Some(crate::pane::Pane::Grep(_)) => 12,
                 Some(crate::pane::Pane::Flaky(_)) => 13,
                 Some(crate::pane::Pane::Outline(_)) => 14,
+                Some(crate::pane::Pane::CmdlineHistory(_)) => 15,
+                Some(crate::pane::Pane::Quickfix(_)) => 16,
                 _ => 0,
             };
             match kind {
@@ -283,6 +286,10 @@ fn render_layout(
                 12 => grep_view::draw(frame, app, *id, area, focused),
                 13 => flaky_view::draw(frame, app, *id, area, focused),
                 14 => outline_view::draw(frame, app, *id, area, focused),
+                15 => cmdline_history_view::draw(frame, app, *id, area, focused),
+                // Quickfix shares the Grep view — same shape, different
+                // pane identity so `:grep` results don't clobber it.
+                16 => grep_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }
