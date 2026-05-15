@@ -759,6 +759,14 @@ aliased to `:cprev`, so `:Cp` only.)
 **`:Capture <cmd>`** — run the command via `$SHELL -c`, open the combined stdout/stderr
 in a new scratch buffer (split below). Useful for grabbing `cargo test` output, log dumps,
 etc. for grep / highlight without launching a full pty. Cwd is the workspace.
+**Debounced syntax highlighting** — `Buffer.highlights_dirty: bool` flag set on every
+text-changing edit (replaces the immediate `refresh_highlights()` call). `App::tick`'s new
+`refresh_stale_highlights` sweeps editor panes and re-runs tree-sitter on any buffer
+whose last edit was ≥ 120 ms ago. Effect: rapid typing holds the previous frame's
+highlights (the buffer text is still live; only the colors lag); after the typing pause,
+highlights snap to fresh. Lets `HIGHLIGHT_BYTE_LIMIT` go from 2 MiB to 4 MiB without
+laggy typing on big files. The first cut at "incremental" without dropping
+`tree_sitter_highlight` (which would require re-implementing injections).
 **`:Wc` / `:WordCount`** — classic `wc -lwc` shape: lines / words / chars / bytes for the
 active buffer or selection. Sibling to `:Stat` which focuses on file metadata.
 **`:Messages!` / `:MessageLog`** — open the full toast/message log in a fresh scratch

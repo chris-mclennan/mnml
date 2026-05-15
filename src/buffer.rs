@@ -13,9 +13,10 @@ use crate::editor::Editor;
 use crate::highlight::{self, ColoredSpan};
 use crate::input::{self, AppCommand, EditCtx, EditingMode, InputHandler, InputResult};
 
-/// Above this many bytes, skip syntax highlighting (re-parsing on every edit
-/// would lag). Incremental parsing lifts this later.
-const HIGHLIGHT_BYTE_LIMIT: usize = 2 * 1024 * 1024;
+/// Above this many bytes, skip syntax highlighting. With debounced
+/// reparse (App::tick refreshes after ~120ms idle) we can afford a
+/// higher ceiling than the original 2 MiB.
+const HIGHLIGHT_BYTE_LIMIT: usize = 4 * 1024 * 1024;
 
 /// In-buffer find state — opened by `find.find` (`Ctrl+F`), advanced by `F3` /
 /// `Shift+F3`. Stores byte ranges; recomputed on every text-changing edit.
@@ -195,6 +196,11 @@ pub struct Buffer {
     /// Stamp of the last text-changing edit (used by `[editor] autosave_secs`).
     /// `None` until the first edit; cleared back to `None` on save.
     pub last_edited: Option<Instant>,
+    /// `true` ⇒ `highlights` is stale and needs a refresh; `App::tick` will
+    /// rebuild it after a short idle. Lets us hold the previous frame's
+    /// highlights while the user is typing rapidly (avoids re-parsing the
+    /// whole buffer on every keystroke for large files).
+    pub highlights_dirty: bool,
     /// Last-known on-disk modification time for `path`. Captured on open
     /// and refreshed on save. The App's tick compares this to the file's
     /// current mtime and toasts (clean buffer ⇒ auto-reload; dirty ⇒
@@ -265,6 +271,7 @@ impl Buffer {
             color_decorations: Vec::new(),
             document_highlights: Vec::new(),
             last_edited: None,
+            highlights_dirty: false,
             disk_mtime: std::fs::metadata(path).and_then(|m| m.modified()).ok(),
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
@@ -331,6 +338,7 @@ impl Buffer {
             color_decorations: Vec::new(),
             document_highlights: Vec::new(),
             last_edited: None,
+            highlights_dirty: false,
             disk_mtime: None,
             find: None,
             trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
@@ -343,8 +351,10 @@ impl Buffer {
     }
 
     /// Re-run tree-sitter over the current text (no-op for unknown languages /
-    /// huge files). Call after any edit that changes the text.
+    /// huge files). Call after any edit that changes the text, or via
+    /// `App::tick`'s debouncer.
     pub fn refresh_highlights(&mut self) {
+        self.highlights_dirty = false;
         let text = self.editor.text();
         if text.len() > HIGHLIGHT_BYTE_LIMIT {
             self.highlights.clear();
@@ -561,7 +571,10 @@ impl Buffer {
                 }
                 if changed {
                     self.recompute_dirty();
-                    self.refresh_highlights();
+                    // Defer highlight reparse — App::tick refreshes after a
+                    // short idle. Holds the previous frame's highlights
+                    // during rapid typing for big files.
+                    self.highlights_dirty = true;
                     self.refresh_find_matches();
                     self.last_edited = Some(Instant::now());
                     self.note_edit_position();
@@ -613,7 +626,7 @@ impl Buffer {
         }
         if changed {
             self.recompute_dirty();
-            self.refresh_highlights();
+            self.highlights_dirty = true;
             self.refresh_find_matches();
             self.last_edited = Some(Instant::now());
             self.folds.clear();

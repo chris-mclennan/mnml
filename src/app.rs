@@ -15406,10 +15406,29 @@ impl App {
         self.check_format_save_deadline();
         self.block_insert_replay_if_done();
         self.repeat_insert_replay_if_done();
+        self.refresh_stale_highlights();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL
         {
             self.toast = None;
+        }
+    }
+
+    /// Re-run tree-sitter on any editor buffer whose `highlights_dirty` is
+    /// set AND whose last edit was more than ~120ms ago. Lets rapid
+    /// typing skip the re-parse hit; the next idle frame catches up.
+    fn refresh_stale_highlights(&mut self) {
+        const HIGHLIGHT_IDLE: std::time::Duration = std::time::Duration::from_millis(120);
+        let now = std::time::Instant::now();
+        for pane in self.panes.iter_mut() {
+            if let Pane::Editor(b) = pane
+                && b.highlights_dirty
+                && b.last_edited
+                    .map(|t| now.duration_since(t) >= HIGHLIGHT_IDLE)
+                    .unwrap_or(true)
+            {
+                b.refresh_highlights();
+            }
         }
     }
 
