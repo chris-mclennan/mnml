@@ -571,6 +571,58 @@ impl Editor {
         self.commit_multi(cursors, anchors);
     }
 
+    /// Distributed paste — each cursor gets `parts[i]` (vim block-paste
+    /// convention when clipboard line count matches cursor count). Cursors
+    /// are paired in *visual order* (top-to-bottom): part 0 → topmost
+    /// cursor, part N-1 → bottommost. Each cursor moves to the end of its
+    /// inserted slice. When `after` is true the insertion goes one char
+    /// past the cursor (vim `p`), else at the cursor itself (vim `P`).
+    fn multi_paste_distribute(&mut self, parts: &[&str], after: bool) {
+        let mut cursors: Vec<usize> = std::iter::once(self.cursor)
+            .chain(self.extra_cursors.iter().copied())
+            .collect();
+        let mut anchors: Vec<Option<usize>> = std::iter::once(self.anchor)
+            .chain(self.extra_anchors.iter().copied())
+            .collect();
+        debug_assert_eq!(parts.len(), cursors.len());
+        // Map each cursor index to its visual order (ascending byte position).
+        let mut order: Vec<usize> = (0..cursors.len()).collect();
+        order.sort_by_key(|&i| cursors[i]);
+        // visual_index[i] = which part this cursor receives.
+        let mut visual_index = vec![0usize; cursors.len()];
+        for (vi, &i) in order.iter().enumerate() {
+            visual_index[i] = vi;
+        }
+        // Process by descending cursor position so earlier offsets stay valid.
+        let mut indices: Vec<usize> = (0..cursors.len()).collect();
+        indices.sort_by_key(|&i| std::cmp::Reverse(cursors[i]));
+        for &i in &indices {
+            let at = if after {
+                self.next_char_boundary(cursors[i]).min(self.text.len())
+            } else {
+                cursors[i].min(self.text.len())
+            };
+            let payload = parts[visual_index[i]];
+            let bytes = payload.len();
+            self.text.insert_str(at, payload);
+            // Shift other cursors / anchors that were at-or-after the
+            // insertion point.
+            for (j, c) in cursors.iter_mut().enumerate() {
+                if j == i {
+                    *c = at + bytes;
+                } else if *c >= at {
+                    *c += bytes;
+                }
+            }
+            for av in anchors.iter_mut().flatten() {
+                if *av >= at {
+                    *av += bytes;
+                }
+            }
+        }
+        self.commit_multi(cursors, anchors);
+    }
+
     /// Multi-cursor DeleteForward — each cursor deletes the char at it.
     fn multi_delete_forward(&mut self) {
         let mut cursors: Vec<usize> = std::iter::once(self.cursor)
@@ -2836,6 +2888,25 @@ impl Editor {
                     return;
                 }
                 self.checkpoint();
+                // Multi-cursor distributed paste: if the clipboard splits
+                // into exactly N lines (one per cursor), each cursor gets
+                // one line. Otherwise fall back to inserting the whole
+                // clipboard at every cursor.
+                if !self.extra_cursors.is_empty() {
+                    let parts: Vec<&str> = s.split('\n').collect();
+                    let total_cursors = self.extra_cursors.len() + 1;
+                    if parts.len() == total_cursors {
+                        self.multi_paste_distribute(&parts, true);
+                    } else {
+                        self.multi_insert_str(&s);
+                    }
+                    self.anchor = None;
+                    for a in self.extra_anchors.iter_mut() {
+                        *a = None;
+                    }
+                    out.buffer_changed = true;
+                    return;
+                }
                 if clip.is_linewise() {
                     let line = self.current_line();
                     let eol = self.line_end(line);
@@ -2864,6 +2935,24 @@ impl Editor {
                     return;
                 }
                 self.checkpoint();
+                if !self.extra_cursors.is_empty() {
+                    let parts: Vec<&str> = s.split('\n').collect();
+                    let total_cursors = self.extra_cursors.len() + 1;
+                    if parts.len() == total_cursors {
+                        self.multi_paste_distribute(&parts, false);
+                    } else {
+                        // Insert at each cursor (not next-char-boundary). We
+                        // reuse multi_insert_str which inserts at `self.cursor`
+                        // / each extra cursor — exactly the "before" semantics.
+                        self.multi_insert_str(&s);
+                    }
+                    self.anchor = None;
+                    for a in self.extra_anchors.iter_mut() {
+                        *a = None;
+                    }
+                    out.buffer_changed = true;
+                    return;
+                }
                 if clip.is_linewise() {
                     let line = self.current_line();
                     let bol = self.line_start(line);

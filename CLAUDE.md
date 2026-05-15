@@ -669,6 +669,14 @@ joins every range with `\n` and writes to the unnamed clipboard; replace
 deletes every range then inserts `s` at each cursor's resting position via
 the existing `multi_insert_str`. So `v…c<text><Esc>` does "change every
 selection to `<text>`" — the most useful multi-cursor edit shape.
+**Multi-cursor distributed paste** — vim block-paste convention: when the unnamed register
+holds N lines and there are N cursors (primary + extras), `p` / `P` distribute one line per
+cursor in *visual order* (topmost cursor → first line, bottommost → last). Mismatched line
+count falls back to the existing "insert the whole clipboard at every cursor" path. New
+`Editor::multi_paste_distribute(parts, after)` handles the cursor/anchor bookkeeping
+(descending-position application + per-cursor shift propagation). Round-trip `y` + `P` on a
+selection across N rows now does "duplicate this column slice into every selected row" —
+the multi-cursor analogue of vim's classic block-yank-paste.
 **Multi-cursor `editor.add_cursor_at_next_word`** — VS Code's `Ctrl+D` shape. Word at
 the primary cursor is the rename target; first press snaps the primary to end-of-
 word; each subsequent press finds the next whole-word occurrence after the bottom-

@@ -90,6 +90,33 @@ key escape
 command file.save
 expect file sel.txt contains "AAABBB\nAAABBB\nAAABBB"
 
+# Multi-cursor distributed paste — clipboard with N lines + N cursors
+# distributes one line per cursor (vim block-paste convention).
+write paste.txt "A.\nB.\nC."
+open paste.txt
+# Visually select column 0 on rows 0-2 (just to capture 'A' / 'B' / 'C').
+key l
+key v
+command editor.add_cursor_below
+command editor.add_cursor_below
+# Selections are now zero-width at the dot column on each row — extend
+# left by one with `h` so we cover 'A' / 'B' / 'C'.
+key h
+# Yank — clipboard now holds "A\nB\nC".
+key y
+key escape
+# Move to col 0 (start of "A.") then add cursors below; primary cursor
+# sits on 'A'.
+key 0
+command editor.add_cursor_below
+command editor.add_cursor_below
+# Paste-before (capital P) — should distribute "A" / "B" / "C" one per
+# cursor, leaving "AA.\nBB.\nCC.".
+key P
+key escape
+command file.save
+expect file paste.txt contains "AA.\nBB.\nCC."
+
 # Visual `c` (change) fans out: each selection deletes, then typed
 # chars insert at all cursors.
 write change.txt "AAAxxxBBB\nAAAyyyBBB\nAAAzzzBBB"
