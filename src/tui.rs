@@ -912,6 +912,56 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // the private integration TestExecutions browser (cfg-gated): ↑↓ move within the active
+    // env column, ←→ cycle column (Dev/Staging/Prod), Esc → tree.
+    #[cfg(feature = "private")]
+    if matches!(app.panes.get(i), Some(Pane::TestExecutions(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
+                    p.move_selection(-1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
+                    p.move_selection(1);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
+                    p.move_selection(-(viewport as i64));
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
+                    p.move_selection(viewport as i64);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
+                    p.move_selection(i64::MIN / 2);
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
+                    p.move_selection(i64::MAX / 2);
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
+                    p.move_column(-1);
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
+                    p.move_column(1);
+                }
+            }
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // A diagnostics ("Problems") list: ↑↓ select, Enter → jump to the location,
     // r refresh, Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::Diagnostics(_))) {

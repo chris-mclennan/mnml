@@ -102,6 +102,18 @@ default = []
 # tokio runtime. Plain `cargo build` is the lean editor.
 private = ["dep:mongodb", "dep:tokio", "dep:futures-util", "dep:bson"]
 
+[[example]]
+name = "private_smoke"
+required-features = ["private"]
+
+[[example]]
+name = "private_discover"
+required-features = ["private"]
+
+[[example]]
+name = "private_sample_doc"
+required-features = ["private"]
+
 [profile.release]
 lto = true
 codegen-units = 1
