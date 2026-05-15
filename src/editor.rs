@@ -2214,6 +2214,38 @@ impl Editor {
             }
             ReplaceSelection(s) => {
                 self.checkpoint();
+                let extras_have_sel = self
+                    .extra_anchors
+                    .iter()
+                    .any(|a| a.is_some_and(|av| av != self.cursor));
+                if extras_have_sel {
+                    // Multi-cursor: delete every (anchor, cursor) range,
+                    // then insert `s` at each cursor's resting position.
+                    self.multi_delete_range_per_cursor(|ed, p| {
+                        let idx = if p == ed.cursor {
+                            None
+                        } else {
+                            ed.extra_cursors.iter().position(|&c| c == p)
+                        };
+                        let anchor = match idx {
+                            None => ed.anchor,
+                            Some(i) => ed.extra_anchors.get(i).copied().flatten(),
+                        };
+                        match anchor {
+                            Some(a) if a != p => (a.min(p), a.max(p)),
+                            _ => (p, p),
+                        }
+                    });
+                    if !s.is_empty() {
+                        self.multi_insert_str(&s);
+                    }
+                    self.anchor = None;
+                    for a in self.extra_anchors.iter_mut() {
+                        *a = None;
+                    }
+                    out.buffer_changed = true;
+                    return;
+                }
                 if let Some((lo, hi)) = self.selection() {
                     self.text.replace_range(lo..hi, &s);
                     self.cursor = lo + s.len();
@@ -2740,6 +2772,45 @@ impl Editor {
                 }
             }
             YankSelection => {
+                // Multi-cursor: collect every (anchor, cursor) range, join
+                // with `\n`, yank the lot. Each extra's selection ends.
+                let extras_have_sel = self
+                    .extra_anchors
+                    .iter()
+                    .any(|a| a.is_some_and(|av| av != self.cursor));
+                if extras_have_sel {
+                    let mut ranges: Vec<(usize, usize)> = Vec::new();
+                    if let Some(a) = self.anchor
+                        && a != self.cursor
+                    {
+                        let (lo, hi) = if a < self.cursor {
+                            (a, self.cursor)
+                        } else {
+                            (self.cursor, a)
+                        };
+                        ranges.push((lo, hi));
+                    }
+                    for (i, c) in self.extra_cursors.iter().enumerate() {
+                        if let Some(a) = self.extra_anchors[i]
+                            && a != *c
+                        {
+                            let (lo, hi) = if a < *c { (a, *c) } else { (*c, a) };
+                            ranges.push((lo, hi));
+                        }
+                    }
+                    ranges.sort_unstable();
+                    let joined = ranges
+                        .iter()
+                        .map(|&(lo, hi)| self.text[lo..hi].to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if !joined.is_empty() {
+                        clip.set_yank(joined.clone(), false);
+                        out.clipboard_set = Some(joined);
+                    }
+                    self.remember_selection();
+                    return;
+                }
                 if let Some((lo, hi)) = self.selection() {
                     let s = self.text[lo..hi].to_string();
                     clip.set_yank(s.clone(), false);

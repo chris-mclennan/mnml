@@ -90,3 +90,22 @@ key escape
 command file.save
 expect file sel.txt contains "AAABBB\nAAABBB\nAAABBB"
 
+# Visual `c` (change) fans out: each selection deletes, then typed
+# chars insert at all cursors.
+write change.txt "AAAxxxBBB\nAAAyyyBBB\nAAAzzzBBB"
+open change.txt
+key l
+key l
+key l
+key v
+command editor.add_cursor_below
+command editor.add_cursor_below
+key l
+key l
+key l
+key c
+type "Z"
+key escape
+command file.save
+expect file change.txt contains "AAAZBBB\nAAAZBBB\nAAAZBBB"
+

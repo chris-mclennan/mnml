@@ -664,6 +664,11 @@ delete-history clipboard. New helpers `replace_extra_positions` /
 extras are re-sorted or shifted by edits. `add_extra_cursor` carries an
 anchor if the primary already has one — so "v + AddCursorBelow" gives each
 new cursor a zero-width selection that extends with motion.
+`YankSelection` and `ReplaceSelection` (visual `y` / `c`) also fan out — yank
+joins every range with `\n` and writes to the unnamed clipboard; replace
+deletes every range then inserts `s` at each cursor's resting position via
+the existing `multi_insert_str`. So `v…c<text><Esc>` does "change every
+selection to `<text>`" — the most useful multi-cursor edit shape.
 **Multi-cursor `editor.add_cursor_at_next_word`** — VS Code's `Ctrl+D` shape. Word at
 the primary cursor is the rename target; first press snaps the primary to end-of-
 word; each subsequent press finds the next whole-word occurrence after the bottom-
