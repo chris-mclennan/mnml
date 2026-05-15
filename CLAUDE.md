@@ -744,6 +744,12 @@ ops accessible from ex. Mkdir creates parents too. Touch creates the file (and a
 parent dirs) but won't truncate. Mv renames / moves (refuses to overwrite an existing
 destination); also re-points any open editor on `from` to `to` and fires the LSP
 close/open pair. All three refresh the tree.
+**`:Scratch [ft]`** — open a fresh scratch buffer split below, optionally tagged with a
+filetype so syntax highlighting kicks in (`:Scratch md`, `:Scratch json`, …). Empty arg
+⇒ plain scratch.
+**`:Cp <from> <to>`** — workspace-relative file copy. Refuses to overwrite an existing
+destination. Creates the parent dir of `<to>` if missing. (Lowercase `:cp` already
+aliased to `:cprev`, so `:Cp` only.)
 **`:Capture <cmd>`** — run the command via `$SHELL -c`, open the combined stdout/stderr
 in a new scratch buffer (split below). Useful for grabbing `cargo test` output, log dumps,
 etc. for grep / highlight without launching a full pty. Cwd is the workspace.

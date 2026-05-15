@@ -13097,6 +13097,20 @@ impl App {
             // `:Mkdir <path>` — create the directory (+ missing parents)
             // under the workspace. Relative paths join onto self.workspace.
             // `:Capture <cmd>` — run `<cmd>` via $SHELL -c, open the
+            // `:Scratch [ft]` — open a fresh scratch buffer (split below)
+            // optionally tagged with a filetype for syntax highlighting.
+            "Scratch" | "scratch" => {
+                let ft = rest.trim();
+                self.split_active(crate::layout::SplitDir::Vertical);
+                let mut buf = crate::buffer::Buffer::scratch(&self.config);
+                if !ft.is_empty() {
+                    buf.language_ext = Some(ft.to_string());
+                    buf.refresh_highlights();
+                }
+                self.panes.push(Pane::Editor(buf));
+                let new_id = self.panes.len() - 1;
+                self.reveal_pane(new_id);
+            }
             // combined stdout/stderr in a new scratch buffer. Useful for
             // grabbing `cargo test` output for grep/highlight without
             // launching a full pty. Cwd is the workspace.
@@ -13154,6 +13168,38 @@ impl App {
             // destination. Re-points any open editor pane on `<from>`
             // to `<to>` (LSP did_close + did_open are wired through
             // the existing rename flow).
+            // `:Cp <from> <to>` — copy a file (workspace-relative).
+            // Refuses to overwrite. Creates the parent of `<to>` if needed.
+            "Cp" => {
+                let mut parts = rest.split_whitespace();
+                let (Some(from), Some(to)) = (parts.next(), parts.next()) else {
+                    self.toast(":Cp <from> <to> — needs two paths");
+                    return;
+                };
+                let resolve = |p: &str| -> std::path::PathBuf {
+                    let path = std::path::Path::new(p);
+                    if path.is_absolute() {
+                        path.to_path_buf()
+                    } else {
+                        self.workspace.join(path)
+                    }
+                };
+                let src = resolve(from);
+                let dst = resolve(to);
+                if dst.exists() {
+                    self.toast(format!("cp refused: {} exists", dst.display()));
+                } else if let Some(parent) = dst.parent()
+                    && !parent.exists()
+                    && let Err(e) = std::fs::create_dir_all(parent)
+                {
+                    self.toast(format!("cp: cannot create parent: {e}"));
+                } else if let Err(e) = std::fs::copy(&src, &dst) {
+                    self.toast(format!("cp failed: {e}"));
+                } else {
+                    self.tree.refresh();
+                    self.toast(format!("cp: {} → {}", src.display(), dst.display()));
+                }
+            }
             "Mv" | "mv" => {
                 let mut parts = rest.split_whitespace();
                 let (Some(from), Some(to)) = (parts.next(), parts.next()) else {
