@@ -300,11 +300,13 @@ pub fn highlight_lines_with_cache(
 
     // Decide whether to do incremental query traversal. Constraints:
     //  - We must have a prior tree to diff against.
-    //  - We need exactly one tracked edit (multi-edit shifts compose, but
-    //    coordinating two-step renumbering of prev_highlights is finicky;
-    //    not worth it for the bounded MVP).
+    //  - The edit batch must collapse into a single contiguous edit. Multiple
+    //    sequential edits at the same insertion point (typing five chars
+    //    within the 120 ms debounce window) collapse cleanly; edits scattered
+    //    across the file (LSP rename) don't, and fall back to full query.
     //  - We need non-empty prev_highlights to copy from.
-    let do_incremental = edits.len() == 1
+    let collapsed_edit = collapse_edits(edits);
+    let do_incremental = collapsed_edit.is_some()
         && !prev_highlights.is_empty()
         && prev_tree.is_some()
         && !prev_line_starts.is_empty();
@@ -312,7 +314,7 @@ pub fn highlight_lines_with_cache(
     let mut out = if do_incremental {
         // Safe to unwrap — the guards above checked these.
         let old_tree = prev_tree.as_ref().unwrap();
-        let edit = edits[0];
+        let edit = collapsed_edit.unwrap();
         match plan_incremental(
             &edit,
             prev_line_starts,
@@ -454,6 +456,40 @@ fn plan_incremental(
         },
         shifted,
     ))
+}
+
+/// Try to fold a batch of sequential `TextEdit`s into a single combined edit.
+///
+/// Each subsequent edit's byte offsets live in the *post-previous-edit*
+/// coordinate space. Two edits can merge when the second starts at or inside
+/// the first's new region:
+/// * `e2.start_byte ∈ [c.start_byte, c.new_end_byte]`
+///
+/// Composition formula (derived from working through type / paste / backspace
+/// sequences):
+/// * `deletion_within_c   = min(e2.old_end, c.new_end) - e2.start_byte`
+/// * `deletion_beyond_c   = max(0, e2.old_end - c.new_end_byte)`
+/// * `insertion           = e2.new_end_byte - e2.start_byte`
+/// * `c.new_end_byte     -= deletion_within_c; c.new_end_byte += insertion`
+/// * `c.old_end_byte     += deletion_beyond_c`
+///
+/// Covers same-line typing (each char picks up at the previous char's
+/// `new_end_byte`), paste-then-edit, and type-then-backspace. Returns `None`
+/// when any edit can't be merged (gap before the combined region, or an edit
+/// strictly before the combined start) — caller falls back to a full reparse.
+fn collapse_edits(edits: &[TextEdit]) -> Option<TextEdit> {
+    let mut combined = *edits.first()?;
+    for e in &edits[1..] {
+        if e.start_byte < combined.start_byte || e.start_byte > combined.new_end_byte {
+            return None;
+        }
+        let deletion_within_c = e.old_end_byte.min(combined.new_end_byte) - e.start_byte;
+        let deletion_beyond_c = e.old_end_byte.saturating_sub(combined.new_end_byte);
+        let insertion = e.new_end_byte - e.start_byte;
+        combined.new_end_byte = combined.new_end_byte - deletion_within_c + insertion;
+        combined.old_end_byte += deletion_beyond_c;
+    }
+    Some(combined)
 }
 
 /// Look up the row containing `byte` via `line_starts`. Returns `None` only
@@ -1302,6 +1338,124 @@ mod tests {
         let prev_starts: Vec<usize> = vec![0];
         let incremental =
             highlight_lines_with_cache(after, "rs", &mut tree, &[edit], &prev_starts, prev_h);
+
+        let mut fresh_tree: Option<Tree> = None;
+        let fresh = highlight_lines_with_cache(after, "rs", &mut fresh_tree, &[], &[], Vec::new());
+        assert_eq!(incremental, fresh);
+    }
+
+    #[test]
+    fn collapse_edits_sequential_typing() {
+        // Type "AB" at byte 5 as two single-char inserts.
+        let edits = [
+            TextEdit {
+                start_byte: 5,
+                old_end_byte: 5,
+                new_end_byte: 6,
+            },
+            TextEdit {
+                start_byte: 6,
+                old_end_byte: 6,
+                new_end_byte: 7,
+            },
+        ];
+        let c = collapse_edits(&edits).expect("contiguous");
+        assert_eq!(c.start_byte, 5);
+        assert_eq!(c.old_end_byte, 5);
+        assert_eq!(c.new_end_byte, 7);
+    }
+
+    #[test]
+    fn collapse_edits_type_then_backspace_cancels() {
+        // Type "X" at 3, then backspace it.
+        let edits = [
+            TextEdit {
+                start_byte: 3,
+                old_end_byte: 3,
+                new_end_byte: 4,
+            },
+            TextEdit {
+                start_byte: 3,
+                old_end_byte: 4,
+                new_end_byte: 3,
+            },
+        ];
+        let c = collapse_edits(&edits).expect("merged");
+        assert_eq!(
+            c,
+            TextEdit {
+                start_byte: 3,
+                old_end_byte: 3,
+                new_end_byte: 3
+            }
+        );
+    }
+
+    #[test]
+    fn collapse_edits_type_then_delete_forward() {
+        // Type "X" at 3, then delete the next original byte (D).
+        let edits = [
+            TextEdit {
+                start_byte: 3,
+                old_end_byte: 3,
+                new_end_byte: 4,
+            },
+            TextEdit {
+                start_byte: 4,
+                old_end_byte: 5,
+                new_end_byte: 4,
+            },
+        ];
+        let c = collapse_edits(&edits).expect("merged");
+        assert_eq!(
+            c,
+            TextEdit {
+                start_byte: 3,
+                old_end_byte: 4,
+                new_end_byte: 4
+            }
+        );
+    }
+
+    #[test]
+    fn collapse_edits_refuses_disjoint() {
+        // Two edits on different parts of the file (LSP rename pattern):
+        // can't merge into one extent.
+        let edits = [
+            TextEdit {
+                start_byte: 100,
+                old_end_byte: 103,
+                new_end_byte: 108,
+            },
+            TextEdit {
+                start_byte: 200,
+                old_end_byte: 203,
+                new_end_byte: 208,
+            },
+        ];
+        assert!(collapse_edits(&edits).is_none());
+    }
+
+    #[test]
+    fn incremental_reparse_matches_fresh_for_multi_char_typing() {
+        // Five sequential single-char inserts on the same line — the
+        // collapsed-edit incremental path should match a fresh parse.
+        let before = "fn main() {}\n";
+        let after = "fn main() {LMNOP}\n";
+        let mut edits = Vec::new();
+        for i in 0..5 {
+            edits.push(TextEdit {
+                start_byte: 11 + i,
+                old_end_byte: 11 + i,
+                new_end_byte: 12 + i,
+            });
+        }
+
+        let mut tree: Option<Tree> = None;
+        let prev_h = highlight_lines_with_cache(before, "rs", &mut tree, &[], &[], Vec::new());
+        let prev_starts: Vec<usize> = vec![0, 13];
+        let incremental =
+            highlight_lines_with_cache(after, "rs", &mut tree, &edits, &prev_starts, prev_h);
 
         let mut fresh_tree: Option<Tree> = None;
         let fresh = highlight_lines_with_cache(after, "rs", &mut fresh_tree, &[], &[], Vec::new());
