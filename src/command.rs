@@ -1488,6 +1488,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_ai_session_picker(),
         },
         Command {
+            id: "picker.clipboard",
+            title: "Clipboard: pick from register history and paste at cursor",
+            group: "edit",
+            keys: &[],
+            run: |app| app.open_clipboard_picker(),
+        },
+        Command {
             id: "ai.claude_code",
             title: "AI: open Claude Code (split below)",
             group: "ai",

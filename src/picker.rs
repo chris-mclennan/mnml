@@ -55,6 +55,10 @@ pub enum PickerKind {
     /// mirror for the session (read-only follow of `~/.claude/projects/
     /// <dashed-cwd>/<id>.jsonl`).
     AiSessions,
+    /// `id` = a register letter (single char). Accept ⇒ insert that
+    /// register's text at the cursor. Populated by `picker.clipboard`
+    /// over `"0`-`"9` (yank + delete history) + lowercase named regs.
+    Clipboard,
 }
 
 #[derive(Debug, Clone)]

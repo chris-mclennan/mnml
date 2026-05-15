@@ -739,9 +739,15 @@ across the prompt; consumed one-shot. New `find.find_backward` command.
 **Persisted vim macros** — `q<reg>...q` recordings now survive a relaunch. Saved as
 `(register, Vec<key_spec>)` via `Chord::to_spec` (the same format `[keys.global]` config
 uses); restored on launch with `parse_key_spec`. Empty macros are dropped on save.
-**`:Mkdir <path>` / `:Touch <path>`** — workspace-relative POSIX file ops accessible from
-ex. Mkdir creates parents too. Touch creates the file (and any missing parent dirs) but
-won't truncate an existing one. Both refresh the tree after.
+**`:Mkdir <path>` / `:Touch <path>` / `:Mv <from> <to>`** — workspace-relative POSIX file
+ops accessible from ex. Mkdir creates parents too. Touch creates the file (and any missing
+parent dirs) but won't truncate. Mv renames / moves (refuses to overwrite an existing
+destination); also re-points any open editor on `from` to `to` and fires the LSP
+close/open pair. All three refresh the tree.
+**`picker.clipboard`** — fuzzy picker over the named-register history (`"0` last yank,
+`"1`-`"9` delete ring, `"a`-`"z` named). Each row shows `"<reg>  <preview>` (newlines as
+`↵`, truncated at 80 chars) with `linewise` as the dim detail. Accept inserts the chosen
+register's text at the cursor. New `PickerKind::Clipboard`.
 **`:Theme <name>`** — alias for `:colorscheme <name>` (vim canon). Bare form toasts the
 current theme. Both `:Theme` and `:colorscheme` round-trip through `set_theme`.
 **Vim `]t` / `[t`** — jump to next / previous `TODO` / `FIXME` / `HACK` / `XXX` whole-word

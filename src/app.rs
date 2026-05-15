@@ -2610,6 +2610,7 @@ impl App {
             }
             PickerKind::FileHistory => self.open_commit_diff(&item.id),
             PickerKind::AiSessions => self.open_ai_session_mirror(&item.id),
+            PickerKind::Clipboard => self.paste_register(&item.id),
         }
     }
 
@@ -5584,6 +5585,79 @@ impl App {
             self.workspace.clone(),
             sid,
         ));
+    }
+
+    /// `picker.clipboard` — pick from the named-register history
+    /// (`"a`-`"z`, `"0` last yank, `"1`-`"9` delete history) and paste
+    /// the chosen entry at the cursor. Useful for "pull back something I
+    /// deleted three operations ago" without remembering its register.
+    pub fn open_clipboard_picker(&mut self) {
+        let registers = self.clipboard.named_registers();
+        if registers.is_empty() {
+            self.toast("clipboard: no register history");
+            return;
+        }
+        let mut entries: Vec<(char, String, bool)> = registers
+            .iter()
+            .map(|(c, (t, lw))| (*c, t.clone(), *lw))
+            .filter(|(_, t, _)| !t.is_empty())
+            .collect();
+        // Show numeric registers in ascending order (0..=9), then a..z.
+        entries.sort_by(|a, b| {
+            let key = |c: char| match c {
+                '0'..='9' => (0u8, c),
+                _ => (1, c),
+            };
+            key(a.0).cmp(&key(b.0))
+        });
+        let items: Vec<crate::picker::PickerItem> = entries
+            .into_iter()
+            .map(|(reg, text, linewise)| {
+                let mut preview: String = text.replace('\n', "↵");
+                let n_chars = preview.chars().count();
+                if n_chars > 80 {
+                    preview = preview.chars().take(80).collect::<String>() + "…";
+                }
+                let detail = if linewise { "linewise" } else { "" };
+                crate::picker::PickerItem::new(
+                    reg.to_string(),
+                    format!("\"{reg}  {preview}"),
+                    detail.to_string(),
+                )
+            })
+            .collect();
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Clipboard,
+            "Clipboard / registers",
+            items,
+        ));
+    }
+
+    /// Accept handler for `PickerKind::Clipboard` — insert the chosen
+    /// register's text at the active editor's cursor.
+    pub fn paste_register(&mut self, reg_letter: &str) {
+        let Some(reg) = reg_letter.chars().next() else {
+            return;
+        };
+        let Some((text, _linewise)) = self.clipboard.named_registers().get(&reg).cloned() else {
+            return;
+        };
+        let Some(idx) = self.active else { return };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+            return;
+        };
+        let vp = self
+            .rects
+            .editor_panes
+            .iter()
+            .find(|(_, pid)| *pid == idx)
+            .map(|(r, _)| r.height as usize)
+            .unwrap_or(24);
+        b.apply_edit_ops(
+            vec![crate::edit_op::EditOp::InsertStr(text)],
+            &mut self.clipboard,
+            vp,
+        );
     }
 
     /// `ai.session_picker` — pick from past Claude sessions in this
@@ -12948,6 +13022,64 @@ impl App {
                 }
             }
             // `:Touch <path>` — create an empty file (creating parents).
+            // `:Mv <from> <to>` — rename / move a file. Both paths
+            // workspace-relative. Refuses to overwrite an existing
+            // destination. Re-points any open editor pane on `<from>`
+            // to `<to>` (LSP did_close + did_open are wired through
+            // the existing rename flow).
+            "Mv" | "mv" => {
+                let mut parts = rest.split_whitespace();
+                let (Some(from), Some(to)) = (parts.next(), parts.next()) else {
+                    self.toast(":Mv <from> <to> — needs two paths");
+                    return;
+                };
+                let resolve = |p: &str| -> std::path::PathBuf {
+                    let path = std::path::Path::new(p);
+                    if path.is_absolute() {
+                        path.to_path_buf()
+                    } else {
+                        self.workspace.join(path)
+                    }
+                };
+                let src = resolve(from);
+                let dst = resolve(to);
+                if dst.exists() {
+                    self.toast(format!("mv refused: {} exists", dst.display()));
+                } else if let Some(parent) = dst.parent()
+                    && !parent.exists()
+                    && let Err(e) = std::fs::create_dir_all(parent)
+                {
+                    self.toast(format!("mv: cannot create parent: {e}"));
+                } else if let Err(e) = std::fs::rename(&src, &dst) {
+                    self.toast(format!("mv failed: {e}"));
+                } else {
+                    // Re-point any open editor pane + notify LSP +
+                    // update recent_files. Same bookkeeping shape as
+                    // `rename_fs_entry`.
+                    for pane in &mut self.panes {
+                        if let Pane::Editor(b) = pane
+                            && b.path.as_deref() == Some(src.as_path())
+                        {
+                            b.path = Some(dst.clone());
+                        }
+                    }
+                    self.lsp.did_close(&src);
+                    let new_text = self.panes.iter().find_map(|p| match p {
+                        Pane::Editor(b) if b.is_at(&dst) => Some(b.editor.text().to_string()),
+                        _ => None,
+                    });
+                    if let Some(t) = new_text {
+                        self.lsp.did_open(&dst, &t);
+                    }
+                    for p in &mut self.recent_files {
+                        if p == &src {
+                            *p = dst.clone();
+                        }
+                    }
+                    self.tree.refresh();
+                    self.toast(format!("mv: {} → {}", src.display(), dst.display()));
+                }
+            }
             "Touch" | "touch" => {
                 let arg = rest.trim();
                 if arg.is_empty() {
