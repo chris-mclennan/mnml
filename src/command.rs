@@ -278,6 +278,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_todo_highlight(),
         },
         Command {
+            id: "project.next_todo",
+            title: "Jump to next TODO / FIXME / HACK / XXX (vim ]t)",
+            group: "project",
+            keys: &[],
+            run: |app| app.jump_todo(true),
+        },
+        Command {
+            id: "project.prev_todo",
+            title: "Jump to previous TODO / FIXME / HACK / XXX (vim [t)",
+            group: "project",
+            keys: &[],
+            run: |app| app.jump_todo(false),
+        },
+        Command {
             id: "view.cmdline_history",
             title: "Open cmdline-history pane (vim q:)",
             group: "view",

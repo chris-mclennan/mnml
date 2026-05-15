@@ -1438,6 +1438,7 @@ impl VimInputHandler {
                     KeyCode::Char('c') => "git.jump_prev_change",
                     KeyCode::Char('d') => "lsp.prev_diagnostic",
                     KeyCode::Char('q') => "qf.prev",
+                    KeyCode::Char('t') => "project.prev_todo",
                     _ => return InputResult::Consumed,
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));
@@ -1448,6 +1449,7 @@ impl VimInputHandler {
                     KeyCode::Char('c') => "git.jump_next_change",
                     KeyCode::Char('d') => "lsp.next_diagnostic",
                     KeyCode::Char('q') => "qf.next",
+                    KeyCode::Char('t') => "project.next_todo",
                     _ => return InputResult::Consumed,
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));

@@ -11376,6 +11376,47 @@ impl App {
 
     /// `:set [no]todohl` / `view.toggle_todo_highlight` — paint
     /// TODO/FIXME/HACK/XXX keywords in bright red across the editor.
+    /// `project.next_todo` (vim `]t`) / `project.prev_todo` (`[t`) —
+    /// jump the cursor to the next / previous `TODO` / `FIXME` / `HACK`
+    /// / `XXX` whole-word match in the active buffer. Wraps. Toasts when
+    /// nothing matches.
+    pub fn jump_todo(&mut self, forward: bool) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let text = b.editor.text().to_string();
+        let cursor = b.editor.cursor();
+        let mut hits: Vec<usize> = ["TODO", "FIXME", "HACK", "XXX"]
+            .iter()
+            .flat_map(|kw| crate::editor::find_whole_word_occurrences(&text, kw))
+            .map(|(s, _)| s)
+            .collect();
+        hits.sort_unstable();
+        hits.dedup();
+        if hits.is_empty() {
+            self.toast("no TODO/FIXME/HACK/XXX in buffer");
+            return;
+        }
+        let target = if forward {
+            hits.iter()
+                .find(|&&p| p > cursor)
+                .copied()
+                .unwrap_or(hits[0])
+        } else {
+            hits.iter()
+                .rev()
+                .find(|&&p| p < cursor)
+                .copied()
+                .unwrap_or_else(|| *hits.last().unwrap())
+        };
+        let Some(Pane::Editor(b)) = self.active.and_then(|i| self.panes.get_mut(i)) else {
+            return;
+        };
+        let (row, col) = b.editor.row_col_at(target);
+        b.editor.place_cursor(row, col);
+    }
+
     pub fn toggle_todo_highlight(&mut self) {
         self.config.ui.highlight_todo_keywords = !self.config.ui.highlight_todo_keywords;
         self.toast(if self.config.ui.highlight_todo_keywords {
@@ -12811,7 +12852,7 @@ impl App {
             // `:colorscheme <name>` / `:colo <name>` — vim canonical theme
             // switcher. mnml's existing `:set theme=…` does the same; this
             // is just the muscle-memory form.
-            "colorscheme" | "colo" => {
+            "colorscheme" | "colo" | "Theme" => {
                 let name = rest.trim();
                 if name.is_empty() {
                     let cur = crate::ui::theme::cur().name;
