@@ -11836,6 +11836,37 @@ impl App {
                     self.toast(format!(":una — no abbreviation for {key}"));
                 }
             }
+            // `:abclear` / `:abc` — drop every abbreviation. Vim canonical.
+            "abc" | "abclear" => {
+                let n = self.config.abbreviations.len();
+                self.config.abbreviations.clear();
+                self.toast(format!(":abclear — {n} abbreviation(s) cleared"));
+            }
+            // `:history` / `:his` / `:hist` — toast the ex-command history
+            // (oldest at the start; capped preview). Vim canonical.
+            "his" | "hist" | "history" => {
+                if self.ex_history.is_empty() {
+                    self.toast(":history — empty");
+                } else {
+                    // Take the most recent N (capped) — vim's `:history` shows
+                    // them indexed from oldest to newest, but the toast is
+                    // bounded so newest-first reads better here.
+                    let preview: Vec<String> = self
+                        .ex_history
+                        .iter()
+                        .rev()
+                        .take(20)
+                        .enumerate()
+                        .map(|(i, s)| format!("{}:{s}", i + 1))
+                        .collect();
+                    let more = if self.ex_history.len() > 20 {
+                        format!(" (…{} more)", self.ex_history.len() - 20)
+                    } else {
+                        String::new()
+                    };
+                    self.toast(format!(":history · {}{more}", preview.join("  ")));
+                }
+            }
             "reg" | "registers" | "di" | "display" => {
                 let mut parts: Vec<String> = Vec::new();
                 let preview = |s: &str, cap: usize| -> String {

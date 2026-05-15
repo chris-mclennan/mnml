@@ -147,6 +147,8 @@ fn next_char_boundary(s: &str, byte: usize) -> usize {
 }
 
 pub(crate) const EX_COMPLETION_NAMES: &[&str] = &[
+    "ab",
+    "abclear",
     "argdo",
     "ascii",
     "Ag",
@@ -189,6 +191,7 @@ pub(crate) const EX_COMPLETION_NAMES: &[&str] = &[
     "grep",
     "help",
     "hide",
+    "history",
     "History",
     "Keys",
     "jumps",
