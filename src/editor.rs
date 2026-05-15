@@ -3202,29 +3202,37 @@ impl Editor {
     /// the same logical line.
     fn for_each_selected_line(&mut self, mut f: impl FnMut(&mut Self, usize) -> isize) -> bool {
         let (cur_line, cur_col) = self.row_col();
-        let (first, last) = match self.selection() {
+        // Build the set of lines to operate on:
+        //   - Selection (if any) spans first..=last
+        //   - Otherwise the primary cursor's line
+        //   - Plus each extra cursor's row (multi-cursor fan-out)
+        let mut lines: Vec<usize> = match self.selection() {
             Some((lo, hi)) => {
                 let fl = self.text[..lo].bytes().filter(|&b| b == b'\n').count();
-                // if the selection ends exactly at a line start, don't include that line
                 let hi_line = self.text[..hi].bytes().filter(|&b| b == b'\n').count();
                 let ll = if hi > lo && hi == self.line_start(hi_line) && hi_line > fl {
                     hi_line - 1
                 } else {
                     hi_line
                 };
-                (fl, ll)
+                (fl..=ll).collect()
             }
-            None => (cur_line, cur_line),
+            None => vec![cur_line],
         };
+        for &b in &self.extra_cursors {
+            lines.push(self.row_col_at(b).0);
+        }
+        lines.sort_unstable();
+        lines.dedup();
         let mut changed = false;
-        for line in first..=last {
+        for line in lines {
             let bol = self.line_start(line);
             let delta = f(&mut *self, bol);
             if delta != 0 {
                 changed = true;
             }
         }
-        // restore cursor to (cur_line, cur_col), clamped
+        // restore primary cursor to (cur_line, cur_col), clamped
         self.cursor = self.byte_at_col(cur_line.min(self.line_count().saturating_sub(1)), cur_col);
         self.anchor = None;
         changed

@@ -647,6 +647,11 @@ byte so the closure can compute per-cursor ranges. Motions also extended:
 across cursors. **Alt+click in an editor pane** adds an extra cursor at the
 clicked position (VS Code convention) — bypasses the focus / drag-arm path so
 the existing primary stays put.
+**Line-scoped multi-cursor ops** — `Indent` / `Outdent` / `ToggleLineComment`
+(and any other op using `for_each_selected_line`) now operate on the union of
+selection lines + the primary cursor's line + each extra cursor's line.
+Same `>iw` / `<<` / `gcc` muscle memory; the change is per-line so multi-
+cursor across rows just works.
 **Multi-cursor `editor.add_cursor_at_next_word`** — VS Code's `Ctrl+D` shape. Word at
 the primary cursor is the rename target; first press snaps the primary to end-of-
 word; each subsequent press finds the next whole-word occurrence after the bottom-
