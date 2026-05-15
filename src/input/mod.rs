@@ -172,6 +172,12 @@ pub trait InputHandler: Send {
     /// no modes). Used by `App::block_insert_start` so the App can drive the
     /// handler into Insert without going through a keystroke.
     fn request_insert_mode(&mut self) {}
+    /// Ask the handler to enter Visual (charwise) mode. Vim's impl flips
+    /// `VimMode::Visual`; Standard mode is no-op (its "selection" mode is
+    /// driven entirely by the editor's anchor, not by handler state).
+    /// Used by `App::lsp_selection_expand` so a server-supplied range
+    /// shows up as a real Visual selection.
+    fn request_visual_mode(&mut self) {}
     /// Current `:` cmdline text, if the handler has one open. Default `None`
     /// (Standard mode has no cmdline). Used by `App::cmdline_tab_complete`.
     fn cmdline_get(&self) -> Option<String> {

@@ -171,6 +171,13 @@ pub enum LspEvent {
         path: PathBuf,
         ranges: Vec<(u32, u32)>,
     },
+    /// Result of a `textDocument/selectionRange` request — semantic
+    /// ranges around the cursor, ordered smallest → largest. Each entry
+    /// is `(start_line, start_char, end_line, end_char)`.
+    SelectionRanges {
+        path: PathBuf,
+        ranges: Vec<(u32, u32, u32, u32)>,
+    },
     /// A server-side message worth surfacing as a toast.
     Message(String),
 }
@@ -650,6 +657,18 @@ impl LspManager {
         for c in self.clients.values_mut() {
             if c.is_open(path) {
                 c.folding_range(path);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send `textDocument/selectionRange` at `(line, character)` — reply
+    /// arrives as [`LspEvent::SelectionRanges`].
+    pub fn selection_range(&mut self, path: &Path, line: u32, character: u32) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.selection_range(path, line, character);
                 sent = true;
             }
         }

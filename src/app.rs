@@ -1080,6 +1080,21 @@ pub struct CmdlineCompleteState {
 /// confirmation flow.
 pub type PendingRenameEdits = Vec<(PathBuf, Vec<(crate::lsp::Range, String)>)>;
 
+/// Live state for the `lsp.selection_expand` / `_shrink` cycle. Holds the
+/// server-supplied ranges (smallest → largest) and the current index. Set
+/// when the first reply lands; consumed when the user expands / shrinks;
+/// cleared whenever the selection moves to a position outside the ladder
+/// (so the next expand re-queries).
+#[derive(Debug, Clone)]
+pub struct SelectionRangeLadder {
+    pub path: PathBuf,
+    /// Index into `App.panes` at request time. Cleared on pane swap.
+    pub pane: usize,
+    /// Ranges as byte offsets — `(start, end)`, ascending size.
+    pub ranges: Vec<(usize, usize)>,
+    pub current: usize,
+}
+
 /// `:command <Name>` entry — the expansion string plus the optional `nargs`
 /// arity check (vim canonical). Default `nargs = Any` (the rest of the line
 /// is appended verbatim, matching mnml's prior behavior).
@@ -1418,6 +1433,12 @@ pub struct App {
     /// open outline pane instead of opening the symbols picker. Set by
     /// `open_outline_pane` / `refresh_outline_pane`; cleared after one reply.
     pending_outline: bool,
+    /// Active selection-range "ladder" — server-supplied semantic ranges
+    /// from smallest (current) → largest (containing) around the cursor
+    /// at the moment of the original `lsp.selection_expand` request. The
+    /// `current` index walks down (expand) / up (shrink). Cleared on any
+    /// non-expand/shrink action.
+    selection_range_ladder: Option<SelectionRangeLadder>,
     /// Snippets backing the open `PickerKind::Snippets` picker — items index
     /// into this list. Populated by [`Self::snippet_pick`], consumed by
     /// [`Self::picker_accept`].
@@ -1618,6 +1639,7 @@ impl App {
             pending_code_action_path: None,
             pending_code_action_auto_apply: false,
             pending_outline: false,
+            selection_range_ladder: None,
             pending_snippets: Vec::new(),
             snippet_session: None,
             pending_workspace_symbols: Vec::new(),
@@ -4639,6 +4661,9 @@ impl App {
             }
             LspEvent::FoldingRanges { path, ranges } => {
                 self.apply_folding_ranges(&path, ranges);
+            }
+            LspEvent::SelectionRanges { path, ranges } => {
+                self.apply_selection_ranges(&path, ranges);
             }
             LspEvent::CodeAction(actions) => self.apply_code_action_reply(actions),
             LspEvent::DocumentSymbols(symbols) => {
@@ -8117,6 +8142,107 @@ impl App {
                 self.toast(format!("unfolded {n} fold(s)"));
             }
         }
+    }
+
+    /// `lsp.selection_expand` — vim-style smart-expand selection. First
+    /// press fires `textDocument/selectionRange` at the cursor; subsequent
+    /// presses walk up the ladder of server-supplied semantic ranges
+    /// (token → expression → statement → block → function → …). Reply
+    /// arrives async — see `apply_selection_ranges`.
+    pub fn lsp_selection_expand(&mut self) {
+        if let Some(l) = &mut self.selection_range_ladder
+            && Some(l.pane) == self.active
+            && l.current + 1 < l.ranges.len()
+        {
+            l.current += 1;
+            let (start, end) = l.ranges[l.current];
+            self.apply_selection_range_to_active(start, end);
+            return;
+        }
+        self.lsp_request_at_cursor(
+            |lsp, p, l, c| lsp.selection_range(p, l, c),
+            "selection-range",
+        );
+    }
+
+    /// `lsp.selection_shrink` — inverse of expand. Walks back down the
+    /// ladder. No-op when there's no ladder or we're at the smallest range.
+    pub fn lsp_selection_shrink(&mut self) {
+        let Some(l) = &mut self.selection_range_ladder else {
+            self.toast("no selection ladder — expand first");
+            return;
+        };
+        if Some(l.pane) != self.active {
+            self.toast("selection ladder belongs to a different pane");
+            return;
+        }
+        if l.current == 0 {
+            self.toast("already at smallest selection");
+            return;
+        }
+        l.current -= 1;
+        let (start, end) = l.ranges[l.current];
+        self.apply_selection_range_to_active(start, end);
+    }
+
+    /// Install server-supplied selection ranges as a ladder and apply the
+    /// smallest one (`current = 0`). Subsequent expand calls walk up.
+    fn apply_selection_ranges(&mut self, path: &Path, ranges: Vec<(u32, u32, u32, u32)>) {
+        if ranges.is_empty() {
+            self.toast("no selection ranges returned");
+            return;
+        }
+        // Find the matching open buffer + convert LSP positions → byte offsets.
+        let mut byte_ranges: Vec<(usize, usize)> = Vec::new();
+        let mut pane_idx: Option<usize> = None;
+        for (i, p) in self.panes.iter().enumerate() {
+            if let Pane::Editor(b) = p
+                && b.path.as_deref() == Some(path)
+            {
+                pane_idx = Some(i);
+                let text = b.editor.text();
+                for (s_line, s_char, e_line, e_char) in &ranges {
+                    let (Some(start), Some(end)) = (
+                        crate::lsp::byte_at(text, *s_line, *s_char),
+                        crate::lsp::byte_at(text, *e_line, *e_char),
+                    ) else {
+                        continue;
+                    };
+                    if start < end {
+                        byte_ranges.push((start, end));
+                    }
+                }
+                break;
+            }
+        }
+        let Some(pane) = pane_idx else {
+            return;
+        };
+        if byte_ranges.is_empty() {
+            self.toast("selection ranges out of range");
+            return;
+        }
+        self.selection_range_ladder = Some(SelectionRangeLadder {
+            path: path.to_path_buf(),
+            pane,
+            ranges: byte_ranges.clone(),
+            current: 0,
+        });
+        let (start, end) = byte_ranges[0];
+        self.apply_selection_range_to_active(start, end);
+    }
+
+    /// Apply a `(start, end)` byte range as a selection on the active editor:
+    /// anchor = start, cursor = end (vim convention so motions extend right).
+    fn apply_selection_range_to_active(&mut self, start: usize, end: usize) {
+        let Some(idx) = self.active else {
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+            return;
+        };
+        b.editor.set_selection(start, end);
+        b.input.request_visual_mode();
     }
 
     /// `lsp.fold_all` — ask the active buffer's language server for its

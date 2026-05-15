@@ -2578,6 +2578,11 @@ impl InputHandler for VimInputHandler {
         self.enter_insert();
     }
 
+    fn request_visual_mode(&mut self) {
+        self.mode = VimMode::Visual;
+        self.prefix = Prefix::None;
+    }
+
     fn cmdline_get(&self) -> Option<String> {
         self.cmdline.clone()
     }

@@ -406,6 +406,21 @@ impl LspClient {
         );
     }
 
+    /// `textDocument/selectionRange` — reply is `SelectionRange[]`. We pass
+    /// a single position (the cursor) and read the linked-list of parents
+    /// from the reply's first entry. Path is stashed so the reply routes
+    /// back to the right buffer.
+    pub fn selection_range(&mut self, path: &Path, line: u32, character: u32) {
+        self.request_with_path(
+            "textDocument/selectionRange",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "positions": [{ "line": line, "character": character }]
+            }),
+            Some(path),
+        );
+    }
+
     /// `textDocument/formatting` — reply is a `TextEdit[]` (possibly null).
     /// The path is stashed so we can route the reply to the right buffer.
     pub fn formatting(&mut self, path: &Path, tab_size: u32, insert_spaces: bool) {
@@ -703,9 +718,63 @@ fn handle_message(
                     let _ = tx.send(LspEvent::FoldingRanges { path, ranges });
                 }
             }
+            "textDocument/selectionRange" => {
+                if let Some(path) = req_path {
+                    let ranges = parse_selection_ranges(result);
+                    let _ = tx.send(LspEvent::SelectionRanges { path, ranges });
+                }
+            }
             _ => {}
         }
     }
+}
+
+/// Parse a `textDocument/selectionRange` reply. The reply is one
+/// `SelectionRange` per requested position; we only ever request one,
+/// so we walk the linked list of `parent` entries from the first reply
+/// and return the ranges smallest → largest.
+pub fn parse_selection_ranges(result: &serde_json::Value) -> Vec<(u32, u32, u32, u32)> {
+    let arr = match result.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let Some(first) = arr.first() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut cur = Some(first);
+    while let Some(node) = cur {
+        let Some(range) = node.get("range") else {
+            break;
+        };
+        let (Some(s_line), Some(s_char)) = (
+            range
+                .get("start")
+                .and_then(|s| s.get("line"))
+                .and_then(|n| n.as_u64()),
+            range
+                .get("start")
+                .and_then(|s| s.get("character"))
+                .and_then(|n| n.as_u64()),
+        ) else {
+            break;
+        };
+        let (Some(e_line), Some(e_char)) = (
+            range
+                .get("end")
+                .and_then(|e| e.get("line"))
+                .and_then(|n| n.as_u64()),
+            range
+                .get("end")
+                .and_then(|e| e.get("character"))
+                .and_then(|n| n.as_u64()),
+        ) else {
+            break;
+        };
+        out.push((s_line as u32, s_char as u32, e_line as u32, e_char as u32));
+        cur = node.get("parent");
+    }
+    out
 }
 
 /// Parse a `textDocument/foldingRange` reply (`FoldingRange[]`).

@@ -435,6 +435,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_fold_all(),
         },
         Command {
+            id: "lsp.selection_expand",
+            title: "LSP: expand selection to next semantic range",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_selection_expand(),
+        },
+        Command {
+            id: "lsp.selection_shrink",
+            title: "LSP: shrink selection to previous semantic range",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.lsp_selection_shrink(),
+        },
+        Command {
             id: "editor.reflow_paragraph",
             title: "Reflow current paragraph to text_width (vim `gqq`)",
             group: "editor",

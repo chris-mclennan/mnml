@@ -669,6 +669,16 @@ joins every range with `\n` and writes to the unnamed clipboard; replace
 deletes every range then inserts `s` at each cursor's resting position via
 the existing `multi_insert_str`. So `v…c<text><Esc>` does "change every
 selection to `<text>`" — the most useful multi-cursor edit shape.
+**LSP `selectionRange`** — vim-style smart-expand selection driven by the server.
+`lsp.selection_expand` fires `textDocument/selectionRange` at the cursor; the reply
+(parsed as a linked list of `(start, end)` byte ranges from smallest → largest by
+`parse_selection_ranges`) is installed as a `SelectionRangeLadder` on `App.selection_range_ladder`.
+First press selects the smallest range (token / identifier under cursor); subsequent presses
+walk *up* the ladder (`expression → statement → block → function → …`). `lsp.selection_shrink`
+walks back *down*. New `InputHandler::request_visual_mode` trait method — vim flips into Visual,
+standard is no-op (anchor alone drives the highlight). The ladder's pane index pins which
+buffer/pane it belongs to so swapping panes invalidates the cycle. Re-firing expand without a
+ladder (or with a stale pane) re-queries the server.
 **LSP `folding_range`** — `lsp.fold_all` (no default chord): asks the active buffer's language
 server for its suggested fold ranges (`textDocument/foldingRange`); the reply installs each
 `(start, end)` as a `Buffer.folds` entry (replaces existing folds — the server is authoritative).
