@@ -1055,6 +1055,55 @@ pub struct CmdlineCompleteState {
     pub last_shown: String,
 }
 
+/// `:command <Name>` entry — the expansion string plus the optional `nargs`
+/// arity check (vim canonical). Default `nargs = Any` (the rest of the line
+/// is appended verbatim, matching mnml's prior behavior).
+#[derive(Debug, Clone)]
+pub struct UserExCommand {
+    pub expansion: String,
+    pub nargs: ExCommandNargs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExCommandNargs {
+    /// `0` — no args; if the user passes any, refuse with a toast.
+    Zero,
+    /// `1` — exactly one arg required (rest of the line, even if it has spaces).
+    One,
+    /// `?` — 0 or 1.
+    ZeroOrOne,
+    /// `+` — 1 or more.
+    OneOrMore,
+    /// `*` (vim canonical) or no spec — any.
+    Any,
+}
+
+impl ExCommandNargs {
+    /// Parse vim's `-nargs=…` value. Unknown ⇒ `Any` (matches mnml's prior
+    /// default — don't break existing definitions).
+    fn parse(spec: &str) -> Self {
+        match spec {
+            "0" => ExCommandNargs::Zero,
+            "1" => ExCommandNargs::One,
+            "?" => ExCommandNargs::ZeroOrOne,
+            "+" => ExCommandNargs::OneOrMore,
+            "*" => ExCommandNargs::Any,
+            _ => ExCommandNargs::Any,
+        }
+    }
+    /// `Ok(())` if `args` (the user's tail after the command name) satisfies
+    /// the arity; `Err(reason)` otherwise.
+    fn check(&self, args: &str) -> Result<(), &'static str> {
+        let count = args.split_whitespace().count();
+        match self {
+            ExCommandNargs::Zero if count > 0 => Err("command takes no args"),
+            ExCommandNargs::One if count == 0 => Err("command needs exactly 1 arg"),
+            ExCommandNargs::OneOrMore if count == 0 => Err("command needs 1+ args"),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Live `<count>o` / `<count>O` repeat-insert state. After the user opens the
 /// first new line and types into it, `App::tick` polls for the mode flipping
 /// back to Normal and replicates the typed text on the remaining
@@ -1192,7 +1241,7 @@ pub struct App {
     /// User-defined ex commands (`:command MyCmd <expansion>`). On
     /// `:MyCmd <args>`, the expansion is run as a fresh ex command with
     /// args appended. Purely an alias layer.
-    pub user_ex_commands: std::collections::HashMap<String, String>,
+    pub user_ex_commands: std::collections::HashMap<String, UserExCommand>,
     /// Last `:!cmd` shell command (vim `:!!` re-runs it).
     pub last_shell_cmd: Option<String>,
     /// `:`-line history — every accepted ex command is appended (oldest
@@ -3863,9 +3912,32 @@ impl App {
             return;
         }
         use crate::picker::PickerItem;
-        let items: Vec<PickerItem> = actions
+        // Group by kind so the picker reads source→refactor→quickfix→…
+        // each kind with a short header chip. Order within a kind is
+        // server-given. Indices we hand the picker still point at the
+        // original action slot.
+        fn kind_priority(k: &str) -> u8 {
+            // Lower = earlier. Quick fixes first (most-used), then
+            // refactors, then source actions, then anything else / blank.
+            if k.starts_with("quickfix") {
+                0
+            } else if k.starts_with("refactor") {
+                1
+            } else if k.starts_with("source") {
+                2
+            } else {
+                3
+            }
+        }
+        let mut indexed: Vec<(usize, &crate::lsp::CodeAction)> =
+            actions.iter().enumerate().collect();
+        indexed.sort_by(|(_, a), (_, b)| {
+            let ka = a.kind.as_deref().unwrap_or("");
+            let kb = b.kind.as_deref().unwrap_or("");
+            kind_priority(ka).cmp(&kind_priority(kb))
+        });
+        let items: Vec<PickerItem> = indexed
             .iter()
-            .enumerate()
             .map(|(i, a)| {
                 let detail = a.kind.clone().unwrap_or_default();
                 PickerItem::new(i.to_string(), a.title.clone(), detail)
@@ -4299,28 +4371,29 @@ impl App {
                 None => self.toast("hover: (nothing)"),
             },
             LspEvent::References(locs) => {
-                use crate::picker::PickerItem;
                 if locs.is_empty() {
                     self.toast("no references");
                     return;
                 }
+                // Open into Pane::Quickfix so the user can navigate references
+                // with `:cnext` / `:cprev` and keep the list visible. Previously
+                // surfaced as a Locations picker — that flow is still
+                // reachable via the palette if needed.
                 let n = locs.len();
-                let items: Vec<PickerItem> = locs
+                let hits: Vec<crate::grep_pane::GrepHit> = locs
                     .into_iter()
-                    .map(|(p, l, c)| {
-                        let rel = rel_path(&self.workspace, &p);
-                        PickerItem::new(
-                            format!("{}\t{}\t{}", p.display(), l, c),
-                            format!("{rel}:{}:{}", l + 1, c + 1),
-                            String::new(),
-                        )
+                    .map(|(path, line, col)| {
+                        let rel = rel_path(&self.workspace, &path);
+                        crate::grep_pane::GrepHit {
+                            path,
+                            rel,
+                            line,
+                            col,
+                            text: String::new(),
+                        }
                     })
                     .collect();
-                self.open_picker(Picker::new(
-                    PickerKind::Locations,
-                    format!("References ({n})"),
-                    items,
-                ));
+                self.open_quickfix(&format!("References ({n})"), hits);
             }
             LspEvent::Rename(edits) => self.apply_rename_edits(edits),
             LspEvent::ApplyEdit { label, edits } => {
@@ -4997,6 +5070,19 @@ impl App {
                 && p.path == path
             {
                 p.source = text.to_string();
+            }
+        }
+    }
+
+    /// Scroll any open `Pane::MdPreview` of `path` so its top line roughly
+    /// matches `src_row` in the source buffer. Called from the editor key
+    /// dispatcher after any cursor motion when the active buffer is markdown.
+    pub fn sync_md_previews_to_cursor(&mut self, path: &Path, src_row: usize) {
+        for pane in &mut self.panes {
+            if let Pane::MdPreview(p) = pane
+                && p.path == path
+            {
+                p.sync_to_source_row(src_row);
             }
         }
     }
@@ -11091,13 +11177,17 @@ impl App {
         // requires user commands to start with a capital letter, but we
         // don't enforce that).
         if let Some(first_word) = line.split_whitespace().next()
-            && let Some(expansion) = self.user_ex_commands.get(first_word).cloned()
+            && let Some(cmd) = self.user_ex_commands.get(first_word).cloned()
         {
             let args = line[first_word.len()..].trim();
+            if let Err(reason) = cmd.nargs.check(args) {
+                self.toast(format!(":{first_word} — {reason}"));
+                return;
+            }
             let merged = if args.is_empty() {
-                expansion
+                cmd.expansion
             } else {
-                format!("{expansion} {args}")
+                format!("{} {args}", cmd.expansion)
             };
             self.run_ex_command(&merged);
             return;
@@ -12254,6 +12344,45 @@ impl App {
             "cfirst" | "cfir" => self.quickfix_navigate(i32::MIN),
             "clast" | "cla" => self.quickfix_navigate(i32::MAX),
             "ccurrent" | "cc" => self.quickfix_navigate(0),
+            // `:cdo <cmd>` — run `<cmd>` on every quickfix entry (jump,
+            // execute, save). `:cfdo <cmd>` — same but once per unique file.
+            // Vim canonical.
+            "cdo" | "cfdo" => {
+                let inner = rest.trim();
+                if inner.is_empty() {
+                    self.toast(":cdo <ex-command>");
+                    return;
+                }
+                let per_file = cmd == "cfdo";
+                let hits = self
+                    .panes
+                    .iter()
+                    .find_map(|p| match p {
+                        Pane::Quickfix(g) | Pane::Grep(g) => Some(g.hits.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                if hits.is_empty() {
+                    self.toast(":cdo — no quickfix entries");
+                    return;
+                }
+                let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+                let mut ran = 0usize;
+                for hit in hits {
+                    if per_file && !seen.insert(hit.path.clone()) {
+                        continue;
+                    }
+                    self.open_path(&hit.path);
+                    if let Some(b) = self.active_editor_mut() {
+                        b.editor.place_cursor(hit.line as usize, hit.col as usize);
+                    }
+                    self.run_ex_command(inner);
+                    self.save_active_now();
+                    ran += 1;
+                }
+                let scope = if per_file { "unique file " } else { "" };
+                self.toast(format!(":{cmd} {inner:?} — ran on {ran} {scope}entry/ies"));
+            }
             "bufdo" | "tabdo" | "argdo" => {
                 let inner = rest.trim();
                 if inner.is_empty() {
@@ -12309,20 +12438,39 @@ impl App {
                             .user_ex_commands
                             .iter()
                             .map(|(k, v)| {
-                                let preview: String = v.chars().take(30).collect();
-                                let suffix = if v.chars().count() > 30 { "…" } else { "" };
+                                let preview: String = v.expansion.chars().take(30).collect();
+                                let suffix = if v.expansion.chars().count() > 30 {
+                                    "…"
+                                } else {
+                                    ""
+                                };
                                 format!("{k}={preview}{suffix}")
                             })
                             .collect();
                         entries.sort();
                         self.toast(format!(":command · {}", entries.join("  ")));
                     }
-                } else if let Some((name, body)) = rest.split_once(char::is_whitespace) {
-                    self.user_ex_commands
-                        .insert(name.trim().to_string(), body.trim().to_string());
-                    self.toast(format!(":command {} = {}", name.trim(), body.trim()));
                 } else {
-                    self.toast(":command <Name> <expansion>");
+                    // Optional leading `-nargs=...` flag (vim canonical).
+                    let (nargs, rest) = if let Some(after) = rest.strip_prefix("-nargs=") {
+                        let (val, tail) = match after.find(char::is_whitespace) {
+                            Some(i) => (&after[..i], after[i..].trim_start()),
+                            None => (after, ""),
+                        };
+                        (ExCommandNargs::parse(val), tail)
+                    } else {
+                        (ExCommandNargs::Any, rest)
+                    };
+                    if let Some((name, body)) = rest.split_once(char::is_whitespace) {
+                        let cmd = UserExCommand {
+                            expansion: body.trim().to_string(),
+                            nargs,
+                        };
+                        self.user_ex_commands.insert(name.trim().to_string(), cmd);
+                        self.toast(format!(":command {} = {}", name.trim(), body.trim()));
+                    } else {
+                        self.toast(":command [-nargs=…] <Name> <expansion>");
+                    }
                 }
             }
             "delcommand" | "delc" => {

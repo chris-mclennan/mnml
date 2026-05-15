@@ -112,6 +112,23 @@ impl MdPreview {
             .unwrap_or_else(|| "markdown".to_string());
         format!("{name} ◳")
     }
+
+    /// Approximate cursor-tracking — scroll the preview so it lines up with
+    /// the source buffer's cursor row. Uses a heading-aware heuristic: for
+    /// each source line above `src_row`, count rendered rows as 1 for body
+    /// lines and 2 for heading-introducing lines (`#…`) to mimic the
+    /// renderer's padding around headings. Then clamp scroll to that count.
+    pub fn sync_to_source_row(&mut self, src_row: usize) {
+        let mut rendered = 0usize;
+        for (i, line) in self.source.lines().enumerate() {
+            if i >= src_row {
+                break;
+            }
+            let t = line.trim_start();
+            rendered += if t.starts_with('#') { 2 } else { 1 };
+        }
+        self.scroll = rendered;
+    }
 }
 
 /// What a [`DiffView`] is showing.

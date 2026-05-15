@@ -1222,6 +1222,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     Some("md" | "markdown" | "mdx" | "mkd")
                 ) {
                     app.refresh_md_previews_from_text(&p, &text);
+                    // Cursor-sync as well so the preview tracks where the
+                    // user is editing, not just what's in the buffer.
+                    if let Some(Pane::Editor(b)) = app.panes.get(i) {
+                        let row = b.editor.row_col().0;
+                        app.sync_md_previews_to_cursor(&p, row);
+                    }
                 }
             }
             // Drive the as-you-type completion popup off the fresh buffer state.
@@ -1237,7 +1243,20 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 app.try_expand_abbreviation(i);
             }
         }
-        BufferEvent::Redraw | BufferEvent::NoOp => {}
+        BufferEvent::Redraw | BufferEvent::NoOp => {
+            // Cursor-only motion in a markdown buffer — sync any open
+            // preview pane's scroll. The Edited path handles its own sync.
+            if let Some(Pane::Editor(b)) = app.panes.get(i)
+                && let Some(p) = b.path.clone()
+                && matches!(
+                    p.extension().and_then(|e| e.to_str()),
+                    Some("md" | "markdown" | "mdx" | "mkd")
+                )
+            {
+                let row = b.editor.row_col().0;
+                app.sync_md_previews_to_cursor(&p, row);
+            }
+        }
         BufferEvent::App(cmd) => apply_app_command(app, cmd),
         BufferEvent::Unhandled(k) => {
             // Not text-editing. Esc releases focus to the tree; the rest (config-
