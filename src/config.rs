@@ -86,6 +86,12 @@ pub struct PlaywrightDocDbConfig {
     pub database: Option<String>,
     /// Defaults to `"TestExecutions"` at consumer-site if `None`.
     pub collection: Option<String>,
+    /// Live-feed strategy. Recognized values: `"polling"` (default),
+    /// `"stream"` (DocumentDB change streams; requires the cluster's
+    /// `change_stream_log_retention_duration` > 0), or `"auto"` (try
+    /// streams; fall back to polling if `watch()` fails). Unrecognized
+    /// values are treated as `"polling"`.
+    pub mode: Option<String>,
 }
 
 impl PlaywrightDocDbConfig {
@@ -354,6 +360,7 @@ struct RawPlaywrightDocDb {
     prod_uri: Option<String>,
     database: Option<String>,
     collection: Option<String>,
+    mode: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -597,6 +604,9 @@ impl Config {
         }
         if let Some(v) = docdb_raw.collection {
             self.playwright.docdb.collection = Some(v);
+        }
+        if let Some(v) = docdb_raw.mode {
+            self.playwright.docdb.mode = Some(v);
         }
     }
 }
