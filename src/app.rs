@@ -7298,6 +7298,35 @@ impl App {
         }
     }
 
+    /// `editor.select_all_occurrences` (VS Code `Ctrl+Shift+L`) — drop a
+    /// cursor at every whole-word occurrence of the identifier under the
+    /// primary cursor. Primary cursor lands at the first occurrence;
+    /// extras take the rest. No-op when the cursor isn't on an identifier.
+    pub fn select_all_occurrences(&mut self) {
+        let Some(idx) = self.active else { return };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+            return;
+        };
+        let word = b.editor.word_under_cursor().to_string();
+        if word.is_empty() {
+            self.toast("not on an identifier");
+            return;
+        }
+        let hits = crate::editor::find_whole_word_occurrences(b.editor.text(), &word);
+        if hits.is_empty() {
+            return;
+        }
+        b.editor.clear_extra_cursors();
+        let (first_s, first_e) = hits[0];
+        b.editor.set_selection(first_s, first_e);
+        for (s, _e) in hits.iter().skip(1) {
+            b.editor.add_extra_cursor(*s);
+        }
+        if hits.len() > 1 {
+            self.toast(format!("selected {} occurrences", hits.len()));
+        }
+    }
+
     /// `view.reveal_active` (`:reveal`) — show the active file in the OS
     /// Finder / Explorer / file manager. macOS uses `open -R`; Linux opens
     /// the file's parent dir via `xdg-open` (the closest portable form —

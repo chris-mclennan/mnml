@@ -407,10 +407,18 @@ fn builtin_commands() -> Vec<Command> {
             id: "editor.add_cursor_at_next_word",
             title: "Add cursor at next occurrence of word (VSCode `Ctrl+D`)",
             group: "editor",
-            // No default chord — vim's Ctrl+D is HalfPageDown and we don't
-            // want to override that. Users can bind via `[keys.standard]`.
-            keys: &[],
+            // `Ctrl+D` for standard mode (VS Code muscle memory); the vim
+            // handler intercepts Ctrl+D as HalfPageDown before the keymap
+            // sees it, so vim users aren't affected.
+            keys: &["ctrl+d"],
             run: |app| app.run_editor_op(crate::edit_op::EditOp::AddCursorAtNextWord),
+        },
+        Command {
+            id: "editor.select_all_occurrences",
+            title: "Select all occurrences of word at cursor (VSCode `Ctrl+Shift+L`)",
+            group: "editor",
+            keys: &["ctrl+shift+l"],
+            run: |app| app.select_all_occurrences(),
         },
         Command {
             id: "editor.delete_line",

@@ -933,31 +933,9 @@ pub fn draw_pane(
     }
 }
 
-/// Color for char column `c`, picking the innermost (last-pushed) covering span.
-/// Byte ranges of every whole-word, case-sensitive occurrence of `word` in
-/// `text`. "Whole word" means the chars immediately before and after the
-/// match aren't `[A-Za-z0-9_]`. Used by the "highlight word under cursor"
-/// render feature — a buffer-wide single scan, cheap enough to do every frame.
+/// Local alias so the per-render bg paint still calls into the public helper.
 fn find_word_occurrences(text: &str, word: &str) -> Vec<(usize, usize)> {
-    if word.is_empty() || word.len() > text.len() {
-        return Vec::new();
-    }
-    let bytes = text.as_bytes();
-    let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    let wlen = word.len();
-    let mut out: Vec<(usize, usize)> = Vec::new();
-    let mut start = 0usize;
-    while let Some(off) = text[start..].find(word) {
-        let s = start + off;
-        let e = s + wlen;
-        let before_ok = s == 0 || !is_id(bytes[s - 1]);
-        let after_ok = e == text.len() || !is_id(bytes[e]);
-        if before_ok && after_ok {
-            out.push((s, e));
-        }
-        start = s + 1; // overlap-safe: step one byte past the start
-    }
-    out
+    crate::editor::find_whole_word_occurrences(text, word)
 }
 
 fn syntax_color(spans: &[crate::highlight::ColoredSpan], c: usize) -> Option<Color> {

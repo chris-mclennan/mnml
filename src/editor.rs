@@ -94,6 +94,32 @@ pub fn load_history_from(editor: &mut Editor, path: &Path) -> bool {
 ///
 /// Cheap to call (~one walk of the buffer); the editor view skips it when
 /// `[ui] bracket_rainbow` is off so files without rainbow pay nothing.
+/// Byte ranges of every whole-word, case-sensitive occurrence of `word` in
+/// `text`. "Whole word" means the chars immediately before and after the
+/// match aren't `[A-Za-z0-9_]`. Used by the "highlight word under cursor"
+/// render feature + the "select all occurrences" multi-cursor gesture.
+pub fn find_whole_word_occurrences(text: &str, word: &str) -> Vec<(usize, usize)> {
+    if word.is_empty() || word.len() > text.len() {
+        return Vec::new();
+    }
+    let bytes = text.as_bytes();
+    let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let wlen = word.len();
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    let mut start = 0usize;
+    while let Some(off) = text[start..].find(word) {
+        let s = start + off;
+        let e = s + wlen;
+        let before_ok = s == 0 || !is_id(bytes[s - 1]);
+        let after_ok = e == text.len() || !is_id(bytes[e]);
+        if before_ok && after_ok {
+            out.push((s, e));
+        }
+        start = s + 1; // overlap-safe: step one byte past the start
+    }
+    out
+}
+
 pub fn bracket_depths_per_line(text: &str) -> Vec<Vec<(usize, u32)>> {
     let mut out: Vec<Vec<(usize, u32)>> = vec![Vec::new()];
     let mut depth: u32 = 0;
