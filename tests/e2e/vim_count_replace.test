@@ -1,0 +1,21 @@
+# Vim `<count>r<c>` — replace the next <count> chars with <c>.
+
+write data.txt "abcdef"
+open data.txt
+command editor.use_vim
+
+# Cursor on 'a' (col 0). Replace 4 chars with 'X' ⇒ "XXXXef".
+type "4"
+key r
+key X
+command file.save
+expect file data.txt contains "XXXXef"
+
+# 2r<c> replaces just 2 chars. Reset and try.
+write more.txt "hello world"
+open more.txt
+type "2"
+key r
+key Q
+command file.save
+expect file more.txt contains "QQllo world"

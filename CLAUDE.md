@@ -526,6 +526,9 @@ def), `n` (split + new scratch).
 **Vim `<count>gg`** — go to line `<count>` (vim canonical: same as `<count>G`). Bare `gg`
 still goes to the first line. The Prefix::G arm now snapshots `self.count.is_some()`
 before `reset_pending` so it can branch.
+**Vim `<count>r<c>`** — replace the next `<count>` characters with `<c>` (vim canonical;
+bare `r<c>` still replaces just one). Emits `Replace, MoveRight` × (n-1) followed by a
+final `Replace` so the cursor lands on the last replaced char.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

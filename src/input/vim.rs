@@ -828,9 +828,23 @@ impl VimInputHandler {
         // ── multi-key prefixes ───────────────────────────────────────
         match self.prefix {
             Prefix::Replace => {
+                let n = self.count1().max(1) as usize;
                 self.reset_pending();
                 return match key.code {
-                    KeyCode::Char(c) => InputResult::Ops(vec![EditOp::ReplaceCharAtCursor(c)]),
+                    KeyCode::Char(c) => {
+                        // `[count]r<c>` — replace the next `count` chars with `<c>`.
+                        // Cursor lands on the last replaced char (vim convention).
+                        // Sequence: Replace, MoveRight, Replace, ... Replace
+                        // (n replaces, n-1 MoveRights).
+                        let mut ops: Vec<EditOp> = Vec::with_capacity(n.saturating_mul(2));
+                        for i in 0..n {
+                            ops.push(EditOp::ReplaceCharAtCursor(c));
+                            if i + 1 < n {
+                                ops.push(EditOp::MoveRight);
+                            }
+                        }
+                        InputResult::Ops(ops)
+                    }
                     KeyCode::Esc => InputResult::Consumed,
                     _ => InputResult::Consumed,
                 };
