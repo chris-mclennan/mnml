@@ -729,6 +729,13 @@ alpha dropped) on `Buffer.color_decorations`. `parse_document_color` clamps each
 to `[0,1]` × 255. Multi-line ranges dropped (renderer is per-line). `initialize` advertises
 `colorProvider`. CSS / SCSS / Tailwind / HTML stylesheets light up immediately when the LSP
 supports it (vscode-css-language-server, vscode-html-language-server, tailwindcss, etc.).
+**Ctrl+Click / Ctrl+Shift+Click** in an editor pane — plain `Ctrl+Click` places the cursor at
+the click and fires `lsp.goto_definition` (VS Code's "click through"); `Ctrl+Shift+Click`
+fires `lsp.references` (peek-references-style gesture). Modifier check happens in
+`tui::dispatch_mouse` after the regular click handling so cursor is in position when the
+request fires.
+**`:Path`** — toast the active editor's full filesystem path (vs `:pwd` which shows the
+workspace path).
 **Statusline `WRAP` chip** — quiet visible confirmation that `[ui] wrap` is on; easy to forget
 the mode is active when the file's lines aren't actually long.
 **`:reveal` / `:Reveal` / `:Finder`** (`view.reveal_active`) — show the active file in the OS

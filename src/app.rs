@@ -12555,6 +12555,16 @@ impl App {
             "reveal" | "Reveal" | "Finder" => {
                 crate::command::run("view.reveal_active", self);
             }
+            // `:Path` / `:pwd` already toasts workspace; `:Path` toasts the
+            // active file's full path. Useful for "where is this file".
+            "Path" => {
+                let path = self
+                    .active_editor()
+                    .and_then(|b| b.path.clone())
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "(unsaved buffer)".into());
+                self.toast(path);
+            }
             "Gcommit" | "Commit" => {
                 crate::command::run("git.commit", self);
             }

@@ -1781,6 +1781,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     _ => 1,
                 };
                 app.last_click = Some((now, x, y, count));
+                // Ctrl+click → place cursor + fire `lsp.goto_definition`
+                // (VS Code convention — "click through" identifiers).
+                let ctrl_click = m.modifiers.contains(KeyModifiers::CONTROL);
                 let wrap = app.config.ui.wrap;
                 if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
                     let (row, col) = click_to_file_pos(b, tr, wrap, x, y);
@@ -1800,6 +1803,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         // drags, the first Drag event will SelectStart at
                         // the origin and move the cursor.
                         app.drag_select = Some((pid, row, col, false));
+                    }
+                }
+                if ctrl_click {
+                    // Ctrl+Shift+Click → references picker; plain Ctrl+Click
+                    // → go-to-definition. Matches VS Code's "peek references"
+                    // / "go to definition" gestures.
+                    if m.modifiers.contains(KeyModifiers::SHIFT) {
+                        app.lsp_references();
+                    } else {
+                        app.lsp_goto_definition();
                     }
                 }
             }
