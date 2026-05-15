@@ -759,6 +759,11 @@ aliased to `:cprev`, so `:Cp` only.)
 **`:Capture <cmd>`** — run the command via `$SHELL -c`, open the combined stdout/stderr
 in a new scratch buffer (split below). Useful for grabbing `cargo test` output, log dumps,
 etc. for grep / highlight without launching a full pty. Cwd is the workspace.
+**`:Sum`** — extract every integer/decimal from the visual selection (or whole buffer)
+and toast the count + total. Spreadsheet-y "what does this column add up to" gesture.
+**`:CountMatches <pattern>` / `:CountMatch`** — toast the count of regex matches for
+`<pattern>` in the active buffer (or selection). Sibling to `:%s/.../.../n` but doesn't
+require a replacement.
 **`:Wipeout <substr>` / `:Wipe <substr>`** — close every editor pane whose workspace-
 relative path contains `<substr>` (case-insensitive). Dirty buffers are kept + toasted
 in the count. Useful for "drop everything under `tests/`" after a refactor.

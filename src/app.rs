@@ -13467,6 +13467,79 @@ impl App {
             // workspace-relative path contains `<substr>`. Skips dirty
             // buffers (toasts the count). Useful for "drop everything
             // under `tests/` after a refactor".
+            // `:Sum` — extract every integer / decimal from the visual
+            // selection (or the whole buffer when no selection) and
+            // toast the count + total. Spreadsheet-y "what does this
+            // column add up to" gesture.
+            // `:CountMatches <pattern>` — toast the count of regex
+            // matches for `<pattern>` in the active buffer (or selection).
+            // Sibling to `:%s/.../.../n` but doesn't require a replacement.
+            "CountMatches" | "CountMatch" => {
+                let pattern = rest.trim();
+                if pattern.is_empty() {
+                    self.toast(":CountMatches <pattern> — needs a pattern");
+                    return;
+                }
+                let text = self.active_editor().map(|b| {
+                    if let Some((s, e)) = b.editor.selection() {
+                        b.editor.text()[s..e].to_string()
+                    } else {
+                        b.editor.text().to_string()
+                    }
+                });
+                let Some(text) = text else {
+                    self.toast("no active editor");
+                    return;
+                };
+                match regex::Regex::new(&format!("(?i){pattern}")) {
+                    Ok(re) => {
+                        let n = re.find_iter(&text).count();
+                        self.toast(format!(":CountMatches /{pattern}/ — {n}"));
+                    }
+                    Err(e) => self.toast(format!(":CountMatches — bad regex: {e}")),
+                }
+            }
+            "Sum" | "sum" => {
+                let text = self.active_editor().map(|b| {
+                    if let Some((s, e)) = b.editor.selection() {
+                        b.editor.text()[s..e].to_string()
+                    } else {
+                        b.editor.text().to_string()
+                    }
+                });
+                let Some(text) = text else {
+                    self.toast("no active editor");
+                    return;
+                };
+                let mut total: f64 = 0.0;
+                let mut count: usize = 0;
+                let mut buf = String::new();
+                for c in text.chars() {
+                    if c.is_ascii_digit() || c == '-' || c == '.' {
+                        buf.push(c);
+                    } else {
+                        if !buf.is_empty()
+                            && let Ok(n) = buf.parse::<f64>()
+                        {
+                            total += n;
+                            count += 1;
+                        }
+                        buf.clear();
+                    }
+                }
+                if !buf.is_empty()
+                    && let Ok(n) = buf.parse::<f64>()
+                {
+                    total += n;
+                    count += 1;
+                }
+                let total_disp = if total.fract().abs() < 1e-9 {
+                    format!("{}", total as i64)
+                } else {
+                    format!("{total:.4}")
+                };
+                self.toast(format!(":Sum — {count} number(s), total {total_disp}"));
+            }
             "Wipeout" | "Wipe" => {
                 let sub = rest.trim();
                 if sub.is_empty() {
