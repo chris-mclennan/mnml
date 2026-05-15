@@ -1366,6 +1366,7 @@ fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
         BlockInsertStart { append } => app.block_insert_start(append),
         BlockChangeStart => app.block_change_start(),
         CmdlineTabComplete => app.cmdline_tab_complete(),
+        RepeatInsertStart { count, above } => app.repeat_insert_start(count as usize, above),
     }
 }
 

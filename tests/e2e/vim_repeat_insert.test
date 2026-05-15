@@ -1,0 +1,25 @@
+# Vim `<count>o<text><Esc>` / `<count>O<text><Esc>` — open count lines and
+# replicate the typed text on all of them (vim canonical repeat-insert).
+
+write data.txt "alpha"
+open data.txt
+command editor.use_vim
+
+# Cursor on "alpha". `3o<text>Esc` should add 3 new lines below, all
+# containing the typed text.
+type "3"
+key o
+type "xxx"
+key escape
+command file.save
+expect file data.txt contains "alpha\nxxx\nxxx\nxxx"
+
+# `3O<text>Esc` adds 3 new lines ABOVE the current line.
+write more.txt "tail"
+open more.txt
+type "3"
+key O
+type "head"
+key escape
+command file.save
+expect file more.txt contains "head\nhead\nhead\ntail"

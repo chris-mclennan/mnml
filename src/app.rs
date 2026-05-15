@@ -1055,6 +1055,28 @@ pub struct CmdlineCompleteState {
     pub last_shown: String,
 }
 
+/// Live `<count>o` / `<count>O` repeat-insert state. After the user opens the
+/// first new line and types into it, `App::tick` polls for the mode flipping
+/// back to Normal and replicates the typed text on the remaining
+/// `count - 1` lines.
+#[derive(Debug, Clone)]
+pub struct RepeatInsertState {
+    /// Total number of lines vim should open (counting the first).
+    pub count: usize,
+    /// Where the first new line ends up in the buffer (0-based row index).
+    pub first_row: usize,
+    /// Byte length of `first_row` at insert-start, so the post-Esc delta
+    /// tells us what was typed.
+    pub first_row_byte_len_before: usize,
+    /// Byte position of `first_row`'s start (insert origin).
+    pub start_byte: usize,
+    /// Pane the insert started in — replay only fires if the same pane
+    /// is still active.
+    pub pane_id: usize,
+    /// `o` ⇒ false (lines added below). `O` ⇒ true (above).
+    pub above: bool,
+}
+
 /// Live visual-block I / A state. Captured at insert-start; consumed when the
 /// handler returns to Normal mode (App::tick polls the transition). `rows`
 /// excludes the top row (the user's literal typing already lands there).
@@ -1146,6 +1168,10 @@ pub struct App {
     /// the typed run on every other row in the rect (vim's "edit a column"
     /// power tool). `None` whenever there's no active block insert.
     pub block_insert_state: Option<BlockInsertState>,
+    /// Active `<count>o` / `<count>O` repeat-insert. Set when the user types
+    /// the count-prefixed gesture; consumed in `App::tick` when the handler
+    /// returns to Normal mode (Esc out of Insert).
+    pub repeat_insert_state: Option<RepeatInsertState>,
     /// Ex-cmdline Tab-completion cycle state. `head` = the part of the
     /// cmdline that stays put; `matches` = candidate completions; `idx` =
     /// the match index currently displayed. Cleared by any non-Tab cmdline
@@ -1294,6 +1320,10 @@ pub struct App {
     /// buffer the request was fired against — needed for `workspace/executeCommand`
     /// routing).
     pending_code_actions: Vec<crate::lsp::CodeAction>,
+    /// Index into `pending_code_actions` for a `codeAction/resolve` request
+    /// in flight. When the resolve reply lands, we merge the edit/command
+    /// into the action at this index and apply it.
+    pending_code_action_resolve: Option<usize>,
     pending_code_action_path: Option<PathBuf>,
     /// When true, the next code-action reply auto-applies the first
     /// returned action instead of opening the picker. Set by
@@ -1451,6 +1481,7 @@ impl App {
             pane_mru: Vec::new(),
             macro_state: MacroState::default(),
             block_insert_state: None,
+            repeat_insert_state: None,
             cmdline_complete_state: None,
             macro_buffer: std::collections::HashMap::new(),
             pending_macro_register: None,
@@ -1498,6 +1529,7 @@ impl App {
             signature: None,
             pending_rename: None,
             pending_code_actions: Vec::new(),
+            pending_code_action_resolve: None,
             pending_code_action_path: None,
             pending_code_action_auto_apply: false,
             pending_outline: false,
@@ -3847,6 +3879,18 @@ impl App {
             return;
         };
         let path = self.pending_code_action_path.clone();
+        // Lazy resolve — server sent us a "stub" action with only `data` (no
+        // edit, no command). Fire `codeAction/resolve` and apply when the
+        // reply lands.
+        if action.edit.is_none()
+            && action.command.is_none()
+            && let (Some(raw), Some(p)) = (action.raw.clone(), path.clone())
+        {
+            self.pending_code_action_resolve = Some(idx);
+            self.lsp.code_action_resolve(&p, raw);
+            self.toast(format!("code action: resolving '{}'…", action.title));
+            return;
+        }
         if action.edit.is_none() && action.command.is_none() {
             self.toast(format!("code action: '{}' has no edit", action.title));
             return;
@@ -4276,6 +4320,44 @@ impl App {
                 self.apply_rename_edits(edits);
                 let lbl = label.unwrap_or_else(|| "workspace edit".to_string());
                 self.toast(format!("LSP {lbl} · applied {n} edit(s)"));
+            }
+            LspEvent::CodeActionResolve { edit, command } => {
+                // We told the server "resolve and apply" on a specific action.
+                // Merge the resolved fields back in, then apply.
+                let Some(idx) = self.pending_code_action_resolve.take() else {
+                    return;
+                };
+                let path = self.pending_code_action_path.clone();
+                let (title, resolved_edit, resolved_command) = {
+                    let Some(action) = self.pending_code_actions.get_mut(idx) else {
+                        return;
+                    };
+                    if action.edit.is_none() {
+                        action.edit = edit;
+                    }
+                    if action.command.is_none() {
+                        action.command = command;
+                    }
+                    (
+                        action.title.clone(),
+                        action.edit.take(),
+                        action.command.take(),
+                    )
+                };
+                if resolved_edit.is_none() && resolved_command.is_none() {
+                    self.toast(format!(
+                        "code action: server returned no edit for '{title}'"
+                    ));
+                    return;
+                }
+                if let Some(edits) = resolved_edit {
+                    self.apply_rename_edits(edits);
+                }
+                if let (Some(cmd), Some(p)) = (resolved_command, path)
+                    && !self.lsp.execute_command(&p, &cmd)
+                {
+                    self.toast(format!("code action: couldn't run '{}'", cmd.command));
+                }
             }
             LspEvent::Completion(items) => {
                 use crate::completion::{CompletionItem, CompletionPopup};
@@ -10373,6 +10455,93 @@ impl App {
         self.cmdline_complete_state = Some(stored);
     }
 
+    /// vim `<count>o` / `<count>O` ⇒ open one new line (the rest get
+    /// filled with the typed text on Esc), enter Insert mode, save state.
+    pub fn repeat_insert_start(&mut self, count: usize, above: bool) {
+        let Some(idx) = self.active else { return };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+            return;
+        };
+        let cur_row = b.editor.row_col().0;
+        let op = if above {
+            crate::edit_op::EditOp::InsertNewlineAbove
+        } else {
+            crate::edit_op::EditOp::InsertNewlineBelow
+        };
+        b.editor.apply(op, 20, &mut self.clipboard);
+        b.recompute_dirty();
+        b.refresh_highlights();
+        let first_row = if above { cur_row } else { cur_row + 1 };
+        let start_byte = b.editor.byte_at_col_pub(first_row, 0);
+        let first_row_byte_len_before = b.editor.line_byte_len(first_row);
+        self.repeat_insert_state = Some(RepeatInsertState {
+            count,
+            first_row,
+            first_row_byte_len_before,
+            start_byte,
+            pane_id: idx,
+            above,
+        });
+        b.input.request_insert_mode();
+    }
+
+    /// Polled by `App::tick`. When a `<count>o` / `<count>O` state is set AND
+    /// the active handler has returned to Normal, capture the text typed on
+    /// `first_row` and replicate it on `count - 1` more lines below the
+    /// first (vim's behavior).
+    pub fn repeat_insert_replay_if_done(&mut self) {
+        let Some(state) = self.repeat_insert_state.as_ref() else {
+            return;
+        };
+        if state.pane_id >= self.panes.len() {
+            self.repeat_insert_state = None;
+            return;
+        }
+        let Some(Pane::Editor(b)) = self.panes.get(state.pane_id) else {
+            self.repeat_insert_state = None;
+            return;
+        };
+        if b.input.mode() == crate::input::EditingMode::Insert {
+            return;
+        }
+        let state = self.repeat_insert_state.take().unwrap();
+        let Some(Pane::Editor(b)) = self.panes.get_mut(state.pane_id) else {
+            return;
+        };
+        // Whatever the user typed on first_row is the chunk to replay.
+        let now_len = b.editor.line_byte_len(state.first_row);
+        if now_len <= state.first_row_byte_len_before {
+            return;
+        }
+        let added = now_len - state.first_row_byte_len_before;
+        let typed: String = b
+            .editor
+            .text()
+            .get(state.start_byte..state.start_byte + added)
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        if typed.is_empty() || state.count <= 1 {
+            return;
+        }
+        // After the first row's content, insert `(count - 1)` more lines
+        // each containing `typed`. Splice in one go below first_row.
+        let payload: String = (1..state.count).map(|_| format!("\n{typed}")).collect();
+        // Insert AT THE END of first_row (after any trailing chars the user
+        // may have typed past the original line end, since `o` opens a
+        // fresh empty line we know the row has only `typed`'s content).
+        let insert_at = state.start_byte + added;
+        let ops = vec![crate::edit_op::EditOp::ReplaceRange {
+            start: insert_at,
+            end: insert_at,
+            text: payload,
+        }];
+        b.apply_edit_ops(ops, &mut self.clipboard, 20);
+        // Cursor returns to the END of the FIRST typed line (vim convention
+        // — same as if the user just hit Esc on a regular `o<text>`).
+        b.editor.set_cursor_byte(insert_at);
+        b.recompute_dirty();
+    }
+
     /// Visual-block `c` / `s` ⇒ delete the rectangle first, then start a
     /// block-insert at the rect's leftmost column (now collapsed since the
     /// slice is gone). On Esc the typed run is replayed on every other row,
@@ -12984,6 +13153,7 @@ impl App {
         self.check_external_file_changes();
         self.check_format_save_deadline();
         self.block_insert_replay_if_done();
+        self.repeat_insert_replay_if_done();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL
         {
@@ -14355,6 +14525,7 @@ mod tests {
             kind: Some("quickfix".into()),
             edit: Some(vec![(path.clone(), vec![(edit_range, "y".into())])]),
             command: None,
+            raw: None,
         };
         app.apply_code_action_reply(vec![action]);
 

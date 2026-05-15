@@ -118,6 +118,9 @@ impl LspClient {
                                         "source", "source.organizeImports"
                                     ]
                                 }
+                            },
+                            "resolveSupport": {
+                                "properties": ["edit", "command"]
                             }
                         },
                         "inlayHint": {
@@ -221,6 +224,12 @@ impl LspClient {
             None,
             Some(label.to_string()),
         );
+    }
+    /// `codeAction/resolve` — round-trip the original action back so the
+    /// server fills in the lazy `edit` / `command`. Reply arrives as
+    /// `LspEvent::CodeActionResolve`.
+    pub fn code_action_resolve(&mut self, action: serde_json::Value) {
+        self.request("codeAction/resolve", action);
     }
 
     /// `textDocument/references` (params carry the extra `context`).
@@ -621,6 +630,10 @@ fn handle_message(
                 let actions = parse_code_actions(result);
                 let _ = tx.send(LspEvent::CodeAction(actions));
             }
+            "codeAction/resolve" => {
+                let (edit, command) = parse_code_action_resolve(result);
+                let _ = tx.send(LspEvent::CodeActionResolve { edit, command });
+            }
             "textDocument/documentSymbol" => {
                 let symbols = parse_document_symbols(result);
                 let _ = tx.send(LspEvent::DocumentSymbols(symbols));
@@ -872,9 +885,49 @@ fn parse_code_actions(result: &serde_json::Value) -> Vec<CodeAction> {
             kind,
             edit,
             command,
+            raw: Some(it.clone()),
         });
     }
     out
+}
+
+/// Parse a `codeAction/resolve` reply — returns `(edit, command)` from the
+/// resolved action. Same shape as one entry of [`parse_code_actions`] but
+/// without re-extracting title/kind (the App already has those).
+pub(crate) fn parse_code_action_resolve(
+    result: &serde_json::Value,
+) -> (Option<super::WorkspaceEdit>, Option<super::CodeCommand>) {
+    let edit = result.get("edit").map(parse_workspace_edit).and_then(|e| {
+        if e.is_empty() && result.get("edit").map(|j| j.is_null()).unwrap_or(true) {
+            None
+        } else {
+            Some(e)
+        }
+    });
+    let command = match result.get("command") {
+        Some(serde_json::Value::Object(o)) => {
+            o.get("command")
+                .and_then(|c| c.as_str())
+                .map(|c| super::CodeCommand {
+                    command: c.to_string(),
+                    arguments: o
+                        .get("arguments")
+                        .and_then(|a| a.as_array())
+                        .cloned()
+                        .unwrap_or_default(),
+                })
+        }
+        Some(serde_json::Value::String(s)) => Some(super::CodeCommand {
+            command: s.clone(),
+            arguments: result
+                .get("arguments")
+                .and_then(|a| a.as_array())
+                .cloned()
+                .unwrap_or_default(),
+        }),
+        _ => None,
+    };
+    (edit, command)
 }
 
 /// Parse a `textDocument/documentSymbol` reply, handling both shapes — the

@@ -100,6 +100,13 @@ pub enum AppCommand {
     /// column (now collapsed since the slice is gone). On Esc the typed run
     /// is replayed on every other row.
     BlockChangeStart,
+    /// vim `<count>o` / `<count>O` — open `count` new lines below / above,
+    /// enter Insert at the first one; on Esc, replicate the typed text on
+    /// the remaining (count - 1) lines.
+    RepeatInsertStart {
+        count: u32,
+        above: bool,
+    },
     /// Tab pressed on the `:` cmdline — ask the App to compute completion
     /// candidates and cycle them. The handler can't do path completion on
     /// its own (no workspace access), so the App owns the cycle state and

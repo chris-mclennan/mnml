@@ -555,6 +555,19 @@ toasts the count.
 that item. `app.rects.completion_rows` is recorded by the renderer; `dispatch_mouse`
 matches click coords against it before the "click anywhere dismisses" path. New
 `CompletionPopup::set_selected`.
+**Lazy `codeAction/resolve`** — actions that arrive with no `edit` and no `command` (the
+server held those for later) get resolved on demand. When `apply_code_action` sees a
+stub with `raw` still set, it fires `codeAction/resolve` and stashes the action index in
+`App.pending_code_action_resolve`. The reply (`LspEvent::CodeActionResolve`) merges
+`edit` + `command` back into the action and applies it. `initialize` advertises
+`codeAction.resolveSupport: { properties: ["edit", "command"] }`. `CodeAction` gains a
+`raw: Option<serde_json::Value>` slot for the round-trip JSON.
+**Vim `<count>o<text><Esc>` / `<count>O<text><Esc>` repeat-insert** — vim canonical
+"open N new lines, type once, replicate". New `AppCommand::RepeatInsertStart{count,
+above}`, new `App.repeat_insert_state: Option<RepeatInsertState>`. The App handles the
+initial line + Insert-mode entry; `App::tick` polls for the Normal-mode transition and
+splices `(count-1)` copies of the typed text in below the first. Single `apply_edit_ops`
+so one Undo reverts.
 **`:Trim` / `:trimws`** — one-shot strip of trailing whitespace on every line in the active
 buffer. Single edit op so one Undo restores. Pairs with `[editor] trim_trailing_ws_on_save`
 for a per-save version. `Buffer::apply_trim_trailing_ws` is now `pub` for ex-command access.

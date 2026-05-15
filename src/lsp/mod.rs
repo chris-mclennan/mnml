@@ -124,6 +124,13 @@ pub enum LspEvent {
     /// Result of a `textDocument/codeAction` request — the available actions at
     /// the requested range, in server order.
     CodeAction(Vec<CodeAction>),
+    /// Result of a `codeAction/resolve` request — the resolved (edit, command)
+    /// pair. The App matches it back to a pending action via the
+    /// `pending_code_action_resolve` slot it set when firing the request.
+    CodeActionResolve {
+        edit: Option<WorkspaceEdit>,
+        command: Option<CodeCommand>,
+    },
     /// Result of a `textDocument/documentSymbol` request — `(name, kind,
     /// line, character, depth)` per symbol, depth-first (parents before
     /// children; depth = nesting level). Both the hierarchical `DocumentSymbol[]`
@@ -245,6 +252,10 @@ pub struct CodeAction {
     /// LSP `Command` — `Some` ⇒ also (or instead) send `workspace/executeCommand`
     /// when the action is accepted.
     pub command: Option<CodeCommand>,
+    /// Original server JSON. Kept so we can round-trip the item back to the
+    /// server on `codeAction/resolve` when `edit` is empty. `None` for
+    /// internally-synthesized actions.
+    pub raw: Option<serde_json::Value>,
 }
 
 /// LSP `Command` — `workspace/executeCommand` payload.
@@ -513,6 +524,18 @@ impl LspManager {
         for c in self.clients.values_mut() {
             if c.is_open(path) {
                 c.completion_resolve(item.clone(), label);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send a `codeAction/resolve` for `action` against whichever server has
+    /// `path` open. Reply arrives as [`LspEvent::CodeActionResolve`].
+    pub fn code_action_resolve(&mut self, path: &Path, action: serde_json::Value) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.code_action_resolve(action.clone());
                 sent = true;
             }
         }

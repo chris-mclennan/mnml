@@ -1904,12 +1904,32 @@ impl VimInputHandler {
                 InputResult::App(AppCommand::RunCommand("nav.back".into()))
             }
             KeyCode::Char('o') => {
-                self.enter_insert();
-                InputResult::Ops(vec![InsertNewlineBelow])
+                let n = self.count1();
+                self.reset_pending();
+                if n > 1 {
+                    // <count>o — App opens the first line, drives Insert,
+                    // and on Esc replicates the typed text on the rest.
+                    InputResult::App(AppCommand::RepeatInsertStart {
+                        count: n,
+                        above: false,
+                    })
+                } else {
+                    self.enter_insert();
+                    InputResult::Ops(vec![InsertNewlineBelow])
+                }
             }
             KeyCode::Char('O') => {
-                self.enter_insert();
-                InputResult::Ops(vec![InsertNewlineAbove])
+                let n = self.count1();
+                self.reset_pending();
+                if n > 1 {
+                    InputResult::App(AppCommand::RepeatInsertStart {
+                        count: n,
+                        above: true,
+                    })
+                } else {
+                    self.enter_insert();
+                    InputResult::Ops(vec![InsertNewlineAbove])
+                }
             }
             // single-char edits
             // `Ctrl+X` — decrement the next number on the cursor's line.
