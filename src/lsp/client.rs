@@ -137,6 +137,9 @@ impl LspClient {
                             "dynamicRegistration": false,
                             "lineFoldingOnly": true
                         },
+                        "colorProvider": {
+                            "dynamicRegistration": false
+                        },
                         "documentSymbol": {
                             "hierarchicalDocumentSymbolSupport": true,
                             "symbolKind": {
@@ -417,6 +420,16 @@ impl LspClient {
                 "textDocument": { "uri": path_to_uri(path) },
                 "positions": [{ "line": line, "character": character }]
             }),
+            Some(path),
+        );
+    }
+
+    /// `textDocument/documentColor` — reply is `ColorInformation[]`. Path
+    /// is stashed so the reply routes back to the right buffer.
+    pub fn document_color(&mut self, path: &Path) {
+        self.request_with_path(
+            "textDocument/documentColor",
+            json!({ "textDocument": { "uri": path_to_uri(path) } }),
             Some(path),
         );
     }
@@ -724,9 +737,71 @@ fn handle_message(
                     let _ = tx.send(LspEvent::SelectionRanges { path, ranges });
                 }
             }
+            "textDocument/documentColor" => {
+                if let Some(path) = req_path {
+                    let colors = parse_document_color(result);
+                    let _ = tx.send(LspEvent::DocumentColor { path, colors });
+                }
+            }
             _ => {}
         }
     }
+}
+
+/// Parse a `textDocument/documentColor` reply (`ColorInformation[]`).
+/// Each entry has a `range` and a `color { red, green, blue, alpha }`
+/// with components in `[0.0, 1.0]`. We drop alpha and pack RGB into
+/// `0xRRGGBB`. Multi-line ranges are dropped — the renderer is per-line.
+pub fn parse_document_color(result: &serde_json::Value) -> Vec<super::ColorDecoration> {
+    let arr = match result.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for it in arr {
+        let Some(range) = it.get("range") else {
+            continue;
+        };
+        let (Some(s_line), Some(s_char), Some(e_line), Some(e_char)) = (
+            range
+                .get("start")
+                .and_then(|s| s.get("line"))
+                .and_then(|n| n.as_u64()),
+            range
+                .get("start")
+                .and_then(|s| s.get("character"))
+                .and_then(|n| n.as_u64()),
+            range
+                .get("end")
+                .and_then(|e| e.get("line"))
+                .and_then(|n| n.as_u64()),
+            range
+                .get("end")
+                .and_then(|e| e.get("character"))
+                .and_then(|n| n.as_u64()),
+        ) else {
+            continue;
+        };
+        if s_line != e_line {
+            continue;
+        }
+        let Some(color) = it.get("color") else {
+            continue;
+        };
+        let r = color.get("red").and_then(|n| n.as_f64()).unwrap_or(0.0);
+        let g = color.get("green").and_then(|n| n.as_f64()).unwrap_or(0.0);
+        let b = color.get("blue").and_then(|n| n.as_f64()).unwrap_or(0.0);
+        let r8 = (r.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let g8 = (g.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let b8 = (b.clamp(0.0, 1.0) * 255.0).round() as u32;
+        out.push(super::ColorDecoration {
+            line: s_line as u32,
+            start_char: s_char as u32,
+            end_char: e_char as u32,
+            rgb: (r8 << 16) | (g8 << 8) | b8,
+        });
+    }
+    out
 }
 
 /// Parse a `textDocument/selectionRange` reply. The reply is one

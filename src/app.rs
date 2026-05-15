@@ -3350,6 +3350,7 @@ impl App {
                 self.lsp.inlay_hint(&path, line_count);
                 self.lsp.code_lens(&path);
                 self.lsp.document_link(&path);
+                self.lsp.document_color(&path);
                 // Auto-open MD preview alongside, if enabled and not yet open.
                 // Passive (focus stays on the editor we just opened).
                 if self.config.ui.auto_md_preview && is_markdown_path(&path) {
@@ -3483,6 +3484,7 @@ impl App {
             self.lsp.inlay_hint(path, line_count);
             self.lsp.code_lens(path);
             self.lsp.document_link(path);
+            self.lsp.document_color(path);
         }
     }
 
@@ -4665,6 +4667,16 @@ impl App {
             }
             LspEvent::SelectionRanges { path, ranges } => {
                 self.apply_selection_ranges(&path, ranges);
+            }
+            LspEvent::DocumentColor { path, colors } => {
+                for p in self.panes.iter_mut() {
+                    if let Pane::Editor(b) = p
+                        && b.path.as_deref() == Some(path.as_path())
+                    {
+                        b.color_decorations = colors;
+                        break;
+                    }
+                }
             }
             LspEvent::CodeAction(actions) => self.apply_code_action_reply(actions),
             LspEvent::DocumentSymbols(symbols) => {

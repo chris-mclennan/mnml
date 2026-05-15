@@ -178,8 +178,26 @@ pub enum LspEvent {
         path: PathBuf,
         ranges: Vec<(u32, u32, u32, u32)>,
     },
+    /// Result of a `textDocument/documentColor` request — color literals
+    /// the server recognized in the buffer.
+    DocumentColor {
+        path: PathBuf,
+        colors: Vec<ColorDecoration>,
+    },
     /// A server-side message worth surfacing as a toast.
     Message(String),
+}
+
+/// One color literal the server recognized. We keep just enough to paint
+/// a swatch glyph at the literal's position. RGB is `0xRRGGBB` packed
+/// (alpha dropped — the renderer uses a fixed-glyph chip).
+#[derive(Debug, Clone)]
+pub struct ColorDecoration {
+    pub line: u32,
+    pub start_char: u32,
+    pub end_char: u32,
+    /// Packed 0xRRGGBB.
+    pub rgb: u32,
 }
 
 /// One link the server says is clickable — `range` is where it sits in the
@@ -669,6 +687,18 @@ impl LspManager {
         for c in self.clients.values_mut() {
             if c.is_open(path) {
                 c.selection_range(path, line, character);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send `textDocument/documentColor` — reply arrives as
+    /// [`LspEvent::DocumentColor`].
+    pub fn document_color(&mut self, path: &Path) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.document_color(path);
                 sent = true;
             }
         }

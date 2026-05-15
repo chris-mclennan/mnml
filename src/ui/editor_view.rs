@@ -580,6 +580,32 @@ pub fn draw_pane(
             }
         }
 
+        // Color decorations: server-supplied `(start_char, end_char, rgb)`
+        // for each color literal on this line. We override the foreground
+        // color of every cell in the literal's char range so the value
+        // renders in its own color (so `#ff0000` literally looks red).
+        for cd in buf.color_decorations.iter() {
+            if cd.line as usize != line_no {
+                continue;
+            }
+            let fg = Color::Rgb(
+                ((cd.rgb >> 16) & 0xff) as u8,
+                ((cd.rgb >> 8) & 0xff) as u8,
+                (cd.rgb & 0xff) as u8,
+            );
+            for cc in cd.start_char..cd.end_char {
+                let c = n + (cc as usize);
+                if c < buf.h_scroll {
+                    continue;
+                }
+                let vc = c - buf.h_scroll;
+                if vc >= cells.len() {
+                    break;
+                }
+                cells[vc].1 = fg;
+            }
+        }
+
         // Inlay hints: collect every hint on this line, format as one
         // joined string, paint into trailing space cells in dim color.
         // (Vim canonical position is inline — we render end-of-line for

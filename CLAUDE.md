@@ -669,6 +669,14 @@ joins every range with `\n` and writes to the unnamed clipboard; replace
 deletes every range then inserts `s` at each cursor's resting position via
 the existing `multi_insert_str`. So `v…c<text><Esc>` does "change every
 selection to `<text>`" — the most useful multi-cursor edit shape.
+**LSP `documentColor`** — server-supplied color literals get their foreground painted in their
+actual color so `#ff0000` literally renders red, `rgb(0,255,0)` renders green, `hsl(...)` shows
+the resolved hue. Fired on open + on save (same cadence as inlay hints / code lens). New
+`crate::lsp::ColorDecoration{line, start_char, end_char, rgb}` (RGB packed as `0xRRGGBB`,
+alpha dropped) on `Buffer.color_decorations`. `parse_document_color` clamps each component
+to `[0,1]` × 255. Multi-line ranges dropped (renderer is per-line). `initialize` advertises
+`colorProvider`. CSS / SCSS / Tailwind / HTML stylesheets light up immediately when the LSP
+supports it (vscode-css-language-server, vscode-html-language-server, tailwindcss, etc.).
 **`git.file_history`** (also `:Gflog` / `:FileHistory`) — fuzzy picker over commits that touched
 the active file (`git log --follow -- <rel>`, capped at 200, newest first). Each row shows
 `<short>  <subject>` with `<age> · <author>` as the dim detail. Accept opens a diff pane for the
