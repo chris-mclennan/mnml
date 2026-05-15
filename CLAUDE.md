@@ -739,6 +739,9 @@ across the prompt; consumed one-shot. New `find.find_backward` command.
 **Persisted vim macros** — `q<reg>...q` recordings now survive a relaunch. Saved as
 `(register, Vec<key_spec>)` via `Chord::to_spec` (the same format `[keys.global]` config
 uses); restored on launch with `parse_key_spec`. Empty macros are dropped on save.
+**Standard `Ctrl+Enter` / `Ctrl+Shift+Enter`** — VS Code convention for "open new line below /
+above". `Ctrl+Enter` goes to end-of-line + newline; `Ctrl+Shift+Enter` goes to start-of-line +
+newline + move up. Cursor stays in Insert (standard mode is always editable).
 **Standard-mode multi-cursor chords** — `Ctrl+D` now binds to `editor.add_cursor_at_next_word`
 (VS Code muscle memory); `Ctrl+Shift+L` to `editor.select_all_occurrences` (drops a cursor at
 every whole-word match of the identifier under the cursor in one go). The keymap builder

@@ -81,6 +81,14 @@ impl InputHandler for StandardInputHandler {
                 _ => InputResult::Ignored,
             },
 
+            // `Ctrl+Enter` = open new line below (cursor lands at start of
+            // the new line, indented to match the current line). VS Code
+            // muscle memory. `Ctrl+Shift+Enter` opens above. Plain Enter is
+            // the standard newline-at-cursor.
+            KeyCode::Enter if ctrl && key.modifiers.contains(KeyModifiers::SHIFT) => {
+                InputResult::Ops(vec![MoveLineStart, InsertNewline, MoveUp])
+            }
+            KeyCode::Enter if ctrl => InputResult::Ops(vec![MoveLineEnd, InsertNewline]),
             KeyCode::Enter => InputResult::Ops(vec![InsertNewline]),
             KeyCode::Tab => {
                 if ctx.has_selection {
