@@ -633,8 +633,16 @@ Multi-cursor fan-out expanded: `Backspace` / `DeleteForward` / `MoveLeft` /
 char in descending-position order; other cursors' positions are updated as the
 text shrinks), and `move_extras_horizontal` / `move_extras_vertical` (each extra
 walks one boundary or one row independently; out-of-range rows drop). `InsertStr` (paste) now fans out too — new `multi_insert_str` mirrors the
-`InsertChar` algorithm but with the full byte length. Word-level deletes
-(`DeleteWordLeft` etc.) still operate only on the primary — next step.
+`InsertChar` algorithm but with the full byte length. `InsertNewline` also fans
+out (auto-indent skipped on multi-cursor — earlier inserts would shift later
+lines and make per-cursor indent introspection hairy). Word-level deletes
+(`DeleteWordLeft` / `DeleteWordRight` / `DeleteToLineStart` / `DeleteToLineEnd`)
+fan out via a new generic `multi_delete_range_per_cursor` helper: the caller
+supplies a closure that maps each cursor's current position to a `(start, end)`
+byte range; the helper applies them descending so earlier offsets stay valid
+and shifts the other cursors as each delete lands. New
+`word_left_target_from` / `word_right_target_from` helpers take a starting
+byte so the closure can compute per-cursor ranges.
 **Multi-cursor `editor.add_cursor_at_next_word`** — VS Code's `Ctrl+D` shape. Word at
 the primary cursor is the rename target; first press snaps the primary to end-of-
 word; each subsequent press finds the next whole-word occurrence after the bottom-

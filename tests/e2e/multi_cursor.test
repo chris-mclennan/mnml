@@ -52,3 +52,18 @@ command file.save
 # ~18. Typing X at each ⇒ "fooX bar fooX baz fooX".
 expect file rename.txt contains "fooX bar fooX baz fooX"
 
+# Word delete + newline insert fan out too. Cursors at end of "old" on
+# each row; Ctrl+W (insert-mode delete-prev-word) wipes it.
+write words.txt "old one\nold two\nold three"
+open words.txt
+# `e` lands on 'd' at col 2; `a` (append) enters Insert at col 3 (the
+# space after "old"). Add cursors below at the same col.
+key e
+key a
+command editor.add_cursor_below
+command editor.add_cursor_below
+key ctrl+w
+key escape
+command file.save
+expect file words.txt contains " one\n two\n three"
+

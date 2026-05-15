@@ -382,6 +382,53 @@ impl Editor {
         self.extra_cursors = extras;
     }
 
+    /// Multi-cursor "delete a per-cursor range". The closure receives each
+    /// cursor's CURRENT position and returns the `(start, end)` byte range
+    /// to remove. Ranges are applied in descending start-position order so
+    /// earlier offsets stay valid; cursors after each delete are shifted.
+    /// The originating cursor lands at the range start.
+    fn multi_delete_range_per_cursor<F>(&mut self, mut range_for: F)
+    where
+        F: FnMut(&Self, usize) -> (usize, usize),
+    {
+        let mut all: Vec<usize> = std::iter::once(self.cursor)
+            .chain(self.extra_cursors.iter().copied())
+            .collect();
+        // Compute each cursor's (start, end) range from its CURRENT pos.
+        let mut ranges: Vec<(usize, usize, usize)> = all
+            .iter()
+            .enumerate()
+            .map(|(i, &p)| {
+                let (s, e) = range_for(self, p);
+                (i, s.min(e), s.max(e))
+            })
+            .collect();
+        // Apply in descending start order.
+        ranges.sort_by_key(|&(_, s, _)| std::cmp::Reverse(s));
+        for (i, s, e) in ranges {
+            if s == e {
+                continue;
+            }
+            let removed = e - s;
+            self.text.replace_range(s..e, "");
+            for (j, c) in all.iter_mut().enumerate() {
+                if j == i {
+                    *c = s;
+                } else if *c >= e {
+                    *c = c.saturating_sub(removed);
+                } else if *c > s {
+                    *c = s;
+                }
+            }
+        }
+        self.cursor = all[0];
+        let mut extras: Vec<usize> = all[1..].to_vec();
+        extras.retain(|&c| c != self.cursor);
+        extras.sort_unstable();
+        extras.dedup();
+        self.extra_cursors = extras;
+    }
+
     /// Multi-cursor InsertStr — insert `s` at every cursor and advance each
     /// by `s.len()`. Same descending-order trick as `InsertChar`.
     fn multi_insert_str(&mut self, s: &str) {
@@ -1740,6 +1787,14 @@ impl Editor {
             InsertNewline => {
                 self.delete_selection_if_any(out);
                 self.checkpoint();
+                if !self.extra_cursors.is_empty() {
+                    // Multi-cursor newline — insert `\n` at every cursor.
+                    // Auto-indent is skipped (per-cursor indent introspection
+                    // gets hairy as earlier inserts shift later lines).
+                    self.multi_insert_str("\n");
+                    out.buffer_changed = true;
+                    return;
+                }
                 let indent = if self.auto_indent {
                     self.leading_indent_of_line_to_cursor()
                 } else {
@@ -1840,6 +1895,15 @@ impl Editor {
                 if self.delete_selection_if_any(out) {
                     return;
                 }
+                if !self.extra_cursors.is_empty() {
+                    self.checkpoint();
+                    self.multi_delete_range_per_cursor(|ed, p| {
+                        let target = ed.word_left_target_from(p);
+                        (target, p)
+                    });
+                    out.buffer_changed = true;
+                    return;
+                }
                 let target = self.word_left_target();
                 if target == self.cursor {
                     return;
@@ -1853,6 +1917,15 @@ impl Editor {
                 if self.delete_selection_if_any(out) {
                     return;
                 }
+                if !self.extra_cursors.is_empty() {
+                    self.checkpoint();
+                    self.multi_delete_range_per_cursor(|ed, p| {
+                        let target = ed.word_right_target_from(p);
+                        (p, target)
+                    });
+                    out.buffer_changed = true;
+                    return;
+                }
                 let target = self.word_right_target();
                 if target == self.cursor {
                     return;
@@ -1862,6 +1935,15 @@ impl Editor {
                 out.buffer_changed = true;
             }
             DeleteToLineStart => {
+                if !self.extra_cursors.is_empty() {
+                    self.checkpoint();
+                    self.multi_delete_range_per_cursor(|ed, p| {
+                        let row = ed.row_col_at(p).0;
+                        (ed.line_start(row), p)
+                    });
+                    out.buffer_changed = true;
+                    return;
+                }
                 let bol = self.line_start(self.current_line());
                 if bol == self.cursor {
                     return;
@@ -1872,6 +1954,15 @@ impl Editor {
                 out.buffer_changed = true;
             }
             DeleteToLineEnd => {
+                if !self.extra_cursors.is_empty() {
+                    self.checkpoint();
+                    self.multi_delete_range_per_cursor(|ed, p| {
+                        let row = ed.row_col_at(p).0;
+                        (p, ed.line_end(row))
+                    });
+                    out.buffer_changed = true;
+                    return;
+                }
                 let eol = self.line_end(self.current_line());
                 if eol == self.cursor {
                     return;
@@ -2843,7 +2934,12 @@ impl Editor {
         self.cursor = i;
     }
     fn word_left_target(&self) -> usize {
-        let mut i = self.cursor;
+        self.word_left_target_from(self.cursor)
+    }
+    /// `word_left_target` parameterized on a starting byte offset — used by
+    /// multi-cursor `DeleteWordLeft` to compute a target per cursor.
+    fn word_left_target_from(&self, from: usize) -> usize {
+        let mut i = from.min(self.text.len());
         while i > 0 {
             match self.char_before(i) {
                 Some(c) if class_of(c) == CharClass::Space => i = self.prev_char_boundary(i),
@@ -2862,8 +2958,12 @@ impl Editor {
         i
     }
     fn word_right_target(&self) -> usize {
+        self.word_right_target_from(self.cursor)
+    }
+    /// `word_right_target` parameterized on a starting byte offset.
+    fn word_right_target_from(&self, from: usize) -> usize {
         let len = self.text.len();
-        let mut i = self.cursor;
+        let mut i = from.min(len);
         if let Some(c) = self.char_at(i)
             && class_of(c) != CharClass::Space
         {
