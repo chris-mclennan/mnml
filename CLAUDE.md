@@ -1752,7 +1752,13 @@ is scrolled off). Fire-and-forget — no reply handler needed; the page just scr
 at `BROWSER_URL_HISTORY_MAX = 100`, newest first). The history accumulates from every main-frame `Page.frameNavigated`
 event (extracted via the new post-match `nav_url` capture in `apply_cdp_message`) and persists in `session.json` so
 previously-visited URLs are available on fresh launch. Accept ⇒ `Page.navigate` the active browser pane to the chosen
-URL. `about:blank` / empty URLs are skipped from history. `R` re-fetches, `D`
+URL. `about:blank` / empty URLs are skipped from history.
+**`K` toggles a cookies panel** — fires `Network.getCookies` on first press, parses the reply via
+`browser_pane::parse_cookies` into `Vec<CookieEntry{name, value, domain, path, expires, http_only, secure, same_site}>`,
+and renders each row as `[SH] name=value · domain · path · <expires> <sameSite>`. The `S` / `H` chip lights up green
+when `secure` is set, yellow when `http_only` is set. `expires` humanizes against now (`session` / `5m` / `2h` / `3d` /
+`expired`). ↑↓/jk/PgUp/PgDn/Home/End move the selection (wheel too), `y` copies the selected `name=value` pair, `R`
+re-fetches, Esc → back. Mutually exclusive with the net + DOM panels. `R` re-fetches, `D`
 (or Esc) leave the panel (Esc also clears any highlight via `Overlay.hideHighlight`). After `s` writes the PNG, `open_path_external` hands it to the OS default app (`open` on macOS,
 `xdg-open` on Linux, `cmd /C start` on Windows; best-effort, errors swallowed). `Target.setDiscoverTargets {discover:true}`
 is also sent on connect so popups / new-tabs show up as `⤴ new tab → url` log lines (`Target.targetCreated` with

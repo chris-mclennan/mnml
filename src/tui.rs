@@ -748,16 +748,18 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // re-send in a request pane), `g` navigate, `e` eval JS, `r` reload, Esc →
     // (leave the net panel, else) tree. `Ctrl+W` closes it (which kills Chrome).
     if matches!(app.panes.get(i), Some(Pane::Browser(_))) {
-        let (net_focus, dom_focus, net_filter_mode, dom_filter_mode) = match app.panes.get(i) {
-            Some(Pane::Browser(b)) => (
-                b.net_focus,
-                b.dom_focus,
-                b.net_filter_mode,
-                b.dom_filter_mode,
-            ),
-            _ => (false, false, false, false),
-        };
-        let any_panel = net_focus || dom_focus;
+        let (net_focus, dom_focus, cookies_focus, net_filter_mode, dom_filter_mode) =
+            match app.panes.get(i) {
+                Some(Pane::Browser(b)) => (
+                    b.net_focus,
+                    b.dom_focus,
+                    b.cookies_focus,
+                    b.net_filter_mode,
+                    b.dom_filter_mode,
+                ),
+                _ => (false, false, false, false, false),
+            };
+        let any_panel = net_focus || dom_focus || cookies_focus;
         // Filter-mode on either panel takes priority over every
         // navigation chord — printable keys narrow the list instead
         // of moving the cursor.
@@ -831,6 +833,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                         Some(n) => b.net_sel = n,
                         None => b.move_net_sel(delta),
                     }
+                } else if b.cookies_focus {
+                    match jump {
+                        Some(usize::MAX) => b.cookies_sel = b.cookies.len().saturating_sub(1),
+                        Some(n) => b.cookies_sel = n,
+                        None => b.move_cookies_sel(delta),
+                    }
                 } else {
                     match jump {
                         Some(usize::MAX) => b.scroll = usize::MAX,
@@ -881,6 +889,13 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Char('y') if net_focus => app.copy_net_entry_curl(),
+            KeyCode::Char('K') => app.browser_open_cookies(),
+            KeyCode::Char('y') if cookies_focus => app.copy_cookie_name_value(),
+            KeyCode::Char('R') if cookies_focus => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.fetch_cookies();
+                }
+            }
             KeyCode::Char('c') if dom_focus => app.copy_dom_selector(),
             KeyCode::Char('h') if dom_focus => {
                 if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
@@ -931,6 +946,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                         }
                         b.net_focus = false;
                         b.dom_focus = false;
+                        b.cookies_focus = false;
                     }
                 } else {
                     app.focus_tree();

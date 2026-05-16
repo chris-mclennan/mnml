@@ -114,6 +114,80 @@ impl NetEntry {
     }
 }
 
+/// One cookie returned by `Network.getCookies`. Projected from the
+/// CDP reply by [`parse_cookies`]; the rendered row carries
+/// `name=value` + the domain / path / expires + the
+/// `secure`/`httpOnly`/`sameSite` flags.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CookieEntry {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    /// `-1` = session cookie (no expiration); otherwise a Unix epoch
+    /// seconds value the browser returned. The renderer formats it as
+    /// a humanized age (or `session`).
+    pub expires: i64,
+    pub http_only: bool,
+    pub secure: bool,
+    /// Verbatim `"Strict"` / `"Lax"` / `"None"` / `""` from the reply.
+    pub same_site: String,
+}
+
+/// Parse `Network.getCookies`'s `cookies: [...]` array into a flat
+/// `Vec<CookieEntry>`. Tolerates missing fields with sensible defaults
+/// — a malformed entry never aborts the parse.
+pub fn parse_cookies(arr: &serde_json::Value) -> Vec<CookieEntry> {
+    let Some(arr) = arr.as_array() else {
+        return Vec::new();
+    };
+    arr.iter()
+        .map(|c| CookieEntry {
+            name: c
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            value: c
+                .get("value")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            domain: c
+                .get("domain")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            path: c
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("/")
+                .to_string(),
+            // CDP returns a float (with fractional seconds) for `expires`;
+            // -1 ⇒ session cookie. We coerce to i64; rounding the fractional
+            // milliseconds doesn't matter for our humanized display.
+            expires: c
+                .get("expires")
+                .and_then(serde_json::Value::as_f64)
+                .map(|f| f as i64)
+                .unwrap_or(-1),
+            http_only: c
+                .get("httpOnly")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            secure: c
+                .get("secure")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            same_site: c
+                .get("sameSite")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        })
+        .collect()
+}
+
 /// One rendered row of a flattened `DOM.getDocument` tree — built by [`parse_dom`].
 /// `selector` is a `tag#id.cls > tag.cls` chain back to the root (good enough to
 /// paste into a `document.querySelector` or copy out as a hint).
@@ -338,6 +412,18 @@ pub struct BrowserPane {
     /// Toggled via `H` in DOM-panel focus. Default off — explicit `h`
     /// still draws a one-shot highlight without enabling follow.
     pub dom_hover_highlight: bool,
+    /// Cookies for the current top-level URL, fetched lazily on the
+    /// first `K` press (and refreshed on `R` inside the panel).
+    /// Populated from `Network.getCookies` via [`parse_cookies`].
+    pub cookies: Vec<CookieEntry>,
+    /// True ⇒ the `K` cookies panel is showing.
+    pub cookies_focus: bool,
+    /// Selected cookies row when `cookies_focus`.
+    pub cookies_sel: usize,
+    /// The id of an in-flight `Network.getCookies` request, so its reply
+    /// can be matched (the panel shows a "fetching cookies…" hint until
+    /// it lands).
+    pub pending_cookies: Option<i64>,
     /// Next JSON-RPC id for requests this pane issues.
     next_id: i64,
     /// The id of an in-flight `Runtime.evaluate`, so its reply can be matched.
@@ -384,6 +470,10 @@ impl BrowserPane {
             dom_filter: String::new(),
             dom_filter_mode: false,
             dom_hover_highlight: false,
+            cookies: Vec::new(),
+            cookies_focus: false,
+            cookies_sel: 0,
+            pending_cookies: None,
             next_id: 100,
             pending_eval: None,
             pending_screenshot: None,
@@ -788,6 +878,53 @@ impl BrowserPane {
     /// dispatcher to match a `DOM.getBoxModel` reply.
     pub fn is_pending_node_screenshot(&self, rpc_id: i64) -> bool {
         self.pending_node_screenshot == Some(rpc_id)
+    }
+
+    /// `K` (or refresh from the panel) — `Network.getCookies`; the
+    /// parsed list lands later as a `cookies` vector (see
+    /// `App::apply_cdp_message`).
+    pub fn fetch_cookies(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.push(LogKind::System, "fetching cookies…");
+        let id = self.send(crate::cdp::get_cookies);
+        self.pending_cookies = Some(id);
+    }
+
+    /// True when `rpc_id` is the one stashed in `pending_cookies` —
+    /// used by the App's CDP reply dispatcher to match the
+    /// `Network.getCookies` reply.
+    pub fn is_pending_cookies(&self, rpc_id: i64) -> bool {
+        self.pending_cookies == Some(rpc_id)
+    }
+
+    /// Replace the cookies list with `cookies` (a fresh
+    /// `Network.getCookies` reply); clamp the selection so it stays
+    /// inside the new list.
+    pub fn set_cookies(&mut self, cookies: Vec<CookieEntry>) {
+        let n = cookies.len();
+        self.cookies = cookies;
+        if self.cookies_sel >= n {
+            self.cookies_sel = n.saturating_sub(1);
+        }
+    }
+
+    /// Clamp + move the cookies-panel selection by `delta`.
+    pub fn move_cookies_sel(&mut self, delta: isize) {
+        if self.cookies.is_empty() {
+            self.cookies_sel = 0;
+            return;
+        }
+        let max = self.cookies.len() - 1;
+        let cur = self.cookies_sel.min(max) as isize;
+        self.cookies_sel = (cur + delta).clamp(0, max as isize) as usize;
+    }
+
+    /// The currently-selected cookie, if the panel is non-empty.
+    pub fn selected_cookie(&self) -> Option<&CookieEntry> {
+        self.cookies
+            .get(self.cookies_sel.min(self.cookies.len().saturating_sub(1)))
     }
 
     /// `D` (or refresh from the panel) — `DOM.getDocument`; the parsed tree lands
@@ -1387,6 +1524,94 @@ mod tests {
             .find(|m| m["method"] == "DOM.getBoxModel")
             .unwrap();
         assert_eq!(req["params"]["nodeId"], 42);
+    }
+
+    #[test]
+    fn parse_cookies_extracts_known_fields() {
+        let arr = serde_json::json!([
+            {
+                "name": "sid",
+                "value": "abc123",
+                "domain": ".example.com",
+                "path": "/",
+                "expires": 1900000000.5,
+                "httpOnly": true,
+                "secure": true,
+                "sameSite": "Strict"
+            },
+            {
+                "name": "csrf",
+                "value": "deadbeef",
+                "domain": "example.com",
+                // path omitted → defaults to "/"
+                "expires": -1, // session
+                "httpOnly": false,
+                "secure": false
+                // sameSite omitted → ""
+            }
+        ]);
+        let cookies = parse_cookies(&arr);
+        assert_eq!(cookies.len(), 2);
+        assert_eq!(cookies[0].name, "sid");
+        assert_eq!(cookies[0].value, "abc123");
+        assert!(cookies[0].http_only);
+        assert!(cookies[0].secure);
+        assert_eq!(cookies[0].same_site, "Strict");
+        assert_eq!(cookies[0].expires, 1_900_000_000);
+        assert_eq!(cookies[1].path, "/");
+        assert_eq!(cookies[1].expires, -1);
+        assert!(cookies[1].same_site.is_empty());
+    }
+
+    #[test]
+    fn parse_cookies_handles_non_array_input() {
+        assert!(parse_cookies(&serde_json::json!({})).is_empty());
+        assert!(parse_cookies(&serde_json::json!(null)).is_empty());
+    }
+
+    #[test]
+    fn cookies_panel_state_round_trips() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        let _ = drain_cdp(&rx);
+
+        p.fetch_cookies();
+        assert!(p.pending_cookies.is_some());
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "Network.getCookies"), 1);
+
+        // Reply lands → set_cookies replaces, clamps selection.
+        p.cookies_sel = 5; // out-of-range against fresh list
+        p.set_cookies(vec![
+            CookieEntry {
+                name: "a".into(),
+                value: "1".into(),
+                domain: ".x".into(),
+                path: "/".into(),
+                expires: -1,
+                http_only: false,
+                secure: true,
+                same_site: String::new(),
+            },
+            CookieEntry {
+                name: "b".into(),
+                value: "2".into(),
+                domain: ".x".into(),
+                path: "/".into(),
+                expires: -1,
+                http_only: true,
+                secure: false,
+                same_site: "Lax".into(),
+            },
+        ]);
+        assert_eq!(p.cookies.len(), 2);
+        assert_eq!(p.cookies_sel, 1); // clamped
+
+        p.move_cookies_sel(-3);
+        assert_eq!(p.cookies_sel, 0);
+        p.move_cookies_sel(5);
+        assert_eq!(p.cookies_sel, 1);
+        assert_eq!(p.selected_cookie().unwrap().name, "b");
     }
 
     #[test]

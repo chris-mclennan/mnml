@@ -1581,6 +1581,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_browser_history_picker(),
         },
         Command {
+            id: "browser.cookies",
+            title: "Browser: toggle the cookies panel (K) — Network.getCookies",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_open_cookies(),
+        },
+        Command {
             id: "browser.dom",
             title: "Browser: open the DOM panel (selectable nodes, copy selector)",
             group: "browser",

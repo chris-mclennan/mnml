@@ -89,6 +89,11 @@ pub fn draw(
                 b.dom.len()
             )
         }
+    } else if b.cookies_focus {
+        format!(
+            "  cookies ({}) · ↑↓ select · y copy name=value · R re-fetch · esc back",
+            b.cookies.len()
+        )
     } else if b.net_focus {
         if b.net_filter_mode {
             format!(
@@ -108,7 +113,7 @@ pub fn draw(
             )
         }
     } else {
-        "  g navigate · ^R history · e eval · r reload · s shot · n net · D DOM · esc → tree"
+        "  g navigate · ^R history · e eval · r reload · s shot · n net · D DOM · K cookies · esc → tree"
             .to_string()
     };
     lines.push(Line::from(Span::styled(
@@ -167,6 +172,96 @@ pub fn draw(
                     Span::styled(marker, Style::default().fg(t.cyan).bg(row_bg)),
                     Span::styled(indent, Style::default().bg(row_bg)),
                     Span::styled(row.label.clone(), Style::default().fg(color).bg(row_bg)),
+                ]));
+            }
+        }
+        frame.render_widget(
+            Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),
+            area,
+        );
+        return None;
+    }
+
+    if b.cookies_focus {
+        // ── cookies panel: one selectable row per cookie ───────────
+        if b.cookies.is_empty() {
+            lines.push(Line::from(Span::styled(
+                if b.pending_cookies.is_some() {
+                    "  fetching cookies…"
+                } else {
+                    "  (no cookies for this page — R re-fetches)"
+                },
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            )));
+        } else {
+            let sel = b.cookies_sel.min(b.cookies.len() - 1);
+            let first = if body_rows == 0 || sel < body_rows {
+                0
+            } else {
+                sel + 1 - body_rows
+            };
+            for (idx, c) in b.cookies.iter().enumerate().skip(first).take(body_rows) {
+                let on = idx == sel;
+                let row_bg = if on { t.bg2 } else { t.bg_dark };
+                let marker = if on { "▶ " } else { "  " };
+                // Flags chip: S = Secure (green), H = HttpOnly (yellow).
+                // Both shown when set; trailing space pads non-set so the
+                // value-column alignment is stable.
+                let s_chip = if c.secure { "S" } else { "·" };
+                let h_chip = if c.http_only { "H" } else { "·" };
+                let s_color = if c.secure { t.green } else { t.comment };
+                let h_color = if c.http_only { t.yellow } else { t.comment };
+                // Truncate the value so a long token doesn't blow the row.
+                let value: String = c.value.chars().take(40).collect();
+                let value = if value.chars().count() < c.value.chars().count() {
+                    format!("{value}…")
+                } else {
+                    value
+                };
+                let expires = if c.expires <= 0 {
+                    "session".to_string()
+                } else {
+                    // Coarse humanized age vs now. Avoids dragging in chrono.
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    let secs = c.expires - now;
+                    if secs <= 0 {
+                        "expired".to_string()
+                    } else if secs < 60 {
+                        format!("{secs}s")
+                    } else if secs < 3600 {
+                        format!("{}m", secs / 60)
+                    } else if secs < 86_400 {
+                        format!("{}h", secs / 3600)
+                    } else {
+                        format!("{}d", secs / 86_400)
+                    }
+                };
+                let same_site = if c.same_site.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", c.same_site)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(marker, Style::default().fg(t.cyan).bg(row_bg)),
+                    Span::styled(
+                        format!("[{s_chip}"),
+                        Style::default().fg(s_color).bg(row_bg),
+                    ),
+                    Span::styled(h_chip, Style::default().fg(h_color).bg(row_bg)),
+                    Span::styled("] ", Style::default().fg(t.comment).bg(row_bg)),
+                    Span::styled(c.name.clone(), Style::default().fg(t.cyan).bg(row_bg)),
+                    Span::styled("=", Style::default().fg(t.comment).bg(row_bg)),
+                    Span::styled(value, Style::default().fg(t.fg).bg(row_bg)),
+                    Span::styled("  ", Style::default().bg(row_bg)),
+                    Span::styled(c.domain.clone(), Style::default().fg(t.purple).bg(row_bg)),
+                    Span::styled(c.path.clone(), Style::default().fg(t.comment).bg(row_bg)),
+                    Span::styled(
+                        format!("  {expires}{same_site}"),
+                        Style::default().fg(t.comment).bg(row_bg),
+                    ),
                 ]));
             }
         }

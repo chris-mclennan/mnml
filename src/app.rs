@@ -7872,6 +7872,46 @@ impl App {
         }
     }
 
+    /// `K` in a browser pane (or `browser.cookies`) — fetch
+    /// `Network.getCookies` if we haven't yet, and toggle into the
+    /// cookies panel. (`R` in the panel re-fetches; `y` copies the
+    /// selected `name=value`.) Closes the net + DOM panels if open.
+    pub fn browser_open_cookies(&mut self) {
+        let Some(Pane::Browser(b)) = self
+            .panes
+            .iter_mut()
+            .find(|p| matches!(p, Pane::Browser(_)))
+        else {
+            self.toast("no browser pane open");
+            return;
+        };
+        if b.cookies.is_empty() && b.pending_cookies.is_none() {
+            b.fetch_cookies();
+        }
+        b.cookies_focus = true;
+        b.net_focus = false;
+        b.dom_focus = false;
+        b.cookies_sel = b.cookies_sel.min(b.cookies.len().saturating_sub(1));
+    }
+
+    /// `y` in the cookies panel — copy the selected cookie's
+    /// `name=value` pair to the clipboard.
+    pub fn copy_cookie_name_value(&mut self) {
+        let pair = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Browser(b)) => b
+                .selected_cookie()
+                .map(|c| format!("{}={}", c.name, c.value)),
+            _ => None,
+        };
+        match pair {
+            Some(s) if !s.is_empty() => {
+                self.clipboard.set(s, false);
+                self.toast("copied cookie");
+            }
+            _ => self.toast("no cookie selected"),
+        }
+    }
+
     /// `D` in a browser pane (or `browser.dom`) — fetch `DOM.getDocument` if we
     /// haven't yet, and toggle into the DOM panel. (`R` in the panel re-fetches.)
     pub fn browser_open_dom(&mut self) {
@@ -8104,6 +8144,20 @@ impl App {
                     .unwrap_or("");
                 if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
                     b.fill_post_data(id, data);
+                }
+                return;
+            }
+            if matches!(self.panes.get(idx), Some(Pane::Browser(b)) if b.is_pending_cookies(id)) {
+                let cookies = v
+                    .get("result")
+                    .and_then(|r| r.get("cookies"))
+                    .map(crate::browser_pane::parse_cookies)
+                    .unwrap_or_default();
+                let n = cookies.len();
+                if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                    b.pending_cookies = None;
+                    b.set_cookies(cookies);
+                    b.push(LogKind::System, format!("cookies loaded ({n} entries)"));
                 }
                 return;
             }

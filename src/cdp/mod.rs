@@ -160,6 +160,15 @@ pub fn hide_highlight(id: i64) -> String {
     rpc(id, "Overlay.hideHighlight", serde_json::json!({}))
 }
 
+/// `Network.getCookies` — fetches every cookie the browser has stored
+/// for the current top-level URL (no `urls` param ⇒ all cookies for
+/// the page). Reply shape is `{ cookies: [{ name, value, domain,
+/// path, expires (-1 ⇒ session), httpOnly, secure, sameSite }] }`.
+/// Used by the `K` cookies panel.
+pub fn get_cookies(id: i64) -> String {
+    rpc(id, "Network.getCookies", serde_json::json!({}))
+}
+
 /// `DOM.scrollIntoViewIfNeeded` — scrolls the page so `node_id`'s
 /// bounding box is visible. Used by the `Z` chord in the DOM panel
 /// to bring off-screen nodes into view before subsequent gestures
