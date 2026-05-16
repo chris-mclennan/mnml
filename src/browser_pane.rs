@@ -4,9 +4,9 @@
 //! worker; dropping the pane tells the worker to kill Chrome. Drawn by
 //! `ui/browser_view.rs`; keys in `tui.rs`.
 
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender};
 
-use crate::cdp::CdpCommand;
+use crate::cdp::{CdpCommand, CdpEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogKind {
@@ -584,6 +584,10 @@ pub struct BrowserPane {
     pub url: String,
     /// Down-channel to the CDP worker (commands; `Drop` sends `Close`).
     pub cmd_tx: Sender<CdpCommand>,
+    /// Up-channel from the CDP worker (events). `drain_cdp_events` polls
+    /// every browser pane's receiver per tick, so multiple browser panes
+    /// can each own their own worker and channel without contention.
+    pub event_rx: Receiver<CdpEvent>,
     /// Attached targets — index 0 is the main page (always present); index 1+
     /// are popups / new tabs / iframes auto-attached via `Target.setAutoAttach`.
     pub targets: Vec<BrowserTarget>,
@@ -686,10 +690,17 @@ pub struct BrowserPane {
 }
 
 impl BrowserPane {
-    pub fn new(url: String, cmd_tx: Sender<CdpCommand>) -> Self {
+    /// Production constructor — caller hands in both the command sender +
+    /// event receiver for the per-pane CDP worker.
+    pub fn with_channel(
+        url: String,
+        cmd_tx: Sender<CdpCommand>,
+        event_rx: Receiver<CdpEvent>,
+    ) -> Self {
         let mut p = BrowserPane {
             url: url.clone(),
             cmd_tx,
+            event_rx,
             targets: vec![BrowserTarget {
                 session_id: String::new(),
                 target_id: String::new(),
@@ -739,6 +750,14 @@ impl BrowserPane {
         };
         p.push(LogKind::System, format!("launching Chrome → {dest}"));
         p
+    }
+
+    /// Test-only / single-channel constructor — synthesizes a dropped event
+    /// receiver so tests can keep the simpler 2-arg shape. Production code
+    /// goes through `with_channel`.
+    pub fn new(url: String, cmd_tx: Sender<CdpCommand>) -> Self {
+        let (_, ev_rx) = std::sync::mpsc::channel::<CdpEvent>();
+        Self::with_channel(url, cmd_tx, ev_rx)
     }
 
     pub fn push(&mut self, kind: LogKind, text: impl Into<String>) {
@@ -1566,6 +1585,35 @@ mod tests {
         assert_eq!(r.url, "https://api.test/v1/things?q=1");
         assert!(r.headers.iter().all(|(k, _)| !k.starts_with(':')));
         assert_eq!(r.body.as_deref(), Some(r#"{"a":1}"#));
+    }
+
+    #[test]
+    fn multiple_panes_each_own_their_event_receiver() {
+        // Two browser panes with independent CDP channels — events sent
+        // to one don't bleed into the other.
+        let (cmd_tx_a, _cmd_rx_a) = std::sync::mpsc::channel();
+        let (cmd_tx_b, _cmd_rx_b) = std::sync::mpsc::channel();
+        let (ev_tx_a, ev_rx_a) = std::sync::mpsc::channel();
+        let (ev_tx_b, ev_rx_b) = std::sync::mpsc::channel();
+        let p_a = BrowserPane::with_channel("https://a.test".into(), cmd_tx_a, ev_rx_a);
+        let p_b = BrowserPane::with_channel("https://b.test".into(), cmd_tx_b, ev_rx_b);
+        ev_tx_a
+            .send(crate::cdp::CdpEvent::Connected {
+                ws_url: "ws://a".into(),
+            })
+            .unwrap();
+        ev_tx_b
+            .send(crate::cdp::CdpEvent::Closed("done".into()))
+            .unwrap();
+        // pane A's receiver picks up the Connected, pane B's picks up the
+        // Closed — each drains independently with no cross-talk.
+        let a_evt = p_a.event_rx.try_recv().expect("a event");
+        let b_evt = p_b.event_rx.try_recv().expect("b event");
+        assert!(matches!(a_evt, crate::cdp::CdpEvent::Connected { .. }));
+        assert!(matches!(b_evt, crate::cdp::CdpEvent::Closed(_)));
+        // Both queues now empty.
+        assert!(p_a.event_rx.try_recv().is_err());
+        assert!(p_b.event_rx.try_recv().is_err());
     }
 
     #[test]

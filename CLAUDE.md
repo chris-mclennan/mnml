@@ -1826,7 +1826,20 @@ removes them (the main entry — index 0, empty session_id — is sticky). `T` o
 get wrapped with `sessionId` via `cdp::with_session(message, session_id)` (flatten-mode routing) when the
 current target isn't the main page, so subsequent `Page.navigate` / `Runtime.evaluate` / `Page.reload` /
 `Page.captureScreenshot` / `DOM.getDocument` drive the picked target. The pane header shows
-`[target: <kind>: <title> · T to switch]` when more than one target is attached. One browser pane at a time.
+`[target: <kind>: <title> · T to switch]` when more than one target is attached.
+**Multi-pane browsers** — `browser.open` no longer refuses when one is already running; each browser
+pane owns its own CDP worker + per-pane command/event channels (`BrowserPane.event_rx` is the
+receiver, drained per-tick by `App::drain_cdp_events` which walks every browser pane). All
+browser-targeted App methods (`browser_screenshot`, `browser_print_pdf`, `browser_open_dom`,
+`browser_open_cookies`, `browser_open_storage`, `browser_open_perf`, `open_browser_device_picker`,
+`open_browser_target_picker`, `switch_browser_target`, `browser_navigate_to`, `browser_set_device`,
+`browser_clear_device`, `browser_scroll_node_into_view`, `browser_screenshot_node`) now route
+through new `App::active_browser{,_mut}` helpers so the *focused* browser pane receives the
+operation (the old `iter().find(|p| matches!(p, Pane::Browser(_)))` would have hit the first pane
+regardless of focus). For `workspace` / `shared` profile modes, the second + later panes use a
+sibling `chrome-profile-N` dir (via `chrome_profile_dir_for_pane(N)`) so Chrome doesn't refuse to
+start against an already-locked user-data-dir. `wipe_browser_profile` still targets the
+unsuffixed dir (the suffix-N dirs are temporary by design and OS-cleaned over time).
 **Headless mode** — `[browser] headless` config (default off; `:set [no]headless` / `:set headless!` /
 `browser.toggle_headless`) — when on, `cdp::run_session` passes `headless: true` to `spawn_chrome` which
 appends `--headless=new --no-sandbox --disable-gpu` to Chrome's flags. The pane still receives network /

@@ -1852,9 +1852,9 @@ pub struct App {
         std::sync::mpsc::Receiver<TestsJobDone>,
     )>,
     /// Receiver for the (single) CDP browser session's worker — events stream in,
-    /// [`Self::tick`] drains them into the `Pane::Browser`. `None` when no browser
-    /// pane is open (only one at a time in the first cut).
-    cdp_chan: Option<std::sync::mpsc::Receiver<crate::cdp::CdpEvent>>,
+    // The per-pane CDP receiver lives on `BrowserPane.event_rx` now —
+    // `drain_cdp_events` walks every browser pane each tick.
+
     /// Receiver for the (single) LogTailPane's streaming aws CLI worker.
     /// `App::tick` drains it into the open `Pane::LogTail`. `None` when
     /// no tail pane is active.
@@ -2135,7 +2135,6 @@ impl App {
             http_chan: None,
             ai_chan: None,
             tests_chan: None,
-            cdp_chan: None,
             #[cfg(feature = "private")]
             log_tail_chan: None,
             #[cfg(feature = "private")]
@@ -7732,13 +7731,10 @@ impl App {
     }
 
     // ─── CDP browser pane ───────────────────────────────────────────
-    /// `browser.open` — prompt for a URL, then launch Chrome on it. (One browser
-    /// pane at a time.)
+    /// `browser.open` — prompt for a URL, then launch Chrome on it. Multiple
+    /// browser panes can coexist; each gets its own CDP worker + (in
+    /// `workspace` / `shared` modes) a per-pane sibling profile dir.
     pub fn open_browser_prompt(&mut self) {
-        if self.panes.iter().any(|p| matches!(p, Pane::Browser(_))) {
-            self.toast("a browser pane is already open — close it first");
-            return;
-        }
         self.prompt = Some(crate::prompt::Prompt::seeded(
             crate::prompt::PromptKind::BrowserUrl,
             "Open URL in Chrome",
@@ -7758,10 +7754,28 @@ impl App {
     ///   call. Clean-slate for login testing; state vanishes when the
     ///   pane closes.
     fn chrome_profile_dir(&self) -> std::path::PathBuf {
+        self.chrome_profile_dir_for_pane(0)
+    }
+
+    /// Same as [`Self::chrome_profile_dir`] but tagged with `pane_index`
+    /// — when another browser pane is already running, the second + later
+    /// opens land in a sibling dir (`-1`, `-2`, …) so Chrome doesn't refuse
+    /// to start against a `--user-data-dir` that already has a process
+    /// holding the lock. `pane_index == 0` ⇒ no suffix (the first / only
+    /// pane keeps the existing single-pane path).
+    fn chrome_profile_dir_for_pane(&self, pane_index: usize) -> std::path::PathBuf {
+        let suffix = if pane_index == 0 {
+            String::new()
+        } else {
+            format!("-{pane_index}")
+        };
         match self.config.browser.profile_mode.as_str() {
             "shared" => match std::env::var_os("HOME").map(PathBuf::from) {
-                Some(h) => h.join(".mnml").join("chrome-profile"),
-                None => self.workspace.join(".mnml").join("chrome-profile"),
+                Some(h) => h.join(".mnml").join(format!("chrome-profile{suffix}")),
+                None => self
+                    .workspace
+                    .join(".mnml")
+                    .join(format!("chrome-profile{suffix}")),
             },
             "ephemeral" => match tempfile::tempdir() {
                 Ok(td) => {
@@ -7777,7 +7791,10 @@ impl App {
                     .join(".mnml")
                     .join("chrome-profile-ephemeral"),
             },
-            _ => self.workspace.join(".mnml").join("chrome-profile"),
+            _ => self
+                .workspace
+                .join(".mnml")
+                .join(format!("chrome-profile{suffix}")),
         }
     }
 
@@ -7806,24 +7823,52 @@ impl App {
         }
     }
 
-    /// Launch Chrome on `url` over CDP and open a `Pane::Browser` (split below).
-    pub fn open_browser(&mut self, url: &str) {
-        if self.panes.iter().any(|p| matches!(p, Pane::Browser(_))) {
-            self.toast("a browser pane is already open — close it first");
-            return;
+    /// Helper — returns the active pane as `Pane::Browser` if it is one.
+    /// With multi-pane browsers, callers that used to do
+    /// `panes.iter().find(|p| matches!(p, Pane::Browser(_)))` need to
+    /// scope to the *focused* pane instead, or the wrong browser pane
+    /// receives the operation.
+    pub fn active_browser_mut(&mut self) -> Option<&mut crate::browser_pane::BrowserPane> {
+        let idx = self.active?;
+        match self.panes.get_mut(idx)? {
+            Pane::Browser(b) => Some(b),
+            _ => None,
         }
+    }
+
+    /// Immutable counterpart of [`Self::active_browser_mut`].
+    pub fn active_browser(&self) -> Option<&crate::browser_pane::BrowserPane> {
+        let idx = self.active?;
+        match self.panes.get(idx)? {
+            Pane::Browser(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    /// Launch Chrome on `url` over CDP and open a `Pane::Browser` (split below).
+    /// Multiple browser panes can coexist — each gets its own CDP worker +
+    /// per-pane channels. The second + later panes (in `workspace` /
+    /// `shared` profile modes) land in a sibling `chrome-profile-N` dir so
+    /// Chrome doesn't refuse to start against an already-locked user-data-dir.
+    pub fn open_browser(&mut self, url: &str) {
+        let existing_browsers = self
+            .panes
+            .iter()
+            .filter(|p| matches!(p, Pane::Browser(_)))
+            .count();
         let url = url.trim().to_string();
         let (ev_tx, ev_rx) = std::sync::mpsc::channel::<crate::cdp::CdpEvent>();
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<crate::cdp::CdpCommand>();
-        let profile_dir = self.chrome_profile_dir();
+        let profile_dir = self.chrome_profile_dir_for_pane(existing_browsers);
         let _ = std::fs::create_dir_all(&profile_dir);
         let headless = self.config.browser.headless;
         let (worker_url, worker_dir) = (url.clone(), profile_dir);
         std::thread::spawn(move || {
             crate::cdp::run_session(&worker_url, &worker_dir, headless, &ev_tx, &cmd_rx);
         });
-        self.cdp_chan = Some(ev_rx);
-        let pane = Pane::Browser(crate::browser_pane::BrowserPane::new(url, cmd_tx));
+        let pane = Pane::Browser(crate::browser_pane::BrowserPane::with_channel(
+            url, cmd_tx, ev_rx,
+        ));
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
@@ -7882,13 +7927,9 @@ impl App {
     /// `s` in a browser pane (or `browser.screenshot`) — capture the viewport;
     /// the PNG is written to `.mnml/screenshots/` when the reply arrives.
     pub fn browser_screenshot(&mut self) {
-        match self
-            .panes
-            .iter_mut()
-            .find(|p| matches!(p, Pane::Browser(_)))
-        {
-            Some(Pane::Browser(b)) => b.screenshot(),
-            _ => self.toast("no browser pane open"),
+        match self.active_browser_mut() {
+            Some(b) => b.screenshot(),
+            None => self.toast("no browser pane open"),
         }
     }
 
@@ -7896,13 +7937,9 @@ impl App {
     /// page as a PDF via `Page.printToPDF`; the file lands in
     /// `.mnml/screenshots/page-<ms>.pdf` when the reply arrives.
     pub fn browser_print_pdf(&mut self) {
-        match self
-            .panes
-            .iter_mut()
-            .find(|p| matches!(p, Pane::Browser(_)))
-        {
-            Some(Pane::Browser(b)) => b.print_pdf(),
-            _ => self.toast("no browser pane open"),
+        match self.active_browser_mut() {
+            Some(b) => b.print_pdf(),
+            None => self.toast("no browser pane open"),
         }
     }
 
@@ -7912,12 +7949,8 @@ impl App {
     /// / `h` (highlight) gestures actually see the node. Fire-and-forget;
     /// no reply handling needed.
     pub fn browser_scroll_node_into_view(&mut self) {
-        match self
-            .panes
-            .iter_mut()
-            .find(|p| matches!(p, Pane::Browser(_)))
-        {
-            Some(Pane::Browser(b)) => {
+        match self.active_browser_mut() {
+            Some(b) => {
                 if !b.dom_focus {
                     self.toast("scroll-into-view needs the DOM panel open (D)");
                     return;
@@ -7929,7 +7962,7 @@ impl App {
                 b.scroll_selected_dom_into_view();
                 self.toast("scrolled node into view");
             }
-            _ => self.toast("no browser pane open"),
+            None => self.toast("no browser pane open"),
         }
     }
 
@@ -7939,12 +7972,8 @@ impl App {
     /// `Page.captureScreenshot { clip }`. The eventual PNG lands in
     /// `.mnml/screenshots/` via the same path as a full-page screenshot.
     pub fn browser_screenshot_node(&mut self) {
-        match self
-            .panes
-            .iter_mut()
-            .find(|p| matches!(p, Pane::Browser(_)))
-        {
-            Some(Pane::Browser(b)) => {
+        match self.active_browser_mut() {
+            Some(b) => {
                 if !b.dom_focus {
                     self.toast("node screenshot needs the DOM panel open (D)");
                     return;
@@ -7955,7 +7984,7 @@ impl App {
                 }
                 b.screenshot_selected_dom();
             }
-            _ => self.toast("no browser pane open"),
+            None => self.toast("no browser pane open"),
         }
     }
 
@@ -8019,8 +8048,7 @@ impl App {
     /// `browser.switch_target` routes subsequent commands there.
     pub fn open_browser_target_picker(&mut self) {
         use crate::picker::PickerItem;
-        let Some(Pane::Browser(b)) = self.panes.iter().find(|p| matches!(p, Pane::Browser(_)))
-        else {
+        let Some(b) = self.active_browser() else {
             self.toast("no browser pane open");
             return;
         };
@@ -8057,11 +8085,7 @@ impl App {
     /// Accept handler for `PickerKind::BrowserTargets` — `idx` is parsed from
     /// `PickerItem.id`. Switches the active browser pane's current target.
     pub fn switch_browser_target(&mut self, idx: usize) {
-        if let Some(Pane::Browser(b)) = self
-            .panes
-            .iter_mut()
-            .find(|p| matches!(p, Pane::Browser(_)))
-        {
+        if let Some(b) = self.active_browser_mut() {
             b.switch_target(idx);
         }
     }
@@ -8071,8 +8095,7 @@ impl App {
     /// entry. Accept ⇒ `browser_set_device` or `browser_clear_device`.
     pub fn open_browser_device_picker(&mut self) {
         use crate::picker::PickerItem;
-        let Some(Pane::Browser(b)) = self.panes.iter().find(|p| matches!(p, Pane::Browser(_)))
-        else {
+        let Some(b) = self.active_browser() else {
             self.toast("no browser pane open");
             return;
         };
@@ -8107,34 +8130,26 @@ impl App {
     /// Accept handler for the device picker (preset row). Applies the
     /// preset to the active browser pane (UA + viewport override).
     pub fn browser_set_device(&mut self, idx: usize) {
-        match self
-            .panes
-            .iter_mut()
-            .find(|p| matches!(p, Pane::Browser(_)))
-        {
-            Some(Pane::Browser(b)) => {
+        match self.active_browser_mut() {
+            Some(b) => {
                 b.set_device(idx);
                 if let Some(p) = crate::browser_pane::DEVICE_PRESETS.get(idx) {
                     self.toast(format!("emulating: {} ({}×{})", p.label, p.width, p.height));
                 }
             }
-            _ => self.toast("no browser pane open"),
+            None => self.toast("no browser pane open"),
         }
     }
 
     /// Accept handler for the device picker (Reset row). Clears any
     /// active device emulation on the active browser pane.
     pub fn browser_clear_device(&mut self) {
-        match self
-            .panes
-            .iter_mut()
-            .find(|p| matches!(p, Pane::Browser(_)))
-        {
-            Some(Pane::Browser(b)) => {
+        match self.active_browser_mut() {
+            Some(b) => {
                 b.clear_device();
                 self.toast("device emulation cleared");
             }
-            _ => self.toast("no browser pane open"),
+            None => self.toast("no browser pane open"),
         }
     }
 
@@ -8143,11 +8158,7 @@ impl App {
     /// yet, and toggle into the perf panel. (`R` in the panel
     /// re-fetches.) Closes the other panels.
     pub fn browser_open_perf(&mut self) {
-        let Some(Pane::Browser(b)) = self
-            .panes
-            .iter_mut()
-            .find(|p| matches!(p, Pane::Browser(_)))
-        else {
+        let Some(b) = self.active_browser_mut() else {
             self.toast("no browser pane open");
             return;
         };
@@ -8167,11 +8178,7 @@ impl App {
     /// panel re-fetches; `y` copies the selected `key=value`.) Closes
     /// the net / DOM / cookies panels if open.
     pub fn browser_open_storage(&mut self) {
-        let Some(Pane::Browser(b)) = self
-            .panes
-            .iter_mut()
-            .find(|p| matches!(p, Pane::Browser(_)))
-        else {
+        let Some(b) = self.active_browser_mut() else {
             self.toast("no browser pane open");
             return;
         };
@@ -8341,11 +8348,7 @@ impl App {
     /// cookies panel. (`R` in the panel re-fetches; `y` copies the
     /// selected `name=value`.) Closes the net + DOM panels if open.
     pub fn browser_open_cookies(&mut self) {
-        let Some(Pane::Browser(b)) = self
-            .panes
-            .iter_mut()
-            .find(|p| matches!(p, Pane::Browser(_)))
-        else {
+        let Some(b) = self.active_browser_mut() else {
             self.toast("no browser pane open");
             return;
         };
@@ -8476,11 +8479,7 @@ impl App {
     /// `D` in a browser pane (or `browser.dom`) — fetch `DOM.getDocument` if we
     /// haven't yet, and toggle into the DOM panel. (`R` in the panel re-fetches.)
     pub fn browser_open_dom(&mut self) {
-        let Some(Pane::Browser(b)) = self
-            .panes
-            .iter_mut()
-            .find(|p| matches!(p, Pane::Browser(_)))
-        else {
+        let Some(b) = self.active_browser_mut() else {
             self.toast("no browser pane open");
             return;
         };
@@ -8594,55 +8593,49 @@ impl App {
         self.focus = Focus::Pane;
     }
 
-    /// Drain the CDP worker's event channel into the (single) `Pane::Browser`.
+    /// Drain every browser pane's CDP worker event channel. Each pane owns
+    /// its own `event_rx`; we walk the pane list, drain each receiver, then
+    /// dispatch. Indices are captured up front so `apply_cdp_message`'s
+    /// `idx` argument lines up with the pane that produced the event.
     fn drain_cdp_events(&mut self) {
-        let Some(rx) = &self.cdp_chan else { return };
-        let mut events = Vec::new();
-        let mut disconnected = false;
-        loop {
-            match rx.try_recv() {
-                Ok(ev) => events.push(ev),
-                Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    disconnected = true;
-                    break;
-                }
-            }
-        }
-        if events.is_empty() && !disconnected {
-            return;
-        }
-        let Some(idx) = self
+        let browser_idxs: Vec<usize> = self
             .panes
             .iter()
-            .position(|p| matches!(p, Pane::Browser(_)))
-        else {
-            if disconnected {
-                self.cdp_chan = None;
-            }
-            return;
-        };
-        for ev in events {
-            match ev {
-                crate::cdp::CdpEvent::Connected { .. } => {
-                    if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
-                        b.push(crate::browser_pane::LogKind::System, "connected to Chrome");
+            .enumerate()
+            .filter_map(|(i, p)| matches!(p, Pane::Browser(_)).then_some(i))
+            .collect();
+        for idx in browser_idxs {
+            // Collect events from this pane's receiver up front so the
+            // borrow ends before apply_cdp_message takes `&mut self`.
+            let events: Vec<crate::cdp::CdpEvent> = {
+                let Some(Pane::Browser(b)) = self.panes.get(idx) else {
+                    continue;
+                };
+                let mut events = Vec::new();
+                while let Ok(ev) = b.event_rx.try_recv() {
+                    events.push(ev);
+                }
+                events
+            };
+            for ev in events {
+                match ev {
+                    crate::cdp::CdpEvent::Connected { .. } => {
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.push(crate::browser_pane::LogKind::System, "connected to Chrome");
+                        }
+                    }
+                    crate::cdp::CdpEvent::Message(v) => self.apply_cdp_message(idx, v),
+                    crate::cdp::CdpEvent::Closed(reason) => {
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.closed = true;
+                            b.push(
+                                crate::browser_pane::LogKind::System,
+                                format!("session ended: {reason}"),
+                            );
+                        }
                     }
                 }
-                crate::cdp::CdpEvent::Message(v) => self.apply_cdp_message(idx, v),
-                crate::cdp::CdpEvent::Closed(reason) => {
-                    if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
-                        b.closed = true;
-                        b.push(
-                            crate::browser_pane::LogKind::System,
-                            format!("session ended: {reason}"),
-                        );
-                    }
-                }
             }
-        }
-        if disconnected {
-            self.cdp_chan = None;
         }
     }
 
