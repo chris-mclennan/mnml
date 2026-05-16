@@ -203,6 +203,7 @@ pub fn draw(
                     .as_deref()
                     .or(b.target_ref.as_deref())
                     .unwrap_or("(no ref)");
+                let target = truncate(ref_text, 16);
                 let dur = b
                     .duration_secs
                     .map(format_duration_secs)
@@ -211,7 +212,8 @@ pub fn draw(
                     .started_at_ms
                     .map(|ms| humanize_age((now_ms - ms).max(0)))
                     .unwrap_or_default();
-                let creator = b.creator.as_deref().unwrap_or("");
+                let creator = truncate(b.creator.as_deref().unwrap_or(""), 22);
+                let reason = b.reason.as_deref().unwrap_or("");
                 lines.push(Line::from(vec![
                     Span::styled("    ", Style::default().bg(row_bg)),
                     Span::styled(
@@ -222,11 +224,11 @@ pub fn draw(
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
-                        format!("{build_num:<10}"),
+                        format!("{build_num:<14}"),
                         Style::default().fg(t.fg).bg(row_bg),
                     ),
                     Span::styled(
-                        format!("{ref_text:<17}"),
+                        format!("{target:<17}"),
                         Style::default().fg(t.cyan).bg(row_bg),
                     ),
                     Span::styled(
@@ -237,7 +239,14 @@ pub fn draw(
                         format!("{age:<10}  "),
                         Style::default().fg(t.comment).bg(row_bg),
                     ),
-                    Span::styled(creator.to_string(), Style::default().fg(t.fg).bg(row_bg)),
+                    Span::styled(
+                        format!("{creator:<24}"),
+                        Style::default().fg(t.fg).bg(row_bg),
+                    ),
+                    Span::styled(
+                        reason.to_string(),
+                        Style::default().fg(t.comment).bg(row_bg),
+                    ),
                 ]));
             }
         }
@@ -352,6 +361,15 @@ fn humanize_age(ms: i64) -> String {
     } else {
         format!("{}d ago", s / 86_400)
     }
+}
+
+fn truncate(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+    out.push('…');
+    out
 }
 
 fn format_duration_secs(secs: u64) -> String {

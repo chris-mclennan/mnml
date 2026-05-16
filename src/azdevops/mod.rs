@@ -172,7 +172,11 @@ fn run_thread(
             if cancel.load(Ordering::Relaxed) {
                 return;
             }
-            // Per-branch latest builds.
+            // Per-branch latest builds. Explicitly-configured branches
+            // always get a row (so the user can SEE the branch is tracked
+            // even when nothing's run yet). Default branches with no
+            // builds get a row too — gives a visible diff between Recent
+            // and PerBranch on thin repos.
             let branches = resolve_branches(project);
             let mut per_branch: Vec<BranchBuildSlot> = Vec::new();
             for branch in &branches {
@@ -181,11 +185,7 @@ fn run_thread(
                 }
                 match api::fetch_latest_build_for_branch(&client, &auth_header, project, branch) {
                     Ok(Some(b)) => per_branch.push((branch.clone(), Some(b))),
-                    Ok(None) => {
-                        if project.branches.iter().any(|b| b == branch) {
-                            per_branch.push((branch.clone(), None));
-                        }
-                    }
+                    Ok(None) => per_branch.push((branch.clone(), None)),
                     Err(_) => {}
                 }
             }

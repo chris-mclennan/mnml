@@ -2119,6 +2119,16 @@ comment_count is hardcoded 0 because Azure's list endpoint doesn't
 return it (would need a per-PR `/threads` call). Free-tier signup
 walk-through in conversation history if a real test is needed.
 
+**TestExecutions mouse support** (private-gated) — clicks now route
+properly through the multi-env column layout. New
+`app.rects.test_executions_rows: Vec<(Rect, PaneId, env_idx, row_idx)>`
+(feature-gated) registers each column-header rect (sentinel
+`HEADER_ROW_SENTINEL = usize::MAX` for the row index) and each
+2-row data record. Click on a header ⇒ flip the active env without
+selecting a record; click on a data row ⇒ flip env *and* set that
+env's `selected_row`. Closes the last list-style pane in the
+codebase that was keyboard-only.
+
 **Bitbucket pipeline-log viewer** — `L` on a BB pipeline row opens a
 `Pane::BitbucketPipelineLog` (split below the source) and a background
 thread fetches every step's `/log` endpoint, concatenating into one

@@ -1252,6 +1252,13 @@ pub struct PaneRects {
     /// per render. Click on a row ⇒ select; click on a header row ⇒
     /// toggle collapse (sibling to keyboard Enter).
     pub list_rows: Vec<(Rect, PaneId, usize)>,
+    /// `(row_rect, pane_id, env_idx, row_in_env_filter)` for every visible
+    /// data row across the 3 env columns in `Pane::TestExecutions`. Also
+    /// records each column's header rect with `row_in_env_filter = usize::MAX`
+    /// so a header-click flips to that env without selecting a record.
+    /// Cleared + rebuilt per render.
+    #[cfg(feature = "private")]
+    pub test_executions_rows: Vec<(Rect, PaneId, u8, usize)>,
     /// One entry per split divider, with enough info to drag-resize it.
     pub split_dividers: Vec<crate::layout::DividerHit>,
     pub statusline: Option<Rect>,
@@ -19991,6 +19998,21 @@ GET https://example.com/second
                 other => panic!("expected Failed, got {other:?}"),
             }
         }
+    }
+
+    #[cfg(feature = "private")]
+    #[test]
+    fn test_executions_env_idx_round_trips() {
+        use crate::ui::test_executions_view::{env_to_idx, idx_to_env};
+        for env in [
+            crate::private::the private integrationEnv::Dev,
+            crate::private::the private integrationEnv::Staging,
+            crate::private::the private integrationEnv::Prod,
+        ] {
+            let i = env_to_idx(env);
+            assert_eq!(idx_to_env(i), Some(env));
+        }
+        assert_eq!(idx_to_env(3), None);
     }
 
     #[test]

@@ -22,6 +22,30 @@ use crate::pane::Pane;
 use crate::private::the private integrationEnv;
 use crate::ui::theme::{self, Theme};
 
+/// Sentinel `row_in_env_filter` value recorded for column headers. The mouse
+/// handler interprets this as "click changes the active env but doesn't
+/// select a record."
+pub const HEADER_ROW_SENTINEL: usize = usize::MAX;
+
+/// Map a `the private integrationEnv` to the 0/1/2 index used in `app.rects.test_executions_rows`.
+pub fn env_to_idx(env: the private integrationEnv) -> u8 {
+    match env {
+        the private integrationEnv::Dev => 0,
+        the private integrationEnv::Staging => 1,
+        the private integrationEnv::Prod => 2,
+    }
+}
+
+/// Inverse of `env_to_idx` — the mouse handler in `tui.rs` calls this.
+pub fn idx_to_env(idx: u8) -> Option<the private integrationEnv> {
+    match idx {
+        0 => Some(the private integrationEnv::Dev),
+        1 => Some(the private integrationEnv::Staging),
+        2 => Some(the private integrationEnv::Prod),
+        _ => None,
+    }
+}
+
 /// Two visible text rows per record (tally + branch/age).
 const ROWS_PER_RECORD: usize = 2;
 
@@ -113,6 +137,9 @@ pub fn draw(
     let mut x = area.x;
     let active = p.selected_env;
 
+    // Collect row rects as draw_column runs; push to app.rects after the
+    // borrow on `p` releases.
+    let mut row_rects: Vec<(Rect, u8, usize)> = Vec::new();
     for (i, &env) in envs.iter().enumerate() {
         // First column gets any leftover from integer division.
         let w = col_w + if i == 0 { leftover } else { 0 };
@@ -123,7 +150,7 @@ pub fn draw(
             height: body_h as u16,
         };
         p.clamp_scroll(env, body_h.saturating_sub(1), ROWS_PER_RECORD);
-        draw_column(frame, p, env, env == active, col_rect, &t);
+        draw_column(frame, p, env, env == active, col_rect, &t, &mut row_rects);
         x += w;
         if i < 2 {
             // Vertical divider.
@@ -140,6 +167,11 @@ pub fn draw(
             x += 1;
         }
     }
+    for (rect, env_idx, row_idx) in row_rects {
+        app.rects
+            .test_executions_rows
+            .push((rect, pane_id, env_idx, row_idx));
+    }
     None
 }
 
@@ -150,6 +182,7 @@ fn draw_column(
     is_active: bool,
     area: Rect,
     t: &Theme,
+    row_rects: &mut Vec<(Rect, u8, usize)>,
 ) {
     let env_color = match env {
         the private integrationEnv::Dev => t.green,
@@ -179,6 +212,14 @@ fn draw_column(
             header_style,
         ),
     ]));
+    // Record the column-header rect so a click on it just flips the active env.
+    let header_rect = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
+    row_rects.push((header_rect, env_to_idx(env), HEADER_ROW_SENTINEL));
 
     if records.is_empty() {
         lines.push(Line::from(vec![
@@ -193,6 +234,7 @@ fn draw_column(
         ]));
     } else {
         let records_visible = (area.height as usize).saturating_sub(1) / ROWS_PER_RECORD;
+        let env_idx = env_to_idx(env);
         for (idx_in_view, rec) in records
             .iter()
             .enumerate()
@@ -212,6 +254,22 @@ fn draw_column(
                 None => "running…".to_string(),
             };
 
+            // The record block is 2 rows starting at this on-screen Y.
+            // Each rendered logical row inside the column = `lines.len() - 1`
+            // (the header is at index 0). We're about to push 2 more lines,
+            // so the row block starts at `area.y + lines.len()` and ends at
+            // `area.y + lines.len() + ROWS_PER_RECORD - 1`.
+            let row_y = area.y + lines.len() as u16;
+            row_rects.push((
+                Rect {
+                    x: area.x,
+                    y: row_y,
+                    width: area.width,
+                    height: ROWS_PER_RECORD as u16,
+                },
+                env_idx,
+                i,
+            ));
             lines.push(Line::from(vec![
                 Span::styled(" ", Style::default().bg(row_bg)),
                 Span::styled(

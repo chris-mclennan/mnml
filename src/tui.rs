@@ -2957,6 +2957,22 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
 
+            // TestExecutions pane row click. Multi-env column layout — the
+            // row registry records env-idx + row-index per visible record
+            // (and a sentinel for column headers).
+            #[cfg(feature = "private")]
+            if let Some(&(_, pid, env_idx, row_idx)) = app
+                .rects
+                .test_executions_rows
+                .iter()
+                .find(|(r, _, _, _)| contains(*r, x, y))
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                handle_test_executions_row_click(app, pid, env_idx, row_idx);
+                return;
+            }
+
             // Editor text in some split leaf? Focus that leaf and place the cursor.
             // Track multi-click: 2 = select word, 3 = select line. The threshold
             // (450 ms, same cell) matches what most OSes use.
@@ -3384,6 +3400,25 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
 
 fn contains(r: Rect, x: u16, y: u16) -> bool {
     x >= r.x && x < r.x.saturating_add(r.width) && y >= r.y && y < r.y.saturating_add(r.height)
+}
+
+/// Mouse click on a TestExecutions pane row. `env_idx` is 0/1/2 (dev/staging/prod).
+/// `row_idx == HEADER_ROW_SENTINEL` ⇒ flip the active env without selecting
+/// a record; otherwise also set the env's selected_row.
+#[cfg(feature = "private")]
+fn handle_test_executions_row_click(app: &mut App, pane_id: usize, env_idx: u8, row_idx: usize) {
+    use crate::pane::Pane;
+    use crate::ui::test_executions_view::{HEADER_ROW_SENTINEL, idx_to_env};
+    let Some(env) = idx_to_env(env_idx) else {
+        return;
+    };
+    if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(pane_id) {
+        p.selected_env = env;
+        if row_idx != HEADER_ROW_SENTINEL {
+            // Only set if the click was on a real data row.
+            p.selected_row.insert(env, row_idx);
+        }
+    }
 }
 
 /// Mouse click on a list-style pane row. Dispatches based on the pane
