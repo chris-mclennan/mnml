@@ -316,6 +316,12 @@ pub fn draw_pane(
     // `app.rects.fold_chips` after the `buf` borrow ends. Lets the click
     // handler find which fold to unfold.
     let mut chip_rects: Vec<(u16, usize)> = Vec::new();
+    // Collected code-lens chip rects — `(visual_row, start_vc, end_vc,
+    // lens_index)` per painted lens. Each `lens_index` is the position in
+    // `Buffer.code_lenses`. Pushed onto `app.rects.code_lens_chips` after
+    // the `buf` borrow ends. Lets the click handler dispatch the lens'
+    // `workspace/executeCommand`.
+    let mut lens_chip_rects: Vec<(u16, usize, usize, usize)> = Vec::new();
     // Build the per-visual-row plan: each entry is (line_no, char_start,
     // is_continuation). With wrap off, every file-line takes exactly one
     // visual row; with wrap on, long lines emit multiple rows where each
@@ -795,35 +801,70 @@ pub fn draw_pane(
         // Code lenses: paint as dim chips at end-of-line in a slightly
         // different color (purple) so they're distinguishable from
         // inlay hints. Same "overlay into trailing space" approach.
-        let lenses_on_line: Vec<&crate::lsp::CodeLens> = if app.config.editor.code_lens {
+        //
+        // Each lens gets its own rect tracked in `lens_chip_rects` so the
+        // mouse handler can route clicks to the right command. The space
+        // separator between lenses is kept inside the rect (1-cell-wide
+        // hit zone past the title) — feels natural since the eye sees the
+        // whole `<title> | ` as one chip.
+        let lenses_on_line: Vec<(usize, &crate::lsp::CodeLens)> = if app.config.editor.code_lens {
             buf.code_lenses
                 .iter()
-                .filter(|l| (l.line as usize) == line_no)
+                .enumerate()
+                .filter(|(_, l)| (l.line as usize) == line_no)
                 .collect()
         } else {
             Vec::new()
         };
         if !lenses_on_line.is_empty() {
-            let chip = lenses_on_line
-                .iter()
-                .map(|l| l.title.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(" | ");
-            let with_lead = format!("  ⚡ {chip}");
             let start_c = n + 2;
             let lcolor = theme::cur().purple;
-            for (i, mc) in with_lead.chars().enumerate() {
-                let c = start_c + i;
-                if c < view_col_start {
+            // Lead `  ⚡ ` (4 chars) is uniform across all lenses on this line.
+            let lead = "  ⚡ ";
+            let mut col = start_c;
+            // Paint lead
+            for mc in lead.chars() {
+                if col >= view_col_start {
+                    let vc = col - view_col_start;
+                    if vc >= cells.len() {
+                        break;
+                    }
+                    if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
+                        cells[vc] = (mc, lcolor, base_bg, ratatui::style::Modifier::empty());
+                    }
+                }
+                col += 1;
+            }
+            // Paint each lens; record its rect; emit ` | ` separator before
+            // every non-first lens (rolled into the prior lens's rect so
+            // clicks on the separator still route somewhere). Rect bounds
+            // are stored in cells[] index space (vc) so screen-x conversion
+            // is a simple `text_x + vc` below.
+            for (i, (lens_idx, lens)) in lenses_on_line.iter().enumerate() {
+                let title = lens.title.trim();
+                if title.is_empty() {
                     continue;
                 }
-                let vc = c - view_col_start;
-                if vc >= cells.len() {
-                    break;
+                let prefix = if i > 0 { " | " } else { "" };
+                // Convert `col` (line-char column) to cell index `vc`. Clamp
+                // to 0 when the chip's start is left-of-visible (h-scrolled
+                // past) so the rect still covers the on-screen portion.
+                let rect_start_vc = col.saturating_sub(view_col_start);
+                for mc in prefix.chars().chain(title.chars()) {
+                    if col >= view_col_start {
+                        let vc = col - view_col_start;
+                        if vc >= cells.len() {
+                            break;
+                        }
+                        if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
+                            cells[vc] = (mc, lcolor, base_bg, ratatui::style::Modifier::empty());
+                        }
+                    }
+                    col += 1;
                 }
-                if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
-                    cells[vc] = (mc, lcolor, base_bg, ratatui::style::Modifier::empty());
+                let rect_end_vc = (col.saturating_sub(view_col_start)).min(cells.len());
+                if rect_end_vc > rect_start_vc {
+                    lens_chip_rects.push((r as u16, rect_start_vc, rect_end_vc, *lens_idx));
                 }
             }
         }
@@ -935,6 +976,24 @@ pub fn draw_pane(
             },
             pane_id,
             line_no,
+        ));
+    }
+    // Per-render code-lens chip rects — clicked to fire the lens command.
+    // `start_vc` / `end_vc` are cell-index bounds in the painted cells[]
+    // array, so screen-x is `text_x + start_vc` directly.
+    for (visual_row, start_vc, end_vc, lens_idx) in lens_chip_rects {
+        if end_vc <= start_vc || end_vc > text_w as usize {
+            continue;
+        }
+        app.rects.code_lens_chips.push((
+            Rect {
+                x: text_x + start_vc as u16,
+                y: area.y + visual_row,
+                width: (end_vc - start_vc) as u16,
+                height: 1,
+            },
+            pane_id,
+            lens_idx,
         ));
     }
 

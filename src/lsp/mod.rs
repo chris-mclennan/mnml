@@ -349,14 +349,16 @@ pub struct InlayHint {
     pub label: String,
 }
 
-/// A single code lens — an actionable annotation on a line. We keep the
-/// line + the title (the human-readable text shown to the user). The
-/// command to invoke isn't surfaced in the MVP renderer (clicks would
-/// need rect tracking + a click-handler + workspace/executeCommand wiring).
+/// A single code lens — an actionable annotation on a line. The renderer
+/// paints `title` as an end-of-line chip; clicking the chip fires
+/// `command` (if any) via `workspace/executeCommand`. Lenses without a
+/// command are dropped at parse time today — they'd need `codeLens/resolve`
+/// to flesh out, which the MVP skips.
 #[derive(Debug, Clone)]
 pub struct CodeLens {
     pub line: u32,
     pub title: String,
+    pub command: Option<CodeCommand>,
 }
 
 /// A single entry in a `textDocument/documentSymbol` reply. We keep just

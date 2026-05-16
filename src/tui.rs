@@ -3088,6 +3088,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
+            // Click on a code-lens chip → fire its `workspace/executeCommand`.
+            // Same priority as fold chips — chip owns the click.
+            if let Some(&(_, pid, lens_idx)) = app
+                .rects
+                .code_lens_chips
+                .iter()
+                .find(|(r, _, _)| contains(*r, x, y))
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                app.trigger_code_lens(pid, lens_idx);
+                return;
+            }
             // Bufferline tab — clicking the close badge closes; clicking elsewhere on the tab activates.
             if let Some(&(_, id)) = app
                 .rects

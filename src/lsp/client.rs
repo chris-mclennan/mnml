@@ -2097,14 +2097,33 @@ pub fn parse_code_lenses(result: &serde_json::Value) -> Vec<crate::lsp::CodeLens
             continue;
         };
         let line = start.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let title = lens
-            .get("command")
-            .and_then(|c| c.get("title"))
+        let Some(cmd_obj) = lens.get("command") else {
+            continue;
+        };
+        let title = cmd_obj
+            .get("title")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let command_str = cmd_obj
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let arguments = cmd_obj
+            .get("arguments")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let command = command_str.map(|c| crate::lsp::CodeCommand {
+            command: c,
+            arguments,
+        });
         if !title.is_empty() {
-            out.push(crate::lsp::CodeLens { line, title });
+            out.push(crate::lsp::CodeLens {
+                line,
+                title,
+                command,
+            });
         }
     }
     out
@@ -2787,7 +2806,7 @@ mod tests {
         let reply = json!([
             {
                 "range": { "start": {"line": 5, "character": 0}, "end": {"line": 5, "character": 0} },
-                "command": { "title": "5 references", "command": "rust-analyzer.showReferences" }
+                "command": { "title": "5 references", "command": "rust-analyzer.showReferences", "arguments": [42] }
             },
             {
                 // No command yet — would need codeLens/resolve. Drop.
@@ -2798,6 +2817,23 @@ mod tests {
         assert_eq!(lenses.len(), 1);
         assert_eq!(lenses[0].line, 5);
         assert_eq!(lenses[0].title, "5 references");
+        let cmd = lenses[0].command.as_ref().expect("command captured");
+        assert_eq!(cmd.command, "rust-analyzer.showReferences");
+        assert_eq!(cmd.arguments.len(), 1);
+        assert_eq!(cmd.arguments[0], 42);
+    }
+
+    #[test]
+    fn parse_code_lenses_drops_title_only_lens() {
+        // A "command" object with just a title and no `command` field is
+        // still actionless — drop it (clicking would have nothing to fire).
+        let reply = json!([{
+            "range": { "start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0} },
+            "command": { "title": "Run | Debug" }
+        }]);
+        let lenses = parse_code_lenses(&reply);
+        assert_eq!(lenses.len(), 1);
+        assert!(lenses[0].command.is_none());
     }
 
     #[test]

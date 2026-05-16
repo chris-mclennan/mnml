@@ -1296,6 +1296,11 @@ pub struct PaneRects {
     /// chip — click on one to unfold that block. Cleared + rebuilt per
     /// editor render.
     pub fold_chips: Vec<(Rect, PaneId, usize)>,
+    /// `(chip_rect, pane_id, lens_index)` per rendered `⚡ <title>` code
+    /// lens chip — click on one to fire its `workspace/executeCommand`.
+    /// `lens_index` is the index into `Buffer.code_lenses`. Cleared +
+    /// rebuilt per editor render.
+    pub code_lens_chips: Vec<(Rect, PaneId, usize)>,
     /// `(row_rect, filtered_index)` for each visible completion popup row
     /// (excluding the docs footer). Cleared + rebuilt every render. Click
     /// on a row ⇒ select + accept.
@@ -5170,6 +5175,36 @@ impl App {
         {
             self.toast(format!("code action: couldn't run '{}'", cmd.command));
         }
+    }
+
+    /// Click handler for a `⚡ <title>` code-lens chip — `pane_id` + `lens_idx`
+    /// come from the rect registered during render
+    /// (`app.rects.code_lens_chips`). Looks up the lens, then fires its
+    /// `workspace/executeCommand` against the language server attached
+    /// to the buffer's path. No-op (with a toast) when the lens has no
+    /// command — those are stub lenses that would need
+    /// `codeLens/resolve` to flesh out, which the MVP skips.
+    pub fn trigger_code_lens(&mut self, pane_id: PaneId, lens_idx: usize) {
+        let Some(Pane::Editor(b)) = self.panes.get(pane_id) else {
+            return;
+        };
+        let Some(lens) = b.code_lenses.get(lens_idx) else {
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("code lens needs a saved file");
+            return;
+        };
+        let Some(cmd) = lens.command.clone() else {
+            self.toast(format!("code lens '{}' has no command", lens.title));
+            return;
+        };
+        let title = lens.title.clone();
+        if !self.lsp.execute_command(&path, &cmd) {
+            self.toast(format!("code lens: no server for '{}'", title));
+            return;
+        }
+        self.toast(format!("code lens: {title}"));
     }
 
     /// `lsp.completion` (`Ctrl+Space`) — manually ask the server for completions

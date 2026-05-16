@@ -277,10 +277,18 @@ collapse back to tabs (`N = [editor] tab_width`). Single edit op.
 inside the open `Pane::Grep` and the cursor jumps to the source line.
 **LSP code lens** — `[editor] code_lens = true` (default; `:set [no]codelens` /
 `:set codelens!`). `LspManager::code_lens(path)` fires `textDocument/codeLens` on
-open + save; reply parsed by `parse_code_lenses` into `Vec<CodeLens{line, title}>`.
-Lenses without a `command` (would require `codeLens/resolve`) are dropped. Renderer
-paints them as dim purple `⚡ <title>` chips at end-of-line. Display-only MVP — clicks
-aren't routed back yet. `initialize` advertises the capability.
+open + save; reply parsed by `parse_code_lenses` into
+`Vec<CodeLens{line, title, command: Option<CodeCommand>}>`. Lenses without a `command`
+object (would require `codeLens/resolve`) are dropped. Renderer paints them as dim
+purple `⚡ <title>` chips at end-of-line, with `|` separators between multiple
+lenses on the same line. **Clicks are routed** — each painted lens's rect lands on
+`app.rects.code_lens_chips`; the mouse-down handler dispatches
+`App::trigger_code_lens(pane_id, lens_idx)` which fires
+`workspace/executeCommand` against the buffer's language server (rust-analyzer's
+"5 references" / "Run | Debug" lenses, TypeScript's "go to implementations", etc.).
+`initialize` advertises the capability. Lazy `codeLens/resolve` for stubs (TypeScript
+sometimes returns title-only lenses that need a resolve round-trip for the command)
+is a follow-up — for now those are toast'd "no command".
 **Vim `Ctrl+W p` / `Ctrl+W _` / `Ctrl+W |` / `Ctrl+W f` / `Ctrl+W n` / `Ctrl+W d` /
 `Ctrl+W x`** — focus previously-active leaf (alias `buffer.last`); maximize active
 split's height / width by pushing the enclosing parent's ratio to 90/10 toward the

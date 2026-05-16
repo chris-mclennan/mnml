@@ -95,6 +95,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.body = Some(area);
         app.rects.editor_panes.clear();
         app.rects.fold_chips.clear();
+        app.rects.code_lens_chips.clear();
         app.rects.completion_rows.clear();
         app.rects.list_rows.clear();
         #[cfg(feature = "private")]
