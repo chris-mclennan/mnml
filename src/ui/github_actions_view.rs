@@ -151,7 +151,18 @@ pub fn draw(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
-    for (i, row) in flat.iter().enumerate().skip(p.scroll).take(body_h) {
+    let body_start_offset = lines.len() as u16;
+    for (visible_i, (i, row)) in flat.iter().enumerate().skip(p.scroll).take(body_h).enumerate() {
+        let row_y = area.y.saturating_add(body_start_offset + visible_i as u16);
+        if row_y < area.y.saturating_add(area.height) {
+            let row_rect = ratatui::layout::Rect {
+                x: area.x,
+                y: row_y,
+                width: area.width,
+                height: 1,
+            };
+            app.rects.scm_rows.push((row_rect, pane_id, i));
+        }
         match row.kind {
             RowKind::Header => {
                 let selected = i == p.selected;

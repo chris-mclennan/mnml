@@ -2369,6 +2369,35 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.click_git_rail(hit);
                 return;
             }
+            // SCM/CI pane row click? Match before the generic editor-pane
+            // handler since these panes also register editor-pane rects.
+            // Single click: focus + select that row. If it's a header,
+            // toggle collapse (sibling to Enter). Double-click on a data
+            // row: open in browser.
+            if let Some(&(_, pid, flat_idx)) = app
+                .rects
+                .scm_rows
+                .iter()
+                .find(|(r, _, _)| contains(*r, x, y))
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                let now = std::time::Instant::now();
+                let count = match app.last_click {
+                    Some((prev, px, py, c))
+                        if px == x
+                            && py == y
+                            && now.duration_since(prev) < std::time::Duration::from_millis(450) =>
+                    {
+                        (c + 1).min(3)
+                    }
+                    _ => 1,
+                };
+                app.last_click = Some((now, x, y, count));
+                handle_scm_row_click(app, pid, flat_idx, count >= 2);
+                return;
+            }
+
             // Editor text in some split leaf? Focus that leaf and place the cursor.
             // Track multi-click: 2 = select word, 3 = select line. The threshold
             // (450 ms, same cell) matches what most OSes use.
@@ -2732,6 +2761,117 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
 
 fn contains(r: Rect, x: u16, y: u16) -> bool {
     x >= r.x && x < r.x.saturating_add(r.width) && y >= r.y && y < r.y.saturating_add(r.height)
+}
+
+/// Mouse click on an SCM/CI pane row. Routes to the right pane variant
+/// based on what's at `pane_id`. `flat_idx` is the index into the active
+/// view's flatten output. `is_double_click` ⇒ trigger the primary
+/// action (open in browser) on a data row.
+fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_double_click: bool) {
+    use crate::pane::Pane;
+    match app.panes.get(pane_id) {
+        Some(Pane::BitbucketPipelines(_)) => {
+            let flat = match app.bb_pipelines_view_mode {
+                crate::bitbucket::PipelineViewMode::Recent => {
+                    crate::ui::bitbucket_pipelines_view::flatten_pipelines(app)
+                }
+                crate::bitbucket::PipelineViewMode::PerBranch => {
+                    crate::ui::bitbucket_pipelines_view::flatten_branch_pipelines(app)
+                }
+            };
+            let Some(row) = flat.get(flat_idx) else { return };
+            let is_header = row.kind == crate::ui::bitbucket_pipelines_view::RowKind::Header;
+            let header_label = row.header_label.clone();
+            if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(pane_id) {
+                p.selected = flat_idx;
+            }
+            if is_header {
+                if app.bb_pipelines_collapsed.contains(&header_label) {
+                    app.bb_pipelines_collapsed.remove(&header_label);
+                } else {
+                    app.bb_pipelines_collapsed.insert(header_label);
+                }
+            } else if is_double_click {
+                app.open_selected_bitbucket_pipeline_url();
+            }
+        }
+        Some(Pane::BitbucketPullRequests(_)) => {
+            let flat = match app.bb_prs_view_mode {
+                crate::bitbucket::PrViewMode::PerRepo => {
+                    crate::ui::bitbucket_pull_requests_view::flatten_prs(app)
+                }
+                crate::bitbucket::PrViewMode::Mine => {
+                    crate::ui::bitbucket_pull_requests_view::flatten_my_prs(app)
+                }
+            };
+            let Some(row) = flat.get(flat_idx) else { return };
+            let is_header = row.kind == crate::ui::bitbucket_pull_requests_view::RowKind::Header;
+            let header_label = row.header_label.clone();
+            if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(pane_id) {
+                p.selected = flat_idx;
+            }
+            if is_header {
+                if app.bb_prs_collapsed.contains(&header_label) {
+                    app.bb_prs_collapsed.remove(&header_label);
+                } else {
+                    app.bb_prs_collapsed.insert(header_label);
+                }
+            } else if is_double_click {
+                app.open_selected_bitbucket_pr_url();
+            }
+        }
+        Some(Pane::GithubActions(_)) => {
+            let flat = match app.gh_actions_view_mode {
+                crate::github::ActionsViewMode::Recent => {
+                    crate::ui::github_actions_view::flatten_runs(app)
+                }
+                crate::github::ActionsViewMode::PerBranch => {
+                    crate::ui::github_actions_view::flatten_branch_runs(app)
+                }
+            };
+            let Some(row) = flat.get(flat_idx) else { return };
+            let is_header = row.kind == crate::ui::github_actions_view::RowKind::Header;
+            let header_label = row.header_label.clone();
+            if let Some(Pane::GithubActions(p)) = app.panes.get_mut(pane_id) {
+                p.selected = flat_idx;
+            }
+            if is_header {
+                if app.gh_actions_collapsed.contains(&header_label) {
+                    app.gh_actions_collapsed.remove(&header_label);
+                } else {
+                    app.gh_actions_collapsed.insert(header_label);
+                }
+            } else if is_double_click {
+                app.open_selected_github_run_url();
+            }
+        }
+        Some(Pane::GithubPullRequests(_)) => {
+            let flat = match app.gh_prs_view_mode {
+                crate::github::GhPrViewMode::PerRepo => {
+                    crate::ui::github_pull_requests_view::flatten_prs(app)
+                }
+                crate::github::GhPrViewMode::Mine => {
+                    crate::ui::github_pull_requests_view::flatten_my_prs(app)
+                }
+            };
+            let Some(row) = flat.get(flat_idx) else { return };
+            let is_header = row.kind == crate::ui::github_pull_requests_view::RowKind::Header;
+            let header_label = row.header_label.clone();
+            if let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(pane_id) {
+                p.selected = flat_idx;
+            }
+            if is_header {
+                if app.gh_prs_collapsed.contains(&header_label) {
+                    app.gh_prs_collapsed.remove(&header_label);
+                } else {
+                    app.gh_prs_collapsed.insert(header_label);
+                }
+            } else if is_double_click {
+                app.open_selected_github_pr_url();
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Translate a key event into the byte sequence a pty child expects (xterm-ish).
