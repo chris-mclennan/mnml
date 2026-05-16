@@ -1,0 +1,22 @@
+# Git blame gutter — toggle on a committed file and verify the author chip
+# renders in the gutter (the line-number column is replaced by `<sha>
+# <author>` in blame mode).
+
+shell git init -q
+shell git config user.email "test@mnml.dev"
+shell git config user.name "alice"
+write code.rs "fn main() {}\n"
+shell git add code.rs
+shell git commit -q -m "initial"
+
+open code.rs
+command git.blame_toggle
+
+# blame_toggle toasts "blame: on" on success.
+expect screen contains "blame: on"
+# The blame gutter renders `<short-sha> <author>` — we set name=alice.
+expect screen contains "alice"
+
+# Toggle off — gutter goes back to line numbers.
+command git.blame_toggle
+expect screen contains "blame: off"

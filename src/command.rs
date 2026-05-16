@@ -1124,6 +1124,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_repo_picker(),
         },
         Command {
+            id: "git.refresh_repos",
+            title: "Git: rediscover repos under workspace",
+            group: "git",
+            keys: &[],
+            run: |app| app.rediscover_repos(),
+        },
+        Command {
             id: "git.blame_toggle",
             title: "Git: toggle blame gutter",
             group: "git",

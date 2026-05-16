@@ -2226,6 +2226,13 @@ and gain a `git.switch_repo` command (palette / `:`) opening a fuzzy
 picker over the discovered repos. Picker is a no-op when there's just
 one repo. New `PickerKind::Repos`.
 
+**Repo rediscovery** — `git.refresh_repos` (palette only) re-walks the
+workspace and rebuilds `App.repos`. Useful when a sub-repo was cloned
+in another terminal after mnml launched — the original `App::new`
+discovery is one-shot. Also enables E2E tests that need to set up
+fixture repos via `shell git init` after the App is constructed.
+Active repo resets to index 0; rail + pulls refresh.
+
 **Multi-repo phase 2 — git operations follow active_repo_path** —
 every git op now routes through `App.active_repo_path()` (with
 `App.workspace` as the fallback for single-repo workspaces): status

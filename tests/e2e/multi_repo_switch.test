@@ -1,0 +1,28 @@
+# Multi-repo workspace — discover sub-repos, switch the active repo,
+# verify the rail follows.
+
+# Create two sibling sub-repos with distinct branches.
+shell mkdir -p proj-a proj-b
+shell git -C proj-a init -q
+shell git -C proj-a config user.email "a@test"
+shell git -C proj-a config user.name "alpha"
+shell git -C proj-a commit -q --allow-empty -m "initial-a"
+shell git -C proj-a checkout -q -b branch-a
+
+shell git -C proj-b init -q
+shell git -C proj-b config user.email "b@test"
+shell git -C proj-b config user.name "beta"
+shell git -C proj-b commit -q --allow-empty -m "initial-b"
+shell git -C proj-b checkout -q -b branch-b
+
+# The App was constructed before the shell steps above, so `App.repos`
+# was empty at that point. Refresh the list now that the sub-repos exist.
+command git.refresh_repos
+
+# The workspace itself isn't a repo so `App.repos` should have just the
+# two sub-dirs. Reach for the switcher.
+command git.switch_repo
+# Picker shows both repo names — pick proj-b via a search.
+type proj-b
+key enter
+expect screen contains "active repo → proj-b"

@@ -3342,6 +3342,24 @@ impl App {
         }
     }
 
+    /// Re-walk the workspace and rebuild `App.repos`. Useful when a repo was
+    /// cloned (or a `.git/` dir created) in another terminal after launch —
+    /// `git.switch_repo` won't see the new repo otherwise. Resets the active
+    /// repo to index 0 (typically the workspace root) on the assumption that
+    /// the previous active repo might not exist in the rebuilt list at the
+    /// same index.
+    pub fn rediscover_repos(&mut self) {
+        let new_repos = crate::git::repos::discover_repos(&self.workspace);
+        let before = self.repos.len();
+        self.repos = new_repos;
+        self.active_repo = 0;
+        let root = self.active_repo_path().to_path_buf();
+        self.git.retarget(&root);
+        self.git_rail.refresh(&root);
+        self.refresh_rail_pulls();
+        self.toast(format!("repos: {} → {}", before, self.repos.len()));
+    }
+
     /// Switch which repo the git rail (branches, worktrees, pulls) is
     /// scoped to. No-op when `idx` is out of range or already active.
     pub fn switch_active_repo(&mut self, idx: usize) {

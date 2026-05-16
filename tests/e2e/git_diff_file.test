@@ -1,0 +1,25 @@
+# Git diff pane — commit a file, modify on disk via shell (mnml can't
+# unsync its own buffer mid-test), then open the diff pane and verify
+# the +/- markers from `git diff HEAD` are visible.
+
+shell git init -q
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+write code.rs "fn alpha() {}\n"
+shell git add code.rs
+shell git commit -q -m "initial"
+
+# Mutate the file on disk (without going through the mnml buffer — the
+# diff machinery reads from the working tree).
+shell printf "fn beta() {}\n" > code.rs
+
+open code.rs
+command git.diff_file
+
+# Diff pane header chunk shows the file path + hunk count.
+expect screen contains "code.rs"
+
+# The diff body contains the removed + added lines. `git diff HEAD`
+# produces `-fn alpha() {}` / `+fn beta() {}`.
+expect screen contains "alpha"
+expect screen contains "beta"
