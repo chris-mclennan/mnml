@@ -2119,6 +2119,19 @@ comment_count is hardcoded 0 because Azure's list endpoint doesn't
 return it (would need a per-PR `/threads` call). Free-tier signup
 walk-through in conversation history if a real test is needed.
 
+**Cross-host PR picker: Tab → cross-nav-to-pipeline** — the cross-host
+PR picker (`pr.picker`, `<leader>P p`) previously only opened the
+chosen PR's web URL on Enter. Tab now triggers a secondary accept
+that jumps to the PR's matching pipeline/build instead — works
+across all 4 hosts. Implementation: picker item id now encodes
+`url\x1Fhost_tag\x1Frepo_label\x1Fsource_branch` (delimited by unit
+separator, which doesn't appear in URLs/labels). New
+`App::picker_accept_secondary` dispatched by `Tab` in the picker.
+Generic host-agnostic helper `App::cross_nav_pr_to_pipeline(host_tag,
+repo_label, branch)` does the lookup from caches — sibling to the
+existing pane-only `jump_from_*_pr_to_*` methods but doesn't require
+the PR pane to be open.
+
 **E2E highlight regression coverage** — new `expect highlights at_least
 <N>` check in the `.test` format that asserts the active editor has
 ≥ N total syntax-highlight spans across all lines. Catches regressions

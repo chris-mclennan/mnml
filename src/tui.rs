@@ -366,6 +366,11 @@ fn handle_picker_key(app: &mut App, key: KeyEvent) {
     };
     match key.code {
         KeyCode::Esc => app.close_picker(),
+        // Tab on a picker → "secondary accept" — picker-specific behavior.
+        // For the cross-host PR picker (`PickerKind::OpenPullRequests`)
+        // this jumps to the PR's matching pipeline/build instead of
+        // opening the URL. Other picker kinds ignore Tab.
+        KeyCode::Tab => app.picker_accept_secondary(),
         KeyCode::Enter => app.picker_accept(),
         KeyCode::Up => picker.move_up(),
         KeyCode::Down => picker.move_down(),

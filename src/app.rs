@@ -2818,6 +2818,18 @@ impl App {
                     "[{}] {} {} {} — {}",
                     r.host_tag, r.repo_label, r.state_label, r.number, r.title
                 );
+                // Item id encodes the full cross-nav payload so the
+                // secondary accept (Ctrl+Enter → jump-to-pipeline) has
+                // everything it needs without an App-side stash. Fields
+                // separated by `\x1F` (unit separator), which doesn't
+                // appear in URLs / branch names / repo labels.
+                let id = format!(
+                    "{}\x1F{}\x1F{}\x1F{}",
+                    r.web_url,
+                    r.host_tag,
+                    r.repo_label,
+                    r.source.clone().unwrap_or_default(),
+                );
                 let branches = match (r.source.as_deref(), r.dest.as_deref()) {
                     (Some(s), Some(d)) => format!("{s}→{d}"),
                     (Some(s), None) => s.to_string(),
@@ -2846,7 +2858,7 @@ impl App {
                 if !age.is_empty() {
                     detail_parts.push(age);
                 }
-                PickerItem::new(r.web_url, label, detail_parts.join(" · "))
+                PickerItem::new(id, label, detail_parts.join(" · "))
             })
             .collect();
         self.open_picker(Picker::new(
@@ -3038,6 +3050,186 @@ impl App {
         Some(t.name.to_string())
     }
     /// Act on the picker's current selection, then close it.
+    /// Tab on a picker — picker-kind-specific "secondary accept".
+    /// For `PickerKind::OpenPullRequests`, jumps to the PR's matching
+    /// pipeline/build (instead of opening the URL). For other kinds,
+    /// no-op + a short hint toast.
+    pub fn picker_accept_secondary(&mut self) {
+        let Some(picker) = &self.picker else {
+            return;
+        };
+        let kind = picker.kind;
+        let Some(item) = picker.selected_item().cloned() else {
+            return;
+        };
+        match kind {
+            PickerKind::OpenPullRequests => {
+                self.picker = None;
+                let mut parts = item.id.split('\x1F');
+                let _url = parts.next().unwrap_or("");
+                let host_tag = parts.next().unwrap_or("");
+                let repo_label = parts.next().unwrap_or("");
+                let branch = parts.next().unwrap_or("");
+                if branch.is_empty() {
+                    self.toast("no source branch on this PR — can't cross-nav");
+                    return;
+                }
+                self.cross_nav_pr_to_pipeline(host_tag, repo_label, branch);
+            }
+            _ => {
+                // No secondary action; let the user know Tab did something.
+                self.toast("Tab → no secondary action for this picker");
+            }
+        }
+    }
+
+    /// Host-agnostic "find the most-recent pipeline/build for `branch` in
+    /// the host's caches and select it." Used by `picker_accept_secondary`
+    /// — the picker doesn't have a pane to read from, so we re-resolve
+    /// by `(host_tag, repo_label, branch)`.
+    fn cross_nav_pr_to_pipeline(&mut self, host_tag: &str, repo_label: &str, branch: &str) {
+        match host_tag {
+            "BB" => {
+                // repo_label = "workspace/slug"
+                let Some((ws, slug)) = repo_label.split_once('/') else {
+                    self.toast(format!("malformed BB repo_label: {repo_label}"));
+                    return;
+                };
+                let key = (ws.to_string(), slug.to_string());
+                let Some(pipelines) = self.bitbucket_pipelines.get(&key) else {
+                    self.toast(format!("no pipelines cached for {repo_label}"));
+                    return;
+                };
+                let Some(pipeline) = pipelines
+                    .iter()
+                    .find(|p| p.target_ref.as_deref() == Some(branch))
+                    .cloned()
+                else {
+                    self.toast(format!("no pipeline on branch '{branch}' yet"));
+                    return;
+                };
+                self.bb_pipelines_view_mode = crate::bitbucket::PipelineViewMode::Recent;
+                self.open_bitbucket_pipelines_pane();
+                let flat = crate::ui::bitbucket_pipelines_view::flatten_pipelines(self);
+                if let Some(idx) = flat.iter().position(|r| {
+                    r.pipeline
+                        .as_ref()
+                        .map(|p| p.uuid == pipeline.uuid)
+                        .unwrap_or(false)
+                }) && let Some(active) = self.active
+                    && let Some(Pane::BitbucketPipelines(p)) = self.panes.get_mut(active)
+                {
+                    p.selected = idx;
+                    p.scroll = 0;
+                }
+                self.toast(format!("→ pipeline #{}", pipeline.build_number));
+            }
+            "GH" => {
+                let Some((owner, repo)) = repo_label.split_once('/') else {
+                    self.toast(format!("malformed GH repo_label: {repo_label}"));
+                    return;
+                };
+                let key = (owner.to_string(), repo.to_string());
+                let Some(runs) = self.github_workflow_runs.get(&key) else {
+                    self.toast(format!("no runs cached for {repo_label}"));
+                    return;
+                };
+                let Some(run) = runs
+                    .iter()
+                    .find(|r| r.target_ref.as_deref() == Some(branch))
+                    .cloned()
+                else {
+                    self.toast(format!("no workflow run on branch '{branch}' yet"));
+                    return;
+                };
+                self.gh_actions_view_mode = crate::github::ActionsViewMode::Recent;
+                self.open_github_actions_pane();
+                let flat = crate::ui::github_actions_view::flatten_runs(self);
+                if let Some(idx) = flat
+                    .iter()
+                    .position(|r| r.run.as_ref().map(|w| w.id == run.id).unwrap_or(false))
+                    && let Some(active) = self.active
+                    && let Some(Pane::GithubActions(p)) = self.panes.get_mut(active)
+                {
+                    p.selected = idx;
+                    p.scroll = 0;
+                }
+                self.toast(format!("→ run #{}", run.run_number));
+            }
+            "GL" => {
+                // GitLab project key is repo_label as-is.
+                let Some(pipelines) = self.gitlab_pipelines.get(repo_label) else {
+                    self.toast(format!("no pipelines cached for {repo_label}"));
+                    return;
+                };
+                let Some(pipeline) = pipelines
+                    .iter()
+                    .find(|p| p.target_ref.as_deref() == Some(branch))
+                    .cloned()
+                else {
+                    self.toast(format!("no pipeline on branch '{branch}' yet"));
+                    return;
+                };
+                self.gl_pipelines_view_mode = crate::gitlab::GlPipelineViewMode::Recent;
+                self.open_gitlab_pipelines_pane();
+                let flat = crate::ui::gitlab_pipelines_view::flatten_pipelines(self);
+                if let Some(idx) = flat.iter().position(|r| {
+                    r.pipeline
+                        .as_ref()
+                        .map(|p| p.id == pipeline.id)
+                        .unwrap_or(false)
+                }) && let Some(active) = self.active
+                    && let Some(Pane::GitlabPipelines(p)) = self.panes.get_mut(active)
+                {
+                    p.selected = idx;
+                    p.scroll = 0;
+                }
+                self.toast(format!("→ pipeline #{}", pipeline.id));
+            }
+            "AZ" => {
+                // Azure repo_label is "org/project/repo"; builds are
+                // keyed by "org/project" (no /repo suffix). Match by
+                // prefix.
+                let build_key_prefix = repo_label
+                    .rsplit_once('/')
+                    .map(|(p, _)| p)
+                    .unwrap_or(repo_label);
+                let builds = self
+                    .azdevops_builds
+                    .get(repo_label)
+                    .or_else(|| self.azdevops_builds.get(build_key_prefix));
+                let Some(builds) = builds else {
+                    self.toast(format!("no builds cached for {repo_label}"));
+                    return;
+                };
+                let Some(build) = builds
+                    .iter()
+                    .find(|b| b.target_ref.as_deref() == Some(branch))
+                    .cloned()
+                else {
+                    self.toast(format!("no build on branch '{branch}' yet"));
+                    return;
+                };
+                self.az_builds_view_mode = crate::azdevops::AzBuildsViewMode::Recent;
+                self.open_azdevops_builds_pane();
+                let flat = crate::ui::azdevops_builds_view::flatten_builds(self);
+                if let Some(idx) = flat
+                    .iter()
+                    .position(|r| r.build.as_ref().map(|b| b.id == build.id).unwrap_or(false))
+                    && let Some(active) = self.active
+                    && let Some(Pane::AzDevOpsBuilds(p)) = self.panes.get_mut(active)
+                {
+                    p.selected = idx;
+                    p.scroll = 0;
+                }
+                self.toast(format!("→ build #{}", build.id));
+            }
+            other => {
+                self.toast(format!("unknown host tag '{other}'"));
+            }
+        }
+    }
+
     pub fn picker_accept(&mut self) {
         let Some(picker) = self.picker.take() else {
             return;
@@ -3126,7 +3318,9 @@ impl App {
             PickerKind::AiSessions => self.open_ai_session_mirror(&item.id),
             PickerKind::Clipboard => self.paste_register(&item.id),
             PickerKind::OpenPullRequests => {
-                open_url_external(&item.id);
+                // First field of the `\x1F`-delimited id is the web URL.
+                let url = item.id.split('\x1F').next().unwrap_or(&item.id);
+                open_url_external(url);
             }
             PickerKind::Repos => {
                 if let Ok(idx) = item.id.parse::<usize>() {
@@ -11135,6 +11329,16 @@ impl App {
             .get(self.active_repo)
             .map(|r| r.path.as_path())
             .unwrap_or(self.workspace.as_path())
+    }
+
+    #[doc(hidden)]
+    pub fn after_git_change_pub_for_test(&mut self) {
+        self.after_git_change();
+    }
+
+    #[doc(hidden)]
+    pub fn after_checkout_pub_for_test(&mut self, label: &str) {
+        self.after_checkout(label);
     }
 
     /// After any staging/commit change: refresh the cached status + all git
@@ -19989,15 +20193,92 @@ GET https://example.com/second
         assert!(labels[1].contains("[AZ]"), "AZ second, got {:?}", labels[1]);
         assert!(labels[2].contains("[GH]"), "GH third, got {:?}", labels[2]);
         assert!(labels[3].contains("[BB]"), "BB fourth, got {:?}", labels[3]);
-        // The id should be the URL — accept opens it externally.
+        // The id encodes URL + cross-nav payload (delimited by `\x1F`).
+        // First field is the URL.
         let ids: Vec<String> = picker.items_view().map(|it| it.id.clone()).collect();
-        assert!(ids[0].starts_with("https://gitlab.com/"));
+        let first_url = ids[0].split('\x1F').next().unwrap_or("");
+        assert!(first_url.starts_with("https://gitlab.com/"));
+        // Subsequent fields encode host_tag, repo_label, source_branch
+        // for Tab → cross-nav-to-pipeline.
+        let parts: Vec<&str> = ids[0].split('\x1F').collect();
+        assert_eq!(parts.len(), 4, "id should have 4 \\x1F-delimited fields");
+        assert_eq!(parts[1], "GL");
+        assert_eq!(parts[2], "group/project");
+        assert_eq!(parts[3], "feature/gl");
         // Fuzzy match shrinks to one host (label contains "private-org" and "refactor").
         let mut picker = app.picker.take().unwrap();
         for c in "refactor".chars() {
             picker.type_char(c);
         }
         assert_eq!(picker.len(), 1, "fuzzy 'refactor' narrows to GH only");
+    }
+
+    #[test]
+    fn picker_accept_secondary_cross_navs_pr_to_pipeline() {
+        // Set up: BB repo with a PR + a matching pipeline on the same branch.
+        // Open the cross-host PR picker, Tab on the row → pipelines pane
+        // opens, selection lands on the matching pipeline.
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.bitbucket.repos = vec![crate::config::BitbucketRepo {
+            workspace: "exampleorg".into(),
+            slug: "example-api".into(),
+            branches: Vec::new(),
+        }];
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.bitbucket_pipelines.insert(
+            ("exampleorg".into(), "example-api".into()),
+            vec![crate::bitbucket::PipelineRecord {
+                workspace: "exampleorg".into(),
+                slug: "example-api".into(),
+                uuid: "uuid-99".into(),
+                build_number: 99,
+                state: crate::bitbucket::PipelineState::Successful,
+                target_ref: Some("feature/cross".into()),
+                target_kind: Some("BRANCH".into()),
+                commit_hash: None,
+                creator: None,
+                trigger: None,
+                created_on_ms: Some(0),
+                completed_on_ms: None,
+                duration_secs: None,
+                running_step: None,
+                web_url: "u".into(),
+            }],
+        );
+        app.bitbucket_pull_requests.insert(
+            ("exampleorg".into(), "example-api".into()),
+            vec![crate::bitbucket::PullRequestRecord {
+                workspace: "exampleorg".into(),
+                slug: "example-api".into(),
+                id: 1,
+                title: "Cross-nav PR".into(),
+                state: crate::bitbucket::PullRequestState::Open,
+                author: None,
+                source_branch: Some("feature/cross".into()),
+                dest_branch: Some("main".into()),
+                reviewer_count: 0,
+                approved_count: 0,
+                changes_count: 0,
+                comment_count: 0,
+                task_count: 0,
+                created_on_ms: Some(0),
+                updated_on_ms: Some(0),
+                web_url: "https://bitbucket.org/...".into(),
+            }],
+        );
+        app.open_pr_picker();
+        assert!(app.picker.is_some(), "picker should be open");
+        // Picker has only the one PR — selection is already at idx 0.
+        app.picker_accept_secondary();
+        // Picker should now be closed.
+        assert!(app.picker.is_none(), "picker should close after Tab");
+        // Active pane should be the BB pipelines pane.
+        let active = app.active.expect("active pane");
+        assert!(
+            matches!(app.panes.get(active), Some(Pane::BitbucketPipelines(_))),
+            "active should be BB pipelines pane after cross-nav"
+        );
     }
 
     #[test]
@@ -20103,6 +20384,121 @@ GET https://example.com/second
         } else {
             panic!("not a pipelines pane");
         }
+    }
+
+    #[test]
+    fn after_git_change_updates_rail_pulls_current_branch_marker() {
+        // The rail's `●` current-branch PR marker should follow whatever
+        // branch HEAD currently points at — refreshing via after_git_change
+        // (or its caller after_checkout) must re-classify which cached PR
+        // is "on the current branch."
+        let d = tempfile::tempdir().unwrap();
+        let _ = std::process::Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(d.path())
+            .status();
+        // Need at least one commit so `git checkout -b` can succeed cleanly.
+        std::fs::write(d.path().join("README.md"), "x\n").unwrap();
+        let _ = std::process::Command::new("git")
+            .args(["-c", "user.email=x@x", "-c", "user.name=x", "add", "."])
+            .current_dir(d.path())
+            .status();
+        let _ = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.email=x@x",
+                "-c",
+                "user.name=x",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ])
+            .current_dir(d.path())
+            .status();
+        let _ = std::process::Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:private-org/repo.git",
+            ])
+            .current_dir(d.path())
+            .status();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // Seed two open GH PRs — one on `main`, one on `feat`.
+        app.github_pull_requests.insert(
+            ("private-org".into(), "repo".into()),
+            vec![
+                crate::github::PullRequestRecord {
+                    owner: "private-org".into(),
+                    repo: "repo".into(),
+                    number: 1,
+                    title: "main PR".into(),
+                    state: crate::github::PullRequestState::Open,
+                    author: None,
+                    source_branch: Some("main".into()),
+                    dest_branch: Some("main".into()),
+                    reviewer_count: 0,
+                    approved_count: 0,
+                    changes_count: 0,
+                    comment_count: 0,
+                    review_comment_count: 0,
+                    created_at_ms: Some(0),
+                    updated_at_ms: Some(0),
+                    web_url: "u".into(),
+                },
+                crate::github::PullRequestRecord {
+                    owner: "private-org".into(),
+                    repo: "repo".into(),
+                    number: 2,
+                    title: "feat PR".into(),
+                    state: crate::github::PullRequestState::Open,
+                    author: None,
+                    source_branch: Some("feat".into()),
+                    dest_branch: Some("main".into()),
+                    reviewer_count: 0,
+                    approved_count: 0,
+                    changes_count: 0,
+                    comment_count: 0,
+                    review_comment_count: 0,
+                    created_at_ms: Some(0),
+                    updated_at_ms: Some(0),
+                    web_url: "u".into(),
+                },
+            ],
+        );
+        // Force a refresh — on main, PR #1 should be marked current.
+        app.after_git_change_pub_for_test();
+        let on_main: Vec<bool> = app
+            .git_rail
+            .pulls
+            .iter()
+            .map(|p| p.is_current_branch)
+            .collect();
+        assert!(
+            !on_main.is_empty(),
+            "expected the GH PRs to project into the rail; got empty"
+        );
+        // PR for `main` should be flagged current; `feat` should not.
+        let main_pr = app.git_rail.pulls.iter().find(|p| p.title == "main PR");
+        let feat_pr = app.git_rail.pulls.iter().find(|p| p.title == "feat PR");
+        assert!(main_pr.is_some_and(|p| p.is_current_branch));
+        assert!(feat_pr.is_some_and(|p| !p.is_current_branch));
+        // Create + checkout feat. after_checkout chains to after_git_change
+        // which chains to refresh_rail_pulls.
+        let _ = std::process::Command::new("git")
+            .args(["checkout", "-q", "-b", "feat"])
+            .current_dir(d.path())
+            .status();
+        app.after_checkout_pub_for_test("feat");
+        let main_pr = app.git_rail.pulls.iter().find(|p| p.title == "main PR");
+        let feat_pr = app.git_rail.pulls.iter().find(|p| p.title == "feat PR");
+        assert!(
+            feat_pr.is_some_and(|p| p.is_current_branch),
+            "expected feat PR to be marked current after checkout"
+        );
+        assert!(main_pr.is_some_and(|p| !p.is_current_branch));
     }
 
     #[test]
