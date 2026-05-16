@@ -2128,9 +2128,20 @@ repo, run_id)` walks the run's jobs via `/actions/runs/{id}/jobs`
 then each job's `/actions/jobs/{id}/logs` (plain text), concatenating
 with `══ job N: <name> (state) ══` headers — sibling to BB's
 fetch_combined_pipeline_log. 404/410 per-job logs ⇒ "(no log)"
-inline so a half-finished run still renders. GitLab + Azure DevOps
-log fetchers follow the same shape; deferred to a future commit
-to keep this one bounded.
+inline so a half-finished run still renders.
+
+**GitLab + Azure DevOps log viewers** — `L` chord on a GL pipeline
+or AZ build row uses the same shared pane via two new `LogHost`
+variants (`Gitlab` / `Azure`). `crate::gitlab::api::fetch_combined_pipeline_log`
+walks `/projects/{id}/pipelines/{pipeline_id}/jobs` then GETs each
+job's `/jobs/{id}/trace` (plain text); `crate::azdevops::api::fetch_combined_build_log`
+walks `/_apis/build/builds/{id}/logs` then GETs each `/logs/{logId}`
+(plain text). Same `══ job/log N ══` separators, same 404 ⇒ `(no log)`
+fallback. The shared `PipelineLogPane` grew one new `host_extra: String`
+slot to carry GitLab's API base URL (the only host where the endpoint
+prefix isn't hard-coded); BB/GH/AZ leave it empty. Refetch reads
+`host_extra` off the pane so a self-hosted GitLab instance keeps the
+right base URL across `r`-presses.
 
 **Cross-host PR picker: Tab → cross-nav-to-pipeline** — the cross-host
 PR picker (`pr.picker`, `<leader>P p`) previously only opened the

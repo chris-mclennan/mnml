@@ -50,6 +50,74 @@ fn url_encode(s: &str) -> String {
     out
 }
 
+/// Walk every job of a pipeline and concatenate each job's `/trace` output
+/// into one big string, with `══ job N: <name> (status) ══` separators
+/// between them. Sibling to `bitbucket::fetch_combined_pipeline_log` and
+/// `github::fetch_combined_run_log`.
+///
+/// GitLab's per-job trace endpoint returns plain text. Skipped / manual /
+/// pending jobs return a 200 with an empty body — render as `(no log)` so
+/// the structure still shows.
+pub fn fetch_combined_pipeline_log(
+    client: &reqwest::blocking::Client,
+    base_url: &str,
+    auth_header: &str,
+    project: &str,
+    pipeline_id: u64,
+) -> Result<String, String> {
+    let id = url_encode(project);
+    let jobs_url = format!("{base_url}/projects/{id}/pipelines/{pipeline_id}/jobs?per_page=100");
+    let body = http_get(client, &jobs_url, auth_header).map_err(|e| format!("jobs fetch: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("jobs json: {e}"))?;
+    let jobs = v
+        .as_array()
+        .ok_or_else(|| "jobs json: not an array".to_string())?;
+    let mut out = String::new();
+    for (i, job) in jobs.iter().enumerate() {
+        let job_id = job
+            .get("id")
+            .and_then(|x| x.as_u64())
+            .ok_or_else(|| format!("job {}: missing id", i + 1))?;
+        let job_name = job
+            .get("name")
+            .and_then(|s| s.as_str())
+            .unwrap_or("(unnamed job)");
+        let status = job.get("status").and_then(|s| s.as_str()).unwrap_or("?");
+        out.push_str(&format!("\n══ job {}: {job_name}  ({status}) ══\n", i + 1));
+        let trace_url = format!("{base_url}/projects/{id}/jobs/{job_id}/trace");
+        let resp = client
+            .get(&trace_url)
+            .header("Authorization", auth_header)
+            .send()
+            .map_err(|e| format!("job {} trace: {e}", i + 1))?;
+        // GitLab returns 404 for never-run jobs (skipped / manual not started).
+        if resp.status().as_u16() == 404 {
+            out.push_str("(no log)\n");
+            continue;
+        }
+        if !resp.status().is_success() {
+            out.push_str(&format!("(log fetch failed: HTTP {})\n", resp.status()));
+            continue;
+        }
+        let text = resp
+            .text()
+            .map_err(|e| format!("job {} body: {e}", i + 1))?;
+        if text.is_empty() {
+            out.push_str("(no log)\n");
+            continue;
+        }
+        out.push_str(&text);
+        if !text.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    if out.is_empty() {
+        out.push_str("(this pipeline has no jobs yet)\n");
+    }
+    Ok(out)
+}
+
 pub fn fetch_recent_pipelines(
     client: &reqwest::blocking::Client,
     base_url: &str,

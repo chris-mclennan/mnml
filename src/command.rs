@@ -1941,6 +1941,20 @@ fn builtin_commands() -> Vec<Command> {
         run: |app| app.open_github_run_log(),
     });
     cmds.push(Command {
+        id: "gitlab.pipeline_log",
+        title: "GitLab: open log for selected pipeline",
+        group: "gitlab",
+        keys: &[],
+        run: |app| app.open_gitlab_pipeline_log(),
+    });
+    cmds.push(Command {
+        id: "azdevops.build_log",
+        title: "Azure DevOps: open log for selected build",
+        group: "azdevops",
+        keys: &[],
+        run: |app| app.open_azdevops_build_log(),
+    });
+    cmds.push(Command {
         id: "bitbucket.jump_pr_to_pipeline",
         title: "Bitbucket: PR → pipeline on same branch",
         group: "bitbucket",

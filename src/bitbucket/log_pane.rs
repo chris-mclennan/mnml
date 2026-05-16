@@ -14,10 +14,21 @@ use std::sync::atomic::AtomicBool;
 /// Which host's API the pane should query on refetch. The pane carries
 /// identifying strings (workspace/slug/uuid in the BB case, owner/repo/
 /// run-id for GH, …); this enum tells the refetch path which API to call.
+///
+/// Per-host id mapping (`workspace`, `slug`, `pipeline_uuid` is just three
+/// generic id slots — names retained for backwards-compat with the BB-first
+/// type):
+/// * `Bitbucket` — `(workspace, slug, pipeline_uuid)`. `host_extra` unused.
+/// * `Github`    — `(owner, repo, run_id-as-string)`. `host_extra` unused.
+/// * `Gitlab`    — `(project-path-or-id, pipeline_id-as-string, "")`.
+///   `host_extra` holds the GitLab API base URL (self-hosted instances differ).
+/// * `Azure`     — `(org, project, build_id-as-string)`. `host_extra` unused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogHost {
     Bitbucket,
     Github,
+    Gitlab,
+    Azure,
 }
 
 #[derive(Debug)]
@@ -27,10 +38,16 @@ pub struct PipelineLogPane {
     /// Which host this pane is wired to.
     pub host: LogHost,
     /// Host-specific id strings. For BB: `workspace` / `slug` / `pipeline_uuid`.
-    /// For GH: `owner` / `repo` / `run_id-as-string`.
+    /// For GH: `owner` / `repo` / `run_id-as-string`. For GL: `project` /
+    /// `pipeline_id-as-string` / `""`. For AZ: `org` / `project` /
+    /// `build_id-as-string`.
     pub workspace: String,
     pub slug: String,
     pub pipeline_uuid: String,
+    /// Per-host overflow slot. GitLab uses this to carry the API base URL
+    /// (the only host where the endpoint base isn't hard-coded). Empty for
+    /// every other host.
+    pub host_extra: String,
     /// State of the fetch.
     pub state: PipelineLogState,
     /// Top rendered row.
@@ -91,12 +108,19 @@ impl PipelineLogPane {
             workspace,
             slug,
             pipeline_uuid,
+            host_extra: String::new(),
             state: PipelineLogState::Fetching,
             scroll: 0,
             job_id,
             cancel,
             web_url,
         }
+    }
+
+    /// Builder for the `host_extra` slot. Only GitLab uses it today.
+    pub fn with_host_extra(mut self, extra: impl Into<String>) -> Self {
+        self.host_extra = extra.into();
+        self
     }
 }
 

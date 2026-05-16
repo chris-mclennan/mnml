@@ -1579,6 +1579,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('y') => app.copy_selected_gitlab_pipeline_url(),
             KeyCode::Char('r') => app.refresh_active_gitlab_pane(),
             KeyCode::Char('P') => app.jump_from_gl_pipeline_to_mr(),
+            KeyCode::Char('L') => app.open_gitlab_pipeline_log(),
             KeyCode::Char('v') => {
                 let new_mode = app.gl_pipelines_view_mode.cycle();
                 app.gl_pipelines_view_mode = new_mode;
@@ -1827,6 +1828,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('y') => app.copy_selected_azdevops_build_url(),
             KeyCode::Char('r') => app.refresh_active_azdevops_pane(),
             KeyCode::Char('P') => app.jump_from_az_build_to_pr(),
+            KeyCode::Char('L') => app.open_azdevops_build_log(),
             KeyCode::Char('v') => {
                 let new_mode = app.az_builds_view_mode.cycle();
                 app.az_builds_view_mode = new_mode;

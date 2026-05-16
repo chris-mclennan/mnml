@@ -17720,6 +17720,128 @@ impl App {
     /// per-job log. Sibling of [`Self::open_bitbucket_pipeline_log`];
     /// reuses the same `Pane::BitbucketPipelineLog` variant via the
     /// new `LogHost::Github` tag.
+    /// `L` on the selected GitLab pipeline row — open a log viewer pane
+    /// and kick off a background fetch of the pipeline's combined per-job
+    /// trace. Same scaffolding as [`Self::open_github_run_log`].
+    pub fn open_gitlab_pipeline_log(&mut self) {
+        let id = match self.active {
+            Some(id) => id,
+            None => {
+                self.toast("no pane focused");
+                return;
+            }
+        };
+        let Some(Pane::GitlabPipelines(pane)) = self.panes.get(id) else {
+            self.toast("not a GitLab pipelines pane");
+            return;
+        };
+        let Some(pipeline) = crate::ui::gitlab_pipelines_view::selected_pipeline(self, pane) else {
+            self.toast("no pipeline selected");
+            return;
+        };
+        let base_url = self.config.gitlab.base_url_or_default().to_string();
+        let title = format!("{} · pipeline #{}", pipeline.project, pipeline.iid);
+        let job_id = self.pipeline_log_next_job;
+        self.pipeline_log_next_job = self.pipeline_log_next_job.wrapping_add(1);
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let log_pane = crate::bitbucket::PipelineLogPane::new_with_host(
+            title,
+            crate::bitbucket::LogHost::Gitlab,
+            pipeline.project.clone(),
+            pipeline.id.to_string(),
+            String::new(),
+            pipeline.web_url.clone(),
+            job_id,
+            cancel.clone(),
+        )
+        .with_host_extra(base_url.clone());
+        let pane_v = Pane::BitbucketPipelineLog(log_pane);
+        let new_id = self.split_leaf_with(id, crate::layout::SplitDir::Horizontal, pane_v);
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+        let auth_env = self
+            .config
+            .gitlab
+            .auth_env
+            .clone()
+            .unwrap_or_else(|| "GITLAB_TOKEN".to_string());
+        self.spawn_log_fetch_inner(
+            job_id,
+            crate::bitbucket::LogHost::Gitlab,
+            auth_env,
+            pipeline.project,
+            pipeline.id.to_string(),
+            String::new(),
+            base_url,
+            cancel,
+        );
+    }
+
+    /// `L` on the selected Azure DevOps build row — open a log viewer pane
+    /// and kick off a background fetch of the build's combined per-log
+    /// output. Azure splits a build into many `logs/{logId}` resources;
+    /// we concatenate them with `══ log N ══` separators.
+    pub fn open_azdevops_build_log(&mut self) {
+        let id = match self.active {
+            Some(id) => id,
+            None => {
+                self.toast("no pane focused");
+                return;
+            }
+        };
+        let Some(Pane::AzDevOpsBuilds(pane)) = self.panes.get(id) else {
+            self.toast("not an Azure DevOps builds pane");
+            return;
+        };
+        let Some(build) = crate::ui::azdevops_builds_view::selected_build(self, pane) else {
+            self.toast("no build selected");
+            return;
+        };
+        // `BuildRecord.label` is `"org/project/repo"` — the log endpoint
+        // only needs org/project so split out the first two segments.
+        let mut parts = build.label.splitn(3, '/');
+        let org = parts.next().unwrap_or("").to_string();
+        let project = parts.next().unwrap_or("").to_string();
+        if org.is_empty() || project.is_empty() {
+            self.toast(format!("bad AZ build label: {}", build.label));
+            return;
+        }
+        let title = format!("{org}/{project} · build #{}", build.build_number);
+        let job_id = self.pipeline_log_next_job;
+        self.pipeline_log_next_job = self.pipeline_log_next_job.wrapping_add(1);
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let log_pane = crate::bitbucket::PipelineLogPane::new_with_host(
+            title,
+            crate::bitbucket::LogHost::Azure,
+            org.clone(),
+            project.clone(),
+            build.id.to_string(),
+            build.web_url.clone(),
+            job_id,
+            cancel.clone(),
+        );
+        let pane_v = Pane::BitbucketPipelineLog(log_pane);
+        let new_id = self.split_leaf_with(id, crate::layout::SplitDir::Horizontal, pane_v);
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+        let auth_env = self
+            .config
+            .azdevops
+            .auth_env
+            .clone()
+            .unwrap_or_else(|| "AZDO_TOKEN".to_string());
+        self.spawn_log_fetch_inner(
+            job_id,
+            crate::bitbucket::LogHost::Azure,
+            auth_env,
+            org,
+            project,
+            build.id.to_string(),
+            String::new(),
+            cancel,
+        );
+    }
+
     pub fn open_github_run_log(&mut self) {
         let id = match self.active {
             Some(id) => id,
@@ -17767,6 +17889,7 @@ impl App {
             run.owner,
             run.repo,
             run.id.to_string(),
+            String::new(),
             cancel,
         );
     }
@@ -17843,13 +17966,14 @@ impl App {
             workspace,
             slug,
             pipeline_uuid,
+            String::new(),
             cancel,
         );
     }
 
-    /// Host-aware sibling to `spawn_bitbucket_pipeline_log_fetch`. For BB
-    /// the three id strings are (workspace, slug, pipeline_uuid); for GH
-    /// they're (owner, repo, run_id-as-string).
+    /// Host-aware log fetcher. The three id strings are host-specific —
+    /// see `bitbucket::LogHost`'s docs for the per-host mapping. `host_extra`
+    /// is only consulted by `LogHost::Gitlab` (carries the API base URL).
     #[allow(clippy::too_many_arguments)]
     fn spawn_log_fetch_inner(
         &mut self,
@@ -17859,6 +17983,7 @@ impl App {
         id1: String,
         id2: String,
         id3: String,
+        host_extra: String,
         cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) {
         let tx = self.ensure_pipeline_log_chan_tx();
@@ -17923,6 +18048,60 @@ impl App {
                         &id1,
                         &id2,
                         run_id,
+                    )
+                }
+                LogHost::Gitlab => {
+                    let auth_header = crate::gitlab::api::auth_header_value(&token);
+                    let client = match crate::gitlab::api::build_client() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            let _ = tx.send(PipelineLogEvent::Failed { job_id, err: e });
+                            return;
+                        }
+                    };
+                    let pipeline_id: u64 = match id2.parse() {
+                        Ok(n) => n,
+                        Err(_) => {
+                            let _ = tx.send(PipelineLogEvent::Failed {
+                                job_id,
+                                err: format!("bad GL pipeline_id: {id2}"),
+                            });
+                            return;
+                        }
+                    };
+                    crate::gitlab::api::fetch_combined_pipeline_log(
+                        &client,
+                        &host_extra,
+                        &auth_header,
+                        &id1,
+                        pipeline_id,
+                    )
+                }
+                LogHost::Azure => {
+                    let auth_header = crate::azdevops::api::auth_header_value(&token);
+                    let client = match crate::azdevops::api::build_client() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            let _ = tx.send(PipelineLogEvent::Failed { job_id, err: e });
+                            return;
+                        }
+                    };
+                    let build_id: u64 = match id3.parse() {
+                        Ok(n) => n,
+                        Err(_) => {
+                            let _ = tx.send(PipelineLogEvent::Failed {
+                                job_id,
+                                err: format!("bad AZ build_id: {id3}"),
+                            });
+                            return;
+                        }
+                    };
+                    crate::azdevops::api::fetch_combined_build_log(
+                        &client,
+                        &auth_header,
+                        &id1,
+                        &id2,
+                        build_id,
                     )
                 }
             };
@@ -18007,6 +18186,7 @@ impl App {
         let id1 = pane.workspace.clone();
         let id2 = pane.slug.clone();
         let id3 = pane.pipeline_uuid.clone();
+        let host_extra = pane.host_extra.clone();
         pane.job_id = new_job;
         pane.cancel = new_cancel.clone();
         pane.state = crate::bitbucket::PipelineLogState::Fetching;
@@ -18024,8 +18204,22 @@ impl App {
                 .auth_env
                 .clone()
                 .unwrap_or_else(|| "GITHUB_TOKEN".to_string()),
+            crate::bitbucket::LogHost::Gitlab => self
+                .config
+                .gitlab
+                .auth_env
+                .clone()
+                .unwrap_or_else(|| "GITLAB_TOKEN".to_string()),
+            crate::bitbucket::LogHost::Azure => self
+                .config
+                .azdevops
+                .auth_env
+                .clone()
+                .unwrap_or_else(|| "AZDO_TOKEN".to_string()),
         };
-        self.spawn_log_fetch_inner(new_job, host, auth_env, id1, id2, id3, new_cancel);
+        self.spawn_log_fetch_inner(
+            new_job, host, auth_env, id1, id2, id3, host_extra, new_cancel,
+        );
     }
 
     /// `Enter` in the pipeline-log pane — open the pipeline's web URL.

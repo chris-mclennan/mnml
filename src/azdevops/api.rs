@@ -56,6 +56,83 @@ fn project_url_prefix(p: &AzDevOpsProject) -> String {
     )
 }
 
+/// Walk every log of a build and concatenate each `/logs/{logId}` output
+/// into one big string, with `══ log N (lines a-b) ══` separators between
+/// them. Sibling to `bitbucket::fetch_combined_pipeline_log`,
+/// `github::fetch_combined_run_log`, and `gitlab::fetch_combined_pipeline_log`.
+///
+/// Azure DevOps splits a build's output into many "log" resources (one per
+/// step / job); the list endpoint returns metadata, the per-log endpoint
+/// returns plain text. Builds still in progress may have a partial list —
+/// not-yet-written logs return 404, handled inline as `(no log)`.
+pub fn fetch_combined_build_log(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    org: &str,
+    project: &str,
+    build_id: u64,
+) -> Result<String, String> {
+    let prefix = format!(
+        "https://dev.azure.com/{}/{}",
+        url_encode(org),
+        url_encode(project)
+    );
+    let logs_url = format!("{prefix}/_apis/build/builds/{build_id}/logs?api-version={API_VERSION}");
+    let body = http_get(client, &logs_url, auth_header).map_err(|e| format!("logs fetch: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("logs json: {e}"))?;
+    let values = v
+        .get("value")
+        .and_then(|x| x.as_array())
+        .ok_or_else(|| "logs json: no `value` array".to_string())?;
+    let mut out = String::new();
+    for (i, log) in values.iter().enumerate() {
+        let log_id = log
+            .get("id")
+            .and_then(|x| x.as_u64())
+            .ok_or_else(|| format!("log {}: missing id", i + 1))?;
+        let line_count = log.get("lineCount").and_then(|x| x.as_u64()).unwrap_or(0);
+        out.push_str(&format!(
+            "\n══ log {} (id {log_id}, {line_count} lines) ══\n",
+            i + 1
+        ));
+        let log_url = format!(
+            "{prefix}/_apis/build/builds/{build_id}/logs/{log_id}?api-version={API_VERSION}"
+        );
+        let resp = client
+            .get(&log_url)
+            .header("Authorization", auth_header)
+            // Azure honors `?$format=text`, but the default for this endpoint
+            // is already plain text — set Accept to keep it explicit.
+            .header("Accept", "text/plain")
+            .send()
+            .map_err(|e| format!("log {} body: {e}", i + 1))?;
+        if resp.status().as_u16() == 404 {
+            out.push_str("(no log)\n");
+            continue;
+        }
+        if !resp.status().is_success() {
+            out.push_str(&format!("(log fetch failed: HTTP {})\n", resp.status()));
+            continue;
+        }
+        let text = resp
+            .text()
+            .map_err(|e| format!("log {} read: {e}", i + 1))?;
+        if text.is_empty() {
+            out.push_str("(no log)\n");
+            continue;
+        }
+        out.push_str(&text);
+        if !text.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    if out.is_empty() {
+        out.push_str("(this build has no logs yet)\n");
+    }
+    Ok(out)
+}
+
 pub fn fetch_recent_builds(
     client: &reqwest::blocking::Client,
     auth_header: &str,
