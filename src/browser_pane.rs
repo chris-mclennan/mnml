@@ -1034,6 +1034,29 @@ impl BrowserPane {
         }
     }
 
+    /// `d` in the cookies panel — fire `Network.deleteCookies` for the
+    /// selected cookie. Returns the cookie's name on success (so the
+    /// App can toast). The reply is fire-and-forget; we optimistically
+    /// drop the row locally so the user sees the change before the
+    /// round-trip lands.
+    pub fn delete_selected_cookie(&mut self) -> Option<String> {
+        if self.closed {
+            return None;
+        }
+        let (name, domain, path) = self
+            .selected_cookie()
+            .map(|c| (c.name.clone(), c.domain.clone(), c.path.clone()))?;
+        self.send(|id| crate::cdp::delete_cookies(id, &name, &domain, &path));
+        if self.cookies_sel < self.cookies.len() {
+            self.cookies.remove(self.cookies_sel);
+        }
+        if self.cookies_sel >= self.cookies.len() {
+            self.cookies_sel = self.cookies.len().saturating_sub(1);
+        }
+        self.push(LogKind::System, format!("deleted cookie {name}"));
+        Some(name)
+    }
+
     /// Clamp + move the cookies-panel selection by `delta`.
     pub fn move_cookies_sel(&mut self, delta: isize) {
         if self.cookies.is_empty() {
@@ -1743,6 +1766,60 @@ mod tests {
     fn parse_cookies_handles_non_array_input() {
         assert!(parse_cookies(&serde_json::json!({})).is_empty());
         assert!(parse_cookies(&serde_json::json!(null)).is_empty());
+    }
+
+    #[test]
+    fn delete_selected_cookie_fires_cdp_and_drops_row() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        let _ = drain_cdp(&rx);
+        p.set_cookies(vec![
+            CookieEntry {
+                name: "a".into(),
+                value: "1".into(),
+                domain: ".x".into(),
+                path: "/".into(),
+                expires: -1,
+                http_only: false,
+                secure: false,
+                same_site: String::new(),
+            },
+            CookieEntry {
+                name: "b".into(),
+                value: "2".into(),
+                domain: ".x".into(),
+                path: "/p".into(),
+                expires: -1,
+                http_only: false,
+                secure: false,
+                same_site: String::new(),
+            },
+        ]);
+        p.cookies_sel = 1;
+        let name = p.delete_selected_cookie();
+        assert_eq!(name.as_deref(), Some("b"));
+        assert_eq!(p.cookies.len(), 1);
+        assert_eq!(p.cookies[0].name, "a");
+        // Selection should clamp back into the new range.
+        assert_eq!(p.cookies_sel, 0);
+        let msgs = drain_cdp(&rx);
+        let req = msgs
+            .iter()
+            .find(|m| m["method"] == "Network.deleteCookies")
+            .expect("delete request");
+        assert_eq!(req["params"]["name"], "b");
+        assert_eq!(req["params"]["domain"], ".x");
+        assert_eq!(req["params"]["path"], "/p");
+    }
+
+    #[test]
+    fn delete_selected_cookie_noops_on_empty_list() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        let _ = drain_cdp(&rx);
+        assert!(p.delete_selected_cookie().is_none());
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "Network.deleteCookies"), 0);
     }
 
     #[test]

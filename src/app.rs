@@ -7937,6 +7937,21 @@ impl App {
         b.cookies_sel = b.cookies_sel.min(b.cookies.len().saturating_sub(1));
     }
 
+    /// `d` in the cookies panel — fire `Network.deleteCookies` for the
+    /// selected cookie. The row is dropped optimistically (the actual
+    /// reply is fire-and-forget); the next `R` re-fetch confirms with
+    /// the browser. Toast the cookie's name on success.
+    pub fn delete_selected_cookie(&mut self) {
+        let name = match self.active.and_then(|i| self.panes.get_mut(i)) {
+            Some(Pane::Browser(b)) => b.delete_selected_cookie(),
+            _ => None,
+        };
+        match name {
+            Some(n) => self.toast(format!("deleted cookie {n}")),
+            None => self.toast("no cookie selected"),
+        }
+    }
+
     /// `y` in the cookies panel — copy the selected cookie's
     /// `name=value` pair to the clipboard.
     pub fn copy_cookie_name_value(&mut self) {

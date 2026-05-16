@@ -898,6 +898,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('y') if net_focus => app.copy_net_entry_curl(),
             KeyCode::Char('K') => app.browser_open_cookies(),
             KeyCode::Char('y') if cookies_focus => app.copy_cookie_name_value(),
+            KeyCode::Char('d') if cookies_focus => app.delete_selected_cookie(),
             KeyCode::Char('R') if cookies_focus => {
                 if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
                     b.fetch_cookies();

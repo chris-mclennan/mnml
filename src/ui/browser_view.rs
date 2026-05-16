@@ -91,7 +91,7 @@ pub fn draw(
         }
     } else if b.cookies_focus {
         format!(
-            "  cookies ({}) · ↑↓ select · y copy name=value · R re-fetch · esc back",
+            "  cookies ({}) · ↑↓ select · y copy · d delete · R re-fetch · esc back",
             b.cookies.len()
         )
     } else if b.storage_focus {

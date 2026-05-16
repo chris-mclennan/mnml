@@ -169,6 +169,22 @@ pub fn get_cookies(id: i64) -> String {
     rpc(id, "Network.getCookies", serde_json::json!({}))
 }
 
+/// `Network.deleteCookies` — clear a specific cookie. `name` is
+/// required; `domain` + `path` narrow the match (a name-only delete
+/// drops every cookie with that name across every domain, which is
+/// usually too broad). Used by the `d` chord in the cookies panel.
+pub fn delete_cookies(id: i64, name: &str, domain: &str, path: &str) -> String {
+    rpc(
+        id,
+        "Network.deleteCookies",
+        serde_json::json!({
+            "name": name,
+            "domain": domain,
+            "path": path,
+        }),
+    )
+}
+
 /// `DOM.scrollIntoViewIfNeeded` — scrolls the page so `node_id`'s
 /// bounding box is visible. Used by the `Z` chord in the DOM panel
 /// to bring off-screen nodes into view before subsequent gestures

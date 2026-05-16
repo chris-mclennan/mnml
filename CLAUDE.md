@@ -1765,7 +1765,11 @@ sandboxed origins throw on access). Reply parsed via `parse_storage_eval` into `
 (local entries first, then session). Each row renders as `[L] key=value` or `[S] key=value` — purple chip for
 localStorage, yellow chip for sessionStorage. ↑↓ / jk / PgUp / PgDn / g / G / Home / End move the selection, `y` copies
 `key=value`, `R` re-fetches, Esc back. Eval-based instead of `DOMStorage.getDOMStorageItems` so we don't have to enable
-a new CDP domain or extract securityOrigin from the page URL. `R` re-fetches, `D`
+a new CDP domain or extract securityOrigin from the page URL.
+**`d` in the cookies panel deletes the selected cookie** (`browser.delete_cookie`) — fires `Network.deleteCookies`
+with the cookie's `{ name, domain, path }` so the match is narrow (a name-only delete drops the cookie across every
+domain, usually too broad). The row drops locally on dispatch (optimistic); the next `R` re-fetch confirms with the
+browser. Pairs naturally with the `K` cookies panel for "log out by clearing this session cookie" debug flows. `R` re-fetches, `D`
 (or Esc) leave the panel (Esc also clears any highlight via `Overlay.hideHighlight`). After `s` writes the PNG, `open_path_external` hands it to the OS default app (`open` on macOS,
 `xdg-open` on Linux, `cmd /C start` on Windows; best-effort, errors swallowed). `Target.setDiscoverTargets {discover:true}`
 is also sent on connect so popups / new-tabs show up as `⤴ new tab → url` log lines (`Target.targetCreated` with
