@@ -1,0 +1,46 @@
+# Vim `:%s/old/new/[flags]` (whole-buffer) and bare `:s/old/new/[flags]`
+# (current-line only). Mnml extension: `g` flag is implicit for `:%s`.
+
+# ─── :%s/old/new/ — buffer-wide ─────────────────────────────────────
+write doc.txt "alpha\nbeta alpha\ngamma alpha"
+open doc.txt
+command editor.use_vim
+
+# Replace every "alpha" with "ALPHA" across the whole buffer.
+type ":%s/alpha/ALPHA/"
+key enter
+command file.save
+
+expect file doc.txt contains "ALPHA"
+expect file doc.txt lacks "alpha"
+
+# ─── :%s/old/new/i — case-insensitive ───────────────────────────────
+write case.txt "Foo bar FOO baz foO"
+open case.txt
+command editor.use_vim
+type ":%s/foo/Q/i"
+key enter
+command file.save
+# All three variants replaced via the i flag.
+expect file case.txt contains "Q bar Q baz Q"
+
+# ─── :%s/old// — empty replacement deletes ──────────────────────────
+write del.txt "keep [drop] keep"
+open del.txt
+command editor.use_vim
+type ":%s/[drop] //"
+key enter
+command file.save
+expect file del.txt contains "keep keep"
+
+# ─── :s/old/new/ — current-line scope only ──────────────────────────
+write scope.txt "x x x\ny y y\nz z z"
+open scope.txt
+command editor.use_vim
+# Move to line 2 (the y's). Then bare :s should only touch that line.
+key j
+type ":s/y/W/"
+key enter
+command file.save
+# All three y's on row 2 replaced (g is implicit in mnml), other rows untouched.
+expect file scope.txt contains "x x x\nW W W\nz z z"
