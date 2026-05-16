@@ -176,21 +176,15 @@ pub fn draw(
                 let row_bg = if selected { t.bg2 } else { t.bg_dark };
                 let collapsed = p.is_collapsed(&row.header_label);
                 let arrow = if collapsed { "▸ " } else { "▾ " };
+                // Tree-style: 2-space indent, arrow, label. Not bold —
+                // matches user preference. Purple instead of the tree's
+                // blue keeps the SCM pane visually distinguishable.
                 lines.push(Line::from(vec![
-                    Span::styled(" ", Style::default().bg(row_bg)),
-                    Span::styled(
-                        arrow,
-                        Style::default()
-                            .fg(t.purple)
-                            .bg(row_bg)
-                            .add_modifier(Modifier::BOLD),
-                    ),
+                    Span::styled("  ", Style::default().bg(row_bg)),
+                    Span::styled(arrow, Style::default().fg(t.purple).bg(row_bg)),
                     Span::styled(
                         row.header_label.clone(),
-                        Style::default()
-                            .fg(t.purple)
-                            .bg(row_bg)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(t.purple).bg(row_bg),
                     ),
                     Span::styled(
                         format!("  ({})", row.repo_count),
@@ -208,7 +202,7 @@ pub fn draw(
                 let Some(pipe) = row.pipeline.as_ref() else {
                     let branch = row.branch_label.as_deref().unwrap_or("?");
                     lines.push(Line::from(vec![
-                        Span::styled("   ", Style::default().bg(row_bg)),
+                        Span::styled("    ", Style::default().bg(row_bg)),
                         Span::styled(
                             "·  ",
                             Style::default().fg(t.comment).bg(row_bg),
@@ -278,7 +272,7 @@ pub fn draw(
                 };
 
                 lines.push(Line::from(vec![
-                    Span::styled("   ", Style::default().bg(row_bg)),
+                    Span::styled("    ", Style::default().bg(row_bg)),
                     Span::styled(
                         format!("{glyph}  "),
                         Style::default()

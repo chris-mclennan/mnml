@@ -155,20 +155,11 @@ pub fn draw(
                 let collapsed = p.is_collapsed(&row.header_label);
                 let arrow = if collapsed { "▸ " } else { "▾ " };
                 lines.push(Line::from(vec![
-                    Span::styled(" ", Style::default().bg(row_bg)),
-                    Span::styled(
-                        arrow,
-                        Style::default()
-                            .fg(t.purple)
-                            .bg(row_bg)
-                            .add_modifier(Modifier::BOLD),
-                    ),
+                    Span::styled("  ", Style::default().bg(row_bg)),
+                    Span::styled(arrow, Style::default().fg(t.purple).bg(row_bg)),
                     Span::styled(
                         row.header_label.clone(),
-                        Style::default()
-                            .fg(t.purple)
-                            .bg(row_bg)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(t.purple).bg(row_bg),
                     ),
                     Span::styled(
                         format!("  ({})", row.repo_count),
@@ -184,7 +175,7 @@ pub fn draw(
                     // PerBranch row with no runs yet — show the branch with a placeholder.
                     let branch = row.branch_label.as_deref().unwrap_or("?");
                     lines.push(Line::from(vec![
-                        Span::styled("   ", Style::default().bg(row_bg)),
+                        Span::styled("    ", Style::default().bg(row_bg)),
                         Span::styled(
                             "·  ",
                             Style::default().fg(t.comment).bg(row_bg),
@@ -255,7 +246,7 @@ pub fn draw(
                 };
 
                 lines.push(Line::from(vec![
-                    Span::styled("   ", Style::default().bg(row_bg)),
+                    Span::styled("    ", Style::default().bg(row_bg)),
                     Span::styled(
                         format!("{glyph}  "),
                         Style::default()
