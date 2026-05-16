@@ -2042,6 +2042,82 @@ draft beats raw state), comment counts are split into "issue comments"
 will follow up with a per-PR `/reviews` call to populate approved /
 changes-requested counts the way BB's participant list already does.
 `<leader>P g` chord.
+**SCM/CI dashboards — sweep complete (BB + GH + GitLab + Azure DevOps).**
+After the initial BB/GH phases the four hosts now share a single mental
+model. All eight panes (pipelines + PRs × 4 hosts) have:
+(1) **View-mode toggle (`v`)** — `Recent` ⇄ `PerBranch` for builds /
+pipelines; `PerRepo` ⇄ `Mine` for PRs/MRs. State is stored on `App`
+(`{bb,gh,gl,az}_pipelines_view_mode` etc) and flipping cycles the
+flatten function used by both renderer and tui handler — view-mode
+mismatches between flat and rendering were the headline bug surfaced
+during the rewrite (`87ffef2` fixed it across both code paths).
+(2) **Collapsible repo/project headers** — file-tree style. Nerd Font
+chevrons `f105` ⇄ `f107` (Unicode triangles `▸ ▾` fallback when `[ui]
+ascii_icons = true`). 2-space header indent, 4-space child indent.
+Header rows are selectable; `Enter` toggles, `Right`/`l` expands,
+`Left`/`h` collapses (or jumps up to parent header from a child row
+— same tree convention).
+(3) **Per-row mouse** — single-click selects, single-click on a header
+toggles collapse, double-click on a data row fires the primary action
+(open in browser). Renderers push per-row `(rect, pane_id, flat_idx)`
+into `app.rects.list_rows`; the mouse dispatcher in `tui.rs` matches
+the rect and calls `handle_scm_row_click`. The same registry was
+extended to non-SCM list panes during the broader mouse audit
+(Diagnostics, Outline, Grep/Quickfix, GitStatus, Tests, Flaky, Diff,
+GitGraph, CmdlineHistory, CodeBuilds) — every list-style pane in the
+codebase now supports click-to-select + double-click-to-act. The only
+list pane *not* wired is `TestExecutions` (private-gated, multi-env
+column layout that needs its own row-tracking shape).
+(4) **Session persistence** — view-mode + `collapsed_*` HashSets land
+in `session.json` via 8 new fields (`{bb,gh,gl,az}_{pipelines,prs}_view_mode`
++ `..._collapsed`). Enum variants serialize kebab-case. Survives pane
+close + relaunch.
+(5) **Per-PR reviewer accuracy on Mine** — the list endpoints return
+stale or absent participant data. BB Mine worker fires
+`/pullrequests/{id}` per PR after the list call; GH fires
+`/pulls/{n}/reviews` and buckets each reviewer's *latest* state into
+`✓N ✗N` (chronological; multiple reviews per author stack). Cost: N
+extra calls per Mine cycle where N ≤ pagelen=50. BB+GH only — GitLab's
+list endpoint already surfaces reviewers via `reviewers[]`; Azure
+parses `vote ≥ 5` / `vote < 0` from each reviewer entry directly.
+**GitLab CI / Merge Requests dashboard** — `src/gitlab/` mirrors
+`src/bitbucket/` + `src/github/`. Endpoints (`api-version=4` paths):
+`/projects/{id}/pipelines` (recent), `?ref=<b>` (per-branch latest),
+`/projects/{id}/merge_requests?state=opened` (per-project MRs),
+`/merge_requests?scope=created_by_me` (cross-project Mine). Project ID
+accepts either numeric (`"12345"`) or URL-encoded path
+(`"group/project"`) — the worker URL-encodes unconditionally. Self-
+hosted GitLab supported via `[gitlab] base_url = "..."`. Auth:
+`Bearer $GITLAB_TOKEN`. PipelineState folds GitLab's 12 raw statuses
+(`success`/`failed`/`canceled`/`skipped`/`running`/`pending`/`created`/
+`manual`/`scheduled`/`preparing`/`waiting_for_resource`/`unknown`) into
+that enum; `is_terminal()` keys color + the per-branch "still running?"
+hint. MergeRequestState handles `Opened | Draft | Merged | Closed |
+Unknown` with draft beating the raw `state` field. `<leader>C l` opens
+pipelines, `<leader>P l` opens MRs. Glyph for the pane chip: `▴` (not
+the cyan triangle BB uses) in orange.
+**Azure DevOps Builds / Pull Requests dashboard** — `src/azdevops/`.
+Project entries are `(org, project, repo)` — Azure scopes builds at
+project level and PRs at repo level. Endpoints (api-version=7.1):
+`/{org}/{project}/_apis/build/builds`,
+`?branchName=refs/heads/<b>&$top=1` (per-branch),
+`/{org}/{project}/_apis/git/repositories/{repo}/pullrequests?searchCriteria.status=active`,
+`/{org}/_apis/git/pullrequests?searchCriteria.creatorId=me` (cross-org-
+project Mine — `me` is GA in recent api-versions; if a real user 400s
+on this, fall back to ConnectionData → GUID lookup then substitute).
+Auth: Basic with empty user + PAT, base64-encoded as `:<PAT>`
+(`auth_header_value` in `src/azdevops/api.rs`). BuildState maps
+status + result two-step (`inProgress` → InProgress;
+`completed`+`succeeded` → Succeeded; etc.). PR review counts come from
+each reviewer's `vote` field (10 = approved, 5 = approved-with-
+suggestions, -5 = waiting, -10 = rejected); we count `vote ≥ 5` as
+`✓N` and `vote < 0` as `✗N`. Header label is `"org/project/repo"`.
+`<leader>C a` opens builds, `<leader>P a` opens PRs. **Untested
+against a real Azure org** — projected fields and the
+`creatorId=me` shortcut may need refinement on first real use; PR
+comment_count is hardcoded 0 because Azure's list endpoint doesn't
+return it (would need a per-PR `/threads` call). Free-tier signup
+walk-through in conversation history if a real test is needed.
 
 ## Not set up yet (could add later)
 
