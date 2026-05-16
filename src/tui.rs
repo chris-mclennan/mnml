@@ -3503,18 +3503,19 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 });
             }
             Some(Pane::Browser(b)) => {
+                let step = if delta < 0 {
+                    -(delta.unsigned_abs() as isize)
+                } else {
+                    delta.unsigned_abs() as isize
+                };
                 if b.dom_focus {
-                    b.move_dom_sel(if delta < 0 {
-                        -(delta.unsigned_abs() as isize)
-                    } else {
-                        delta.unsigned_abs() as isize
-                    });
+                    b.move_dom_sel(step);
                 } else if b.net_focus {
-                    b.move_net_sel(if delta < 0 {
-                        -(delta.unsigned_abs() as isize)
-                    } else {
-                        delta.unsigned_abs() as isize
-                    });
+                    b.move_net_sel(step);
+                } else if b.cookies_focus {
+                    b.move_cookies_sel(step);
+                } else if b.storage_focus {
+                    b.move_storage_sel(step);
                 } else {
                     let n = delta.unsigned_abs() as usize;
                     b.scroll = if delta < 0 {
