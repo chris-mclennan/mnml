@@ -45,6 +45,30 @@ struct SemState {
 }
 type SemStates = Arc<Mutex<HashMap<PathBuf, SemState>>>;
 
+/// Per-server semantic-tokens capability flags, captured from the
+/// `initialize` reply's `capabilities.semanticTokensProvider`. The
+/// App-thread client reads these when choosing which request shape to
+/// send (delta > full > range); the reader thread writes them once.
+/// Defaults are optimistic (`supports_full = true`) so requests made
+/// before the initialize reply lands still go out — most servers do
+/// support full.
+#[derive(Debug, Clone)]
+struct SemServerCaps {
+    supports_full: bool,
+    supports_delta: bool,
+    supports_range: bool,
+}
+impl Default for SemServerCaps {
+    fn default() -> Self {
+        Self {
+            supports_full: true,
+            supports_delta: false,
+            supports_range: false,
+        }
+    }
+}
+type SemCaps = Arc<Mutex<SemServerCaps>>;
+
 pub struct LspClient {
     name: String,
     child: Child,
@@ -53,6 +77,7 @@ pub struct LspClient {
     next_id: i64,
     pending: Pending,
     sem_states: SemStates,
+    sem_caps: SemCaps,
     /// path → document version (also: presence ⇒ the doc is open with this server).
     versions: HashMap<PathBuf, i64>,
 }
@@ -76,13 +101,15 @@ impl LspClient {
         let stdout = child.stdout.take().ok_or("no stdout")?;
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
         let sem_states: SemStates = Arc::new(Mutex::new(HashMap::new()));
+        let sem_caps: SemCaps = Arc::new(Mutex::new(SemServerCaps::default()));
 
         let r_pending = Arc::clone(&pending);
         let r_stdin = Arc::clone(&stdin);
         let r_sem_states = Arc::clone(&sem_states);
+        let r_sem_caps = Arc::clone(&sem_caps);
         let reader = std::thread::Builder::new()
             .name(format!("mnml-lsp-{}", sc.name))
-            .spawn(move || reader_loop(stdout, tx, r_pending, r_stdin, r_sem_states))
+            .spawn(move || reader_loop(stdout, tx, r_pending, r_stdin, r_sem_states, r_sem_caps))
             .map_err(|e| format!("reader thread: {e}"))?;
 
         let mut c = LspClient {
@@ -93,6 +120,7 @@ impl LspClient {
             next_id: 1,
             pending,
             sem_states,
+            sem_caps,
             versions: HashMap::new(),
         };
 
@@ -161,7 +189,7 @@ impl LspClient {
                         },
                         "semanticTokens": {
                             "dynamicRegistration": false,
-                            "requests": { "full": { "delta": true } },
+                            "requests": { "full": { "delta": true }, "range": true },
                             "tokenTypes": [
                                 "namespace", "type", "class", "enum", "interface",
                                 "struct", "typeParameter", "parameter", "variable",
@@ -439,24 +467,40 @@ impl LspClient {
         );
     }
 
-    /// Request semantic tokens for `path`. Picks `full` vs `full/delta`
-    /// automatically: when the per-server `SemState` cache has a
-    /// `resultId` from a previous reply, we send `full/delta` with that
-    /// id — the server returns either a fresh full set (replacement) or
-    /// just the `edits` to apply to our cached raw data. Falls back to
-    /// `full` when there's no cached id (first request, after did_close,
-    /// or after a delta merge failed). Reply arrives as
-    /// [`super::LspEvent::SemanticTokens`] either way.
-    pub fn semantic_tokens(&mut self, path: &Path) {
+    /// Request semantic tokens for `path`. Picks the best request shape
+    /// for what the server advertises:
+    ///
+    /// 1. `full/delta` when the server advertises delta AND we have a
+    ///    cached `resultId` — the cheapest update, sparse edits we
+    ///    splice into the cached raw data.
+    /// 2. `full` when the server advertises full (the typical path).
+    /// 3. `range` (line 0 → `line_count`) when the server only
+    ///    advertises range — uncommon, but the rare path where neither
+    ///    full nor delta is available.
+    /// 4. No-op when the server advertises none of the three.
+    ///
+    /// `line_count` is needed only for the range fallback — pass the
+    /// active buffer's line count so the request covers the whole file.
+    /// Reply arrives as [`super::LspEvent::SemanticTokens`] in every case.
+    pub fn semantic_tokens(&mut self, path: &Path, line_count: u32) {
+        let caps = self.sem_caps.lock().map(|c| c.clone()).unwrap_or_default();
         let prev_id = self
             .sem_states
             .lock()
             .ok()
             .and_then(|s| s.get(path).and_then(|st| st.result_id.clone()));
-        match prev_id {
-            Some(id) => self.semantic_tokens_delta(path, &id),
-            None => self.semantic_tokens_full(path),
+        if caps.supports_delta
+            && let Some(id) = prev_id
+        {
+            self.semantic_tokens_delta(path, &id);
+        } else if caps.supports_full {
+            self.semantic_tokens_full(path);
+        } else if caps.supports_range {
+            self.semantic_tokens_range(path, 0, line_count);
         }
+        // else: server advertised no semantic-tokens capability at all
+        // (or hasn't replied to initialize yet, in which case the
+        // optimistic `supports_full = true` default kicked in above).
     }
 
     /// `textDocument/semanticTokens/full` — reply is `SemanticTokens { data:
@@ -482,6 +526,25 @@ impl LspClient {
             json!({
                 "textDocument": { "uri": path_to_uri(path) },
                 "previousResultId": previous_result_id,
+            }),
+            Some(path),
+        );
+    }
+
+    /// `textDocument/semanticTokens/range` — reply is `SemanticTokens {
+    /// data }` for tokens within `[start_line, end_line)`. Used as a
+    /// fallback when the server doesn't advertise `full` (rare). Tokens
+    /// replace any prior cached set on receipt — coverage is just for
+    /// the requested range, not cumulative across requests.
+    pub fn semantic_tokens_range(&mut self, path: &Path, start_line: u32, end_line: u32) {
+        self.request_with_path(
+            "textDocument/semanticTokens/range",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "range": {
+                    "start": { "line": start_line, "character": 0 },
+                    "end": { "line": end_line, "character": 0 }
+                }
             }),
             Some(path),
         );
@@ -769,6 +832,7 @@ fn reader_loop(
     pending: Pending,
     stdin: Sink,
     sem_states: SemStates,
+    sem_caps: SemCaps,
 ) {
     let mut r = BufReader::new(stdout);
     // Per-server semantic-tokens legends, captured when the `initialize`
@@ -817,10 +881,12 @@ fn reader_loop(
             &mut sem_legend,
             &mut sem_mod_legend,
             &sem_states,
+            &sem_caps,
         );
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_message(
     v: &serde_json::Value,
     tx: &std::sync::mpsc::Sender<LspEvent>,
@@ -829,6 +895,7 @@ fn handle_message(
     sem_legend: &mut Vec<String>,
     sem_mod_legend: &mut Vec<String>,
     sem_states: &SemStates,
+    sem_caps: &SemCaps,
 ) {
     // A server→client request (has both `id` and `method`).
     if let (Some(id), Some(method)) = (v.get("id"), v.get("method").and_then(|m| m.as_str())) {
@@ -1026,10 +1093,10 @@ fn handle_message(
                 // Cache the server's semanticTokens legend so subsequent
                 // `textDocument/semanticTokens/full` replies can resolve
                 // type-index → name and modifier-bit → name.
-                let legend = result
+                let provider = result
                     .get("capabilities")
-                    .and_then(|c| c.get("semanticTokensProvider"))
-                    .and_then(|p| p.get("legend"));
+                    .and_then(|c| c.get("semanticTokensProvider"));
+                let legend = provider.and_then(|p| p.get("legend"));
                 if let Some(types) = legend
                     .and_then(|l| l.get("tokenTypes"))
                     .and_then(|t| t.as_array())
@@ -1052,6 +1119,11 @@ fn handle_message(
                         }
                     }
                 }
+                // Capture the server's request-shape capability flags.
+                let new_caps = parse_semantic_tokens_caps(provider);
+                if let Ok(mut caps) = sem_caps.lock() {
+                    *caps = new_caps;
+                }
             }
             "textDocument/semanticTokens/full" => {
                 if let Some(path) = req_path {
@@ -1069,6 +1141,20 @@ fn handle_message(
                                 raw_data: raw,
                             },
                         );
+                    }
+                    let _ = tx.send(LspEvent::SemanticTokens { path, tokens });
+                }
+            }
+            "textDocument/semanticTokens/range" => {
+                if let Some(path) = req_path {
+                    let raw = extract_semantic_data(result);
+                    let tokens = parse_semantic_tokens_from_raw(&raw, sem_legend, sem_mod_legend);
+                    // Range replies don't carry a `resultId` we can use
+                    // for delta requests (different request shape). Drop
+                    // the per-path cache so a future call doesn't try
+                    // to send a stale delta against a range result.
+                    if let Ok(mut s) = sem_states.lock() {
+                        s.remove(&path);
                     }
                     let _ = tx.send(LspEvent::SemanticTokens { path, tokens });
                 }
@@ -2094,6 +2180,48 @@ pub(crate) fn parse_semantic_tokens_from_raw(
     out
 }
 
+/// Parse the server's `semanticTokensProvider` capability from its
+/// `initialize` reply into the three flags we use to pick a request
+/// shape. `provider` is the value at `capabilities.semanticTokensProvider`,
+/// or `None` when the server didn't advertise semantic tokens.
+///
+/// `requests.full` can be `true` (full only) or `{ delta: true }`
+/// (full + delta). `requests.range` can be `true` or an object. When
+/// the provider exists but `requests` is bare, we assume `full` is
+/// supported (older LSP servers may not populate `requests`).
+fn parse_semantic_tokens_caps(provider: Option<&serde_json::Value>) -> SemServerCaps {
+    let Some(provider) = provider else {
+        return SemServerCaps {
+            supports_full: false,
+            supports_delta: false,
+            supports_range: false,
+        };
+    };
+    let requests = provider.get("requests");
+    let full = requests.and_then(|r| r.get("full"));
+    let supports_full = match full {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::Object(_)) => true,
+        _ => requests.is_none(),
+    };
+    let supports_delta = match full {
+        Some(serde_json::Value::Object(o)) => {
+            o.get("delta").and_then(|v| v.as_bool()).unwrap_or(false)
+        }
+        _ => false,
+    };
+    let supports_range = match requests.and_then(|r| r.get("range")) {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::Object(_)) => true,
+        _ => false,
+    };
+    SemServerCaps {
+        supports_full,
+        supports_delta,
+        supports_range,
+    }
+}
+
 /// Decode a modifier bitmask against the per-server modifier legend.
 /// Bit `i` set ⇒ `mod_legend[i]` is in the returned list. Unknown bits
 /// (set beyond `mod_legend.len()`) are dropped silently — a forward-
@@ -2434,6 +2562,52 @@ mod tests {
         // Bit beyond legend length ⇒ silently dropped.
         let mods = decode_modifier_bits(0b1000_0000, &legend);
         assert!(mods.is_empty());
+    }
+
+    #[test]
+    fn parse_semantic_tokens_caps_handles_common_shapes() {
+        // No provider ⇒ all flags off.
+        let caps = parse_semantic_tokens_caps(None);
+        assert!(!caps.supports_full);
+        assert!(!caps.supports_delta);
+        assert!(!caps.supports_range);
+        // Modern rust-analyzer / tsserver / pyright shape: full + delta
+        // + range.
+        let provider = json!({
+            "legend": { "tokenTypes": [], "tokenModifiers": [] },
+            "requests": { "full": { "delta": true }, "range": true }
+        });
+        let caps = parse_semantic_tokens_caps(Some(&provider));
+        assert!(caps.supports_full);
+        assert!(caps.supports_delta);
+        assert!(caps.supports_range);
+        // Full only (no delta, no range).
+        let provider = json!({
+            "legend": { "tokenTypes": [], "tokenModifiers": [] },
+            "requests": { "full": true }
+        });
+        let caps = parse_semantic_tokens_caps(Some(&provider));
+        assert!(caps.supports_full);
+        assert!(!caps.supports_delta);
+        assert!(!caps.supports_range);
+        // Range only — the rare server that omits full.
+        let provider = json!({
+            "legend": { "tokenTypes": [], "tokenModifiers": [] },
+            "requests": { "range": true }
+        });
+        let caps = parse_semantic_tokens_caps(Some(&provider));
+        assert!(!caps.supports_full);
+        assert!(!caps.supports_delta);
+        assert!(caps.supports_range);
+        // Provider exists but `requests` is omitted (older LSP form) ⇒
+        // assume full only.
+        let provider = json!({
+            "legend": { "tokenTypes": [], "tokenModifiers": [] }
+        });
+        let caps = parse_semantic_tokens_caps(Some(&provider));
+        assert!(caps.supports_full);
+        assert!(!caps.supports_delta);
+        assert!(!caps.supports_range);
     }
 
     #[test]

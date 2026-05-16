@@ -823,16 +823,17 @@ impl LspManager {
         }
         sent
     }
-    /// Request semantic tokens — `full` on first call, `full/delta` on
-    /// subsequent calls (the client picks based on its per-path
-    /// `resultId` cache). Reply arrives as [`LspEvent::SemanticTokens`]
-    /// either way. No-op when the server didn't advertise
-    /// `semanticTokensProvider` (the request would just be ignored).
-    pub fn semantic_tokens(&mut self, path: &Path) -> bool {
+    /// Request semantic tokens — the client picks the best request shape
+    /// per advertised capability: `full/delta` (delta + cached resultId),
+    /// `full` (the typical path), or `range` (only when the server
+    /// doesn't advertise full). Reply arrives as
+    /// [`LspEvent::SemanticTokens`]. `line_count` is needed only for the
+    /// range fallback; pass the active buffer's line count.
+    pub fn semantic_tokens(&mut self, path: &Path, line_count: u32) -> bool {
         let mut sent = false;
         for c in self.clients.values_mut() {
             if c.is_open(path) {
-                c.semantic_tokens(path);
+                c.semantic_tokens(path, line_count);
                 sent = true;
             }
         }

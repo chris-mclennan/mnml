@@ -759,9 +759,21 @@ with matching style together. Mapping: `deprecated` → CROSSED_OUT (deprecated 
 impossible to miss), `readonly` → ITALIC, `static` → BOLD, `defaultLibrary` → DIM
 (stdlib symbols recede); other LSP-standard modifiers (`declaration` / `definition` /
 `abstract` / `async` / `modification` / `documentation`) have no visual hook yet.
-**Limitations (first-cut still):** no range requests (a server that only implements
-`full` won't fall back); linear scan per cell (token volumes per file are typically
-hundreds, fine for now; sort-by-line + binary-search would help on massive files).
+**Range requests** — `semanticTokens/range` (line 0 → file's last line) is wired as
+a fallback when the server advertises `range: true` but not `full`. Per-server
+capability flags (`supports_full` / `supports_delta` / `supports_range`) are captured
+from the `initialize` reply's `semanticTokensProvider.requests` and live in a shared
+`Arc<Mutex<SemServerCaps>>` so the App-thread `LspClient::semantic_tokens(path, line_count)`
+chooser can pick the best shape: delta > full > range. `parse_semantic_tokens_caps`
+handles every common shape (legacy `{ full: true }`, modern `{ full: { delta: true },
+range: true }`, bare provider, missing provider). Range replies don't carry a `resultId`
+useful for delta requests so receipt drops the per-path cache (the next request will
+fall back to full or range, not stale delta). `initialize` advertises `requests: {
+full: { delta: true }, range: true }`. **Limitations (first-cut still):** linear scan
+per cell (token volumes per file are typically hundreds, fine for now; sort-by-line +
+binary-search would help on massive files); range fallback always requests the whole
+file (0 → line_count), not the viewport — viewport-only range requests on scroll would
+be a future cut.
 **`[ui] wrap` survives a relaunch** — the user's runtime `:set wrap` choice now persists in
 `session.json` (`SavedSession.wrap: Option<bool>`). Config-file changes still take precedence
 on a fresh workspace.
