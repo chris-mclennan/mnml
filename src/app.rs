@@ -719,6 +719,12 @@ struct SavedSession {
     /// source of truth for fresh workspaces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     wrap: Option<bool>,
+    /// Last `[m] device emulation` preset picked this session (index into
+    /// `crate::browser_pane::DEVICE_PRESETS`). Applied to every fresh
+    /// `browser.open` so the user doesn't have to re-pick after a relaunch.
+    /// `None` ⇒ no preset (Chrome's real viewport).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_browser_device: Option<usize>,
     /// Vim macros recorded with `q<reg>...q`, serialized as
     /// `(register_letter, Vec<key_spec>)`. Lets `@a` work across
     /// restarts. Each spec round-trips through `parse_key_spec`.
@@ -1509,6 +1515,10 @@ pub struct App {
     /// pane). Persisted in session.json. App-wide rather than per-pane
     /// since URLs are workspace-relevant, not pane-relevant.
     pub browser_url_history: Vec<String>,
+    /// Last `m` device-emulation preset picked (index into
+    /// `crate::browser_pane::DEVICE_PRESETS`). Persisted in session.json so
+    /// fresh `browser.open` calls auto-apply it. `None` ⇒ no preset.
+    pub last_browser_device: Option<usize>,
     /// Stack of recently closed buffers (`(path, cursor_byte, scroll)`),
     /// newest last. `buffer.reopen` (`Ctrl+Shift+T`) pops the top entry
     /// and re-opens it. Capped at `CLOSED_BUFFERS_MAX`. Not persisted —
@@ -2047,6 +2057,7 @@ impl App {
             bufferline_visible: true,
             recent_files: Vec::new(),
             browser_url_history: Vec::new(),
+            last_browser_device: None,
             closed_buffers: Vec::new(),
             last_active: None,
             pane_mru: Vec::new(),
@@ -7866,9 +7877,17 @@ impl App {
         std::thread::spawn(move || {
             crate::cdp::run_session(&worker_url, &worker_dir, headless, &ev_tx, &cmd_rx);
         });
-        let pane = Pane::Browser(crate::browser_pane::BrowserPane::with_channel(
-            url, cmd_tx, ev_rx,
-        ));
+        let mut browser_pane = crate::browser_pane::BrowserPane::with_channel(url, cmd_tx, ev_rx);
+        // Re-apply the user's most-recent device-emulation preset so the
+        // choice survives across `browser.open` calls (and mnml relaunches
+        // via session.json). The commands queue on cmd_tx and the worker
+        // dispatches them as soon as the CDP WS is up.
+        if let Some(idx) = self.last_browser_device
+            && idx < crate::browser_pane::DEVICE_PRESETS.len()
+        {
+            browser_pane.set_device(idx);
+        }
+        let pane = Pane::Browser(browser_pane);
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
@@ -8134,7 +8153,13 @@ impl App {
             Some(b) => {
                 b.set_device(idx);
                 if let Some(p) = crate::browser_pane::DEVICE_PRESETS.get(idx) {
-                    self.toast(format!("emulating: {} ({}×{})", p.label, p.width, p.height));
+                    let label = p.label.to_string();
+                    let (w, h) = (p.width, p.height);
+                    // Remember the choice so subsequent `browser.open` calls
+                    // (in this session or after a relaunch via session.json)
+                    // auto-apply it.
+                    self.last_browser_device = Some(idx);
+                    self.toast(format!("emulating: {label} ({w}×{h})"));
                 }
             }
             None => self.toast("no browser pane open"),
@@ -8147,6 +8172,7 @@ impl App {
         match self.active_browser_mut() {
             Some(b) => {
                 b.clear_device();
+                self.last_browser_device = None;
                 self.toast("device emulation cleared");
             }
             None => self.toast("no browser pane open"),
@@ -18100,6 +18126,7 @@ impl App {
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect(),
             browser_url_history: self.browser_url_history.clone(),
+            last_browser_device: self.last_browser_device,
             theme: Some(crate::ui::theme::cur().name.to_string()),
             wrap: Some(self.config.ui.wrap),
             macros: self
@@ -18299,6 +18326,14 @@ impl App {
         }
         if let Some(w) = saved.wrap {
             self.config.ui.wrap = w;
+        }
+        // Drop indices that no longer point into the (potentially
+        // shorter) preset table — older sessions could have saved an
+        // out-of-range value after a code change.
+        if let Some(idx) = saved.last_browser_device
+            && idx < crate::browser_pane::DEVICE_PRESETS.len()
+        {
+            self.last_browser_device = Some(idx);
         }
         for m in saved.macros {
             let keys: Vec<_> = m

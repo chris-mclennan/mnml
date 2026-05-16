@@ -1791,6 +1791,14 @@ of the selected entry; accept evals `localStorage.setItem` (or `sessionStorage.s
 `scope|key=value` where scope is `local` (default) or `session`. `d` evals `removeItem` for the selected entry and
 drops the row locally. All three use `BrowserPane::eval_silent` (fire-and-forget eval that doesn't push a `» …` log
 line or claim `pending_eval`).
+**Active device preset persists across mnml relaunches** — `App.last_browser_device:
+Option<usize>` (preset index) is saved on `SavedSession.last_browser_device` and restored on
+launch. Every fresh `browser.open` re-applies it via `browser_pane.set_device(idx)` so the
+emulated viewport survives a Chrome restart (Chrome itself loses state — the *choice* is what
+persists; on relaunch the next browser pane lands already emulating without the user re-picking).
+Picking the Reset row in the `m` picker also clears the persisted value. Out-of-range saved
+indices (e.g. after a preset removal in code) drop silently on restore.
+
 **`m` opens a device-emulation picker** (`browser.device_picker`) — fuzzy picker over
 `crate::browser_pane::DEVICE_PRESETS` (iPhone 15 / iPhone SE / Pixel 8 / Galaxy S22 / iPad / iPad Pro 12.9" /
 Desktop 1366×768 / Desktop 1920×1080) plus a top "Reset — clear device emulation" entry. The active preset
