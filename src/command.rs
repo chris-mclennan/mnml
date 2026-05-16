@@ -1595,6 +1595,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.delete_selected_cookie(),
         },
         Command {
+            id: "browser.wipe_profile",
+            title: "Browser: wipe Chrome's user-data-dir (next open starts fresh)",
+            group: "browser",
+            keys: &[],
+            run: |app| app.wipe_browser_profile(),
+        },
+        Command {
             id: "browser.storage",
             title: "Browser: toggle the Web Storage panel (L) — localStorage + sessionStorage",
             group: "browser",

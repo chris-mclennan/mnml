@@ -7626,6 +7626,66 @@ impl App {
         ));
     }
 
+    /// Resolve the `--user-data-dir` for Chrome based on the
+    /// `[browser] profile_mode` config:
+    /// * `"workspace"` (default) — `<workspace>/.mnml/chrome-profile/`.
+    ///   Per-workspace, persists across mnml relaunches in the same
+    ///   workspace.
+    /// * `"shared"` — `$HOME/.mnml/chrome-profile/`. One profile across
+    ///   every workspace; handy when you sign into the same services
+    ///   from multiple repos.
+    /// * `"ephemeral"` — a fresh `tempfile::tempdir()` per `open_browser`
+    ///   call. Clean-slate for login testing; state vanishes when the
+    ///   pane closes.
+    fn chrome_profile_dir(&self) -> std::path::PathBuf {
+        match self.config.browser.profile_mode.as_str() {
+            "shared" => match std::env::var_os("HOME").map(PathBuf::from) {
+                Some(h) => h.join(".mnml").join("chrome-profile"),
+                None => self.workspace.join(".mnml").join("chrome-profile"),
+            },
+            "ephemeral" => match tempfile::tempdir() {
+                Ok(td) => {
+                    // The TempDir RAII guard would delete the dir as
+                    // soon as it dropped, but we need Chrome to outlive
+                    // this fn. `into_path` keeps it on disk; the OS
+                    // will clean it up next reboot, or the user can
+                    // `:browser.wipe_profile` to drop it sooner.
+                    td.keep()
+                }
+                Err(_) => self
+                    .workspace
+                    .join(".mnml")
+                    .join("chrome-profile-ephemeral"),
+            },
+            _ => self.workspace.join(".mnml").join("chrome-profile"),
+        }
+    }
+
+    /// `browser.wipe_profile` — remove the workspace-scoped (or shared)
+    /// Chrome profile dir so the next `browser.open` starts fresh.
+    /// No-op in `ephemeral` mode (every open already starts fresh).
+    /// Refuses to run while a browser pane is open (Chrome would have
+    /// the files locked).
+    pub fn wipe_browser_profile(&mut self) {
+        if self.panes.iter().any(|p| matches!(p, Pane::Browser(_))) {
+            self.toast("close the browser pane first — Chrome has the profile locked");
+            return;
+        }
+        if self.config.browser.profile_mode == "ephemeral" {
+            self.toast("profile_mode = ephemeral — every open already starts fresh");
+            return;
+        }
+        let dir = self.chrome_profile_dir();
+        if !dir.exists() {
+            self.toast("no profile to wipe");
+            return;
+        }
+        match std::fs::remove_dir_all(&dir) {
+            Ok(_) => self.toast(format!("wiped {}", dir.display())),
+            Err(e) => self.toast(format!("wipe failed: {e}")),
+        }
+    }
+
     /// Launch Chrome on `url` over CDP and open a `Pane::Browser` (split below).
     pub fn open_browser(&mut self, url: &str) {
         if self.panes.iter().any(|p| matches!(p, Pane::Browser(_))) {
@@ -7635,7 +7695,7 @@ impl App {
         let url = url.trim().to_string();
         let (ev_tx, ev_rx) = std::sync::mpsc::channel::<crate::cdp::CdpEvent>();
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<crate::cdp::CdpCommand>();
-        let profile_dir = self.workspace.join(".mnml").join("chrome-profile");
+        let profile_dir = self.chrome_profile_dir();
         let _ = std::fs::create_dir_all(&profile_dir);
         let headless = self.config.browser.headless;
         let (worker_url, worker_dir) = (url.clone(), profile_dir);
@@ -20302,6 +20362,38 @@ mod tests {
         fs::write(d.path().join("b.txt"), "beta").unwrap();
         let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
         (d, app)
+    }
+
+    #[test]
+    fn chrome_profile_dir_honors_mode() {
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        // workspace (default) ⇒ <workspace>/.mnml/chrome-profile
+        let app = App::new(d.path().to_path_buf(), cfg.clone()).unwrap();
+        let p = app.chrome_profile_dir();
+        // App::new canonicalizes the workspace, so the workspace dir
+        // in `app` is the canonical form of `d.path()`.
+        let canon = d.path().canonicalize().unwrap();
+        assert!(p.starts_with(&canon), "{p:?} should start with {canon:?}");
+        assert!(p.ends_with("chrome-profile"));
+        // ephemeral ⇒ a brand new dir per call, not under workspace
+        cfg.browser.profile_mode = "ephemeral".to_string();
+        let app = App::new(d.path().to_path_buf(), cfg.clone()).unwrap();
+        let p1 = app.chrome_profile_dir();
+        let p2 = app.chrome_profile_dir();
+        assert_ne!(p1, p2, "ephemeral should hand back a fresh dir each call");
+        // shared ⇒ under $HOME (when set)
+        cfg.browser.profile_mode = "shared".to_string();
+        // SAFETY: setting + restoring an env var in a serial test.
+        let prior = std::env::var_os("HOME");
+        unsafe { std::env::set_var("HOME", "/tmp/mnml-test-home") };
+        let app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        let p = app.chrome_profile_dir();
+        assert!(p.starts_with("/tmp/mnml-test-home"));
+        match prior {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
     }
 
     #[test]

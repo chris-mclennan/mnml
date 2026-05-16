@@ -352,6 +352,16 @@ pub struct BrowserConfig {
     /// (navigate), `e` (eval), `s` (screenshot), etc. Default off — the
     /// visible window is what most users expect from `browser.open`.
     pub headless: bool,
+    /// Where Chrome's `--user-data-dir` (cookies, localStorage, login
+    /// state) is stored. `"workspace"` (default) ⇒
+    /// `<workspace>/.mnml/chrome-profile/` — workspace-scoped, persists
+    /// across `browser.open` and across mnml relaunches in the same
+    /// workspace. `"shared"` ⇒ `$HOME/.mnml/chrome-profile/` — one
+    /// profile across every workspace (handy when you sign into the
+    /// same services from multiple repos). `"ephemeral"` ⇒ a fresh
+    /// `tempfile::tempdir()` per open — clean-slate for login testing /
+    /// fresh-eyes debugging; state vanishes when the pane closes.
+    pub profile_mode: String,
 }
 
 #[derive(Debug, Clone)]
@@ -566,7 +576,10 @@ impl Default for Config {
             startup_tasks: Vec::new(),
             snippets: BTreeMap::new(),
             abbreviations: BTreeMap::new(),
-            browser: BrowserConfig { headless: false },
+            browser: BrowserConfig {
+                headless: false,
+                profile_mode: "workspace".to_string(),
+            },
             playwright: PlaywrightConfig::default(),
             ci: CiConfig::default(),
             bitbucket: BitbucketConfig::default(),
@@ -693,6 +706,7 @@ struct RawCi {
 #[derive(Debug, Default, Deserialize)]
 struct RawBrowser {
     headless: Option<bool>,
+    profile_mode: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -942,6 +956,15 @@ impl Config {
         }
         if let Some(v) = raw.browser.headless {
             self.browser.headless = v;
+        }
+        if let Some(v) = raw.browser.profile_mode {
+            // Validate the enum; unknown values silently fall back to
+            // the default ("workspace") rather than rejecting the
+            // whole config file.
+            self.browser.profile_mode = match v.as_str() {
+                "workspace" | "shared" | "ephemeral" => v,
+                _ => "workspace".to_string(),
+            };
         }
         // `[playwright.docdb]` — overlay only the fields that are set, so a
         // workspace-level file can override the home file's defaults per-key.

@@ -1788,6 +1788,15 @@ current target isn't the main page, so subsequent `Page.navigate` / `Runtime.eva
 appends `--headless=new --no-sandbox --disable-gpu` to Chrome's flags. The pane still receives network /
 console / DOM / target events and can be driven by `g` / `e` / `s` / `D` / etc; the only difference is no
 visible window. Takes effect on the *next* `browser.open` — in-flight panes are unaffected.
+**Profile persistence** — `[browser] profile_mode` config controls Chrome's `--user-data-dir`:
+`"workspace"` (default) ⇒ `<workspace>/.mnml/chrome-profile/` — per-workspace, persists across
+`browser.open` and across mnml relaunches in the same workspace, so login state / cookies / localStorage
+survive a restart. `"shared"` ⇒ `$HOME/.mnml/chrome-profile/` — one profile across every workspace,
+handy when signing into the same services from multiple repos. `"ephemeral"` ⇒ a fresh `tempfile::tempdir()`
+per `open_browser` call — clean-slate for login testing; state vanishes when the pane closes.
+`App::chrome_profile_dir` resolves the path; `browser.wipe_profile` clears the workspace / shared dir so
+the next open starts fresh (no-op in ephemeral mode; refuses while a browser pane is open since Chrome
+holds the files locked).
 **Clear-on-navigate** — on a main-frame `Page.frameNavigated` event the browser pane's `net` + `dom`
 lists and their selections reset to empty / 0. Mirrors Chrome DevTools' default ("Preserve log: off") —
 the prior page's network log / DOM tree don't pile up across navigations. `g`-style navigation usually
