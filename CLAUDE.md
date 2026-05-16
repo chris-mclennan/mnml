@@ -2253,6 +2253,17 @@ manual config.
 Plus a new `examples/azdevops_smoke.rs` smoke binary for verifying
 end-to-end against a real org without launching the TUI.
 
+**Azure DevOps — verified on a real org** (2026-05-16, `getprivate`):
+the smoke binary returned all five event types cleanly — `Connected`,
+`Builds` (1 row, state + ref + duration parsed), `BranchBuilds`
+(4 branches), `PullRequests` (0 active), `MyPullRequests` via the
+`creatorId=me` shorthand (0 failures — no fallback triggered for this
+tenant). Auth-header shape (`Basic <base64(:PAT)>`), JSON projections,
+state classification, per-branch fetch, and the Mine endpoint all hold
+against a live tenant. Outstanding edge cases (no PR builds or
+custom-targeted builds existed in the test org yet) are unverified but
+follow the same JSON parsing patterns as the verified shapes.
+
 **TestExecutions mouse support** (private-gated) — clicks now route
 properly through the multi-env column layout. New
 `app.rects.test_executions_rows: Vec<(Rect, PaneId, env_idx, row_idx)>`
