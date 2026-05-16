@@ -952,6 +952,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('r') => app.browser_reload(),
             KeyCode::Char('s') => app.browser_screenshot(),
             KeyCode::Char('p') if !any_panel => app.browser_print_pdf(),
+            KeyCode::Char('m') if !any_panel => app.open_browser_device_picker(),
             KeyCode::Char('T') => app.open_browser_target_picker(),
             KeyCode::Esc => {
                 // On either panel, Esc-with-a-held-filter clears the

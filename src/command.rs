@@ -1574,6 +1574,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.browser_print_pdf(),
         },
         Command {
+            id: "browser.device_picker",
+            title: "Browser: device emulation picker (m) — mobile UA + viewport",
+            group: "browser",
+            keys: &[],
+            run: |app| app.open_browser_device_picker(),
+        },
+        Command {
             id: "browser.scroll_node_into_view",
             title: "Browser: scroll the selected DOM node into view",
             group: "browser",

@@ -3376,6 +3376,13 @@ impl App {
                 }
             }
             PickerKind::BrowserHistory => self.browser_navigate_to(&item.id),
+            PickerKind::BrowserDevices => {
+                if item.id == "reset" {
+                    self.browser_clear_device();
+                } else if let Ok(idx) = item.id.parse::<usize>() {
+                    self.browser_set_device(idx);
+                }
+            }
             PickerKind::Snippets => {
                 if let Ok(idx) = item.id.parse::<usize>() {
                     self.snippet_insert_at_cursor(idx);
@@ -7969,6 +7976,78 @@ impl App {
             .find(|p| matches!(p, Pane::Browser(_)))
         {
             b.switch_target(idx);
+        }
+    }
+
+    /// `m` in a browser pane (or `browser.device_picker`) — open a picker
+    /// over [`crate::browser_pane::DEVICE_PRESETS`] plus a top "Reset"
+    /// entry. Accept ⇒ `browser_set_device` or `browser_clear_device`.
+    pub fn open_browser_device_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let Some(Pane::Browser(b)) = self.panes.iter().find(|p| matches!(p, Pane::Browser(_)))
+        else {
+            self.toast("no browser pane open");
+            return;
+        };
+        let current = b.current_device;
+        let mut items: Vec<PickerItem> =
+            Vec::with_capacity(crate::browser_pane::DEVICE_PRESETS.len() + 1);
+        let reset_star = if current.is_none() { "● " } else { "  " };
+        items.push(PickerItem::new(
+            "reset",
+            format!("{reset_star}Reset — clear device emulation"),
+            "real Chrome viewport",
+        ));
+        for (i, p) in crate::browser_pane::DEVICE_PRESETS.iter().enumerate() {
+            let star = if current == Some(i) { "● " } else { "  " };
+            let kind = if p.mobile { "mobile" } else { "desktop" };
+            items.push(PickerItem::new(
+                i.to_string(),
+                format!("{star}{}", p.label),
+                format!(
+                    "{}×{} · {}× · {kind}",
+                    p.width, p.height, p.device_scale_factor
+                ),
+            ));
+        }
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::BrowserDevices,
+            "Device emulation".to_string(),
+            items,
+        ));
+    }
+
+    /// Accept handler for the device picker (preset row). Applies the
+    /// preset to the active browser pane (UA + viewport override).
+    pub fn browser_set_device(&mut self, idx: usize) {
+        match self
+            .panes
+            .iter_mut()
+            .find(|p| matches!(p, Pane::Browser(_)))
+        {
+            Some(Pane::Browser(b)) => {
+                b.set_device(idx);
+                if let Some(p) = crate::browser_pane::DEVICE_PRESETS.get(idx) {
+                    self.toast(format!("emulating: {} ({}×{})", p.label, p.width, p.height));
+                }
+            }
+            _ => self.toast("no browser pane open"),
+        }
+    }
+
+    /// Accept handler for the device picker (Reset row). Clears any
+    /// active device emulation on the active browser pane.
+    pub fn browser_clear_device(&mut self) {
+        match self
+            .panes
+            .iter_mut()
+            .find(|p| matches!(p, Pane::Browser(_)))
+        {
+            Some(Pane::Browser(b)) => {
+                b.clear_device();
+                self.toast("device emulation cleared");
+            }
+            _ => self.toast("no browser pane open"),
         }
     }
 

@@ -50,6 +50,13 @@ pub fn draw(
     } else {
         String::new()
     };
+    let device_chip = match b
+        .current_device
+        .and_then(|i| crate::browser_pane::DEVICE_PRESETS.get(i))
+    {
+        Some(p) => format!("   [📱 {} · {}×{}]", p.label, p.width, p.height),
+        None => String::new(),
+    };
     lines.push(Line::from(vec![
         Span::styled("  ", Style::default().bg(t.bg_dark)),
         Span::styled(
@@ -66,6 +73,7 @@ pub fn draw(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(target_chip, Style::default().fg(t.yellow).bg(t.bg_dark)),
+        Span::styled(device_chip, Style::default().fg(t.purple).bg(t.bg_dark)),
         Span::styled(
             if b.closed { "   (session ended)" } else { "" },
             Style::default().fg(t.comment).bg(t.bg_dark),

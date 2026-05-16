@@ -115,6 +115,49 @@ pub fn capture_screenshot_clip(id: i64, x: f64, y: f64, width: f64, height: f64)
     )
 }
 
+/// `Network.setUserAgentOverride` — swap the page's reported `User-Agent`
+/// (and `navigator.userAgent` in JS). Used by the device-emulation
+/// picker to mimic mobile / tablet user agents.
+pub fn set_user_agent_override(id: i64, user_agent: &str) -> String {
+    rpc(
+        id,
+        "Network.setUserAgentOverride",
+        serde_json::json!({ "userAgent": user_agent }),
+    )
+}
+
+/// `Emulation.setDeviceMetricsOverride` — override the viewport size,
+/// device pixel ratio, and `navigator.maxTouchPoints`-style "is-mobile"
+/// signal. `width == 0 && height == 0` clears the override (per CDP).
+pub fn set_device_metrics_override(
+    id: i64,
+    width: u32,
+    height: u32,
+    device_scale_factor: f64,
+    mobile: bool,
+) -> String {
+    rpc(
+        id,
+        "Emulation.setDeviceMetricsOverride",
+        serde_json::json!({
+            "width": width,
+            "height": height,
+            "deviceScaleFactor": device_scale_factor,
+            "mobile": mobile,
+        }),
+    )
+}
+
+/// `Emulation.clearDeviceMetricsOverride` — drop any device-metrics
+/// override and let the page render with the real window dimensions.
+pub fn clear_device_metrics_override(id: i64) -> String {
+    rpc(
+        id,
+        "Emulation.clearDeviceMetricsOverride",
+        serde_json::json!({}),
+    )
+}
+
 /// `Page.printToPDF` — render the current page as a PDF (base64-encoded
 /// in `result.data`). Uses default page size + margins; backgrounds on
 /// so brand colors / CSS backgrounds aren't dropped.

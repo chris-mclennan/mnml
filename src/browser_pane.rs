@@ -493,6 +493,92 @@ pub struct BrowserTarget {
     pub kind: String,
 }
 
+/// A device-emulation preset for the `m` picker: user agent, viewport
+/// dimensions, device pixel ratio, and the is-mobile flag — applied via
+/// `Network.setUserAgentOverride` and `Emulation.setDeviceMetricsOverride`.
+///
+/// UA strings are mid-2024 Chrome shapes — they don't need to be perfectly
+/// current, just plausible.
+#[derive(Debug, Clone, Copy)]
+pub struct DevicePreset {
+    pub label: &'static str,
+    pub user_agent: &'static str,
+    pub width: u32,
+    pub height: u32,
+    pub device_scale_factor: f64,
+    pub mobile: bool,
+}
+
+/// The fixed list of device presets the `m` picker offers. Order is
+/// roughly "smallest mobile → tablet → desktop"; the picker's first
+/// row is the no-emulation "Reset" entry the App injects on top.
+pub const DEVICE_PRESETS: &[DevicePreset] = &[
+    DevicePreset {
+        label: "iPhone 15",
+        user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+        width: 393,
+        height: 852,
+        device_scale_factor: 3.0,
+        mobile: true,
+    },
+    DevicePreset {
+        label: "iPhone SE",
+        user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+        width: 375,
+        height: 667,
+        device_scale_factor: 2.0,
+        mobile: true,
+    },
+    DevicePreset {
+        label: "Pixel 8",
+        user_agent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
+        width: 412,
+        height: 915,
+        device_scale_factor: 2.625,
+        mobile: true,
+    },
+    DevicePreset {
+        label: "Galaxy S22",
+        user_agent: "Mozilla/5.0 (Linux; Android 14; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
+        width: 360,
+        height: 780,
+        device_scale_factor: 3.0,
+        mobile: true,
+    },
+    DevicePreset {
+        label: "iPad",
+        user_agent: "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+        width: 820,
+        height: 1180,
+        device_scale_factor: 2.0,
+        mobile: true,
+    },
+    DevicePreset {
+        label: "iPad Pro 12.9\"",
+        user_agent: "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+        width: 1024,
+        height: 1366,
+        device_scale_factor: 2.0,
+        mobile: true,
+    },
+    DevicePreset {
+        label: "Desktop 1366×768",
+        user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        width: 1366,
+        height: 768,
+        device_scale_factor: 1.0,
+        mobile: false,
+    },
+    DevicePreset {
+        label: "Desktop 1920×1080",
+        user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        width: 1920,
+        height: 1080,
+        device_scale_factor: 1.0,
+        mobile: false,
+    },
+];
+
 pub struct BrowserPane {
     /// The page's current URL (updated on `Page.frameNavigated`).
     pub url: String,
@@ -585,6 +671,10 @@ pub struct BrowserPane {
     pub pending_node_screenshot: Option<i64>,
     /// The id of an in-flight `Page.printToPDF`, so its reply can be matched.
     pub pending_pdf: Option<i64>,
+    /// Index into [`DEVICE_PRESETS`] when the page is being emulated as a
+    /// specific device (UA + viewport overridden via `m`); `None` means
+    /// no emulation. Shown as a chip in the pane header.
+    pub current_device: Option<usize>,
     /// The id of an in-flight `DOM.getDocument`, so its reply can be matched.
     pub pending_dom: Option<i64>,
     /// Outstanding `Network.getRequestPostData` requests: `(rpc id, CDP requestId)`.
@@ -636,6 +726,7 @@ impl BrowserPane {
             pending_screenshot: None,
             pending_node_screenshot: None,
             pending_pdf: None,
+            current_device: None,
             pending_dom: None,
             pending_post_data: Vec::new(),
             scroll: usize::MAX, // follow the tail
@@ -1049,6 +1140,44 @@ impl BrowserPane {
     /// dispatcher to match a `DOM.getBoxModel` reply.
     pub fn is_pending_node_screenshot(&self, rpc_id: i64) -> bool {
         self.pending_node_screenshot == Some(rpc_id)
+    }
+
+    /// `m` (via device picker) — apply a device emulation preset. Fires
+    /// `Network.setUserAgentOverride` + `Emulation.setDeviceMetricsOverride`
+    /// together; both are fire-and-forget (no reply handling needed —
+    /// effects show on the next navigation / reload). The pane records
+    /// the preset index so the header chip can render it.
+    pub fn set_device(&mut self, preset_index: usize) {
+        if self.closed {
+            return;
+        }
+        let Some(preset) = DEVICE_PRESETS.get(preset_index) else {
+            return;
+        };
+        let ua = preset.user_agent.to_string();
+        self.send(move |id| crate::cdp::set_user_agent_override(id, &ua));
+        let (w, h, dpr, mobile) = (
+            preset.width,
+            preset.height,
+            preset.device_scale_factor,
+            preset.mobile,
+        );
+        self.send(move |id| crate::cdp::set_device_metrics_override(id, w, h, dpr, mobile));
+        self.current_device = Some(preset_index);
+        self.push(LogKind::System, format!("emulating: {}", preset.label));
+    }
+
+    /// `m` → Reset (the picker's first entry) — clear any device-metrics
+    /// override + reset the UA to the empty string (per CDP, that
+    /// restores Chrome's real UA).
+    pub fn clear_device(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.send(crate::cdp::clear_device_metrics_override);
+        self.send(|id| crate::cdp::set_user_agent_override(id, ""));
+        self.current_device = None;
+        self.push(LogKind::System, "device emulation cleared");
     }
 
     /// `p` — `Page.printToPDF`; the PDF lands later (matched by id) and
@@ -2100,6 +2229,66 @@ mod tests {
         assert!(p.pending_node_screenshot.is_none());
         let msgs = drain_cdp(&rx);
         assert_eq!(count_method(&msgs, "DOM.getBoxModel"), 0);
+    }
+
+    #[test]
+    fn set_device_fires_ua_and_metrics_overrides() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        let _ = drain_cdp(&rx);
+        // pick the first mobile preset (iPhone 15)
+        p.set_device(0);
+        assert_eq!(p.current_device, Some(0));
+        let msgs = drain_cdp(&rx);
+        let ua = msgs
+            .iter()
+            .find(|m| m["method"] == "Network.setUserAgentOverride")
+            .expect("ua override");
+        assert!(
+            ua["params"]["userAgent"]
+                .as_str()
+                .unwrap_or("")
+                .contains("iPhone")
+        );
+        let metrics = msgs
+            .iter()
+            .find(|m| m["method"] == "Emulation.setDeviceMetricsOverride")
+            .expect("metrics override");
+        let preset = &DEVICE_PRESETS[0];
+        assert_eq!(metrics["params"]["width"], preset.width);
+        assert_eq!(metrics["params"]["height"], preset.height);
+        assert_eq!(metrics["params"]["mobile"], preset.mobile);
+    }
+
+    #[test]
+    fn set_device_out_of_range_is_noop() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        let _ = drain_cdp(&rx);
+        p.set_device(usize::MAX);
+        assert!(p.current_device.is_none());
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "Emulation.setDeviceMetricsOverride"), 0);
+    }
+
+    #[test]
+    fn clear_device_fires_clear_and_empty_ua() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        p.set_device(0);
+        let _ = drain_cdp(&rx);
+        p.clear_device();
+        assert!(p.current_device.is_none());
+        let msgs = drain_cdp(&rx);
+        assert_eq!(
+            count_method(&msgs, "Emulation.clearDeviceMetricsOverride"),
+            1
+        );
+        let ua = msgs
+            .iter()
+            .find(|m| m["method"] == "Network.setUserAgentOverride")
+            .expect("ua reset");
+        assert_eq!(ua["params"]["userAgent"], "");
     }
 
     #[test]

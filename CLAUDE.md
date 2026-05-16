@@ -1780,6 +1780,15 @@ of the selected entry; accept evals `localStorage.setItem` (or `sessionStorage.s
 `scope|key=value` where scope is `local` (default) or `session`. `d` evals `removeItem` for the selected entry and
 drops the row locally. All three use `BrowserPane::eval_silent` (fire-and-forget eval that doesn't push a `» …` log
 line or claim `pending_eval`).
+**`m` opens a device-emulation picker** (`browser.device_picker`) — fuzzy picker over
+`crate::browser_pane::DEVICE_PRESETS` (iPhone 15 / iPhone SE / Pixel 8 / Galaxy S22 / iPad / iPad Pro 12.9" /
+Desktop 1366×768 / Desktop 1920×1080) plus a top "Reset — clear device emulation" entry. The active preset
+gets a `●` chip; the picker accept fires `Network.setUserAgentOverride` + `Emulation.setDeviceMetricsOverride`
+(or the matching clear ops for Reset). Both are fire-and-forget — effects show on the next navigation / reload.
+The active preset surfaces as a purple `📱 <label> · <w>×<h>` chip on the pane header so the emulated state is
+always visible. New `BrowserPane.current_device: Option<usize>` records the index. UA strings are mid-2024
+Chrome shapes — plausible but not auto-updated.
+
 **`p` prints the current page to PDF** (`browser.print_pdf`) — fires `Page.printToPDF` (printBackground on so
 brand colors / CSS backgrounds survive). The reply's base64 `data` decodes + writes to
 `<workspace>/.mnml/screenshots/page-<ms>.pdf` (same dir as screenshots — "captures from the browser pane" all

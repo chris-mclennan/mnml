@@ -43,6 +43,11 @@ pub enum PickerKind {
     /// `App::browser_url_history` (accumulated from `Page.frameNavigated`
     /// across sessions).
     BrowserHistory,
+    /// `id` = `"reset"` or the index (as a string) into
+    /// [`crate::browser_pane::DEVICE_PRESETS`]. Accept ⇒ apply the preset
+    /// (or clear emulation if `"reset"`). Populated by
+    /// `browser.device_picker`.
+    BrowserDevices,
     /// `id` = the index (as a string) into [`crate::app::App::pending_snippets`].
     /// Accept ⇒ insert the snippet's expansion at the active editor's cursor.
     Snippets,
