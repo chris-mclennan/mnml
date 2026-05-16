@@ -771,11 +771,14 @@ fn reader_loop(
     sem_states: SemStates,
 ) {
     let mut r = BufReader::new(stdout);
-    // Per-server semantic-tokens legend, captured when the `initialize`
+    // Per-server semantic-tokens legends, captured when the `initialize`
     // reply lands. Empty until then — semantic-tokens replies before
     // capture are dropped (servers shouldn't send them before initialize
-    // anyway). Type-index → name lookup at decode time.
+    // anyway). Type-index → name lookup at decode time; the modifier
+    // legend lets us resolve each bit in the per-token modifier bitmask
+    // back to its string name.
     let mut sem_legend: Vec<String> = Vec::new();
+    let mut sem_mod_legend: Vec<String> = Vec::new();
     loop {
         // Read headers until a blank line; we only need Content-Length.
         let mut len: Option<usize> = None;
@@ -806,7 +809,15 @@ fn reader_loop(
         let Ok(v) = serde_json::from_slice::<serde_json::Value>(&buf) else {
             continue;
         };
-        handle_message(&v, &tx, &pending, &stdin, &mut sem_legend, &sem_states);
+        handle_message(
+            &v,
+            &tx,
+            &pending,
+            &stdin,
+            &mut sem_legend,
+            &mut sem_mod_legend,
+            &sem_states,
+        );
     }
 }
 
@@ -816,6 +827,7 @@ fn handle_message(
     pending: &Pending,
     stdin: &Sink,
     sem_legend: &mut Vec<String>,
+    sem_mod_legend: &mut Vec<String>,
     sem_states: &SemStates,
 ) {
     // A server→client request (has both `id` and `method`).
@@ -1013,11 +1025,12 @@ fn handle_message(
             "initialize" => {
                 // Cache the server's semanticTokens legend so subsequent
                 // `textDocument/semanticTokens/full` replies can resolve
-                // type-index → name.
-                if let Some(types) = result
+                // type-index → name and modifier-bit → name.
+                let legend = result
                     .get("capabilities")
                     .and_then(|c| c.get("semanticTokensProvider"))
-                    .and_then(|p| p.get("legend"))
+                    .and_then(|p| p.get("legend"));
+                if let Some(types) = legend
                     .and_then(|l| l.get("tokenTypes"))
                     .and_then(|t| t.as_array())
                 {
@@ -1025,6 +1038,17 @@ fn handle_message(
                     for v in types {
                         if let Some(s) = v.as_str() {
                             sem_legend.push(s.to_string());
+                        }
+                    }
+                }
+                if let Some(mods) = legend
+                    .and_then(|l| l.get("tokenModifiers"))
+                    .and_then(|m| m.as_array())
+                {
+                    sem_mod_legend.clear();
+                    for v in mods {
+                        if let Some(s) = v.as_str() {
+                            sem_mod_legend.push(s.to_string());
                         }
                     }
                 }
@@ -1036,7 +1060,7 @@ fn handle_message(
                         .get("resultId")
                         .and_then(|v| v.as_str())
                         .map(String::from);
-                    let tokens = parse_semantic_tokens_from_raw(&raw, sem_legend);
+                    let tokens = parse_semantic_tokens_from_raw(&raw, sem_legend, sem_mod_legend);
                     if let Ok(mut s) = sem_states.lock() {
                         s.insert(
                             path.clone(),
@@ -1060,7 +1084,8 @@ fn handle_message(
                     // `edits` ⇒ sparse splices to apply to cached raw.
                     if result.get("data").is_some() {
                         let raw = extract_semantic_data(result);
-                        let tokens = parse_semantic_tokens_from_raw(&raw, sem_legend);
+                        let tokens =
+                            parse_semantic_tokens_from_raw(&raw, sem_legend, sem_mod_legend);
                         if let Ok(mut s) = sem_states.lock() {
                             s.insert(
                                 path.clone(),
@@ -1092,7 +1117,8 @@ fn handle_message(
                             // save kicks off a fresh `full` request.
                             return;
                         };
-                        let tokens = parse_semantic_tokens_from_raw(&raw, sem_legend);
+                        let tokens =
+                            parse_semantic_tokens_from_raw(&raw, sem_legend, sem_mod_legend);
                         let _ = tx.send(LspEvent::SemanticTokens { path, tokens });
                     }
                 }
@@ -1996,18 +2022,21 @@ pub fn parse_code_lenses(result: &serde_json::Value) -> Vec<crate::lsp::CodeLens
 ///   previous token's start char.
 /// * `length` is in chars (not bytes — UTF-16 by spec, but most servers in
 ///   practice work in chars; we follow the more-common interpretation).
-/// * `tokenTypeIdx` indexes into the legend; we resolve to the type-name
+/// * `tokenTypeIdx` indexes into `legend`; we resolve to the type-name
 ///   string before emitting so the renderer doesn't have to keep the legend.
-/// * The modifier bitmask is dropped in this first cut.
+/// * `tokenModifiersBitmask` is decoded against `mod_legend` — each set bit
+///   resolves to a modifier name (`"deprecated"` / `"readonly"` / etc.)
+///   the renderer maps to a `Modifier` style (CROSSED_OUT / DIM / etc.).
 ///
 /// Returns `Vec<SemanticToken>` in source order. Empty when the reply is
 /// shaped weirdly (no `data` array, or non-multiple-of-5 length).
 pub fn parse_semantic_tokens(
     result: &serde_json::Value,
     legend: &[String],
+    mod_legend: &[String],
 ) -> Vec<crate::lsp::SemanticToken> {
     let raw = extract_semantic_data(result);
-    parse_semantic_tokens_from_raw(&raw, legend)
+    parse_semantic_tokens_from_raw(&raw, legend, mod_legend)
 }
 
 /// Pull the flat `data: number[]` array off a `SemanticTokens` reply
@@ -2026,6 +2055,7 @@ pub(crate) fn extract_semantic_data(result: &serde_json::Value) -> Vec<u32> {
 pub(crate) fn parse_semantic_tokens_from_raw(
     data: &[u32],
     legend: &[String],
+    mod_legend: &[String],
 ) -> Vec<crate::lsp::SemanticToken> {
     if !data.len().is_multiple_of(5) || legend.is_empty() {
         return Vec::new();
@@ -2038,7 +2068,7 @@ pub(crate) fn parse_semantic_tokens_from_raw(
         let delta_start = chunk[1];
         let length = chunk[2];
         let type_idx = chunk[3] as usize;
-        // _modifiers = chunk[4] — bitmask, dropped for the first cut.
+        let mod_bits = chunk[4];
         line += delta_line;
         if delta_line == 0 {
             start += delta_start;
@@ -2052,12 +2082,31 @@ pub(crate) fn parse_semantic_tokens_from_raw(
             .get(type_idx)
             .cloned()
             .unwrap_or_else(|| String::from("unknown"));
+        let modifiers = decode_modifier_bits(mod_bits, mod_legend);
         out.push(crate::lsp::SemanticToken {
             line,
             start_char: start,
             length,
             type_name,
+            modifiers,
         });
+    }
+    out
+}
+
+/// Decode a modifier bitmask against the per-server modifier legend.
+/// Bit `i` set ⇒ `mod_legend[i]` is in the returned list. Unknown bits
+/// (set beyond `mod_legend.len()`) are dropped silently — a forward-
+/// compat shape since some servers report modifiers we don't recognize.
+pub(crate) fn decode_modifier_bits(bits: u32, mod_legend: &[String]) -> Vec<String> {
+    if bits == 0 || mod_legend.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (i, name) in mod_legend.iter().enumerate() {
+        if bits & (1 << i) != 0 {
+            out.push(name.clone());
+        }
     }
     out
 }
@@ -2326,7 +2375,7 @@ mod tests {
                 1, 2, 1, 2, 0
             ]
         });
-        let tokens = parse_semantic_tokens(&reply, &legend);
+        let tokens = parse_semantic_tokens(&reply, &legend, &[]);
         assert_eq!(tokens.len(), 3);
         assert_eq!(tokens[0].line, 0);
         assert_eq!(tokens[0].start_char, 0);
@@ -2338,29 +2387,71 @@ mod tests {
         assert_eq!(tokens[2].line, 1);
         assert_eq!(tokens[2].start_char, 2);
         assert_eq!(tokens[2].type_name, "variable");
+        // No modifier legend supplied ⇒ every token's `modifiers` is empty.
+        assert!(tokens.iter().all(|t| t.modifiers.is_empty()));
     }
 
     #[test]
     fn parse_semantic_tokens_handles_empty_or_malformed() {
         let legend = vec!["keyword".to_string()];
         // No data array
-        assert!(parse_semantic_tokens(&json!({}), &legend).is_empty());
+        assert!(parse_semantic_tokens(&json!({}), &legend, &[]).is_empty());
         // Non-multiple-of-5
-        assert!(parse_semantic_tokens(&json!({"data": [1, 2, 3]}), &legend).is_empty());
+        assert!(parse_semantic_tokens(&json!({"data": [1, 2, 3]}), &legend, &[]).is_empty());
         // Empty legend ⇒ can't resolve type names ⇒ bail
-        assert!(parse_semantic_tokens(&json!({"data": [0, 0, 1, 0, 0]}), &[]).is_empty());
+        assert!(parse_semantic_tokens(&json!({"data": [0, 0, 1, 0, 0]}), &[], &[]).is_empty());
     }
 
     #[test]
     fn parse_semantic_tokens_drops_zero_length() {
         let legend = vec!["keyword".to_string()];
         let reply = json!({ "data": [0, 0, 0, 0, 0, 0, 5, 3, 0, 0] });
-        let tokens = parse_semantic_tokens(&reply, &legend);
+        let tokens = parse_semantic_tokens(&reply, &legend, &[]);
         assert_eq!(tokens.len(), 1);
         // First entry's zero length skipped; second advances by delta_start=5
         // (delta_line=0) from the prior start_char=0 → start at 5.
         assert_eq!(tokens[0].start_char, 5);
         assert_eq!(tokens[0].length, 3);
+    }
+
+    #[test]
+    fn decode_modifier_bits_picks_set_bits() {
+        let legend = vec![
+            "declaration".to_string(),
+            "definition".to_string(),
+            "readonly".to_string(),
+            "static".to_string(),
+            "deprecated".to_string(),
+            "abstract".to_string(),
+        ];
+        // bits 2 (readonly) + 4 (deprecated) set
+        let mods = decode_modifier_bits(0b0001_0100, &legend);
+        assert_eq!(mods, vec!["readonly".to_string(), "deprecated".to_string()]);
+        // Zero bitmask ⇒ no modifiers.
+        assert!(decode_modifier_bits(0, &legend).is_empty());
+        // Empty legend ⇒ no modifiers regardless of bits.
+        assert!(decode_modifier_bits(0xff, &[]).is_empty());
+        // Bit beyond legend length ⇒ silently dropped.
+        let mods = decode_modifier_bits(0b1000_0000, &legend);
+        assert!(mods.is_empty());
+    }
+
+    #[test]
+    fn parse_semantic_tokens_resolves_modifiers_when_legend_supplied() {
+        let legend = vec!["function".to_string()];
+        let mod_legend = vec![
+            "declaration".to_string(),
+            "readonly".to_string(),
+            "deprecated".to_string(),
+        ];
+        // One token, bits 0 + 2 set (declaration + deprecated).
+        let reply = json!({ "data": [0, 0, 3, 0, 0b0000_0101] });
+        let tokens = parse_semantic_tokens(&reply, &legend, &mod_legend);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(
+            tokens[0].modifiers,
+            vec!["declaration".to_string(), "deprecated".to_string()]
+        );
     }
 
     #[test]
@@ -2446,7 +2537,7 @@ mod tests {
             data: vec![1, 2, 5, 1, 0],
         }];
         assert!(apply_semantic_token_edits(&mut raw, edits));
-        let tokens = parse_semantic_tokens_from_raw(&raw, &legend);
+        let tokens = parse_semantic_tokens_from_raw(&raw, &legend, &[]);
         assert_eq!(tokens.len(), 2);
         assert_eq!(tokens[0].type_name, "keyword");
         assert_eq!(tokens[1].line, 1);

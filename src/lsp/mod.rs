@@ -302,15 +302,19 @@ pub struct CallHit {
 /// index to a name via the per-server legend before sending up.
 ///
 /// `type_name` is the legend string (`"function"` / `"variable"` /
-/// `"string"` / …) which the editor renderer maps to a theme color. We
-/// drop the modifier bitmask in this first cut — the renderer would
-/// need a per-`(type, modifier)` color table to do anything with it.
+/// `"string"` / …) which the editor renderer maps to a theme color.
+/// `modifiers` is the resolved set of modifier names (`"deprecated"` /
+/// `"defaultLibrary"` / `"readonly"` / `"static"` / etc.) the renderer
+/// maps to a `ratatui::style::Modifier` (CROSSED_OUT / DIM / ITALIC /
+/// BOLD). Modifiers with no visual mapping are kept on the token but
+/// have no rendering effect.
 #[derive(Debug, Clone)]
 pub struct SemanticToken {
     pub line: u32,
     pub start_char: u32,
     pub length: u32,
     pub type_name: String,
+    pub modifiers: Vec<String>,
 }
 
 /// One color literal the server recognized. We keep just enough to paint

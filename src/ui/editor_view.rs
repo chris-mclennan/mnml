@@ -527,8 +527,12 @@ pub fn draw_pane(
             None
         };
 
-        // Per-visible-cell (char, fg, bg), then coalesce into spans.
-        let mut cells: Vec<(char, Color, Color)> = Vec::with_capacity(tw);
+        // Per-visible-cell (char, fg, bg, modifier), then coalesce into
+        // spans. The modifier carries BOLD / DIM / ITALIC / CROSSED_OUT
+        // bits from LSP semantic-token modifiers (`static` / `defaultLibrary`
+        // / `readonly` / `deprecated`) so deprecated APIs render with a
+        // strikethrough, stdlib symbols dim, etc.
+        let mut cells: Vec<(char, Color, Color, ratatui::style::Modifier)> = Vec::with_capacity(tw);
         for vc in 0..tw {
             let c = view_col_start + vc;
             let in_sel = (sel_hi > sel_lo && c >= sel_lo && c < sel_hi)
@@ -596,7 +600,7 @@ pub fn draw_pane(
                     }
                 }
             };
-            let (ch, mut fg) = if c < n {
+            let (ch, mut fg, mut style_mod) = if c < n {
                 let raw_ch = chars[c];
                 if raw_ch == ' '
                     && has_content
@@ -604,29 +608,34 @@ pub fn draw_pane(
                     && c.is_multiple_of(tab_w)
                     && c < indent_cols
                 {
-                    ('│', guide_fg)
+                    ('│', guide_fg, ratatui::style::Modifier::empty())
                 } else if show_ws && raw_ch == ' ' {
-                    ('·', guide_fg)
+                    ('·', guide_fg, ratatui::style::Modifier::empty())
                 } else if show_ws && raw_ch == '\t' {
-                    ('→', guide_fg)
+                    ('→', guide_fg, ratatui::style::Modifier::empty())
                 } else {
                     // LSP semantic tokens win over tree-sitter at overlapping
                     // cells (per LSP convention — server has more context
                     // than a pure syntactic grammar). When LSP doesn't cover
                     // this cell, fall back to tree-sitter; if both empty,
-                    // use the theme foreground.
-                    let fg = semantic_color(&buf.semantic_tokens, line_no, c)
-                        .or_else(|| syntax_color(spans_for_line, c))
-                        .unwrap_or(theme::cur().fg);
-                    (raw_ch, fg)
+                    // use the theme foreground. Semantic tokens may carry
+                    // a modifier-bitmask style (DIM / BOLD / ITALIC / etc.).
+                    let (fg, sem_mod) = match semantic_style(&buf.semantic_tokens, line_no, c) {
+                        Some((c, m)) => (c, m),
+                        None => (
+                            syntax_color(spans_for_line, c).unwrap_or(theme::cur().fg),
+                            ratatui::style::Modifier::empty(),
+                        ),
+                    };
+                    (raw_ch, fg, sem_mod)
                 }
             } else if show_ws && c == n {
                 // `:set list` end-of-line marker (vim canonical `$`). Paint
                 // it in the same dim guide color as the other whitespace
                 // glyphs so it doesn't shout.
-                ('$', guide_fg)
+                ('$', guide_fg, ratatui::style::Modifier::empty())
             } else {
-                (' ', theme::cur().fg)
+                (' ', theme::cur().fg, ratatui::style::Modifier::empty())
             };
             // Rainbow-brackets override: when enabled and this cell holds a
             // `()[]{}`, recolor it from the depth-cycling palette. Beats the
@@ -637,6 +646,7 @@ pub fn draw_pane(
                 && let Some(&(_, depth)) = row_entries.iter().find(|&&(col, _)| col == c)
             {
                 fg = rainbow_palette[(depth as usize) % rainbow_palette.len()];
+                style_mod = ratatui::style::Modifier::empty();
             }
             // The "current" find match: force dark fg so it stays readable on
             // the bright bg.
@@ -653,8 +663,9 @@ pub fn draw_pane(
             // selection / cursor-line still keep their bg.
             if todo_on_line.iter().any(|&(s, e)| c >= s && c < e) {
                 fg = theme::cur().red;
+                style_mod = ratatui::style::Modifier::empty();
             }
-            cells.push((ch, fg, bg));
+            cells.push((ch, fg, bg, style_mod));
         }
 
         // Fold marker — painted into the trailing space cells of a fold's
@@ -675,7 +686,7 @@ pub fn draw_pane(
                     break;
                 }
                 if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
-                    cells[vc] = (mc, mcolor, base_bg);
+                    cells[vc] = (mc, mcolor, base_bg, ratatui::style::Modifier::empty());
                 }
             }
             // Remember the rect so click-to-unfold can find this fold.
@@ -713,7 +724,7 @@ pub fn draw_pane(
                 // Only paint where the line's natural content ended (a space
                 // cell with the line bg) — never over selection / find-match.
                 if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
-                    cells[vc] = (mc, dcolor, base_bg);
+                    cells[vc] = (mc, dcolor, base_bg, ratatui::style::Modifier::empty());
                 }
             }
         }
@@ -776,7 +787,7 @@ pub fn draw_pane(
                     break;
                 }
                 if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
-                    cells[vc] = (mc, hcolor, base_bg);
+                    cells[vc] = (mc, hcolor, base_bg, ratatui::style::Modifier::empty());
                 }
             }
         }
@@ -812,7 +823,7 @@ pub fn draw_pane(
                     break;
                 }
                 if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
-                    cells[vc] = (mc, lcolor, base_bg);
+                    cells[vc] = (mc, lcolor, base_bg, ratatui::style::Modifier::empty());
                 }
             }
         }
@@ -820,13 +831,17 @@ pub fn draw_pane(
         let mut spans: Vec<Span> = vec![sign_span, Span::styled(num_gutter, num_style)];
         let mut i = 0;
         while i < cells.len() {
-            let (_, fg, bg) = cells[i];
+            let (_, fg, bg, m) = cells[i];
             let mut s = String::new();
-            while i < cells.len() && cells[i].1 == fg && cells[i].2 == bg {
+            while i < cells.len() && cells[i].1 == fg && cells[i].2 == bg && cells[i].3 == m {
                 s.push(cells[i].0);
                 i += 1;
             }
-            spans.push(Span::styled(s, Style::default().fg(fg).bg(bg)));
+            let mut style = Style::default().fg(fg).bg(bg);
+            if !m.is_empty() {
+                style = style.add_modifier(m);
+            }
+            spans.push(Span::styled(s, style));
         }
         lines.push(Line::from(spans));
     }
@@ -978,15 +993,24 @@ fn syntax_color(spans: &[crate::highlight::ColoredSpan], c: usize) -> Option<Col
         .map(|&(_, _, color)| color)
 }
 
-/// LSP semantic-tokens color override for cell `(line, c)`. Returns `Some`
+/// LSP semantic-tokens style override for cell `(line, c)`. Returns `Some`
 /// when a token covers this cell — caller layers this on top of the
 /// tree-sitter `syntax_color` (LSP wins where they overlap, per spec).
 /// `None` ⇒ no semantic token here, fall back to tree-sitter.
 ///
+/// The return carries both the type-derived color *and* a `Modifier`
+/// derived from the token's modifier list (deprecated ⇒ CROSSED_OUT,
+/// readonly ⇒ ITALIC, static ⇒ BOLD, defaultLibrary ⇒ DIM); multiple
+/// modifiers OR together via `Modifier`'s bitflags semantics.
+///
 /// Linear scan over the buffer's tokens — fine for the typical token
 /// volume per file (hundreds, not thousands). A future optimization
 /// could pre-sort by line and binary-search.
-fn semantic_color(tokens: &[crate::lsp::SemanticToken], line: usize, c: usize) -> Option<Color> {
+fn semantic_style(
+    tokens: &[crate::lsp::SemanticToken],
+    line: usize,
+    c: usize,
+) -> Option<(Color, ratatui::style::Modifier)> {
     let line_u32 = line as u32;
     let c_u32 = c as u32;
     for tok in tokens {
@@ -994,7 +1018,10 @@ fn semantic_color(tokens: &[crate::lsp::SemanticToken], line: usize, c: usize) -
             continue;
         }
         if c_u32 >= tok.start_char && c_u32 < tok.start_char + tok.length {
-            return Some(semantic_token_color(&tok.type_name));
+            return Some((
+                semantic_token_color(&tok.type_name),
+                semantic_token_modifier(&tok.modifiers),
+            ));
         }
     }
     None
@@ -1018,6 +1045,34 @@ fn semantic_token_color(type_name: &str) -> Color {
         "operator" => t.fg,
         _ => t.fg,
     }
+}
+
+/// Map an LSP semantic-token modifier list to a `ratatui::style::Modifier`
+/// bitmask. The visual hooks are picked to match common-IDE conventions:
+///
+/// * `deprecated` → `CROSSED_OUT` — the strongest signal; deprecated APIs
+///   should be impossible to use accidentally.
+/// * `readonly` → `ITALIC` — by convention, immutable / `const`-ish refs.
+/// * `static` → `BOLD` — class-level / module-level binding.
+/// * `defaultLibrary` → `DIM` — stdlib / built-in symbols recede.
+///
+/// Other LSP-standard modifiers (`declaration`, `definition`, `abstract`,
+/// `async`, `modification`, `documentation`) have no visual mapping —
+/// they could each get a hook in a future cut, but the four above cover
+/// the visually-distinct cases at the terminal palette's resolution.
+fn semantic_token_modifier(modifiers: &[String]) -> ratatui::style::Modifier {
+    use ratatui::style::Modifier;
+    let mut m = Modifier::empty();
+    for name in modifiers {
+        match name.as_str() {
+            "deprecated" => m |= Modifier::CROSSED_OUT,
+            "readonly" => m |= Modifier::ITALIC,
+            "static" => m |= Modifier::BOLD,
+            "defaultLibrary" => m |= Modifier::DIM,
+            _ => {}
+        }
+    }
+    m
 }
 
 /// One-row workspace-relative path header (dim) above the editor body. Drawn
@@ -1064,4 +1119,72 @@ fn draw_breadcrumb(frame: &mut Frame, app: &App, pane_id: PaneId, area: Rect) {
         ])),
         area,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Modifier;
+
+    #[test]
+    fn semantic_token_modifier_maps_known_names() {
+        assert_eq!(
+            semantic_token_modifier(&["deprecated".to_string()]),
+            Modifier::CROSSED_OUT
+        );
+        assert_eq!(
+            semantic_token_modifier(&["readonly".to_string()]),
+            Modifier::ITALIC
+        );
+        assert_eq!(
+            semantic_token_modifier(&["static".to_string()]),
+            Modifier::BOLD
+        );
+        assert_eq!(
+            semantic_token_modifier(&["defaultLibrary".to_string()]),
+            Modifier::DIM
+        );
+    }
+
+    #[test]
+    fn semantic_token_modifier_combines_multiple() {
+        // deprecated + static ⇒ CROSSED_OUT | BOLD
+        let m = semantic_token_modifier(&["deprecated".to_string(), "static".to_string()]);
+        assert!(m.contains(Modifier::CROSSED_OUT));
+        assert!(m.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn semantic_token_modifier_drops_unknown_names() {
+        // Unmapped names contribute nothing; known names still apply.
+        let m = semantic_token_modifier(&[
+            "declaration".to_string(),
+            "abstract".to_string(),
+            "deprecated".to_string(),
+        ]);
+        assert_eq!(m, Modifier::CROSSED_OUT);
+    }
+
+    #[test]
+    fn semantic_token_modifier_empty_when_no_input() {
+        assert_eq!(semantic_token_modifier(&[]), Modifier::empty());
+    }
+
+    #[test]
+    fn semantic_style_returns_color_and_modifier_for_overlap() {
+        let tokens = vec![crate::lsp::SemanticToken {
+            line: 3,
+            start_char: 4,
+            length: 5,
+            type_name: "function".to_string(),
+            modifiers: vec!["deprecated".to_string()],
+        }];
+        let Some((_, m)) = semantic_style(&tokens, 3, 6) else {
+            panic!("expected token coverage");
+        };
+        assert_eq!(m, Modifier::CROSSED_OUT);
+        // Outside the range ⇒ None.
+        assert!(semantic_style(&tokens, 3, 9).is_none());
+        assert!(semantic_style(&tokens, 2, 5).is_none());
+    }
 }

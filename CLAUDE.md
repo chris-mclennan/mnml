@@ -749,11 +749,19 @@ SemState>>>`. First request after `did_open` sends `full`; every subsequent requ
 cached raw array). `apply_semantic_token_edits` sorts edits descending by `start` so later
 splices don't shift earlier offsets out from under us; out-of-bounds edits drop the cache
 so the next request falls back to `full`. `initialize` advertises `requests: { full: {
-delta: true } }`. `did_close` evicts the per-path cache. **Limitations (first-cut still):**
-no range requests (a server that only implements `full` won't fall back); modifier bitmask
-dropped (`readonly` / `deprecated` / `static` etc. — would need per-`(type, mod)` color
-tables); linear scan per cell (token volumes per file are typically hundreds, fine for now;
-sort-by-line + binary-search would help on massive files).
+delta: true } }`. `did_close` evicts the per-path cache. **Modifier colors** —
+`SemanticToken.modifiers: Vec<String>` is now populated by decoding the 5th-element
+bitmask against the per-server `tokenModifiers` legend (also captured from the
+`initialize` reply, reader-thread-local alongside the type legend). The renderer's
+`semantic_style` returns `(Color, Modifier)` instead of just `Color`; per-cell `cells`
+data shape grew a `ratatui::style::Modifier` slot so span coalescing keeps adjacent cells
+with matching style together. Mapping: `deprecated` → CROSSED_OUT (deprecated APIs are
+impossible to miss), `readonly` → ITALIC, `static` → BOLD, `defaultLibrary` → DIM
+(stdlib symbols recede); other LSP-standard modifiers (`declaration` / `definition` /
+`abstract` / `async` / `modification` / `documentation`) have no visual hook yet.
+**Limitations (first-cut still):** no range requests (a server that only implements
+`full` won't fall back); linear scan per cell (token volumes per file are typically
+hundreds, fine for now; sort-by-line + binary-search would help on massive files).
 **`[ui] wrap` survives a relaunch** — the user's runtime `:set wrap` choice now persists in
 `session.json` (`SavedSession.wrap: Option<bool>`). Config-file changes still take precedence
 on a fresh workspace.
