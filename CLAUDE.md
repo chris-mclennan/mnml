@@ -2119,6 +2119,16 @@ comment_count is hardcoded 0 because Azure's list endpoint doesn't
 return it (would need a per-PR `/threads` call). Free-tier signup
 walk-through in conversation history if a real test is needed.
 
+**Cross-nav PR ↔ pipeline** — pane-level chords: `c` on a PR row jumps
+to the matching pipeline/build (selects the most-recent one whose
+`target_ref` equals the PR's `source_branch`); `P` on a pipeline/build
+row jumps to the matching open PR. Opens the peer pane if it isn't
+already open. All 4 hosts: `jump_from_{bb,gh,gl,az}_{pr,pipeline,run,build}_to_*`
+on `App`. Toasts when there's no match (PR with no pipelines yet, or
+the worker hasn't cycled). Forces the peer pane's view-mode to
+Recent/PerRepo before jumping so the target row is actually visible
+(per-branch view-mode hides anything but the latest per branch).
+
 **Cross-host PR picker** — `pr.picker` (`<leader>P p`) — one fuzzy
 picker over every open PR/MR across the 4 configured SCM hosts.
 Reads from the per-host caches the workers populate

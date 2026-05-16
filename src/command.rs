@@ -1916,6 +1916,65 @@ fn builtin_commands() -> Vec<Command> {
         keys: &[],
         run: |app| app.open_pr_picker(),
     });
+    // Cross-nav between paired PR + pipeline panes (per host). Bound to
+    // `c` (on a PR row) and `P` (on a pipeline row) inside each pane —
+    // these aliases keep them in the palette too for discovery.
+    cmds.push(Command {
+        id: "bitbucket.jump_pr_to_pipeline",
+        title: "Bitbucket: PR → pipeline on same branch",
+        group: "bitbucket",
+        keys: &[],
+        run: |app| app.jump_from_bb_pr_to_pipeline(),
+    });
+    cmds.push(Command {
+        id: "bitbucket.jump_pipeline_to_pr",
+        title: "Bitbucket: pipeline → PR on same branch",
+        group: "bitbucket",
+        keys: &[],
+        run: |app| app.jump_from_bb_pipeline_to_pr(),
+    });
+    cmds.push(Command {
+        id: "github.jump_pr_to_run",
+        title: "GitHub: PR → workflow run on same branch",
+        group: "github",
+        keys: &[],
+        run: |app| app.jump_from_gh_pr_to_run(),
+    });
+    cmds.push(Command {
+        id: "github.jump_run_to_pr",
+        title: "GitHub: workflow run → PR on same branch",
+        group: "github",
+        keys: &[],
+        run: |app| app.jump_from_gh_run_to_pr(),
+    });
+    cmds.push(Command {
+        id: "gitlab.jump_mr_to_pipeline",
+        title: "GitLab: MR → pipeline on same branch",
+        group: "gitlab",
+        keys: &[],
+        run: |app| app.jump_from_gl_mr_to_pipeline(),
+    });
+    cmds.push(Command {
+        id: "gitlab.jump_pipeline_to_mr",
+        title: "GitLab: pipeline → MR on same branch",
+        group: "gitlab",
+        keys: &[],
+        run: |app| app.jump_from_gl_pipeline_to_mr(),
+    });
+    cmds.push(Command {
+        id: "azdevops.jump_pr_to_build",
+        title: "Azure DevOps: PR → build on same branch",
+        group: "azdevops",
+        keys: &[],
+        run: |app| app.jump_from_az_pr_to_build(),
+    });
+    cmds.push(Command {
+        id: "azdevops.jump_build_to_pr",
+        title: "Azure DevOps: build → PR on same branch",
+        group: "azdevops",
+        keys: &[],
+        run: |app| app.jump_from_az_build_to_pr(),
+    });
     #[cfg(feature = "private")]
     {
         cmds.push(Command {

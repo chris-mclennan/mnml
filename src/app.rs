@@ -17149,6 +17149,125 @@ impl App {
         crate::ui::bitbucket_pull_requests_view::selected_pr(self, pane).map(|r| r.web_url)
     }
 
+    /// `c` on a Bitbucket PR row — open / focus the pipelines pane and
+    /// select the most-recent pipeline whose `target_ref` matches the PR's
+    /// `source_branch`. Toasts when there's no match (PR with no
+    /// pipelines run yet, or the worker hasn't cycled).
+    pub fn jump_from_bb_pr_to_pipeline(&mut self) {
+        let id = match self.active {
+            Some(id) => id,
+            None => {
+                self.toast("no pane focused");
+                return;
+            }
+        };
+        let Some(Pane::BitbucketPullRequests(pane)) = self.panes.get(id) else {
+            self.toast("not a Bitbucket PR pane");
+            return;
+        };
+        let Some(pr) = crate::ui::bitbucket_pull_requests_view::selected_pr(self, pane) else {
+            self.toast("no PR selected");
+            return;
+        };
+        let Some(branch) = pr.source_branch.clone() else {
+            self.toast("PR has no source branch");
+            return;
+        };
+        let key = (pr.workspace.clone(), pr.slug.clone());
+        let Some(pipelines) = self.bitbucket_pipelines.get(&key) else {
+            self.toast(format!(
+                "no pipelines cached for {}/{}",
+                pr.workspace, pr.slug
+            ));
+            return;
+        };
+        // Pipelines arrive sorted newest-first; first match by target_ref wins.
+        let Some(pipeline) = pipelines
+            .iter()
+            .find(|p| p.target_ref.as_deref() == Some(branch.as_str()))
+            .cloned()
+        else {
+            self.toast(format!("no pipeline on branch '{branch}' yet"));
+            return;
+        };
+        // Force the next view-mode to Recent (PerBranch only shows latest per branch).
+        self.bb_pipelines_view_mode = crate::bitbucket::PipelineViewMode::Recent;
+        self.open_bitbucket_pipelines_pane();
+        // Find the new pipelines pane and snap the selection onto the
+        // matching pipeline by uuid.
+        let flat = crate::ui::bitbucket_pipelines_view::flatten_pipelines(self);
+        let target_idx = flat.iter().position(|r| {
+            r.pipeline
+                .as_ref()
+                .map(|p| p.uuid == pipeline.uuid)
+                .unwrap_or(false)
+        });
+        if let Some(idx) = target_idx
+            && let Some(active) = self.active
+            && let Some(Pane::BitbucketPipelines(p)) = self.panes.get_mut(active)
+        {
+            p.selected = idx;
+            p.scroll = 0;
+        }
+        self.toast(format!("→ pipeline #{}", pipeline.build_number));
+    }
+
+    /// `P` on a Bitbucket pipeline row — open / focus the PRs pane and
+    /// select the open PR whose `source_branch` matches the pipeline's
+    /// `target_ref`. Toasts when there's no match.
+    pub fn jump_from_bb_pipeline_to_pr(&mut self) {
+        let id = match self.active {
+            Some(id) => id,
+            None => {
+                self.toast("no pane focused");
+                return;
+            }
+        };
+        let Some(Pane::BitbucketPipelines(pane)) = self.panes.get(id) else {
+            self.toast("not a Bitbucket pipelines pane");
+            return;
+        };
+        let Some(pipeline) = crate::ui::bitbucket_pipelines_view::selected_pipeline(self, pane)
+        else {
+            self.toast("no pipeline selected");
+            return;
+        };
+        let Some(branch) = pipeline.target_ref.clone() else {
+            self.toast("pipeline has no target ref");
+            return;
+        };
+        let key = (pipeline.workspace.clone(), pipeline.slug.clone());
+        let Some(prs) = self.bitbucket_pull_requests.get(&key) else {
+            self.toast(format!(
+                "no PRs cached for {}/{}",
+                pipeline.workspace, pipeline.slug
+            ));
+            return;
+        };
+        let Some(pr) = prs
+            .iter()
+            .find(|p| p.source_branch.as_deref() == Some(branch.as_str()))
+            .cloned()
+        else {
+            self.toast(format!("no open PR for branch '{branch}'"));
+            return;
+        };
+        self.bb_prs_view_mode = crate::bitbucket::PrViewMode::PerRepo;
+        self.open_bitbucket_pull_requests_pane();
+        let flat = crate::ui::bitbucket_pull_requests_view::flatten_prs(self);
+        let target_idx = flat
+            .iter()
+            .position(|r| r.pr.as_ref().map(|p| p.id == pr.id).unwrap_or(false));
+        if let Some(idx) = target_idx
+            && let Some(active) = self.active
+            && let Some(Pane::BitbucketPullRequests(p)) = self.panes.get_mut(active)
+        {
+            p.selected = idx;
+            p.scroll = 0;
+        }
+        self.toast(format!("→ PR #{}", pr.id));
+    }
+
     // ── GitHub Actions — sibling of the Bitbucket methods above. ──────
 
     pub fn ensure_github_worker(&mut self) {
@@ -17286,6 +17405,112 @@ impl App {
             return None;
         };
         crate::ui::github_pull_requests_view::selected_pr(self, pane).map(|r| r.web_url)
+    }
+
+    /// `c` on a GitHub PR row — open / focus the Actions pane and select
+    /// the most-recent workflow run whose `target_ref` matches this PR's
+    /// `source_branch`.
+    pub fn jump_from_gh_pr_to_run(&mut self) {
+        let id = match self.active {
+            Some(id) => id,
+            None => {
+                self.toast("no pane focused");
+                return;
+            }
+        };
+        let Some(Pane::GithubPullRequests(pane)) = self.panes.get(id) else {
+            self.toast("not a GitHub PR pane");
+            return;
+        };
+        let Some(pr) = crate::ui::github_pull_requests_view::selected_pr(self, pane) else {
+            self.toast("no PR selected");
+            return;
+        };
+        let Some(branch) = pr.source_branch.clone() else {
+            self.toast("PR has no source branch");
+            return;
+        };
+        let key = (pr.owner.clone(), pr.repo.clone());
+        let Some(runs) = self.github_workflow_runs.get(&key) else {
+            self.toast(format!("no runs cached for {}/{}", pr.owner, pr.repo));
+            return;
+        };
+        let Some(run) = runs
+            .iter()
+            .find(|r| r.target_ref.as_deref() == Some(branch.as_str()))
+            .cloned()
+        else {
+            self.toast(format!("no workflow run on branch '{branch}' yet"));
+            return;
+        };
+        self.gh_actions_view_mode = crate::github::ActionsViewMode::Recent;
+        self.open_github_actions_pane();
+        let flat = crate::ui::github_actions_view::flatten_runs(self);
+        let target_idx = flat
+            .iter()
+            .position(|r| r.run.as_ref().map(|w| w.id == run.id).unwrap_or(false));
+        if let Some(idx) = target_idx
+            && let Some(active) = self.active
+            && let Some(Pane::GithubActions(p)) = self.panes.get_mut(active)
+        {
+            p.selected = idx;
+            p.scroll = 0;
+        }
+        self.toast(format!("→ run #{}", run.run_number));
+    }
+
+    /// `P` on a GitHub workflow-run row — open / focus the PRs pane and
+    /// select the open PR whose `source_branch` matches the run's
+    /// `target_ref`.
+    pub fn jump_from_gh_run_to_pr(&mut self) {
+        let id = match self.active {
+            Some(id) => id,
+            None => {
+                self.toast("no pane focused");
+                return;
+            }
+        };
+        let Some(Pane::GithubActions(pane)) = self.panes.get(id) else {
+            self.toast("not a GitHub Actions pane");
+            return;
+        };
+        let Some(run) = crate::ui::github_actions_view::selected_run(self, pane) else {
+            self.toast("no run selected");
+            return;
+        };
+        let Some(branch) = run.target_ref.clone() else {
+            self.toast("run has no target ref");
+            return;
+        };
+        let key = (run.owner.clone(), run.repo.clone());
+        let Some(prs) = self.github_pull_requests.get(&key) else {
+            self.toast(format!("no PRs cached for {}/{}", run.owner, run.repo));
+            return;
+        };
+        let Some(pr) = prs
+            .iter()
+            .find(|p| p.source_branch.as_deref() == Some(branch.as_str()))
+            .cloned()
+        else {
+            self.toast(format!("no open PR for branch '{branch}'"));
+            return;
+        };
+        self.gh_prs_view_mode = crate::github::GhPrViewMode::PerRepo;
+        self.open_github_pull_requests_pane();
+        let flat = crate::ui::github_pull_requests_view::flatten_prs(self);
+        let target_idx = flat.iter().position(|r| {
+            r.pr.as_ref()
+                .map(|p| p.number == pr.number)
+                .unwrap_or(false)
+        });
+        if let Some(idx) = target_idx
+            && let Some(active) = self.active
+            && let Some(Pane::GithubPullRequests(p)) = self.panes.get_mut(active)
+        {
+            p.selected = idx;
+            p.scroll = 0;
+        }
+        self.toast(format!("→ PR #{}", pr.number));
     }
 
     fn drain_github_events(&mut self) {
@@ -17473,6 +17698,111 @@ impl App {
         crate::ui::gitlab_merge_requests_view::selected_mr(self, pane).map(|r| r.web_url)
     }
 
+    /// `c` on a GitLab MR row — open / focus the pipelines pane and select
+    /// the most-recent pipeline whose `target_ref` matches the MR's
+    /// `source_branch`.
+    pub fn jump_from_gl_mr_to_pipeline(&mut self) {
+        let id = match self.active {
+            Some(id) => id,
+            None => {
+                self.toast("no pane focused");
+                return;
+            }
+        };
+        let Some(Pane::GitlabMergeRequests(pane)) = self.panes.get(id) else {
+            self.toast("not a GitLab MR pane");
+            return;
+        };
+        let Some(mr) = crate::ui::gitlab_merge_requests_view::selected_mr(self, pane) else {
+            self.toast("no MR selected");
+            return;
+        };
+        let Some(branch) = mr.source_branch.clone() else {
+            self.toast("MR has no source branch");
+            return;
+        };
+        let Some(pipelines) = self.gitlab_pipelines.get(&mr.project) else {
+            self.toast(format!("no pipelines cached for {}", mr.project));
+            return;
+        };
+        let Some(pipeline) = pipelines
+            .iter()
+            .find(|p| p.target_ref.as_deref() == Some(branch.as_str()))
+            .cloned()
+        else {
+            self.toast(format!("no pipeline on branch '{branch}' yet"));
+            return;
+        };
+        self.gl_pipelines_view_mode = crate::gitlab::GlPipelineViewMode::Recent;
+        self.open_gitlab_pipelines_pane();
+        let flat = crate::ui::gitlab_pipelines_view::flatten_pipelines(self);
+        let target_idx = flat.iter().position(|r| {
+            r.pipeline
+                .as_ref()
+                .map(|p| p.id == pipeline.id)
+                .unwrap_or(false)
+        });
+        if let Some(idx) = target_idx
+            && let Some(active) = self.active
+            && let Some(Pane::GitlabPipelines(p)) = self.panes.get_mut(active)
+        {
+            p.selected = idx;
+            p.scroll = 0;
+        }
+        self.toast(format!("→ pipeline #{}", pipeline.id));
+    }
+
+    /// `P` on a GitLab pipeline row — open / focus the MRs pane and select
+    /// the open MR whose `source_branch` matches the pipeline's
+    /// `target_ref`.
+    pub fn jump_from_gl_pipeline_to_mr(&mut self) {
+        let id = match self.active {
+            Some(id) => id,
+            None => {
+                self.toast("no pane focused");
+                return;
+            }
+        };
+        let Some(Pane::GitlabPipelines(pane)) = self.panes.get(id) else {
+            self.toast("not a GitLab pipelines pane");
+            return;
+        };
+        let Some(pipeline) = crate::ui::gitlab_pipelines_view::selected_pipeline(self, pane) else {
+            self.toast("no pipeline selected");
+            return;
+        };
+        let Some(branch) = pipeline.target_ref.clone() else {
+            self.toast("pipeline has no target ref");
+            return;
+        };
+        let Some(mrs) = self.gitlab_merge_requests.get(&pipeline.project) else {
+            self.toast(format!("no MRs cached for {}", pipeline.project));
+            return;
+        };
+        let Some(mr) = mrs
+            .iter()
+            .find(|m| m.source_branch.as_deref() == Some(branch.as_str()))
+            .cloned()
+        else {
+            self.toast(format!("no open MR for branch '{branch}'"));
+            return;
+        };
+        self.gl_mrs_view_mode = crate::gitlab::GlMrViewMode::PerProject;
+        self.open_gitlab_merge_requests_pane();
+        let flat = crate::ui::gitlab_merge_requests_view::flatten_mrs(self);
+        let target_idx = flat
+            .iter()
+            .position(|r| r.mr.as_ref().map(|m| m.iid == mr.iid).unwrap_or(false));
+        if let Some(idx) = target_idx
+            && let Some(active) = self.active
+            && let Some(Pane::GitlabMergeRequests(p)) = self.panes.get_mut(active)
+        {
+            p.selected = idx;
+            p.scroll = 0;
+        }
+        self.toast(format!("→ MR !{}", mr.iid));
+    }
+
     fn drain_gitlab_events(&mut self) {
         use crate::gitlab::GitlabEvent;
         let Some(handle) = &self.gitlab_handle else {
@@ -17649,6 +17979,124 @@ impl App {
             return None;
         };
         crate::ui::azdevops_pull_requests_view::selected_pr(self, pane).map(|r| r.web_url)
+    }
+
+    /// `c` on an Azure DevOps PR row — open / focus the builds pane and
+    /// select the most-recent build whose `target_ref` matches the PR's
+    /// `source_branch`.
+    pub fn jump_from_az_pr_to_build(&mut self) {
+        let id = match self.active {
+            Some(id) => id,
+            None => {
+                self.toast("no pane focused");
+                return;
+            }
+        };
+        let Some(Pane::AzDevOpsPullRequests(pane)) = self.panes.get(id) else {
+            self.toast("not an Azure PR pane");
+            return;
+        };
+        let Some(pr) = crate::ui::azdevops_pull_requests_view::selected_pr(self, pane) else {
+            self.toast("no PR selected");
+            return;
+        };
+        let Some(branch) = pr.source_branch.clone() else {
+            self.toast("PR has no source branch");
+            return;
+        };
+        // Azure DevOps build records carry the org/project label; PRs add
+        // a /repo suffix. Try the exact label first, then walk the
+        // (org/project) prefix as a fallback so the lookup still works
+        // when a project has multiple repos.
+        let pr_label = pr.label.clone();
+        let project_label = pr_label
+            .rsplit_once('/')
+            .map(|(p, _)| p.to_string())
+            .unwrap_or_else(|| pr_label.clone());
+        let builds = self
+            .azdevops_builds
+            .get(&pr_label)
+            .or_else(|| self.azdevops_builds.get(&project_label));
+        let Some(builds) = builds else {
+            self.toast(format!("no builds cached for {pr_label}"));
+            return;
+        };
+        let Some(build) = builds
+            .iter()
+            .find(|b| b.target_ref.as_deref() == Some(branch.as_str()))
+            .cloned()
+        else {
+            self.toast(format!("no build on branch '{branch}' yet"));
+            return;
+        };
+        self.az_builds_view_mode = crate::azdevops::AzBuildsViewMode::Recent;
+        self.open_azdevops_builds_pane();
+        let flat = crate::ui::azdevops_builds_view::flatten_builds(self);
+        let target_idx = flat
+            .iter()
+            .position(|r| r.build.as_ref().map(|b| b.id == build.id).unwrap_or(false));
+        if let Some(idx) = target_idx
+            && let Some(active) = self.active
+            && let Some(Pane::AzDevOpsBuilds(p)) = self.panes.get_mut(active)
+        {
+            p.selected = idx;
+            p.scroll = 0;
+        }
+        self.toast(format!("→ build #{}", build.id));
+    }
+
+    /// `P` on an Azure DevOps build row — open / focus the PRs pane and
+    /// select the open PR whose `source_branch` matches the build's
+    /// `target_ref`.
+    pub fn jump_from_az_build_to_pr(&mut self) {
+        let id = match self.active {
+            Some(id) => id,
+            None => {
+                self.toast("no pane focused");
+                return;
+            }
+        };
+        let Some(Pane::AzDevOpsBuilds(pane)) = self.panes.get(id) else {
+            self.toast("not an Azure builds pane");
+            return;
+        };
+        let Some(build) = crate::ui::azdevops_builds_view::selected_build(self, pane) else {
+            self.toast("no build selected");
+            return;
+        };
+        let Some(branch) = build.target_ref.clone() else {
+            self.toast("build has no target ref");
+            return;
+        };
+        // Build label is "org/project"; PRs are keyed "org/project/repo".
+        // Pick the first PR-label whose source_branch matches AND whose
+        // prefix is the build's label.
+        let build_label = build.label.clone();
+        let Some(matched) = self.azdevops_pull_requests.iter().find_map(|(label, prs)| {
+            if !(label == &build_label || label.starts_with(&format!("{build_label}/"))) {
+                return None;
+            }
+            prs.iter()
+                .find(|p| p.source_branch.as_deref() == Some(branch.as_str()))
+                .cloned()
+        }) else {
+            self.toast(format!("no open PR for branch '{branch}'"));
+            return;
+        };
+        self.az_prs_view_mode = crate::azdevops::AzPrViewMode::PerRepo;
+        self.open_azdevops_pull_requests_pane();
+        let flat = crate::ui::azdevops_pull_requests_view::flatten_prs(self);
+        let target_idx = flat
+            .iter()
+            .position(|r| r.pr.as_ref().map(|p| p.id == matched.id).unwrap_or(false));
+        if let Some(idx) = target_idx
+            && let Some(active) = self.active
+            && let Some(Pane::AzDevOpsPullRequests(p)) = self.panes.get_mut(active)
+        {
+            p.selected = idx;
+            p.scroll = 0;
+        }
+        self.toast(format!("→ PR #{}", matched.id));
     }
 
     fn drain_azdevops_events(&mut self) {
@@ -18899,6 +19347,111 @@ GET https://example.com/second
             picker.type_char(c);
         }
         assert_eq!(picker.len(), 1, "fuzzy 'refactor' narrows to GH only");
+    }
+
+    #[test]
+    fn jump_from_bb_pr_to_pipeline_selects_match_by_branch() {
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.bitbucket.repos = vec![crate::config::BitbucketRepo {
+            workspace: "exampleorg".into(),
+            slug: "example-api".into(),
+            branches: Vec::new(),
+        }];
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        // Two pipelines on the repo — pipeline #200 sits on the PR's branch;
+        // #100 is on a different branch (the "wrong" answer).
+        app.bitbucket_pipelines.insert(
+            ("exampleorg".into(), "example-api".into()),
+            vec![
+                crate::bitbucket::PipelineRecord {
+                    workspace: "exampleorg".into(),
+                    slug: "example-api".into(),
+                    uuid: "uuid-200".into(),
+                    build_number: 200,
+                    state: crate::bitbucket::PipelineState::InProgress,
+                    target_ref: Some("feature/cross-nav".into()),
+                    target_kind: Some("BRANCH".into()),
+                    commit_hash: None,
+                    creator: None,
+                    trigger: None,
+                    created_on_ms: Some(2_000),
+                    completed_on_ms: None,
+                    duration_secs: None,
+                    running_step: None,
+                    web_url: "https://bitbucket.org/exampleorg/example-api/pipelines/results/200"
+                        .into(),
+                },
+                crate::bitbucket::PipelineRecord {
+                    workspace: "exampleorg".into(),
+                    slug: "example-api".into(),
+                    uuid: "uuid-100".into(),
+                    build_number: 100,
+                    state: crate::bitbucket::PipelineState::Successful,
+                    target_ref: Some("main".into()),
+                    target_kind: Some("BRANCH".into()),
+                    commit_hash: None,
+                    creator: None,
+                    trigger: None,
+                    created_on_ms: Some(1_000),
+                    completed_on_ms: None,
+                    duration_secs: None,
+                    running_step: None,
+                    web_url: "https://bitbucket.org/exampleorg/example-api/pipelines/results/100"
+                        .into(),
+                },
+            ],
+        );
+        // One PR whose source branch matches the running pipeline.
+        app.bitbucket_pull_requests.insert(
+            ("exampleorg".into(), "example-api".into()),
+            vec![crate::bitbucket::PullRequestRecord {
+                workspace: "exampleorg".into(),
+                slug: "example-api".into(),
+                id: 42,
+                title: "Feature".into(),
+                state: crate::bitbucket::PullRequestState::Open,
+                author: None,
+                source_branch: Some("feature/cross-nav".into()),
+                dest_branch: Some("main".into()),
+                reviewer_count: 0,
+                approved_count: 0,
+                changes_count: 0,
+                comment_count: 0,
+                task_count: 0,
+                created_on_ms: Some(1_000),
+                updated_on_ms: Some(1_000),
+                web_url: "https://bitbucket.org/exampleorg/example-api/pull-requests/42".into(),
+            }],
+        );
+        // Open the PR pane (so jump_from_bb_pr_to_pipeline has an active
+        // pane to inspect) and prime the selection on PR #42.
+        app.open_bitbucket_pull_requests_pane();
+        let prs_pane = app.active.unwrap();
+        // The pane defaults to selected = 0; the flatten places header
+        // first. The first PR-shape row is what we expect under it.
+        // Force selection onto the PR data row (it's index 1 with the
+        // header at 0; we set 1 explicitly so the test doesn't depend on
+        // flatten internals beyond "the PR is the second visible row").
+        if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(prs_pane) {
+            p.selected = 1;
+        }
+        app.jump_from_bb_pr_to_pipeline();
+        // The active pane should now be the pipelines pane.
+        let new_active = app.active.unwrap();
+        assert!(
+            matches!(app.panes.get(new_active), Some(Pane::BitbucketPipelines(_))),
+            "active pane should be pipelines after jump"
+        );
+        // And the selected pipeline row should be uuid-200, not uuid-100.
+        if let Some(Pane::BitbucketPipelines(p)) = app.panes.get(new_active) {
+            let flat = crate::ui::bitbucket_pipelines_view::flatten_pipelines(&app);
+            let selected = flat.get(p.selected).and_then(|r| r.pipeline.as_ref());
+            assert!(selected.is_some(), "should land on a pipeline row");
+            assert_eq!(selected.unwrap().uuid, "uuid-200");
+        } else {
+            panic!("not a pipelines pane");
+        }
     }
 
     #[test]

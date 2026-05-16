@@ -1030,6 +1030,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('y') => app.copy_selected_bitbucket_pipeline_url(),
             KeyCode::Char('r') => app.refresh_active_bitbucket_pane(),
+            KeyCode::Char('P') => app.jump_from_bb_pipeline_to_pr(),
             KeyCode::Char('v') => {
                 let new_mode = app.bb_pipelines_view_mode.cycle();
                 app.bb_pipelines_view_mode = new_mode;
@@ -1154,6 +1155,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('y') => app.copy_selected_bitbucket_pr_url(),
             KeyCode::Char('r') => app.refresh_active_bitbucket_pane(),
+            KeyCode::Char('c') => app.jump_from_bb_pr_to_pipeline(),
             KeyCode::Char('v') => {
                 let new_mode = app.bb_prs_view_mode.cycle();
                 app.bb_prs_view_mode = new_mode;
@@ -1277,6 +1279,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('y') => app.copy_selected_github_pr_url(),
             KeyCode::Char('r') => app.refresh_active_github_pane(),
+            KeyCode::Char('c') => app.jump_from_gh_pr_to_run(),
             KeyCode::Char('v') => {
                 let new_mode = app.gh_prs_view_mode.cycle();
                 app.gh_prs_view_mode = new_mode;
@@ -1402,6 +1405,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('y') => app.copy_selected_github_run_url(),
             KeyCode::Char('r') => app.refresh_active_github_pane(),
+            KeyCode::Char('P') => app.jump_from_gh_run_to_pr(),
             KeyCode::Char('v') => {
                 let new_mode = app.gh_actions_view_mode.cycle();
                 app.gh_actions_view_mode = new_mode;
@@ -1525,6 +1529,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('y') => app.copy_selected_gitlab_pipeline_url(),
             KeyCode::Char('r') => app.refresh_active_gitlab_pane(),
+            KeyCode::Char('P') => app.jump_from_gl_pipeline_to_mr(),
             KeyCode::Char('v') => {
                 let new_mode = app.gl_pipelines_view_mode.cycle();
                 app.gl_pipelines_view_mode = new_mode;
@@ -1648,6 +1653,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('y') => app.copy_selected_gitlab_mr_url(),
             KeyCode::Char('r') => app.refresh_active_gitlab_pane(),
+            KeyCode::Char('c') => app.jump_from_gl_mr_to_pipeline(),
             KeyCode::Char('v') => {
                 let new_mode = app.gl_mrs_view_mode.cycle();
                 app.gl_mrs_view_mode = new_mode;
@@ -1771,6 +1777,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('y') => app.copy_selected_azdevops_build_url(),
             KeyCode::Char('r') => app.refresh_active_azdevops_pane(),
+            KeyCode::Char('P') => app.jump_from_az_build_to_pr(),
             KeyCode::Char('v') => {
                 let new_mode = app.az_builds_view_mode.cycle();
                 app.az_builds_view_mode = new_mode;
@@ -1894,6 +1901,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('y') => app.copy_selected_azdevops_pr_url(),
             KeyCode::Char('r') => app.refresh_active_azdevops_pane(),
+            KeyCode::Char('c') => app.jump_from_az_pr_to_build(),
             KeyCode::Char('v') => {
                 let new_mode = app.az_prs_view_mode.cycle();
                 app.az_prs_view_mode = new_mode;
