@@ -90,6 +90,16 @@ pub struct BitbucketConfig {
 pub struct BitbucketRepo {
     pub workspace: String,
     pub slug: String,
+    /// Branches the per-branch pipelines view should always include for
+    /// this repo. Empty ⇒ use [`default_branches()`] (the long-lived
+    /// `main` / `master` / `develop` / `staging`) plus active release/
+    /// hotfix branches auto-discovered via Bitbucket's refs/branches
+    /// search (`q='name ~ "release"'`).
+    ///
+    /// Set this when a repo has a non-standard long-lived branch you
+    /// want pinned (e.g. `production`, `qa`, a long-running feature
+    /// branch) without relying on auto-discovery.
+    pub branches: Vec<String>,
 }
 
 /// `[github]` — GitHub Actions / Pull Requests integration. Mirrors the
@@ -123,6 +133,16 @@ pub struct GithubConfig {
 pub struct GithubRepo {
     pub owner: String,
     pub repo: String,
+    /// Branches the per-branch Actions view should always include for
+    /// this repo. Same shape + semantics as [`BitbucketRepo::branches`].
+    pub branches: Vec<String>,
+}
+
+/// Long-lived branches the per-branch pipelines/actions views default to
+/// when a repo's `branches` field is empty. Mirrors James's `bbwatch.py`
+/// CANDIDATE_BRANCHES tuple.
+pub fn default_branches() -> &'static [&'static str] {
+    &["main", "master", "develop", "staging"]
 }
 
 impl GithubConfig {
@@ -133,7 +153,9 @@ impl GithubConfig {
         self.auth_env.as_deref().unwrap_or("GITHUB_TOKEN")
     }
     pub fn poll_secs_or_default(&self) -> u64 {
-        self.poll_secs.unwrap_or(30).max(5)
+        // 60s default for GH because it has 5000/hr headroom and the
+        // per-branch view doesn't multiply badly with N repos.
+        self.poll_secs.unwrap_or(60).max(5)
     }
 }
 
@@ -148,7 +170,10 @@ impl BitbucketConfig {
     }
     /// Poll interval in seconds. Defaults to 30.
     pub fn poll_secs_or_default(&self) -> u64 {
-        self.poll_secs.unwrap_or(30).max(5)
+        // 60s default for BB to stay under the ~1000/hr token rate limit
+        // with multiple repos × per-branch pipeline fetches. Lower at
+        // your own risk via `[bitbucket] poll_secs = N`.
+        self.poll_secs.unwrap_or(60).max(5)
     }
 }
 
@@ -481,6 +506,8 @@ struct RawBitbucket {
 struct RawBitbucketRepo {
     workspace: String,
     slug: String,
+    #[serde(default)]
+    branches: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -495,6 +522,8 @@ struct RawGithub {
 struct RawGithubRepo {
     owner: String,
     repo: String,
+    #[serde(default)]
+    branches: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -792,6 +821,7 @@ impl Config {
             self.bitbucket.repos.push(BitbucketRepo {
                 workspace: r.workspace,
                 slug: r.slug,
+                branches: r.branches,
             });
         }
         // `[github]` — same per-field overlay shape as `[bitbucket]`.
@@ -805,6 +835,7 @@ impl Config {
             self.github.repos.push(GithubRepo {
                 owner: r.owner,
                 repo: r.repo,
+                branches: r.branches,
             });
         }
     }
@@ -912,8 +943,10 @@ slug      = "private-playwright"
         let cfg = Config::default();
         assert!(!cfg.bitbucket.any_configured());
         // Defaults so the worker has sensible values even without a config.
+        // 60s default keeps us under the ~1000/hr token rate limit when
+        // multiple repos × per-branch fetches multiply API calls.
         assert_eq!(cfg.bitbucket.auth_env_name(), "BITBUCKET_TOKEN");
-        assert_eq!(cfg.bitbucket.poll_secs_or_default(), 30);
+        assert_eq!(cfg.bitbucket.poll_secs_or_default(), 60);
     }
 
     #[test]
@@ -961,7 +994,7 @@ repo  = "private-claude-knowledge"
         let cfg = Config::default();
         assert!(!cfg.github.any_configured());
         assert_eq!(cfg.github.auth_env_name(), "GITHUB_TOKEN");
-        assert_eq!(cfg.github.poll_secs_or_default(), 30);
+        assert_eq!(cfg.github.poll_secs_or_default(), 60);
     }
 
     #[test]

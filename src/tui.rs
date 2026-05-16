@@ -966,6 +966,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter => app.open_selected_bitbucket_pipeline_url(),
             KeyCode::Char('y') => app.copy_selected_bitbucket_pipeline_url(),
             KeyCode::Char('r') => app.refresh_active_bitbucket_pane(),
+            KeyCode::Char('v') => {
+                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
+                    let new_mode = p.cycle_view();
+                    app.toast(format!("bitbucket pipelines: view → {}", new_mode.label()));
+                }
+            }
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }
@@ -1021,6 +1027,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter => app.open_selected_bitbucket_pr_url(),
             KeyCode::Char('y') => app.copy_selected_bitbucket_pr_url(),
             KeyCode::Char('r') => app.refresh_active_bitbucket_pane(),
+            KeyCode::Char('v') => {
+                if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i) {
+                    let new_mode = p.cycle_view();
+                    app.toast(format!("bitbucket prs: view → {}", new_mode.label()));
+                }
+            }
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }

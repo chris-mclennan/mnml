@@ -36,8 +36,13 @@ pub mod pipelines_pane;
 pub mod pull_requests_pane;
 
 pub use api::{PipelineRecord, PipelineState, PullRequestRecord, PullRequestState};
-pub use pipelines_pane::BitbucketPipelinesPane;
-pub use pull_requests_pane::BitbucketPullRequestsPane;
+pub use pipelines_pane::{BitbucketPipelinesPane, PipelineViewMode};
+pub use pull_requests_pane::{BitbucketPullRequestsPane, PrViewMode};
+
+/// One row in the PerBranch pipelines cache: `(branch_name, latest_pipeline_or_none)`.
+/// Aliased so the App-side `HashMap` doesn't need to spell out the
+/// tuple shape (clippy warns about the complexity otherwise).
+pub type BranchPipelineSlot = (String, Option<PipelineRecord>);
 
 /// Backoff after a per-repo fetch failure before we visit the next repo
 /// in the same pass. Keeps a flaky repo from spinning at full speed.
@@ -46,20 +51,41 @@ const PER_REPO_ERROR_BACKOFF: Duration = Duration::from_secs(5);
 /// Events from the Bitbucket worker thread → main thread.
 #[derive(Debug, Clone)]
 pub enum BitbucketEvent {
-    /// Latest pipelines for a single repo. Replaces (does not merge with)
-    /// the receiver's cached vec for that repo — Bitbucket gives us the
-    /// canonical newest-N each poll so wholesale-replace is simplest.
+    /// Latest pipelines for a single repo (newest-N, mixed branches).
+    /// Replaces — not merges — the receiver's cached vec for that repo.
+    /// Powers the "recent pipelines" view-mode.
     Pipelines {
         workspace: String,
         slug: String,
         pipelines: Vec<PipelineRecord>,
     },
-    /// Latest open pull requests for a single repo. Replaces the cache.
+    /// Latest pipeline per branch for one repo (one row per branch in
+    /// the per-branch view-mode). The branch list is resolved per-pass
+    /// from `[[bitbucket.repos]] branches = […]` overlaid with
+    /// [`crate::config::default_branches()`] and auto-discovered active
+    /// release / hotfix branches. `Option<PipelineRecord>` is `None`
+    /// when a branch has no pipelines (kept in the result so the pane
+    /// renders the row anyway — useful when adding a new long-lived
+    /// branch).
+    BranchPipelines {
+        workspace: String,
+        slug: String,
+        /// Branch name → its most-recent pipeline (or `None` if it
+        /// never ran one).
+        per_branch: Vec<(String, Option<PipelineRecord>)>,
+    },
+    /// Latest open pull requests for a single repo. Powers the
+    /// "per-repo grouped" PR view-mode.
     PullRequests {
         workspace: String,
         slug: String,
         pull_requests: Vec<PullRequestRecord>,
     },
+    /// Every non-merged PR the authenticated user authored, across
+    /// every accessible repo (NOT scoped to configured repos). Powers
+    /// the cross-repo "mine" PR view-mode. Replaces the cache wholesale
+    /// each poll cycle.
+    MyPullRequests(Vec<PullRequestRecord>),
     /// At least one successful response has landed. Pane drops the
     /// "loading…" chip on first receipt.
     Connected,
@@ -152,17 +178,47 @@ fn run_thread(
     let auth_header = api::auth_header_value(&token);
     let poll_interval = Duration::from_secs(cfg.poll_secs_or_default());
 
+    // Fetch account_id once at spawn — required for the cross-repo
+    // /pullrequests/{account_id} endpoint. If this fails we still continue
+    // (the per-repo views work without it; the mine view will just stay
+    // empty).
+    let account_id = match api::fetch_account_id(&client, &auth_header) {
+        Ok(id) => Some(id),
+        Err(e) => {
+            let _ = tx.send(BitbucketEvent::Failed(format!(
+                "fetching account_id: {e} — the \"mine\" PR view will be \
+                 empty; per-repo views still work"
+            )));
+            None
+        }
+    };
+
     let mut have_sent_connected = false;
     while !cancel.load(Ordering::Relaxed) {
-        // Clear at pass start — a wake set *during* the pass will fire the
-        // next iteration anyway, and we want a fresh latch for the
-        // post-pass sleep below.
         wake.store(false, Ordering::Relaxed);
+
+        // ── Cross-repo: my open PRs (one cheap call total) ─────────────
+        if let Some(aid) = account_id.as_deref() {
+            match api::fetch_my_open_pull_requests(&client, &auth_header, aid) {
+                Ok(prs) => {
+                    if !have_sent_connected {
+                        have_sent_connected = true;
+                        let _ = tx.send(BitbucketEvent::Connected);
+                    }
+                    let _ = tx.send(BitbucketEvent::MyPullRequests(prs));
+                }
+                Err(e) => {
+                    let _ = tx.send(BitbucketEvent::Failed(format!("my prs: {e}")));
+                }
+            }
+        }
+
+        // ── Per-repo: pipelines + open PRs + per-branch pipelines ──────
         for repo in &cfg.repos {
             if cancel.load(Ordering::Relaxed) {
                 return;
             }
-            // Pipelines first — the more interactive surface.
+            // Recent pipelines (newest-N mixed-branch).
             match api::fetch_recent_pipelines(&client, &auth_header, repo) {
                 Ok(pipelines) => {
                     if !have_sent_connected {
@@ -184,11 +240,57 @@ fn run_thread(
                     sleep_cancellable_with_wake(PER_REPO_ERROR_BACKOFF, &cancel, &wake);
                 }
             }
-            // Then PRs. A failure here doesn't abort the loop — we'll try
-            // again next pass.
             if cancel.load(Ordering::Relaxed) {
                 return;
             }
+            // Per-branch latest pipeline. Branch list is the config's
+            // explicit branches, then default_branches, then discovered
+            // active release/hotfix branches — deduped, order preserved.
+            let branches = resolve_branches(&client, &auth_header, repo, &cancel);
+            let mut per_branch: Vec<(String, Option<PipelineRecord>)> = Vec::new();
+            for branch in &branches {
+                if cancel.load(Ordering::Relaxed) {
+                    return;
+                }
+                match api::fetch_latest_pipeline_for_branch(&client, &auth_header, repo, branch) {
+                    Ok(Some(mut pipeline)) => {
+                        // For in-progress runs, enrich with the running
+                        // step name. James's bbwatch.py polish.
+                        if !pipeline.state.is_terminal() && !pipeline.uuid.is_empty() {
+                            pipeline.running_step = api::fetch_running_step(
+                                &client,
+                                &auth_header,
+                                &repo.workspace,
+                                &repo.slug,
+                                &pipeline.uuid,
+                            );
+                        }
+                        per_branch.push((branch.clone(), Some(pipeline)));
+                    }
+                    Ok(None) => {
+                        // Branch exists but has no pipelines — only include
+                        // it if it was explicitly configured (otherwise the
+                        // default-branches list pollutes repos that don't
+                        // use one of the defaults).
+                        if repo.branches.iter().any(|b| b == branch) {
+                            per_branch.push((branch.clone(), None));
+                        }
+                    }
+                    Err(_) => {
+                        // Don't spam Failed events per-branch — they add
+                        // up too quickly. Just skip the branch this pass.
+                    }
+                }
+            }
+            let _ = tx.send(BitbucketEvent::BranchPipelines {
+                workspace: repo.workspace.clone(),
+                slug: repo.slug.clone(),
+                per_branch,
+            });
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            // Per-repo open PRs (still useful for the per-repo grouped view).
             match api::fetch_open_pull_requests(&client, &auth_header, repo) {
                 Ok(pull_requests) => {
                     let _ = tx.send(BitbucketEvent::PullRequests {
@@ -209,6 +311,40 @@ fn run_thread(
         }
         sleep_cancellable_with_wake(poll_interval, &cancel, &wake);
     }
+}
+
+/// Build the deduped, ordered branch list for one repo's per-branch
+/// pipeline fetch. Order: explicit `[[bitbucket.repos]] branches = […]`
+/// first, then [`crate::config::default_branches()`], then up to 2
+/// recently-active release/hotfix branches discovered via the BB
+/// `refs/branches?q=` search. Auto-discovery is best-effort and silent
+/// on failure (it's an enrichment, not load-bearing).
+fn resolve_branches(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    repo: &BitbucketRepo,
+    cancel: &Arc<AtomicBool>,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for b in &repo.branches {
+        if !out.iter().any(|x| x == b) {
+            out.push(b.clone());
+        }
+    }
+    for b in crate::config::default_branches() {
+        if !out.iter().any(|x| x == b) {
+            out.push((*b).to_string());
+        }
+    }
+    if cancel.load(Ordering::Relaxed) {
+        return out;
+    }
+    for b in api::discover_release_branches(client, auth_header, repo, 2) {
+        if !out.iter().any(|x| x == &b) {
+            out.push(b);
+        }
+    }
+    out
 }
 
 /// Sleep `dur`, waking early on either `cancel` or `wake`. Keeps shutdown

@@ -1,11 +1,44 @@
-//! `Pane::BitbucketPullRequests` state — same minimal shape as the
-//! pipelines pane (selection + scroll only; data lives in
-//! `App.bitbucket_pull_requests`).
+//! `Pane::BitbucketPullRequests` state. Two view-modes, toggled with `v`:
+//!
+//! * [`PrViewMode::PerRepo`] — for each configured repo, list the open
+//!   PRs (grouped by repo header). Good for "what's pending review on
+//!   the repos I track."
+//! * [`PrViewMode::Mine`] — cross-repo flat list of every non-merged PR
+//!   I authored across every accessible repo (NOT scoped to configured
+//!   `[[bitbucket.repos]]`). Good for "what am I on the hook for."
+//!
+//! Both surfaces are kept fresh by the same worker thread, so flipping
+//! is instant.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PrViewMode {
+    /// PRs per configured repo. The original pane.
+    #[default]
+    PerRepo,
+    /// PRs I authored across every accessible repo. James's `--mine`.
+    Mine,
+}
+
+impl PrViewMode {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::PerRepo => Self::Mine,
+            Self::Mine => Self::PerRepo,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::PerRepo => "per-repo",
+            Self::Mine => "mine",
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct BitbucketPullRequestsPane {
     pub selected: usize,
     pub scroll: usize,
+    pub view_mode: PrViewMode,
 }
 
 impl BitbucketPullRequestsPane {
@@ -13,7 +46,14 @@ impl BitbucketPullRequestsPane {
         Self::default()
     }
     pub fn tab_title(&self) -> String {
-        "Bitbucket PRs".to_string()
+        format!("Bitbucket PRs · {}", self.view_mode.label())
+    }
+
+    pub fn cycle_view(&mut self) -> PrViewMode {
+        self.view_mode = self.view_mode.cycle();
+        self.selected = 0;
+        self.scroll = 0;
+        self.view_mode
     }
     pub fn move_selection(&mut self, delta: i64, max_idx: usize) {
         if max_idx == 0 {

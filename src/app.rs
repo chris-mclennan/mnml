@@ -1745,6 +1745,17 @@ pub struct App {
     /// the same worker — each pass fetches both surfaces.
     pub(crate) bitbucket_pull_requests:
         std::collections::HashMap<(String, String), Vec<crate::bitbucket::PullRequestRecord>>,
+    /// Cross-repo flat list of every non-merged PR the authenticated
+    /// user authored. Populated by the BB worker's
+    /// `/pullrequests/{account_id}` poll — replaces wholesale each pass.
+    /// Powers the "mine" PR view-mode.
+    pub(crate) bitbucket_my_pull_requests: Vec<crate::bitbucket::PullRequestRecord>,
+    /// Per-repo per-branch latest pipeline (the "per-branch" pipelines
+    /// view-mode). Keyed by `(workspace, slug)` → ordered
+    /// `Vec<BranchPipelineSlot>`. Branch order follows the worker's
+    /// `resolve_branches` output.
+    pub(crate) bitbucket_branch_pipelines:
+        std::collections::HashMap<(String, String), Vec<crate::bitbucket::BranchPipelineSlot>>,
     /// GitHub Actions REST worker handle — sibling of `bitbucket_handle`.
     github_handle: Option<crate::github::GithubHandle>,
     /// Per-repo cache of the latest workflow runs. Keyed by `(owner, repo)`.
@@ -1906,6 +1917,8 @@ impl App {
             bitbucket_handle: None,
             bitbucket_pipelines: std::collections::HashMap::new(),
             bitbucket_pull_requests: std::collections::HashMap::new(),
+            bitbucket_my_pull_requests: Vec::new(),
+            bitbucket_branch_pipelines: std::collections::HashMap::new(),
             bitbucket_last_error: None,
             bitbucket_connected: false,
             github_handle: None,
@@ -16976,6 +16989,19 @@ impl App {
                 } => {
                     self.bitbucket_pull_requests
                         .insert((workspace, slug), pull_requests);
+                    self.bitbucket_last_error = None;
+                }
+                BitbucketEvent::BranchPipelines {
+                    workspace,
+                    slug,
+                    per_branch,
+                } => {
+                    self.bitbucket_branch_pipelines
+                        .insert((workspace, slug), per_branch);
+                    self.bitbucket_last_error = None;
+                }
+                BitbucketEvent::MyPullRequests(prs) => {
+                    self.bitbucket_my_pull_requests = prs;
                     self.bitbucket_last_error = None;
                 }
                 BitbucketEvent::Connected => {

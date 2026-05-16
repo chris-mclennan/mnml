@@ -38,9 +38,20 @@ pub fn draw(
     );
     app.rects.editor_panes.push((area, pane_id));
 
-    let flat = flatten_prs(app);
+    let mode = match app.panes.get(pane_id) {
+        Some(Pane::BitbucketPullRequests(p)) => p.view_mode,
+        _ => return None,
+    };
+    let flat = match mode {
+        crate::bitbucket::PrViewMode::PerRepo => flatten_prs(app),
+        crate::bitbucket::PrViewMode::Mine => flatten_my_prs(app),
+    };
     let total = flat.iter().filter(|r| r.kind == RowKind::Pr).count();
-    let loading = !app.bitbucket_connected && app.bitbucket_pull_requests.is_empty();
+    let cache_empty = match mode {
+        crate::bitbucket::PrViewMode::PerRepo => app.bitbucket_pull_requests.is_empty(),
+        crate::bitbucket::PrViewMode::Mine => app.bitbucket_my_pull_requests.is_empty(),
+    };
+    let loading = !app.bitbucket_connected && cache_empty;
     let last_error = app.bitbucket_last_error.clone();
     let poll_secs = app.config.bitbucket.poll_secs_or_default();
 
@@ -62,6 +73,13 @@ pub fn draw(
             format!("{total} open PR{}", if total == 1 { "" } else { "s" }),
             Style::default()
                 .fg(if total > 0 { t.fg } else { t.comment })
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" · view: {} (v to flip)", p.view_mode.label()),
+            Style::default()
+                .fg(t.yellow)
                 .bg(t.bg_dark)
                 .add_modifier(Modifier::BOLD),
         ),
@@ -217,11 +235,21 @@ pub fn draw(
                         pr_num,
                         Style::default().fg(t.fg).bg(row_bg),
                     ),
-                    Span::styled(
-                        format!("{title:<50}  "),
-                        Style::default().fg(t.fg).bg(row_bg),
-                    ),
                 ];
+                // In Mine mode the data is cross-repo with no per-repo
+                // header grouping — surface the repo name inline so the
+                // user can tell rows apart.
+                if matches!(mode, crate::bitbucket::PrViewMode::Mine) {
+                    let repo_label = truncate(&format!("{}/{}", pr.workspace, pr.slug), 22);
+                    spans.push(Span::styled(
+                        format!("{repo_label:<23}"),
+                        Style::default().fg(t.purple).bg(row_bg),
+                    ));
+                }
+                spans.push(Span::styled(
+                    format!("{title:<50}  "),
+                    Style::default().fg(t.fg).bg(row_bg),
+                ));
                 spans.extend(review_spans);
                 spans.extend([
                     Span::styled(
@@ -289,11 +317,38 @@ pub fn flatten_prs(app: &App) -> Vec<FlatRow> {
     out
 }
 
+/// Cross-repo flat list — one header row labeled "mine" + every PR I
+/// authored across every accessible repo. The PR data carries its own
+/// `workspace` and `slug` so the renderer can inline the REPO column
+/// rather than rely on per-repo grouping.
+pub fn flatten_my_prs(app: &App) -> Vec<FlatRow> {
+    let mut out: Vec<FlatRow> = Vec::new();
+    let prs = &app.bitbucket_my_pull_requests;
+    out.push(FlatRow {
+        kind: RowKind::Header,
+        header_label: "mine (cross-repo)".to_string(),
+        repo_count: prs.len(),
+        pr: None,
+    });
+    for rec in prs {
+        out.push(FlatRow {
+            kind: RowKind::Pr,
+            header_label: String::new(),
+            repo_count: 0,
+            pr: Some(rec.clone()),
+        });
+    }
+    out
+}
+
 pub fn selected_pr(
     app: &App,
     pane: &crate::bitbucket::BitbucketPullRequestsPane,
 ) -> Option<PullRequestRecord> {
-    let flat = flatten_prs(app);
+    let flat = match pane.view_mode {
+        crate::bitbucket::PrViewMode::PerRepo => flatten_prs(app),
+        crate::bitbucket::PrViewMode::Mine => flatten_my_prs(app),
+    };
     flat.get(pane.selected).and_then(|r| r.pr.clone())
 }
 

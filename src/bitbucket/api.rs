@@ -1,14 +1,26 @@
 //! Bitbucket Cloud REST API plumbing. Plain HTTPS via `reqwest::blocking`
 //! (already in the dep tree for the `http` track) — no Bitbucket SDK.
 //!
-//! Endpoints used so far:
-//! * `GET /2.0/repositories/{workspace}/{slug}/pipelines/?sort=-created_on&pagelen=N` (phase 1)
-//! * `GET /2.0/repositories/{workspace}/{slug}/pullrequests?state=OPEN&pagelen=N` (phase 3)
-//!
-//! Endpoints planned for phase 4 polish (not yet wired):
-//! * `GET /2.0/repositories/{ws}/{slug}/pullrequests/{id}/statuses` — build
-//!   status chips on the PR's head commit (Bitbucket Pipelines build state
-//!   per check).
+//! Endpoints used:
+//! * `GET /2.0/user` — fetch the authenticated user's `account_id` (cached
+//!   once at worker spawn; required for the cross-repo "my PRs" view).
+//! * `GET /2.0/pullrequests/{account_id}` — every non-merged PR I authored,
+//!   across every accessible repo (cross-repo, not config-driven).
+//! * `GET /2.0/repositories/{ws}/{slug}/pullrequests?state=OPEN&pagelen=N`
+//!   — open PRs for one configured repo (per-repo view).
+//! * `GET /2.0/repositories/{ws}/{slug}/pullrequests/{id}` — single-PR
+//!   detail with accurate `participants[]` (the list endpoint above
+//!   returns stale ones, per James's bbwatch.py note).
+//! * `GET /2.0/repositories/{ws}/{slug}/pipelines/?sort=-created_on&pagelen=N`
+//!   — recent pipelines for one repo (mixed branches).
+//! * `GET /2.0/repositories/{ws}/{slug}/pipelines/?target.branch=<b>&pagelen=1`
+//!   — single most-recent pipeline for one branch (per-branch view).
+//! * `GET /2.0/repositories/{ws}/{slug}/pipelines/{uuid}/steps/` — when a
+//!   pipeline is `IN_PROGRESS`, find the running step name so the pane
+//!   can show `▶ build` / `▶ test` instead of just "running".
+//! * `GET /2.0/repositories/{ws}/{slug}/refs/branches?q='name~"release"'`
+//!   — discover active release/hotfix branches to include in the
+//!   per-branch view alongside the long-lived defaults.
 //!
 //! Auth: `Bearer <token>` for the modern API-token format (recommended
 //! after Bitbucket's 2024 deprecation of App Passwords). Values containing
@@ -58,6 +70,274 @@ pub fn auth_header_value(token: &str) -> String {
     } else {
         format!("Bearer {trimmed}")
     }
+}
+
+/// Fetch the authenticated user's `account_id` — the path segment the
+/// cross-repo `/pullrequests/{account_id}` endpoint requires. Cached
+/// once per worker spawn; cheap (~150ms one-shot) so we don't need to
+/// persist it.
+pub fn fetch_account_id(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+) -> Result<String, String> {
+    let url = format!("{API_BASE}/user");
+    let resp = client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/json")
+        .send()
+        .map_err(|e| format!("send: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        let snippet = body.chars().take(200).collect::<String>();
+        return Err(format!("HTTP {status} — {snippet}"));
+    }
+    let body = resp.text().map_err(|e| format!("read body: {e}"))?;
+    let v: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("parse json: {e}"))?;
+    v.get("account_id")
+        .and_then(|x| x.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "no account_id in /user response".to_string())
+}
+
+/// Pull every non-merged pull request authored by `account_id` across
+/// every accessible repo (cross-repo — NOT scoped to configured repos).
+/// Each PR's `workspace` and `slug` are pulled out of
+/// `destination.repository.full_name`. James's `--mine` mode.
+pub fn fetch_my_open_pull_requests(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    account_id: &str,
+) -> Result<Vec<PullRequestRecord>, String> {
+    use std::borrow::Cow;
+    // Bitbucket needs the account_id URL-encoded — it can contain `:` etc.
+    let encoded: Cow<str> = url_encode_account_id(account_id);
+    let url = format!(
+        "{API_BASE}/pullrequests/{encoded}?state=OPEN&state=DECLINED&state=SUPERSEDED&sort=-updated_on&pagelen=50",
+    );
+    let resp = client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/json")
+        .send()
+        .map_err(|e| format!("send: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        let snippet = body.chars().take(200).collect::<String>();
+        return Err(format!("HTTP {status} — {snippet}"));
+    }
+    let body = resp.text().map_err(|e| format!("read body: {e}"))?;
+    parse_my_pull_requests_response(&body)
+}
+
+pub fn parse_my_pull_requests_response(body: &str) -> Result<Vec<PullRequestRecord>, String> {
+    let raw: RawPrPage =
+        serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
+    let mut out = Vec::new();
+    for p in raw.values {
+        // For the cross-repo endpoint, workspace/slug come from
+        // destination.repository.full_name (always present per BB spec).
+        let full_name = p
+            .destination
+            .as_ref()
+            .and_then(|d| d.repository.as_ref())
+            .and_then(|r| r.full_name.clone());
+        let (ws, slug) = match full_name {
+            Some(fn_str) => {
+                let mut split = fn_str.splitn(2, '/');
+                let w = split.next().unwrap_or("").to_string();
+                let s = split.next().unwrap_or("").to_string();
+                (w, s)
+            }
+            None => continue, // Can't render a PR without its repo identity.
+        };
+        out.push(project_pr(p, &ws, &slug));
+    }
+    Ok(out)
+}
+
+/// Minimal percent-encoder for the segments we put in URL paths. Only
+/// percent-encodes characters outside the unreserved set
+/// (RFC 3986 §2.3) — that's enough for `account_id` values like
+/// `{abc-uuid}` and `user:1234`.
+fn url_encode_account_id(s: &str) -> std::borrow::Cow<'_, str> {
+    let needs_escape = s.bytes().any(|b| {
+        !(b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_' || b == b'~')
+    });
+    if !needs_escape {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_' || b == b'~' {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// Fetch a single PR's full detail — the list endpoint returns stale
+/// `participants[]` so reviewer / approval / changes-requested counts
+/// need this follow-up call. James's bbwatch.py note flagged this.
+pub fn fetch_pr_detail(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    workspace: &str,
+    slug: &str,
+    id: u64,
+) -> Result<PullRequestRecord, String> {
+    let url = format!("{API_BASE}/repositories/{workspace}/{slug}/pullrequests/{id}");
+    let resp = client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/json")
+        .send()
+        .map_err(|e| format!("send: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        let snippet = body.chars().take(200).collect::<String>();
+        return Err(format!("HTTP {status} — {snippet}"));
+    }
+    let body = resp.text().map_err(|e| format!("read body: {e}"))?;
+    let raw: RawPullRequest =
+        serde_json::from_str(&body).map_err(|e| format!("parse json: {e}"))?;
+    Ok(project_pr(raw, workspace, slug))
+}
+
+/// Fetch the single most-recent pipeline for a specific branch on a
+/// repo. `None` ⇒ no pipeline has ever run for that branch (or the
+/// branch doesn't exist).
+pub fn fetch_latest_pipeline_for_branch(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    repo: &BitbucketRepo,
+    branch: &str,
+) -> Result<Option<PipelineRecord>, String> {
+    let url = format!(
+        "{API_BASE}/repositories/{ws}/{slug}/pipelines/?sort=-created_on&pagelen=1&target.branch={branch}",
+        ws = repo.workspace,
+        slug = repo.slug,
+    );
+    let resp = client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/json")
+        .send()
+        .map_err(|e| format!("send: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        let snippet = body.chars().take(200).collect::<String>();
+        return Err(format!("HTTP {status} — {snippet}"));
+    }
+    let body = resp.text().map_err(|e| format!("read body: {e}"))?;
+    let pipelines = parse_pipelines_response(&body, &repo.workspace, &repo.slug)?;
+    Ok(pipelines.into_iter().next())
+}
+
+/// For an `IN_PROGRESS` pipeline, return the name of the currently-running
+/// step (or `⏸ <name>` for a pending step). `None` means nothing to show
+/// (no in-progress steps, or the steps endpoint errored).
+pub fn fetch_running_step(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    workspace: &str,
+    slug: &str,
+    pipeline_uuid: &str,
+) -> Option<String> {
+    // UUIDs in Bitbucket are `{abc-123}` — must be percent-encoded.
+    let encoded = url_encode_account_id(pipeline_uuid);
+    let url = format!(
+        "{API_BASE}/repositories/{workspace}/{slug}/pipelines/{encoded}/steps/?pagelen=50",
+    );
+    let resp = client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/json")
+        .send()
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body = resp.text().ok()?;
+    parse_running_step(&body)
+}
+
+pub fn parse_running_step(body: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    let values = v.get("values")?.as_array()?;
+    // In-progress wins over pending (matches James's logic).
+    let mut pending_step: Option<String> = None;
+    for step in values {
+        let state = step
+            .get("state")
+            .and_then(|s| s.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("");
+        let name = step
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("(unnamed)")
+            .to_string();
+        match state {
+            "IN_PROGRESS" => return Some(name),
+            "PENDING" if pending_step.is_none() => {
+                pending_step = Some(format!("⏸ {name}"));
+            }
+            _ => {}
+        }
+    }
+    pending_step
+}
+
+/// Discover active release/hotfix branches via Bitbucket's branch search.
+/// Returns up to `max_n` most-recently-active matching branches. Empty
+/// `Vec` on any failure (this is an enrichment, not load-bearing).
+pub fn discover_release_branches(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    repo: &BitbucketRepo,
+    max_n: usize,
+) -> Vec<String> {
+    let url = format!(
+        "{API_BASE}/repositories/{ws}/{slug}/refs/branches?q={query}&sort=-target.date&pagelen={n}",
+        ws = repo.workspace,
+        slug = repo.slug,
+        query = "name+~+%22release%22+OR+name+~+%22hotfix%22",
+        n = max_n,
+    );
+    let resp = match client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/json")
+        .send()
+    {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Vec::new(),
+    };
+    let body = match resp.text() {
+        Ok(b) => b,
+        Err(_) => return Vec::new(),
+    };
+    let v: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(x) => x,
+        Err(_) => return Vec::new(),
+    };
+    v.get("values")
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|b| b.get("name").and_then(|n| n.as_str()).map(str::to_string))
+                .take(max_n)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Pull every open pull request for one repo (most teams have ≤50 open
@@ -288,6 +568,9 @@ fn project_pipeline(p: RawPipeline, workspace: &str, slug: &str) -> PipelineReco
         completed_on_ms,
         duration_secs,
         web_url,
+        // Worker enriches this for in-progress runs via a follow-up
+        // /pipelines/{uuid}/steps/ call; default to None.
+        running_step: None,
     }
 }
 
@@ -320,6 +603,11 @@ pub struct PipelineRecord {
     pub duration_secs: Option<u64>,
     /// Bitbucket UI link (the dashboard's `#!/results/N` page).
     pub web_url: String,
+    /// For `IN_PROGRESS` pipelines, the currently-running step's name
+    /// (or `⏸ <name>` if a step is pending). Populated by the worker via
+    /// a follow-up `/pipelines/{uuid}/steps/` call; `None` for terminal
+    /// runs or when the steps fetch failed.
+    pub running_step: Option<String>,
 }
 
 /// Unified pipeline state — folds Bitbucket's two-level
@@ -566,6 +854,17 @@ struct RawPullRequest {
 #[derive(Debug, Deserialize)]
 struct RawPrEnd {
     branch: Option<RawBranch>,
+    /// Present on the cross-repo `/pullrequests/{account_id}` endpoint —
+    /// the PR's destination repo identity, since the endpoint doesn't
+    /// scope by repo. The repo-scoped list omits this (we already know).
+    #[serde(default)]
+    repository: Option<RawRepoSummary>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawRepoSummary {
+    /// `"exampleorg/example-api"` form — parse on the consumer side.
+    full_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

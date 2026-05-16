@@ -90,6 +90,19 @@ fn main() {
                     n = pull_requests.len(),
                 ));
             }
+            Ok(BitbucketEvent::BranchPipelines {
+                workspace,
+                slug,
+                per_branch,
+            }) => {
+                samples.push(format!(
+                    "  ⌥  {workspace}/{slug}  per-branch: {n} branch(es)",
+                    n = per_branch.len(),
+                ));
+            }
+            Ok(BitbucketEvent::MyPullRequests(prs)) => {
+                samples.push(format!("  👤  mine: {n} PR(s) across all repos", n = prs.len()));
+            }
             Ok(BitbucketEvent::Connected) => connected = true,
             Ok(BitbucketEvent::Failed(msg)) => failures.push(msg),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {} // keep looping

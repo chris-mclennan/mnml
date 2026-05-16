@@ -368,10 +368,12 @@ mod tests {
         cfg.github.repos.push(crate::config::GithubRepo {
             owner: "a".into(),
             repo: "1".into(),
+            branches: Vec::new(),
         });
         cfg.github.repos.push(crate::config::GithubRepo {
             owner: "a".into(),
             repo: "2".into(),
+            branches: Vec::new(),
         });
         // Empty cache — just headers.
         let ws = std::env::temp_dir();

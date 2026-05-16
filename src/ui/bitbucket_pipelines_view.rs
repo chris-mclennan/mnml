@@ -46,10 +46,25 @@ pub fn draw(
     );
     app.rects.editor_panes.push((area, pane_id));
 
-    // Flatten before borrowing the pane — keeps the borrow scope clean.
-    let flat = flatten_pipelines(app);
+    // Pick the active view's flatten function up front. The pane's
+    // view_mode is on App, but flatten functions take &App — read the
+    // mode via a short borrow before pivoting.
+    let mode = match app.panes.get(pane_id) {
+        Some(Pane::BitbucketPipelines(p)) => p.view_mode,
+        _ => return None,
+    };
+    let flat = match mode {
+        crate::bitbucket::PipelineViewMode::Recent => flatten_pipelines(app),
+        crate::bitbucket::PipelineViewMode::PerBranch => flatten_branch_pipelines(app),
+    };
     let total_pipelines = flat.iter().filter(|r| r.kind == RowKind::Pipeline).count();
-    let loading = !app.bitbucket_connected && app.bitbucket_pipelines.is_empty();
+    let cache_empty = match mode {
+        crate::bitbucket::PipelineViewMode::Recent => app.bitbucket_pipelines.is_empty(),
+        crate::bitbucket::PipelineViewMode::PerBranch => {
+            app.bitbucket_branch_pipelines.is_empty()
+        }
+    };
+    let loading = !app.bitbucket_connected && cache_empty;
     let last_error = app.bitbucket_last_error.clone();
     let poll_secs = app.config.bitbucket.poll_secs_or_default();
     let configured = app.config.bitbucket.any_configured();
@@ -77,6 +92,13 @@ pub fn draw(
             ),
             Style::default()
                 .fg(if total_pipelines > 0 { t.fg } else { t.comment })
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" · view: {} (v to flip)", p.view_mode.label()),
+            Style::default()
+                .fg(t.yellow)
                 .bg(t.bg_dark)
                 .add_modifier(Modifier::BOLD),
         ),
@@ -173,9 +195,35 @@ pub fn draw(
                 ]));
             }
             RowKind::Pipeline => {
-                let pipe = row.pipeline.as_ref().expect("pipeline row carries record");
                 let selected = i == p.selected;
                 let row_bg = if selected { t.bg2 } else { t.bg_dark };
+
+                // PerBranch rows always carry a branch_label; if the
+                // pipeline is None we render a "never run" placeholder
+                // row using just the branch label.
+                let Some(pipe) = row.pipeline.as_ref() else {
+                    let branch = row.branch_label.as_deref().unwrap_or("?");
+                    lines.push(Line::from(vec![
+                        Span::styled(" ", Style::default().bg(row_bg)),
+                        Span::styled(
+                            "·  ",
+                            Style::default().fg(t.comment).bg(row_bg),
+                        ),
+                        Span::styled(
+                            format!("{:<7}", "—"),
+                            Style::default().fg(t.comment).bg(row_bg),
+                        ),
+                        Span::styled(
+                            format!("{branch:<17}"),
+                            Style::default().fg(t.cyan).bg(row_bg),
+                        ),
+                        Span::styled(
+                            "(no pipeline runs yet)",
+                            Style::default().fg(t.comment).bg(row_bg),
+                        ),
+                    ]));
+                    continue;
+                };
 
                 let (glyph, status_color) = match pipe.state {
                     PipelineState::Successful => (pipe.state.glyph(), t.green),
@@ -195,10 +243,15 @@ pub fn draw(
                 } else {
                     "#?".to_string()
                 };
-                let target = truncate(
-                    pipe.target_ref.as_deref().unwrap_or("(no ref)"),
-                    16,
-                );
+                // In PerBranch mode prefer the row's branch_label (canonical
+                // — that's the branch we *asked* about). In Recent mode use
+                // the pipeline's target_ref. Either way, truncate to 16.
+                let ref_text = row
+                    .branch_label
+                    .as_deref()
+                    .or(pipe.target_ref.as_deref())
+                    .unwrap_or("(no ref)");
+                let target = truncate(ref_text, 16);
                 let dur = pipe
                     .duration_secs
                     .map(format_duration_secs)
@@ -209,6 +262,16 @@ pub fn draw(
                     .unwrap_or_default();
                 let creator = truncate(pipe.creator.as_deref().unwrap_or(""), 22);
                 let trigger = pipe.trigger.as_deref().unwrap_or("");
+
+                // In-progress pipelines: show the running step name
+                // instead of (or alongside) the trigger. James's bbwatch
+                // shows `▶ <step>` in the RESULT column.
+                let step_or_trigger = match (pipe.state, &pipe.running_step) {
+                    (PipelineState::InProgress, Some(step)) => {
+                        format!("▶ {step}")
+                    }
+                    _ => trigger.to_string(),
+                };
 
                 lines.push(Line::from(vec![
                     Span::styled(" ", Style::default().bg(row_bg)),
@@ -240,7 +303,7 @@ pub fn draw(
                         Style::default().fg(t.fg).bg(row_bg),
                     ),
                     Span::styled(
-                        trigger.to_string(),
+                        step_or_trigger,
                         Style::default().fg(t.comment).bg(row_bg),
                     ),
                 ]));
@@ -266,6 +329,10 @@ pub struct FlatRow {
     pub header_label: String,
     pub repo_count: usize,
     pub pipeline: Option<PipelineRecord>,
+    /// Set on PerBranch data rows — the branch this row represents.
+    /// May be `Some` with `pipeline = None` when an explicitly-configured
+    /// branch has no pipelines yet (so the user can see it's tracked).
+    pub branch_label: Option<String>,
 }
 
 /// Walk the configured repos in config order; emit a `Header` row for each
@@ -283,6 +350,7 @@ pub fn flatten_pipelines(app: &App) -> Vec<FlatRow> {
             header_label: format!("{}/{}", repo.workspace, repo.slug),
             repo_count: count,
             pipeline: None,
+            branch_label: None,
         });
         if let Some(v) = pipelines {
             for rec in v {
@@ -291,6 +359,38 @@ pub fn flatten_pipelines(app: &App) -> Vec<FlatRow> {
                     header_label: String::new(),
                     repo_count: 0,
                     pipeline: Some(rec.clone()),
+                    branch_label: None,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Walk the configured repos and emit one Header + one data row per
+/// branch (from the cached `App.bitbucket_branch_pipelines`). Used when
+/// the pane's `view_mode == PerBranch`.
+pub fn flatten_branch_pipelines(app: &App) -> Vec<FlatRow> {
+    let mut out: Vec<FlatRow> = Vec::new();
+    for repo in &app.config.bitbucket.repos {
+        let key = (repo.workspace.clone(), repo.slug.clone());
+        let per_branch = app.bitbucket_branch_pipelines.get(&key);
+        let count = per_branch.map(|v| v.len()).unwrap_or(0);
+        out.push(FlatRow {
+            kind: RowKind::Header,
+            header_label: format!("{}/{}", repo.workspace, repo.slug),
+            repo_count: count,
+            pipeline: None,
+            branch_label: None,
+        });
+        if let Some(v) = per_branch {
+            for (branch, pipeline_opt) in v {
+                out.push(FlatRow {
+                    kind: RowKind::Pipeline,
+                    header_label: String::new(),
+                    repo_count: 0,
+                    pipeline: pipeline_opt.clone(),
+                    branch_label: Some(branch.clone()),
                 });
             }
         }
@@ -299,11 +399,17 @@ pub fn flatten_pipelines(app: &App) -> Vec<FlatRow> {
 }
 
 /// Resolve the selected index to a `PipelineRecord`, skipping over header
-/// rows. Used by the `Enter` / `y` key handlers in tui.rs.
-pub fn selected_pipeline(app: &App, pane: &crate::bitbucket::BitbucketPipelinesPane) -> Option<PipelineRecord> {
-    let flat = flatten_pipelines(app);
-    flat.get(pane.selected)
-        .and_then(|r| r.pipeline.clone())
+/// rows. Dispatches to the right flatten function based on the pane's
+/// view_mode. Used by the `Enter` / `y` key handlers in tui.rs.
+pub fn selected_pipeline(
+    app: &App,
+    pane: &crate::bitbucket::BitbucketPipelinesPane,
+) -> Option<PipelineRecord> {
+    let flat = match pane.view_mode {
+        crate::bitbucket::PipelineViewMode::Recent => flatten_pipelines(app),
+        crate::bitbucket::PipelineViewMode::PerBranch => flatten_branch_pipelines(app),
+    };
+    flat.get(pane.selected).and_then(|r| r.pipeline.clone())
 }
 
 /// Skip past header rows so j/k feel right (vim convention — don't park
@@ -414,12 +520,14 @@ mod tests {
                 header_label: "h0".into(),
                 repo_count: 0,
                 pipeline: None,
+                branch_label: None,
             },
             FlatRow {
                 kind: RowKind::Pipeline,
                 header_label: String::new(),
                 repo_count: 0,
                 pipeline: None,
+                branch_label: None,
             },
         ];
         let mut p = crate::bitbucket::BitbucketPipelinesPane::new();
@@ -436,12 +544,14 @@ mod tests {
                 header_label: String::new(),
                 repo_count: 0,
                 pipeline: None,
+                branch_label: None,
             },
             FlatRow {
                 kind: RowKind::Header,
                 header_label: "h".into(),
                 repo_count: 0,
                 pipeline: None,
+                branch_label: None,
             },
         ];
         let mut p = crate::bitbucket::BitbucketPipelinesPane::new();
