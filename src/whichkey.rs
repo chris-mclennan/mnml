@@ -208,8 +208,10 @@ pub fn root() -> &'static Leader {
                             // will join as `l` when its phase lands.
                             ('p', cmd("bitbucket.pipelines", "bitbucket pipelines")),
                             ('g', cmd("github.actions", "github actions")),
+                            ('l', cmd("gitlab.pipelines", "gitlab pipelines")),
                             ('r', cmd("bitbucket.refresh_active", "refresh bb pane")),
                             ('R', cmd("github.refresh_active", "refresh gh pane")),
+                            ('L', cmd("gitlab.refresh_active", "refresh gl pane")),
                         ],
                     ),
                 ),
@@ -220,6 +222,7 @@ pub fn root() -> &'static Leader {
                         vec![
                             ('b', cmd("bitbucket.pull_requests", "bitbucket PRs")),
                             ('g', cmd("github.pull_requests", "github PRs")),
+                            ('l', cmd("gitlab.merge_requests", "gitlab MRs")),
                         ],
                     ),
                 ),

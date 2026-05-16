@@ -35,6 +35,7 @@ pub mod focus;
 pub mod fuzzy;
 pub mod git;
 pub mod github;
+pub mod gitlab;
 pub mod grep_pane;
 pub mod headless;
 pub mod highlight;

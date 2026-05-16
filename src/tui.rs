@@ -1401,6 +1401,244 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // GitLab pipelines browser — sibling of the BB/GH pipeline panes.
+    if matches!(app.panes.get(i), Some(Pane::GitlabPipelines(_))) {
+        let flat = match app.gl_pipelines_view_mode {
+            crate::gitlab::GlPipelineViewMode::Recent => {
+                crate::ui::gitlab_pipelines_view::flatten_pipelines(app)
+            }
+            crate::gitlab::GlPipelineViewMode::PerBranch => {
+                crate::ui::gitlab_pipelines_view::flatten_branch_pipelines(app)
+            }
+        };
+        let max_idx = flat.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(i) {
+                    p.move_selection(-1, max_idx);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(i) {
+                    p.move_selection(1, max_idx);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(i) {
+                    p.move_selection(-(viewport as i64), max_idx);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(i) {
+                    p.move_selection(viewport as i64, max_idx);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(i) {
+                    p.move_selection(i64::MIN / 2, max_idx);
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(i) {
+                    p.move_selection(i64::MAX / 2, max_idx);
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::GitlabPipelines(p)) => p.selected,
+                    _ => 0,
+                };
+                if let Some(row) = flat.get(sel)
+                    && row.kind == crate::ui::gitlab_pipelines_view::RowKind::Header
+                    && app.gl_pipelines_collapsed.contains(&row.header_label)
+                {
+                    app.gl_pipelines_collapsed.remove(&row.header_label);
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::GitlabPipelines(p)) => p.selected,
+                    _ => 0,
+                };
+                let header_kind = crate::ui::gitlab_pipelines_view::RowKind::Header;
+                if let Some(row) = flat.get(sel) {
+                    if row.kind == header_kind {
+                        if !app.gl_pipelines_collapsed.contains(&row.header_label) {
+                            app.gl_pipelines_collapsed.insert(row.header_label.clone());
+                        }
+                    } else {
+                        let parent_idx = (0..sel).rev().find(|&j| {
+                            flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
+                        });
+                        if let Some(idx) = parent_idx
+                            && let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(i)
+                        {
+                            p.selected = idx;
+                        }
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::GitlabPipelines(p)) => p.selected,
+                    _ => 0,
+                };
+                let header_label = flat
+                    .get(sel)
+                    .filter(|r| r.kind == crate::ui::gitlab_pipelines_view::RowKind::Header)
+                    .map(|r| r.header_label.clone());
+                if let Some(label) = header_label {
+                    let now_collapsed = if app.gl_pipelines_collapsed.contains(&label) {
+                        app.gl_pipelines_collapsed.remove(&label);
+                        false
+                    } else {
+                        app.gl_pipelines_collapsed.insert(label.clone());
+                        true
+                    };
+                    app.toast(format!(
+                        "{label}: {}",
+                        if now_collapsed { "collapsed" } else { "expanded" }
+                    ));
+                } else {
+                    app.open_selected_gitlab_pipeline_url();
+                }
+            }
+            KeyCode::Char('y') => app.copy_selected_gitlab_pipeline_url(),
+            KeyCode::Char('r') => app.refresh_active_gitlab_pane(),
+            KeyCode::Char('v') => {
+                let new_mode = app.gl_pipelines_view_mode.cycle();
+                app.gl_pipelines_view_mode = new_mode;
+                if let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(i) {
+                    p.selected = 0;
+                    p.scroll = 0;
+                }
+                app.toast(format!("gitlab pipelines: view → {}", new_mode.label()));
+            }
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
+
+    // GitLab merge requests browser.
+    if matches!(app.panes.get(i), Some(Pane::GitlabMergeRequests(_))) {
+        let flat = match app.gl_mrs_view_mode {
+            crate::gitlab::GlMrViewMode::PerProject => {
+                crate::ui::gitlab_merge_requests_view::flatten_mrs(app)
+            }
+            crate::gitlab::GlMrViewMode::Mine => {
+                crate::ui::gitlab_merge_requests_view::flatten_my_mrs(app)
+            }
+        };
+        let max_idx = flat.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(i) {
+                    p.move_selection(-1, max_idx);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(i) {
+                    p.move_selection(1, max_idx);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(i) {
+                    p.move_selection(-(viewport as i64), max_idx);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(i) {
+                    p.move_selection(viewport as i64, max_idx);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(i) {
+                    p.move_selection(i64::MIN / 2, max_idx);
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(i) {
+                    p.move_selection(i64::MAX / 2, max_idx);
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::GitlabMergeRequests(p)) => p.selected,
+                    _ => 0,
+                };
+                if let Some(row) = flat.get(sel)
+                    && row.kind == crate::ui::gitlab_merge_requests_view::RowKind::Header
+                    && app.gl_mrs_collapsed.contains(&row.header_label)
+                {
+                    app.gl_mrs_collapsed.remove(&row.header_label);
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::GitlabMergeRequests(p)) => p.selected,
+                    _ => 0,
+                };
+                let header_kind = crate::ui::gitlab_merge_requests_view::RowKind::Header;
+                if let Some(row) = flat.get(sel) {
+                    if row.kind == header_kind {
+                        if !app.gl_mrs_collapsed.contains(&row.header_label) {
+                            app.gl_mrs_collapsed.insert(row.header_label.clone());
+                        }
+                    } else {
+                        let parent_idx = (0..sel).rev().find(|&j| {
+                            flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
+                        });
+                        if let Some(idx) = parent_idx
+                            && let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(i)
+                        {
+                            p.selected = idx;
+                        }
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::GitlabMergeRequests(p)) => p.selected,
+                    _ => 0,
+                };
+                let header_label = flat
+                    .get(sel)
+                    .filter(|r| r.kind == crate::ui::gitlab_merge_requests_view::RowKind::Header)
+                    .map(|r| r.header_label.clone());
+                if let Some(label) = header_label {
+                    let now_collapsed = if app.gl_mrs_collapsed.contains(&label) {
+                        app.gl_mrs_collapsed.remove(&label);
+                        false
+                    } else {
+                        app.gl_mrs_collapsed.insert(label.clone());
+                        true
+                    };
+                    app.toast(format!(
+                        "{label}: {}",
+                        if now_collapsed { "collapsed" } else { "expanded" }
+                    ));
+                } else {
+                    app.open_selected_gitlab_mr_url();
+                }
+            }
+            KeyCode::Char('y') => app.copy_selected_gitlab_mr_url(),
+            KeyCode::Char('r') => app.refresh_active_gitlab_pane(),
+            KeyCode::Char('v') => {
+                let new_mode = app.gl_mrs_view_mode.cycle();
+                app.gl_mrs_view_mode = new_mode;
+                if let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(i) {
+                    p.selected = 0;
+                    p.scroll = 0;
+                }
+                app.toast(format!("gitlab mrs: view → {}", new_mode.label()));
+            }
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
+
     // the private integration CodeBuilds browser (cfg-gated): ↑↓ select, Enter open URL,
     // y copy URL, r refresh, Esc → tree.
     #[cfg(feature = "private")]
@@ -2692,7 +2930,9 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             Some(Pane::BitbucketPipelines(_))
             | Some(Pane::BitbucketPullRequests(_))
             | Some(Pane::GithubActions(_))
-            | Some(Pane::GithubPullRequests(_)) => {
+            | Some(Pane::GithubPullRequests(_))
+            | Some(Pane::GitlabPipelines(_))
+            | Some(Pane::GitlabMergeRequests(_)) => {
                 // Wheel-scroll for the SCM/CI panes is handled below the
                 // match so the borrow on `app.panes` releases first — we
                 // need an immutable read of `app.config` to compute the
@@ -2753,6 +2993,32 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             };
             let max_idx = flat.len();
             if let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(pid) {
+                p.move_selection(delta as i64, max_idx);
+            }
+        } else if matches!(app.panes.get(pid), Some(Pane::GitlabPipelines(_))) {
+            let flat = match app.gl_pipelines_view_mode {
+                crate::gitlab::GlPipelineViewMode::Recent => {
+                    crate::ui::gitlab_pipelines_view::flatten_pipelines(app)
+                }
+                crate::gitlab::GlPipelineViewMode::PerBranch => {
+                    crate::ui::gitlab_pipelines_view::flatten_branch_pipelines(app)
+                }
+            };
+            let max_idx = flat.len();
+            if let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(pid) {
+                p.move_selection(delta as i64, max_idx);
+            }
+        } else if matches!(app.panes.get(pid), Some(Pane::GitlabMergeRequests(_))) {
+            let flat = match app.gl_mrs_view_mode {
+                crate::gitlab::GlMrViewMode::PerProject => {
+                    crate::ui::gitlab_merge_requests_view::flatten_mrs(app)
+                }
+                crate::gitlab::GlMrViewMode::Mine => {
+                    crate::ui::gitlab_merge_requests_view::flatten_my_mrs(app)
+                }
+            };
+            let max_idx = flat.len();
+            if let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(pid) {
                 p.move_selection(delta as i64, max_idx);
             }
         }
@@ -2998,6 +3264,56 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
                 }
             } else if is_double_click {
                 app.open_selected_github_pr_url();
+            }
+        }
+        Some(Pane::GitlabPipelines(_)) => {
+            let flat = match app.gl_pipelines_view_mode {
+                crate::gitlab::GlPipelineViewMode::Recent => {
+                    crate::ui::gitlab_pipelines_view::flatten_pipelines(app)
+                }
+                crate::gitlab::GlPipelineViewMode::PerBranch => {
+                    crate::ui::gitlab_pipelines_view::flatten_branch_pipelines(app)
+                }
+            };
+            let Some(row) = flat.get(flat_idx) else { return };
+            let is_header = row.kind == crate::ui::gitlab_pipelines_view::RowKind::Header;
+            let header_label = row.header_label.clone();
+            if let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(pane_id) {
+                p.selected = flat_idx;
+            }
+            if is_header {
+                if app.gl_pipelines_collapsed.contains(&header_label) {
+                    app.gl_pipelines_collapsed.remove(&header_label);
+                } else {
+                    app.gl_pipelines_collapsed.insert(header_label);
+                }
+            } else if is_double_click {
+                app.open_selected_gitlab_pipeline_url();
+            }
+        }
+        Some(Pane::GitlabMergeRequests(_)) => {
+            let flat = match app.gl_mrs_view_mode {
+                crate::gitlab::GlMrViewMode::PerProject => {
+                    crate::ui::gitlab_merge_requests_view::flatten_mrs(app)
+                }
+                crate::gitlab::GlMrViewMode::Mine => {
+                    crate::ui::gitlab_merge_requests_view::flatten_my_mrs(app)
+                }
+            };
+            let Some(row) = flat.get(flat_idx) else { return };
+            let is_header = row.kind == crate::ui::gitlab_merge_requests_view::RowKind::Header;
+            let header_label = row.header_label.clone();
+            if let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(pane_id) {
+                p.selected = flat_idx;
+            }
+            if is_header {
+                if app.gl_mrs_collapsed.contains(&header_label) {
+                    app.gl_mrs_collapsed.remove(&header_label);
+                } else {
+                    app.gl_mrs_collapsed.insert(header_label);
+                }
+            } else if is_double_click {
+                app.open_selected_gitlab_mr_url();
             }
         }
         _ => {}

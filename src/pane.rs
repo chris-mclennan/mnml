@@ -10,6 +10,7 @@ use crate::bitbucket::{BitbucketPipelinesPane, BitbucketPullRequestsPane};
 use crate::browser_pane::BrowserPane;
 use crate::buffer::Buffer;
 use crate::github::{GithubActionsPane, GithubPullRequestsPane};
+use crate::gitlab::{GitlabMergeRequestsPane, GitlabPipelinesPane};
 use crate::git::diff::Hunk;
 use crate::git::graph::GitGraphPane;
 use crate::git::stage::GitStatusPane;
@@ -79,6 +80,10 @@ pub enum Pane {
     GithubActions(GithubActionsPane),
     /// GitHub open pull requests list.
     GithubPullRequests(GithubPullRequestsPane),
+    /// GitLab CI pipelines list.
+    GitlabPipelines(GitlabPipelinesPane),
+    /// GitLab open merge requests list.
+    GitlabMergeRequests(GitlabMergeRequestsPane),
     /// DocumentDB live `TestExecutions` browser (the private integration org build). Behind
     /// the `private` Cargo feature — the lean build doesn't have this.
     #[cfg(feature = "private")]
@@ -232,6 +237,8 @@ impl Pane {
             Pane::BitbucketPullRequests(p) => p.tab_title(),
             Pane::GithubActions(p) => p.tab_title(),
             Pane::GithubPullRequests(p) => p.tab_title(),
+            Pane::GitlabPipelines(p) => p.tab_title(),
+            Pane::GitlabMergeRequests(p) => p.tab_title(),
             #[cfg(feature = "private")]
             Pane::TestExecutions(p) => p.tab_title(),
             #[cfg(feature = "private")]
@@ -262,7 +269,9 @@ impl Pane {
             | Pane::BitbucketPipelines(_)
             | Pane::BitbucketPullRequests(_)
             | Pane::GithubActions(_)
-            | Pane::GithubPullRequests(_) => false,
+            | Pane::GithubPullRequests(_)
+            | Pane::GitlabPipelines(_)
+            | Pane::GitlabMergeRequests(_) => false,
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => false,
             #[cfg(feature = "private")]

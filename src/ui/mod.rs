@@ -38,6 +38,8 @@ pub mod git_graph_view;
 pub mod git_status_view;
 pub mod github_actions_view;
 pub mod github_pull_requests_view;
+pub mod gitlab_merge_requests_view;
+pub mod gitlab_pipelines_view;
 pub mod grep_view;
 pub mod hover;
 pub mod icons;
@@ -298,6 +300,8 @@ fn render_layout(
                 Some(crate::pane::Pane::GithubActions(_)) => 20,
                 Some(crate::pane::Pane::BitbucketPullRequests(_)) => 21,
                 Some(crate::pane::Pane::GithubPullRequests(_)) => 22,
+                Some(crate::pane::Pane::GitlabPipelines(_)) => 23,
+                Some(crate::pane::Pane::GitlabMergeRequests(_)) => 24,
                 _ => 0,
             };
             match kind {
@@ -327,6 +331,8 @@ fn render_layout(
                 20 => github_actions_view::draw(frame, app, *id, area, focused),
                 21 => bitbucket_pull_requests_view::draw(frame, app, *id, area, focused),
                 22 => github_pull_requests_view::draw(frame, app, *id, area, focused),
+                23 => gitlab_pipelines_view::draw(frame, app, *id, area, focused),
+                24 => gitlab_merge_requests_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

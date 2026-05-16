@@ -1806,6 +1806,56 @@ fn builtin_commands() -> Vec<Command> {
         keys: &[],
         run: |app| app.copy_selected_github_pr_url(),
     });
+    // GitLab — mirror of BB/GH commands.
+    cmds.push(Command {
+        id: "gitlab.pipelines",
+        title: "GitLab: open pipelines dashboard",
+        group: "gitlab",
+        keys: &[],
+        run: |app| app.open_gitlab_pipelines_pane(),
+    });
+    cmds.push(Command {
+        id: "gitlab.merge_requests",
+        title: "GitLab: open merge-requests dashboard",
+        group: "gitlab",
+        keys: &[],
+        run: |app| app.open_gitlab_merge_requests_pane(),
+    });
+    cmds.push(Command {
+        id: "gitlab.refresh_active",
+        title: "GitLab: refresh the active pane",
+        group: "gitlab",
+        keys: &[],
+        run: |app| app.refresh_active_gitlab_pane(),
+    });
+    cmds.push(Command {
+        id: "gitlab.open_selected_pipeline_url",
+        title: "GitLab: open selected pipeline in browser",
+        group: "gitlab",
+        keys: &[],
+        run: |app| app.open_selected_gitlab_pipeline_url(),
+    });
+    cmds.push(Command {
+        id: "gitlab.copy_selected_pipeline_url",
+        title: "GitLab: copy selected pipeline URL",
+        group: "gitlab",
+        keys: &[],
+        run: |app| app.copy_selected_gitlab_pipeline_url(),
+    });
+    cmds.push(Command {
+        id: "gitlab.open_selected_mr_url",
+        title: "GitLab: open selected MR in browser",
+        group: "gitlab",
+        keys: &[],
+        run: |app| app.open_selected_gitlab_mr_url(),
+    });
+    cmds.push(Command {
+        id: "gitlab.copy_selected_mr_url",
+        title: "GitLab: copy selected MR URL",
+        group: "gitlab",
+        keys: &[],
+        run: |app| app.copy_selected_gitlab_mr_url(),
+    });
     #[cfg(feature = "private")]
     {
         cmds.push(Command {

@@ -732,6 +732,14 @@ struct SavedSession {
     gh_prs_view_mode: Option<crate::github::GhPrViewMode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     gh_prs_collapsed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gl_pipelines_view_mode: Option<crate::gitlab::GlPipelineViewMode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    gl_pipelines_collapsed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gl_mrs_view_mode: Option<crate::gitlab::GlMrViewMode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    gl_mrs_collapsed: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -1785,6 +1793,21 @@ pub struct App {
     pub(crate) gh_actions_collapsed: std::collections::HashSet<String>,
     pub(crate) gh_prs_view_mode: crate::github::GhPrViewMode,
     pub(crate) gh_prs_collapsed: std::collections::HashSet<String>,
+    /// GitLab worker handle + per-project caches.
+    gitlab_handle: Option<crate::gitlab::GitlabHandle>,
+    pub(crate) gitlab_pipelines:
+        std::collections::HashMap<String, Vec<crate::gitlab::PipelineRecord>>,
+    pub(crate) gitlab_branch_pipelines:
+        std::collections::HashMap<String, Vec<crate::gitlab::BranchPipelineSlot>>,
+    pub(crate) gitlab_merge_requests:
+        std::collections::HashMap<String, Vec<crate::gitlab::MergeRequestRecord>>,
+    pub(crate) gitlab_my_merge_requests: Vec<crate::gitlab::MergeRequestRecord>,
+    pub(crate) gitlab_last_error: Option<String>,
+    pub(crate) gitlab_connected: bool,
+    pub(crate) gl_pipelines_view_mode: crate::gitlab::GlPipelineViewMode,
+    pub(crate) gl_pipelines_collapsed: std::collections::HashSet<String>,
+    pub(crate) gl_mrs_view_mode: crate::gitlab::GlMrViewMode,
+    pub(crate) gl_mrs_collapsed: std::collections::HashSet<String>,
     /// Per-repo per-branch latest pipeline (the "per-branch" pipelines
     /// view-mode). Keyed by `(workspace, slug)` → ordered
     /// `Vec<BranchPipelineSlot>`. Branch order follows the worker's
@@ -1968,6 +1991,17 @@ impl App {
             gh_actions_collapsed: std::collections::HashSet::new(),
             gh_prs_view_mode: Default::default(),
             gh_prs_collapsed: std::collections::HashSet::new(),
+            gitlab_handle: None,
+            gitlab_pipelines: std::collections::HashMap::new(),
+            gitlab_branch_pipelines: std::collections::HashMap::new(),
+            gitlab_merge_requests: std::collections::HashMap::new(),
+            gitlab_my_merge_requests: Vec::new(),
+            gitlab_last_error: None,
+            gitlab_connected: false,
+            gl_pipelines_view_mode: Default::default(),
+            gl_pipelines_collapsed: std::collections::HashSet::new(),
+            gl_mrs_view_mode: Default::default(),
+            gl_mrs_collapsed: std::collections::HashSet::new(),
             bitbucket_last_error: None,
             bitbucket_connected: false,
             github_handle: None,
@@ -5440,6 +5474,8 @@ impl App {
             | Some(Pane::BitbucketPullRequests(_))
             | Some(Pane::GithubActions(_))
             | Some(Pane::GithubPullRequests(_))
+            | Some(Pane::GitlabPipelines(_))
+            | Some(Pane::GitlabMergeRequests(_))
             | None => None,
             #[cfg(feature = "private")]
             Some(Pane::TestExecutions(_)) => None,
@@ -11326,7 +11362,9 @@ impl App {
             | Pane::BitbucketPipelines(_)
             | Pane::BitbucketPullRequests(_)
             | Pane::GithubActions(_)
-            | Pane::GithubPullRequests(_) => (None, None),
+            | Pane::GithubPullRequests(_)
+            | Pane::GitlabPipelines(_)
+            | Pane::GitlabMergeRequests(_) => (None, None),
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (None, None),
             #[cfg(feature = "private")]
@@ -11429,6 +11467,8 @@ impl App {
             Pane::BitbucketPullRequests(p) => Some((p.tab_title(), false)),
             Pane::GithubActions(p) => Some((p.tab_title(), false)),
             Pane::GithubPullRequests(p) => Some((p.tab_title(), false)),
+            Pane::GitlabPipelines(p) => Some((p.tab_title(), false)),
+            Pane::GitlabMergeRequests(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "private")]
             Pane::TestExecutions(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "private")]
@@ -15860,6 +15900,7 @@ impl App {
         self.drain_codebuild_events();
         self.drain_bitbucket_events();
         self.drain_github_events();
+        self.drain_gitlab_events();
         self.refresh_live_ai_panes();
         self.autosave_idle_buffers();
         self.check_external_file_changes();
@@ -16168,6 +16209,10 @@ impl App {
             gh_actions_collapsed: self.gh_actions_collapsed.iter().cloned().collect(),
             gh_prs_view_mode: Some(self.gh_prs_view_mode),
             gh_prs_collapsed: self.gh_prs_collapsed.iter().cloned().collect(),
+            gl_pipelines_view_mode: Some(self.gl_pipelines_view_mode),
+            gl_pipelines_collapsed: self.gl_pipelines_collapsed.iter().cloned().collect(),
+            gl_mrs_view_mode: Some(self.gl_mrs_view_mode),
+            gl_mrs_collapsed: self.gl_mrs_collapsed.iter().cloned().collect(),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -16377,6 +16422,14 @@ impl App {
             self.gh_prs_view_mode = m;
         }
         self.gh_prs_collapsed = saved.gh_prs_collapsed.into_iter().collect();
+        if let Some(m) = saved.gl_pipelines_view_mode {
+            self.gl_pipelines_view_mode = m;
+        }
+        self.gl_pipelines_collapsed = saved.gl_pipelines_collapsed.into_iter().collect();
+        if let Some(m) = saved.gl_mrs_view_mode {
+            self.gl_mrs_view_mode = m;
+        }
+        self.gl_mrs_collapsed = saved.gl_mrs_collapsed.into_iter().collect();
         // Per-file change list — restore for any buffer we just re-opened.
         // Cursor sits past the newest entry so the first `g;` lands on the
         // most recent edit (vim convention).
@@ -17049,6 +17102,184 @@ impl App {
                 }
                 GithubEvent::Failed(msg) => {
                     self.github_last_error = Some(msg);
+                }
+            }
+        }
+    }
+
+    // ── GitLab ────────────────────────────────────────────────────────
+
+    pub fn ensure_gitlab_worker(&mut self) {
+        if self.gitlab_handle.is_some() {
+            return;
+        }
+        if !self.config.gitlab.any_configured() {
+            return;
+        }
+        self.gitlab_handle = Some(crate::gitlab::spawn(self.config.gitlab.clone()));
+    }
+
+    pub fn open_gitlab_pipelines_pane(&mut self) {
+        if !self.config.gitlab.any_configured() {
+            self.toast("gitlab: add a [[gitlab.projects]] entry to ~/.config/mnml/config.toml first");
+            return;
+        }
+        self.ensure_gitlab_worker();
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::GitlabPipelines(_)))
+        {
+            if let Some(h) = &self.gitlab_handle {
+                h.force_refresh();
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::GitlabPipelines(crate::gitlab::GitlabPipelinesPane::new());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+        self.toast("gitlab: pipelines (loading…)");
+    }
+
+    pub fn open_gitlab_merge_requests_pane(&mut self) {
+        if !self.config.gitlab.any_configured() {
+            self.toast("gitlab: add a [[gitlab.projects]] entry to ~/.config/mnml/config.toml first");
+            return;
+        }
+        self.ensure_gitlab_worker();
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::GitlabMergeRequests(_)))
+        {
+            if let Some(h) = &self.gitlab_handle {
+                h.force_refresh();
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::GitlabMergeRequests(crate::gitlab::GitlabMergeRequestsPane::new());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+        self.toast("gitlab: merge requests (loading…)");
+    }
+
+    pub fn refresh_active_gitlab_pane(&mut self) {
+        if let Some(h) = &self.gitlab_handle {
+            h.force_refresh();
+            self.toast("gitlab: refreshing…");
+        }
+    }
+
+    pub fn open_selected_gitlab_pipeline_url(&mut self) {
+        let Some(url) = self.selected_gitlab_pipeline_url() else {
+            self.toast("no pipeline selected");
+            return;
+        };
+        crate::app::open_url_external(&url);
+        self.toast("opened pipeline in browser");
+    }
+
+    pub fn copy_selected_gitlab_pipeline_url(&mut self) {
+        let Some(url) = self.selected_gitlab_pipeline_url() else {
+            self.toast("no pipeline selected");
+            return;
+        };
+        self.clipboard.set_yank(url, false);
+        self.toast("copied pipeline URL");
+    }
+
+    fn selected_gitlab_pipeline_url(&self) -> Option<String> {
+        let id = self.active?;
+        let Pane::GitlabPipelines(pane) = self.panes.get(id)? else {
+            return None;
+        };
+        crate::ui::gitlab_pipelines_view::selected_pipeline(self, pane).map(|r| r.web_url)
+    }
+
+    pub fn open_selected_gitlab_mr_url(&mut self) {
+        let Some(url) = self.selected_gitlab_mr_url() else {
+            self.toast("no MR selected");
+            return;
+        };
+        crate::app::open_url_external(&url);
+        self.toast("opened MR in browser");
+    }
+
+    pub fn copy_selected_gitlab_mr_url(&mut self) {
+        let Some(url) = self.selected_gitlab_mr_url() else {
+            self.toast("no MR selected");
+            return;
+        };
+        self.clipboard.set_yank(url, false);
+        self.toast("copied MR URL");
+    }
+
+    fn selected_gitlab_mr_url(&self) -> Option<String> {
+        let id = self.active?;
+        let Pane::GitlabMergeRequests(pane) = self.panes.get(id)? else {
+            return None;
+        };
+        crate::ui::gitlab_merge_requests_view::selected_mr(self, pane).map(|r| r.web_url)
+    }
+
+    fn drain_gitlab_events(&mut self) {
+        use crate::gitlab::GitlabEvent;
+        let Some(handle) = &self.gitlab_handle else {
+            return;
+        };
+        while let Ok(ev) = handle.rx.try_recv() {
+            match ev {
+                GitlabEvent::Pipelines { project, pipelines } => {
+                    self.gitlab_pipelines.insert(project, pipelines);
+                    self.gitlab_last_error = None;
+                }
+                GitlabEvent::BranchPipelines {
+                    project,
+                    per_branch,
+                } => {
+                    self.gitlab_branch_pipelines.insert(project, per_branch);
+                    self.gitlab_last_error = None;
+                }
+                GitlabEvent::MergeRequests {
+                    project,
+                    merge_requests,
+                } => {
+                    self.gitlab_merge_requests.insert(project, merge_requests);
+                    self.gitlab_last_error = None;
+                }
+                GitlabEvent::MyMergeRequests(mrs) => {
+                    self.gitlab_my_merge_requests = mrs;
+                    self.gitlab_last_error = None;
+                }
+                GitlabEvent::Connected => {
+                    self.gitlab_connected = true;
+                }
+                GitlabEvent::Failed(msg) => {
+                    self.gitlab_last_error = Some(msg);
                 }
             }
         }

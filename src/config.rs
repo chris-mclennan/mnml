@@ -52,6 +52,7 @@ pub struct Config {
     pub ci: CiConfig,
     pub bitbucket: BitbucketConfig,
     pub github: GithubConfig,
+    pub gitlab: GitlabConfig,
 }
 
 /// `[bitbucket]` — Bitbucket Cloud REST API integration. Powers the
@@ -143,6 +144,57 @@ pub struct GithubRepo {
 /// CANDIDATE_BRANCHES tuple.
 pub fn default_branches() -> &'static [&'static str] {
     &["main", "master", "develop", "staging"]
+}
+
+/// `[gitlab]` — GitLab CI / Merge Requests integration. Same shape as
+/// `[bitbucket]` and `[github]` — separate module, separate pane, same
+/// mental model (recent/per-branch + per-project/mine view-modes).
+///
+/// ```toml
+/// [gitlab]
+/// auth_env  = "GITLAB_TOKEN"                # optional
+/// poll_secs = 60                             # optional
+/// base_url  = "https://gitlab.com/api/v4"    # optional, override for self-hosted
+///
+/// [[gitlab.projects]]
+/// project = "private-org/private-claude-plugins"  # path OR numeric ID
+///
+/// [[gitlab.projects]]
+/// project  = "12345"
+/// branches = ["main", "production"]             # optional
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct GitlabConfig {
+    pub auth_env: Option<String>,
+    pub poll_secs: Option<u64>,
+    /// `https://gitlab.com/api/v4` by default; override for self-hosted.
+    pub base_url: Option<String>,
+    pub projects: Vec<GitlabProject>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GitlabProject {
+    /// Path (`"group/project"`) or numeric ID. The worker URL-encodes
+    /// when it builds the request path so either form works.
+    pub project: String,
+    pub branches: Vec<String>,
+}
+
+impl GitlabConfig {
+    pub fn any_configured(&self) -> bool {
+        !self.projects.is_empty()
+    }
+    pub fn auth_env_name(&self) -> &str {
+        self.auth_env.as_deref().unwrap_or("GITLAB_TOKEN")
+    }
+    pub fn poll_secs_or_default(&self) -> u64 {
+        self.poll_secs.unwrap_or(60).max(5)
+    }
+    pub fn base_url_or_default(&self) -> &str {
+        self.base_url
+            .as_deref()
+            .unwrap_or("https://gitlab.com/api/v4")
+    }
 }
 
 impl GithubConfig {
@@ -454,6 +506,7 @@ impl Default for Config {
             ci: CiConfig::default(),
             bitbucket: BitbucketConfig::default(),
             github: GithubConfig::default(),
+            gitlab: GitlabConfig::default(),
         }
     }
 }
@@ -492,6 +545,24 @@ struct RawConfig {
     bitbucket: RawBitbucket,
     #[serde(default)]
     github: RawGithub,
+    #[serde(default)]
+    gitlab: RawGitlab,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawGitlab {
+    auth_env: Option<String>,
+    poll_secs: Option<u64>,
+    base_url: Option<String>,
+    #[serde(default)]
+    projects: Vec<RawGitlabProject>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawGitlabProject {
+    project: String,
+    #[serde(default)]
+    branches: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -835,6 +906,22 @@ impl Config {
             self.github.repos.push(GithubRepo {
                 owner: r.owner,
                 repo: r.repo,
+                branches: r.branches,
+            });
+        }
+        // GitLab — same overlay shape.
+        if let Some(v) = raw.gitlab.auth_env {
+            self.gitlab.auth_env = Some(v);
+        }
+        if let Some(v) = raw.gitlab.poll_secs {
+            self.gitlab.poll_secs = Some(v);
+        }
+        if let Some(v) = raw.gitlab.base_url {
+            self.gitlab.base_url = Some(v);
+        }
+        for r in raw.gitlab.projects {
+            self.gitlab.projects.push(GitlabProject {
+                project: r.project,
                 branches: r.branches,
             });
         }
