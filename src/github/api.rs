@@ -308,6 +308,68 @@ fn parse_owner_repo_from_url(url: &str) -> Option<(String, String)> {
     }
 }
 
+/// Fetch the reviews on one PR and reduce them to
+/// `(approved_count, changes_count)`. GH's `/reviews` returns one entry
+/// per review submission; multiple reviews from the same author can
+/// stack (e.g. "Changes requested" → "Approved"). We bucket each
+/// reviewer's *most recent* state to match the way GH's web UI counts.
+pub fn fetch_reviews_summary(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    owner: &str,
+    repo: &str,
+    number: u64,
+) -> Option<(u32, u32)> {
+    let url = format!("{API_BASE}/repos/{owner}/{repo}/pulls/{number}/reviews?per_page=100");
+    let resp = client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body = resp.text().ok()?;
+    parse_reviews_summary(&body)
+}
+
+pub fn parse_reviews_summary(body: &str) -> Option<(u32, u32)> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    let arr = v.as_array()?;
+    // user.id (or login) → latest review state. GH's API returns reviews
+    // in chronological order, so we let later entries overwrite earlier.
+    let mut latest: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for r in arr {
+        let key = r
+            .get("user")
+            .and_then(|u| u.get("login"))
+            .and_then(|l| l.as_str())
+            .map(str::to_string)
+            .unwrap_or_default();
+        let state = r
+            .get("state")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+        if !state.is_empty() && !key.is_empty() {
+            latest.insert(key, state);
+        }
+    }
+    let mut approved = 0u32;
+    let mut changes = 0u32;
+    for (_, state) in latest {
+        match state.as_str() {
+            "APPROVED" => approved += 1,
+            "CHANGES_REQUESTED" => changes += 1,
+            _ => {} // COMMENTED, DISMISSED, PENDING — don't count
+        }
+    }
+    Some((approved, changes))
+}
+
 /// Latest workflow run for one branch on one repo. `None` ⇒ no runs.
 pub fn fetch_latest_run_for_branch(
     client: &reqwest::blocking::Client,

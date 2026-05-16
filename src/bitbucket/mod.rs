@@ -197,13 +197,40 @@ fn run_thread(
     while !cancel.load(Ordering::Relaxed) {
         wake.store(false, Ordering::Relaxed);
 
-        // ── Cross-repo: my open PRs (one cheap call total) ─────────────
+        // ── Cross-repo: my open PRs (one list call + per-PR detail
+        // calls to populate accurate participants — the list endpoint
+        // returns stale ones, per James's bbwatch.py note). ────────────
         if let Some(aid) = account_id.as_deref() {
             match api::fetch_my_open_pull_requests(&client, &auth_header, aid) {
-                Ok(prs) => {
+                Ok(mut prs) => {
                     if !have_sent_connected {
                         have_sent_connected = true;
                         let _ = tx.send(BitbucketEvent::Connected);
+                    }
+                    // Enrich each PR with detail-endpoint data so the
+                    // ✓N / ✗N counts are accurate. Bounded by the
+                    // pagelen=50 on the list call. Failures per-PR are
+                    // silent — we just keep the stale row from the list.
+                    for pr in prs.iter_mut() {
+                        if cancel.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        if let Ok(detail) = api::fetch_pr_detail(
+                            &client,
+                            &auth_header,
+                            &pr.workspace,
+                            &pr.slug,
+                            pr.id,
+                        ) {
+                            pr.reviewer_count = detail.reviewer_count;
+                            pr.approved_count = detail.approved_count;
+                            pr.changes_count = detail.changes_count;
+                            pr.comment_count = detail.comment_count;
+                            pr.task_count = detail.task_count;
+                            // The list endpoint already gave us source / dest
+                            // branches; detail has them too but the values
+                            // should match.
+                        }
                     }
                     let _ = tx.send(BitbucketEvent::MyPullRequests(prs));
                 }

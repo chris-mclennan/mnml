@@ -220,11 +220,29 @@ pub fn draw(
                     format!("{title:<50}  "),
                     Style::default().fg(t.fg).bg(row_bg),
                 ));
+                spans.push(Span::styled(
+                    format!("👀{:<2}", pr.reviewer_count),
+                    Style::default().fg(t.fg).bg(row_bg),
+                ));
+                if pr.approved_count > 0 {
+                    spans.push(Span::styled(
+                        format!(" ✓{}", pr.approved_count),
+                        Style::default()
+                            .fg(t.green)
+                            .bg(row_bg)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+                if pr.changes_count > 0 {
+                    spans.push(Span::styled(
+                        format!(" ✗{}", pr.changes_count),
+                        Style::default()
+                            .fg(t.red)
+                            .bg(row_bg)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
                 spans.extend([
-                    Span::styled(
-                        format!("👀{:<2}", pr.reviewer_count),
-                        Style::default().fg(t.fg).bg(row_bg),
-                    ),
                     Span::styled(
                         format!(" · 💬{:<3}", total_comments),
                         Style::default().fg(t.comment).bg(row_bg),

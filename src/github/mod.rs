@@ -150,13 +150,29 @@ fn run_thread(
     while !cancel.load(Ordering::Relaxed) {
         wake.store(false, Ordering::Relaxed);
 
-        // ── Cross-repo: my open PRs via /search/issues ─────────────────
+        // ── Cross-repo: my open PRs via /search/issues, then enrich
+        // each with /reviews so ✓N ✗N counts are accurate. ──────────
         if let Some(login_str) = login.as_deref() {
             match api::fetch_my_open_pull_requests(&client, &auth_header, login_str) {
-                Ok(prs) => {
+                Ok(mut prs) => {
                     if !have_sent_connected {
                         have_sent_connected = true;
                         let _ = tx.send(GithubEvent::Connected);
+                    }
+                    for pr in prs.iter_mut() {
+                        if cancel.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        if let Some((approved, changes)) = api::fetch_reviews_summary(
+                            &client,
+                            &auth_header,
+                            &pr.owner,
+                            &pr.repo,
+                            pr.number,
+                        ) {
+                            pr.approved_count = approved;
+                            pr.changes_count = changes;
+                        }
                     }
                     let _ = tx.send(GithubEvent::MyPullRequests(prs));
                 }
