@@ -1426,10 +1426,13 @@ fn parse_workspace_edit(result: &serde_json::Value) -> Vec<(PathBuf, Vec<(Range,
 }
 
 /// Parse a `textDocument/completion` result (`CompletionItem[]` or
-/// `CompletionList { items }`) into `(label, insert_text, detail)` per item.
-/// `insertText` (then `textEdit.newText`, then `label`) supplies the text to
-/// insert; snippet items (`insertTextFormat == 2`) fall back to the label since
-/// we don't expand placeholders.
+/// `CompletionList { items }`) into `(label, insert_text, detail, doc, raw,
+/// is_snippet)` per item. `insertText` (then `textEdit.newText`, then
+/// `label`) supplies the text to insert. Snippet items
+/// (`insertTextFormat == 2`) keep their LSP snippet syntax in `insert` —
+/// the App side runs it through `lsp_snippet::to_mnml` on accept and
+/// applies it via `App::apply_snippet_edit` so `$1` / `$0` placeholders
+/// drive the existing Tab-cycle.
 fn parse_completion(result: &serde_json::Value) -> Vec<super::CompletionItemTuple> {
     let arr = match result {
         serde_json::Value::Array(a) => a,
@@ -1445,25 +1448,29 @@ fn parse_completion(result: &serde_json::Value) -> Vec<super::CompletionItemTupl
             continue;
         };
         let is_snippet = it.get("insertTextFormat").and_then(|f| f.as_u64()) == Some(2);
-        let insert = if is_snippet {
-            label.to_string()
-        } else {
-            it.get("insertText")
-                .and_then(|t| t.as_str())
-                .or_else(|| {
-                    it.get("textEdit")
-                        .and_then(|e| e.get("newText"))
-                        .and_then(|t| t.as_str())
-                })
-                .unwrap_or(label)
-                .to_string()
-        };
+        let insert = it
+            .get("insertText")
+            .and_then(|t| t.as_str())
+            .or_else(|| {
+                it.get("textEdit")
+                    .and_then(|e| e.get("newText"))
+                    .and_then(|t| t.as_str())
+            })
+            .unwrap_or(label)
+            .to_string();
         let detail = it
             .get("detail")
             .and_then(|d| d.as_str())
             .map(str::to_string);
         let documentation = parse_completion_doc(it.get("documentation"));
-        out.push((label.to_string(), insert, detail, documentation, it.clone()));
+        out.push((
+            label.to_string(),
+            insert,
+            detail,
+            documentation,
+            it.clone(),
+            is_snippet,
+        ));
     }
     out
 }
@@ -2053,8 +2060,10 @@ mod tests {
         assert_eq!(got[0].1, "push");
         assert_eq!(got[0].2, Some("fn(&mut self, T)".to_string()));
         assert_eq!(got[0].3, None);
-        // snippet ⇒ fall back to the label, not the placeholder text
-        assert_eq!(got[1].1, "println!");
+        // snippet ⇒ keep the LSP snippet body in `insert` (expanded on accept)
+        assert_eq!(got[1].1, "println!($0)");
+        assert!(got[1].5, "println! should be flagged is_snippet");
+        assert!(!got[0].5, "push should not be flagged is_snippet");
         // no insertText ⇒ use the label
         assert_eq!(got[2].0, "len");
         assert_eq!(got[2].1, "len");

@@ -3431,7 +3431,9 @@ impl App {
     }
 
     /// Accept the highlighted completion: replace the identifier prefix left of
-    /// the cursor with the item's insert text, then close the popup.
+    /// the cursor with the item's insert text, then close the popup. Snippet
+    /// items (`insertTextFormat == 2`) get LSP snippet syntax expanded into
+    /// mnml's placeholder machinery so `$1` / `$0` drive Tab-cycling.
     pub fn completion_accept(&mut self) {
         let Some(popup) = self.completion.take() else {
             return;
@@ -3447,6 +3449,27 @@ impl App {
         else {
             return;
         };
+        if item.is_snippet {
+            // Snippet path — convert LSP syntax → mnml syntax, parse out
+            // placeholders, apply via the existing snippet edit machinery.
+            let mnml_body = crate::snippets::lsp_snippet_to_mnml(&item.insert);
+            let snippet = crate::snippets::Snippet::parse("", &mnml_body, "lsp");
+            let (cursor, start) = match self.panes.get(idx) {
+                Some(Pane::Editor(b)) => {
+                    let c = b.editor.cursor();
+                    (c, c.saturating_sub(prefix_len))
+                }
+                _ => return,
+            };
+            self.apply_snippet_edit(
+                start,
+                cursor,
+                snippet.text,
+                snippet.cursor_offset,
+                snippet.placeholders,
+            );
+            return;
+        }
         let clip = &mut self.clipboard;
         if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
             let cursor = b.editor.cursor();
@@ -3923,6 +3946,7 @@ impl App {
                 documentation: String::new(),
                 raw: None,
                 resolved: true,
+                is_snippet: false,
             })
             .collect();
         let popup = crate::completion::CompletionPopup::new(path, items, &prefix);
@@ -5499,13 +5523,14 @@ impl App {
                     .into_iter()
                     .take(500)
                     .map(
-                        |(label, insert, detail, documentation, raw)| CompletionItem {
+                        |(label, insert, detail, documentation, raw, is_snippet)| CompletionItem {
                             label,
                             insert,
                             detail: detail.unwrap_or_default(),
                             documentation: documentation.unwrap_or_default(),
                             raw: Some(raw),
                             resolved: false,
+                            is_snippet,
                         },
                     )
                     .collect();

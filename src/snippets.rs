@@ -130,6 +130,100 @@ impl Snippet {
     }
 }
 
+/// Convert LSP snippet syntax (`$1` / `${1:default}` / `${1|a,b|}` / `$0` /
+/// escaped `\$` `\}` `\\`) into mnml's bare-`$N` snippet syntax that
+/// `Snippet::parse` understands.
+///
+/// Rules:
+/// * `$1` … `$9` and `$0` — pass through verbatim (mnml's native form).
+/// * `${N}` — `→ $N`.
+/// * `${N:default text}` — `→ default text$N`. The cursor lands at the end
+///   of the default text so a user typing replaces nothing (vs. selecting
+///   the default, which mnml's placeholder machinery doesn't support yet).
+/// * `${N|a,b,c|}` — choice variants: drop the choices and emit `$N`. Rare
+///   in the wild.
+/// * `\$` → `$`, `\}` → `}`, `\\` → `\` (LSP's escape set).
+/// * Unrecognised `$<thing>` (variables like `$TM_FILENAME`) — passed
+///   through as-is so the text isn't damaged; they won't be picked up as
+///   placeholders.
+pub fn lsp_snippet_to_mnml(body: &str) -> String {
+    let bytes = body.as_bytes();
+    let mut out = String::with_capacity(body.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\\' && i + 1 < bytes.len() {
+            let next = bytes[i + 1];
+            if next == b'$' || next == b'}' || next == b'\\' {
+                out.push(next as char);
+                i += 2;
+                continue;
+            }
+        }
+        if b == b'$' && i + 1 < bytes.len() {
+            let next = bytes[i + 1];
+            if next.is_ascii_digit() {
+                // Bare `$N` — emit verbatim.
+                out.push('$');
+                out.push(next as char);
+                i += 2;
+                continue;
+            }
+            if next == b'{' {
+                // `${N…}` form. Find the matching `}` (LSP nesting is rare;
+                // we treat any `}` as the terminator).
+                let close = body[i + 2..].find('}');
+                if let Some(rel) = close {
+                    let inner = &body[i + 2..i + 2 + rel];
+                    if let Some(rest) = parse_lsp_placeholder_inner(inner) {
+                        // rest is `(digit, default_text)` — emit default
+                        // text, then the bare marker so mnml records the
+                        // cursor at the end-of-default position.
+                        let (digit, default) = rest;
+                        out.push_str(default);
+                        out.push('$');
+                        out.push(digit);
+                        i += 2 + rel + 1;
+                        continue;
+                    }
+                }
+                // Malformed (no closing brace, or inner doesn't start with
+                // a digit). Pass through verbatim.
+            }
+        }
+        // Literal char — copy a full UTF-8 codepoint.
+        let ch_len = utf8_char_len(b);
+        out.push_str(&body[i..i + ch_len]);
+        i += ch_len;
+    }
+    out
+}
+
+/// Parse the inner part of `${...}` — must start with a digit, then either
+/// be done (`{N}`) or `:default` or `|choices|`. Returns `(digit, default)`
+/// where `default` is the literal default text (empty for `{N}` and choice
+/// forms).
+fn parse_lsp_placeholder_inner(inner: &str) -> Option<(char, &str)> {
+    let mut chars = inner.char_indices();
+    let (_, first) = chars.next()?;
+    if !first.is_ascii_digit() {
+        return None;
+    }
+    match chars.next() {
+        None => Some((first, "")),
+        Some((_, ':')) => {
+            // Everything after the `:` is the default text.
+            let default_start = first.len_utf8() + ':'.len_utf8();
+            Some((first, &inner[default_start..]))
+        }
+        Some((_, '|')) => {
+            // Choice form — drop the choices.
+            Some((first, ""))
+        }
+        Some(_) => None,
+    }
+}
+
 /// Length in bytes of the UTF-8 codepoint that starts at `b` (the leading
 /// byte). Standard 0xxx/110x/1110/1111 lookahead. Continuation bytes
 /// (`0x80..=0xBF`) can't be a leading byte on a valid `&str`, but we
@@ -207,6 +301,70 @@ pub fn word_before_cursor(text: &str, cursor: usize) -> (usize, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lsp_bare_dollar_n_passes_through() {
+        // Bare `$1` / `$0` are mnml's native form — no transformation.
+        assert_eq!(
+            lsp_snippet_to_mnml("for $1 in $2 {\n    $0\n}"),
+            "for $1 in $2 {\n    $0\n}"
+        );
+    }
+
+    #[test]
+    fn lsp_brace_form_loses_braces() {
+        // `${N}` collapses to `$N` so mnml's parser picks it up.
+        assert_eq!(lsp_snippet_to_mnml("println!(${1})"), "println!($1)");
+    }
+
+    #[test]
+    fn lsp_default_is_emitted_then_marker() {
+        // `${1:default}` → `default$1` — default text inserted, cursor lands
+        // at the end of it so typing extends instead of replacing.
+        assert_eq!(
+            lsp_snippet_to_mnml("for ${1:i} in ${2:iter}"),
+            "for i$1 in iter$2"
+        );
+    }
+
+    #[test]
+    fn lsp_choice_form_drops_choices() {
+        // `${1|a,b,c|}` → `$1` (default text empty).
+        assert_eq!(lsp_snippet_to_mnml("${1|foo,bar,baz|}"), "$1");
+    }
+
+    #[test]
+    fn lsp_escapes_unescape() {
+        assert_eq!(
+            lsp_snippet_to_mnml(r"\$not_a_placeholder"),
+            "$not_a_placeholder"
+        );
+        assert_eq!(lsp_snippet_to_mnml(r"close \} brace"), "close } brace");
+        assert_eq!(lsp_snippet_to_mnml(r"back\\slash"), r"back\slash");
+    }
+
+    #[test]
+    fn lsp_unknown_variables_pass_through() {
+        // `$TM_FILENAME` etc. — we don't expand variables, leave them.
+        assert_eq!(
+            lsp_snippet_to_mnml("path = $TM_FILENAME"),
+            "path = $TM_FILENAME"
+        );
+    }
+
+    #[test]
+    fn lsp_through_snippet_parse_picks_up_stops() {
+        // End-to-end: LSP snippet → mnml snippet → mnml's Snippet::parse
+        // extracts the placeholders correctly.
+        let body = lsp_snippet_to_mnml("for ${1:i} in ${2:iter} {\n    $0\n}");
+        let s = Snippet::parse("forr", &body, "rs");
+        // Text after stripping markers: `for i in iter {\n    \n}`.
+        assert_eq!(s.text, "for i in iter {\n    \n}");
+        // Two placeholders ($1 after "i" at col 5, $2 after "iter" at col 12).
+        assert_eq!(s.placeholders.len(), 2);
+        // $0 sits inside the body indent (after the 4 spaces).
+        assert!(s.cursor_offset < s.text.len());
+    }
 
     fn t(triggers: &[(&str, &str)]) -> BTreeMap<String, BTreeMap<String, String>> {
         let mut all = BTreeMap::new();

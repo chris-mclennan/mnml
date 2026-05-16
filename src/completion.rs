@@ -32,6 +32,11 @@ pub struct CompletionItem {
     /// item. Prevents the popup from spamming the server when the user
     /// jumps back and forth.
     pub resolved: bool,
+    /// `true` when the server marked this item with `insertTextFormat == 2`
+    /// (LSP snippet). `insert` then contains LSP snippet syntax
+    /// (`$1` / `${1:default}` / `$0`) instead of literal text, and the
+    /// accept path expands it through mnml's snippet placeholder machinery.
+    pub is_snippet: bool,
 }
 
 #[derive(Debug)]
@@ -158,6 +163,7 @@ mod tests {
             documentation: String::new(),
             raw: None,
             resolved: false,
+            is_snippet: false,
         }
     }
 

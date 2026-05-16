@@ -66,15 +66,18 @@ pub struct Diagnostic {
 }
 
 /// One candidate as parsed from a `textDocument/completion` reply:
-/// `(label, insert_text, detail, documentation, raw_json)`. `raw_json` is
-/// the original server item — kept so the App can round-trip it on a
-/// `completionItem/resolve` request.
+/// `(label, insert_text, detail, documentation, raw_json, is_snippet)`.
+/// `raw_json` is the original server item — kept so the App can round-trip
+/// it on a `completionItem/resolve` request. `is_snippet` is `true` when
+/// the server marked the item with `insertTextFormat == 2` (the `insert`
+/// then holds LSP snippet syntax — `$1` / `${1:default}` / `$0`).
 pub type CompletionItemTuple = (
     String,
     String,
     Option<String>,
     Option<String>,
     serde_json::Value,
+    bool,
 );
 
 /// What the reader thread sends to the event loop.

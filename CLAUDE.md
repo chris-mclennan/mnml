@@ -1866,7 +1866,12 @@ runs after every editor edit (`tui.rs` `BufferEvent::Edited`): refilters an open
 on `.`/`:`(member access) or the first char of a new word; the reply (`apply_lsp_event`) opens the popup
 filtered against the *live* prefix. In the popup: ↑↓/Ctrl-N·P move, PgUp/PgDn jump, Tab/Enter accept
 (`App::completion_accept` → `EditOp::ReplaceRange` over the identifier prefix left of the cursor →
-`item.insert`; snippet items fall back to the label, no placeholder expansion), Esc dismisses, any other key
+`item.insert`; **snippet items** (`insertTextFormat == 2`, surfaced as the new `CompletionItem.is_snippet`
+flag) get LSP snippet syntax — `$1` / `${1:default}` / `${1|a,b|}` / `$0` / escapes — converted to mnml's
+bare-`$N` form via new `crate::snippets::lsp_snippet_to_mnml`, then parsed through `Snippet::parse` and
+applied via the existing `apply_snippet_edit` so Tab cycles through the placeholders. `${1:default}` puts
+the default text in the buffer with the cursor at its end — default-as-selected isn't supported yet),
+Esc dismisses, any other key
 dismisses + is handled normally, a click dismisses it. `lsp.completion` (`Ctrl+Space` / `<leader>l c`) is the
 manual trigger (requests regardless of prefix; same popup). Known simplifications (in `src/lsp/mod.rs`):
 full-text doc sync, char-offset columns, `initialize` not awaited before `didOpen`; completion list is
