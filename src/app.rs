@@ -1307,6 +1307,14 @@ pub struct PaneRects {
     /// `lens_index` is the index into `Buffer.code_lenses`. Cleared +
     /// rebuilt per editor render.
     pub code_lens_chips: Vec<(Rect, PaneId, usize)>,
+    /// Rect of the bufferline's `‹` overflow chevron when painted (more tabs
+    /// scrolled off the left edge); `None` when there's nothing past it.
+    /// Clicking scrolls the bufferline left by one.
+    pub bufferline_overflow_left: Option<Rect>,
+    /// Rect of the bufferline's `›` overflow chevron when painted (more tabs
+    /// past the right edge); `None` when there's nothing past it. Clicking
+    /// scrolls the bufferline right by one.
+    pub bufferline_overflow_right: Option<Rect>,
     /// `(rect, pane_id, view_mode)` per `[Edit]` / `[Response]` tab chip
     /// on a request pane's tab bar. Clicking switches the pane's view.
     pub request_tabs: Vec<(Rect, PaneId, crate::request_pane::ViewMode)>,

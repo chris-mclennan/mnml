@@ -91,6 +91,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.bufferline = None;
         app.rects.bufferline_tabs.clear();
         app.rects.bufferline_tab_close.clear();
+        app.rects.bufferline_overflow_left = None;
+        app.rects.bufferline_overflow_right = None;
         app.rects.statusline = None;
         app.rects.body = Some(area);
         app.rects.editor_panes.clear();
@@ -193,6 +195,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.bufferline = None;
         app.rects.bufferline_tabs.clear();
         app.rects.bufferline_tab_close.clear();
+        app.rects.bufferline_overflow_left = None;
+        app.rects.bufferline_overflow_right = None;
     }
 
     // ── the split-tree of pane bodies ──

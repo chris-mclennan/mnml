@@ -1791,6 +1791,14 @@ of the selected entry; accept evals `localStorage.setItem` (or `sessionStorage.s
 `scope|key=value` where scope is `local` (default) or `session`. `d` evals `removeItem` for the selected entry and
 drops the row locally. All three use `BrowserPane::eval_silent` (fire-and-forget eval that doesn't push a `» …` log
 line or claim `pending_eval`).
+**Bufferline overflow chevrons + wheel-scroll** — the `‹` / `›` chevrons that appear when
+the tab strip overflows are now clickable (registered as
+`app.rects.bufferline_overflow_left/right` whenever they're painted; click adjusts
+`bufferline_first_visible` by 1). Wheel over the bufferline strip also scrolls by one tab
+per tick (`scroll_under` matches `app.rects.bufferline` and updates first-visible). No
+keybinding equivalent — the chord-driven tab strip already keeps the active tab on screen,
+so this is purely for "I can see there are more tabs, let me page through them with the mouse."
+
 **Request-pane mouse clicks** — the `[Edit]` / `[Response]` tab chips (registered in
 `app.rects.request_tabs`) switch view; in Edit mode each field row (Method / URL / Headers /
 Body — registered per visible line in `app.rects.request_fields`) clicks to focus that field

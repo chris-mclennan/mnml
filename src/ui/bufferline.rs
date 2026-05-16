@@ -159,6 +159,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 .fg(theme::cur().blue)
                 .bg(theme::cur().bg_darker),
         ));
+        // Register the click rect so the mouse handler can scroll left on click.
+        app.rects.bufferline_overflow_left = Some(ratatui::layout::Rect {
+            x: area.x,
+            y: area.y,
+            width: 1,
+            height: 1,
+        });
         1
     } else {
         spans.push(Span::styled(
@@ -341,6 +348,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .fg(theme::cur().blue)
             .bg(theme::cur().bg_darker),
     ));
+    if more_right {
+        // Right chevron sits at the cell just before the right cap, which
+        // is at `inner_right` (= `fill_end`). The cap takes 1 cell after it.
+        app.rects.bufferline_overflow_right = Some(ratatui::layout::Rect {
+            x: inner_right,
+            y: area.y,
+            width: 1,
+            height: 1,
+        });
+    }
     let _ = last_drawn;
     // right cap
     spans.push(Span::styled(

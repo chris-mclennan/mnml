@@ -3130,6 +3130,23 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
+            // Bufferline overflow chevrons — scroll the tab strip by one.
+            if let Some(r) = app.rects.bufferline_overflow_left
+                && contains(r, x, y)
+            {
+                if app.bufferline_first_visible > 0 {
+                    app.bufferline_first_visible -= 1;
+                }
+                return;
+            }
+            if let Some(r) = app.rects.bufferline_overflow_right
+                && contains(r, x, y)
+            {
+                if app.bufferline_first_visible + 1 < app.panes.len() {
+                    app.bufferline_first_visible += 1;
+                }
+                return;
+            }
             // Bufferline tab — clicking the close badge closes; clicking elsewhere on the tab activates.
             if let Some(&(_, id)) = app
                 .rects
@@ -3372,6 +3389,17 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             } else {
                 app.tree.move_down();
             }
+        }
+        return;
+    }
+    // Wheel over the bufferline → scroll the tab strip by one per tick.
+    if let Some(br) = app.rects.bufferline
+        && contains(br, x, y)
+    {
+        if delta < 0 {
+            app.bufferline_first_visible = app.bufferline_first_visible.saturating_sub(1);
+        } else if app.bufferline_first_visible + 1 < app.panes.len() {
+            app.bufferline_first_visible += 1;
         }
         return;
     }
