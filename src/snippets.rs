@@ -63,6 +63,14 @@ pub struct SnippetSession {
     /// the cursor here instead of dropping it back at `stops[idx]`. `None`
     /// for never-visited stops.
     pub stop_cursors: Vec<Option<usize>>,
+    /// Default-text length per stop, in bytes. When > 0 AND the user
+    /// hasn't visited the stop yet (`stop_cursors[i].is_none()`), placing
+    /// at the stop drops the anchor at `stops[i]` and the cursor at
+    /// `stops[i] + default_lens[i]` so the default is selected — typing
+    /// replaces it. Once visited, the recorded exit cursor wins. Always
+    /// parallel to `stops`; populated only by LSP snippets (mnml's
+    /// native snippets emit all zeroes).
+    pub default_lens: Vec<usize>,
 }
 
 /// One snippet entry as it lives on `App` (placeholder markers pre-parsed
@@ -127,6 +135,90 @@ impl Snippet {
             placeholders,
             scope,
         }
+    }
+}
+
+/// Result of parsing an LSP snippet body. Richer than `Snippet::parse`'s
+/// output: each placeholder carries its default-text length so the
+/// session can select the default when Tab lands there (vs. mnml's
+/// native snippets which never have defaults).
+#[derive(Debug, Clone)]
+pub struct LspSnippetParse {
+    /// Buffer-ready text — markers stripped, defaults inlined.
+    pub text: String,
+    /// `(byte_offset, default_len)` for each `$1`..`$9` in tab-stop order.
+    /// `default_len` is in bytes (LSP defaults are inlined into `text`
+    /// starting at `byte_offset`). 0 = bare placeholder, no default.
+    pub placeholders: Vec<(usize, usize)>,
+    /// Byte offset of `$0` (or `text.len()` when absent — the cursor's
+    /// natural resting place after the last `$N`).
+    pub cursor_offset: usize,
+}
+
+/// Parse an LSP snippet body into a buffer-ready string + per-placeholder
+/// offsets + default-text lengths. Handles `$N` / `${N}` / `${N:default}` /
+/// `${N|a,b|}` / `$0` / escapes `\$` `\}` `\\`. Unknown forms (`$TM_FILENAME`)
+/// pass through as literal text. Sibling to `Snippet::parse` for native
+/// mnml snippets — different return type because LSP carries more info.
+pub fn parse_lsp_snippet(body: &str) -> LspSnippetParse {
+    let bytes = body.as_bytes();
+    let mut text = String::with_capacity(body.len());
+    // `(position_in_text, default_len)` per digit, first occurrence only.
+    let mut found: [Option<(usize, usize)>; 10] = [None; 10];
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\\' && i + 1 < bytes.len() {
+            let next = bytes[i + 1];
+            if next == b'$' || next == b'}' || next == b'\\' {
+                text.push(next as char);
+                i += 2;
+                continue;
+            }
+        }
+        if b == b'$' && i + 1 < bytes.len() {
+            let next = bytes[i + 1];
+            if next.is_ascii_digit() {
+                // Bare `$N` — record position, no default text.
+                let n = (next - b'0') as usize;
+                if found[n].is_none() {
+                    found[n] = Some((text.len(), 0));
+                }
+                i += 2;
+                continue;
+            }
+            if next == b'{'
+                && let Some(rel) = body[i + 2..].find('}')
+            {
+                let inner = &body[i + 2..i + 2 + rel];
+                if let Some((digit, default)) = parse_lsp_placeholder_inner(inner) {
+                    let n = digit.to_digit(10).unwrap() as usize;
+                    let pos = text.len();
+                    text.push_str(default);
+                    if found[n].is_none() {
+                        // Only the *first* occurrence of each digit gets a
+                        // default-text span — subsequent ones (rare in
+                        // practice) are silently dropped to keep the
+                        // session's stop-shifts unambiguous.
+                        found[n] = Some((pos, default.len()));
+                    }
+                    i += 2 + rel + 1;
+                    continue;
+                }
+            }
+            // `$<other>` (variables like `$TM_FILENAME`) — fall through and
+            // copy verbatim so the text isn't damaged.
+        }
+        let ch_len = utf8_char_len(b);
+        text.push_str(&body[i..i + ch_len]);
+        i += ch_len;
+    }
+    let cursor_offset = found[0].map(|(pos, _)| pos).unwrap_or(text.len());
+    let placeholders: Vec<(usize, usize)> = (1..=9).filter_map(|n| found[n]).collect();
+    LspSnippetParse {
+        text,
+        placeholders,
+        cursor_offset,
     }
 }
 
@@ -350,6 +442,37 @@ mod tests {
             lsp_snippet_to_mnml("path = $TM_FILENAME"),
             "path = $TM_FILENAME"
         );
+    }
+
+    #[test]
+    fn parse_lsp_snippet_records_default_lens() {
+        // `${1:i}` → text "i" at position 0, default_len 1.
+        // `${2:iter}` → "iter" at position 5, default_len 4.
+        let p = parse_lsp_snippet("for ${1:i} in ${2:iter} {\n    $0\n}");
+        assert_eq!(p.text, "for i in iter {\n    \n}");
+        assert_eq!(p.placeholders, vec![(4, 1), (9, 4)]);
+        assert_eq!(p.cursor_offset, 20); // `$0` lands after the indent on line 2.
+    }
+
+    #[test]
+    fn parse_lsp_snippet_bare_marker_zero_default() {
+        let p = parse_lsp_snippet("println!($0)");
+        assert_eq!(p.text, "println!()");
+        // $0 lands at position 9 (between `(` and `)`).
+        assert_eq!(p.cursor_offset, 9);
+        assert!(p.placeholders.is_empty());
+    }
+
+    #[test]
+    fn parse_lsp_snippet_handles_choices_and_escapes() {
+        // Choices drop their alternatives, no default.
+        let p = parse_lsp_snippet("${1|a,b,c|}");
+        assert_eq!(p.text, "");
+        assert_eq!(p.placeholders, vec![(0, 0)]);
+        // `\$` survives as literal.
+        let p2 = parse_lsp_snippet(r"price = \$5");
+        assert_eq!(p2.text, "price = $5");
+        assert!(p2.placeholders.is_empty());
     }
 
     #[test]

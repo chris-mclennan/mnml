@@ -3468,10 +3468,10 @@ impl App {
             return;
         };
         if item.is_snippet {
-            // Snippet path — convert LSP syntax → mnml syntax, parse out
-            // placeholders, apply via the existing snippet edit machinery.
-            let mnml_body = crate::snippets::lsp_snippet_to_mnml(&item.insert);
-            let snippet = crate::snippets::Snippet::parse("", &mnml_body, "lsp");
+            // Snippet path — parse LSP syntax with per-stop default lengths,
+            // then apply via the defaults-aware snippet edit machinery so
+            // `${1:default}` gets the default text *selected* at landing.
+            let parsed = crate::snippets::parse_lsp_snippet(&item.insert);
             let (cursor, start) = match self.panes.get(idx) {
                 Some(Pane::Editor(b)) => {
                     let c = b.editor.cursor();
@@ -3479,12 +3479,15 @@ impl App {
                 }
                 _ => return,
             };
-            self.apply_snippet_edit(
+            let placeholders: Vec<usize> = parsed.placeholders.iter().map(|(p, _)| *p).collect();
+            let default_lens: Vec<usize> = parsed.placeholders.iter().map(|(_, d)| *d).collect();
+            self.apply_snippet_edit_with_defaults(
                 start,
                 cursor,
-                snippet.text,
-                snippet.cursor_offset,
-                snippet.placeholders,
+                parsed.text,
+                parsed.cursor_offset,
+                placeholders,
+                default_lens,
             );
             return;
         }
@@ -5237,6 +5240,26 @@ impl App {
         cursor_offset: usize,
         placeholders: Vec<usize>,
     ) {
+        // No defaults — mnml's native snippets path. Defer to the richer
+        // form with an empty `default_lens`.
+        let zeros = vec![0usize; placeholders.len()];
+        self.apply_snippet_edit_with_defaults(start, end, text, cursor_offset, placeholders, zeros);
+    }
+
+    /// Same as [`Self::apply_snippet_edit`] but carries an LSP-style
+    /// `default_lens: Vec<usize>` parallel to `placeholders`. When the
+    /// first stop has a non-zero default, the default text is selected
+    /// (anchor at the stop, cursor at stop+default_len) so typing replaces
+    /// it — vim-canonical `c{motion}` shape.
+    fn apply_snippet_edit_with_defaults(
+        &mut self,
+        start: usize,
+        end: usize,
+        text: String,
+        cursor_offset: usize,
+        placeholders: Vec<usize>,
+        default_lens: Vec<usize>,
+    ) {
         let pane_id = self.active;
         let Some(b) = self.active_editor_mut() else {
             return;
@@ -5250,19 +5273,29 @@ impl App {
         }
         // The cursor sits at `start + inserted_len` after the replace. First
         // stop is `placeholders[0]` if any, else the `$0` marker (or end).
-        let first_stop = placeholders
+        let first_stop_local = placeholders
             .first()
             .copied()
             .unwrap_or(cursor_offset.min(inserted_len));
-        let target_cursor = start + first_stop;
-        place_cursor_at_byte(b, target_cursor);
+        let first_default_len = default_lens.first().copied().unwrap_or(0);
+        let target_cursor = start + first_stop_local;
+        if first_default_len > 0 {
+            // LSP default-as-selected: drop anchor at the placeholder, put
+            // cursor at the default's end. Typing replaces the default.
+            let end = target_cursor + first_default_len;
+            b.editor.set_selection(target_cursor, end);
+        } else {
+            place_cursor_at_byte(b, target_cursor);
+        }
         // Open a placeholder session if there are any tab stops — `$1..$9`
         // at the front, optionally `$0` appended as the final stop. (When
         // `$0` is absent we let Tab terminate at the last `$N` rather than
         // yanking the cursor to the end.)
         let mut stops: Vec<usize> = placeholders.iter().map(|&off| start + off).collect();
+        let mut def_lens: Vec<usize> = default_lens.clone();
         if !placeholders.is_empty() && cursor_offset < inserted_len {
             stops.push(start + cursor_offset);
+            def_lens.push(0);
         }
         let last_text_len = b.editor.text().len();
         let path_for_lsp = b.path.clone();
@@ -5273,12 +5306,25 @@ impl App {
         // index 1.
         if let (true, Some(pane_id)) = (stops.len() > 1, pane_id) {
             let n_stops = stops.len();
+            // The user is currently sitting at index 0; mark it visited so
+            // future Backtab-to-0 lands at the *end* of (now-modified)
+            // default text instead of re-selecting the default.
+            let mut stop_cursors = vec![None; n_stops];
+            if first_default_len > 0 {
+                stop_cursors[0] = Some(target_cursor + first_default_len);
+            }
+            // Defensive: pad def_lens to match stops len if caller passed
+            // a shorter vec.
+            while def_lens.len() < n_stops {
+                def_lens.push(0);
+            }
             self.snippet_session = Some(crate::snippets::SnippetSession {
                 pane_id,
                 stops,
                 current: 0,
                 last_text_len,
-                stop_cursors: vec![None; n_stops],
+                stop_cursors,
+                default_lens: def_lens,
             });
         } else {
             self.snippet_session = None;
@@ -5359,15 +5405,28 @@ impl App {
             return;
         }
         let new_idx = new_idx_signed as usize;
-        // Prefer the stop's exit cursor (typed-content end) if we've been
-        // there before; else the placeholder's bare position.
-        let target = sess
-            .stop_cursors
-            .get(new_idx)
-            .and_then(|c| *c)
-            .unwrap_or(sess.stops[new_idx])
-            .min(cur_len);
-        place_cursor_at_byte(b, target);
+        // Three landing-position cases:
+        //  1. Visited before — restore the recorded exit cursor (vim-ish
+        //     "end of what was typed there").
+        //  2. Unvisited with default text — select the default so typing
+        //     replaces it (LSP convention).
+        //  3. Unvisited bare placeholder — drop cursor at stop position.
+        let visited_exit = sess.stop_cursors.get(new_idx).and_then(|c| *c);
+        let default_len = sess.default_lens.get(new_idx).copied().unwrap_or(0);
+        let stop_pos = sess.stops[new_idx];
+        if let Some(exit) = visited_exit {
+            place_cursor_at_byte(b, exit.min(cur_len));
+        } else if default_len > 0 {
+            let span_end = (stop_pos + default_len).min(cur_len);
+            b.editor.set_selection(stop_pos.min(cur_len), span_end);
+            // Mark visited at the default's end so a subsequent Backtab-back
+            // doesn't re-select.
+            if new_idx < sess.stop_cursors.len() {
+                sess.stop_cursors[new_idx] = Some(span_end);
+            }
+        } else {
+            place_cursor_at_byte(b, stop_pos.min(cur_len));
+        }
         sess.current = new_idx;
         sess.last_text_len = cur_len;
         self.snippet_session = Some(sess);
