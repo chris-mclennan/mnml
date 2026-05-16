@@ -740,6 +740,14 @@ struct SavedSession {
     gl_mrs_view_mode: Option<crate::gitlab::GlMrViewMode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     gl_mrs_collapsed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    az_builds_view_mode: Option<crate::azdevops::AzBuildsViewMode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    az_builds_collapsed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    az_prs_view_mode: Option<crate::azdevops::AzPrViewMode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    az_prs_collapsed: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -1808,6 +1816,21 @@ pub struct App {
     pub(crate) gl_pipelines_collapsed: std::collections::HashSet<String>,
     pub(crate) gl_mrs_view_mode: crate::gitlab::GlMrViewMode,
     pub(crate) gl_mrs_collapsed: std::collections::HashSet<String>,
+    /// Azure DevOps worker handle + caches.
+    azdevops_handle: Option<crate::azdevops::AzDevOpsHandle>,
+    pub(crate) azdevops_builds:
+        std::collections::HashMap<String, Vec<crate::azdevops::BuildRecord>>,
+    pub(crate) azdevops_branch_builds:
+        std::collections::HashMap<String, Vec<crate::azdevops::BranchBuildSlot>>,
+    pub(crate) azdevops_pull_requests:
+        std::collections::HashMap<String, Vec<crate::azdevops::PullRequestRecord>>,
+    pub(crate) azdevops_my_pull_requests: Vec<crate::azdevops::PullRequestRecord>,
+    pub(crate) azdevops_last_error: Option<String>,
+    pub(crate) azdevops_connected: bool,
+    pub(crate) az_builds_view_mode: crate::azdevops::AzBuildsViewMode,
+    pub(crate) az_builds_collapsed: std::collections::HashSet<String>,
+    pub(crate) az_prs_view_mode: crate::azdevops::AzPrViewMode,
+    pub(crate) az_prs_collapsed: std::collections::HashSet<String>,
     /// Per-repo per-branch latest pipeline (the "per-branch" pipelines
     /// view-mode). Keyed by `(workspace, slug)` → ordered
     /// `Vec<BranchPipelineSlot>`. Branch order follows the worker's
@@ -2002,6 +2025,17 @@ impl App {
             gl_pipelines_collapsed: std::collections::HashSet::new(),
             gl_mrs_view_mode: Default::default(),
             gl_mrs_collapsed: std::collections::HashSet::new(),
+            azdevops_handle: None,
+            azdevops_builds: std::collections::HashMap::new(),
+            azdevops_branch_builds: std::collections::HashMap::new(),
+            azdevops_pull_requests: std::collections::HashMap::new(),
+            azdevops_my_pull_requests: Vec::new(),
+            azdevops_last_error: None,
+            azdevops_connected: false,
+            az_builds_view_mode: Default::default(),
+            az_builds_collapsed: std::collections::HashSet::new(),
+            az_prs_view_mode: Default::default(),
+            az_prs_collapsed: std::collections::HashSet::new(),
             bitbucket_last_error: None,
             bitbucket_connected: false,
             github_handle: None,
@@ -5476,6 +5510,8 @@ impl App {
             | Some(Pane::GithubPullRequests(_))
             | Some(Pane::GitlabPipelines(_))
             | Some(Pane::GitlabMergeRequests(_))
+            | Some(Pane::AzDevOpsBuilds(_))
+            | Some(Pane::AzDevOpsPullRequests(_))
             | None => None,
             #[cfg(feature = "private")]
             Some(Pane::TestExecutions(_)) => None,
@@ -11364,7 +11400,9 @@ impl App {
             | Pane::GithubActions(_)
             | Pane::GithubPullRequests(_)
             | Pane::GitlabPipelines(_)
-            | Pane::GitlabMergeRequests(_) => (None, None),
+            | Pane::GitlabMergeRequests(_)
+            | Pane::AzDevOpsBuilds(_)
+            | Pane::AzDevOpsPullRequests(_) => (None, None),
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (None, None),
             #[cfg(feature = "private")]
@@ -11469,6 +11507,8 @@ impl App {
             Pane::GithubPullRequests(p) => Some((p.tab_title(), false)),
             Pane::GitlabPipelines(p) => Some((p.tab_title(), false)),
             Pane::GitlabMergeRequests(p) => Some((p.tab_title(), false)),
+            Pane::AzDevOpsBuilds(p) => Some((p.tab_title(), false)),
+            Pane::AzDevOpsPullRequests(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "private")]
             Pane::TestExecutions(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "private")]
@@ -15901,6 +15941,7 @@ impl App {
         self.drain_bitbucket_events();
         self.drain_github_events();
         self.drain_gitlab_events();
+        self.drain_azdevops_events();
         self.refresh_live_ai_panes();
         self.autosave_idle_buffers();
         self.check_external_file_changes();
@@ -16213,6 +16254,10 @@ impl App {
             gl_pipelines_collapsed: self.gl_pipelines_collapsed.iter().cloned().collect(),
             gl_mrs_view_mode: Some(self.gl_mrs_view_mode),
             gl_mrs_collapsed: self.gl_mrs_collapsed.iter().cloned().collect(),
+            az_builds_view_mode: Some(self.az_builds_view_mode),
+            az_builds_collapsed: self.az_builds_collapsed.iter().cloned().collect(),
+            az_prs_view_mode: Some(self.az_prs_view_mode),
+            az_prs_collapsed: self.az_prs_collapsed.iter().cloned().collect(),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -16430,6 +16475,14 @@ impl App {
             self.gl_mrs_view_mode = m;
         }
         self.gl_mrs_collapsed = saved.gl_mrs_collapsed.into_iter().collect();
+        if let Some(m) = saved.az_builds_view_mode {
+            self.az_builds_view_mode = m;
+        }
+        self.az_builds_collapsed = saved.az_builds_collapsed.into_iter().collect();
+        if let Some(m) = saved.az_prs_view_mode {
+            self.az_prs_view_mode = m;
+        }
+        self.az_prs_collapsed = saved.az_prs_collapsed.into_iter().collect();
         // Per-file change list — restore for any buffer we just re-opened.
         // Cursor sits past the newest entry so the first `g;` lands on the
         // most recent edit (vim convention).
@@ -17280,6 +17333,181 @@ impl App {
                 }
                 GitlabEvent::Failed(msg) => {
                     self.gitlab_last_error = Some(msg);
+                }
+            }
+        }
+    }
+
+    // ── Azure DevOps ──────────────────────────────────────────────────
+
+    pub fn ensure_azdevops_worker(&mut self) {
+        if self.azdevops_handle.is_some() {
+            return;
+        }
+        if !self.config.azdevops.any_configured() {
+            return;
+        }
+        self.azdevops_handle = Some(crate::azdevops::spawn(self.config.azdevops.clone()));
+    }
+
+    pub fn open_azdevops_builds_pane(&mut self) {
+        if !self.config.azdevops.any_configured() {
+            self.toast("azdevops: add a [[azdevops.projects]] entry first");
+            return;
+        }
+        self.ensure_azdevops_worker();
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::AzDevOpsBuilds(_)))
+        {
+            if let Some(h) = &self.azdevops_handle {
+                h.force_refresh();
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::AzDevOpsBuilds(crate::azdevops::AzDevOpsBuildsPane::new());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+        self.toast("azdevops: builds (loading…)");
+    }
+
+    pub fn open_azdevops_pull_requests_pane(&mut self) {
+        if !self.config.azdevops.any_configured() {
+            self.toast("azdevops: add a [[azdevops.projects]] entry first");
+            return;
+        }
+        self.ensure_azdevops_worker();
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::AzDevOpsPullRequests(_)))
+        {
+            if let Some(h) = &self.azdevops_handle {
+                h.force_refresh();
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::AzDevOpsPullRequests(crate::azdevops::AzDevOpsPullRequestsPane::new());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+        self.toast("azdevops: pull requests (loading…)");
+    }
+
+    pub fn refresh_active_azdevops_pane(&mut self) {
+        if let Some(h) = &self.azdevops_handle {
+            h.force_refresh();
+            self.toast("azdevops: refreshing…");
+        }
+    }
+
+    pub fn open_selected_azdevops_build_url(&mut self) {
+        let Some(url) = self.selected_azdevops_build_url() else {
+            self.toast("no build selected");
+            return;
+        };
+        crate::app::open_url_external(&url);
+        self.toast("opened build in browser");
+    }
+
+    pub fn copy_selected_azdevops_build_url(&mut self) {
+        let Some(url) = self.selected_azdevops_build_url() else {
+            self.toast("no build selected");
+            return;
+        };
+        self.clipboard.set_yank(url, false);
+        self.toast("copied build URL");
+    }
+
+    fn selected_azdevops_build_url(&self) -> Option<String> {
+        let id = self.active?;
+        let Pane::AzDevOpsBuilds(pane) = self.panes.get(id)? else {
+            return None;
+        };
+        crate::ui::azdevops_builds_view::selected_build(self, pane).map(|r| r.web_url)
+    }
+
+    pub fn open_selected_azdevops_pr_url(&mut self) {
+        let Some(url) = self.selected_azdevops_pr_url() else {
+            self.toast("no PR selected");
+            return;
+        };
+        crate::app::open_url_external(&url);
+        self.toast("opened PR in browser");
+    }
+
+    pub fn copy_selected_azdevops_pr_url(&mut self) {
+        let Some(url) = self.selected_azdevops_pr_url() else {
+            self.toast("no PR selected");
+            return;
+        };
+        self.clipboard.set_yank(url, false);
+        self.toast("copied PR URL");
+    }
+
+    fn selected_azdevops_pr_url(&self) -> Option<String> {
+        let id = self.active?;
+        let Pane::AzDevOpsPullRequests(pane) = self.panes.get(id)? else {
+            return None;
+        };
+        crate::ui::azdevops_pull_requests_view::selected_pr(self, pane).map(|r| r.web_url)
+    }
+
+    fn drain_azdevops_events(&mut self) {
+        use crate::azdevops::AzDevOpsEvent;
+        let Some(handle) = &self.azdevops_handle else {
+            return;
+        };
+        while let Ok(ev) = handle.rx.try_recv() {
+            match ev {
+                AzDevOpsEvent::Builds { label, builds } => {
+                    self.azdevops_builds.insert(label, builds);
+                    self.azdevops_last_error = None;
+                }
+                AzDevOpsEvent::BranchBuilds { label, per_branch } => {
+                    self.azdevops_branch_builds.insert(label, per_branch);
+                    self.azdevops_last_error = None;
+                }
+                AzDevOpsEvent::PullRequests {
+                    label,
+                    pull_requests,
+                } => {
+                    self.azdevops_pull_requests.insert(label, pull_requests);
+                    self.azdevops_last_error = None;
+                }
+                AzDevOpsEvent::MyPullRequests(prs) => {
+                    self.azdevops_my_pull_requests = prs;
+                    self.azdevops_last_error = None;
+                }
+                AzDevOpsEvent::Connected => {
+                    self.azdevops_connected = true;
+                }
+                AzDevOpsEvent::Failed(msg) => {
+                    self.azdevops_last_error = Some(msg);
                 }
             }
         }

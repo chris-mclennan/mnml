@@ -18,6 +18,7 @@
 
 pub mod ai;
 pub mod app;
+pub mod azdevops;
 pub mod bitbucket;
 pub mod browser_pane;
 pub mod buffer;

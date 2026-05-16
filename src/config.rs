@@ -53,6 +53,7 @@ pub struct Config {
     pub bitbucket: BitbucketConfig,
     pub github: GithubConfig,
     pub gitlab: GitlabConfig,
+    pub azdevops: AzDevOpsConfig,
 }
 
 /// `[bitbucket]` — Bitbucket Cloud REST API integration. Powers the
@@ -194,6 +195,48 @@ impl GitlabConfig {
         self.base_url
             .as_deref()
             .unwrap_or("https://gitlab.com/api/v4")
+    }
+}
+
+/// `[azdevops]` — Azure DevOps integration. Builds + Pull Requests.
+/// Each `[[azdevops.projects]]` entry is `{org, project, repo}` since
+/// Azure scopes pipelines to a project and PRs to a repo within a
+/// project. Mine PRs are fetched per-unique-org.
+///
+/// ```toml
+/// [azdevops]
+/// auth_env  = "AZDO_TOKEN"   # PAT (base64-encoded as :PAT in the Basic header)
+/// poll_secs = 60
+///
+/// [[azdevops.projects]]
+/// org     = "my-org"
+/// project = "MyProject"
+/// repo    = "my-repo"
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct AzDevOpsConfig {
+    pub auth_env: Option<String>,
+    pub poll_secs: Option<u64>,
+    pub projects: Vec<AzDevOpsProject>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AzDevOpsProject {
+    pub org: String,
+    pub project: String,
+    pub repo: String,
+    pub branches: Vec<String>,
+}
+
+impl AzDevOpsConfig {
+    pub fn any_configured(&self) -> bool {
+        !self.projects.is_empty()
+    }
+    pub fn auth_env_name(&self) -> &str {
+        self.auth_env.as_deref().unwrap_or("AZDO_TOKEN")
+    }
+    pub fn poll_secs_or_default(&self) -> u64 {
+        self.poll_secs.unwrap_or(60).max(5)
     }
 }
 
@@ -507,6 +550,7 @@ impl Default for Config {
             bitbucket: BitbucketConfig::default(),
             github: GithubConfig::default(),
             gitlab: GitlabConfig::default(),
+            azdevops: AzDevOpsConfig::default(),
         }
     }
 }
@@ -547,6 +591,25 @@ struct RawConfig {
     github: RawGithub,
     #[serde(default)]
     gitlab: RawGitlab,
+    #[serde(default)]
+    azdevops: RawAzDevOps,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawAzDevOps {
+    auth_env: Option<String>,
+    poll_secs: Option<u64>,
+    #[serde(default)]
+    projects: Vec<RawAzDevOpsProject>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawAzDevOpsProject {
+    org: String,
+    project: String,
+    repo: String,
+    #[serde(default)]
+    branches: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -922,6 +985,21 @@ impl Config {
         for r in raw.gitlab.projects {
             self.gitlab.projects.push(GitlabProject {
                 project: r.project,
+                branches: r.branches,
+            });
+        }
+        // Azure DevOps
+        if let Some(v) = raw.azdevops.auth_env {
+            self.azdevops.auth_env = Some(v);
+        }
+        if let Some(v) = raw.azdevops.poll_secs {
+            self.azdevops.poll_secs = Some(v);
+        }
+        for r in raw.azdevops.projects {
+            self.azdevops.projects.push(AzDevOpsProject {
+                org: r.org,
+                project: r.project,
+                repo: r.repo,
                 branches: r.branches,
             });
         }

@@ -1856,6 +1856,56 @@ fn builtin_commands() -> Vec<Command> {
         keys: &[],
         run: |app| app.copy_selected_gitlab_mr_url(),
     });
+    // Azure DevOps
+    cmds.push(Command {
+        id: "azdevops.builds",
+        title: "Azure DevOps: open builds dashboard",
+        group: "azdevops",
+        keys: &[],
+        run: |app| app.open_azdevops_builds_pane(),
+    });
+    cmds.push(Command {
+        id: "azdevops.pull_requests",
+        title: "Azure DevOps: open pull-requests dashboard",
+        group: "azdevops",
+        keys: &[],
+        run: |app| app.open_azdevops_pull_requests_pane(),
+    });
+    cmds.push(Command {
+        id: "azdevops.refresh_active",
+        title: "Azure DevOps: refresh the active pane",
+        group: "azdevops",
+        keys: &[],
+        run: |app| app.refresh_active_azdevops_pane(),
+    });
+    cmds.push(Command {
+        id: "azdevops.open_selected_build_url",
+        title: "Azure DevOps: open selected build in browser",
+        group: "azdevops",
+        keys: &[],
+        run: |app| app.open_selected_azdevops_build_url(),
+    });
+    cmds.push(Command {
+        id: "azdevops.copy_selected_build_url",
+        title: "Azure DevOps: copy selected build URL",
+        group: "azdevops",
+        keys: &[],
+        run: |app| app.copy_selected_azdevops_build_url(),
+    });
+    cmds.push(Command {
+        id: "azdevops.open_selected_pr_url",
+        title: "Azure DevOps: open selected PR in browser",
+        group: "azdevops",
+        keys: &[],
+        run: |app| app.open_selected_azdevops_pr_url(),
+    });
+    cmds.push(Command {
+        id: "azdevops.copy_selected_pr_url",
+        title: "Azure DevOps: copy selected PR URL",
+        group: "azdevops",
+        keys: &[],
+        run: |app| app.copy_selected_azdevops_pr_url(),
+    });
     #[cfg(feature = "private")]
     {
         cmds.push(Command {

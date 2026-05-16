@@ -20,6 +20,8 @@
 //! palette / which-key / popups) draw on top.
 
 pub mod ai_view;
+pub mod azdevops_builds_view;
+pub mod azdevops_pull_requests_view;
 pub mod bitbucket_pipelines_view;
 pub mod bitbucket_pull_requests_view;
 pub mod browser_view;
@@ -302,6 +304,8 @@ fn render_layout(
                 Some(crate::pane::Pane::GithubPullRequests(_)) => 22,
                 Some(crate::pane::Pane::GitlabPipelines(_)) => 23,
                 Some(crate::pane::Pane::GitlabMergeRequests(_)) => 24,
+                Some(crate::pane::Pane::AzDevOpsBuilds(_)) => 25,
+                Some(crate::pane::Pane::AzDevOpsPullRequests(_)) => 26,
                 _ => 0,
             };
             match kind {
@@ -333,6 +337,8 @@ fn render_layout(
                 22 => github_pull_requests_view::draw(frame, app, *id, area, focused),
                 23 => gitlab_pipelines_view::draw(frame, app, *id, area, focused),
                 24 => gitlab_merge_requests_view::draw(frame, app, *id, area, focused),
+                25 => azdevops_builds_view::draw(frame, app, *id, area, focused),
+                26 => azdevops_pull_requests_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }
