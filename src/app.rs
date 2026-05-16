@@ -3564,6 +3564,14 @@ impl App {
             }
             #[cfg(not(feature = "private"))]
             PickerKind::the private integrationBranch => {}
+            PickerKind::Tools => {
+                // `id` is a `KNOWN_TOOLS[i].name`. Find the entry and
+                // copy its install command to the clipboard.
+                if let Some(tool) = crate::tools::KNOWN_TOOLS.iter().find(|t| t.name == item.id) {
+                    self.clipboard.set(tool.install, false);
+                    self.toast(format!("copied install: {}", tool.install));
+                }
+            }
         }
     }
 
@@ -6281,6 +6289,54 @@ impl App {
         }
         // No LSP formatter — try the external one.
         self.format_external_active();
+    }
+
+    /// `tools.installer` — Mason-style picker over `KNOWN_TOOLS`. Each
+    /// row shows ✓/✗ (is the binary on $PATH?) + name + kind + the
+    /// suggested install command (as the picker's "detail" hint).
+    /// Accept copies the install command to the clipboard so the user
+    /// can paste + run it themselves. Sorted: missing tools first
+    /// (likely what the user opened the picker for), then installed.
+    pub fn open_tools_installer(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let mut items: Vec<PickerItem> = Vec::new();
+        // Pass 1: missing tools first (with ✗ glyph).
+        for tool in crate::tools::KNOWN_TOOLS {
+            if crate::tools::is_on_path(tool.bin) {
+                continue;
+            }
+            items.push(PickerItem::new(
+                tool.name,
+                format!(
+                    "✗ [{}] {} — {}",
+                    tool.kind.label(),
+                    tool.name,
+                    tool.description
+                ),
+                tool.install.to_string(),
+            ));
+        }
+        // Pass 2: installed tools (✓).
+        for tool in crate::tools::KNOWN_TOOLS {
+            if !crate::tools::is_on_path(tool.bin) {
+                continue;
+            }
+            items.push(PickerItem::new(
+                tool.name,
+                format!(
+                    "✓ [{}] {} — {}",
+                    tool.kind.label(),
+                    tool.name,
+                    tool.description
+                ),
+                tool.install.to_string(),
+            ));
+        }
+        self.open_picker(Picker::new(
+            PickerKind::Tools,
+            "External tools (Enter = copy install command)",
+            items,
+        ));
     }
 
     /// `editor.lint_external` — fire the configured external linter(s)
@@ -15935,6 +15991,13 @@ impl App {
             // statusline counts).
             "Lint" | "LintExternal" => {
                 crate::command::run("editor.lint_external", self);
+            }
+            // `:Tools` / `:Mason` — open the Mason-style tools picker.
+            // Shows every LSP / formatter / linter mnml looks for, with
+            // ✓/✗ "is on PATH" status; Enter copies the install command
+            // to the clipboard.
+            "Tools" | "Mason" => {
+                crate::command::run("tools.installer", self);
             }
             // `:LspRestart` — kill every running server; subsequent
             // `did_open` calls (e.g. opening a file in that language) spawn

@@ -2608,6 +2608,20 @@ browser via the same `open_url_external` helper the per-host
 Empty caches ⇒ toast pointing at the four `[[<host>.repos]]` /
 `[[<host>.projects]]` config tables (no picker opens).
 
+**Mason-style tools picker** — `tools.installer` (`:Tools` / `:Mason`)
+opens a fuzzy picker over `crate::tools::KNOWN_TOOLS` — a curated list
+of every LSP / formatter / linter mnml looks for. Each row shows ✓/✗
+(is the binary on `$PATH`?) + the kind chip (`lsp` / `fmt` / `lint`)
++ name + description; the picker's detail line carries the suggested
+install command. Enter copies that install command to the clipboard
+(the user runs it themselves — mnml doesn't auto-install since
+package managers vary too much per platform / language). Sorted
+missing-first so the user lands on what's actually broken. Covers
+the standard tooling: rust-analyzer, typescript-language-server,
+pyright, gopls, clangd, lua-language-server, ruby-lsp, prettier,
+rustfmt, ruff, black, shfmt, stylua, nixfmt, biome, eslint,
+shellcheck. New `crate::tools` module + `PickerKind::Tools`.
+
 **External-linter integration** — `[linters.<ext>] cmd = "..." parser = "eslint"`
 (or a list of commands) per file extension, layered on top of built-in
 defaults (`eslint --format=unix` for js/ts/jsx/tsx, `ruff check --output-format=concise` for py,

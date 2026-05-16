@@ -62,6 +62,7 @@ pub mod signature;
 pub mod snippets;
 #[cfg(feature = "private")]
 pub mod private;
+pub mod tools;
 pub mod tree;
 pub mod tui;
 pub mod ui;

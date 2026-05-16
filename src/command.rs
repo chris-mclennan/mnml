@@ -1521,6 +1521,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lint_external_active(),
         },
         Command {
+            id: "tools.installer",
+            title: "Browse external tools (Mason-style — LSPs / formatters / linters)",
+            group: "tools",
+            keys: &[],
+            run: |app| app.open_tools_installer(),
+        },
+        Command {
             id: "lsp.code_action",
             title: "LSP: code actions at cursor (→ picker)",
             group: "lsp",

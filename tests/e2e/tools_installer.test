@@ -1,0 +1,14 @@
+# Mason-style tools picker — `:Tools` lists known LSPs / formatters /
+# linters with ✓/✗ install status; Enter on a row copies the install
+# command to the clipboard.
+
+write a.txt "x"
+open a.txt
+
+# Open the picker.
+command tools.installer
+
+# Picker title is visible.
+expect screen contains "External tools"
+# At least one known tool row is rendered (every line carries the kind chip).
+expect screen contains "[lsp]"

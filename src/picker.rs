@@ -89,6 +89,11 @@ pub enum PickerKind {
     /// `BRANCH=<id>` (private-feature only). Populated by
     /// `private.run_tests_pick_branch`.
     the private integrationBranch,
+    /// `id` = `"<tool-name>"` matching `crate::tools::KNOWN_TOOLS`. Accept ⇒
+    /// copy the install command to the clipboard. Populated by
+    /// `tools.installer` (mnml's Mason-style picker — lists every LSP /
+    /// formatter / linter mnml looks for + installed status + install hint).
+    Tools,
 }
 
 #[derive(Debug, Clone)]
