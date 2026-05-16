@@ -72,10 +72,23 @@ pub fn draw(
         ),
     ]));
     let hint = if b.dom_focus {
-        format!(
-            "  DOM ({}) · ↑↓ select · h highlight in page · c copy selector · R re-fetch · esc back",
-            b.dom.len()
-        )
+        if b.dom_filter_mode {
+            format!(
+                "  DOM filter: {}_ · Backspace deletes · Enter applies · Esc clears",
+                b.dom_filter
+            )
+        } else if !b.dom_filter.is_empty() {
+            format!(
+                "  DOM ({}/{}) · / filter · ↑↓ select · h highlight · c copy selector · esc clear",
+                b.visible_dom_indices().len(),
+                b.dom.len()
+            )
+        } else {
+            format!(
+                "  DOM ({}) · / filter · ↑↓ select · h highlight · c copy selector · R re-fetch · esc back",
+                b.dom.len()
+            )
+        }
     } else if b.net_focus {
         if b.net_filter_mode {
             format!(
@@ -112,6 +125,7 @@ pub fn draw(
 
     if b.dom_focus {
         // ── DOM panel: one selectable row per parsed node, indent = depth ──
+        let visible = b.visible_dom_indices();
         if b.dom.is_empty() {
             lines.push(Line::from(Span::styled(
                 if b.pending_dom.is_some() {
@@ -121,15 +135,23 @@ pub fn draw(
                 },
                 Style::default().fg(t.comment).bg(t.bg_dark),
             )));
+        } else if visible.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("  (no matches for '{}')", b.dom_filter),
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            )));
         } else {
-            let sel = b.dom_sel.min(b.dom.len() - 1);
+            let sel = b.dom_sel.min(visible.len() - 1);
             let first = if body_rows == 0 || sel < body_rows {
                 0
             } else {
                 sel + 1 - body_rows
             };
-            for (idx, row) in b.dom.iter().enumerate().skip(first).take(body_rows) {
-                let on = idx == sel;
+            for (row_idx, &raw_idx) in visible.iter().enumerate().skip(first).take(body_rows) {
+                let Some(row) = b.dom.get(raw_idx) else {
+                    continue;
+                };
+                let on = row_idx == sel;
                 let row_bg = if on { t.bg2 } else { t.bg_dark };
                 let marker = if on { "▶ " } else { "  " };
                 // Two spaces per depth level, capped so very deep trees don't run off.

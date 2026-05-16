@@ -322,8 +322,17 @@ pub struct BrowserPane {
     pub dom: Vec<DomRow>,
     /// True ⇒ the `D` DOM panel is showing.
     pub dom_focus: bool,
-    /// Selected DOM row when `dom_focus`.
+    /// Selected row in the **filtered** DOM view (index into
+    /// [`Self::visible_dom_indices`]). Resolves through the filter via
+    /// [`Self::selected_dom`] / [`Self::move_dom_sel`].
     pub dom_sel: usize,
+    /// Fuzzy filter narrowing the DOM panel — typed via `/` while
+    /// `dom_focus`. Empty ⇒ every parsed row is visible.
+    pub dom_filter: String,
+    /// True while the user is typing the DOM filter (printable keys
+    /// append, Backspace pops). Enter exits filter mode (keeps the
+    /// filter); Esc clears the filter + exits the filter mode.
+    pub dom_filter_mode: bool,
     /// True ⇒ every change in `dom_sel` fires `Overlay.highlightNode` so
     /// the page's overlay box tracks the keyboard selection in real time.
     /// Toggled via `H` in DOM-panel focus. Default off — explicit `h`
@@ -367,6 +376,8 @@ impl BrowserPane {
             dom: Vec::new(),
             dom_focus: false,
             dom_sel: 0,
+            dom_filter: String::new(),
+            dom_filter_mode: false,
             dom_hover_highlight: false,
             next_id: 100,
             pending_eval: None,
@@ -753,24 +764,70 @@ impl BrowserPane {
         }
     }
 
-    /// Clamp + move the DOM-panel selection by `delta`.
+    /// Clamp + move the (filtered) DOM-panel selection by `delta`.
+    /// `dom_sel` is an index into [`Self::visible_dom_indices`] so the
+    /// clamp is against the *filtered* row count.
     pub fn move_dom_sel(&mut self, delta: isize) {
-        if self.dom.is_empty() {
+        let n = self.visible_dom_indices().len();
+        if n == 0 {
             self.dom_sel = 0;
             return;
         }
-        let max = self.dom.len() - 1;
+        let max = n - 1;
         let cur = self.dom_sel.min(max) as isize;
         self.dom_sel = (cur + delta).clamp(0, max as isize) as usize;
         self.maybe_hover_highlight();
     }
 
-    /// Direct `dom_sel` setter — clamps to the list, then fires the
-    /// hover overlay (when enabled). Used by the `g` / `G` / `Home` /
-    /// `End` chords that jump rather than step.
+    /// Direct `dom_sel` setter — clamps to the filtered list, then
+    /// fires the hover overlay (when enabled). Used by the `g` / `G` /
+    /// `Home` / `End` chords that jump rather than step.
     pub fn set_dom_sel(&mut self, idx: usize) {
-        let max = self.dom.len().saturating_sub(1);
+        let max = self.visible_dom_indices().len().saturating_sub(1);
         self.dom_sel = idx.min(max);
+        self.maybe_hover_highlight();
+    }
+
+    /// Indices into [`Self::dom`] that pass the current fuzzy filter,
+    /// in tree order (so depth-indent stays readable). Empty filter
+    /// returns every index. Match target is `"<label> <selector>"` so
+    /// either side narrows — `div#main` (selector) or `class="card"`
+    /// (label) both work.
+    pub fn visible_dom_indices(&self) -> Vec<usize> {
+        if self.dom_filter.is_empty() {
+            return (0..self.dom.len()).collect();
+        }
+        self.dom
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| {
+                let hay = format!("{} {}", r.label, r.selector);
+                crate::fuzzy::fuzzy_match(&self.dom_filter, &hay).map(|_| i)
+            })
+            .collect()
+    }
+
+    /// Append `c` to the live DOM filter, snap selection back to the
+    /// top (the previous filtered position no longer makes sense).
+    pub fn dom_filter_push(&mut self, c: char) {
+        self.dom_filter.push(c);
+        self.dom_sel = 0;
+        self.maybe_hover_highlight();
+    }
+
+    /// Pop one char off the live DOM filter. When the query empties,
+    /// the pane stays in filter mode (Esc / Enter exit).
+    pub fn dom_filter_pop(&mut self) {
+        self.dom_filter.pop();
+        self.dom_sel = 0;
+        self.maybe_hover_highlight();
+    }
+
+    /// Clear the filter + exit filter mode.
+    pub fn dom_filter_clear_and_exit(&mut self) {
+        self.dom_filter.clear();
+        self.dom_filter_mode = false;
+        self.dom_sel = 0;
         self.maybe_hover_highlight();
     }
 
@@ -796,10 +853,11 @@ impl BrowserPane {
         }
     }
 
-    /// The currently-selected DOM row, if the panel is non-empty.
+    /// The currently-selected DOM row, resolved through the filter.
+    /// Returns `None` when the filtered view is empty or selection drifted.
     pub fn selected_dom(&self) -> Option<&DomRow> {
-        self.dom
-            .get(self.dom_sel.min(self.dom.len().saturating_sub(1)))
+        let v = self.visible_dom_indices();
+        v.get(self.dom_sel).and_then(|&i| self.dom.get(i))
     }
 
     /// `Overlay.highlightNode` for the selected DOM row (no-op if no node).
@@ -1243,6 +1301,131 @@ mod tests {
         let e = p.selected_net().expect("selection");
         assert_eq!(e.method, "POST");
         assert_eq!(e.url, "https://a.test/login");
+    }
+
+    #[test]
+    fn visible_dom_indices_narrow_by_label_or_selector() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        p.dom = vec![
+            DomRow {
+                depth: 0,
+                label: r#"<div id="main" class="card">"#.into(),
+                selector: "html > body > div#main.card".into(),
+                node_id: 1,
+            },
+            DomRow {
+                depth: 1,
+                label: r#"<button class="primary">"#.into(),
+                selector: "html > body > div#main > button.primary".into(),
+                node_id: 2,
+            },
+            DomRow {
+                depth: 2,
+                label: r#"<span>"#.into(),
+                selector: "html > body > div#main > button > span".into(),
+                node_id: 3,
+            },
+        ];
+        // No filter ⇒ all visible.
+        assert_eq!(p.visible_dom_indices().len(), 3);
+
+        // Selector-substring narrows correctly.
+        p.dom_filter.push_str("button");
+        let v = p.visible_dom_indices();
+        assert_eq!(v, vec![1, 2]); // both rows have `button` in their selector
+
+        // Label-substring narrows correctly.
+        p.dom_filter.clear();
+        p.dom_filter.push_str("primary");
+        let v = p.visible_dom_indices();
+        assert_eq!(v, vec![1]);
+
+        // No match ⇒ empty.
+        p.dom_filter.clear();
+        p.dom_filter.push_str("zzz-xxx");
+        assert!(p.visible_dom_indices().is_empty());
+
+        // Clear restores everything.
+        p.dom_filter.clear();
+        assert_eq!(p.visible_dom_indices().len(), 3);
+    }
+
+    #[test]
+    fn dom_filter_push_pop_clear_resets_selection() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        p.dom = vec![
+            DomRow {
+                depth: 0,
+                label: "<a>".into(),
+                selector: "a".into(),
+                node_id: 1,
+            },
+            DomRow {
+                depth: 0,
+                label: "<b>".into(),
+                selector: "b".into(),
+                node_id: 2,
+            },
+            DomRow {
+                depth: 0,
+                label: "<c>".into(),
+                selector: "c".into(),
+                node_id: 3,
+            },
+        ];
+        p.move_dom_sel(2);
+        assert_eq!(p.dom_sel, 2);
+
+        // Push a char ⇒ selection snaps to top.
+        p.dom_filter_push('a');
+        assert_eq!(p.dom_sel, 0);
+
+        // Pop ⇒ selection snaps to top again.
+        p.move_dom_sel(2);
+        p.dom_filter_pop();
+        assert_eq!(p.dom_sel, 0);
+        assert_eq!(p.dom_filter, "");
+
+        // Enter filter mode + clear-exits.
+        p.dom_filter_mode = true;
+        p.dom_filter.push_str("foo");
+        p.move_dom_sel(1);
+        p.dom_filter_clear_and_exit();
+        assert_eq!(p.dom_filter, "");
+        assert_eq!(p.dom_sel, 0);
+        assert!(!p.dom_filter_mode);
+    }
+
+    #[test]
+    fn selected_dom_resolves_through_filter() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        p.dom = vec![
+            DomRow {
+                depth: 0,
+                label: "<div>".into(),
+                selector: "div".into(),
+                node_id: 11,
+            },
+            DomRow {
+                depth: 0,
+                label: "<button>".into(),
+                selector: "button".into(),
+                node_id: 22,
+            },
+            DomRow {
+                depth: 0,
+                label: "<span>".into(),
+                selector: "span".into(),
+                node_id: 33,
+            },
+        ];
+        p.dom_filter.push_str("button");
+        // visible_dom_indices = [1]; dom_sel = 0 ⇒ resolves to button.
+        let r = p.selected_dom().expect("selection");
+        assert_eq!(r.node_id, 22);
     }
 
     #[test]

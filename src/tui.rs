@@ -748,14 +748,19 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // re-send in a request pane), `g` navigate, `e` eval JS, `r` reload, Esc →
     // (leave the net panel, else) tree. `Ctrl+W` closes it (which kills Chrome).
     if matches!(app.panes.get(i), Some(Pane::Browser(_))) {
-        let (net_focus, dom_focus, net_filter_mode) = match app.panes.get(i) {
-            Some(Pane::Browser(b)) => (b.net_focus, b.dom_focus, b.net_filter_mode),
-            _ => (false, false, false),
+        let (net_focus, dom_focus, net_filter_mode, dom_filter_mode) = match app.panes.get(i) {
+            Some(Pane::Browser(b)) => (
+                b.net_focus,
+                b.dom_focus,
+                b.net_filter_mode,
+                b.dom_filter_mode,
+            ),
+            _ => (false, false, false, false),
         };
         let any_panel = net_focus || dom_focus;
-        // Filter-mode on the network panel takes priority over every
-        // navigation chord — printable keys narrow the list instead of
-        // moving the cursor.
+        // Filter-mode on either panel takes priority over every
+        // navigation chord — printable keys narrow the list instead
+        // of moving the cursor.
         if net_filter_mode {
             match key.code {
                 KeyCode::Esc => {
@@ -782,13 +787,40 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             return;
         }
+        if dom_filter_mode {
+            match key.code {
+                KeyCode::Esc => {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.dom_filter_clear_and_exit();
+                    }
+                }
+                KeyCode::Enter => {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.dom_filter_mode = false;
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.dom_filter_pop();
+                    }
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.dom_filter_push(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         // In the net / DOM panel ↑↓/jk/PgUp/PgDn/g/G/Home/End move the row
         // selection; otherwise they scroll the log.
         let scroll_or_select = |app: &mut App, delta: isize, jump: Option<usize>| {
             if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
                 if b.dom_focus {
+                    let n = b.visible_dom_indices().len();
                     match jump {
-                        Some(usize::MAX) => b.set_dom_sel(b.dom.len().saturating_sub(1)),
+                        Some(usize::MAX) => b.set_dom_sel(n.saturating_sub(1)),
                         Some(n) => b.set_dom_sel(n),
                         None => b.move_dom_sel(delta),
                     }
@@ -837,6 +869,11 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     b.net_filter_mode = true;
                 }
             }
+            KeyCode::Char('/') if dom_focus => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.dom_filter_mode = true;
+                }
+            }
             KeyCode::Char('D') => app.browser_open_dom(),
             KeyCode::Char('R') if dom_focus => {
                 if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
@@ -862,16 +899,24 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('s') => app.browser_screenshot(),
             KeyCode::Char('T') => app.open_browser_target_picker(),
             KeyCode::Esc => {
-                // On the net panel, Esc-with-a-held-filter clears the
+                // On either panel, Esc-with-a-held-filter clears the
                 // filter first (the "narrow → exit" two-step UX); a
                 // second Esc actually leaves the panel.
                 let has_net_filter = matches!(
                     app.panes.get(i),
                     Some(Pane::Browser(b)) if b.net_focus && !b.net_filter.is_empty()
                 );
+                let has_dom_filter = matches!(
+                    app.panes.get(i),
+                    Some(Pane::Browser(b)) if b.dom_focus && !b.dom_filter.is_empty()
+                );
                 if has_net_filter {
                     if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
                         b.net_filter_clear_and_exit();
+                    }
+                } else if has_dom_filter {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.dom_filter_clear_and_exit();
                     }
                 } else if any_panel {
                     if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
