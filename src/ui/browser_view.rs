@@ -77,10 +77,23 @@ pub fn draw(
             b.dom.len()
         )
     } else if b.net_focus {
-        format!(
-            "  network ({}) · ↑↓ select · y curl · enter re-send · n logs · esc back",
-            b.net.len()
-        )
+        if b.net_filter_mode {
+            format!(
+                "  network filter: {}_ · Backspace deletes · Enter applies · Esc clears",
+                b.net_filter
+            )
+        } else if !b.net_filter.is_empty() {
+            format!(
+                "  network ({}/{}) · / filter · ↑↓ select · y curl · enter re-send · esc clear",
+                b.visible_net_indices().len(),
+                b.net.len()
+            )
+        } else {
+            format!(
+                "  network ({}) · / filter · ↑↓ select · y curl · enter re-send · n logs · esc back",
+                b.net.len()
+            )
+        }
     } else {
         "  g navigate · e eval JS · r reload · s screenshot · n network · D DOM · esc → tree"
             .to_string()
@@ -144,21 +157,30 @@ pub fn draw(
 
     if b.net_focus {
         // ── network panel: one selectable row per captured request ─────
+        let visible = b.visible_net_indices();
         if b.net.is_empty() {
             lines.push(Line::from(Span::styled(
                 "  (no network requests captured yet — Document / XHR / Fetch only)",
                 Style::default().fg(t.comment).bg(t.bg_dark),
             )));
+        } else if visible.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("  (no matches for '{}')", b.net_filter),
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            )));
         } else {
-            let sel = b.net_sel.min(b.net.len() - 1);
+            let sel = b.net_sel.min(visible.len() - 1);
             // Keep the selected row inside the viewport.
             let first = if body_rows == 0 || sel < body_rows {
                 0
             } else {
                 sel + 1 - body_rows
             };
-            for (idx, e) in b.net.iter().enumerate().skip(first).take(body_rows) {
-                let on = idx == sel;
+            for (row_idx, &raw_idx) in visible.iter().enumerate().skip(first).take(body_rows) {
+                let Some(e) = b.net.get(raw_idx) else {
+                    continue;
+                };
+                let on = row_idx == sel;
                 let row_bg = if on { t.bg2 } else { t.bg_dark };
                 let status = e.status_text();
                 let status_color = if e.failed.is_some() {

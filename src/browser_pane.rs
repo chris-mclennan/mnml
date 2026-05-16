@@ -307,8 +307,17 @@ pub struct BrowserPane {
     pub net: Vec<NetEntry>,
     /// True ⇒ the `n` network panel is showing (rows selectable instead of the log).
     pub net_focus: bool,
-    /// Selected network row when `net_focus`.
+    /// Selected row in the **filtered** network view (index into
+    /// [`Self::visible_net_indices`]). Resolves through the filter via
+    /// [`Self::selected_net`] / [`Self::move_net_sel`].
     pub net_sel: usize,
+    /// Fuzzy filter narrowing the network panel — typed via `/` while
+    /// `net_focus`. Empty ⇒ every captured request is visible.
+    pub net_filter: String,
+    /// True while the user is typing the filter (printable keys append,
+    /// Backspace pops). Enter exits filter mode (keeps the filter); Esc
+    /// clears the filter + exits the filter mode.
+    pub net_filter_mode: bool,
     /// Flattened DOM rows (lazy — populated on the first `D` press, refreshed on `R`).
     pub dom: Vec<DomRow>,
     /// True ⇒ the `D` DOM panel is showing.
@@ -353,6 +362,8 @@ impl BrowserPane {
             net: Vec::new(),
             net_focus: false,
             net_sel: 0,
+            net_filter: String::new(),
+            net_filter_mode: false,
             dom: Vec::new(),
             dom_focus: false,
             dom_sel: 0,
@@ -488,21 +499,65 @@ impl BrowserPane {
         }
     }
 
-    /// Clamp + move the network-panel selection by `delta`.
+    /// Clamp + move the (filtered) network-panel selection by `delta`.
+    /// `net_sel` is an index into [`Self::visible_net_indices`], so the
+    /// clamp is against the *filtered* row count.
     pub fn move_net_sel(&mut self, delta: isize) {
-        if self.net.is_empty() {
+        let n = self.visible_net_indices().len();
+        if n == 0 {
             self.net_sel = 0;
             return;
         }
-        let max = self.net.len() - 1;
+        let max = n - 1;
         let cur = self.net_sel.min(max) as isize;
         self.net_sel = (cur + delta).clamp(0, max as isize) as usize;
     }
 
-    /// The currently-selected network entry, if the panel is non-empty.
+    /// The currently-selected network entry, resolved through the filter.
+    /// Returns `None` when the filtered view is empty or selection drifted.
     pub fn selected_net(&self) -> Option<&NetEntry> {
+        let v = self.visible_net_indices();
+        v.get(self.net_sel).and_then(|&i| self.net.get(i))
+    }
+
+    /// Indices into [`Self::net`] that pass the current fuzzy filter, in
+    /// arrival order (so the selected-row mapping is stable). Empty
+    /// `net_filter` returns every index. Match target is
+    /// `"<METHOD> <short_url>"` so `get api` or `post v2/login` both
+    /// work.
+    pub fn visible_net_indices(&self) -> Vec<usize> {
+        if self.net_filter.is_empty() {
+            return (0..self.net.len()).collect();
+        }
         self.net
-            .get(self.net_sel.min(self.net.len().saturating_sub(1)))
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| {
+                let hay = format!("{} {}", e.method, e.short_url());
+                crate::fuzzy::fuzzy_match(&self.net_filter, &hay).map(|_| i)
+            })
+            .collect()
+    }
+
+    /// Append `c` to the live network filter, snap selection back to the
+    /// top (the previous filtered position no longer makes sense).
+    pub fn net_filter_push(&mut self, c: char) {
+        self.net_filter.push(c);
+        self.net_sel = 0;
+    }
+
+    /// Pop one char off the live network filter. When the query empties,
+    /// the pane stays in filter mode (Esc / Enter exit).
+    pub fn net_filter_pop(&mut self) {
+        self.net_filter.pop();
+        self.net_sel = 0;
+    }
+
+    /// Clear the filter + exit filter mode.
+    pub fn net_filter_clear_and_exit(&mut self) {
+        self.net_filter.clear();
+        self.net_filter_mode = false;
+        self.net_sel = 0;
     }
 
     fn fresh_id(&mut self) -> i64 {
@@ -1079,6 +1134,115 @@ mod tests {
         p.move_dom_sel(1);
         let msgs = drain_cdp(&rx);
         assert_eq!(count_method(&msgs, "Overlay.highlightNode"), 0);
+    }
+
+    #[test]
+    fn visible_net_indices_narrow_by_method_and_url() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        for (i, (method, url)) in [
+            ("GET", "https://a.test/api/widgets"),
+            ("POST", "https://a.test/api/widgets"),
+            ("GET", "https://a.test/api/orders"),
+            ("PUT", "https://b.test/login"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            p.note_net_request(
+                &format!("rid-{i}"),
+                &serde_json::json!({"method": *method, "url": *url}),
+            );
+        }
+        assert_eq!(p.visible_net_indices().len(), 4);
+
+        // URL-substring narrows correctly.
+        p.net_filter.push_str("widgets");
+        let v = p.visible_net_indices();
+        assert_eq!(v, vec![0, 1]);
+
+        // Distinct host narrows to just that host's row.
+        p.net_filter.clear();
+        p.net_filter.push_str("login");
+        let v = p.visible_net_indices();
+        assert_eq!(v, vec![3]);
+
+        // Method discriminator works when paired with something
+        // url-specific (fuzzy is subsequence-based, so `POST` alone
+        // could match unrelated rows whose URLs happen to contain
+        // p-o-s-t in order).
+        p.net_filter.clear();
+        p.net_filter.push_str("POST widgets");
+        let v = p.visible_net_indices();
+        assert_eq!(v, vec![1]);
+
+        // No match ⇒ empty. Use a query no row can subsequence.
+        p.net_filter.clear();
+        p.net_filter.push_str("zzz-xxx");
+        assert!(p.visible_net_indices().is_empty());
+
+        // Clearing restores everything.
+        p.net_filter.clear();
+        assert_eq!(p.visible_net_indices().len(), 4);
+    }
+
+    #[test]
+    fn filter_push_pop_clear_resets_selection() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        for i in 0..3 {
+            p.note_net_request(
+                &format!("rid-{i}"),
+                &serde_json::json!({"method": "GET", "url": format!("https://a/{i}")}),
+            );
+        }
+        p.move_net_sel(2);
+        assert_eq!(p.net_sel, 2);
+
+        // Push a char ⇒ selection snaps to top.
+        p.net_filter_push('a');
+        assert_eq!(p.net_sel, 0);
+        // (filter "a" matches all three URLs — `a/0`, `a/1`, `a/2`.)
+        assert_eq!(p.visible_net_indices().len(), 3);
+
+        // Pop ⇒ selection snaps to top again.
+        p.move_net_sel(2);
+        p.net_filter_pop();
+        assert_eq!(p.net_sel, 0);
+        assert_eq!(p.net_filter, "");
+        assert!(!p.net_filter_mode);
+
+        // Enter filter mode + clear-exits.
+        p.net_filter_mode = true;
+        p.net_filter.push_str("foo");
+        p.move_net_sel(1);
+        p.net_filter_clear_and_exit();
+        assert_eq!(p.net_filter, "");
+        assert_eq!(p.net_sel, 0);
+        assert!(!p.net_filter_mode);
+    }
+
+    #[test]
+    fn selected_net_resolves_through_filter() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        p.note_net_request(
+            "a",
+            &serde_json::json!({"method": "GET", "url": "https://a.test/x"}),
+        );
+        p.note_net_request(
+            "b",
+            &serde_json::json!({"method": "POST", "url": "https://a.test/login"}),
+        );
+        p.note_net_request(
+            "c",
+            &serde_json::json!({"method": "GET", "url": "https://a.test/y"}),
+        );
+        p.net_filter.push_str("POST");
+        // visible_net_indices = [1]; net_sel=0 ⇒ resolves to the POST.
+        let e = p.selected_net().expect("selection");
+        assert_eq!(e.method, "POST");
+        assert_eq!(e.url, "https://a.test/login");
     }
 
     #[test]
