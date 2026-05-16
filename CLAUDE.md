@@ -2233,11 +2233,14 @@ computation for the active repo (vs. the existing
 `rel_to_workspace`, which got removed since every git caller switched
 over). Files-outside-the-active-repo toast `"file is outside the
 active git repo"` instead of the old `"file is outside the workspace"`.
-**Remaining limitation:** open `GitStatusPane` / `GitGraphPane`
-instances cache their own `workspace: PathBuf` at `::open()` time and
-don't re-point on `switch_active_repo` — that's arguably correct (a
-pane is tied to a specific repo) but means a user wanting fresh data
-on the *new* active repo needs to close + re-open the pane.
+**Phase 3:** open `GitStatusPane` / `GitGraphPane` instances now get
+retargeted on `switch_active_repo` too — new `GitStatusPane::retarget`
++ `GitGraphPane::retarget` methods re-point the cached workspace,
+reset selection/scroll (the new repo's file list / commit history
+shares nothing with the old), and refresh. The switch_active_repo
+loop walks `App.panes` and calls retarget on any matching variant.
+Other panes (BB / GH / GL / AZ pipelines etc.) aren't repo-scoped so
+they don't move.
 
 **Azure DevOps Mine — `creator_id` config override + auto-fallback** —
 the `searchCriteria.creatorId=me` shorthand was a flagged risk:

@@ -3357,6 +3357,16 @@ impl App {
         self.git.retarget(&root);
         self.git_rail.refresh(&root);
         self.refresh_rail_pulls();
+        // Retarget every open GitStatus / GitGraph pane so they follow the
+        // new active repo. Other panes (BB / GH / GL / AZ pipelines etc.)
+        // aren't repo-scoped so they don't need to move.
+        for pane in &mut self.panes {
+            match pane {
+                Pane::GitStatus(g) => g.retarget(&root),
+                Pane::GitGraph(g) => g.retarget(&root),
+                _ => {}
+            }
+        }
         self.toast(format!("active repo → {name}"));
     }
 
@@ -21093,6 +21103,47 @@ GET https://example.com/second
         // self.git.snapshot() reads from proj-b's `git status` (empty, since
         // the test fixture only has an empty `.git/` marker).
         assert_eq!(app.active_repo_path(), &app.repos[1].path);
+    }
+
+    #[test]
+    fn switching_active_repo_retargets_open_git_panes() {
+        // Two sibling sub-repos; open both a GitStatus and a GitGraph pane
+        // while on proj-a, then switch to proj-b. Each pane should follow
+        // the switch (verified via the pane's `workspace` field).
+        let d = tempfile::tempdir().unwrap();
+        for name in ["proj-a", "proj-b"] {
+            let p = d.path().join(name);
+            std::fs::create_dir(&p).unwrap();
+            std::fs::create_dir(p.join(".git")).unwrap();
+        }
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let proj_a = app.repos[0].path.clone();
+        let proj_b = app.repos[1].path.clone();
+
+        // Open status + graph panes while proj-a is active.
+        let status = Pane::GitStatus(crate::git::stage::GitStatusPane::open(&proj_a));
+        let graph = Pane::GitGraph(crate::git::graph::GitGraphPane::open(&proj_a));
+        app.panes.push(status);
+        app.panes.push(graph);
+
+        // Sanity: both currently point at proj-a.
+        for pane in &app.panes {
+            match pane {
+                Pane::GitStatus(g) => assert_eq!(g.workspace, proj_a),
+                Pane::GitGraph(g) => assert_eq!(g.workspace, proj_a),
+                _ => {}
+            }
+        }
+
+        app.switch_active_repo(1);
+        // Both panes should now point at proj-b.
+        for pane in &app.panes {
+            match pane {
+                Pane::GitStatus(g) => assert_eq!(g.workspace, proj_b),
+                Pane::GitGraph(g) => assert_eq!(g.workspace, proj_b),
+                _ => {}
+            }
+        }
     }
 
     #[test]

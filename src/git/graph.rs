@@ -59,6 +59,18 @@ impl GitGraphPane {
         self.reload_detail();
     }
 
+    /// Re-point the cached workspace at a different repo root + reload.
+    /// Used when `App::switch_active_repo` flips repos so the graph follows.
+    /// Resets selection + scroll since the new repo's commit history is
+    /// entirely different.
+    pub fn retarget(&mut self, workspace: &Path) {
+        self.workspace = workspace.to_path_buf();
+        self.selected = 0;
+        self.scroll = 0;
+        self.commits = log::load(&self.workspace, LIMIT);
+        self.reload_detail();
+    }
+
     /// Move the selection by `delta` rows (clamped), reloading the detail panel.
     pub fn move_selection(&mut self, delta: isize) {
         if self.commits.is_empty() {

@@ -6,7 +6,7 @@
 //! Numbers (Apple Silicon, release build, 2026-05-16):
 //! * 600KB / 19k-line file: fresh ~295ms, incremental ~22ms.
 //! * Real-world sizes (see `bench_highlight_md_sizes.rs` for the sweep):
-//!     5KB README — 0.17ms, 30KB — 1.0ms, 100KB — 3.6ms, 300KB — 11ms.
+//!   5KB README — 0.17ms, 30KB — 1.0ms, 100KB — 3.6ms, 300KB — 11ms.
 //!
 //! The "50ms floor" referenced in earlier handoff notes was stale (likely
 //! debug-build numbers). In release on modern hardware, even the 600KB

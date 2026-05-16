@@ -165,6 +165,17 @@ impl GitStatusPane {
         }
     }
 
+    /// Re-point the cached workspace at a different repo root + refresh.
+    /// Used when `App::switch_active_repo` flips to a different repo so the
+    /// status list follows. Resets selection + scroll since the new repo's
+    /// file list has nothing to do with the old one.
+    pub fn retarget(&mut self, workspace: &Path) {
+        self.workspace = workspace.to_path_buf();
+        self.selected = 0;
+        self.scroll = 0;
+        self.refresh();
+    }
+
     pub fn flat_len(&self) -> usize {
         self.unstaged.len() + self.staged.len()
     }
