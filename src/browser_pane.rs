@@ -583,6 +583,8 @@ pub struct BrowserPane {
     /// the bbox + fires `Page.captureScreenshot` with clip. Distinct
     /// from `pending_screenshot` so the two reply paths don't collide.
     pub pending_node_screenshot: Option<i64>,
+    /// The id of an in-flight `Page.printToPDF`, so its reply can be matched.
+    pub pending_pdf: Option<i64>,
     /// The id of an in-flight `DOM.getDocument`, so its reply can be matched.
     pub pending_dom: Option<i64>,
     /// Outstanding `Network.getRequestPostData` requests: `(rpc id, CDP requestId)`.
@@ -633,6 +635,7 @@ impl BrowserPane {
             pending_eval: None,
             pending_screenshot: None,
             pending_node_screenshot: None,
+            pending_pdf: None,
             pending_dom: None,
             pending_post_data: Vec::new(),
             scroll: usize::MAX, // follow the tail
@@ -1046,6 +1049,26 @@ impl BrowserPane {
     /// dispatcher to match a `DOM.getBoxModel` reply.
     pub fn is_pending_node_screenshot(&self, rpc_id: i64) -> bool {
         self.pending_node_screenshot == Some(rpc_id)
+    }
+
+    /// `p` — `Page.printToPDF`; the PDF lands later (matched by id) and
+    /// is written to `.mnml/screenshots/page-<ms>.pdf` (see
+    /// `App::apply_cdp_message`). Same dir as screenshots — "captures
+    /// from the browser pane" all in one place.
+    pub fn print_pdf(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.push(LogKind::System, "printing page to PDF…");
+        let id = self.send(crate::cdp::print_to_pdf);
+        self.pending_pdf = Some(id);
+    }
+
+    /// True when `rpc_id` is the one we stashed in `pending_pdf`. Used
+    /// by the App's CDP reply dispatcher to match a `Page.printToPDF`
+    /// reply.
+    pub fn is_pending_pdf(&self, rpc_id: i64) -> bool {
+        self.pending_pdf == Some(rpc_id)
     }
 
     /// `P` (or refresh from the panel) — eval-fetch `performance.*`
@@ -2077,6 +2100,34 @@ mod tests {
         assert!(p.pending_node_screenshot.is_none());
         let msgs = drain_cdp(&rx);
         assert_eq!(count_method(&msgs, "DOM.getBoxModel"), 0);
+    }
+
+    #[test]
+    fn print_pdf_fires_page_print_to_pdf() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        let _ = drain_cdp(&rx);
+        p.print_pdf();
+        assert!(p.pending_pdf.is_some());
+        let msgs = drain_cdp(&rx);
+        let req = msgs
+            .iter()
+            .find(|m| m["method"] == "Page.printToPDF")
+            .expect("printToPDF");
+        assert_eq!(req["params"]["printBackground"], true);
+        assert_eq!(req["params"]["transferMode"], "ReturnAsBase64");
+    }
+
+    #[test]
+    fn print_pdf_is_noop_when_closed() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        let _ = drain_cdp(&rx);
+        p.closed = true;
+        p.print_pdf();
+        assert!(p.pending_pdf.is_none());
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "Page.printToPDF"), 0);
     }
 
     #[test]

@@ -115,6 +115,21 @@ pub fn capture_screenshot_clip(id: i64, x: f64, y: f64, width: f64, height: f64)
     )
 }
 
+/// `Page.printToPDF` — render the current page as a PDF (base64-encoded
+/// in `result.data`). Uses default page size + margins; backgrounds on
+/// so brand colors / CSS backgrounds aren't dropped.
+pub fn print_to_pdf(id: i64) -> String {
+    rpc(
+        id,
+        "Page.printToPDF",
+        serde_json::json!({
+            "printBackground": true,
+            "preferCSSPageSize": false,
+            "transferMode": "ReturnAsBase64",
+        }),
+    )
+}
+
 /// `DOM.getBoxModel` — fetches the node's content / padding / border /
 /// margin quads. Each quad is `[x1, y1, x2, y2, x3, y3, x4, y4]` (8
 /// numbers, the four corners of the rectangle in viewport coords).

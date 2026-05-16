@@ -1780,6 +1780,13 @@ of the selected entry; accept evals `localStorage.setItem` (or `sessionStorage.s
 `scope|key=value` where scope is `local` (default) or `session`. `d` evals `removeItem` for the selected entry and
 drops the row locally. All three use `BrowserPane::eval_silent` (fire-and-forget eval that doesn't push a `» …` log
 line or claim `pending_eval`).
+**`p` prints the current page to PDF** (`browser.print_pdf`) — fires `Page.printToPDF` (printBackground on so
+brand colors / CSS backgrounds survive). The reply's base64 `data` decodes + writes to
+`<workspace>/.mnml/screenshots/page-<ms>.pdf` (same dir as screenshots — "captures from the browser pane" all
+in one place) via the new `save_pdf_bytes` helper; the file is handed to the OS's default PDF viewer
+(`open_path_external`). New `BrowserPane.pending_pdf: Option<i64>` mirrors `pending_screenshot` so the two reply
+paths don't collide. Only bound when no sub-panel is focused (the per-panel letters keep priority).
+
 **`P` toggles a performance panel** (`browser.perf`) — eval-fetches `performance.getEntriesByType('navigation')[0]`
 plus paint entries + LCP via `PERF_EVAL_EXPR` (a fixed IIFE). `parse_perf_eval` converts the result into
 `PerfMetrics{dns, tcp, ttfb, response, dom_interactive, load, fcp, lcp}` — each field is `Option<f64>` (None when ≤ 0

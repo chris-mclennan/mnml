@@ -7798,6 +7798,20 @@ impl App {
         }
     }
 
+    /// `p` in a browser pane (or `browser.print_pdf`) — render the current
+    /// page as a PDF via `Page.printToPDF`; the file lands in
+    /// `.mnml/screenshots/page-<ms>.pdf` when the reply arrives.
+    pub fn browser_print_pdf(&mut self) {
+        match self
+            .panes
+            .iter_mut()
+            .find(|p| matches!(p, Pane::Browser(_)))
+        {
+            Some(Pane::Browser(b)) => b.print_pdf(),
+            _ => self.toast("no browser pane open"),
+        }
+    }
+
     /// `Z` in a browser pane's DOM panel (`browser.scroll_node_into_view`)
     /// — `DOM.scrollIntoViewIfNeeded` for the selected node. Brings an
     /// off-screen node into the viewport so subsequent `S` (screenshot)
@@ -8352,6 +8366,28 @@ impl App {
         Ok(path)
     }
 
+    /// Decode a base64 PDF (from `Page.printToPDF`), write it under
+    /// `<workspace>/.mnml/screenshots/page-<millis>.pdf`, and hand it to the
+    /// OS's default PDF viewer (best-effort). Returns the path. Same dir as
+    /// the screenshot helper — "captures from the browser pane" all live in
+    /// one place so they're easy to find.
+    fn save_pdf_bytes(&self, b64: &str) -> Result<std::path::PathBuf, String> {
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64.trim())
+            .map_err(|e| format!("base64 decode: {e}"))?;
+        let dir = self.workspace.join(".mnml").join("screenshots");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let path = dir.join(format!("page-{millis}.pdf"));
+        std::fs::write(&path, &bytes).map_err(|e| format!("writing {}: {e}", path.display()))?;
+        open_path_external(&path);
+        Ok(path)
+    }
+
     /// `y` in the browser pane's network panel — copy the selected request as a
     /// curl command to the clipboard.
     pub fn copy_net_entry_curl(&mut self) {
@@ -8540,6 +8576,36 @@ impl App {
                     None => {
                         if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
                             b.push(LogKind::ConsoleErr, "screenshot: empty reply from Chrome");
+                        }
+                    }
+                }
+                return;
+            }
+            if matches!(self.panes.get(idx), Some(Pane::Browser(b)) if b.is_pending_pdf(id)) {
+                if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                    b.pending_pdf = None;
+                }
+                let data = v
+                    .get("result")
+                    .and_then(|r| r.get("data"))
+                    .and_then(serde_json::Value::as_str);
+                match data.map(|d| self.save_pdf_bytes(d)) {
+                    Some(Ok(path)) => {
+                        let p = path.display().to_string();
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.push(LogKind::System, format!("pdf → {p}"));
+                        }
+                        self.toast(format!("pdf saved: {p}"));
+                    }
+                    Some(Err(e)) => {
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.push(LogKind::ConsoleErr, format!("pdf failed: {e}"));
+                        }
+                        self.toast(format!("pdf failed: {e}"));
+                    }
+                    None => {
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.push(LogKind::ConsoleErr, "pdf: empty reply from Chrome");
                         }
                     }
                 }
