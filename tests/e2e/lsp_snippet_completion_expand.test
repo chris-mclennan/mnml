@@ -1,0 +1,33 @@
+# Exercise the LSP snippet completion accept path: seed an mnml-side
+# snippet (via the snippet step), expand it, verify the placeholders
+# Tab-cycle correctly. This is a proxy for the LSP path — the e2e
+# harness doesn't connect to a real language server, but mnml's native
+# snippet expansion uses the same `apply_snippet_edit` machinery.
+
+snippet rs forr "for $1 in $2 {\n    $0\n}"
+
+write code.rs ""
+open code.rs
+
+# Type the trigger, then expand.
+type forr
+command snippet.expand
+
+# Expansion is on screen with `$1`/`$2`/`$0` stripped (rendered blank).
+expect screen contains "for  in  {"
+
+# Cursor is at $1. Type the loop variable.
+type i
+
+# Tab moves to $2 — type the iterable.
+key tab
+type items
+
+# Tab again moves to $0 (the body indent).
+key tab
+type println
+
+# Final state shows the filled-in template.
+expect screen contains "for i in items {"
+expect screen contains "println"
+expect dirty true
