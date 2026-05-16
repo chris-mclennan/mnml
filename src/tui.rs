@@ -897,6 +897,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter if net_focus => app.open_net_entry_as_request(),
             KeyCode::Char('g') => app.browser_navigate_prompt(),
             KeyCode::Char('e') => app.browser_eval_prompt(),
+            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.open_browser_history_picker()
+            }
             KeyCode::Char('r') => app.browser_reload(),
             KeyCode::Char('s') => app.browser_screenshot(),
             KeyCode::Char('T') => app.open_browser_target_picker(),

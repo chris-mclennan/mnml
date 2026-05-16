@@ -108,7 +108,7 @@ pub fn draw(
             )
         }
     } else {
-        "  g navigate · e eval JS · r reload · s screenshot · n network · D DOM · esc → tree"
+        "  g navigate · ^R history · e eval · r reload · s shot · n net · D DOM · esc → tree"
             .to_string()
     };
     lines.push(Line::from(Span::styled(

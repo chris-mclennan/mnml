@@ -24,6 +24,11 @@ const TOAST_TTL: Duration = Duration::from_secs(4);
 /// ago, short enough that the picker isn't a wall of text."
 const RECENT_FILES_MAX: usize = 20;
 
+/// Cap on `App::browser_url_history`. Higher than `recent_files` because
+/// URLs accumulate quickly (every navigation, every redirect) and the
+/// fuzzy picker handles long lists gracefully.
+const BROWSER_URL_HISTORY_MAX: usize = 100;
+
 /// Cap on `App::file_cursors`. Per-file last-position state isn't tied to the
 /// recent-files cap because the user may legitimately revisit files long after
 /// they've dropped off `recent_files`.
@@ -683,6 +688,11 @@ struct SavedSession {
     /// Most-recently-opened files, newest first (capped on save).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     recent_files: Vec<String>,
+    /// Most-recently-visited browser URLs (newest first, capped). Built
+    /// up from `Page.frameNavigated` events across the session and
+    /// surfaced by `browser.url_history` (Ctrl+R in a browser pane).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    browser_url_history: Vec<String>,
     /// The active theme name when we quit. `None` ⇒ launch picks the default
     /// (or whatever `[ui] theme` in the config file says).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1472,6 +1482,12 @@ pub struct App {
     /// Most-recently-opened files, newest first, capped at `RECENT_FILES_MAX`.
     /// Updated every time `open_path` opens a file. Persisted in session.json.
     pub recent_files: Vec<PathBuf>,
+    /// Most-recently-visited browser URLs, newest first, capped at
+    /// [`BROWSER_URL_HISTORY_MAX`]. Built up from `Page.frameNavigated`
+    /// events; surfaced via `browser.url_history` (Ctrl+R in a browser
+    /// pane). Persisted in session.json. App-wide rather than per-pane
+    /// since URLs are workspace-relevant, not pane-relevant.
+    pub browser_url_history: Vec<String>,
     /// Stack of recently closed buffers (`(path, cursor_byte, scroll)`),
     /// newest last. `buffer.reopen` (`Ctrl+Shift+T`) pops the top entry
     /// and re-opens it. Capped at `CLOSED_BUFFERS_MAX`. Not persisted —
@@ -1997,6 +2013,7 @@ impl App {
             zen_mode: false,
             bufferline_visible: true,
             recent_files: Vec::new(),
+            browser_url_history: Vec::new(),
             closed_buffers: Vec::new(),
             last_active: None,
             pane_mru: Vec::new(),
@@ -3332,6 +3349,7 @@ impl App {
                     self.switch_browser_target(idx);
                 }
             }
+            PickerKind::BrowserHistory => self.browser_navigate_to(&item.id),
             PickerKind::Snippets => {
                 if let Ok(idx) = item.id.parse::<usize>() {
                     self.snippet_insert_at_cursor(idx);
@@ -7747,6 +7765,61 @@ impl App {
         }
     }
 
+    /// `Ctrl+R` in a browser pane — fuzzy picker over the App-wide
+    /// `browser_url_history`. Accept ⇒ `Page.navigate` the active
+    /// browser pane to the chosen URL. The history accumulates from
+    /// `Page.frameNavigated` events across the session and persists in
+    /// session.json so previously-visited URLs are available on fresh
+    /// launch.
+    pub fn open_browser_history_picker(&mut self) {
+        use crate::picker::PickerItem;
+        if !matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Browser(_))
+        ) {
+            self.toast("no browser pane open");
+            return;
+        }
+        if self.browser_url_history.is_empty() {
+            self.toast("no browser history yet");
+            return;
+        }
+        // Best-effort short label: host + path, mirroring the
+        // network-panel `short_url` shape. Full URL kept as detail.
+        let items: Vec<PickerItem> = self
+            .browser_url_history
+            .iter()
+            .map(|u| {
+                let short = u
+                    .strip_prefix("https://")
+                    .or_else(|| u.strip_prefix("http://"))
+                    .unwrap_or(u)
+                    .to_string();
+                PickerItem::new(u.clone(), short, u.clone())
+            })
+            .collect();
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::BrowserHistory,
+            format!("Browser history ({})", self.browser_url_history.len()),
+            items,
+        ));
+    }
+
+    /// Accept handler for `PickerKind::BrowserHistory` — navigate the
+    /// active browser pane to `url`. Empty / whitespace urls toast.
+    pub fn browser_navigate_to(&mut self, url: &str) {
+        let url = url.trim();
+        if url.is_empty() {
+            self.toast("history: empty URL");
+            return;
+        }
+        if let Some(Pane::Browser(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            b.navigate(url);
+        } else {
+            self.toast("no browser pane open");
+        }
+    }
+
     /// `T` in the browser pane — open a picker over discovered CDP targets
     /// (main page + auto-attached popups / new tabs / iframes). Accept ⇒
     /// `browser.switch_target` routes subsequent commands there.
@@ -8055,6 +8128,11 @@ impl App {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("");
         let params = v.get("params");
+        // URL captured during the match so we can push it onto the
+        // App-wide `browser_url_history` after the `&mut b` borrow
+        // ends. NLL drops `b` at last use, so the post-match write
+        // compiles cleanly.
+        let mut nav_url: Option<String> = None;
         let Some(Pane::Browser(b)) = self.panes.get_mut(idx) else {
             return;
         };
@@ -8123,6 +8201,7 @@ impl App {
                         .and_then(serde_json::Value::as_str)
                 {
                     b.url = url.to_string();
+                    nav_url = Some(url.to_string());
                     b.push(LogKind::Nav, format!("→ {url}"));
                     // DevTools' default: don't carry the prior page's
                     // network log + DOM into the new page. Mirrors the
@@ -8264,6 +8343,24 @@ impl App {
                 }
             }
             _ => {} // loadEventFired, snapshots, etc. — not mirrored here
+        }
+        if let Some(url) = nav_url {
+            self.note_browser_url(url);
+        }
+    }
+
+    /// Push `url` to the front of `browser_url_history` (de-duped),
+    /// capping at [`BROWSER_URL_HISTORY_MAX`]. `about:blank` is skipped
+    /// — it's the noisy initial state, not a real navigation target.
+    /// Called from every main-frame `Page.frameNavigated`.
+    pub fn note_browser_url(&mut self, url: String) {
+        if url == "about:blank" || url.is_empty() {
+            return;
+        }
+        self.browser_url_history.retain(|u| u != &url);
+        self.browser_url_history.insert(0, url);
+        if self.browser_url_history.len() > BROWSER_URL_HISTORY_MAX {
+            self.browser_url_history.truncate(BROWSER_URL_HISTORY_MAX);
         }
     }
 
@@ -17274,6 +17371,7 @@ impl App {
                 .iter()
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect(),
+            browser_url_history: self.browser_url_history.clone(),
             theme: Some(crate::ui::theme::cur().name.to_string()),
             wrap: Some(self.config.ui.wrap),
             macros: self
@@ -17456,6 +17554,13 @@ impl App {
                 .into_iter()
                 .map(PathBuf::from)
                 .take(RECENT_FILES_MAX)
+                .collect();
+        }
+        if !saved.browser_url_history.is_empty() {
+            self.browser_url_history = saved
+                .browser_url_history
+                .into_iter()
+                .take(BROWSER_URL_HISTORY_MAX)
                 .collect();
         }
         if let Some(name) = saved.theme.as_deref() {
@@ -19897,6 +20002,39 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::fs;
+
+    #[test]
+    fn note_browser_url_dedupes_and_caps() {
+        let mut h: Vec<String> = Vec::new();
+        // Inline the same shape `note_browser_url` uses on App so we can
+        // exercise the dedupe / cap logic without spinning up a full App.
+        let push = |h: &mut Vec<String>, url: &str| {
+            if url == "about:blank" || url.is_empty() {
+                return;
+            }
+            h.retain(|u| u != url);
+            h.insert(0, url.to_string());
+            if h.len() > BROWSER_URL_HISTORY_MAX {
+                h.truncate(BROWSER_URL_HISTORY_MAX);
+            }
+        };
+        push(&mut h, "https://a.test/");
+        push(&mut h, "https://b.test/");
+        push(&mut h, "https://a.test/"); // move-to-front, dedupe
+        assert_eq!(h, vec!["https://a.test/", "https://b.test/"]);
+
+        // about:blank + empty are skipped.
+        push(&mut h, "about:blank");
+        push(&mut h, "");
+        assert_eq!(h.len(), 2);
+
+        // Cap enforced.
+        for i in 0..BROWSER_URL_HISTORY_MAX + 10 {
+            push(&mut h, &format!("https://h.test/{i}"));
+        }
+        assert_eq!(h.len(), BROWSER_URL_HISTORY_MAX);
+        assert!(h[0].ends_with(&format!("/{}", BROWSER_URL_HISTORY_MAX + 9)));
+    }
 
     #[test]
     fn bbox_from_quad_computes_axis_aligned_rect() {

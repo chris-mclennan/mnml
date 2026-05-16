@@ -1747,7 +1747,12 @@ where the bbox can't be computed log a `bbox unavailable` warning.
 **`Z` scrolls the selected DOM node into view** (`browser.scroll_node_into_view`) — fires
 `DOM.scrollIntoViewIfNeeded { nodeId }` so off-screen nodes become reachable by `S` (screenshot needs the bbox to be in
 the viewport for `Page.captureScreenshot` to land anything useful) and `h` (overlay highlight isn't visible if the node
-is scrolled off). Fire-and-forget — no reply handler needed; the page just scrolls. `R` re-fetches, `D`
+is scrolled off). Fire-and-forget — no reply handler needed; the page just scrolls.
+**`Ctrl+R` opens a URL history picker** (`browser.url_history`) — fuzzy picker over `App.browser_url_history` (capped
+at `BROWSER_URL_HISTORY_MAX = 100`, newest first). The history accumulates from every main-frame `Page.frameNavigated`
+event (extracted via the new post-match `nav_url` capture in `apply_cdp_message`) and persists in `session.json` so
+previously-visited URLs are available on fresh launch. Accept ⇒ `Page.navigate` the active browser pane to the chosen
+URL. `about:blank` / empty URLs are skipped from history. `R` re-fetches, `D`
 (or Esc) leave the panel (Esc also clears any highlight via `Overlay.hideHighlight`). After `s` writes the PNG, `open_path_external` hands it to the OS default app (`open` on macOS,
 `xdg-open` on Linux, `cmd /C start` on Windows; best-effort, errors swallowed). `Target.setDiscoverTargets {discover:true}`
 is also sent on connect so popups / new-tabs show up as `⤴ new tab → url` log lines (`Target.targetCreated` with

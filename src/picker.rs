@@ -38,6 +38,11 @@ pub enum PickerKind {
     /// `id` = index (as a string) into [`crate::browser_pane::BrowserPane::targets`].
     /// Accept ⇒ switch which CDP target the active browser pane drives.
     BrowserTargets,
+    /// `id` = the URL itself. Accept ⇒ `Page.navigate` the active browser
+    /// pane to it. Populated by `browser.url_history` from
+    /// `App::browser_url_history` (accumulated from `Page.frameNavigated`
+    /// across sessions).
+    BrowserHistory,
     /// `id` = the index (as a string) into [`crate::app::App::pending_snippets`].
     /// Accept ⇒ insert the snippet's expansion at the active editor's cursor.
     Snippets,

@@ -1574,6 +1574,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.browser_scroll_node_into_view(),
         },
         Command {
+            id: "browser.url_history",
+            title: "Browser: fuzzy pick a previously-visited URL (Ctrl+R)",
+            group: "browser",
+            keys: &[],
+            run: |app| app.open_browser_history_picker(),
+        },
+        Command {
             id: "browser.dom",
             title: "Browser: open the DOM panel (selectable nodes, copy selector)",
             group: "browser",
