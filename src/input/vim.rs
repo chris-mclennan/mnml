@@ -1384,6 +1384,31 @@ impl VimInputHandler {
                             SelectInnerParagraph
                         }
                     }
+                    // Tree-sitter text objects — `if`/`af` = inner/around
+                    // function, `ic`/`ac` = inner/around class, `ia`/`aa`
+                    // = inner/around argument. Driven by `regex_outline`
+                    // for the header lines + brace matching for the body.
+                    KeyCode::Char('f') => {
+                        if around {
+                            SelectAroundFunction
+                        } else {
+                            SelectInnerFunction
+                        }
+                    }
+                    KeyCode::Char('c') => {
+                        if around {
+                            SelectAroundClass
+                        } else {
+                            SelectInnerClass
+                        }
+                    }
+                    KeyCode::Char('a') => {
+                        if around {
+                            SelectAroundArgument
+                        } else {
+                            SelectInnerArgument
+                        }
+                    }
                     // Brackets — vim accepts the open *or* the close as the
                     // text-object char; both mean "the surrounding pair".
                     // (`ib` / `iB` shorthands aren't wired yet — same shape.)

@@ -1,0 +1,61 @@
+# Tree-sitter text objects — `if`/`af` (function), `ic`/`ac` (class),
+# `ia`/`aa` (argument). Uses regex_outline to identify the header line
+# and brace-matching for the body extent.
+
+write fn.rs "fn first() {\n    one;\n    two;\n}\n\nfn second() {\n    three;\n    four;\n}\n"
+open fn.rs
+command editor.use_vim
+
+# Cursor at top — move into the first function body.
+key j
+key j
+# `dif` ⇒ delete inside the enclosing function (just the body).
+key d
+key i
+key f
+# After: header + braces remain, body gone.
+expect screen contains "fn first()"
+expect screen contains "fn second()"
+expect screen lacks "one;"
+expect screen lacks "two;"
+
+# Reset and try `daf` ⇒ delete around the enclosing function (entire def).
+write fn2.rs "fn first() {\n    one;\n    two;\n}\n\nfn second() {\n    three;\n}\n"
+open fn2.rs
+command editor.use_vim
+key j
+key j
+key d
+key a
+key f
+# After daf, the entire `fn first() { ... }` block is gone.
+expect screen lacks "first"
+expect screen lacks "one;"
+expect screen contains "fn second()"
+expect screen contains "three;"
+
+# Argument text object — `dia` deletes inside an arg.
+write call.rs "let r = call(foo, bar, baz);\n"
+open call.rs
+command editor.use_vim
+# Move cursor to the 'b' of "bar" using f<char> (find-char on line).
+key 0
+key f
+key b
+# `dia` deletes the arg.
+key d
+key i
+key a
+expect screen contains "call(foo, , baz)"
+
+# Around-arg variant pulls the trailing comma + space.
+write call2.rs "let r = call(foo, bar, baz);\n"
+open call2.rs
+command editor.use_vim
+key 0
+key f
+key b
+key d
+key a
+key a
+expect screen contains "call(foo, baz)"

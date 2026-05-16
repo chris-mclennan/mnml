@@ -15908,7 +15908,7 @@ impl App {
                 self.split_active(crate::layout::SplitDir::Vertical);
                 let mut buf = crate::buffer::Buffer::scratch(&self.config);
                 if !ft.is_empty() {
-                    buf.language_ext = Some(ft.to_string());
+                    buf.set_language_ext(Some(ft.to_string()));
                     buf.refresh_highlights();
                 }
                 self.panes.push(Pane::Editor(buf));
@@ -16752,7 +16752,7 @@ impl App {
                 if name.is_empty() {
                     self.toast(":setf <ext>");
                 } else if let Some(b) = self.active_editor_mut() {
-                    b.language_ext = Some(name.to_string());
+                    b.set_language_ext(Some(name.to_string()));
                     b.refresh_highlights();
                     self.toast(format!(":setf {name}"));
                 }
@@ -17647,7 +17647,7 @@ impl App {
                 {
                     let name = v.trim().to_string();
                     if let Some(b) = self.active_editor_mut() {
-                        b.language_ext = Some(name.clone());
+                        b.set_language_ext(Some(name.clone()));
                         b.refresh_highlights();
                         self.toast(format!(":set filetype={name}"));
                     }

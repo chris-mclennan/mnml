@@ -286,6 +286,7 @@ impl Buffer {
         editor.set_comment_token(comment_token_for(ext.as_deref()));
         editor.auto_pair = cfg.editor.auto_pair;
         editor.auto_indent = cfg.editor.auto_indent;
+        editor.language_ext = ext.clone();
         let mut b = Buffer {
             path: Some(path.to_path_buf()),
             editor,
@@ -406,6 +407,14 @@ impl Buffer {
     /// [`Self::pending_tree_edits`] is non-empty: each edit's `InputEdit` is
     /// applied to the cached tree (with `Point` halves derived from
     /// [`Self::prev_line_starts`]) and the parser is given the tree as a
+    /// Set the language extension (for highlights + text-object scoping)
+    /// and sync the inner `Editor`'s mirror. Use this instead of writing
+    /// `buf.language_ext` directly so the editor stays in sync.
+    pub fn set_language_ext(&mut self, ext: Option<String>) {
+        self.language_ext = ext.clone();
+        self.editor.language_ext = ext;
+    }
+
     /// hint. Untracked edits drop `parse_tree` to `None` at the time the edit
     /// is processed, so this method falls back to a full reparse.
     pub fn refresh_highlights(&mut self) {

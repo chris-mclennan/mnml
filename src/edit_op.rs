@@ -144,6 +144,27 @@ pub enum EditOp {
     /// edges). `ap` extends to include trailing blank lines.
     SelectInnerParagraph,
     SelectAroundParagraph,
+    /// Tree-sitter text object — `if` / `af`. Selects the body of the
+    /// enclosing function (inner: between the braces, around: the whole
+    /// def including signature + braces). Driven by
+    /// `regex_outline::extract_symbols` for the header line + bracket
+    /// matching for the body extent. Indent-scoped languages (py) use
+    /// the indent rule instead. No-op when no enclosing function.
+    SelectInnerFunction,
+    SelectAroundFunction,
+    /// Tree-sitter text object — `ic` / `ac`. Selects the body of the
+    /// enclosing class / struct / enum / trait / interface / module.
+    /// Same scan as the function variant but accepts a different symbol
+    /// kind set.
+    SelectInnerClass,
+    SelectAroundClass,
+    /// Tree-sitter text object — `ia` / `aa`. Selects a single argument
+    /// (function call or definition param list). Walks back to find the
+    /// nearest unmatched `(`, walks forward to the matching `)`, then
+    /// splits on top-level commas. `inner` = just the arg, `around` =
+    /// arg + adjacent comma + adjacent whitespace.
+    SelectInnerArgument,
+    SelectAroundArgument,
     /// vim `gv` — restore the editor's last remembered selection (anchor +
     /// cursor). No-op when no selection has been made yet.
     RestoreLastSelection,

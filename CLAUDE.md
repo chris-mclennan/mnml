@@ -2608,6 +2608,29 @@ browser via the same `open_url_external` helper the per-host
 Empty caches ⇒ toast pointing at the four `[[<host>.repos]]` /
 `[[<host>.projects]]` config tables (no picker opens).
 
+**Tree-sitter text objects** — `if`/`af` (inner/around function), `ic`/`ac`
+(inner/around class/struct/enum/trait/interface/mod/namespace/impl),
+`ia`/`aa` (inner/around argument). New ops `SelectInnerFunction` /
+`SelectAroundFunction` / `SelectInnerClass` / `SelectAroundClass` /
+`SelectInnerArgument` / `SelectAroundArgument` on `EditOp`. Wired into
+the vim text-object prefix arm (`Prefix::TextObjectInner` /
+`TextObjectAround`). Function / class picking uses
+`regex_outline::extract_symbols` for the header line — so it covers
+rust/py/js/ts/go/rb/c/cpp without an LSP — plus brace matching for
+the body extent (`match_close_after`); the cursor must sit inside the
+braces for the scope to be picked. Inner ⇒ just the body; around ⇒
+header line through closing `}`. Argument scan walks back to the
+innermost unmatched `(`, walks forward to its `)`, splits on
+top-level commas (depth-balanced over `()[]{}`, respects single-line
+`""`/`''`/`` ` `` strings). Inner ⇒ the trimmed arg slice; around ⇒
+extends to swallow the trailing comma + whitespace (or the leading
+comma for the last arg, vim's `aa` convention). `Editor::language_ext`
+mirrors `Buffer.language_ext` (set on open + by `:setf` / `:set ft=`
+via the new `Buffer::set_language_ext` helper) so the editor can pick
+language regex bundles without going back through the Buffer.
+Indent-scoped languages (Python, Ruby) aren't supported yet — they
+return None and the gesture is a no-op.
+
 **Treesitter-context (sticky scope)** — `[ui] sticky_context = true`
 (default off; `:set [no]stickycontext` runtime toggle, also `sticky` /
 `nosticky`; `:set stickycontext!` flips). When on, the top N rows of

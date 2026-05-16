@@ -588,6 +588,33 @@ fn match_close_for(open: char) -> char {
     }
 }
 
+/// Forward depth-balanced match for a `{`. Walks from `open_byte` (must
+/// point at a `{`) and returns the byte offset of the matching `}` or
+/// `None` if unbalanced. Bare scan — doesn't respect strings/comments
+/// (good enough for the text-object MVP; refinement is a follow-up).
+fn match_close_after(text: &str, open_byte: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    if bytes.get(open_byte) != Some(&b'{') {
+        return None;
+    }
+    let mut depth: i32 = 0;
+    let mut i = open_byte;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 fn auto_pair_close(c: char) -> Option<char> {
     match c {
         '(' => Some(')'),
@@ -726,6 +753,11 @@ pub struct Editor {
     /// on `ReplaceSessionBegin`. The vim Replace handler reads it via
     /// `ReplaceUndoOne` to implement vim's "Backspace restores" behavior.
     replace_stack: Vec<Option<char>>,
+    /// File extension used to pick syntax/text-object regexes (mirror of
+    /// `Buffer.language_ext`). Synced by `Buffer::set_language_ext`; the
+    /// editor reads it for the tree-sitter text objects (`if`/`af`/`ic`/
+    /// `ac`) so they can scope by `regex_outline` per language.
+    pub language_ext: Option<String>,
 }
 
 impl Editor {
@@ -747,6 +779,7 @@ impl Editor {
             replace_stack: Vec::new(),
             extra_cursors: Vec::new(),
             extra_anchors: Vec::new(),
+            language_ext: None,
         }
     }
 
@@ -2368,6 +2401,43 @@ impl Editor {
                 let (lo, hi) = self.paragraph_bounds(true);
                 self.anchor = Some(lo);
                 self.cursor = hi;
+            }
+            SelectInnerFunction | SelectAroundFunction => {
+                let inner = matches!(op, SelectInnerFunction);
+                if let Some(ext) = self.language_ext.as_deref() {
+                    let kinds: &[&str] = &["fn"];
+                    if let Some((lo, hi)) = self.enclosing_function_range(ext, kinds, inner) {
+                        self.anchor = Some(lo);
+                        self.cursor = hi;
+                    }
+                }
+            }
+            SelectInnerClass | SelectAroundClass => {
+                let inner = matches!(op, SelectInnerClass);
+                if let Some(ext) = self.language_ext.as_deref() {
+                    let kinds: &[&str] = &[
+                        "class",
+                        "struct",
+                        "enum",
+                        "trait",
+                        "interface",
+                        "mod",
+                        "module",
+                        "namespace",
+                        "impl",
+                    ];
+                    if let Some((lo, hi)) = self.enclosing_function_range(ext, kinds, inner) {
+                        self.anchor = Some(lo);
+                        self.cursor = hi;
+                    }
+                }
+            }
+            SelectInnerArgument | SelectAroundArgument => {
+                let inner = matches!(op, SelectInnerArgument);
+                if let Some((lo, hi)) = self.enclosing_argument_range(inner) {
+                    self.anchor = Some(lo);
+                    self.cursor = hi;
+                }
             }
             SelectAroundWord => {
                 // vim `aw` — `iw` extended to include trailing whitespace,
@@ -4174,6 +4244,161 @@ impl Editor {
         Some((open_byte, close_byte))
     }
 
+    /// Find the innermost enclosing function (`if` / `af`) or
+    /// class-like (`ic` / `ac`) text object using `regex_outline` for
+    /// the header lines and brace matching for the body.
+    ///
+    /// `header_kinds` filters which symbol kinds (`"fn"`, `"struct"`,
+    /// etc) count as a candidate header. Returns the buffer-byte range
+    /// (`start`, `end`) where:
+    /// - `inner=true`: cursor lands just inside the braces (header
+    ///   excluded, opening / closing `{}` excluded).
+    /// - `inner=false`: cursor includes the whole header line through
+    ///   one past the closing `}`.
+    ///
+    /// Indent-scoped languages (Python, Ruby) aren't supported here
+    /// (returns None) — for the MVP we only handle braced bodies.
+    pub fn enclosing_function_range(
+        &self,
+        ext: &str,
+        header_kinds: &[&str],
+        inner: bool,
+    ) -> Option<(usize, usize)> {
+        let text = self.text.as_str();
+        let symbols = crate::regex_outline::extract_symbols(text, ext);
+        if symbols.is_empty() {
+            return None;
+        }
+        let (cur_row, _) = self.row_col();
+        // Walk symbols in reverse — the innermost (highest line, still
+        // ≤ cursor) wins first.
+        for s in symbols.iter().rev() {
+            if s.line as usize > cur_row {
+                continue;
+            }
+            if !header_kinds.contains(&s.kind) {
+                continue;
+            }
+            // From the header's line start, find the next `{` (or
+            // `(` for Go/Rust func sigs with multi-line params — we
+            // still want the body, so prefer `{`).
+            let header_line_start = self.line_start(s.line as usize);
+            let header_line_end_eof = self.text.len();
+            let after_header = &text[header_line_start..header_line_end_eof];
+            // Walk forward to the first `{` outside of strings/comments
+            // (we keep this simple — bare `{` scan).
+            let Some(rel_brace) = after_header.find('{') else {
+                continue;
+            };
+            let open_byte = header_line_start + rel_brace;
+            // Brace-match forward from `open_byte` (depth-counted).
+            let close_byte = match_close_after(text, open_byte)?;
+            // Only this scope counts if the cursor actually sits inside
+            // it (or on its header line, which counts as `around`).
+            if self.cursor < header_line_start || self.cursor > close_byte {
+                continue;
+            }
+            return Some(if inner {
+                let start = self.next_char_boundary(open_byte);
+                (start, close_byte)
+            } else {
+                let end = self.next_char_boundary(close_byte);
+                (header_line_start, end)
+            });
+        }
+        None
+    }
+
+    /// Argument text object (`ia` / `aa`). Walks back to the innermost
+    /// enclosing `(`, walks forward to its matching `)`, then splits
+    /// the contents on top-level commas (depth-balanced over
+    /// parens / brackets / braces; respects single-line `'…'` / `"…"`
+    /// strings). Picks the arg slice the cursor sits inside.
+    /// `inner` ⇒ just the slice; `around` ⇒ extends to include the
+    /// trailing comma + leading whitespace (or the leading comma if at
+    /// the last arg).
+    pub fn enclosing_argument_range(&self, inner: bool) -> Option<(usize, usize)> {
+        let (open, close) = self.enclosing_bracket_pair('(', ')')?;
+        // Content range — one past the open `(` to (but not including)
+        // the `)`.
+        let body_start = self.next_char_boundary(open);
+        let body_end = close;
+        let text = self.text.as_str();
+        // Split into argument byte-ranges (start, end) at top-level commas.
+        let mut args: Vec<(usize, usize)> = Vec::new();
+        let mut depth: i32 = 0;
+        let mut in_str: Option<u8> = None;
+        let mut arg_start = body_start;
+        let bytes = text.as_bytes();
+        let mut i = body_start;
+        while i < body_end {
+            let b = bytes[i];
+            if let Some(q) = in_str {
+                if b == q && (i == 0 || bytes[i - 1] != b'\\') {
+                    in_str = None;
+                }
+            } else {
+                match b {
+                    b'"' | b'\'' | b'`' => in_str = Some(b),
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b',' if depth == 0 => {
+                        args.push((arg_start, i));
+                        arg_start = i + 1;
+                    }
+                    _ => {}
+                }
+            }
+            i += 1;
+        }
+        args.push((arg_start, body_end));
+        // Pick the arg the cursor sits inside (cursor between the
+        // start/end of an arg, inclusive on each side).
+        let cur = self.cursor;
+        let mut chosen: Option<usize> = None;
+        for (i, &(s, e)) in args.iter().enumerate() {
+            if cur >= s && cur <= e {
+                chosen = Some(i);
+                break;
+            }
+        }
+        let idx = chosen?;
+        let (s, e) = args[idx];
+        // Trim leading whitespace for the inner variant (the comma
+        // and any whitespace belong to "around").
+        let mut s_trim = s;
+        while s_trim < e && matches!(bytes[s_trim], b' ' | b'\t' | b'\n') {
+            s_trim += 1;
+        }
+        let mut e_trim = e;
+        while e_trim > s_trim && matches!(bytes[e_trim - 1], b' ' | b'\t' | b'\n') {
+            e_trim -= 1;
+        }
+        if inner {
+            return Some((s_trim, e_trim));
+        }
+        // `around` — extend to swallow the adjacent comma + adjacent
+        // whitespace. Prefer the trailing comma when the arg isn't last
+        // (vim's `aa` convention).
+        let mut around_end = e;
+        if idx + 1 < args.len() && around_end < body_end && bytes[around_end] == b',' {
+            around_end += 1;
+            while around_end < body_end && matches!(bytes[around_end], b' ' | b'\t') {
+                around_end += 1;
+            }
+            return Some((s_trim, around_end));
+        }
+        // Last arg ⇒ pull the preceding comma + whitespace.
+        let mut around_start = s_trim;
+        while around_start > body_start && matches!(bytes[around_start - 1], b' ' | b'\t') {
+            around_start -= 1;
+        }
+        if around_start > body_start && bytes[around_start - 1] == b',' {
+            around_start -= 1;
+        }
+        Some((around_start, e_trim))
+    }
+
     /// Find the surrounding pair of `q` characters on the cursor's line.
     /// Returns `(open_byte, close_byte)` (both pointing at the quote chars),
     /// or `None` when there isn't a matching pair flanking the cursor. Used
@@ -4656,6 +4881,84 @@ mod tests {
         );
         // Punctuation untouched; each ASCII letter swapped.
         assert_eq!(e.text(), "hELLO, wORLD!");
+    }
+
+    #[test]
+    fn inner_function_selects_braced_body() {
+        let src = "fn outer() {\n    let x = 1;\n    let y = 2;\n}\n";
+        let (mut e, mut c) = ed(src);
+        e.language_ext = Some("rs".into());
+        // Place cursor inside the body (after the `\n` at end of line 1).
+        e.cursor = src.find("let x").unwrap();
+        e.apply(SelectInnerFunction, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        let body = &e.text()[sel.0..sel.1];
+        assert!(body.contains("let x = 1;"));
+        assert!(body.contains("let y = 2;"));
+        assert!(!body.contains("fn outer"));
+        assert!(!body.contains('}'));
+    }
+
+    #[test]
+    fn around_function_selects_header_and_braces() {
+        let src = "fn outer() {\n    let x = 1;\n}\n";
+        let (mut e, mut c) = ed(src);
+        e.language_ext = Some("rs".into());
+        e.cursor = src.find("let x").unwrap();
+        e.apply(SelectAroundFunction, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        let around = &e.text()[sel.0..sel.1];
+        assert!(around.starts_with("fn outer()"));
+        assert!(around.contains('}'));
+    }
+
+    #[test]
+    fn inner_class_selects_struct_body() {
+        let src = "pub struct Foo {\n    a: i32,\n    b: i32,\n}\n";
+        let (mut e, mut c) = ed(src);
+        e.language_ext = Some("rs".into());
+        e.cursor = src.find("a: i32").unwrap();
+        e.apply(SelectInnerClass, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        let body = &e.text()[sel.0..sel.1];
+        assert!(body.contains("a: i32"));
+        assert!(body.contains("b: i32"));
+        assert!(!body.contains("pub struct"));
+    }
+
+    #[test]
+    fn inner_argument_selects_one_arg() {
+        // cursor on the `b` in `bar`
+        let src = "call(foo, bar, baz)";
+        let (mut e, mut c) = ed(src);
+        e.cursor = src.find("bar").unwrap();
+        e.apply(SelectInnerArgument, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        assert_eq!(&e.text()[sel.0..sel.1], "bar");
+    }
+
+    #[test]
+    fn around_argument_pulls_trailing_comma() {
+        let src = "call(foo, bar, baz)";
+        let (mut e, mut c) = ed(src);
+        // cursor on `b` of "bar" — not the last arg, so `around` extends
+        // forward to include the trailing comma + space.
+        e.cursor = src.find("bar").unwrap();
+        e.apply(SelectAroundArgument, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        assert_eq!(&e.text()[sel.0..sel.1], "bar, ");
+    }
+
+    #[test]
+    fn inner_argument_handles_nested_call() {
+        // Nested paren — the cursor's enclosing args are `inner(2)` + `3`.
+        let src = "outer(inner(1, 2), 3)";
+        let (mut e, mut c) = ed(src);
+        // cursor on `2` — should select `2`, not `inner(1, 2)`
+        e.cursor = src.find('2').unwrap();
+        e.apply(SelectInnerArgument, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        assert_eq!(&e.text()[sel.0..sel.1], "2");
     }
 
     #[test]
