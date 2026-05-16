@@ -917,7 +917,20 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // header / open in browser on a data row, y → copy URL,
     // r → refresh, v → flip view-mode, Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::BitbucketPipelines(_))) {
-        let flat = crate::ui::bitbucket_pipelines_view::flatten_pipelines(app);
+        // Flatten with the pane's actual view-mode — otherwise key
+        // handlers look up rows in the wrong layout and Right/Left
+        // mis-target headers in PerBranch mode.
+        let flat = match app.panes.get(i) {
+            Some(Pane::BitbucketPipelines(p)) => match p.view_mode {
+                crate::bitbucket::PipelineViewMode::Recent => {
+                    crate::ui::bitbucket_pipelines_view::flatten_pipelines(app)
+                }
+                crate::bitbucket::PipelineViewMode::PerBranch => {
+                    crate::ui::bitbucket_pipelines_view::flatten_branch_pipelines(app)
+                }
+            },
+            _ => Vec::new(),
+        };
         let max_idx = flat.len();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -1035,7 +1048,17 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // Bitbucket pull requests browser: same key shape as the pipelines
     // pane; Enter / y act on the row's PR URL.
     if matches!(app.panes.get(i), Some(Pane::BitbucketPullRequests(_))) {
-        let flat = crate::ui::bitbucket_pull_requests_view::flatten_prs(app);
+        let flat = match app.panes.get(i) {
+            Some(Pane::BitbucketPullRequests(p)) => match p.view_mode {
+                crate::bitbucket::PrViewMode::PerRepo => {
+                    crate::ui::bitbucket_pull_requests_view::flatten_prs(app)
+                }
+                crate::bitbucket::PrViewMode::Mine => {
+                    crate::ui::bitbucket_pull_requests_view::flatten_my_prs(app)
+                }
+            },
+            _ => Vec::new(),
+        };
         let max_idx = flat.len();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -1146,7 +1169,17 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
 
     // GitHub pull requests browser — sibling of the BB PR pane above.
     if matches!(app.panes.get(i), Some(Pane::GithubPullRequests(_))) {
-        let flat = crate::ui::github_pull_requests_view::flatten_prs(app);
+        let flat = match app.panes.get(i) {
+            Some(Pane::GithubPullRequests(p)) => match p.view_mode {
+                crate::github::GhPrViewMode::PerRepo => {
+                    crate::ui::github_pull_requests_view::flatten_prs(app)
+                }
+                crate::github::GhPrViewMode::Mine => {
+                    crate::ui::github_pull_requests_view::flatten_my_prs(app)
+                }
+            },
+            _ => Vec::new(),
+        };
         let max_idx = flat.len();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -1259,7 +1292,17 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // auto-skipped), Enter → open in browser, y → copy URL, r → refresh,
     // Esc → tree. Symmetric to the Bitbucket pane above.
     if matches!(app.panes.get(i), Some(Pane::GithubActions(_))) {
-        let flat = crate::ui::github_actions_view::flatten_runs(app);
+        let flat = match app.panes.get(i) {
+            Some(Pane::GithubActions(p)) => match p.view_mode {
+                crate::github::ActionsViewMode::Recent => {
+                    crate::ui::github_actions_view::flatten_runs(app)
+                }
+                crate::github::ActionsViewMode::PerBranch => {
+                    crate::ui::github_actions_view::flatten_branch_runs(app)
+                }
+            },
+            _ => Vec::new(),
+        };
         let max_idx = flat.len();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -2638,26 +2681,69 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             }
             None => {}
         }
+        // Each SCM/CI pane's max_idx depends on which view-mode is
+        // active — same trap as the key handlers above (flat must match
+        // the rendered layout).
         if matches!(app.panes.get(pid), Some(Pane::BitbucketPipelines(_))) {
-            let flat = crate::ui::bitbucket_pipelines_view::flatten_pipelines(app);
+            let flat = match app.panes.get(pid) {
+                Some(Pane::BitbucketPipelines(p)) => match p.view_mode {
+                    crate::bitbucket::PipelineViewMode::Recent => {
+                        crate::ui::bitbucket_pipelines_view::flatten_pipelines(app)
+                    }
+                    crate::bitbucket::PipelineViewMode::PerBranch => {
+                        crate::ui::bitbucket_pipelines_view::flatten_branch_pipelines(app)
+                    }
+                },
+                _ => Vec::new(),
+            };
             let max_idx = flat.len();
             if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(pid) {
                 p.move_selection(delta as i64, max_idx);
             }
         } else if matches!(app.panes.get(pid), Some(Pane::BitbucketPullRequests(_))) {
-            let flat = crate::ui::bitbucket_pull_requests_view::flatten_prs(app);
+            let flat = match app.panes.get(pid) {
+                Some(Pane::BitbucketPullRequests(p)) => match p.view_mode {
+                    crate::bitbucket::PrViewMode::PerRepo => {
+                        crate::ui::bitbucket_pull_requests_view::flatten_prs(app)
+                    }
+                    crate::bitbucket::PrViewMode::Mine => {
+                        crate::ui::bitbucket_pull_requests_view::flatten_my_prs(app)
+                    }
+                },
+                _ => Vec::new(),
+            };
             let max_idx = flat.len();
             if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(pid) {
                 p.move_selection(delta as i64, max_idx);
             }
         } else if matches!(app.panes.get(pid), Some(Pane::GithubActions(_))) {
-            let flat = crate::ui::github_actions_view::flatten_runs(app);
+            let flat = match app.panes.get(pid) {
+                Some(Pane::GithubActions(p)) => match p.view_mode {
+                    crate::github::ActionsViewMode::Recent => {
+                        crate::ui::github_actions_view::flatten_runs(app)
+                    }
+                    crate::github::ActionsViewMode::PerBranch => {
+                        crate::ui::github_actions_view::flatten_branch_runs(app)
+                    }
+                },
+                _ => Vec::new(),
+            };
             let max_idx = flat.len();
             if let Some(Pane::GithubActions(p)) = app.panes.get_mut(pid) {
                 p.move_selection(delta as i64, max_idx);
             }
         } else if matches!(app.panes.get(pid), Some(Pane::GithubPullRequests(_))) {
-            let flat = crate::ui::github_pull_requests_view::flatten_prs(app);
+            let flat = match app.panes.get(pid) {
+                Some(Pane::GithubPullRequests(p)) => match p.view_mode {
+                    crate::github::GhPrViewMode::PerRepo => {
+                        crate::ui::github_pull_requests_view::flatten_prs(app)
+                    }
+                    crate::github::GhPrViewMode::Mine => {
+                        crate::ui::github_pull_requests_view::flatten_my_prs(app)
+                    }
+                },
+                _ => Vec::new(),
+            };
             let max_idx = flat.len();
             if let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(pid) {
                 p.move_selection(delta as i64, max_idx);
