@@ -1958,6 +1958,14 @@ pub struct App {
         std::sync::mpsc::Sender<TestsJobDone>,
         std::sync::mpsc::Receiver<TestsJobDone>,
     )>,
+    /// Channel for background external-linter runs. Each job carries
+    /// `(buffer_path, parser_label, Result<Vec<Diagnostic>>)`. Drained
+    /// each tick; results land on `Buffer.linter_diagnostics` for the
+    /// matching path (if it's still open).
+    linter_chan: Option<(
+        std::sync::mpsc::Sender<LinterJobDone>,
+        std::sync::mpsc::Receiver<LinterJobDone>,
+    )>,
     /// Receiver for the (single) CDP browser session's worker — events stream in,
     // The per-pane CDP receiver lives on `BrowserPane.event_rx` now —
     // `drain_cdp_events` walks every browser pane each tick.
@@ -2112,6 +2120,10 @@ pub struct App {
 type HttpJobDone = (u64, Result<crate::request_pane::ResponseView, String>);
 type AiJobMsg = (u64, crate::ai::AiMsg);
 type TestsJobDone = (u64, Result<crate::playwright::TestRun, String>);
+/// One external-linter run's result: `(buffer_path, parser_label,
+/// Result<diagnostics, error_preview>)`. The `parser_label` is the
+/// linter name (`"eslint"` / `"ruff"` / …) shown in the success toast.
+type LinterJobDone = (PathBuf, String, Result<Vec<crate::lsp::Diagnostic>, String>);
 
 impl App {
     pub fn new(workspace: PathBuf, config: Config) -> Result<App, String> {
@@ -2247,6 +2259,7 @@ impl App {
             http_chan: None,
             ai_chan: None,
             tests_chan: None,
+            linter_chan: None,
             #[cfg(feature = "private")]
             log_tail_chan: None,
             #[cfg(feature = "private")]
@@ -4753,15 +4766,20 @@ impl App {
             self.toast("no active editor");
             return;
         };
-        if b.diagnostics.is_empty() {
+        let has_any = b
+            .diagnostics
+            .iter()
+            .chain(b.linter_diagnostics.iter())
+            .next()
+            .is_some();
+        if !has_any {
             self.toast("no diagnostics in this file");
             return;
         }
         let (row, col) = b.editor.row_col();
         let cur = (row as u32, col as u32);
         let mut diags: Vec<(u32, u32, String)> = b
-            .diagnostics
-            .iter()
+            .all_diagnostics()
             .map(|d| {
                 (
                     d.range.start.line,
@@ -6265,6 +6283,101 @@ impl App {
         self.format_external_active();
     }
 
+    /// `editor.lint_external` — fire the configured external linter(s)
+    /// for the active buffer in a background thread. Results land in
+    /// `linter_chan` and are merged onto the buffer's `linter_diagnostics`
+    /// in `App::tick` → `drain_linter_jobs`. Toasts when no linter is
+    /// configured for the filetype.
+    pub fn lint_external_active(&mut self) {
+        let Some(idx) = self.active else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get(idx) else {
+            self.toast("no active editor");
+            return;
+        };
+        let ext = match b.language_ext.as_deref() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => {
+                self.toast("linter: no filetype");
+                return;
+            }
+        };
+        let recipes = crate::linter::linters_for(&self.config.linters, &ext);
+        if recipes.is_empty() {
+            self.toast(format!("linter: no command configured for .{ext}"));
+            return;
+        }
+        let Some(path) = b.path.clone() else {
+            self.toast("linter: scratch buffer not supported");
+            return;
+        };
+        let input = b.editor.text().to_string();
+        let workspace = self.workspace.clone();
+        // Lazily create the channel.
+        if self.linter_chan.is_none() {
+            self.linter_chan = Some(std::sync::mpsc::channel());
+        }
+        let tx = self.linter_chan.as_ref().unwrap().0.clone();
+        let parser_label = recipes
+            .first()
+            .map(|r| r.parser.clone())
+            .unwrap_or_default();
+        std::thread::spawn(move || {
+            // Try each recipe in order; first one that spawns wins.
+            // Diagnostics from non-zero exits are kept (linters report
+            // findings via non-zero exit).
+            for recipe in &recipes {
+                match crate::linter::run_linter(recipe, &workspace, &input, Some(&path)) {
+                    Ok(diags) => {
+                        let _ = tx.send((path.clone(), recipe.parser.clone(), Ok(diags)));
+                        return;
+                    }
+                    Err(_) => continue, // try next recipe (likely "command not found")
+                }
+            }
+            let _ = tx.send((
+                path,
+                parser_label,
+                Err("no linter spawned successfully".into()),
+            ));
+        });
+        self.toast("linting…");
+    }
+
+    /// Drain completed linter jobs and write their diagnostics onto the
+    /// matching buffer. Called once per `App::tick`.
+    pub fn drain_linter_jobs(&mut self) {
+        let Some((_, rx)) = &self.linter_chan else {
+            return;
+        };
+        let done: Vec<LinterJobDone> = rx.try_iter().collect();
+        for (path, parser, result) in done {
+            let target = self.panes.iter_mut().find_map(|p| match p {
+                Pane::Editor(b) if b.path.as_deref() == Some(path.as_path()) => Some(b),
+                _ => None,
+            });
+            let Some(b) = target else {
+                continue;
+            };
+            match result {
+                Ok(diags) => {
+                    let n = diags.len();
+                    b.linter_diagnostics = diags;
+                    self.toast(format!(
+                        "{parser}: {n} issue{}",
+                        if n == 1 { "" } else { "s" }
+                    ));
+                }
+                Err(e) => {
+                    self.toast(format!("linter failed — {e}"));
+                }
+            }
+        }
+        self.refresh_diagnostics_panes();
+    }
+
     /// `editor.format_external` — conform-style external formatter for
     /// the active buffer. Picks a command from `[formatters.<ext>] cmd =
     /// "..."` (config) or the built-in defaults (`prettier`, `rustfmt`,
@@ -6396,17 +6509,29 @@ impl App {
     /// Collect every diagnostic currently held on an open editor buffer into a
     /// fresh [`DiagnosticsPane`].
     fn build_diagnostics_pane(&self) -> crate::lsp::diagnostics_pane::DiagnosticsPane {
-        let sources = self.panes.iter().filter_map(|p| match p {
-            Pane::Editor(b) => {
-                let path = b.path.clone()?;
-                if b.diagnostics.is_empty() {
-                    return None;
+        // Merge LSP + linter diagnostics into one slice per buffer. The
+        // pane doesn't care which source produced each diagnostic — sort
+        // / nav still works.
+        let merged: Vec<(PathBuf, String, Vec<crate::lsp::Diagnostic>)> = self
+            .panes
+            .iter()
+            .filter_map(|p| match p {
+                Pane::Editor(b) => {
+                    let path = b.path.clone()?;
+                    let mut all: Vec<crate::lsp::Diagnostic> = b.diagnostics.clone();
+                    all.extend(b.linter_diagnostics.iter().cloned());
+                    if all.is_empty() {
+                        return None;
+                    }
+                    let rel = rel_path(&self.workspace, &path);
+                    Some((path, rel, all))
                 }
-                let rel = rel_path(&self.workspace, &path);
-                Some((path, rel, b.diagnostics.as_slice()))
-            }
-            _ => None,
-        });
+                _ => None,
+            })
+            .collect();
+        let sources = merged
+            .iter()
+            .map(|(p, r, d)| (p.clone(), r.clone(), d.as_slice()));
         crate::lsp::diagnostics_pane::DiagnosticsPane::build(sources)
     }
 
@@ -15804,6 +15929,13 @@ impl App {
             "Format!" | "FormatExternal" => {
                 crate::command::run("editor.format_external", self);
             }
+            // `:Lint` — fire the configured external linter on the
+            // active buffer (background; results land on
+            // `linter_diagnostics` and merge into the diagnostics pane /
+            // statusline counts).
+            "Lint" | "LintExternal" => {
+                crate::command::run("editor.lint_external", self);
+            }
             // `:LspRestart` — kill every running server; subsequent
             // `did_open` calls (e.g. opening a file in that language) spawn
             // fresh ones. "The LSP got stuck" recovery gesture.
@@ -18464,6 +18596,7 @@ impl App {
         self.drain_http_jobs();
         self.drain_ai_jobs();
         self.drain_tests_jobs();
+        self.drain_linter_jobs();
         self.drain_lsp_events();
         self.drain_cdp_events();
         #[cfg(feature = "private")]

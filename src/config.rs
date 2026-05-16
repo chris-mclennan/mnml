@@ -55,6 +55,13 @@ pub struct Config {
     /// Config entries override the built-in `DEFAULT_FORMATTERS` table
     /// (`prettier` for js/ts/json/css/md, `ruff format -` for py, etc).
     pub formatters: BTreeMap<String, crate::formatter::FormatterEntry>,
+    /// `[linters.<ext>] cmd = "..." parser = "eslint"` — external
+    /// linters per file extension. Output goes through the named parser
+    /// (`eslint` / `tsc` / `ruff` / `shellcheck` / `vimgrep` fallback)
+    /// into LSP-shaped diagnostics that merge with the LSP set. Config
+    /// entries override the built-in `DEFAULT_LINTERS` (eslint for
+    /// js/ts, ruff for py, shellcheck for sh).
+    pub linters: BTreeMap<String, crate::linter::LinterEntry>,
     pub browser: BrowserConfig,
     pub playwright: PlaywrightConfig,
     pub ci: CiConfig,
@@ -603,6 +610,7 @@ impl Default for Config {
             snippets: BTreeMap::new(),
             abbreviations: BTreeMap::new(),
             formatters: BTreeMap::new(),
+            linters: BTreeMap::new(),
             browser: BrowserConfig {
                 headless: false,
                 profile_mode: "workspace".to_string(),
@@ -643,6 +651,8 @@ struct RawConfig {
     abbr: BTreeMap<String, String>,
     #[serde(default)]
     formatters: BTreeMap<String, crate::formatter::FormatterEntry>,
+    #[serde(default)]
+    linters: BTreeMap<String, crate::linter::LinterEntry>,
     #[serde(default)]
     browser: RawBrowser,
     #[serde(default)]
@@ -993,6 +1003,9 @@ impl Config {
         }
         for (ext, entry) in raw.formatters {
             self.formatters.insert(ext, entry);
+        }
+        for (ext, entry) in raw.linters {
+            self.linters.insert(ext, entry);
         }
         if let Some(v) = raw.browser.headless {
             self.browser.headless = v;

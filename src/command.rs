@@ -1514,6 +1514,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.format_smart(),
         },
         Command {
+            id: "editor.lint_external",
+            title: "Lint buffer with external linter (eslint / tsc / ruff / shellcheck / …)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.lint_external_active(),
+        },
+        Command {
             id: "lsp.code_action",
             title: "LSP: code actions at cursor (→ picker)",
             group: "lsp",

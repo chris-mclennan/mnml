@@ -26,7 +26,7 @@ fn diag_chip_for(p: &Pane) -> String {
     if let Pane::Editor(b) = p {
         let mut err = 0usize;
         let mut warn = 0usize;
-        for d in &b.diagnostics {
+        for d in b.all_diagnostics() {
             match d.severity {
                 crate::lsp::Severity::Error => err += 1,
                 crate::lsp::Severity::Warning => warn += 1,

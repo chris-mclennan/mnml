@@ -394,10 +394,9 @@ pub fn draw_pane(
         } else {
             format!("{:>num_w$} ", line_no + 1)
         };
-        // Worst LSP diagnostic severity touching this line (if any).
+        // Worst LSP + linter diagnostic severity touching this line (if any).
         let diag_sev: Option<crate::lsp::Severity> = buf
-            .diagnostics
-            .iter()
+            .all_diagnostics()
             .filter(|d| {
                 (d.range.start.line as usize) <= line_no && line_no <= (d.range.end.line as usize)
             })
@@ -705,8 +704,7 @@ pub fn draw_pane(
         // cells (won't clobber actual code or selection bg).
         if let Some(sev) = diag_sev
             && let Some(msg) = buf
-                .diagnostics
-                .iter()
+                .all_diagnostics()
                 .find(|d| (d.range.start.line as usize) == line_no)
                 .and_then(|d| {
                     d.message

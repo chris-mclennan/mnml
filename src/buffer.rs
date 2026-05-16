@@ -172,6 +172,12 @@ pub struct Buffer {
     pub blame: Option<Vec<crate::git::blame::BlameLine>>,
     /// LSP diagnostics for this file (replaced wholesale on each `publishDiagnostics`).
     pub diagnostics: Vec<crate::lsp::Diagnostic>,
+    /// External-linter diagnostics (eslint / tsc / ruff / shellcheck /
+    /// etc). Replaced wholesale on each lint run. Kept separate from
+    /// `diagnostics` so LSP's `publishDiagnostics` doesn't clobber them
+    /// — the diagnostics pane + gutter signs + statusline counts merge
+    /// the two lists.
+    pub linter_diagnostics: Vec<crate::lsp::Diagnostic>,
     /// LSP inlay hints — virtual text the server suggests at specific
     /// positions. Refreshed on save (and after the initial `did_open`
     /// reply lands). Rendered as dim chips in the editor view.
@@ -300,6 +306,7 @@ impl Buffer {
             highlights: Vec::new(),
             blame: None,
             diagnostics: Vec::new(),
+            linter_diagnostics: Vec::new(),
             inlay_hints: Vec::new(),
             semantic_tokens: Vec::new(),
             last_semantic_viewport: None,
@@ -374,6 +381,7 @@ impl Buffer {
             highlights: Vec::new(),
             blame: None,
             diagnostics: Vec::new(),
+            linter_diagnostics: Vec::new(),
             inlay_hints: Vec::new(),
             semantic_tokens: Vec::new(),
             last_semantic_viewport: None,
@@ -457,6 +465,15 @@ impl Buffer {
             .get(line)
             .map(|v| v.as_slice())
             .unwrap_or(&[])
+    }
+
+    /// Iterate over LSP + external-linter diagnostics for this buffer.
+    /// Used by every rendering / counting / navigation site so the two
+    /// sets behave identically downstream.
+    pub fn all_diagnostics(&self) -> impl Iterator<Item = &crate::lsp::Diagnostic> {
+        self.diagnostics
+            .iter()
+            .chain(self.linter_diagnostics.iter())
     }
 
     pub fn display_name(&self) -> String {

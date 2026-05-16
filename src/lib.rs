@@ -48,6 +48,7 @@ pub mod http;
 pub mod input;
 pub mod ipc;
 pub mod layout;
+pub mod linter;
 pub mod lsp;
 pub mod markdown_outline;
 pub mod pane;

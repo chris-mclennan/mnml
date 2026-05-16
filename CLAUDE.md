@@ -2608,6 +2608,24 @@ browser via the same `open_url_external` helper the per-host
 Empty caches ⇒ toast pointing at the four `[[<host>.repos]]` /
 `[[<host>.projects]]` config tables (no picker opens).
 
+**External-linter integration** — `[linters.<ext>] cmd = "..." parser = "eslint"`
+(or a list of commands) per file extension, layered on top of built-in
+defaults (`eslint --format=unix` for js/ts/jsx/tsx, `ruff check --output-format=concise` for py,
+`shellcheck --format=gcc` for sh/bash/zsh). `editor.lint_external` /
+`:Lint` fires the linter on the active buffer in a background thread;
+results land on `Buffer.linter_diagnostics` and merge with LSP
+diagnostics in the gutter signs, statusline error/warn counts, bufferline
+tab chips, diagnostics pane, and `]d` / `[d` navigation via new
+`Buffer::all_diagnostics()` chaining helper. New `src/linter.rs` holds
+the runner + per-parser output parsers (`parse_eslint_unix`,
+`parse_tsc`, `parse_ruff`, `parse_shellcheck_gcc`, `parse_vimgrep`
+fallback for unknown parser names). `{file}` in the command template
+is substituted with the workspace-relative path. Each candidate
+recipe is tried in order; first to spawn successfully wins (linters
+exit non-zero on findings — that's *not* a spawn failure). New
+`LinterJobDone` channel + `App::drain_linter_jobs` mirrors the
+`tests_chan` pattern.
+
 **Conform-style external formatters** — `[formatters.<ext>] cmd = "..."`
 (or a list of strings tried in order) in the user's config; layered on
 top of a built-in `DEFAULT_FORMATTERS` table covering the common cases
