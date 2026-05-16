@@ -87,8 +87,8 @@ pub fn draw(
 
     let mut selected_row = lines.len();
     let mut last_file: Option<String> = None;
+    let mut row_indices: Vec<(usize, usize)> = Vec::with_capacity(f.items.len());
     for (idx, it) in f.items.iter().enumerate() {
-        // Group header when the file changes (cheap visual grouping).
         if last_file.as_deref() != Some(it.rel.as_str()) {
             lines.push(Line::from(vec![
                 Span::styled("  ", Style::default().bg(t.bg_dark)),
@@ -106,10 +106,10 @@ pub fn draw(
         if sel {
             selected_row = lines.len();
         }
+        row_indices.push((lines.len(), idx));
         lines.push(item_line(&t, it, sel));
     }
 
-    // Keep the selected row visible — same shape as diagnostics_view.
     let h = area.height as usize;
     let total = lines.len();
     if total > h {
@@ -120,6 +120,27 @@ pub fn draw(
     } else {
         f.scroll = 0;
     }
+
+    for (line_y, idx) in &row_indices {
+        if *line_y < f.scroll || *line_y >= f.scroll + h {
+            continue;
+        }
+        let visible_y = line_y - f.scroll;
+        let screen_y = area.y.saturating_add(visible_y as u16);
+        if screen_y < area.y.saturating_add(area.height) {
+            app.rects.list_rows.push((
+                ratatui::layout::Rect {
+                    x: area.x,
+                    y: screen_y,
+                    width: area.width,
+                    height: 1,
+                },
+                pane_id,
+                *idx,
+            ));
+        }
+    }
+
     let visible: Vec<Line> = lines.into_iter().skip(f.scroll).take(h).collect();
     frame.render_widget(
         Paragraph::new(visible).style(Style::default().bg(t.bg_dark)),

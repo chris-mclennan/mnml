@@ -173,6 +173,33 @@ pub fn draw(
     let max_scroll = rows.len().saturating_sub(h.min(rows.len()));
     d.scroll = d.scroll.min(max_scroll);
 
+    // Click on a hunk header → set cursor to that hunk. The body of a
+    // hunk (lines, intraline diffs) shares the rect of the header it
+    // belongs to so clicking anywhere inside still picks the hunk.
+    for (hi, &line_y) in hunk_row.iter().enumerate() {
+        let next_y = hunk_row.get(hi + 1).copied().unwrap_or(rows.len());
+        // Build a single rect spanning header + body lines for this hunk.
+        for row_y in line_y..next_y {
+            if row_y < d.scroll || row_y >= d.scroll + h {
+                continue;
+            }
+            let visible_y = row_y - d.scroll;
+            let screen_y = area.y.saturating_add(visible_y as u16);
+            if screen_y < area.y.saturating_add(area.height) {
+                app.rects.list_rows.push((
+                    ratatui::layout::Rect {
+                        x: area.x,
+                        y: screen_y,
+                        width: area.width,
+                        height: 1,
+                    },
+                    pane_id,
+                    hi,
+                ));
+            }
+        }
+    }
+
     let view: Vec<Line> = rows.into_iter().skip(d.scroll).take(h).collect();
     frame.render_widget(
         Paragraph::new(view).style(Style::default().bg(t.bg_dark)),

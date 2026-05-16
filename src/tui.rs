@@ -2793,6 +2793,39 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
         }
         return;
     }
+    if matches!(app.panes.get(pane_id), Some(Pane::Flaky(_))) {
+        if let Some(Pane::Flaky(f)) = app.panes.get_mut(pane_id)
+            && flat_idx < f.items.len()
+        {
+            f.selected = flat_idx;
+        }
+        if is_double_click {
+            app.jump_to_selected_flaky();
+        }
+        return;
+    }
+    if matches!(app.panes.get(pane_id), Some(Pane::Diff(_))) {
+        if let Some(Pane::Diff(d)) = app.panes.get_mut(pane_id)
+            && flat_idx < d.hunks.len()
+        {
+            d.cursor = flat_idx;
+        }
+        if is_double_click {
+            app.jump_to_cursor_hunk();
+        }
+        return;
+    }
+    if matches!(app.panes.get(pane_id), Some(Pane::CmdlineHistory(_))) {
+        if let Some(Pane::CmdlineHistory(h)) = app.panes.get_mut(pane_id)
+            && flat_idx < h.entries.len()
+        {
+            h.selected = flat_idx;
+        }
+        if is_double_click {
+            app.cmdline_history_accept();
+        }
+        return;
+    }
     if matches!(app.panes.get(pane_id), Some(Pane::Tests(_))) {
         if let Some(Pane::Tests(t)) = app.panes.get_mut(pane_id)
             && let crate::playwright::TestsState::Done(r) = &t.state

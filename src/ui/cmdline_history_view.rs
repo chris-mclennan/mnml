@@ -64,6 +64,8 @@ pub fn draw(
     )));
 
     let mut cursor: Option<(u16, u16)> = None;
+    let body_start_offset = lines.len() as u16;
+    let mut row_recordings: Vec<(u16, usize)> = Vec::new();
     for (offset, entry) in h.entries.iter().enumerate().skip(h.scroll).take(body_h) {
         let is_sel = offset == h.selected;
         let bg = if is_sel { t.bg2 } else { t.bg_dark };
@@ -94,6 +96,24 @@ pub fn draw(
             cursor = Some((
                 area.x + 1 + 2 + entry.chars().count() as u16,
                 area.y + 2 + (offset - h.scroll) as u16,
+            ));
+        }
+        let visible_y = body_start_offset + (offset - h.scroll) as u16;
+        row_recordings.push((visible_y, offset));
+    }
+
+    for (visible_y, offset) in row_recordings {
+        let screen_y = area.y.saturating_add(visible_y);
+        if screen_y < area.y.saturating_add(area.height) {
+            app.rects.list_rows.push((
+                ratatui::layout::Rect {
+                    x: area.x,
+                    y: screen_y,
+                    width: area.width,
+                    height: 1,
+                },
+                pane_id,
+                offset,
             ));
         }
     }
