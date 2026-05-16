@@ -1758,7 +1758,14 @@ URL. `about:blank` / empty URLs are skipped from history.
 and renders each row as `[SH] name=value · domain · path · <expires> <sameSite>`. The `S` / `H` chip lights up green
 when `secure` is set, yellow when `http_only` is set. `expires` humanizes against now (`session` / `5m` / `2h` / `3d` /
 `expired`). ↑↓/jk/PgUp/PgDn/Home/End move the selection (wheel too), `y` copies the selected `name=value` pair, `R`
-re-fetches, Esc → back. Mutually exclusive with the net + DOM panels. `R` re-fetches, `D`
+re-fetches, Esc → back. Mutually exclusive with the net + DOM panels.
+**`L` toggles a Web Storage panel** — reads both `localStorage` and `sessionStorage` for the current top-level page via
+`Runtime.evaluate` against a fixed IIFE (`STORAGE_EVAL_EXPR` — wrapped in try/catch since `file://` and some
+sandboxed origins throw on access). Reply parsed via `parse_storage_eval` into `Vec<StorageEntry{key, value, is_local}>`
+(local entries first, then session). Each row renders as `[L] key=value` or `[S] key=value` — purple chip for
+localStorage, yellow chip for sessionStorage. ↑↓ / jk / PgUp / PgDn / g / G / Home / End move the selection, `y` copies
+`key=value`, `R` re-fetches, Esc back. Eval-based instead of `DOMStorage.getDOMStorageItems` so we don't have to enable
+a new CDP domain or extract securityOrigin from the page URL. `R` re-fetches, `D`
 (or Esc) leave the panel (Esc also clears any highlight via `Overlay.hideHighlight`). After `s` writes the PNG, `open_path_external` hands it to the OS default app (`open` on macOS,
 `xdg-open` on Linux, `cmd /C start` on Windows; best-effort, errors swallowed). `Target.setDiscoverTargets {discover:true}`
 is also sent on connect so popups / new-tabs show up as `⤴ new tab → url` log lines (`Target.targetCreated` with

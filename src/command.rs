@@ -1588,6 +1588,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.browser_open_cookies(),
         },
         Command {
+            id: "browser.storage",
+            title: "Browser: toggle the Web Storage panel (L) — localStorage + sessionStorage",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_open_storage(),
+        },
+        Command {
             id: "browser.dom",
             title: "Browser: open the DOM panel (selectable nodes, copy selector)",
             group: "browser",

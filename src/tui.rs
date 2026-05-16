@@ -748,18 +748,19 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // re-send in a request pane), `g` navigate, `e` eval JS, `r` reload, Esc →
     // (leave the net panel, else) tree. `Ctrl+W` closes it (which kills Chrome).
     if matches!(app.panes.get(i), Some(Pane::Browser(_))) {
-        let (net_focus, dom_focus, cookies_focus, net_filter_mode, dom_filter_mode) =
+        let (net_focus, dom_focus, cookies_focus, storage_focus, net_filter_mode, dom_filter_mode) =
             match app.panes.get(i) {
                 Some(Pane::Browser(b)) => (
                     b.net_focus,
                     b.dom_focus,
                     b.cookies_focus,
+                    b.storage_focus,
                     b.net_filter_mode,
                     b.dom_filter_mode,
                 ),
-                _ => (false, false, false, false, false),
+                _ => (false, false, false, false, false, false),
             };
-        let any_panel = net_focus || dom_focus || cookies_focus;
+        let any_panel = net_focus || dom_focus || cookies_focus || storage_focus;
         // Filter-mode on either panel takes priority over every
         // navigation chord — printable keys narrow the list instead
         // of moving the cursor.
@@ -839,6 +840,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                         Some(n) => b.cookies_sel = n,
                         None => b.move_cookies_sel(delta),
                     }
+                } else if b.storage_focus {
+                    match jump {
+                        Some(usize::MAX) => b.storage_sel = b.storage.len().saturating_sub(1),
+                        Some(n) => b.storage_sel = n,
+                        None => b.move_storage_sel(delta),
+                    }
                 } else {
                     match jump {
                         Some(usize::MAX) => b.scroll = usize::MAX,
@@ -896,6 +903,13 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     b.fetch_cookies();
                 }
             }
+            KeyCode::Char('L') => app.browser_open_storage(),
+            KeyCode::Char('y') if storage_focus => app.copy_storage_key_value(),
+            KeyCode::Char('R') if storage_focus => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.fetch_storage();
+                }
+            }
             KeyCode::Char('c') if dom_focus => app.copy_dom_selector(),
             KeyCode::Char('h') if dom_focus => {
                 if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
@@ -947,6 +961,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                         b.net_focus = false;
                         b.dom_focus = false;
                         b.cookies_focus = false;
+                        b.storage_focus = false;
                     }
                 } else {
                     app.focus_tree();

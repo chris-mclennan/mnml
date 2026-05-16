@@ -94,6 +94,11 @@ pub fn draw(
             "  cookies ({}) · ↑↓ select · y copy name=value · R re-fetch · esc back",
             b.cookies.len()
         )
+    } else if b.storage_focus {
+        format!(
+            "  storage ({}) · ↑↓ select · y copy key=value · R re-fetch · esc back",
+            b.storage.len()
+        )
     } else if b.net_focus {
         if b.net_filter_mode {
             format!(
@@ -113,7 +118,7 @@ pub fn draw(
             )
         }
     } else {
-        "  g navigate · ^R history · e eval · r reload · s shot · n net · D DOM · K cookies · esc → tree"
+        "  g navigate · ^R history · e eval · r reload · s shot · n net · D DOM · K cookies · L storage · esc → tree"
             .to_string()
     };
     lines.push(Line::from(Span::styled(
@@ -262,6 +267,60 @@ pub fn draw(
                         format!("  {expires}{same_site}"),
                         Style::default().fg(t.comment).bg(row_bg),
                     ),
+                ]));
+            }
+        }
+        frame.render_widget(
+            Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),
+            area,
+        );
+        return None;
+    }
+
+    if b.storage_focus {
+        // ── Web Storage panel: one row per localStorage / sessionStorage entry ──
+        if b.storage.is_empty() {
+            lines.push(Line::from(Span::styled(
+                if b.pending_storage.is_some() {
+                    "  fetching localStorage / sessionStorage…"
+                } else {
+                    "  (no Web Storage entries for this page — R re-fetches)"
+                },
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            )));
+        } else {
+            let sel = b.storage_sel.min(b.storage.len() - 1);
+            let first = if body_rows == 0 || sel < body_rows {
+                0
+            } else {
+                sel + 1 - body_rows
+            };
+            for (idx, e) in b.storage.iter().enumerate().skip(first).take(body_rows) {
+                let on = idx == sel;
+                let row_bg = if on { t.bg2 } else { t.bg_dark };
+                let marker = if on { "▶ " } else { "  " };
+                // Chip: `[L]` for localStorage (purple), `[S]` for
+                // sessionStorage (yellow). Both fixed-width so columns
+                // align across heterogeneous lists.
+                let (chip, chip_color) = if e.is_local {
+                    ("[L] ", t.purple)
+                } else {
+                    ("[S] ", t.yellow)
+                };
+                // Truncate the value column so a JWT-sized entry doesn't
+                // blow the row apart.
+                let value: String = e.value.chars().take(60).collect();
+                let value = if value.chars().count() < e.value.chars().count() {
+                    format!("{value}…")
+                } else {
+                    value
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(marker, Style::default().fg(t.cyan).bg(row_bg)),
+                    Span::styled(chip, Style::default().fg(chip_color).bg(row_bg)),
+                    Span::styled(e.key.clone(), Style::default().fg(t.cyan).bg(row_bg)),
+                    Span::styled("=", Style::default().fg(t.comment).bg(row_bg)),
+                    Span::styled(value, Style::default().fg(t.fg).bg(row_bg)),
                 ]));
             }
         }

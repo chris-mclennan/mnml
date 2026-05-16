@@ -114,6 +114,65 @@ impl NetEntry {
     }
 }
 
+/// One Web Storage entry (either `localStorage` or `sessionStorage`).
+/// Read via the eval flow in [`BrowserPane::fetch_storage`] —
+/// `Runtime.evaluate` against an IIFE that returns both storages so
+/// we don't need to enable the `DOMStorage` CDP domain or extract a
+/// securityOrigin from the page URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageEntry {
+    pub key: String,
+    pub value: String,
+    /// `true` = `localStorage`, `false` = `sessionStorage`. Drives the
+    /// row chip the renderer paints in front of each entry.
+    pub is_local: bool,
+}
+
+/// The IIFE we eval to read both storages in one Runtime.evaluate.
+/// Wrapped in try/catch since `file://` and some sandboxed origins
+/// throw on access; the App treats `{ error: <str> }` as a toast.
+pub(crate) const STORAGE_EVAL_EXPR: &str = "(function(){\
+try{\
+const l=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);l.push([k,localStorage.getItem(k)]);}\
+const s=[];for(let i=0;i<sessionStorage.length;i++){const k=sessionStorage.key(i);s.push([k,sessionStorage.getItem(k)]);}\
+return{local:l,session:s};\
+}catch(e){return{error:String(e)};}\
+})()";
+
+/// Parse the `Runtime.evaluate` reply's value (the IIFE return) into a
+/// flat `Vec<StorageEntry>` (local first, then session). Returns `Err`
+/// when the eval landed an `error` field (origin denied access) so the
+/// App can toast.
+pub fn parse_storage_eval(v: &serde_json::Value) -> Result<Vec<StorageEntry>, String> {
+    if let Some(e) = v.get("error").and_then(serde_json::Value::as_str) {
+        return Err(e.to_string());
+    }
+    let mut out = Vec::new();
+    let walk = |arr: Option<&serde_json::Value>, is_local: bool, out: &mut Vec<StorageEntry>| {
+        let Some(arr) = arr.and_then(serde_json::Value::as_array) else {
+            return;
+        };
+        for pair in arr {
+            let Some(pair) = pair.as_array() else {
+                continue;
+            };
+            if pair.len() < 2 {
+                continue;
+            }
+            let key = pair[0].as_str().unwrap_or("").to_string();
+            let value = pair[1].as_str().unwrap_or("").to_string();
+            out.push(StorageEntry {
+                key,
+                value,
+                is_local,
+            });
+        }
+    };
+    walk(v.get("local"), true, &mut out);
+    walk(v.get("session"), false, &mut out);
+    Ok(out)
+}
+
 /// One cookie returned by `Network.getCookies`. Projected from the
 /// CDP reply by [`parse_cookies`]; the rendered row carries
 /// `name=value` + the domain / path / expires + the
@@ -424,6 +483,19 @@ pub struct BrowserPane {
     /// can be matched (the panel shows a "fetching cookies…" hint until
     /// it lands).
     pub pending_cookies: Option<i64>,
+    /// `localStorage` + `sessionStorage` entries for the current page,
+    /// fetched lazily on the first `L` press (and refreshed on `R`
+    /// inside the panel). Populated via the eval flow described on
+    /// [`STORAGE_EVAL_EXPR`].
+    pub storage: Vec<StorageEntry>,
+    /// True ⇒ the `L` Web Storage panel is showing.
+    pub storage_focus: bool,
+    /// Selected storage row when `storage_focus`.
+    pub storage_sel: usize,
+    /// The id of an in-flight Web Storage `Runtime.evaluate` so its
+    /// reply can be routed to the storage panel (not the regular eval
+    /// log).
+    pub pending_storage: Option<i64>,
     /// Next JSON-RPC id for requests this pane issues.
     next_id: i64,
     /// The id of an in-flight `Runtime.evaluate`, so its reply can be matched.
@@ -474,6 +546,10 @@ impl BrowserPane {
             cookies_focus: false,
             cookies_sel: 0,
             pending_cookies: None,
+            storage: Vec::new(),
+            storage_focus: false,
+            storage_sel: 0,
+            pending_storage: None,
             next_id: 100,
             pending_eval: None,
             pending_screenshot: None,
@@ -878,6 +954,54 @@ impl BrowserPane {
     /// dispatcher to match a `DOM.getBoxModel` reply.
     pub fn is_pending_node_screenshot(&self, rpc_id: i64) -> bool {
         self.pending_node_screenshot == Some(rpc_id)
+    }
+
+    /// `L` (or refresh from the panel) — eval-fetch
+    /// `localStorage` + `sessionStorage` for the current top-level
+    /// page. Reply lands later as a `storage` vector (see
+    /// `App::apply_cdp_message`); errors (denied origins) become a
+    /// toast.
+    pub fn fetch_storage(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.push(LogKind::System, "fetching localStorage / sessionStorage…");
+        let id = self.send(|id| crate::cdp::evaluate(id, STORAGE_EVAL_EXPR));
+        self.pending_storage = Some(id);
+    }
+
+    /// True when `rpc_id` is the one stashed in `pending_storage` —
+    /// the App uses it to route the eval reply to the storage panel
+    /// instead of the regular Eval log.
+    pub fn is_pending_storage(&self, rpc_id: i64) -> bool {
+        self.pending_storage == Some(rpc_id)
+    }
+
+    /// Replace the storage list with `entries` (a fresh fetch result);
+    /// clamp the selection so it stays inside the new list.
+    pub fn set_storage(&mut self, entries: Vec<StorageEntry>) {
+        let n = entries.len();
+        self.storage = entries;
+        if self.storage_sel >= n {
+            self.storage_sel = n.saturating_sub(1);
+        }
+    }
+
+    /// Clamp + move the storage-panel selection by `delta`.
+    pub fn move_storage_sel(&mut self, delta: isize) {
+        if self.storage.is_empty() {
+            self.storage_sel = 0;
+            return;
+        }
+        let max = self.storage.len() - 1;
+        let cur = self.storage_sel.min(max) as isize;
+        self.storage_sel = (cur + delta).clamp(0, max as isize) as usize;
+    }
+
+    /// The currently-selected storage entry, if the panel is non-empty.
+    pub fn selected_storage(&self) -> Option<&StorageEntry> {
+        self.storage
+            .get(self.storage_sel.min(self.storage.len().saturating_sub(1)))
     }
 
     /// `K` (or refresh from the panel) — `Network.getCookies`; the
@@ -1524,6 +1648,58 @@ mod tests {
             .find(|m| m["method"] == "DOM.getBoxModel")
             .unwrap();
         assert_eq!(req["params"]["nodeId"], 42);
+    }
+
+    #[test]
+    fn parse_storage_eval_flattens_local_and_session() {
+        let v = serde_json::json!({
+            "local": [["theme", "dark"], ["user", "alice"]],
+            "session": [["tab", "1"]]
+        });
+        let entries = parse_storage_eval(&v).expect("ok");
+        assert_eq!(entries.len(), 3);
+        assert!(entries[0].is_local);
+        assert_eq!(entries[0].key, "theme");
+        assert_eq!(entries[0].value, "dark");
+        assert!(entries[1].is_local);
+        assert_eq!(entries[1].key, "user");
+        assert!(!entries[2].is_local); // sessionStorage
+        assert_eq!(entries[2].key, "tab");
+    }
+
+    #[test]
+    fn parse_storage_eval_propagates_error() {
+        let v = serde_json::json!({ "error": "SecurityError: blocked" });
+        let err = parse_storage_eval(&v).expect_err("err");
+        assert!(err.contains("SecurityError"));
+    }
+
+    #[test]
+    fn parse_storage_eval_skips_malformed_pairs() {
+        let v = serde_json::json!({
+            "local": [["good", "ok"], ["lonely"]],
+            "session": "not an array"
+        });
+        let entries = parse_storage_eval(&v).expect("ok");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, "good");
+    }
+
+    #[test]
+    fn fetch_storage_fires_runtime_evaluate_with_iife() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        let _ = drain_cdp(&rx);
+        p.fetch_storage();
+        assert!(p.pending_storage.is_some());
+        let msgs = drain_cdp(&rx);
+        let req = msgs
+            .iter()
+            .find(|m| m["method"] == "Runtime.evaluate")
+            .expect("evaluate");
+        let expr = req["params"]["expression"].as_str().unwrap_or("");
+        assert!(expr.contains("localStorage"));
+        assert!(expr.contains("sessionStorage"));
     }
 
     #[test]

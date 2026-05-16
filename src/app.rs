@@ -7872,6 +7872,48 @@ impl App {
         }
     }
 
+    /// `L` in a browser pane (or `browser.storage`) — fetch
+    /// `localStorage` + `sessionStorage` via Runtime.evaluate if we
+    /// haven't yet, and toggle into the Web Storage panel. (`R` in the
+    /// panel re-fetches; `y` copies the selected `key=value`.) Closes
+    /// the net / DOM / cookies panels if open.
+    pub fn browser_open_storage(&mut self) {
+        let Some(Pane::Browser(b)) = self
+            .panes
+            .iter_mut()
+            .find(|p| matches!(p, Pane::Browser(_)))
+        else {
+            self.toast("no browser pane open");
+            return;
+        };
+        if b.storage.is_empty() && b.pending_storage.is_none() {
+            b.fetch_storage();
+        }
+        b.storage_focus = true;
+        b.net_focus = false;
+        b.dom_focus = false;
+        b.cookies_focus = false;
+        b.storage_sel = b.storage_sel.min(b.storage.len().saturating_sub(1));
+    }
+
+    /// `y` in the storage panel — copy the selected entry's
+    /// `key=value` pair to the clipboard.
+    pub fn copy_storage_key_value(&mut self) {
+        let pair = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Browser(b)) => b
+                .selected_storage()
+                .map(|s| format!("{}={}", s.key, s.value)),
+            _ => None,
+        };
+        match pair {
+            Some(s) if !s.is_empty() => {
+                self.clipboard.set(s, false);
+                self.toast("copied storage entry");
+            }
+            _ => self.toast("no storage entry selected"),
+        }
+    }
+
     /// `K` in a browser pane (or `browser.cookies`) — fetch
     /// `Network.getCookies` if we haven't yet, and toggle into the
     /// cookies panel. (`R` in the panel re-fetches; `y` copies the
@@ -7891,6 +7933,7 @@ impl App {
         b.cookies_focus = true;
         b.net_focus = false;
         b.dom_focus = false;
+        b.storage_focus = false;
         b.cookies_sel = b.cookies_sel.min(b.cookies.len().saturating_sub(1));
     }
 
@@ -7928,6 +7971,8 @@ impl App {
         }
         b.dom_focus = true;
         b.net_focus = false;
+        b.cookies_focus = false;
+        b.storage_focus = false;
         b.dom_sel = b.dom_sel.min(b.dom.len().saturating_sub(1));
     }
 
@@ -8067,6 +8112,36 @@ impl App {
         use crate::browser_pane::LogKind;
         // A reply to a request we issued?
         if let Some(id) = v.get("id").and_then(serde_json::Value::as_i64) {
+            if matches!(self.panes.get(idx), Some(Pane::Browser(b)) if b.is_pending_storage(id)) {
+                // Web Storage eval reply (`L` panel). The result is a
+                // `RemoteObject` with `type:'object', value:<obj>` —
+                // already JSON-ified by `returnByValue:true`.
+                let value = v
+                    .get("result")
+                    .and_then(|r| r.get("result"))
+                    .and_then(|ro| ro.get("value"));
+                let parsed = value
+                    .map(crate::browser_pane::parse_storage_eval)
+                    .unwrap_or_else(|| Err("no value in reply".to_string()));
+                match parsed {
+                    Ok(entries) => {
+                        let n = entries.len();
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.pending_storage = None;
+                            b.set_storage(entries);
+                            b.push(LogKind::System, format!("storage loaded ({n} entries)"));
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.pending_storage = None;
+                            b.push(LogKind::ConsoleErr, format!("storage: {e}"));
+                        }
+                        self.toast(format!("storage: {e}"));
+                    }
+                }
+                return;
+            }
             if matches!(self.panes.get(idx), Some(Pane::Browser(b)) if b.pending_eval == Some(id)) {
                 let text = cdp_eval_result_text(&v);
                 if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
