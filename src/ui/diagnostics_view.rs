@@ -87,12 +87,15 @@ pub fn draw(
         Style::default().bg(t.bg_dark),
     )));
 
+    let body_start_offset = lines.len();
     let mut selected_row = lines.len();
+    let mut row_indices: Vec<usize> = Vec::with_capacity(d.items.len());
     for (idx, it) in d.items.iter().enumerate() {
         let sel = idx == d.selected;
         if sel {
             selected_row = lines.len();
         }
+        row_indices.push(lines.len());
         lines.push(item_line(&t, it, sel));
     }
 
@@ -105,6 +108,28 @@ pub fn draw(
     }
     let max_scroll = lines.len().saturating_sub(h.min(lines.len()));
     d.scroll = d.scroll.min(max_scroll);
+
+    // Record clickable rects for each visible data row.
+    for (idx, line_y) in row_indices.iter().enumerate() {
+        if *line_y < d.scroll || *line_y >= d.scroll + h {
+            continue;
+        }
+        let visible_y = line_y - d.scroll;
+        let screen_y = area.y.saturating_add(visible_y as u16);
+        if screen_y < area.y.saturating_add(area.height) {
+            app.rects.list_rows.push((
+                ratatui::layout::Rect {
+                    x: area.x,
+                    y: screen_y,
+                    width: area.width,
+                    height: 1,
+                },
+                pane_id,
+                idx,
+            ));
+        }
+    }
+    let _ = body_start_offset;
 
     let view: Vec<Line> = lines.into_iter().skip(d.scroll).take(h).collect();
     frame.render_widget(

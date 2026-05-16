@@ -190,7 +190,7 @@ pub fn draw(
                 width: area.width,
                 height: 1,
             };
-            app.rects.scm_rows.push((row_rect, pane_id, i));
+            app.rects.list_rows.push((row_rect, pane_id, i));
         }
         match row.kind {
             RowKind::Header => {

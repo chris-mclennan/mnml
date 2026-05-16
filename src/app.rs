@@ -1235,7 +1235,7 @@ pub struct PaneRects {
     /// SCM/CI pane (BB pipelines/PRs, GH actions/PRs). Cleared + rebuilt
     /// per render. Click on a row ⇒ select; click on a header row ⇒
     /// toggle collapse (sibling to keyboard Enter).
-    pub scm_rows: Vec<(Rect, PaneId, usize)>,
+    pub list_rows: Vec<(Rect, PaneId, usize)>,
     /// One entry per split divider, with enough info to drag-resize it.
     pub split_dividers: Vec<crate::layout::DividerHit>,
     pub statusline: Option<Rect>,

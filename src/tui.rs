@@ -2376,7 +2376,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // row: open in browser.
             if let Some(&(_, pid, flat_idx)) = app
                 .rects
-                .scm_rows
+                .list_rows
                 .iter()
                 .find(|(r, _, _)| contains(*r, x, y))
             {
@@ -2763,12 +2763,25 @@ fn contains(r: Rect, x: u16, y: u16) -> bool {
     x >= r.x && x < r.x.saturating_add(r.width) && y >= r.y && y < r.y.saturating_add(r.height)
 }
 
-/// Mouse click on an SCM/CI pane row. Routes to the right pane variant
-/// based on what's at `pane_id`. `flat_idx` is the index into the active
-/// view's flatten output. `is_double_click` ⇒ trigger the primary
-/// action (open in browser) on a data row.
+/// Mouse click on a list-style pane row. Dispatches based on the pane
+/// at `pane_id`. `flat_idx` is the index into either the active view's
+/// flatten output (SCM/CI panes) or directly into the pane's items vec
+/// (plain list panes). `is_double_click` ⇒ trigger the primary action.
 fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_double_click: bool) {
     use crate::pane::Pane;
+    // Plain list panes — set selected, optionally fire primary action.
+    if matches!(app.panes.get(pane_id), Some(Pane::Diagnostics(_))) {
+        if let Some(Pane::Diagnostics(d)) = app.panes.get_mut(pane_id)
+            && flat_idx < d.items.len()
+        {
+            d.selected = flat_idx;
+        }
+        if is_double_click {
+            app.jump_to_selected_diagnostic();
+        }
+        return;
+    }
+    // SCM/CI panes — header-vs-data dispatch with collapse + URL open.
     match app.panes.get(pane_id) {
         Some(Pane::BitbucketPipelines(_)) => {
             let flat = match app.bb_pipelines_view_mode {
