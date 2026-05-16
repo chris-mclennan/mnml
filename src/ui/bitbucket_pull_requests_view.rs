@@ -227,7 +227,7 @@ pub fn draw(
                 };
 
                 let mut spans = vec![
-                    Span::styled(" ", Style::default().bg(row_bg)),
+                    Span::styled("   ", Style::default().bg(row_bg)),
                     Span::styled(
                         format!("{state_glyph}  "),
                         Style::default()

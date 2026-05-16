@@ -208,7 +208,7 @@ pub fn draw(
                 let Some(pipe) = row.pipeline.as_ref() else {
                     let branch = row.branch_label.as_deref().unwrap_or("?");
                     lines.push(Line::from(vec![
-                        Span::styled(" ", Style::default().bg(row_bg)),
+                        Span::styled("   ", Style::default().bg(row_bg)),
                         Span::styled(
                             "·  ",
                             Style::default().fg(t.comment).bg(row_bg),
@@ -278,7 +278,7 @@ pub fn draw(
                 };
 
                 lines.push(Line::from(vec![
-                    Span::styled(" ", Style::default().bg(row_bg)),
+                    Span::styled("   ", Style::default().bg(row_bg)),
                     Span::styled(
                         format!("{glyph}  "),
                         Style::default()

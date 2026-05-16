@@ -950,6 +950,49 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     p.move_selection(i64::MAX / 2, max_idx);
                 }
             }
+            // Right (or `l`): expand a collapsed header.
+            KeyCode::Right | KeyCode::Char('l') => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::BitbucketPipelines(p)) => p.selected,
+                    _ => 0,
+                };
+                if let Some(row) = flat.get(sel)
+                    && row.kind == crate::ui::bitbucket_pipelines_view::RowKind::Header
+                    && let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i)
+                    && p.is_collapsed(&row.header_label)
+                {
+                    p.toggle_collapsed(&row.header_label);
+                }
+            }
+            // Left (or `h`): on an expanded header → collapse; on a child
+            // row → jump up to the parent header (tree convention).
+            KeyCode::Left | KeyCode::Char('h') => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::BitbucketPipelines(p)) => p.selected,
+                    _ => 0,
+                };
+                let header_kind = crate::ui::bitbucket_pipelines_view::RowKind::Header;
+                if let Some(row) = flat.get(sel) {
+                    if row.kind == header_kind {
+                        if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i)
+                            && !p.is_collapsed(&row.header_label)
+                        {
+                            p.toggle_collapsed(&row.header_label);
+                        }
+                    } else {
+                        let parent_idx = (0..sel)
+                            .rev()
+                            .find(|&j| {
+                                flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
+                            });
+                        if let Some(idx) = parent_idx
+                            && let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i)
+                        {
+                            p.selected = idx;
+                        }
+                    }
+                }
+            }
             KeyCode::Enter => {
                 // Header row ⇒ toggle collapse. Data row ⇒ open URL.
                 let header_label = flat.get(
@@ -1025,6 +1068,44 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     p.move_selection(i64::MAX / 2, max_idx);
                 }
             }
+            KeyCode::Right | KeyCode::Char('l') => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::BitbucketPullRequests(p)) => p.selected,
+                    _ => 0,
+                };
+                if let Some(row) = flat.get(sel)
+                    && row.kind == crate::ui::bitbucket_pull_requests_view::RowKind::Header
+                    && let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i)
+                    && p.is_collapsed(&row.header_label)
+                {
+                    p.toggle_collapsed(&row.header_label);
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::BitbucketPullRequests(p)) => p.selected,
+                    _ => 0,
+                };
+                let header_kind = crate::ui::bitbucket_pull_requests_view::RowKind::Header;
+                if let Some(row) = flat.get(sel) {
+                    if row.kind == header_kind {
+                        if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i)
+                            && !p.is_collapsed(&row.header_label)
+                        {
+                            p.toggle_collapsed(&row.header_label);
+                        }
+                    } else {
+                        let parent_idx = (0..sel).rev().find(|&j| {
+                            flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
+                        });
+                        if let Some(idx) = parent_idx
+                            && let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i)
+                        {
+                            p.selected = idx;
+                        }
+                    }
+                }
+            }
             KeyCode::Enter => {
                 let header_label = flat.get(
                     app.panes
@@ -1096,6 +1177,44 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::End | KeyCode::Char('G') => {
                 if let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(i) {
                     p.move_selection(i64::MAX / 2, max_idx);
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::GithubPullRequests(p)) => p.selected,
+                    _ => 0,
+                };
+                if let Some(row) = flat.get(sel)
+                    && row.kind == crate::ui::github_pull_requests_view::RowKind::Header
+                    && let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(i)
+                    && p.is_collapsed(&row.header_label)
+                {
+                    p.toggle_collapsed(&row.header_label);
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::GithubPullRequests(p)) => p.selected,
+                    _ => 0,
+                };
+                let header_kind = crate::ui::github_pull_requests_view::RowKind::Header;
+                if let Some(row) = flat.get(sel) {
+                    if row.kind == header_kind {
+                        if let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(i)
+                            && !p.is_collapsed(&row.header_label)
+                        {
+                            p.toggle_collapsed(&row.header_label);
+                        }
+                    } else {
+                        let parent_idx = (0..sel).rev().find(|&j| {
+                            flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
+                        });
+                        if let Some(idx) = parent_idx
+                            && let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(i)
+                        {
+                            p.selected = idx;
+                        }
+                    }
                 }
             }
             KeyCode::Enter => {
@@ -1171,6 +1290,44 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::End | KeyCode::Char('G') => {
                 if let Some(Pane::GithubActions(p)) = app.panes.get_mut(i) {
                     p.move_selection(i64::MAX / 2, max_idx);
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::GithubActions(p)) => p.selected,
+                    _ => 0,
+                };
+                if let Some(row) = flat.get(sel)
+                    && row.kind == crate::ui::github_actions_view::RowKind::Header
+                    && let Some(Pane::GithubActions(p)) = app.panes.get_mut(i)
+                    && p.is_collapsed(&row.header_label)
+                {
+                    p.toggle_collapsed(&row.header_label);
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                let sel = match app.panes.get(i) {
+                    Some(Pane::GithubActions(p)) => p.selected,
+                    _ => 0,
+                };
+                let header_kind = crate::ui::github_actions_view::RowKind::Header;
+                if let Some(row) = flat.get(sel) {
+                    if row.kind == header_kind {
+                        if let Some(Pane::GithubActions(p)) = app.panes.get_mut(i)
+                            && !p.is_collapsed(&row.header_label)
+                        {
+                            p.toggle_collapsed(&row.header_label);
+                        }
+                    } else {
+                        let parent_idx = (0..sel).rev().find(|&j| {
+                            flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
+                        });
+                        if let Some(idx) = parent_idx
+                            && let Some(Pane::GithubActions(p)) = app.panes.get_mut(i)
+                        {
+                            p.selected = idx;
+                        }
+                    }
                 }
             }
             KeyCode::Enter => {
