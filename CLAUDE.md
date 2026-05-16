@@ -2119,6 +2119,19 @@ comment_count is hardcoded 0 because Azure's list endpoint doesn't
 return it (would need a per-PR `/threads` call). Free-tier signup
 walk-through in conversation history if a real test is needed.
 
+**GitHub workflow log viewer** — `L` chord on a GH Actions row opens
+the same `Pane::BitbucketPipelineLog` variant the BB pipeline-log
+viewer uses; the pane now carries a `host: LogHost` tag (`Bitbucket`
+or `Github`) and refetch dispatches based on it. New
+`crate::github::api::fetch_combined_run_log(client, auth, owner,
+repo, run_id)` walks the run's jobs via `/actions/runs/{id}/jobs`
+then each job's `/actions/jobs/{id}/logs` (plain text), concatenating
+with `══ job N: <name> (state) ══` headers — sibling to BB's
+fetch_combined_pipeline_log. 404/410 per-job logs ⇒ "(no log)"
+inline so a half-finished run still renders. GitLab + Azure DevOps
+log fetchers follow the same shape; deferred to a future commit
+to keep this one bounded.
+
 **Cross-host PR picker: Tab → cross-nav-to-pipeline** — the cross-host
 PR picker (`pr.picker`, `<leader>P p`) previously only opened the
 chosen PR's web URL on Enter. Tab now triggers a secondary accept

@@ -1934,6 +1934,13 @@ fn builtin_commands() -> Vec<Command> {
         run: |app| app.open_bitbucket_pipeline_log(),
     });
     cmds.push(Command {
+        id: "github.run_log",
+        title: "GitHub: open log for selected workflow run",
+        group: "github",
+        keys: &[],
+        run: |app| app.open_github_run_log(),
+    });
+    cmds.push(Command {
         id: "bitbucket.jump_pr_to_pipeline",
         title: "Bitbucket: PR → pipeline on same branch",
         group: "bitbucket",

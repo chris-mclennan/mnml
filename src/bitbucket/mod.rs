@@ -37,7 +37,7 @@ pub mod pipelines_pane;
 pub mod pull_requests_pane;
 
 pub use api::{PipelineRecord, PipelineState, PullRequestRecord, PullRequestState};
-pub use log_pane::{PipelineLogEvent, PipelineLogPane, PipelineLogState};
+pub use log_pane::{LogHost, PipelineLogEvent, PipelineLogPane, PipelineLogState};
 pub use pipelines_pane::{BitbucketPipelinesPane, PipelineViewMode};
 pub use pull_requests_pane::{BitbucketPullRequestsPane, PrViewMode};
 
@@ -192,46 +192,53 @@ fn run_thread(
     while !cancel.load(Ordering::Relaxed) {
         wake.store(false, Ordering::Relaxed);
 
-        // ── Cross-repo: my open PRs (one list call + per-PR detail
-        // calls to populate accurate participants — the list endpoint
-        // returns stale ones, per James's bbwatch.py note). ────────────
+        // ── Cross-repo: my open PRs. Bitbucket retired the
+        // user-level `/pullrequests/{aid}` endpoint, so we iterate the
+        // configured workspaces (deduped) and merge — same end result.
+        // Each PR is enriched via the detail endpoint so the ✓N / ✗N
+        // counts are accurate (the list endpoint returns stale ones).
         if let Some(aid) = account_id.as_deref() {
-            match api::fetch_my_open_pull_requests(&client, &auth_header, aid) {
-                Ok(mut prs) => {
-                    if !have_sent_connected {
-                        have_sent_connected = true;
-                        let _ = tx.send(BitbucketEvent::Connected);
-                    }
-                    // Enrich each PR with detail-endpoint data so the
-                    // ✓N / ✗N counts are accurate. Bounded by the
-                    // pagelen=50 on the list call. Failures per-PR are
-                    // silent — we just keep the stale row from the list.
-                    for pr in prs.iter_mut() {
-                        if cancel.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        if let Ok(detail) = api::fetch_pr_detail(
-                            &client,
-                            &auth_header,
-                            &pr.workspace,
-                            &pr.slug,
-                            pr.id,
-                        ) {
-                            pr.reviewer_count = detail.reviewer_count;
-                            pr.approved_count = detail.approved_count;
-                            pr.changes_count = detail.changes_count;
-                            pr.comment_count = detail.comment_count;
-                            pr.task_count = detail.task_count;
-                            // The list endpoint already gave us source / dest
-                            // branches; detail has them too but the values
-                            // should match.
-                        }
-                    }
-                    let _ = tx.send(BitbucketEvent::MyPullRequests(prs));
+            let mut workspaces: Vec<String> =
+                cfg.repos.iter().map(|r| r.workspace.clone()).collect();
+            workspaces.sort();
+            workspaces.dedup();
+            let mut all_mine: Vec<PullRequestRecord> = Vec::new();
+            let mut had_any_error: Option<String> = None;
+            for ws in &workspaces {
+                if cancel.load(Ordering::Relaxed) {
+                    return;
                 }
-                Err(e) => {
-                    let _ = tx.send(BitbucketEvent::Failed(format!("my prs: {e}")));
+                match api::fetch_my_open_pull_requests_for_workspace(&client, &auth_header, ws, aid)
+                {
+                    Ok(prs) => {
+                        if !have_sent_connected {
+                            have_sent_connected = true;
+                            let _ = tx.send(BitbucketEvent::Connected);
+                        }
+                        all_mine.extend(prs);
+                    }
+                    Err(e) => {
+                        had_any_error = Some(format!("{ws}: my prs: {e}"));
+                    }
                 }
+            }
+            for pr in all_mine.iter_mut() {
+                if cancel.load(Ordering::Relaxed) {
+                    return;
+                }
+                if let Ok(detail) =
+                    api::fetch_pr_detail(&client, &auth_header, &pr.workspace, &pr.slug, pr.id)
+                {
+                    pr.reviewer_count = detail.reviewer_count;
+                    pr.approved_count = detail.approved_count;
+                    pr.changes_count = detail.changes_count;
+                    pr.comment_count = detail.comment_count;
+                    pr.task_count = detail.task_count;
+                }
+            }
+            let _ = tx.send(BitbucketEvent::MyPullRequests(all_mine));
+            if let Some(msg) = had_any_error {
+                let _ = tx.send(BitbucketEvent::Failed(msg));
             }
         }
 

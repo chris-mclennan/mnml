@@ -102,20 +102,20 @@ pub fn fetch_account_id(
         .ok_or_else(|| "no account_id in /user response".to_string())
 }
 
-/// Pull every non-merged pull request authored by `account_id` across
-/// every accessible repo (cross-repo — NOT scoped to configured repos).
-/// Each PR's `workspace` and `slug` are pulled out of
-/// `destination.repository.full_name`. James's `--mine` mode.
-pub fn fetch_my_open_pull_requests(
+/// Pull every open pull request authored by `account_id` in one
+/// workspace. Bitbucket replaced the cross-account `/pullrequests/{aid}`
+/// endpoint (404s now) with the workspace-scoped form below — so callers
+/// iterate the configured workspaces and merge.
+pub fn fetch_my_open_pull_requests_for_workspace(
     client: &reqwest::blocking::Client,
     auth_header: &str,
+    workspace: &str,
     account_id: &str,
 ) -> Result<Vec<PullRequestRecord>, String> {
     use std::borrow::Cow;
-    // Bitbucket needs the account_id URL-encoded — it can contain `:` etc.
     let encoded: Cow<str> = url_encode_account_id(account_id);
     let url = format!(
-        "{API_BASE}/pullrequests/{encoded}?state=OPEN&state=DECLINED&state=SUPERSEDED&sort=-updated_on&pagelen=50",
+        "{API_BASE}/workspaces/{workspace}/pullrequests/{encoded}?state=OPEN&sort=-updated_on&pagelen=50",
     );
     let resp = client
         .get(&url)

@@ -11,11 +11,23 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+/// Which host's API the pane should query on refetch. The pane carries
+/// identifying strings (workspace/slug/uuid in the BB case, owner/repo/
+/// run-id for GH, …); this enum tells the refetch path which API to call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogHost {
+    Bitbucket,
+    Github,
+}
+
 #[derive(Debug)]
 pub struct PipelineLogPane {
     /// e.g. `exampleorg/example-api · build #4521`
     pub title: String,
-    /// Workspace / slug / pipeline UUID. Stashed so `r` can re-fetch.
+    /// Which host this pane is wired to.
+    pub host: LogHost,
+    /// Host-specific id strings. For BB: `workspace` / `slug` / `pipeline_uuid`.
+    /// For GH: `owner` / `repo` / `run_id-as-string`.
     pub workspace: String,
     pub slug: String,
     pub pipeline_uuid: String,
@@ -50,8 +62,32 @@ impl PipelineLogPane {
         job_id: u64,
         cancel: Arc<AtomicBool>,
     ) -> Self {
+        Self::new_with_host(
+            title,
+            LogHost::Bitbucket,
+            workspace,
+            slug,
+            pipeline_uuid,
+            web_url,
+            job_id,
+            cancel,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_host(
+        title: impl Into<String>,
+        host: LogHost,
+        workspace: String,
+        slug: String,
+        pipeline_uuid: String,
+        web_url: String,
+        job_id: u64,
+        cancel: Arc<AtomicBool>,
+    ) -> Self {
         PipelineLogPane {
             title: title.into(),
+            host,
             workspace,
             slug,
             pipeline_uuid,

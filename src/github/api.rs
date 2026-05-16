@@ -52,6 +52,91 @@ pub fn auth_header_value(token: &str) -> String {
     format!("Bearer {}", token.trim())
 }
 
+/// Walk every job of a workflow run and concatenate each job's `/logs`
+/// output into one big string, with `══ job N: <name> (state) ══`
+/// separators between them. Sibling to `bitbucket::fetch_combined_pipeline_log`.
+///
+/// GitHub's per-job logs endpoint returns plain text (the alternative —
+/// the whole-run logs endpoint — returns a ZIP that'd require unzipping).
+pub fn fetch_combined_run_log(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    owner: &str,
+    repo: &str,
+    run_id: u64,
+) -> Result<String, String> {
+    let jobs_url =
+        format!("{API_BASE}/repos/{owner}/{repo}/actions/runs/{run_id}/jobs?per_page=100");
+    let resp = client
+        .get(&jobs_url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .map_err(|e| format!("jobs fetch: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("jobs fetch: HTTP {}", resp.status()));
+    }
+    let body = resp.text().map_err(|e| format!("jobs body: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("jobs json: {e}"))?;
+    let jobs = v
+        .get("jobs")
+        .and_then(|x| x.as_array())
+        .ok_or_else(|| "jobs json: no `jobs` array".to_string())?;
+    let mut out = String::new();
+    for (i, job) in jobs.iter().enumerate() {
+        let job_id = job
+            .get("id")
+            .and_then(|x| x.as_u64())
+            .ok_or_else(|| format!("job {}: missing id", i + 1))?;
+        let job_name = job
+            .get("name")
+            .and_then(|s| s.as_str())
+            .unwrap_or("(unnamed job)");
+        let status = job.get("status").and_then(|s| s.as_str()).unwrap_or("?");
+        let conclusion = job.get("conclusion").and_then(|s| s.as_str()).unwrap_or("");
+        let state_str = if conclusion.is_empty() {
+            status.to_string()
+        } else {
+            format!("{status}/{conclusion}")
+        };
+        out.push_str(&format!(
+            "\n══ job {}: {job_name}  ({state_str}) ══\n",
+            i + 1
+        ));
+        let log_url = format!("{API_BASE}/repos/{owner}/{repo}/actions/jobs/{job_id}/logs");
+        let resp = client
+            .get(&log_url)
+            .header("Authorization", auth_header)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send()
+            .map_err(|e| format!("job {} log: {e}", i + 1))?;
+        // 404 = "no log available yet" (queued / cancelled before run).
+        // 410 = "log expired" (GH expires logs after ~90 days).
+        if matches!(resp.status().as_u16(), 404 | 410) {
+            out.push_str(&format!("(no log: HTTP {})\n", resp.status()));
+            continue;
+        }
+        if !resp.status().is_success() {
+            out.push_str(&format!("(log fetch failed: HTTP {})\n", resp.status()));
+            continue;
+        }
+        let text = resp
+            .text()
+            .map_err(|e| format!("job {} body: {e}", i + 1))?;
+        out.push_str(&text);
+        if !text.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    if out.is_empty() {
+        out.push_str("(this workflow run has no jobs yet)\n");
+    }
+    Ok(out)
+}
+
 /// Pull every open pull request for one repo. Sorted newest-first by
 /// `updated_at` — same default as GitHub's web UI.
 pub fn fetch_open_pull_requests(

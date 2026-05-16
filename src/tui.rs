@@ -1454,6 +1454,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('y') => app.copy_selected_github_run_url(),
             KeyCode::Char('r') => app.refresh_active_github_pane(),
             KeyCode::Char('P') => app.jump_from_gh_run_to_pr(),
+            KeyCode::Char('L') => app.open_github_run_log(),
             KeyCode::Char('v') => {
                 let new_mode = app.gh_actions_view_mode.cycle();
                 app.gh_actions_view_mode = new_mode;

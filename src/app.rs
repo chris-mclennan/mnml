@@ -17715,6 +17715,62 @@ impl App {
     /// `Pane::BitbucketPipelineLog` and kick off a background fetch of
     /// the combined per-step build log. Errors land in the pane's `Failed`
     /// state (e.g. missing auth env var, network, 404).
+    /// `L` on the selected GitHub workflow row — open a log viewer
+    /// pane and kick off a background fetch of the run's combined
+    /// per-job log. Sibling of [`Self::open_bitbucket_pipeline_log`];
+    /// reuses the same `Pane::BitbucketPipelineLog` variant via the
+    /// new `LogHost::Github` tag.
+    pub fn open_github_run_log(&mut self) {
+        let id = match self.active {
+            Some(id) => id,
+            None => {
+                self.toast("no pane focused");
+                return;
+            }
+        };
+        let Some(Pane::GithubActions(pane)) = self.panes.get(id) else {
+            self.toast("not a GitHub Actions pane");
+            return;
+        };
+        let Some(run) = crate::ui::github_actions_view::selected_run(self, pane) else {
+            self.toast("no run selected");
+            return;
+        };
+        let title = format!("{}/{} · run #{}", run.owner, run.repo, run.run_number);
+        let job_id = self.pipeline_log_next_job;
+        self.pipeline_log_next_job = self.pipeline_log_next_job.wrapping_add(1);
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let log_pane = crate::bitbucket::PipelineLogPane::new_with_host(
+            title,
+            crate::bitbucket::LogHost::Github,
+            run.owner.clone(),
+            run.repo.clone(),
+            run.id.to_string(),
+            run.web_url.clone(),
+            job_id,
+            cancel.clone(),
+        );
+        let pane_v = Pane::BitbucketPipelineLog(log_pane);
+        let new_id = self.split_leaf_with(id, crate::layout::SplitDir::Horizontal, pane_v);
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+        let auth_env = self
+            .config
+            .github
+            .auth_env
+            .clone()
+            .unwrap_or_else(|| "GITHUB_TOKEN".to_string());
+        self.spawn_log_fetch_inner(
+            job_id,
+            crate::bitbucket::LogHost::Github,
+            auth_env,
+            run.owner,
+            run.repo,
+            run.id.to_string(),
+            cancel,
+        );
+    }
+
     pub fn open_bitbucket_pipeline_log(&mut self) {
         let id = match self.active {
             Some(id) => id,
@@ -17774,17 +17830,40 @@ impl App {
         pipeline_uuid: String,
         cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) {
-        let tx = self.ensure_pipeline_log_chan_tx();
-        // Reuse the BB config's auth_env so the user has one place to
-        // configure their token (`[bitbucket] auth_env = "..."`).
         let auth_env = self
             .config
             .bitbucket
             .auth_env
             .clone()
             .unwrap_or_else(|| "BITBUCKET_TOKEN".to_string());
+        self.spawn_log_fetch_inner(
+            job_id,
+            crate::bitbucket::LogHost::Bitbucket,
+            auth_env,
+            workspace,
+            slug,
+            pipeline_uuid,
+            cancel,
+        );
+    }
+
+    /// Host-aware sibling to `spawn_bitbucket_pipeline_log_fetch`. For BB
+    /// the three id strings are (workspace, slug, pipeline_uuid); for GH
+    /// they're (owner, repo, run_id-as-string).
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_log_fetch_inner(
+        &mut self,
+        job_id: u64,
+        host: crate::bitbucket::LogHost,
+        auth_env: String,
+        id1: String,
+        id2: String,
+        id3: String,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let tx = self.ensure_pipeline_log_chan_tx();
         std::thread::spawn(move || {
-            use crate::bitbucket::PipelineLogEvent;
+            use crate::bitbucket::{LogHost, PipelineLogEvent};
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 return;
             }
@@ -17798,24 +17877,56 @@ impl App {
                     return;
                 }
             };
-            let auth_header = crate::bitbucket::api::auth_header_value(&token);
-            let client = match crate::bitbucket::api::build_client() {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = tx.send(PipelineLogEvent::Failed { job_id, err: e });
-                    return;
-                }
-            };
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 return;
             }
-            match crate::bitbucket::api::fetch_combined_pipeline_log(
-                &client,
-                &auth_header,
-                &workspace,
-                &slug,
-                &pipeline_uuid,
-            ) {
+            let result = match host {
+                LogHost::Bitbucket => {
+                    let auth_header = crate::bitbucket::api::auth_header_value(&token);
+                    let client = match crate::bitbucket::api::build_client() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            let _ = tx.send(PipelineLogEvent::Failed { job_id, err: e });
+                            return;
+                        }
+                    };
+                    crate::bitbucket::api::fetch_combined_pipeline_log(
+                        &client,
+                        &auth_header,
+                        &id1,
+                        &id2,
+                        &id3,
+                    )
+                }
+                LogHost::Github => {
+                    let auth_header = crate::github::api::auth_header_value(&token);
+                    let client = match crate::github::api::build_client() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            let _ = tx.send(PipelineLogEvent::Failed { job_id, err: e });
+                            return;
+                        }
+                    };
+                    let run_id: u64 = match id3.parse() {
+                        Ok(n) => n,
+                        Err(_) => {
+                            let _ = tx.send(PipelineLogEvent::Failed {
+                                job_id,
+                                err: format!("bad GH run_id: {id3}"),
+                            });
+                            return;
+                        }
+                    };
+                    crate::github::api::fetch_combined_run_log(
+                        &client,
+                        &auth_header,
+                        &id1,
+                        &id2,
+                        run_id,
+                    )
+                }
+            };
+            match result {
                 Ok(log) => {
                     let _ = tx.send(PipelineLogEvent::Done { job_id, log });
                 }
@@ -17892,20 +18003,29 @@ impl App {
         let new_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let new_job = self.pipeline_log_next_job;
         self.pipeline_log_next_job = self.pipeline_log_next_job.wrapping_add(1);
-        let workspace = pane.workspace.clone();
-        let slug = pane.slug.clone();
-        let pipeline_uuid = pane.pipeline_uuid.clone();
+        let host = pane.host;
+        let id1 = pane.workspace.clone();
+        let id2 = pane.slug.clone();
+        let id3 = pane.pipeline_uuid.clone();
         pane.job_id = new_job;
         pane.cancel = new_cancel.clone();
         pane.state = crate::bitbucket::PipelineLogState::Fetching;
         pane.scroll = 0;
-        self.spawn_bitbucket_pipeline_log_fetch(
-            new_job,
-            workspace,
-            slug,
-            pipeline_uuid,
-            new_cancel,
-        );
+        let auth_env = match host {
+            crate::bitbucket::LogHost::Bitbucket => self
+                .config
+                .bitbucket
+                .auth_env
+                .clone()
+                .unwrap_or_else(|| "BITBUCKET_TOKEN".to_string()),
+            crate::bitbucket::LogHost::Github => self
+                .config
+                .github
+                .auth_env
+                .clone()
+                .unwrap_or_else(|| "GITHUB_TOKEN".to_string()),
+        };
+        self.spawn_log_fetch_inner(new_job, host, auth_env, id1, id2, id3, new_cancel);
     }
 
     /// `Enter` in the pipeline-log pane — open the pipeline's web URL.
