@@ -7776,6 +7776,14 @@ impl App {
                 {
                     b.url = url.to_string();
                     b.push(LogKind::Nav, format!("→ {url}"));
+                    // DevTools' default: don't carry the prior page's
+                    // network log + DOM into the new page. Mirrors the
+                    // "Preserve log: off" Chrome default. Selections reset
+                    // so the panels open at the top of the new page's data.
+                    b.net.clear();
+                    b.net_sel = 0;
+                    b.dom.clear();
+                    b.dom_sel = 0;
                 }
             }
             "Target.targetCreated" => {

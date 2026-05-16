@@ -1672,6 +1672,10 @@ current target isn't the main page, so subsequent `Page.navigate` / `Runtime.eva
 appends `--headless=new --no-sandbox --disable-gpu` to Chrome's flags. The pane still receives network /
 console / DOM / target events and can be driven by `g` / `e` / `s` / `D` / etc; the only difference is no
 visible window. Takes effect on the *next* `browser.open` — in-flight panes are unaffected.
+**Clear-on-navigate** — on a main-frame `Page.frameNavigated` event the browser pane's `net` + `dom`
+lists and their selections reset to empty / 0. Mirrors Chrome DevTools' default ("Preserve log: off") —
+the prior page's network log / DOM tree don't pile up across navigations. `g`-style navigation usually
+means "I'm debugging the new page" so a clean slate is the principle-of-least-surprise default.
 **Right-click context menus — done:** `src/context_menu.rs` (`ContextMenu{title,items:Vec<MenuItem{label,
 action: MenuAction}>,anchor,selected}`) + `src/ui/context_menu.rs` (a bordered floating list at the click,
 clamped to screen, selected row highlighted). Right-click a tree file → Open / Open in split / Reveal in
