@@ -175,6 +175,13 @@ pub fn draw(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
+    // Auto-fit the branch/ref column. Other columns are fixed width:
+    // indent 4 · glyph 3 · #N 7 · dur 9 · age 12 · creator 24 ·
+    // trigger 10 = 69 fixed. Long refs like `PR #4545 TE-13216-…` now
+    // stretch into the spare horizontal real estate instead of being
+    // chopped at 17.
+    let ref_w = (area.width as usize).saturating_sub(69).clamp(15, 80);
+
     // Per-row screen position so mouse clicks can map back to a flat
     // row index. lines.len() is the y-offset where the *next* line
     // lands inside `area`.
@@ -275,7 +282,7 @@ pub fn draw(
                     .as_deref()
                     .or(pipe.target_ref.as_deref())
                     .unwrap_or("(no ref)");
-                let target = truncate(ref_text, 16);
+                let target = truncate(ref_text, ref_w.saturating_sub(1));
                 let dur = pipe
                     .duration_secs
                     .map(format_duration_secs)
@@ -311,7 +318,7 @@ pub fn draw(
                         Style::default().fg(t.fg).bg(row_bg),
                     ),
                     Span::styled(
-                        format!("{target:<17}"),
+                        format!("{target:<width$}", width = ref_w),
                         Style::default().fg(t.cyan).bg(row_bg),
                     ),
                     Span::styled(

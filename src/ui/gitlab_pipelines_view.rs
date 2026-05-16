@@ -139,6 +139,9 @@ pub fn draw(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
+    // Auto-fit the ref column: fixed cols ~55 (indent 4 · glyph 3 ·
+    // #N 7 · sha 10 · dur 9 · age 10 · trailing slack 12).
+    let ref_w = (area.width as usize).saturating_sub(55).clamp(15, 80);
     let body_start_offset = lines.len() as u16;
     for (visible_i, (i, row)) in flat
         .iter()
@@ -254,7 +257,11 @@ pub fn draw(
                         Style::default().fg(t.fg).bg(row_bg),
                     ),
                     Span::styled(
-                        format!("{ref_text:<17}"),
+                        format!(
+                            "{:<width$}",
+                            truncate(ref_text, ref_w.saturating_sub(1)),
+                            width = ref_w,
+                        ),
                         Style::default().fg(t.cyan).bg(row_bg),
                     ),
                     Span::styled(
@@ -368,6 +375,15 @@ pub fn selected_pipeline(
         crate::gitlab::GlPipelineViewMode::PerBranch => flatten_branch_pipelines(app),
     };
     flat.get(pane.selected).and_then(|r| r.pipeline.clone())
+}
+
+fn truncate(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+    out.push('…');
+    out
 }
 
 fn humanize_age(ms: i64) -> String {

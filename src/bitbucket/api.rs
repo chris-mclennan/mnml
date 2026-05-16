@@ -604,10 +604,38 @@ fn project_pipeline(p: RawPipeline, workspace: &str, slug: &str) -> PipelineReco
             (Some(s), Some(e)) if e >= s => Some(((e - s) / 1000) as u64),
             _ => None,
         });
-    let target_ref = p
-        .target
-        .as_ref()
-        .and_then(|t| t.ref_name.clone().or_else(|| t.branch.clone()));
+    let target_ref = p.target.as_ref().and_then(|t| {
+        // 1. Branch build → branch name.
+        if let Some(ref_name) = t.ref_name.clone().or_else(|| t.branch.clone()) {
+            return Some(ref_name);
+        }
+        // 2. PR build → `PR #1234 (source→dest)` or just `PR #1234`.
+        if let Some(pr_id) = t.pullrequest.as_ref().and_then(|p| p.id) {
+            let src = t
+                .source_branch
+                .clone()
+                .or_else(|| t.source.as_ref().and_then(extract_branch_name));
+            let dst = t
+                .destination_branch
+                .clone()
+                .or_else(|| t.destination.as_ref().and_then(extract_branch_name));
+            return Some(match (src, dst) {
+                (Some(s), Some(d)) => format!("PR #{pr_id} {s}→{d}"),
+                (Some(s), None) => format!("PR #{pr_id} {s}"),
+                _ => format!("PR #{pr_id}"),
+            });
+        }
+        // 3. Custom build → the selector's pattern (the pipeline name).
+        if let Some(sel) = t.selector.as_ref() {
+            if let Some(pat) = sel.pattern.clone() {
+                return Some(format!("custom: {pat}"));
+            }
+            if let Some(kind) = sel.kind.clone() {
+                return Some(format!("custom: {kind}"));
+            }
+        }
+        None
+    });
     let target_kind = p
         .target
         .as_ref()
@@ -877,13 +905,52 @@ struct RawStateResult {
 
 #[derive(Debug, Deserialize)]
 struct RawTarget {
-    // Newer payload form.
+    // Branch-build shape: `{ref_type: "branch", ref_name: "main", ...}`.
     ref_name: Option<String>,
     ref_type: Option<String>,
-    // Legacy form some older repos still emit.
+    // Older branch-build form some BB tenants still emit.
     branch: Option<String>,
     r#type: Option<String>,
     commit: Option<RawCommit>,
+    // PR-build shape: `{type: "pipeline_pullrequest_target",
+    // pullrequest: {id, ...}, source: <variant>, destination: <variant>}`.
+    // BB returns the source/destination as either a bare branch-name
+    // string OR `{branch: {name}}` — keep it as raw JSON and resolve
+    // when projecting the record.
+    pullrequest: Option<RawTargetPr>,
+    source: Option<serde_json::Value>,
+    destination: Option<serde_json::Value>,
+    // Some PR-build payloads use flat `source_branch` / `destination_branch`
+    // strings at the target level instead of nesting under `source`/`destination`.
+    source_branch: Option<String>,
+    destination_branch: Option<String>,
+    // Custom-build shape: `{type: "pipeline_commit_target",
+    // selector: {type: "custom", pattern: "my-pipeline"}, commit: {...}}`.
+    // The selector pattern is the only human-readable identifier.
+    selector: Option<RawTargetSelector>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawTargetPr {
+    id: Option<u64>,
+}
+
+fn extract_branch_name(v: &serde_json::Value) -> Option<String> {
+    // Accept either `"branch-name"` (string) or `{branch: {name: "..."}}`.
+    if let Some(s) = v.as_str() {
+        return Some(s.to_string());
+    }
+    v.get("branch")
+        .and_then(|b| b.get("name"))
+        .and_then(|n| n.as_str())
+        .map(str::to_string)
+}
+
+#[derive(Debug, Deserialize)]
+struct RawTargetSelector {
+    pattern: Option<String>,
+    #[serde(rename = "type")]
+    kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1191,6 +1258,81 @@ mod tests {
         }"#;
         let rows = parse_pipelines_response(body, "ws", "repo").unwrap();
         assert_eq!(rows[0].duration_secs, Some(150));
+    }
+
+    #[test]
+    fn pr_build_target_ref_renders_pr_with_branch_arrow() {
+        // PR build with source + destination as nested `{branch: {name}}`.
+        let body = r#"{
+          "values": [{
+            "build_number": 99,
+            "state": { "name": "COMPLETED", "result": { "name": "SUCCESSFUL" } },
+            "target": {
+              "type": "pipeline_pullrequest_target",
+              "pullrequest": { "id": 4545 },
+              "source":      { "branch": { "name": "TE-13216-foo" } },
+              "destination": { "branch": { "name": "main" } }
+            }
+          }]
+        }"#;
+        let rows = parse_pipelines_response(body, "ws", "repo").unwrap();
+        assert_eq!(
+            rows[0].target_ref.as_deref(),
+            Some("PR #4545 TE-13216-foo→main")
+        );
+    }
+
+    #[test]
+    fn pr_build_target_ref_handles_flat_source_branch_form() {
+        // PR build where BB used flat `source_branch` / `destination_branch`
+        // strings instead of nesting under `source` / `destination`.
+        let body = r#"{
+          "values": [{
+            "build_number": 100,
+            "state": { "name": "IN_PROGRESS" },
+            "target": {
+              "pullrequest": { "id": 12 },
+              "source_branch": "feat/x",
+              "destination_branch": "develop"
+            }
+          }]
+        }"#;
+        let rows = parse_pipelines_response(body, "ws", "repo").unwrap();
+        assert_eq!(rows[0].target_ref.as_deref(), Some("PR #12 feat/x→develop"));
+    }
+
+    #[test]
+    fn pr_build_target_ref_falls_back_to_bare_id() {
+        // PR build with no source/destination at all — render just `PR #N`.
+        let body = r#"{
+          "values": [{
+            "build_number": 101,
+            "state": { "name": "IN_PROGRESS" },
+            "target": { "pullrequest": { "id": 7 } }
+          }]
+        }"#;
+        let rows = parse_pipelines_response(body, "ws", "repo").unwrap();
+        assert_eq!(rows[0].target_ref.as_deref(), Some("PR #7"));
+    }
+
+    #[test]
+    fn custom_build_target_ref_renders_selector_pattern() {
+        let body = r#"{
+          "values": [{
+            "build_number": 102,
+            "state": { "name": "IN_PROGRESS" },
+            "target": {
+              "type": "pipeline_commit_target",
+              "selector": { "type": "custom", "pattern": "deploy-staging" },
+              "commit": { "hash": "abc1234" }
+            }
+          }]
+        }"#;
+        let rows = parse_pipelines_response(body, "ws", "repo").unwrap();
+        assert_eq!(
+            rows[0].target_ref.as_deref(),
+            Some("custom: deploy-staging")
+        );
     }
 
     #[test]

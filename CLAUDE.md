@@ -2143,6 +2143,20 @@ prefix isn't hard-coded); BB/GH/AZ leave it empty. Refetch reads
 `host_extra` off the pane so a self-hosted GitLab instance keeps the
 right base URL across `r`-presses.
 
+**Bitbucket `target_ref` for PR + custom builds** — `RawTarget` /
+`project_pipeline` now project three shapes instead of one. Branch
+builds keep rendering the bare branch name (`main`, `feature/login`).
+PR builds (`pipeline_pullrequest_target`) render
+`PR #1234 source→dest`, falling back to `PR #1234 source` then bare
+`PR #1234` when the API omits the branch fields. Custom builds
+(`pipeline_commit_target` with a `selector`) render `custom: <pattern>`
+so manually-triggered pipelines aren't blank. The list pane's
+`target_ref` column auto-fits horizontally instead of truncating at
+17 chars (was a hard cap when refs were always single branch names);
+matching auto-fit added on every other SCM/CI list pane so a long
+title / branch / `PR #N src→dst` stretches into spare real estate
+instead of getting chopped.
+
 **Cross-host PR picker: Tab → cross-nav-to-pipeline** — the cross-host
 PR picker (`pr.picker`, `<leader>P p`) previously only opened the
 chosen PR's web URL on Enter. Tab now triggers a secondary accept

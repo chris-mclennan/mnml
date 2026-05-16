@@ -151,6 +151,9 @@ pub fn draw(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
+    // Auto-fit the ref column: fixed cols total ~72 (indent 4 · glyph 3 ·
+    // run# 6 · workflow 15 · age 12 · creator 22 · event 10).
+    let ref_w = (area.width as usize).saturating_sub(72).clamp(15, 80);
     let body_start_offset = lines.len() as u16;
     for (visible_i, (i, row)) in flat
         .iter()
@@ -249,7 +252,7 @@ pub fn draw(
                     .as_deref()
                     .or(run.target_ref.as_deref())
                     .unwrap_or("(no ref)");
-                let target = truncate(ref_text, 16);
+                let target = truncate(ref_text, ref_w.saturating_sub(1));
                 let dur = run
                     .duration_secs
                     .map(format_duration_secs)
@@ -283,7 +286,7 @@ pub fn draw(
                         Style::default().fg(t.yellow).bg(row_bg),
                     ),
                     Span::styled(
-                        format!("{target:<17}"),
+                        format!("{target:<width$}", width = ref_w),
                         Style::default().fg(t.cyan).bg(row_bg),
                     ),
                     Span::styled(

@@ -127,6 +127,18 @@ pub fn draw(
     }
     // Headers selectable (Enter toggles collapse). No auto-snap.
 
+    // Auto-fit the title column to the remaining pane width.
+    // Fixed columns (rough char widths): indent 4 · glyph 3 · #N 6 ·
+    // (repo 23 only in Mine) · review chips ~13 · 💬 8 · branches 36 ·
+    // age 12 · author 18 = ~100 fixed, +23 in Mine.
+    let fixed_w = 100
+        + if matches!(mode, crate::bitbucket::PrViewMode::Mine) {
+            23
+        } else {
+            0
+        };
+    let title_w = (area.width as usize).saturating_sub(fixed_w).clamp(20, 120);
+
     let body_h = (area.height as usize).saturating_sub(2);
     if body_h > 0 && n > 0 {
         if p.selected < p.scroll {
@@ -190,7 +202,7 @@ pub fn draw(
                 let row_bg = if selected { t.bg2 } else { t.bg_dark };
 
                 let pr_num = format!("#{:<5}", pr.id);
-                let title = truncate(&pr.title, 50);
+                let title = truncate(&pr.title, title_w);
                 let branches = format!(
                     "{} → {}",
                     truncate(pr.source_branch.as_deref().unwrap_or("?"), 18),
@@ -265,7 +277,7 @@ pub fn draw(
                     ));
                 }
                 spans.push(Span::styled(
-                    format!("{title:<50}  "),
+                    format!("{title:<width$}  ", width = title_w),
                     Style::default().fg(t.fg).bg(row_bg),
                 ));
                 spans.extend(review_spans);
