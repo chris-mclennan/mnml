@@ -13,6 +13,11 @@ use crate::layout::PaneId;
 use crate::pane::Pane;
 use crate::ui::theme;
 
+const CHEVRON_OPEN_NERD: &str = "\u{f107}";
+const CHEVRON_CLOSED_NERD: &str = "\u{f105}";
+const CHEVRON_OPEN_ASCII: &str = "▾";
+const CHEVRON_CLOSED_ASCII: &str = "▸";
+
 pub fn draw(
     frame: &mut Frame,
     app: &mut App,
@@ -46,6 +51,7 @@ pub fn draw(
     let loading = !app.github_connected && cache_empty;
     let last_error = app.github_last_error.clone();
     let poll_secs = app.config.github.poll_secs_or_default();
+    let nerd = !app.config.ui.ascii_icons;
 
     let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(pane_id) else {
         return None;
@@ -136,7 +142,12 @@ pub fn draw(
                 let selected = i == p.selected;
                 let row_bg = if selected { t.bg2 } else { t.bg_dark };
                 let collapsed = p.is_collapsed(&row.header_label);
-                let arrow = if collapsed { "▸ " } else { "▾ " };
+                let arrow = match (collapsed, nerd) {
+                    (true, true) => format!("{CHEVRON_CLOSED_NERD} "),
+                    (false, true) => format!("{CHEVRON_OPEN_NERD} "),
+                    (true, false) => format!("{CHEVRON_CLOSED_ASCII} "),
+                    (false, false) => format!("{CHEVRON_OPEN_ASCII} "),
+                };
                 lines.push(Line::from(vec![
                     Span::styled("  ", Style::default().bg(row_bg)),
                     Span::styled(arrow, Style::default().fg(t.purple).bg(row_bg)),

@@ -29,6 +29,15 @@ use crate::layout::PaneId;
 use crate::pane::Pane;
 use crate::ui::theme;
 
+// Same Nerd Font chevrons the file tree uses — `f107` is angle-down
+// (expanded), `f105` is angle-right (collapsed). Falls back to the
+// Unicode triangles when `[ui] ascii_icons = true` so non-Nerd-Font
+// terminals still show a sensible glyph.
+const CHEVRON_OPEN_NERD: &str = "\u{f107}";
+const CHEVRON_CLOSED_NERD: &str = "\u{f105}";
+const CHEVRON_OPEN_ASCII: &str = "▾";
+const CHEVRON_CLOSED_ASCII: &str = "▸";
+
 pub fn draw(
     frame: &mut Frame,
     app: &mut App,
@@ -68,6 +77,7 @@ pub fn draw(
     let last_error = app.bitbucket_last_error.clone();
     let poll_secs = app.config.bitbucket.poll_secs_or_default();
     let configured = app.config.bitbucket.any_configured();
+    let nerd = !app.config.ui.ascii_icons;
 
     let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(pane_id) else {
         return None;
@@ -175,7 +185,12 @@ pub fn draw(
                 let selected = i == p.selected;
                 let row_bg = if selected { t.bg2 } else { t.bg_dark };
                 let collapsed = p.is_collapsed(&row.header_label);
-                let arrow = if collapsed { "▸ " } else { "▾ " };
+                let arrow = match (collapsed, nerd) {
+                    (true, true) => format!("{CHEVRON_CLOSED_NERD} "),
+                    (false, true) => format!("{CHEVRON_OPEN_NERD} "),
+                    (true, false) => format!("{CHEVRON_CLOSED_ASCII} "),
+                    (false, false) => format!("{CHEVRON_OPEN_ASCII} "),
+                };
                 // Tree-style: 2-space indent, arrow, label. Not bold —
                 // matches user preference. Purple instead of the tree's
                 // blue keeps the SCM pane visually distinguishable.
