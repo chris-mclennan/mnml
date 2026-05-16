@@ -912,35 +912,22 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // Bitbucket pipelines browser: ↑↓/jk/PgUp/PgDn/g/G navigate (header
-    // rows auto-skipped), Enter → open in browser, y → copy URL,
-    // r → refresh, Esc → tree.
+    // Bitbucket pipelines browser: ↑↓/jk/PgUp/PgDn/g/G navigate every
+    // row (headers selectable too), Enter → toggle collapse on a
+    // header / open in browser on a data row, y → copy URL,
+    // r → refresh, v → flip view-mode, Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::BitbucketPipelines(_))) {
-        // Compute the max index *before* taking a mutable borrow on the pane.
         let flat = crate::ui::bitbucket_pipelines_view::flatten_pipelines(app);
         let max_idx = flat.len();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
-                    // Skip over header rows by jumping in pairs when needed.
-                    // The view's snap_selection_to_data fixes the final
-                    // resting spot if we land on a header.
                     p.move_selection(-1, max_idx);
-                    while p.selected > 0
-                        && flat
-                            .get(p.selected)
-                            .map(|r| r.kind == crate::ui::bitbucket_pipelines_view::RowKind::Header)
-                            .unwrap_or(false)
-                    {
-                        p.move_selection(-1, max_idx);
-                    }
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
                     p.move_selection(1, max_idx);
-                    // The view's snap_selection_to_data handles header skip
-                    // on the down-direction at render time.
                 }
             }
             KeyCode::PageUp => {
@@ -963,7 +950,31 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     p.move_selection(i64::MAX / 2, max_idx);
                 }
             }
-            KeyCode::Enter => app.open_selected_bitbucket_pipeline_url(),
+            KeyCode::Enter => {
+                // Header row ⇒ toggle collapse. Data row ⇒ open URL.
+                let header_label = flat.get(
+                    app.panes
+                        .get(i)
+                        .and_then(|p| match p {
+                            Pane::BitbucketPipelines(pp) => Some(pp.selected),
+                            _ => None,
+                        })
+                        .unwrap_or(0),
+                )
+                .filter(|r| r.kind == crate::ui::bitbucket_pipelines_view::RowKind::Header)
+                .map(|r| r.header_label.clone());
+                if let Some(label) = header_label {
+                    if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
+                        let now_collapsed = p.toggle_collapsed(&label);
+                        app.toast(format!(
+                            "{label}: {}",
+                            if now_collapsed { "collapsed" } else { "expanded" }
+                        ));
+                    }
+                } else {
+                    app.open_selected_bitbucket_pipeline_url();
+                }
+            }
             KeyCode::Char('y') => app.copy_selected_bitbucket_pipeline_url(),
             KeyCode::Char('r') => app.refresh_active_bitbucket_pane(),
             KeyCode::Char('v') => {
@@ -987,16 +998,6 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Up | KeyCode::Char('k') => {
                 if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i) {
                     p.move_selection(-1, max_idx);
-                    while p.selected > 0
-                        && flat
-                            .get(p.selected)
-                            .map(|r| {
-                                r.kind == crate::ui::bitbucket_pull_requests_view::RowKind::Header
-                            })
-                            .unwrap_or(false)
-                    {
-                        p.move_selection(-1, max_idx);
-                    }
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -1024,7 +1025,30 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     p.move_selection(i64::MAX / 2, max_idx);
                 }
             }
-            KeyCode::Enter => app.open_selected_bitbucket_pr_url(),
+            KeyCode::Enter => {
+                let header_label = flat.get(
+                    app.panes
+                        .get(i)
+                        .and_then(|p| match p {
+                            Pane::BitbucketPullRequests(pp) => Some(pp.selected),
+                            _ => None,
+                        })
+                        .unwrap_or(0),
+                )
+                .filter(|r| r.kind == crate::ui::bitbucket_pull_requests_view::RowKind::Header)
+                .map(|r| r.header_label.clone());
+                if let Some(label) = header_label {
+                    if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i) {
+                        let now_collapsed = p.toggle_collapsed(&label);
+                        app.toast(format!(
+                            "{label}: {}",
+                            if now_collapsed { "collapsed" } else { "expanded" }
+                        ));
+                    }
+                } else {
+                    app.open_selected_bitbucket_pr_url();
+                }
+            }
             KeyCode::Char('y') => app.copy_selected_bitbucket_pr_url(),
             KeyCode::Char('r') => app.refresh_active_bitbucket_pane(),
             KeyCode::Char('v') => {
@@ -1047,16 +1071,6 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Up | KeyCode::Char('k') => {
                 if let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(i) {
                     p.move_selection(-1, max_idx);
-                    while p.selected > 0
-                        && flat
-                            .get(p.selected)
-                            .map(|r| {
-                                r.kind == crate::ui::github_pull_requests_view::RowKind::Header
-                            })
-                            .unwrap_or(false)
-                    {
-                        p.move_selection(-1, max_idx);
-                    }
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -1084,7 +1098,30 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     p.move_selection(i64::MAX / 2, max_idx);
                 }
             }
-            KeyCode::Enter => app.open_selected_github_pr_url(),
+            KeyCode::Enter => {
+                let header_label = flat.get(
+                    app.panes
+                        .get(i)
+                        .and_then(|p| match p {
+                            Pane::GithubPullRequests(pp) => Some(pp.selected),
+                            _ => None,
+                        })
+                        .unwrap_or(0),
+                )
+                .filter(|r| r.kind == crate::ui::github_pull_requests_view::RowKind::Header)
+                .map(|r| r.header_label.clone());
+                if let Some(label) = header_label {
+                    if let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(i) {
+                        let now_collapsed = p.toggle_collapsed(&label);
+                        app.toast(format!(
+                            "{label}: {}",
+                            if now_collapsed { "collapsed" } else { "expanded" }
+                        ));
+                    }
+                } else {
+                    app.open_selected_github_pr_url();
+                }
+            }
             KeyCode::Char('y') => app.copy_selected_github_pr_url(),
             KeyCode::Char('r') => app.refresh_active_github_pane(),
             KeyCode::Char('v') => {
@@ -1109,14 +1146,6 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Up | KeyCode::Char('k') => {
                 if let Some(Pane::GithubActions(p)) = app.panes.get_mut(i) {
                     p.move_selection(-1, max_idx);
-                    while p.selected > 0
-                        && flat
-                            .get(p.selected)
-                            .map(|r| r.kind == crate::ui::github_actions_view::RowKind::Header)
-                            .unwrap_or(false)
-                    {
-                        p.move_selection(-1, max_idx);
-                    }
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -1144,7 +1173,30 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     p.move_selection(i64::MAX / 2, max_idx);
                 }
             }
-            KeyCode::Enter => app.open_selected_github_run_url(),
+            KeyCode::Enter => {
+                let header_label = flat.get(
+                    app.panes
+                        .get(i)
+                        .and_then(|p| match p {
+                            Pane::GithubActions(pp) => Some(pp.selected),
+                            _ => None,
+                        })
+                        .unwrap_or(0),
+                )
+                .filter(|r| r.kind == crate::ui::github_actions_view::RowKind::Header)
+                .map(|r| r.header_label.clone());
+                if let Some(label) = header_label {
+                    if let Some(Pane::GithubActions(p)) = app.panes.get_mut(i) {
+                        let now_collapsed = p.toggle_collapsed(&label);
+                        app.toast(format!(
+                            "{label}: {}",
+                            if now_collapsed { "collapsed" } else { "expanded" }
+                        ));
+                    }
+                } else {
+                    app.open_selected_github_run_url();
+                }
+            }
             KeyCode::Char('y') => app.copy_selected_github_run_url(),
             KeyCode::Char('r') => app.refresh_active_github_pane(),
             KeyCode::Char('v') => {

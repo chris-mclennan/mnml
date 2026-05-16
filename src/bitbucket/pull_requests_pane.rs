@@ -39,6 +39,24 @@ pub struct BitbucketPullRequestsPane {
     pub selected: usize,
     pub scroll: usize,
     pub view_mode: PrViewMode,
+    /// Per-repo header labels (`"workspace/slug"`) that are collapsed.
+    /// Only applies in the PerRepo view-mode — Mine is a flat list.
+    pub collapsed_repos: std::collections::HashSet<String>,
+}
+
+impl BitbucketPullRequestsPane {
+    pub fn toggle_collapsed(&mut self, header_label: &str) -> bool {
+        if self.collapsed_repos.contains(header_label) {
+            self.collapsed_repos.remove(header_label);
+            false
+        } else {
+            self.collapsed_repos.insert(header_label.to_string());
+            true
+        }
+    }
+    pub fn is_collapsed(&self, header_label: &str) -> bool {
+        self.collapsed_repos.contains(header_label)
+    }
 }
 
 impl BitbucketPullRequestsPane {

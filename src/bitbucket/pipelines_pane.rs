@@ -42,12 +42,32 @@ impl PipelineViewMode {
 
 #[derive(Debug, Default)]
 pub struct BitbucketPipelinesPane {
-    /// Index into the *flattened* list of pipelines (across every configured
-    /// repo, in config order, newest-first within each repo). Header rows
-    /// don't count — see `is_data_row` in the view.
+    /// Index into the flattened list — header rows are now selectable
+    /// (Enter on a header toggles collapse, just like the file tree).
     pub selected: usize,
     pub scroll: usize,
     pub view_mode: PipelineViewMode,
+    /// Header labels (`"workspace/slug"`) for repos that are currently
+    /// collapsed in the UI. The flatten function skips their child rows.
+    /// Default ⇒ empty (all expanded).
+    pub collapsed_repos: std::collections::HashSet<String>,
+}
+
+impl BitbucketPipelinesPane {
+    /// Flip the collapsed state of one repo header. Returns the new
+    /// state (`true` ⇒ now collapsed, `false` ⇒ now expanded).
+    pub fn toggle_collapsed(&mut self, header_label: &str) -> bool {
+        if self.collapsed_repos.contains(header_label) {
+            self.collapsed_repos.remove(header_label);
+            false
+        } else {
+            self.collapsed_repos.insert(header_label.to_string());
+            true
+        }
+    }
+    pub fn is_collapsed(&self, header_label: &str) -> bool {
+        self.collapsed_repos.contains(header_label)
+    }
 }
 
 impl BitbucketPipelinesPane {

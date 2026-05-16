@@ -28,6 +28,22 @@ pub struct GithubPullRequestsPane {
     pub selected: usize,
     pub scroll: usize,
     pub view_mode: GhPrViewMode,
+    pub collapsed_repos: std::collections::HashSet<String>,
+}
+
+impl GithubPullRequestsPane {
+    pub fn toggle_collapsed(&mut self, header_label: &str) -> bool {
+        if self.collapsed_repos.contains(header_label) {
+            self.collapsed_repos.remove(header_label);
+            false
+        } else {
+            self.collapsed_repos.insert(header_label.to_string());
+            true
+        }
+    }
+    pub fn is_collapsed(&self, header_label: &str) -> bool {
+        self.collapsed_repos.contains(header_label)
+    }
 }
 
 impl GithubPullRequestsPane {

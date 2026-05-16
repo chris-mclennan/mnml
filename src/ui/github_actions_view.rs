@@ -130,7 +130,7 @@ pub fn draw(
     if n > 0 && p.selected >= n {
         p.selected = n - 1;
     }
-    snap_selection_to_data(p, &flat);
+    // Headers selectable; Enter toggles collapse. No auto-snap.
 
     let body_h = (area.height as usize).saturating_sub(2);
     if body_h > 0 && n > 0 {
@@ -150,25 +150,29 @@ pub fn draw(
     for (i, row) in flat.iter().enumerate().skip(p.scroll).take(body_h) {
         match row.kind {
             RowKind::Header => {
+                let selected = i == p.selected;
+                let row_bg = if selected { t.bg2 } else { t.bg_dark };
+                let collapsed = p.is_collapsed(&row.header_label);
+                let arrow = if collapsed { "▸ " } else { "▾ " };
                 lines.push(Line::from(vec![
-                    Span::raw(" "),
+                    Span::styled(" ", Style::default().bg(row_bg)),
                     Span::styled(
-                        "▸ ",
+                        arrow,
                         Style::default()
                             .fg(t.purple)
-                            .bg(t.bg_dark)
+                            .bg(row_bg)
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
                         row.header_label.clone(),
                         Style::default()
                             .fg(t.purple)
-                            .bg(t.bg_dark)
+                            .bg(row_bg)
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
                         format!("  ({})", row.repo_count),
-                        Style::default().fg(t.comment).bg(t.bg_dark),
+                        Style::default().fg(t.comment).bg(row_bg),
                     ),
                 ]));
             }
@@ -315,18 +319,27 @@ pub struct FlatRow {
 }
 
 pub fn flatten_runs(app: &App) -> Vec<FlatRow> {
+    let pane_collapsed = active_actions_collapsed(app);
     let mut out: Vec<FlatRow> = Vec::new();
     for repo in &app.config.github.repos {
         let key = (repo.owner.clone(), repo.repo.clone());
         let runs = app.github_workflow_runs.get(&key);
         let count = runs.map(|v| v.len()).unwrap_or(0);
+        let header_label = format!("{}/{}", repo.owner, repo.repo);
+        let collapsed = pane_collapsed
+            .as_ref()
+            .map(|c| c.contains(&header_label))
+            .unwrap_or(false);
         out.push(FlatRow {
             kind: RowKind::Header,
-            header_label: format!("{}/{}", repo.owner, repo.repo),
+            header_label,
             repo_count: count,
             run: None,
             branch_label: None,
         });
+        if collapsed {
+            continue;
+        }
         if let Some(v) = runs {
             for rec in v {
                 out.push(FlatRow {
@@ -342,21 +355,37 @@ pub fn flatten_runs(app: &App) -> Vec<FlatRow> {
     out
 }
 
+fn active_actions_collapsed(app: &App) -> Option<std::collections::HashSet<String>> {
+    app.panes.iter().find_map(|p| match p {
+        Pane::GithubActions(pane) => Some(pane.collapsed_repos.clone()),
+        _ => None,
+    })
+}
+
 /// Walk the configured repos and emit one Header + one data row per
 /// branch. Used when `view_mode == PerBranch`.
 pub fn flatten_branch_runs(app: &App) -> Vec<FlatRow> {
+    let pane_collapsed = active_actions_collapsed(app);
     let mut out: Vec<FlatRow> = Vec::new();
     for repo in &app.config.github.repos {
         let key = (repo.owner.clone(), repo.repo.clone());
         let per_branch = app.github_branch_runs.get(&key);
         let count = per_branch.map(|v| v.len()).unwrap_or(0);
+        let header_label = format!("{}/{}", repo.owner, repo.repo);
+        let collapsed = pane_collapsed
+            .as_ref()
+            .map(|c| c.contains(&header_label))
+            .unwrap_or(false);
         out.push(FlatRow {
             kind: RowKind::Header,
-            header_label: format!("{}/{}", repo.owner, repo.repo),
+            header_label,
             repo_count: count,
             run: None,
             branch_label: None,
         });
+        if collapsed {
+            continue;
+        }
         if let Some(v) = per_branch {
             for (branch, run_opt) in v {
                 out.push(FlatRow {
@@ -383,6 +412,7 @@ pub fn selected_run(
     flat.get(pane.selected).and_then(|r| r.run.clone())
 }
 
+#[allow(dead_code)] // headers are now selectable; kept for revisit.
 fn snap_selection_to_data(pane: &mut crate::github::GithubActionsPane, flat: &[FlatRow]) {
     if flat.is_empty() {
         return;
