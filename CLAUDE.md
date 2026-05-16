@@ -739,12 +739,21 @@ loop calls new `semantic_color(tokens, line, c)` BEFORE `syntax_color(spans, c)`
 wins where they overlap (per LSP convention; servers know about types / shadowing / scopes
 that tree-sitter doesn't). `semantic_token_color(type_name)` maps the LSP type-name string
 (`"function"` / `"keyword"` / `"string"` / etc.) to theme colors using the same scheme as
-the tree-sitter `HIGHLIGHT_NAMES` mapping. **Limitations (first-cut):** no delta requests
-(every save re-decodes the whole file — fine for moderate-size files, expensive for huge
-ones); no range requests (a server that only implements `full` won't fall back); modifier
-bitmask dropped (`readonly` / `deprecated` / `static` etc. — would need per-`(type, mod)`
-color tables); linear scan per cell (token volumes per file are typically hundreds, fine
-for now; sort-by-line + binary-search would help on massive files).
+the tree-sitter `HIGHLIGHT_NAMES` mapping. **Delta requests** — `LspClient::semantic_tokens`
+picks `full` vs `full/delta` based on a per-path `SemState{result_id, raw_data}` cache
+shared between the App-thread client and the reader thread via `Arc<Mutex<HashMap<PathBuf,
+SemState>>>`. First request after `did_open` sends `full`; every subsequent request sends
+`full/delta` with the cached `resultId`. The reader handles both reply shapes —
+`SemanticTokens { data }` (full replacement, server bailed on computing a delta) and
+`SemanticTokensDelta { edits: [{ start, deleteCount, data? }] }` (sparse splices into the
+cached raw array). `apply_semantic_token_edits` sorts edits descending by `start` so later
+splices don't shift earlier offsets out from under us; out-of-bounds edits drop the cache
+so the next request falls back to `full`. `initialize` advertises `requests: { full: {
+delta: true } }`. `did_close` evicts the per-path cache. **Limitations (first-cut still):**
+no range requests (a server that only implements `full` won't fall back); modifier bitmask
+dropped (`readonly` / `deprecated` / `static` etc. — would need per-`(type, mod)` color
+tables); linear scan per cell (token volumes per file are typically hundreds, fine for now;
+sort-by-line + binary-search would help on massive files).
 **`[ui] wrap` survives a relaunch** — the user's runtime `:set wrap` choice now persists in
 `session.json` (`SavedSession.wrap: Option<bool>`). Config-file changes still take precedence
 on a fresh workspace.

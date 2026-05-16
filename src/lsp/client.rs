@@ -30,6 +30,21 @@ use super::{
 type Pending = Arc<Mutex<HashMap<i64, (String, Option<PathBuf>, Option<String>)>>>;
 type Sink = Arc<Mutex<ChildStdin>>;
 
+/// Per-path cache for semantic-tokens delta requests. The server returns a
+/// `resultId` with every reply; we cache it (plus the raw decoded `data[]`
+/// array) so the next request can be `semanticTokens/full/delta` with
+/// `previousResultId`. Shared between the App-thread client (which reads
+/// the result_id when crafting requests) and the reader thread (which
+/// updates both fields when replies land).
+#[derive(Debug, Default, Clone)]
+struct SemState {
+    result_id: Option<String>,
+    /// Last full decoded raw token data — the protocol-shape flat array
+    /// of u32, 5 per token. Used to apply incoming deltas via splice.
+    raw_data: Vec<u32>,
+}
+type SemStates = Arc<Mutex<HashMap<PathBuf, SemState>>>;
+
 pub struct LspClient {
     name: String,
     child: Child,
@@ -37,6 +52,7 @@ pub struct LspClient {
     reader: Option<JoinHandle<()>>,
     next_id: i64,
     pending: Pending,
+    sem_states: SemStates,
     /// path → document version (also: presence ⇒ the doc is open with this server).
     versions: HashMap<PathBuf, i64>,
 }
@@ -59,12 +75,14 @@ impl LspClient {
         let stdin = Arc::new(Mutex::new(child.stdin.take().ok_or("no stdin")?));
         let stdout = child.stdout.take().ok_or("no stdout")?;
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let sem_states: SemStates = Arc::new(Mutex::new(HashMap::new()));
 
         let r_pending = Arc::clone(&pending);
         let r_stdin = Arc::clone(&stdin);
+        let r_sem_states = Arc::clone(&sem_states);
         let reader = std::thread::Builder::new()
             .name(format!("mnml-lsp-{}", sc.name))
-            .spawn(move || reader_loop(stdout, tx, r_pending, r_stdin))
+            .spawn(move || reader_loop(stdout, tx, r_pending, r_stdin, r_sem_states))
             .map_err(|e| format!("reader thread: {e}"))?;
 
         let mut c = LspClient {
@@ -74,6 +92,7 @@ impl LspClient {
             reader: Some(reader),
             next_id: 1,
             pending,
+            sem_states,
             versions: HashMap::new(),
         };
 
@@ -138,7 +157,7 @@ impl LspClient {
                         },
                         "semanticTokens": {
                             "dynamicRegistration": false,
-                            "requests": { "full": true },
+                            "requests": { "full": { "delta": true } },
                             "tokenTypes": [
                                 "namespace", "type", "class", "enum", "interface",
                                 "struct", "typeParameter", "parameter", "variable",
@@ -227,6 +246,9 @@ impl LspClient {
     pub fn did_close(&mut self, path: &Path) {
         if self.versions.remove(path).is_none() {
             return;
+        }
+        if let Ok(mut s) = self.sem_states.lock() {
+            s.remove(path);
         }
         self.notify(
             "textDocument/didClose",
@@ -413,6 +435,26 @@ impl LspClient {
         );
     }
 
+    /// Request semantic tokens for `path`. Picks `full` vs `full/delta`
+    /// automatically: when the per-server `SemState` cache has a
+    /// `resultId` from a previous reply, we send `full/delta` with that
+    /// id — the server returns either a fresh full set (replacement) or
+    /// just the `edits` to apply to our cached raw data. Falls back to
+    /// `full` when there's no cached id (first request, after did_close,
+    /// or after a delta merge failed). Reply arrives as
+    /// [`super::LspEvent::SemanticTokens`] either way.
+    pub fn semantic_tokens(&mut self, path: &Path) {
+        let prev_id = self
+            .sem_states
+            .lock()
+            .ok()
+            .and_then(|s| s.get(path).and_then(|st| st.result_id.clone()));
+        match prev_id {
+            Some(id) => self.semantic_tokens_delta(path, &id),
+            None => self.semantic_tokens_full(path),
+        }
+    }
+
     /// `textDocument/semanticTokens/full` — reply is `SemanticTokens { data:
     /// number[] }` in protocol's flat delta-encoded form. The reader thread
     /// decodes against the per-server legend (stashed when the `initialize`
@@ -421,6 +463,22 @@ impl LspClient {
         self.request_with_path(
             "textDocument/semanticTokens/full",
             json!({ "textDocument": { "uri": path_to_uri(path) } }),
+            Some(path),
+        );
+    }
+
+    /// `textDocument/semanticTokens/full/delta` — reply is either a full
+    /// `SemanticTokens { resultId?, data }` (when the server gives up on
+    /// computing a delta) or a `SemanticTokensDelta { resultId?, edits }`
+    /// whose `edits` are sparse splices into our previously-cached raw
+    /// data. The reader merges and re-decodes either way.
+    pub fn semantic_tokens_delta(&mut self, path: &Path, previous_result_id: &str) {
+        self.request_with_path(
+            "textDocument/semanticTokens/full/delta",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "previousResultId": previous_result_id,
+            }),
             Some(path),
         );
     }
@@ -689,6 +747,7 @@ fn reader_loop(
     tx: std::sync::mpsc::Sender<LspEvent>,
     pending: Pending,
     stdin: Sink,
+    sem_states: SemStates,
 ) {
     let mut r = BufReader::new(stdout);
     // Per-server semantic-tokens legend, captured when the `initialize`
@@ -726,7 +785,7 @@ fn reader_loop(
         let Ok(v) = serde_json::from_slice::<serde_json::Value>(&buf) else {
             continue;
         };
-        handle_message(&v, &tx, &pending, &stdin, &mut sem_legend);
+        handle_message(&v, &tx, &pending, &stdin, &mut sem_legend, &sem_states);
     }
 }
 
@@ -736,6 +795,7 @@ fn handle_message(
     pending: &Pending,
     stdin: &Sink,
     sem_legend: &mut Vec<String>,
+    sem_states: &SemStates,
 ) {
     // A server→client request (has both `id` and `method`).
     if let (Some(id), Some(method)) = (v.get("id"), v.get("method").and_then(|m| m.as_str())) {
@@ -941,8 +1001,70 @@ fn handle_message(
             }
             "textDocument/semanticTokens/full" => {
                 if let Some(path) = req_path {
-                    let tokens = parse_semantic_tokens(result, sem_legend);
+                    let raw = extract_semantic_data(result);
+                    let result_id = result
+                        .get("resultId")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let tokens = parse_semantic_tokens_from_raw(&raw, sem_legend);
+                    if let Ok(mut s) = sem_states.lock() {
+                        s.insert(
+                            path.clone(),
+                            SemState {
+                                result_id,
+                                raw_data: raw,
+                            },
+                        );
+                    }
                     let _ = tx.send(LspEvent::SemanticTokens { path, tokens });
+                }
+            }
+            "textDocument/semanticTokens/full/delta" => {
+                if let Some(path) = req_path {
+                    let result_id = result
+                        .get("resultId")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    // Two reply shapes — `data` ⇒ server bailed on
+                    // computing a delta and returned a fresh full set;
+                    // `edits` ⇒ sparse splices to apply to cached raw.
+                    if result.get("data").is_some() {
+                        let raw = extract_semantic_data(result);
+                        let tokens = parse_semantic_tokens_from_raw(&raw, sem_legend);
+                        if let Ok(mut s) = sem_states.lock() {
+                            s.insert(
+                                path.clone(),
+                                SemState {
+                                    result_id,
+                                    raw_data: raw,
+                                },
+                            );
+                        }
+                        let _ = tx.send(LspEvent::SemanticTokens { path, tokens });
+                    } else if let Some(edits) = parse_semantic_token_edits(result) {
+                        // Splice into the cached raw_data; on failure
+                        // (out-of-bounds edit) drop the cache so the
+                        // next request falls back to `full`.
+                        let merged = sem_states.lock().ok().map(|mut s| {
+                            let entry = s.entry(path.clone()).or_default();
+                            let ok = apply_semantic_token_edits(&mut entry.raw_data, edits);
+                            if !ok {
+                                s.remove(&path);
+                                None
+                            } else {
+                                entry.result_id = result_id;
+                                Some(entry.raw_data.clone())
+                            }
+                        });
+                        let Some(Some(raw)) = merged else {
+                            // Edit failed — emit nothing; the App keeps
+                            // the previous frame's tokens until the next
+                            // save kicks off a fresh `full` request.
+                            return;
+                        };
+                        let tokens = parse_semantic_tokens_from_raw(&raw, sem_legend);
+                        let _ = tx.send(LspEvent::SemanticTokens { path, tokens });
+                    }
                 }
             }
             "textDocument/inlayHint" => {
@@ -1854,20 +1976,38 @@ pub fn parse_semantic_tokens(
     result: &serde_json::Value,
     legend: &[String],
 ) -> Vec<crate::lsp::SemanticToken> {
-    let Some(data) = result.get("data").and_then(|d| d.as_array()) else {
+    let raw = extract_semantic_data(result);
+    parse_semantic_tokens_from_raw(&raw, legend)
+}
+
+/// Pull the flat `data: number[]` array off a `SemanticTokens` reply
+/// into a typed `Vec<u32>`. Returns empty when the field is missing or
+/// shaped wrong (non-array, non-numeric entries).
+pub(crate) fn extract_semantic_data(result: &serde_json::Value) -> Vec<u32> {
+    let Some(arr) = result.get("data").and_then(|d| d.as_array()) else {
         return Vec::new();
     };
-    if data.len() % 5 != 0 || legend.is_empty() {
+    arr.iter().map(|v| v.as_u64().unwrap_or(0) as u32).collect()
+}
+
+/// Core decoder — same delta-encoded shape as the protocol's `data[]`, but
+/// already typed as `Vec<u32>`. Splits the reply parser from the cache-
+/// merging path so deltas can decode without round-tripping through JSON.
+pub(crate) fn parse_semantic_tokens_from_raw(
+    data: &[u32],
+    legend: &[String],
+) -> Vec<crate::lsp::SemanticToken> {
+    if !data.len().is_multiple_of(5) || legend.is_empty() {
         return Vec::new();
     }
     let mut out = Vec::with_capacity(data.len() / 5);
     let mut line: u32 = 0;
     let mut start: u32 = 0;
     for chunk in data.chunks_exact(5) {
-        let delta_line = chunk[0].as_u64().unwrap_or(0) as u32;
-        let delta_start = chunk[1].as_u64().unwrap_or(0) as u32;
-        let length = chunk[2].as_u64().unwrap_or(0) as u32;
-        let type_idx = chunk[3].as_u64().unwrap_or(0) as usize;
+        let delta_line = chunk[0];
+        let delta_start = chunk[1];
+        let length = chunk[2];
+        let type_idx = chunk[3] as usize;
         // _modifiers = chunk[4] — bitmask, dropped for the first cut.
         line += delta_line;
         if delta_line == 0 {
@@ -1890,6 +2030,60 @@ pub fn parse_semantic_tokens(
         });
     }
     out
+}
+
+/// Parse a `SemanticTokensDelta` reply's `edits[]` into typed splices.
+/// Each edit: `{ start, deleteCount, data?: [u32] }`. Returns `None` when
+/// the reply isn't a delta shape (no `edits` array) so the caller can
+/// branch on full-replacement vs delta cleanly.
+pub(crate) fn parse_semantic_token_edits(
+    result: &serde_json::Value,
+) -> Option<Vec<SemanticTokenEdit>> {
+    let arr = result.get("edits")?.as_array()?;
+    let mut out = Vec::with_capacity(arr.len());
+    for e in arr {
+        let start = e.get("start").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let delete_count = e.get("deleteCount").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let data: Vec<u32> = e
+            .get("data")
+            .and_then(|d| d.as_array())
+            .map(|a| a.iter().map(|v| v.as_u64().unwrap_or(0) as u32).collect())
+            .unwrap_or_default();
+        out.push(SemanticTokenEdit {
+            start,
+            delete_count,
+            data,
+        });
+    }
+    Some(out)
+}
+
+/// One splice operation against the cached raw token data.
+#[derive(Debug, Clone)]
+pub(crate) struct SemanticTokenEdit {
+    pub start: usize,
+    pub delete_count: usize,
+    pub data: Vec<u32>,
+}
+
+/// Apply a server-supplied list of edits to the cached raw token array.
+/// Edits are applied in descending-`start` order so earlier offsets stay
+/// valid as later splices shrink/grow the array. Returns `false` when an
+/// edit is out of bounds — the caller should drop the cache and request
+/// `full` instead of trusting a half-merged buffer.
+pub(crate) fn apply_semantic_token_edits(
+    raw: &mut Vec<u32>,
+    edits: Vec<SemanticTokenEdit>,
+) -> bool {
+    let mut edits = edits;
+    edits.sort_by_key(|e| std::cmp::Reverse(e.start));
+    for e in edits {
+        if e.start > raw.len() || e.start.saturating_add(e.delete_count) > raw.len() {
+            return false;
+        }
+        raw.splice(e.start..e.start + e.delete_count, e.data);
+    }
+    true
 }
 
 /// Parse a `textDocument/inlayHint` reply (`InlayHint[]` or null) into our
@@ -2137,6 +2331,98 @@ mod tests {
         // (delta_line=0) from the prior start_char=0 → start at 5.
         assert_eq!(tokens[0].start_char, 5);
         assert_eq!(tokens[0].length, 3);
+    }
+
+    #[test]
+    fn semantic_token_edits_splice_in_descending_order() {
+        // raw: 5 tokens worth, edits at positions 10 and 5; descending
+        // order means the larger offset's splice doesn't shift the
+        // smaller offset out from under us.
+        let mut raw: Vec<u32> = (0..25).collect();
+        let edits = vec![
+            SemanticTokenEdit {
+                start: 5,
+                delete_count: 5,
+                data: vec![99, 99, 99],
+            },
+            SemanticTokenEdit {
+                start: 15,
+                delete_count: 0,
+                data: vec![55, 55],
+            },
+        ];
+        assert!(apply_semantic_token_edits(&mut raw, edits));
+        // After: 0..5, 99,99,99, 10..15, 55,55, 15..25 (with the original
+        // 10..15 shrunk away since we deleted [5..10) and replaced with 3).
+        assert_eq!(
+            raw,
+            vec![
+                0, 1, 2, 3, 4, 99, 99, 99, 10, 11, 12, 13, 14, 55, 55, 15, 16, 17, 18, 19, 20, 21,
+                22, 23, 24
+            ]
+        );
+    }
+
+    #[test]
+    fn semantic_token_edits_reject_out_of_bounds() {
+        let mut raw: Vec<u32> = vec![0, 1, 2, 3, 4];
+        let edits = vec![SemanticTokenEdit {
+            start: 10,
+            delete_count: 0,
+            data: vec![99],
+        }];
+        assert!(!apply_semantic_token_edits(&mut raw, edits));
+    }
+
+    #[test]
+    fn parse_semantic_token_edits_picks_up_edits_array() {
+        let reply = json!({
+            "resultId": "abc",
+            "edits": [
+                { "start": 0, "deleteCount": 5, "data": [0, 0, 3, 0, 0] },
+                { "start": 10, "deleteCount": 0 }
+            ]
+        });
+        let edits = parse_semantic_token_edits(&reply).expect("edits");
+        assert_eq!(edits.len(), 2);
+        assert_eq!(edits[0].start, 0);
+        assert_eq!(edits[0].delete_count, 5);
+        assert_eq!(edits[0].data, vec![0, 0, 3, 0, 0]);
+        assert_eq!(edits[1].start, 10);
+        assert_eq!(edits[1].delete_count, 0);
+        assert!(edits[1].data.is_empty());
+    }
+
+    #[test]
+    fn parse_semantic_token_edits_none_when_data_form() {
+        // `data` form ⇒ full replacement, not a delta — parser should
+        // return None so the caller knows to take the full path.
+        let reply = json!({ "resultId": "abc", "data": [0, 0, 1, 0, 0] });
+        assert!(parse_semantic_token_edits(&reply).is_none());
+    }
+
+    #[test]
+    fn delta_then_decode_round_trips_through_cache() {
+        let legend: Vec<String> = ["keyword", "function", "variable"]
+            .iter()
+            .map(|&s| s.to_string())
+            .collect();
+        // Start with one token at (0,0,3,0,0) — `keyword` at line 0 col 0..3.
+        let mut raw: Vec<u32> = vec![0, 0, 3, 0, 0];
+        // Server says "splice in a new token at offset 5" (append).
+        let edits = vec![SemanticTokenEdit {
+            start: 5,
+            delete_count: 0,
+            data: vec![1, 2, 5, 1, 0],
+        }];
+        assert!(apply_semantic_token_edits(&mut raw, edits));
+        let tokens = parse_semantic_tokens_from_raw(&raw, &legend);
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].type_name, "keyword");
+        assert_eq!(tokens[1].line, 1);
+        assert_eq!(tokens[1].start_char, 2);
+        assert_eq!(tokens[1].length, 5);
+        assert_eq!(tokens[1].type_name, "function");
     }
 
     #[test]

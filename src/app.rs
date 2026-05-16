@@ -4306,7 +4306,7 @@ impl App {
                 self.lsp.code_lens(&path);
                 self.lsp.document_link(&path);
                 self.lsp.document_color(&path);
-                self.lsp.semantic_tokens_full(&path);
+                self.lsp.semantic_tokens(&path);
                 // Auto-open MD preview alongside, if enabled and not yet open.
                 // Passive (focus stays on the editor we just opened).
                 if self.config.ui.auto_md_preview && is_markdown_path(&path) {
@@ -4441,7 +4441,7 @@ impl App {
             self.lsp.code_lens(path);
             self.lsp.document_link(path);
             self.lsp.document_color(path);
-            self.lsp.semantic_tokens_full(path);
+            self.lsp.semantic_tokens(path);
         }
     }
 

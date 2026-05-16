@@ -797,14 +797,16 @@ impl LspManager {
         }
         sent
     }
-    /// Send `textDocument/semanticTokens/full` — reply arrives as
-    /// [`LspEvent::SemanticTokens`]. No-op when the server didn't advertise
-    /// `semanticTokensProvider` (the request would just be ignored / errored).
-    pub fn semantic_tokens_full(&mut self, path: &Path) -> bool {
+    /// Request semantic tokens — `full` on first call, `full/delta` on
+    /// subsequent calls (the client picks based on its per-path
+    /// `resultId` cache). Reply arrives as [`LspEvent::SemanticTokens`]
+    /// either way. No-op when the server didn't advertise
+    /// `semanticTokensProvider` (the request would just be ignored).
+    pub fn semantic_tokens(&mut self, path: &Path) -> bool {
         let mut sent = false;
         for c in self.clients.values_mut() {
             if c.is_open(path) {
-                c.semantic_tokens_full(path);
+                c.semantic_tokens(path);
                 sent = true;
             }
         }
