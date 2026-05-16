@@ -1791,6 +1791,17 @@ of the selected entry; accept evals `localStorage.setItem` (or `sessionStorage.s
 `scope|key=value` where scope is `local` (default) or `session`. `d` evals `removeItem` for the selected entry and
 drops the row locally. All three use `BrowserPane::eval_silent` (fire-and-forget eval that doesn't push a `» …` log
 line or claim `pending_eval`).
+**Browser sub-panel mouse clicks** — each row in the network / DOM / cookies / storage panels
+registers a rect in `app.rects.list_rows` per render (via a `std::mem::take` swap so the renderer
+can write to `app.rects` while still holding the `Pane::Browser` borrow). The `handle_scm_row_click`
+dispatcher gains a `Pane::Browser` arm that routes single-clicks to the right per-panel
+selection setter (`dom_sel` / `cookies_sel` / `storage_sel` / `net_sel`); double-clicking a
+network row opens it as a Request pane (sibling to `Enter`). Closes the last list-style mouse
+gap — every selectable row in the codebase is now click-targetable. **`tests/ipc.rs`** integration
+test exercises the file-IPC channel end-to-end (open / run-command / type / register-command /
+quit / unknown) by writing JSONL into `command` then asserting on `screen.txt` / `status.json` /
+`events.jsonl`. Catches the headless wire format regressing without a real headless run.
+
 **Active device preset persists across mnml relaunches** — `App.last_browser_device:
 Option<usize>` (preset index) is saved on `SavedSession.last_browser_device` and restored on
 launch. Every fresh `browser.open` re-applies it via `browser_pane.set_device(idx)` so the

@@ -1,0 +1,27 @@
+# Browser commands toast clearly when invoked with no Pane::Browser open —
+# locks the "command runs, doesn't panic, surfaces the no-pane state" wiring
+# for browser.screenshot / browser.print_pdf / browser.device_picker /
+# browser.dom / browser.cookies / browser.storage / browser.perf.
+write x.txt hello
+open x.txt
+
+command browser.print_pdf
+expect screen contains "no browser pane open"
+
+command browser.screenshot
+expect screen contains "no browser pane open"
+
+command browser.device_picker
+expect screen contains "no browser pane open"
+
+command browser.dom
+expect screen contains "no browser pane open"
+
+command browser.cookies
+expect screen contains "no browser pane open"
+
+command browser.storage
+expect screen contains "no browser pane open"
+
+command browser.perf
+expect screen contains "no browser pane open"

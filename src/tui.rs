@@ -3810,6 +3810,45 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
         }
         return;
     }
+    // Browser sub-panels — clicks select the row inside whichever panel
+    // is focused (network / DOM / cookies / storage). Double-click on a
+    // network row opens it as a Request pane (sibling to Enter).
+    if matches!(app.panes.get(pane_id), Some(Pane::Browser(_))) {
+        let net_double_open = {
+            let Some(Pane::Browser(b)) = app.panes.get_mut(pane_id) else {
+                return;
+            };
+            if b.dom_focus {
+                let n = b.visible_dom_indices().len();
+                if flat_idx < n {
+                    b.set_dom_sel(flat_idx);
+                }
+                false
+            } else if b.cookies_focus {
+                if flat_idx < b.cookies.len() {
+                    b.cookies_sel = flat_idx;
+                }
+                false
+            } else if b.storage_focus {
+                if flat_idx < b.storage.len() {
+                    b.storage_sel = flat_idx;
+                }
+                false
+            } else if b.net_focus {
+                let n = b.visible_net_indices().len();
+                if flat_idx < n {
+                    b.net_sel = flat_idx;
+                }
+                is_double_click
+            } else {
+                false
+            }
+        };
+        if net_double_open {
+            app.open_net_entry_as_request();
+        }
+        return;
+    }
     // SCM/CI panes — header-vs-data dispatch with collapse + URL open.
     match app.panes.get(pane_id) {
         Some(Pane::BitbucketPipelines(_)) => {

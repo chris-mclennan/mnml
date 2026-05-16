@@ -33,8 +33,14 @@ pub fn draw(
         area,
     );
     app.rects.editor_panes.push((area, pane_id));
+    // Detach `list_rows` so each panel branch below can push interactive
+    // row rects (network / DOM / cookies / storage) while still holding a
+    // mutable borrow on `app.panes` via `b`. The Vec is owned locally
+    // throughout the function body and put back before every return point.
+    let mut list_rows = std::mem::take(&mut app.rects.list_rows);
 
     let Some(Pane::Browser(b)) = app.panes.get_mut(pane_id) else {
+        app.rects.list_rows = list_rows;
         return None;
     };
 
@@ -183,6 +189,17 @@ pub fn draw(
                 } else {
                     t.comment
                 };
+                let y_off = lines.len() as u16;
+                list_rows.push((
+                    Rect {
+                        x: area.x,
+                        y: area.y + y_off,
+                        width: area.width,
+                        height: 1,
+                    },
+                    pane_id,
+                    row_idx,
+                ));
                 lines.push(Line::from(vec![
                     Span::styled(marker, Style::default().fg(t.cyan).bg(row_bg)),
                     Span::styled(indent, Style::default().bg(row_bg)),
@@ -194,6 +211,7 @@ pub fn draw(
             Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),
             area,
         );
+        app.rects.list_rows = list_rows;
         return None;
     }
 
@@ -219,6 +237,17 @@ pub fn draw(
                 let on = idx == sel;
                 let row_bg = if on { t.bg2 } else { t.bg_dark };
                 let marker = if on { "▶ " } else { "  " };
+                let y_off = lines.len() as u16;
+                list_rows.push((
+                    Rect {
+                        x: area.x,
+                        y: area.y + y_off,
+                        width: area.width,
+                        height: 1,
+                    },
+                    pane_id,
+                    idx,
+                ));
                 // Flags chip: S = Secure (green), H = HttpOnly (yellow).
                 // Both shown when set; trailing space pads non-set so the
                 // value-column alignment is stable.
@@ -284,6 +313,7 @@ pub fn draw(
             Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),
             area,
         );
+        app.rects.list_rows = list_rows;
         return None;
     }
 
@@ -343,6 +373,7 @@ pub fn draw(
             Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),
             area,
         );
+        app.rects.list_rows = list_rows;
         return None;
     }
 
@@ -384,6 +415,17 @@ pub fn draw(
                 } else {
                     value
                 };
+                let y_off = lines.len() as u16;
+                list_rows.push((
+                    Rect {
+                        x: area.x,
+                        y: area.y + y_off,
+                        width: area.width,
+                        height: 1,
+                    },
+                    pane_id,
+                    idx,
+                ));
                 lines.push(Line::from(vec![
                     Span::styled(marker, Style::default().fg(t.cyan).bg(row_bg)),
                     Span::styled(chip, Style::default().fg(chip_color).bg(row_bg)),
@@ -397,6 +439,7 @@ pub fn draw(
             Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),
             area,
         );
+        app.rects.list_rows = list_rows;
         return None;
     }
 
@@ -427,6 +470,17 @@ pub fn draw(
                 };
                 let on = row_idx == sel;
                 let row_bg = if on { t.bg2 } else { t.bg_dark };
+                let y_off = lines.len() as u16;
+                list_rows.push((
+                    Rect {
+                        x: area.x,
+                        y: area.y + y_off,
+                        width: area.width,
+                        height: 1,
+                    },
+                    pane_id,
+                    row_idx,
+                ));
                 let status = e.status_text();
                 let status_color = if e.failed.is_some() {
                     t.red
@@ -467,6 +521,7 @@ pub fn draw(
             Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),
             area,
         );
+        app.rects.list_rows = list_rows;
         return None;
     }
 
@@ -503,5 +558,6 @@ pub fn draw(
         Paragraph::new(view).style(Style::default().bg(t.bg_dark)),
         area,
     );
+    app.rects.list_rows = list_rows;
     None
 }
