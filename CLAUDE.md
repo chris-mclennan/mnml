@@ -729,6 +729,22 @@ alpha dropped) on `Buffer.color_decorations`. `parse_document_color` clamps each
 to `[0,1]` × 255. Multi-line ranges dropped (renderer is per-line). `initialize` advertises
 `colorProvider`. CSS / SCSS / Tailwind / HTML stylesheets light up immediately when the LSP
 supports it (vscode-css-language-server, vscode-html-language-server, tailwindcss, etc.).
+**LSP semantic tokens — first cut** — `textDocument/semanticTokens/full` fired on open + on
+save (same cadence as inlay hints / code lens). Reply's flat `data[]` array is decoded by
+`crate::lsp::client::parse_semantic_tokens` against the per-server legend (captured from
+the `initialize` reply's `capabilities.semanticTokensProvider.legend.tokenTypes` and kept
+as a reader-thread-local `Vec<String>`). Output is `Vec<SemanticToken{line, start_char,
+length, type_name}>` on `Buffer.semantic_tokens`. The editor renderer's per-cell color
+loop calls new `semantic_color(tokens, line, c)` BEFORE `syntax_color(spans, c)` — LSP
+wins where they overlap (per LSP convention; servers know about types / shadowing / scopes
+that tree-sitter doesn't). `semantic_token_color(type_name)` maps the LSP type-name string
+(`"function"` / `"keyword"` / `"string"` / etc.) to theme colors using the same scheme as
+the tree-sitter `HIGHLIGHT_NAMES` mapping. **Limitations (first-cut):** no delta requests
+(every save re-decodes the whole file — fine for moderate-size files, expensive for huge
+ones); no range requests (a server that only implements `full` won't fall back); modifier
+bitmask dropped (`readonly` / `deprecated` / `static` etc. — would need per-`(type, mod)`
+color tables); linear scan per cell (token volumes per file are typically hundreds, fine
+for now; sort-by-line + binary-search would help on massive files).
 **`[ui] wrap` survives a relaunch** — the user's runtime `:set wrap` choice now persists in
 `session.json` (`SavedSession.wrap: Option<bool>`). Config-file changes still take precedence
 on a fresh workspace.

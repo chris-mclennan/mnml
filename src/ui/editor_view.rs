@@ -610,10 +610,15 @@ pub fn draw_pane(
                 } else if show_ws && raw_ch == '\t' {
                     ('→', guide_fg)
                 } else {
-                    (
-                        raw_ch,
-                        syntax_color(spans_for_line, c).unwrap_or(theme::cur().fg),
-                    )
+                    // LSP semantic tokens win over tree-sitter at overlapping
+                    // cells (per LSP convention — server has more context
+                    // than a pure syntactic grammar). When LSP doesn't cover
+                    // this cell, fall back to tree-sitter; if both empty,
+                    // use the theme foreground.
+                    let fg = semantic_color(&buf.semantic_tokens, line_no, c)
+                        .or_else(|| syntax_color(spans_for_line, c))
+                        .unwrap_or(theme::cur().fg);
+                    (raw_ch, fg)
                 }
             } else if show_ws && c == n {
                 // `:set list` end-of-line marker (vim canonical `$`). Paint
@@ -971,6 +976,48 @@ fn syntax_color(spans: &[crate::highlight::ColoredSpan], c: usize) -> Option<Col
         .rev()
         .find(|&&(s, e, _)| c >= s && c < e)
         .map(|&(_, _, color)| color)
+}
+
+/// LSP semantic-tokens color override for cell `(line, c)`. Returns `Some`
+/// when a token covers this cell — caller layers this on top of the
+/// tree-sitter `syntax_color` (LSP wins where they overlap, per spec).
+/// `None` ⇒ no semantic token here, fall back to tree-sitter.
+///
+/// Linear scan over the buffer's tokens — fine for the typical token
+/// volume per file (hundreds, not thousands). A future optimization
+/// could pre-sort by line and binary-search.
+fn semantic_color(tokens: &[crate::lsp::SemanticToken], line: usize, c: usize) -> Option<Color> {
+    let line_u32 = line as u32;
+    let c_u32 = c as u32;
+    for tok in tokens {
+        if tok.line != line_u32 {
+            continue;
+        }
+        if c_u32 >= tok.start_char && c_u32 < tok.start_char + tok.length {
+            return Some(semantic_token_color(&tok.type_name));
+        }
+    }
+    None
+}
+
+/// Map an LSP semantic-token type name to a theme color. Mirrors the
+/// HIGHLIGHT_NAMES → color mapping in `highlight.rs` so semantic tokens
+/// and tree-sitter highlights look consistent. Unknown types fall back to
+/// the theme's foreground (effectively a no-op vs. the tree-sitter layer).
+fn semantic_token_color(type_name: &str) -> Color {
+    let t = theme::cur();
+    match type_name {
+        "keyword" | "modifier" => t.purple,
+        "string" | "regexp" => t.green,
+        "number" => t.yellow,
+        "comment" => t.comment,
+        "function" | "method" | "macro" | "decorator" => t.blue,
+        "type" | "class" | "struct" | "enum" | "interface" | "typeParameter" => t.yellow,
+        "namespace" | "event" => t.cyan,
+        "variable" | "parameter" | "property" | "enumMember" => t.fg,
+        "operator" => t.fg,
+        _ => t.fg,
+    }
 }
 
 /// One-row workspace-relative path header (dim) above the editor body. Drawn

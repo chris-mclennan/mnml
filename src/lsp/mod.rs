@@ -154,6 +154,14 @@ pub enum LspEvent {
         path: PathBuf,
         hints: Vec<InlayHint>,
     },
+    /// Result of a `textDocument/semanticTokens/full` request — server-aware
+    /// syntax highlight spans, decoded from the protocol's flat delta-
+    /// encoded `data[]` array. Layered on top of tree-sitter highlights by
+    /// the editor renderer.
+    SemanticTokens {
+        path: PathBuf,
+        tokens: Vec<SemanticToken>,
+    },
     /// Result of a `textDocument/codeLens` request — actionable annotations
     /// (like "5 references" or "Run | Debug") attached to specific lines.
     /// Rendered as dim chips at end-of-line by the editor view.
@@ -276,6 +284,24 @@ pub struct CallHit {
     pub path: PathBuf,
     pub line: u32,
     pub character: u32,
+}
+
+/// One semantic-token span returned by `textDocument/semanticTokens/full`.
+/// The LSP wire form is a flat `data: number[]` with delta encoding (every
+/// 5 numbers = deltaLine, deltaStart, length, tokenTypeIdx, modifiers); the
+/// reader decodes that into absolute positions + resolves the token type
+/// index to a name via the per-server legend before sending up.
+///
+/// `type_name` is the legend string (`"function"` / `"variable"` /
+/// `"string"` / …) which the editor renderer maps to a theme color. We
+/// drop the modifier bitmask in this first cut — the renderer would
+/// need a per-`(type, modifier)` color table to do anything with it.
+#[derive(Debug, Clone)]
+pub struct SemanticToken {
+    pub line: u32,
+    pub start_char: u32,
+    pub length: u32,
+    pub type_name: String,
 }
 
 /// One color literal the server recognized. We keep just enough to paint
@@ -766,6 +792,19 @@ impl LspManager {
         for c in self.clients.values_mut() {
             if c.is_open(path) {
                 c.inlay_hint(path, line_count);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send `textDocument/semanticTokens/full` — reply arrives as
+    /// [`LspEvent::SemanticTokens`]. No-op when the server didn't advertise
+    /// `semanticTokensProvider` (the request would just be ignored / errored).
+    pub fn semantic_tokens_full(&mut self, path: &Path) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.semantic_tokens_full(path);
                 sent = true;
             }
         }

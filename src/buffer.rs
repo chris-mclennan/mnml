@@ -176,6 +176,10 @@ pub struct Buffer {
     /// positions. Refreshed on save (and after the initial `did_open`
     /// reply lands). Rendered as dim chips in the editor view.
     pub inlay_hints: Vec<crate::lsp::InlayHint>,
+    /// LSP semantic tokens — server-aware syntax highlight spans. Layered
+    /// on top of tree-sitter highlights by the editor renderer (LSP wins
+    /// where they overlap). Refreshed on save + after did_open.
+    pub semantic_tokens: Vec<crate::lsp::SemanticToken>,
     /// LSP code lenses — actionable annotations (like "5 references" or
     /// "Run | Debug") attached to specific lines. Rendered as dim chips
     /// at end-of-line. Refreshed on save.
@@ -286,6 +290,7 @@ impl Buffer {
             blame: None,
             diagnostics: Vec::new(),
             inlay_hints: Vec::new(),
+            semantic_tokens: Vec::new(),
             code_lenses: Vec::new(),
             document_links: Vec::new(),
             color_decorations: Vec::new(),
@@ -357,6 +362,7 @@ impl Buffer {
             blame: None,
             diagnostics: Vec::new(),
             inlay_hints: Vec::new(),
+            semantic_tokens: Vec::new(),
             code_lenses: Vec::new(),
             document_links: Vec::new(),
             color_decorations: Vec::new(),

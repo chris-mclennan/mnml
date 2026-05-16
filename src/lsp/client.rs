@@ -136,6 +136,23 @@ impl LspClient {
                             "dynamicRegistration": false,
                             "resolveSupport": { "properties": ["label.tooltip", "label.location"] }
                         },
+                        "semanticTokens": {
+                            "dynamicRegistration": false,
+                            "requests": { "full": true },
+                            "tokenTypes": [
+                                "namespace", "type", "class", "enum", "interface",
+                                "struct", "typeParameter", "parameter", "variable",
+                                "property", "enumMember", "event", "function",
+                                "method", "macro", "keyword", "modifier", "comment",
+                                "string", "number", "regexp", "operator", "decorator"
+                            ],
+                            "tokenModifiers": [
+                                "declaration", "definition", "readonly", "static",
+                                "deprecated", "abstract", "async", "modification",
+                                "documentation", "defaultLibrary"
+                            ],
+                            "formats": ["relative"]
+                        },
                         "codeLens": {
                             "dynamicRegistration": false
                         },
@@ -392,6 +409,18 @@ impl LspClient {
                     "end": { "line": line_count.saturating_sub(1), "character": 0 }
                 }
             }),
+            Some(path),
+        );
+    }
+
+    /// `textDocument/semanticTokens/full` — reply is `SemanticTokens { data:
+    /// number[] }` in protocol's flat delta-encoded form. The reader thread
+    /// decodes against the per-server legend (stashed when the `initialize`
+    /// reply arrived) and forwards as [`super::LspEvent::SemanticTokens`].
+    pub fn semantic_tokens_full(&mut self, path: &Path) {
+        self.request_with_path(
+            "textDocument/semanticTokens/full",
+            json!({ "textDocument": { "uri": path_to_uri(path) } }),
             Some(path),
         );
     }
@@ -662,6 +691,11 @@ fn reader_loop(
     stdin: Sink,
 ) {
     let mut r = BufReader::new(stdout);
+    // Per-server semantic-tokens legend, captured when the `initialize`
+    // reply lands. Empty until then — semantic-tokens replies before
+    // capture are dropped (servers shouldn't send them before initialize
+    // anyway). Type-index → name lookup at decode time.
+    let mut sem_legend: Vec<String> = Vec::new();
     loop {
         // Read headers until a blank line; we only need Content-Length.
         let mut len: Option<usize> = None;
@@ -692,7 +726,7 @@ fn reader_loop(
         let Ok(v) = serde_json::from_slice::<serde_json::Value>(&buf) else {
             continue;
         };
-        handle_message(&v, &tx, &pending, &stdin);
+        handle_message(&v, &tx, &pending, &stdin, &mut sem_legend);
     }
 }
 
@@ -701,6 +735,7 @@ fn handle_message(
     tx: &std::sync::mpsc::Sender<LspEvent>,
     pending: &Pending,
     stdin: &Sink,
+    sem_legend: &mut Vec<String>,
 ) {
     // A server→client request (has both `id` and `method`).
     if let (Some(id), Some(method)) = (v.get("id"), v.get("method").and_then(|m| m.as_str())) {
@@ -883,6 +918,31 @@ fn handle_message(
             "textDocument/signatureHelp" => {
                 if let Some(sh) = parse_signature_help(result) {
                     let _ = tx.send(LspEvent::SignatureHelp(sh));
+                }
+            }
+            "initialize" => {
+                // Cache the server's semanticTokens legend so subsequent
+                // `textDocument/semanticTokens/full` replies can resolve
+                // type-index → name.
+                if let Some(types) = result
+                    .get("capabilities")
+                    .and_then(|c| c.get("semanticTokensProvider"))
+                    .and_then(|p| p.get("legend"))
+                    .and_then(|l| l.get("tokenTypes"))
+                    .and_then(|t| t.as_array())
+                {
+                    sem_legend.clear();
+                    for v in types {
+                        if let Some(s) = v.as_str() {
+                            sem_legend.push(s.to_string());
+                        }
+                    }
+                }
+            }
+            "textDocument/semanticTokens/full" => {
+                if let Some(path) = req_path {
+                    let tokens = parse_semantic_tokens(result, sem_legend);
+                    let _ = tx.send(LspEvent::SemanticTokens { path, tokens });
                 }
             }
             "textDocument/inlayHint" => {
@@ -1774,6 +1834,64 @@ pub fn parse_code_lenses(result: &serde_json::Value) -> Vec<crate::lsp::CodeLens
     out
 }
 
+/// Decode a `textDocument/semanticTokens/full` reply against the per-server
+/// `legend`. The protocol's `data` is a flat array of u32, 5-per-token, with
+/// `(deltaLine, deltaStart, length, tokenTypeIdx, tokenModifiersBitmask)`:
+///
+/// * `deltaLine` is relative to the *previous token's* line (or 0 for the
+///   first). When > 0, `deltaStart` is the absolute char column on the new
+///   line; when 0 (same-line continuation), `deltaStart` is relative to the
+///   previous token's start char.
+/// * `length` is in chars (not bytes — UTF-16 by spec, but most servers in
+///   practice work in chars; we follow the more-common interpretation).
+/// * `tokenTypeIdx` indexes into the legend; we resolve to the type-name
+///   string before emitting so the renderer doesn't have to keep the legend.
+/// * The modifier bitmask is dropped in this first cut.
+///
+/// Returns `Vec<SemanticToken>` in source order. Empty when the reply is
+/// shaped weirdly (no `data` array, or non-multiple-of-5 length).
+pub fn parse_semantic_tokens(
+    result: &serde_json::Value,
+    legend: &[String],
+) -> Vec<crate::lsp::SemanticToken> {
+    let Some(data) = result.get("data").and_then(|d| d.as_array()) else {
+        return Vec::new();
+    };
+    if data.len() % 5 != 0 || legend.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(data.len() / 5);
+    let mut line: u32 = 0;
+    let mut start: u32 = 0;
+    for chunk in data.chunks_exact(5) {
+        let delta_line = chunk[0].as_u64().unwrap_or(0) as u32;
+        let delta_start = chunk[1].as_u64().unwrap_or(0) as u32;
+        let length = chunk[2].as_u64().unwrap_or(0) as u32;
+        let type_idx = chunk[3].as_u64().unwrap_or(0) as usize;
+        // _modifiers = chunk[4] — bitmask, dropped for the first cut.
+        line += delta_line;
+        if delta_line == 0 {
+            start += delta_start;
+        } else {
+            start = delta_start;
+        }
+        if length == 0 {
+            continue;
+        }
+        let type_name = legend
+            .get(type_idx)
+            .cloned()
+            .unwrap_or_else(|| String::from("unknown"));
+        out.push(crate::lsp::SemanticToken {
+            line,
+            start_char: start,
+            length,
+            type_name,
+        });
+    }
+    out
+}
+
 /// Parse a `textDocument/inlayHint` reply (`InlayHint[]` or null) into our
 /// flat `(line, char, label)` form. Labels can be either a plain string or
 /// an array of `InlayHintLabelPart` (we concatenate the parts' values).
@@ -1963,6 +2081,63 @@ fn hover_text(result: &serde_json::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_semantic_tokens_decodes_delta_form() {
+        // Synthetic legend mirrors LSP's standard order (truncated).
+        let legend: Vec<String> = ["keyword", "function", "variable", "string"]
+            .iter()
+            .map(|&s| s.to_string())
+            .collect();
+        // Three tokens:
+        //   (0, 0, 3, 0, 0) → keyword at line 0, col 0..3
+        //   (0, 4, 5, 1, 0) → function at line 0, col 4..9 (delta_line=0 ⇒
+        //                    delta_start is offset from prev start (0+4))
+        //   (1, 2, 1, 2, 0) → variable at line 1, col 2..3 (delta_line=1 ⇒
+        //                    delta_start is absolute)
+        let reply = json!({
+            "data": [
+                0, 0, 3, 0, 0,
+                0, 4, 5, 1, 0,
+                1, 2, 1, 2, 0
+            ]
+        });
+        let tokens = parse_semantic_tokens(&reply, &legend);
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0].line, 0);
+        assert_eq!(tokens[0].start_char, 0);
+        assert_eq!(tokens[0].length, 3);
+        assert_eq!(tokens[0].type_name, "keyword");
+        assert_eq!(tokens[1].line, 0);
+        assert_eq!(tokens[1].start_char, 4);
+        assert_eq!(tokens[1].type_name, "function");
+        assert_eq!(tokens[2].line, 1);
+        assert_eq!(tokens[2].start_char, 2);
+        assert_eq!(tokens[2].type_name, "variable");
+    }
+
+    #[test]
+    fn parse_semantic_tokens_handles_empty_or_malformed() {
+        let legend = vec!["keyword".to_string()];
+        // No data array
+        assert!(parse_semantic_tokens(&json!({}), &legend).is_empty());
+        // Non-multiple-of-5
+        assert!(parse_semantic_tokens(&json!({"data": [1, 2, 3]}), &legend).is_empty());
+        // Empty legend ⇒ can't resolve type names ⇒ bail
+        assert!(parse_semantic_tokens(&json!({"data": [0, 0, 1, 0, 0]}), &[]).is_empty());
+    }
+
+    #[test]
+    fn parse_semantic_tokens_drops_zero_length() {
+        let legend = vec!["keyword".to_string()];
+        let reply = json!({ "data": [0, 0, 0, 0, 0, 0, 5, 3, 0, 0] });
+        let tokens = parse_semantic_tokens(&reply, &legend);
+        assert_eq!(tokens.len(), 1);
+        // First entry's zero length skipped; second advances by delta_start=5
+        // (delta_line=0) from the prior start_char=0 → start at 5.
+        assert_eq!(tokens[0].start_char, 5);
+        assert_eq!(tokens[0].length, 3);
+    }
 
     #[test]
     fn first_location_handles_shapes() {

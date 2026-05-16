@@ -4306,6 +4306,7 @@ impl App {
                 self.lsp.code_lens(&path);
                 self.lsp.document_link(&path);
                 self.lsp.document_color(&path);
+                self.lsp.semantic_tokens_full(&path);
                 // Auto-open MD preview alongside, if enabled and not yet open.
                 // Passive (focus stays on the editor we just opened).
                 if self.config.ui.auto_md_preview && is_markdown_path(&path) {
@@ -4440,6 +4441,7 @@ impl App {
             self.lsp.code_lens(path);
             self.lsp.document_link(path);
             self.lsp.document_color(path);
+            self.lsp.semantic_tokens_full(path);
         }
     }
 
@@ -5650,6 +5652,16 @@ impl App {
                         && b.path.as_deref() == Some(path.as_path())
                     {
                         b.inlay_hints = hints;
+                        break;
+                    }
+                }
+            }
+            LspEvent::SemanticTokens { path, tokens } => {
+                for p in self.panes.iter_mut() {
+                    if let Pane::Editor(b) = p
+                        && b.path.as_deref() == Some(path.as_path())
+                    {
+                        b.semantic_tokens = tokens;
                         break;
                     }
                 }
