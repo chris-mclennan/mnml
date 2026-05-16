@@ -6241,6 +6241,89 @@ impl App {
         }
     }
 
+    /// `editor.format` — smart format: try LSP formatter first; if no
+    /// server is attached for this file, fall through to the external
+    /// (conform-style) formatter. Matches conform.nvim's "ask LSP first"
+    /// behavior.
+    pub fn format_smart(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let path = match b.path.clone() {
+            Some(p) => p,
+            None => {
+                self.toast("nothing to format (scratch buffer)");
+                return;
+            }
+        };
+        let tab_size = self.config.editor.tab_width as u32;
+        if self.lsp.formatting(&path, tab_size, true) {
+            return;
+        }
+        // No LSP formatter — try the external one.
+        self.format_external_active();
+    }
+
+    /// `editor.format_external` — conform-style external formatter for
+    /// the active buffer. Picks a command from `[formatters.<ext>] cmd =
+    /// "..."` (config) or the built-in defaults (`prettier`, `rustfmt`,
+    /// `gofmt`, `ruff format`, `shfmt`, etc). Tries each candidate in
+    /// order until one exits successfully; non-zero exits ⇒ no buffer
+    /// change + toast with stderr preview. Cursor preserved by
+    /// `ReplaceRange` (single edit op so undo restores the original).
+    pub fn format_external_active(&mut self) {
+        let Some(idx) = self.active else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get(idx) else {
+            self.toast("no active editor");
+            return;
+        };
+        let ext = match b.language_ext.as_deref() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => {
+                self.toast("formatter: no filetype");
+                return;
+            }
+        };
+        let cands = crate::formatter::formatters_for(&self.config.formatters, &ext);
+        if cands.is_empty() {
+            self.toast(format!("formatter: no command configured for .{ext}"));
+            return;
+        }
+        let path = b.path.clone();
+        let input = b.editor.text().to_string();
+        let buf_len = input.len();
+        let workspace = self.workspace.clone();
+        let mut last_err = String::new();
+        for template in &cands {
+            let cmd = crate::formatter::expand_cmd(template, &workspace, path.as_deref());
+            match crate::formatter::run_formatter(&cmd, &workspace, &input) {
+                Ok(stdout) => {
+                    if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                        b.apply_edit_ops(
+                            vec![crate::edit_op::EditOp::ReplaceRange {
+                                start: 0,
+                                end: buf_len,
+                                text: stdout.clone(),
+                            }],
+                            &mut self.clipboard,
+                            0,
+                        );
+                    }
+                    // Trim the command to its first token for the toast.
+                    let bin = template.split_whitespace().next().unwrap_or("formatter");
+                    self.toast(format!("formatted via {bin}"));
+                    return;
+                }
+                Err(e) => last_err = format!("{template}: {e}"),
+            }
+        }
+        self.toast(format!("formatter failed — {last_err}"));
+    }
+
     /// Apply a flattened `WorkspaceEdit` (from `textDocument/rename`): edit each
     /// affected file — through `Editor::apply` if it's open as a buffer (left
     /// dirty for review), else by splicing the file on disk directly.
@@ -15713,6 +15796,13 @@ impl App {
             // ALE / coc / nvim-lspconfig conventions.
             "Format" => {
                 crate::command::run("lsp.format", self);
+            }
+            // `:Format!` / `:FormatExternal` — pipe through the configured
+            // external formatter (prettier / rustfmt / gofmt / ruff / …)
+            // instead of the LSP. Useful when the LSP doesn't support
+            // formatting or has stale config.
+            "Format!" | "FormatExternal" => {
+                crate::command::run("editor.format_external", self);
             }
             // `:LspRestart` — kill every running server; subsequent
             // `did_open` calls (e.g. opening a file in that language) spawn

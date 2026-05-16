@@ -1500,6 +1500,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.lsp_format(),
         },
         Command {
+            id: "editor.format_external",
+            title: "Format buffer with external formatter (prettier / rustfmt / gofmt / ruff / …)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.format_external_active(),
+        },
+        Command {
+            id: "editor.format",
+            title: "Format buffer (LSP if attached, else external formatter)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.format_smart(),
+        },
+        Command {
             id: "lsp.code_action",
             title: "LSP: code actions at cursor (→ picker)",
             group: "lsp",

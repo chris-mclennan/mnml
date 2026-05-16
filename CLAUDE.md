@@ -2608,6 +2608,26 @@ browser via the same `open_url_external` helper the per-host
 Empty caches ⇒ toast pointing at the four `[[<host>.repos]]` /
 `[[<host>.projects]]` config tables (no picker opens).
 
+**Conform-style external formatters** — `[formatters.<ext>] cmd = "..."`
+(or a list of strings tried in order) in the user's config; layered on
+top of a built-in `DEFAULT_FORMATTERS` table covering the common cases
+(`prettier --stdin-filepath {file}` for js/ts/json/css/html/md/yaml,
+`rustfmt --emit stdout` for rs, `gofmt` for go, `ruff format -` / `black
+-q -` for py, `shfmt -i 2` for sh/bash/zsh, `stylua -` for lua, `nixfmt`
+for nix). `{file}` in the template is substituted with the buffer's
+workspace-relative path (shell-quoted when it contains whitespace), so
+prettier picks the right rule per extension. New `src/formatter.rs`
+holds the table + `formatters_for` + `expand_cmd` + `run_formatter` (a
+sync `$SHELL -c <cmd>` runner that pipes the source on stdin + captures
+stdout). New `editor.format_external` command (`:Format!` /
+`:FormatExternal`) pipes the active buffer through the configured
+formatter, replacing the contents via `ReplaceRange` (one edit op so
+Undo restores). New `editor.format` (`:Format` already aliases to
+`lsp.format` — the smart variant tries LSP first then falls through to
+external when no server is attached). Each candidate command in the
+list is tried in order; the first to exit 0 wins. Non-zero exits ⇒
+no buffer change + toast with stderr preview.
+
 **Stacked notifications** — when more than one toast is live, the recent
 ones (capped at `TOAST_STACK_MAX = 5`, newest first) render as a
 vertical column of bordered boxes at the bottom-right above the

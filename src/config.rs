@@ -47,6 +47,14 @@ pub struct Config {
     /// in Insert mode, the word is replaced with the expansion. Runtime
     /// `:ab` adds; `:una` removes.
     pub abbreviations: BTreeMap<String, String>,
+    /// `[formatters.<ext>] cmd = "..."` (or a list of strings tried in
+    /// order). External formatter command line(s) per file extension;
+    /// the buffer is piped through `$SHELL -c <cmd>`. `{file}` in the
+    /// template is substituted with the workspace-relative path (so
+    /// `prettier --stdin-filepath {file}` picks the right rules).
+    /// Config entries override the built-in `DEFAULT_FORMATTERS` table
+    /// (`prettier` for js/ts/json/css/md, `ruff format -` for py, etc).
+    pub formatters: BTreeMap<String, crate::formatter::FormatterEntry>,
     pub browser: BrowserConfig,
     pub playwright: PlaywrightConfig,
     pub ci: CiConfig,
@@ -594,6 +602,7 @@ impl Default for Config {
             startup_tasks: Vec::new(),
             snippets: BTreeMap::new(),
             abbreviations: BTreeMap::new(),
+            formatters: BTreeMap::new(),
             browser: BrowserConfig {
                 headless: false,
                 profile_mode: "workspace".to_string(),
@@ -632,6 +641,8 @@ struct RawConfig {
     snippets: BTreeMap<String, BTreeMap<String, String>>,
     #[serde(default)]
     abbr: BTreeMap<String, String>,
+    #[serde(default)]
+    formatters: BTreeMap<String, crate::formatter::FormatterEntry>,
     #[serde(default)]
     browser: RawBrowser,
     #[serde(default)]
@@ -979,6 +990,9 @@ impl Config {
         }
         for (k, v) in raw.abbr {
             self.abbreviations.insert(k, v);
+        }
+        for (ext, entry) in raw.formatters {
+            self.formatters.insert(ext, entry);
         }
         if let Some(v) = raw.browser.headless {
             self.browser.headless = v;

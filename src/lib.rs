@@ -35,6 +35,7 @@ pub mod editor;
 pub mod editorconfig;
 pub mod flash;
 pub mod focus;
+pub mod formatter;
 pub mod fuzzy;
 pub mod git;
 pub mod github;
