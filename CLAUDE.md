@@ -1791,6 +1791,14 @@ of the selected entry; accept evals `localStorage.setItem` (or `sessionStorage.s
 `scope|key=value` where scope is `local` (default) or `session`. `d` evals `removeItem` for the selected entry and
 drops the row locally. All three use `BrowserPane::eval_silent` (fire-and-forget eval that doesn't push a `» …` log
 line or claim `pending_eval`).
+**Request-pane mouse clicks** — the `[Edit]` / `[Response]` tab chips (registered in
+`app.rects.request_tabs`) switch view; in Edit mode each field row (Method / URL / Headers /
+Body — registered per visible line in `app.rects.request_fields`) clicks to focus that field
++ flip to Edit mode if currently in Response. The `request_view::draw` uses the same
+`std::mem::take` swap as `browser_view` so the renderer can push to `app.rects` while still
+holding the `rp` borrow. Field rect `y` values are stored as row indices within the rendered
+`rows` vec and translated to screen y by the caller after `scroll` is applied.
+
 **Browser sub-panel mouse clicks** — each row in the network / DOM / cookies / storage panels
 registers a rect in `app.rects.list_rows` per render (via a `std::mem::take` swap so the renderer
 can write to `app.rects` while still holding the `Pane::Browser` borrow). The `handle_scm_row_click`

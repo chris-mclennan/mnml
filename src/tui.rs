@@ -3101,6 +3101,35 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.trigger_code_lens(pid, lens_idx);
                 return;
             }
+            // Click on a request-pane tab chip → switch view (Edit ⇄ Response).
+            if let Some(&(_, pid, view)) = app
+                .rects
+                .request_tabs
+                .iter()
+                .find(|(r, _, _)| contains(*r, x, y))
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                if let Some(Pane::Request(rp)) = app.panes.get_mut(pid) {
+                    rp.view = view;
+                }
+                return;
+            }
+            // Click on a request-pane Edit-mode field row → focus that field.
+            if let Some(&(_, pid, field)) = app
+                .rects
+                .request_fields
+                .iter()
+                .find(|(r, _, _)| contains(*r, x, y))
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                if let Some(Pane::Request(rp)) = app.panes.get_mut(pid) {
+                    rp.view = crate::request_pane::ViewMode::Edit;
+                    rp.focus = field;
+                }
+                return;
+            }
             // Bufferline tab — clicking the close badge closes; clicking elsewhere on the tab activates.
             if let Some(&(_, id)) = app
                 .rects

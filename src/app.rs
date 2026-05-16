@@ -1307,6 +1307,14 @@ pub struct PaneRects {
     /// `lens_index` is the index into `Buffer.code_lenses`. Cleared +
     /// rebuilt per editor render.
     pub code_lens_chips: Vec<(Rect, PaneId, usize)>,
+    /// `(rect, pane_id, view_mode)` per `[Edit]` / `[Response]` tab chip
+    /// on a request pane's tab bar. Clicking switches the pane's view.
+    pub request_tabs: Vec<(Rect, PaneId, crate::request_pane::ViewMode)>,
+    /// `(row_rect, pane_id, field)` per Edit-mode row that belongs to a
+    /// specific field (Method / URL / Headers / Body). Clicking focuses
+    /// that field. Multi-line fields (Headers / Body) push one row entry
+    /// per rendered line so clicking anywhere in the field area works.
+    pub request_fields: Vec<(Rect, PaneId, crate::request_pane::EditField)>,
     /// `(row_rect, filtered_index)` for each visible completion popup row
     /// (excluding the docs footer). Cleared + rebuilt every render. Click
     /// on a row ⇒ select + accept.

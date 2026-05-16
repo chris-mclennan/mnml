@@ -36,7 +36,14 @@ pub fn draw(
         Paragraph::new("").style(Style::default().bg(t.bg_dark)),
         area,
     );
+    // Detach the click-target registries so the draw fns below can push
+    // into them while `rp` is borrowed from `app.panes`. Restored at the
+    // bottom (and at the early-return below).
+    let mut tabs = std::mem::take(&mut app.rects.request_tabs);
+    let mut fields = std::mem::take(&mut app.rects.request_fields);
     let Some(Pane::Request(rp)) = app.panes.get_mut(pane_id) else {
+        app.rects.request_tabs = tabs;
+        app.rects.request_fields = fields;
         return None;
     };
 
@@ -67,13 +74,56 @@ pub fn draw(
             dim,
         ),
     ]));
+    // Register click rects for both tab chips. The tab bar is row 0
+    // of the rendered output; layout is:
+    //   leading space (1) + "  Edit  " (8) + "  Response  " (12) + hint.
+    let tab_y = area.y;
+    if area.width > 1 {
+        let edit_x = area.x + 1;
+        let edit_w = 8u16.min(area.width.saturating_sub(1));
+        if edit_w > 0 {
+            tabs.push((
+                Rect {
+                    x: edit_x,
+                    y: tab_y,
+                    width: edit_w,
+                    height: 1,
+                },
+                pane_id,
+                ViewMode::Edit,
+            ));
+        }
+        let resp_x = area.x + 1 + 8;
+        if area.x + area.width > resp_x {
+            let resp_w = 12u16.min(area.x + area.width - resp_x);
+            tabs.push((
+                Rect {
+                    x: resp_x,
+                    y: tab_y,
+                    width: resp_w,
+                    height: 1,
+                },
+                pane_id,
+                ViewMode::Response,
+            ));
+        }
+    }
     rows.push(plain(String::new(), body_style));
 
     // ── caret position to return (set when Edit-mode draws the focused field) ──
     let mut caret: Option<(u16, u16)> = None;
 
     if active_edit {
-        draw_edit(rp, t, &mut rows, area, &mut caret, focused);
+        draw_edit(
+            rp,
+            t,
+            &mut rows,
+            area,
+            &mut caret,
+            focused,
+            pane_id,
+            &mut fields,
+        );
     } else {
         draw_response(rp, t, &mut rows);
     }
@@ -89,6 +139,22 @@ pub fn draw(
         area,
     );
     app.rects.editor_panes.push((area, pane_id));
+    app.rects.request_tabs = tabs;
+    // Field rects were collected with `y` as a row index within `rows`
+    // (no scroll offset applied). Adjust by `scroll` + clip to area now
+    // that the final scroll value is known.
+    for (mut r, pid, f) in fields.drain(..) {
+        let row_off = r.y; // row index within `rows`
+        if (row_off as usize) < scroll {
+            continue;
+        }
+        let visible_off = row_off as usize - scroll;
+        if visible_off >= h {
+            continue;
+        }
+        r.y = area.y + visible_off as u16;
+        app.rects.request_fields.push((r, pid, f));
+    }
 
     // Adjust the caret for scroll + return it so the terminal cursor sits there.
     caret.and_then(|(x, y)| {
@@ -101,6 +167,7 @@ pub fn draw(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_edit(
     rp: &crate::request_pane::RequestPane,
     t: theme::Theme,
@@ -108,7 +175,25 @@ fn draw_edit(
     area: Rect,
     caret: &mut Option<(u16, u16)>,
     focused: bool,
+    pane_id: PaneId,
+    fields: &mut Vec<(Rect, PaneId, EditField)>,
 ) {
+    // Stash a click-target rect for the row at `row_idx_in_rows` covering
+    // the full pane width (y stays as the *row index*; `draw` translates
+    // it to a screen y after applying scroll).
+    let register_field =
+        |fields: &mut Vec<(Rect, PaneId, EditField)>, row_y: u16, field: EditField| {
+            fields.push((
+                Rect {
+                    x: area.x,
+                    y: row_y,
+                    width: area.width,
+                    height: 1,
+                },
+                pane_id,
+                field,
+            ));
+        };
     let body_style = Style::default().fg(t.fg).bg(t.bg_dark);
     let plain = |s: String, st: Style| Line::from(Span::styled(s, st));
     let dim = Style::default().fg(t.comment).bg(t.bg_dark);
@@ -125,6 +210,7 @@ fn draw_edit(
 
     // Method
     let m_focus = rp.focus == EditField::Method;
+    let method_y = rows.len() as u16;
     rows.push(Line::from(vec![
         Span::styled(prefix(m_focus).to_string(), label_style(m_focus)),
         Span::styled("Method  ", label_style(m_focus)),
@@ -137,16 +223,19 @@ fn draw_edit(
         ),
         Span::styled("   (space → cycle)".to_string(), dim),
     ]));
+    register_field(fields, method_y, EditField::Method);
 
     // URL (field — caret rendered when focused)
     let u_focus = rp.focus == EditField::Url;
     let url_text = rp.request.url.clone();
     let label_url = format!("{}URL     ", prefix(u_focus));
     let label_len = label_url.chars().count() as u16;
+    let url_y = rows.len() as u16;
     rows.push(Line::from(vec![
         Span::styled(label_url, label_style(u_focus)),
         Span::styled(url_text.clone(), Style::default().fg(t.blue).bg(t.bg_dark)),
     ]));
+    register_field(fields, url_y, EditField::Url);
     if u_focus && focused {
         // y = index of the row we just pushed (0-based from rows[0])
         let y = (rows.len() - 1) as u16;
@@ -156,16 +245,20 @@ fn draw_edit(
 
     // Headers (editable as `Key: Value` text; one line per entry)
     let h_focus = rp.focus == EditField::Headers;
+    let headers_label_y = rows.len() as u16;
     rows.push(Line::from(vec![Span::styled(
         format!("{}Headers", prefix(h_focus)),
         label_style(h_focus),
     )]));
+    register_field(fields, headers_label_y, EditField::Headers);
     let hb = &rp.headers_buffer;
     if hb.is_empty() {
+        let empty_y = rows.len() as u16;
         rows.push(Line::from(vec![Span::styled(
             "    (none — type `Name: value` to add)".to_string(),
             dim,
         )]));
+        register_field(fields, empty_y, EditField::Headers);
         if h_focus && focused && caret.is_none() {
             let y = (rows.len() - 1) as u16;
             *caret = Some((area.x + 4, y));
@@ -197,7 +290,9 @@ fn draw_edit(
             } else {
                 vec![Span::styled(format!("    {line}"), plain_dim)]
             };
+            let row_y = rows.len() as u16;
             rows.push(Line::from(spans));
+            register_field(fields, row_y, EditField::Headers);
             if h_focus && focused && caret.is_none() {
                 let start = nth_line_start(hb, i);
                 let end = nth_line_end(hb, i);
@@ -218,22 +313,28 @@ fn draw_edit(
 
     // Body
     let b_focus = rp.focus == EditField::Body;
+    let body_label_y = rows.len() as u16;
     rows.push(Line::from(vec![Span::styled(
         format!("{}Body", prefix(b_focus)),
         label_style(b_focus),
     )]));
+    register_field(fields, body_label_y, EditField::Body);
     let body = rp.request.body.as_deref().unwrap_or("");
     if body.is_empty() {
+        let empty_y = rows.len() as u16;
         rows.push(Line::from(vec![Span::styled(
             "    (empty)".to_string(),
             dim,
         )]));
+        register_field(fields, empty_y, EditField::Body);
     } else {
         for (i, line) in body.lines().enumerate() {
+            let row_y = rows.len() as u16;
             rows.push(Line::from(vec![Span::styled(
                 format!("    {line}"),
                 Style::default().fg(t.grey_fg).bg(t.bg_dark),
             )]));
+            register_field(fields, row_y, EditField::Body);
             if b_focus && focused && caret.is_none() {
                 let body_offset_of_line_start = nth_line_start(body, i);
                 let body_offset_of_line_end = nth_line_end(body, i);

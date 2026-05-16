@@ -96,6 +96,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.editor_panes.clear();
         app.rects.fold_chips.clear();
         app.rects.code_lens_chips.clear();
+        app.rects.request_tabs.clear();
+        app.rects.request_fields.clear();
         app.rects.completion_rows.clear();
         app.rects.list_rows.clear();
         #[cfg(feature = "private")]
@@ -197,6 +199,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.body = Some(body_area);
     app.rects.editor_panes.clear();
     app.rects.fold_chips.clear();
+    app.rects.code_lens_chips.clear();
+    app.rects.request_tabs.clear();
+    app.rects.request_fields.clear();
     app.rects.list_rows.clear();
     #[cfg(feature = "private")]
     app.rects.test_executions_rows.clear();
