@@ -67,6 +67,14 @@ pub enum PickerKind {
     /// `id` = the index (as a string) into `App::repos`. Accept ⇒
     /// switch the active repo. Populated by `git.switch_repo`.
     Repos,
+    /// `id` = an env name (`"dev"` / `"staging"` / `"prod"`). Accept ⇒
+    /// run playwright tests against that env (private-feature only).
+    /// Populated by `private.run_tests_pick_env`.
+    the private integrationEnv,
+    /// `id` = a branch name. Accept ⇒ run playwright tests with
+    /// `BRANCH=<id>` (private-feature only). Populated by
+    /// `private.run_tests_pick_branch`.
+    the private integrationBranch,
 }
 
 #[derive(Debug, Clone)]

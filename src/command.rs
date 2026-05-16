@@ -2012,6 +2012,20 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.run_private_tests(),
         });
+        cmds.push(Command {
+            id: "private.run_tests_pick_env",
+            title: "the private integration: run playwright tests… (pick env)",
+            group: "private",
+            keys: &[],
+            run: |app| app.open_private_env_picker(),
+        });
+        cmds.push(Command {
+            id: "private.run_tests_pick_branch",
+            title: "the private integration: run playwright tests… (pick branch)",
+            group: "private",
+            keys: &[],
+            run: |app| app.open_private_branch_picker(),
+        });
     }
     cmds
 }

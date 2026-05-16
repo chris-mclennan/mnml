@@ -2119,6 +2119,17 @@ comment_count is hardcoded 0 because Azure's list endpoint doesn't
 return it (would need a per-PR `/threads` call). Free-tier signup
 walk-through in conversation history if a real test is needed.
 
+**the private integration 7b polish — `private.run_tests` pickers** — two opt-in pickers
+in front of the default run: `private.run_tests_pick_env` (dev/staging/
+prod) and `private.run_tests_pick_branch` (lists local branches; the
+settings.json default is pinned to the top with a `●` marker). Each
+picker dispatches to a new `App::run_private_tests_with_overrides
+(env_override, branch_override)` so the underlying command shape
+stays one path. The bare `private.run_tests` command still uses
+settings.json defaults across the board. New `PickerKind::the private integrationEnv`
++ `PickerKind::the private integrationBranch` (both private-feature-gated at the
+accept site). log_level wasn't picker-ized — settings.json controls it.
+
 **Multi-repo workspace (rail switcher)** — `crate::git::repos::discover_repos`
 walks the workspace at startup looking for `.git/` markers (bounded depth,
 skips dot-dirs / `node_modules/` / `target/`). New `App.repos:

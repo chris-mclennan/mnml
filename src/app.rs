@@ -3119,6 +3119,18 @@ impl App {
                     self.switch_active_repo(idx);
                 }
             }
+            #[cfg(feature = "private")]
+            PickerKind::the private integrationEnv => {
+                self.run_private_tests_with_overrides(Some(item.id), None);
+            }
+            #[cfg(not(feature = "private"))]
+            PickerKind::the private integrationEnv => {}
+            #[cfg(feature = "private")]
+            PickerKind::the private integrationBranch => {
+                self.run_private_tests_with_overrides(None, Some(item.id));
+            }
+            #[cfg(not(feature = "private"))]
+            PickerKind::the private integrationBranch => {}
         }
     }
 
@@ -17095,7 +17107,22 @@ impl App {
     /// vars. No interactive pickers — user edits settings.json (or runs the
     /// original launcher script) for one-off overrides.
     pub fn run_private_tests(&mut self) {
+        self.run_private_tests_with_overrides(None, None);
+    }
+
+    /// Run playwright tests with optional per-axis overrides for `env`
+    /// and/or `branch`. Each `None` falls back to the value loaded from
+    /// settings.json (which itself falls back to a hardcoded default).
+    /// `log_level` always uses settings.json — a third picker for that
+    /// felt like one too many.
+    pub fn run_private_tests_with_overrides(
+        &mut self,
+        env_override: Option<String>,
+        branch_override: Option<String>,
+    ) {
         let (branch, env, log_level, source) = load_playwright_settings(&self.workspace);
+        let branch = branch_override.unwrap_or(branch);
+        let env = env_override.unwrap_or(env);
         let cwd = self.workspace.clone();
         // Mirror the launcher's env-var construction.
         let cmd = format!(
@@ -17109,6 +17136,68 @@ impl App {
         self.open_pty(profile);
         self.toast(format!(
             "running playwright ({env}/{branch}/{log_level}) — source: {source}"
+        ));
+    }
+
+    /// Open a fuzzy picker over the standard private envs. Accept ⇒ run
+    /// playwright tests with that env (other axes default).
+    pub fn open_private_env_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let (default_branch, default_env, _, _) = load_playwright_settings(&self.workspace);
+        let items: Vec<PickerItem> = ["dev", "staging", "prod"]
+            .iter()
+            .map(|e| {
+                let marker = if *e == default_env { "● " } else { "  " };
+                PickerItem::new(
+                    e.to_string(),
+                    format!("{marker}{e}"),
+                    if *e == default_env {
+                        format!("default · branch={default_branch}")
+                    } else {
+                        format!("branch={default_branch}")
+                    },
+                )
+            })
+            .collect();
+        self.open_picker(Picker::new(PickerKind::the private integrationEnv, "Playwright env", items));
+    }
+
+    /// Open a fuzzy picker over local + remote branches (the same list
+    /// `git.checkout` uses). Accept ⇒ run playwright tests with that
+    /// branch (other axes default).
+    pub fn open_private_branch_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let (default_branch, default_env, _, _) = load_playwright_settings(&self.workspace);
+        let mut names: Vec<String> = crate::git::branch::local_branches(&self.workspace);
+        // Drop duplicates + keep stable order; prepend the settings default
+        // so it's the picker's first hit.
+        names.sort();
+        names.dedup();
+        let mut items: Vec<PickerItem> = Vec::with_capacity(names.len() + 1);
+        if !names.iter().any(|n| n == &default_branch) {
+            items.push(PickerItem::new(
+                default_branch.clone(),
+                format!("● {default_branch}"),
+                format!("default · env={default_env}"),
+            ));
+        }
+        for n in &names {
+            let marker = if n == &default_branch { "● " } else { "  " };
+            let detail = if n == &default_branch {
+                format!("default · env={default_env}")
+            } else {
+                format!("env={default_env}")
+            };
+            items.push(PickerItem::new(n.clone(), format!("{marker}{n}"), detail));
+        }
+        if items.is_empty() {
+            self.toast("no local branches found");
+            return;
+        }
+        self.open_picker(Picker::new(
+            PickerKind::the private integrationBranch,
+            "Playwright branch",
+            items,
         ));
     }
 
@@ -20083,6 +20172,23 @@ GET https://example.com/second
                 other => panic!("expected Failed, got {other:?}"),
             }
         }
+    }
+
+    #[cfg(feature = "private")]
+    #[test]
+    fn private_env_picker_seeds_default_and_options() {
+        let d = tempfile::tempdir().unwrap();
+        let prior = std::env::var("SETTINGS_FILE").ok();
+        unsafe { std::env::remove_var("SETTINGS_FILE") };
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_private_env_picker();
+        if let Some(p) = prior {
+            unsafe { std::env::set_var("SETTINGS_FILE", p) };
+        }
+        let picker = app.picker.as_ref().expect("picker should be open");
+        assert_eq!(picker.kind, crate::picker::PickerKind::the private integrationEnv);
+        let ids: Vec<&str> = picker.items_view().map(|it| it.id.as_str()).collect();
+        assert_eq!(ids, vec!["dev", "staging", "prod"]);
     }
 
     #[cfg(feature = "private")]
