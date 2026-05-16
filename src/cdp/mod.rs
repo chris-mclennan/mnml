@@ -93,6 +93,39 @@ pub fn capture_screenshot(id: i64) -> String {
         serde_json::json!({ "format": "png", "captureBeyondViewport": false }),
     )
 }
+
+/// Same as `capture_screenshot`, but clipped to `(x, y, width, height)`
+/// — used for the node-screenshot flow (`S` in the DOM panel), where
+/// the clip is the bounding-box of the selected DOM node.
+pub fn capture_screenshot_clip(id: i64, x: f64, y: f64, width: f64, height: f64) -> String {
+    rpc(
+        id,
+        "Page.captureScreenshot",
+        serde_json::json!({
+            "format": "png",
+            "captureBeyondViewport": false,
+            "clip": {
+                "x": x,
+                "y": y,
+                "width": width,
+                "height": height,
+                "scale": 1.0,
+            }
+        }),
+    )
+}
+
+/// `DOM.getBoxModel` — fetches the node's content / padding / border /
+/// margin quads. Each quad is `[x1, y1, x2, y2, x3, y3, x4, y4]` (8
+/// numbers, the four corners of the rectangle in viewport coords).
+/// Used by the node-screenshot flow to compute a bounding rect.
+pub fn get_box_model(id: i64, node_id: i64) -> String {
+    rpc(
+        id,
+        "DOM.getBoxModel",
+        serde_json::json!({ "nodeId": node_id }),
+    )
+}
 pub fn get_request_post_data(id: i64, request_id: &str) -> String {
     rpc(
         id,

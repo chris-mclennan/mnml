@@ -344,6 +344,11 @@ pub struct BrowserPane {
     pub pending_eval: Option<i64>,
     /// The id of an in-flight `Page.captureScreenshot`, so its reply can be matched.
     pub pending_screenshot: Option<i64>,
+    /// The id of an in-flight `DOM.getBoxModel` (from the `S`
+    /// node-screenshot flow) — once its reply lands the App computes
+    /// the bbox + fires `Page.captureScreenshot` with clip. Distinct
+    /// from `pending_screenshot` so the two reply paths don't collide.
+    pub pending_node_screenshot: Option<i64>,
     /// The id of an in-flight `DOM.getDocument`, so its reply can be matched.
     pub pending_dom: Option<i64>,
     /// Outstanding `Network.getRequestPostData` requests: `(rpc id, CDP requestId)`.
@@ -382,6 +387,7 @@ impl BrowserPane {
             next_id: 100,
             pending_eval: None,
             pending_screenshot: None,
+            pending_node_screenshot: None,
             pending_dom: None,
             pending_post_data: Vec::new(),
             scroll: usize::MAX, // follow the tail
@@ -742,6 +748,46 @@ impl BrowserPane {
         self.push(LogKind::System, "capturing screenshot…");
         let id = self.send(crate::cdp::capture_screenshot);
         self.pending_screenshot = Some(id);
+    }
+
+    /// `S` in the DOM panel — capture a screenshot of the selected
+    /// node only. Two-step CDP flow: first `DOM.getBoxModel`, then on
+    /// reply compute the bounding rect + fire
+    /// `Page.captureScreenshot` with a `clip` argument. The eventual
+    /// PNG is written through the same path as a full-page screenshot.
+    /// No-op if the panel has no selection or `selected_dom().node_id`
+    /// is 0 (synthetic / un-screenshottable node).
+    pub fn screenshot_selected_dom(&mut self) {
+        if self.closed {
+            return;
+        }
+        let Some(node_id) = self.selected_dom().map(|r| r.node_id) else {
+            return;
+        };
+        if node_id == 0 {
+            return;
+        }
+        self.push(LogKind::System, "capturing node screenshot…");
+        let id = self.send(|id| crate::cdp::get_box_model(id, node_id));
+        self.pending_node_screenshot = Some(id);
+    }
+
+    /// Fire `Page.captureScreenshot` clipped to a rect. Called by the
+    /// App after the `DOM.getBoxModel` reply lands and the bbox is
+    /// computed.
+    pub fn screenshot_clip(&mut self, x: f64, y: f64, width: f64, height: f64) {
+        if self.closed {
+            return;
+        }
+        let id = self.send(|id| crate::cdp::capture_screenshot_clip(id, x, y, width, height));
+        self.pending_screenshot = Some(id);
+    }
+
+    /// True when `rpc_id` is the one we stashed in
+    /// `pending_node_screenshot`. Used by the App's CDP reply
+    /// dispatcher to match a `DOM.getBoxModel` reply.
+    pub fn is_pending_node_screenshot(&self, rpc_id: i64) -> bool {
+        self.pending_node_screenshot == Some(rpc_id)
     }
 
     /// `D` (or refresh from the panel) — `DOM.getDocument`; the parsed tree lands
@@ -1301,6 +1347,67 @@ mod tests {
         let e = p.selected_net().expect("selection");
         assert_eq!(e.method, "POST");
         assert_eq!(e.url, "https://a.test/login");
+    }
+
+    #[test]
+    fn screenshot_selected_dom_fires_get_box_model() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        p.dom = vec![DomRow {
+            depth: 0,
+            label: "<button>".into(),
+            selector: "button".into(),
+            node_id: 42,
+        }];
+        // Drain the initial Page.navigate.
+        let _ = drain_cdp(&rx);
+
+        p.screenshot_selected_dom();
+        assert!(p.pending_node_screenshot.is_some());
+
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "DOM.getBoxModel"), 1);
+        let req = msgs
+            .iter()
+            .find(|m| m["method"] == "DOM.getBoxModel")
+            .unwrap();
+        assert_eq!(req["params"]["nodeId"], 42);
+    }
+
+    #[test]
+    fn screenshot_selected_dom_skips_synthetic_nodes() {
+        // node_id == 0 (synthetic / un-screenshottable) ⇒ no-op.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        p.dom = vec![DomRow {
+            depth: 0,
+            label: "<!DOCTYPE html>".into(),
+            selector: String::new(),
+            node_id: 0,
+        }];
+        let _ = drain_cdp(&rx);
+        p.screenshot_selected_dom();
+        assert!(p.pending_node_screenshot.is_none());
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "DOM.getBoxModel"), 0);
+    }
+
+    #[test]
+    fn screenshot_clip_fires_capture_screenshot_with_clip() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        let _ = drain_cdp(&rx);
+        p.screenshot_clip(10.0, 20.0, 100.0, 40.0);
+        assert!(p.pending_screenshot.is_some());
+        let msgs = drain_cdp(&rx);
+        let req = msgs
+            .iter()
+            .find(|m| m["method"] == "Page.captureScreenshot")
+            .expect("capture");
+        assert_eq!(req["params"]["clip"]["x"], 10.0);
+        assert_eq!(req["params"]["clip"]["y"], 20.0);
+        assert_eq!(req["params"]["clip"]["width"], 100.0);
+        assert_eq!(req["params"]["clip"]["height"], 40.0);
     }
 
     #[test]

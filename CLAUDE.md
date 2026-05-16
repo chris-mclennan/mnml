@@ -1737,7 +1737,13 @@ Enter exits the mode (keeping the filter), Esc clears + exits. Selection space s
 indexes into `visible_dom_indices()`; `selected_dom` resolves through. Esc with a held filter clears it first (the
 canonical "narrow → exit" two-step). Filter changes auto-fire hover-highlight if follow mode is on so the page's overlay
 tracks the narrowed selection. Header chip shows `DOM (M/N)` while narrowed, `DOM filter: ..._ · Backspace · Enter · Esc
-clears` while typing. `R` re-fetches, `D`
+clears` while typing.
+**`S` screenshots the selected DOM node** (`browser.screenshot_node`) — two-step CDP flow: `DOM.getBoxModel { nodeId }`
+→ reply parsed via `bbox_from_quad` (handles rotated quads — axis-aligned bbox of the 4 content-corner points) →
+`Page.captureScreenshot { clip: {x, y, width, height, scale: 1} }`. The PNG lands in `.mnml/screenshots/` via the same
+path as a full-page screenshot. New `BrowserPane.pending_node_screenshot` slot is distinct from `pending_screenshot` so
+the two reply paths don't collide. `node_id == 0` (synthetic / un-screenshottable) ⇒ no-op + toast; off-screen nodes
+where the bbox can't be computed log a `bbox unavailable` warning. `R` re-fetches, `D`
 (or Esc) leave the panel (Esc also clears any highlight via `Overlay.hideHighlight`). After `s` writes the PNG, `open_path_external` hands it to the OS default app (`open` on macOS,
 `xdg-open` on Linux, `cmd /C start` on Windows; best-effort, errors swallowed). `Target.setDiscoverTargets {discover:true}`
 is also sent on connect so popups / new-tabs show up as `⤴ new tab → url` log lines (`Target.targetCreated` with

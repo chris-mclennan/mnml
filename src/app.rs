@@ -140,6 +140,33 @@ fn cdp_short_url(url: &str) -> String {
     }
 }
 
+/// `DOM.getBoxModel.content` is `[x1, y1, x2, y2, x3, y3, x4, y4]` — the
+/// four corners of the node's content quad in viewport coords. Compute
+/// the axis-aligned bounding box `(x, y, width, height)` we can hand
+/// to `Page.captureScreenshot.clip`. Returns `None` when the array
+/// isn't 8 numeric entries (off-screen / detached nodes can yield an
+/// empty / shorter quad).
+fn bbox_from_quad(q: &[serde_json::Value]) -> Option<(f64, f64, f64, f64)> {
+    if q.len() != 8 {
+        return None;
+    }
+    let mut nums = q.iter().map(|v| v.as_f64());
+    let mut xs = [0.0_f64; 4];
+    let mut ys = [0.0_f64; 4];
+    for i in 0..4 {
+        xs[i] = nums.next()??;
+        ys[i] = nums.next()??;
+    }
+    let x_min = xs.iter().cloned().fold(f64::INFINITY, f64::min);
+    let y_min = ys.iter().cloned().fold(f64::INFINITY, f64::min);
+    let x_max = xs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let y_max = ys.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    if !x_min.is_finite() || !y_min.is_finite() || !x_max.is_finite() || !y_max.is_finite() {
+        return None;
+    }
+    Some((x_min, y_min, x_max - x_min, y_max - y_min))
+}
+
 /// Render a `Runtime.evaluate` reply (`{result:{result:<RemoteObject>, exceptionDetails?}}`) to text.
 fn cdp_eval_result_text(v: &serde_json::Value) -> String {
     let res = v.get("result");
@@ -7667,6 +7694,32 @@ impl App {
         }
     }
 
+    /// `S` in a browser pane's DOM panel (`browser.screenshot_node`) —
+    /// capture a screenshot clipped to the selected DOM node's bounding
+    /// box. Two-step CDP flow under the hood: `DOM.getBoxModel` →
+    /// `Page.captureScreenshot { clip }`. The eventual PNG lands in
+    /// `.mnml/screenshots/` via the same path as a full-page screenshot.
+    pub fn browser_screenshot_node(&mut self) {
+        match self
+            .panes
+            .iter_mut()
+            .find(|p| matches!(p, Pane::Browser(_)))
+        {
+            Some(Pane::Browser(b)) => {
+                if !b.dom_focus {
+                    self.toast("node screenshot needs the DOM panel open (D)");
+                    return;
+                }
+                if b.selected_dom().map(|r| r.node_id).unwrap_or(0) == 0 {
+                    self.toast("no node selected");
+                    return;
+                }
+                b.screenshot_selected_dom();
+            }
+            _ => self.toast("no browser pane open"),
+        }
+    }
+
     /// `T` in the browser pane — open a picker over discovered CDP targets
     /// (main page + auto-attached popups / new tabs / iframes). Accept ⇒
     /// `browser.switch_target` routes subsequent commands there.
@@ -7909,6 +7962,36 @@ impl App {
                         if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
                             b.push(LogKind::ConsoleErr, "screenshot: empty reply from Chrome");
                         }
+                    }
+                }
+                return;
+            }
+            if matches!(self.panes.get(idx), Some(Pane::Browser(b)) if b.is_pending_node_screenshot(id))
+            {
+                // `DOM.getBoxModel` reply → parse content quad → compute
+                // bbox → fire `Page.captureScreenshot` with `clip`.
+                if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                    b.pending_node_screenshot = None;
+                }
+                let quad = v
+                    .get("result")
+                    .and_then(|r| r.get("model"))
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array());
+                match quad.and_then(|q| bbox_from_quad(q)) {
+                    Some((x, y, w, h)) if w > 0.0 && h > 0.0 => {
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.screenshot_clip(x, y, w, h);
+                        }
+                    }
+                    _ => {
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.push(
+                                LogKind::ConsoleErr,
+                                "node screenshot: bbox unavailable (off-screen / display:none?)",
+                            );
+                        }
+                        self.toast("node screenshot: bbox unavailable");
                     }
                 }
                 return;
@@ -19785,7 +19868,67 @@ fn layout_from_saved(saved: &SavedLayout, idx_to_pane: &[Option<PaneId>]) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::fs;
+
+    #[test]
+    fn bbox_from_quad_computes_axis_aligned_rect() {
+        // A 100×40 rectangle anchored at (10, 20). Corners walk clockwise:
+        // (10,20) → (110,20) → (110,60) → (10,60).
+        let q = vec![
+            json!(10.0),
+            json!(20.0),
+            json!(110.0),
+            json!(20.0),
+            json!(110.0),
+            json!(60.0),
+            json!(10.0),
+            json!(60.0),
+        ];
+        let (x, y, w, h) = bbox_from_quad(&q).expect("bbox");
+        assert_eq!(x, 10.0);
+        assert_eq!(y, 20.0);
+        assert_eq!(w, 100.0);
+        assert_eq!(h, 40.0);
+    }
+
+    #[test]
+    fn bbox_from_quad_handles_rotated_input() {
+        // A 50×50 square rotated ~45° so the bbox is wider than either side.
+        let q = vec![
+            json!(50.0),
+            json!(0.0),
+            json!(100.0),
+            json!(50.0),
+            json!(50.0),
+            json!(100.0),
+            json!(0.0),
+            json!(50.0),
+        ];
+        let (x, y, w, h) = bbox_from_quad(&q).expect("bbox");
+        assert_eq!(x, 0.0);
+        assert_eq!(y, 0.0);
+        assert_eq!(w, 100.0);
+        assert_eq!(h, 100.0);
+    }
+
+    #[test]
+    fn bbox_from_quad_rejects_malformed_input() {
+        // Shorter array
+        assert!(bbox_from_quad(&[json!(1.0), json!(2.0)]).is_none());
+        // Non-numeric entry
+        let q = vec![
+            json!(0.0),
+            json!(0.0),
+            json!(10.0),
+            json!(0.0),
+            json!("bad"),
+            json!(10.0),
+            json!(0.0),
+            json!(10.0),
+        ];
+        assert!(bbox_from_quad(&q).is_none());
+    }
 
     #[cfg(feature = "private")]
     #[test]
