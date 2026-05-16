@@ -713,6 +713,25 @@ struct SavedSession {
     /// cmdline walks through them). Oldest-first; capped at 100.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     ex_history: Vec<String>,
+    /// View-mode + collapsed-headers state for each SCM/CI pane.
+    /// Persisted so flipping `v` or collapsing a repo header sticks
+    /// across `q!` and relaunches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bb_pipelines_view_mode: Option<crate::bitbucket::PipelineViewMode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    bb_pipelines_collapsed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bb_prs_view_mode: Option<crate::bitbucket::PrViewMode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    bb_prs_collapsed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gh_actions_view_mode: Option<crate::github::ActionsViewMode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    gh_actions_collapsed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gh_prs_view_mode: Option<crate::github::GhPrViewMode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    gh_prs_collapsed: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -1750,6 +1769,17 @@ pub struct App {
     /// `/pullrequests/{account_id}` poll — replaces wholesale each pass.
     /// Powers the "mine" PR view-mode.
     pub(crate) bitbucket_my_pull_requests: Vec<crate::bitbucket::PullRequestRecord>,
+    /// View-mode the BB pipelines pane should open in / is in. Lives on
+    /// App so the choice survives close-pane and session restore.
+    pub(crate) bb_pipelines_view_mode: crate::bitbucket::PipelineViewMode,
+    /// Header labels currently collapsed in the BB pipelines pane.
+    pub(crate) bb_pipelines_collapsed: std::collections::HashSet<String>,
+    pub(crate) bb_prs_view_mode: crate::bitbucket::PrViewMode,
+    pub(crate) bb_prs_collapsed: std::collections::HashSet<String>,
+    pub(crate) gh_actions_view_mode: crate::github::ActionsViewMode,
+    pub(crate) gh_actions_collapsed: std::collections::HashSet<String>,
+    pub(crate) gh_prs_view_mode: crate::github::GhPrViewMode,
+    pub(crate) gh_prs_collapsed: std::collections::HashSet<String>,
     /// Per-repo per-branch latest pipeline (the "per-branch" pipelines
     /// view-mode). Keyed by `(workspace, slug)` → ordered
     /// `Vec<BranchPipelineSlot>`. Branch order follows the worker's
@@ -1925,6 +1955,14 @@ impl App {
             bitbucket_pull_requests: std::collections::HashMap::new(),
             bitbucket_my_pull_requests: Vec::new(),
             bitbucket_branch_pipelines: std::collections::HashMap::new(),
+            bb_pipelines_view_mode: Default::default(),
+            bb_pipelines_collapsed: std::collections::HashSet::new(),
+            bb_prs_view_mode: Default::default(),
+            bb_prs_collapsed: std::collections::HashSet::new(),
+            gh_actions_view_mode: Default::default(),
+            gh_actions_collapsed: std::collections::HashSet::new(),
+            gh_prs_view_mode: Default::default(),
+            gh_prs_collapsed: std::collections::HashSet::new(),
             bitbucket_last_error: None,
             bitbucket_connected: false,
             github_handle: None,
@@ -16113,6 +16151,18 @@ impl App {
                 })
                 .collect(),
             ex_history: self.ex_history.clone(),
+            bb_pipelines_view_mode: Some(self.bb_pipelines_view_mode),
+            bb_pipelines_collapsed: self
+                .bb_pipelines_collapsed
+                .iter()
+                .cloned()
+                .collect(),
+            bb_prs_view_mode: Some(self.bb_prs_view_mode),
+            bb_prs_collapsed: self.bb_prs_collapsed.iter().cloned().collect(),
+            gh_actions_view_mode: Some(self.gh_actions_view_mode),
+            gh_actions_collapsed: self.gh_actions_collapsed.iter().cloned().collect(),
+            gh_prs_view_mode: Some(self.gh_prs_view_mode),
+            gh_prs_collapsed: self.gh_prs_collapsed.iter().cloned().collect(),
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -16305,6 +16355,23 @@ impl App {
                 }
             }
         }
+        // SCM/CI pane view-mode + collapse state.
+        if let Some(m) = saved.bb_pipelines_view_mode {
+            self.bb_pipelines_view_mode = m;
+        }
+        self.bb_pipelines_collapsed = saved.bb_pipelines_collapsed.into_iter().collect();
+        if let Some(m) = saved.bb_prs_view_mode {
+            self.bb_prs_view_mode = m;
+        }
+        self.bb_prs_collapsed = saved.bb_prs_collapsed.into_iter().collect();
+        if let Some(m) = saved.gh_actions_view_mode {
+            self.gh_actions_view_mode = m;
+        }
+        self.gh_actions_collapsed = saved.gh_actions_collapsed.into_iter().collect();
+        if let Some(m) = saved.gh_prs_view_mode {
+            self.gh_prs_view_mode = m;
+        }
+        self.gh_prs_collapsed = saved.gh_prs_collapsed.into_iter().collect();
         // Per-file change list — restore for any buffer we just re-opened.
         // Cursor sits past the newest entry so the first `g;` lands on the
         // most recent edit (vim convention).

@@ -35,10 +35,8 @@ pub fn draw(
     );
     app.rects.editor_panes.push((area, pane_id));
 
-    let mode = match app.panes.get(pane_id) {
-        Some(Pane::GithubPullRequests(p)) => p.view_mode,
-        _ => return None,
-    };
+    let mode = app.gh_prs_view_mode;
+    let collapsed_set = app.gh_prs_collapsed.clone();
     let flat = match mode {
         crate::github::GhPrViewMode::PerRepo => flatten_prs(app),
         crate::github::GhPrViewMode::Mine => flatten_my_prs(app),
@@ -75,7 +73,7 @@ pub fn draw(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" · view: {} (v to flip)", p.view_mode.label()),
+            format!(" · view: {} (v to flip)", mode.label()),
             Style::default()
                 .fg(t.yellow)
                 .bg(t.bg_dark)
@@ -141,7 +139,7 @@ pub fn draw(
             RowKind::Header => {
                 let selected = i == p.selected;
                 let row_bg = if selected { t.bg2 } else { t.bg_dark };
-                let collapsed = p.is_collapsed(&row.header_label);
+                let collapsed = collapsed_set.contains(&row.header_label);
                 let arrow = match (collapsed, nerd) {
                     (true, true) => format!("{CHEVRON_CLOSED_NERD} "),
                     (false, true) => format!("{CHEVRON_OPEN_NERD} "),
@@ -291,10 +289,7 @@ pub fn flatten_prs(app: &App) -> Vec<FlatRow> {
 }
 
 fn active_gh_pr_collapsed(app: &App) -> Option<std::collections::HashSet<String>> {
-    app.panes.iter().find_map(|p| match p {
-        Pane::GithubPullRequests(pane) => Some(pane.collapsed_repos.clone()),
-        _ => None,
-    })
+    Some(app.gh_prs_collapsed.clone())
 }
 
 pub fn flatten_my_prs(app: &App) -> Vec<FlatRow> {
@@ -321,7 +316,7 @@ pub fn selected_pr(
     app: &App,
     pane: &crate::github::GithubPullRequestsPane,
 ) -> Option<PullRequestRecord> {
-    let flat = match pane.view_mode {
+    let flat = match app.gh_prs_view_mode {
         crate::github::GhPrViewMode::PerRepo => flatten_prs(app),
         crate::github::GhPrViewMode::Mine => flatten_my_prs(app),
     };

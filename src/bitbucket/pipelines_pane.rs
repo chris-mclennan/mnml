@@ -15,7 +15,8 @@
 //! view-mode is active. Data lives on `App.bitbucket_pipelines` (Recent)
 //! and `App.bitbucket_branch_pipelines` (PerBranch).
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum PipelineViewMode {
     /// Newest-N pipelines per repo, mixed branches. The original pane.
     #[default]
@@ -40,34 +41,14 @@ impl PipelineViewMode {
     }
 }
 
+/// Per-pane ephemeral state. The persistent bits (view_mode +
+/// `collapsed_repos`) live on `App` so they survive pane close +
+/// session restore. The pane itself only tracks where the user is
+/// looking right now.
 #[derive(Debug, Default)]
 pub struct BitbucketPipelinesPane {
-    /// Index into the flattened list — header rows are now selectable
-    /// (Enter on a header toggles collapse, just like the file tree).
     pub selected: usize,
     pub scroll: usize,
-    pub view_mode: PipelineViewMode,
-    /// Header labels (`"workspace/slug"`) for repos that are currently
-    /// collapsed in the UI. The flatten function skips their child rows.
-    /// Default ⇒ empty (all expanded).
-    pub collapsed_repos: std::collections::HashSet<String>,
-}
-
-impl BitbucketPipelinesPane {
-    /// Flip the collapsed state of one repo header. Returns the new
-    /// state (`true` ⇒ now collapsed, `false` ⇒ now expanded).
-    pub fn toggle_collapsed(&mut self, header_label: &str) -> bool {
-        if self.collapsed_repos.contains(header_label) {
-            self.collapsed_repos.remove(header_label);
-            false
-        } else {
-            self.collapsed_repos.insert(header_label.to_string());
-            true
-        }
-    }
-    pub fn is_collapsed(&self, header_label: &str) -> bool {
-        self.collapsed_repos.contains(header_label)
-    }
 }
 
 impl BitbucketPipelinesPane {
@@ -76,15 +57,7 @@ impl BitbucketPipelinesPane {
     }
 
     pub fn tab_title(&self) -> String {
-        format!("Bitbucket · {}", self.view_mode.label())
-    }
-
-    /// Flip the view-mode. Returns the new mode. `v` key handler.
-    pub fn cycle_view(&mut self) -> PipelineViewMode {
-        self.view_mode = self.view_mode.cycle();
-        self.selected = 0;
-        self.scroll = 0;
-        self.view_mode
+        "Bitbucket".to_string()
     }
 
     /// Move the selection by `delta` items, clamped to `[0, max_idx)`.

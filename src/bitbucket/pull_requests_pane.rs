@@ -7,10 +7,12 @@
 //!   I authored across every accessible repo (NOT scoped to configured
 //!   `[[bitbucket.repos]]`). Good for "what am I on the hook for."
 //!
-//! Both surfaces are kept fresh by the same worker thread, so flipping
-//! is instant.
+//! `view_mode` and `collapsed_repos` live on `App` (so they survive
+//! pane close + session restore); the pane itself only tracks
+//! selection + scroll.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum PrViewMode {
     /// PRs per configured repo. The original pane.
     #[default]
@@ -38,25 +40,6 @@ impl PrViewMode {
 pub struct BitbucketPullRequestsPane {
     pub selected: usize,
     pub scroll: usize,
-    pub view_mode: PrViewMode,
-    /// Per-repo header labels (`"workspace/slug"`) that are collapsed.
-    /// Only applies in the PerRepo view-mode — Mine is a flat list.
-    pub collapsed_repos: std::collections::HashSet<String>,
-}
-
-impl BitbucketPullRequestsPane {
-    pub fn toggle_collapsed(&mut self, header_label: &str) -> bool {
-        if self.collapsed_repos.contains(header_label) {
-            self.collapsed_repos.remove(header_label);
-            false
-        } else {
-            self.collapsed_repos.insert(header_label.to_string());
-            true
-        }
-    }
-    pub fn is_collapsed(&self, header_label: &str) -> bool {
-        self.collapsed_repos.contains(header_label)
-    }
 }
 
 impl BitbucketPullRequestsPane {
@@ -64,14 +47,7 @@ impl BitbucketPullRequestsPane {
         Self::default()
     }
     pub fn tab_title(&self) -> String {
-        format!("Bitbucket PRs · {}", self.view_mode.label())
-    }
-
-    pub fn cycle_view(&mut self) -> PrViewMode {
-        self.view_mode = self.view_mode.cycle();
-        self.selected = 0;
-        self.scroll = 0;
-        self.view_mode
+        "Bitbucket PRs".to_string()
     }
     pub fn move_selection(&mut self, delta: i64, max_idx: usize) {
         if max_idx == 0 {

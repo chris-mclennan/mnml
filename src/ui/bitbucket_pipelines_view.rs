@@ -58,10 +58,8 @@ pub fn draw(
     // Pick the active view's flatten function up front. The pane's
     // view_mode is on App, but flatten functions take &App — read the
     // mode via a short borrow before pivoting.
-    let mode = match app.panes.get(pane_id) {
-        Some(Pane::BitbucketPipelines(p)) => p.view_mode,
-        _ => return None,
-    };
+    let mode = app.bb_pipelines_view_mode;
+    let collapsed_set = app.bb_pipelines_collapsed.clone();
     let flat = match mode {
         crate::bitbucket::PipelineViewMode::Recent => flatten_pipelines(app),
         crate::bitbucket::PipelineViewMode::PerBranch => flatten_branch_pipelines(app),
@@ -106,7 +104,7 @@ pub fn draw(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" · view: {} (v to flip)", p.view_mode.label()),
+            format!(" · view: {} (v to flip)", mode.label()),
             Style::default()
                 .fg(t.yellow)
                 .bg(t.bg_dark)
@@ -184,7 +182,7 @@ pub fn draw(
             RowKind::Header => {
                 let selected = i == p.selected;
                 let row_bg = if selected { t.bg2 } else { t.bg_dark };
-                let collapsed = p.is_collapsed(&row.header_label);
+                let collapsed = collapsed_set.contains(&row.header_label);
                 let arrow = match (collapsed, nerd) {
                     (true, true) => format!("{CHEVRON_CLOSED_NERD} "),
                     (false, true) => format!("{CHEVRON_OPEN_NERD} "),
@@ -393,10 +391,9 @@ pub fn flatten_pipelines(app: &App) -> Vec<FlatRow> {
 /// its `collapsed_repos` set. Used by the flatten functions to honor
 /// per-pane collapse state without taking a mutable borrow.
 fn active_pipelines_collapsed(app: &App) -> Option<std::collections::HashSet<String>> {
-    app.panes.iter().find_map(|p| match p {
-        Pane::BitbucketPipelines(pane) => Some(pane.collapsed_repos.clone()),
-        _ => None,
-    })
+    // State lives on `App` now — same value regardless of whether a
+    // pane is currently open.
+    Some(app.bb_pipelines_collapsed.clone())
 }
 
 /// Walk the configured repos and emit one Header + one data row per
@@ -446,7 +443,7 @@ pub fn selected_pipeline(
     app: &App,
     pane: &crate::bitbucket::BitbucketPipelinesPane,
 ) -> Option<PipelineRecord> {
-    let flat = match pane.view_mode {
+    let flat = match app.bb_pipelines_view_mode {
         crate::bitbucket::PipelineViewMode::Recent => flatten_pipelines(app),
         crate::bitbucket::PipelineViewMode::PerBranch => flatten_branch_pipelines(app),
     };

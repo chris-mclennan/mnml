@@ -1,7 +1,9 @@
 //! `Pane::GithubPullRequests` state — sibling of
-//! [`crate::bitbucket::BitbucketPullRequestsPane`].
+//! [`crate::bitbucket::BitbucketPullRequestsPane`]. View-mode +
+//! collapse state live on `App`.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum GhPrViewMode {
     #[default]
     PerRepo,
@@ -27,23 +29,6 @@ impl GhPrViewMode {
 pub struct GithubPullRequestsPane {
     pub selected: usize,
     pub scroll: usize,
-    pub view_mode: GhPrViewMode,
-    pub collapsed_repos: std::collections::HashSet<String>,
-}
-
-impl GithubPullRequestsPane {
-    pub fn toggle_collapsed(&mut self, header_label: &str) -> bool {
-        if self.collapsed_repos.contains(header_label) {
-            self.collapsed_repos.remove(header_label);
-            false
-        } else {
-            self.collapsed_repos.insert(header_label.to_string());
-            true
-        }
-    }
-    pub fn is_collapsed(&self, header_label: &str) -> bool {
-        self.collapsed_repos.contains(header_label)
-    }
 }
 
 impl GithubPullRequestsPane {
@@ -51,13 +36,7 @@ impl GithubPullRequestsPane {
         Self::default()
     }
     pub fn tab_title(&self) -> String {
-        format!("GitHub PRs · {}", self.view_mode.label())
-    }
-    pub fn cycle_view(&mut self) -> GhPrViewMode {
-        self.view_mode = self.view_mode.cycle();
-        self.selected = 0;
-        self.scroll = 0;
-        self.view_mode
+        "GitHub PRs".to_string()
     }
     pub fn move_selection(&mut self, delta: i64, max_idx: usize) {
         if max_idx == 0 {
