@@ -1764,6 +1764,12 @@ pub struct App {
     /// Per-repo cache of the latest open pull requests (GitHub).
     pub(crate) github_pull_requests:
         std::collections::HashMap<(String, String), Vec<crate::github::PullRequestRecord>>,
+    /// Cross-repo flat list of every open PR the authenticated GitHub
+    /// user authored. Powers the GH Mine view-mode.
+    pub(crate) github_my_pull_requests: Vec<crate::github::PullRequestRecord>,
+    /// Per-repo per-branch latest workflow run.
+    pub(crate) github_branch_runs:
+        std::collections::HashMap<(String, String), Vec<crate::github::BranchRunSlot>>,
     /// Last error string from the GitHub worker. Cleared on the next
     /// successful event.
     pub(crate) github_last_error: Option<String>,
@@ -1924,6 +1930,8 @@ impl App {
             github_handle: None,
             github_workflow_runs: std::collections::HashMap::new(),
             github_pull_requests: std::collections::HashMap::new(),
+            github_my_pull_requests: Vec::new(),
+            github_branch_runs: std::collections::HashMap::new(),
             github_last_error: None,
             github_connected: false,
             pending_commit_msg_job: None,
@@ -16950,6 +16958,18 @@ impl App {
                 } => {
                     self.github_pull_requests
                         .insert((owner, repo), pull_requests);
+                    self.github_last_error = None;
+                }
+                GithubEvent::BranchRuns {
+                    owner,
+                    repo,
+                    per_branch,
+                } => {
+                    self.github_branch_runs.insert((owner, repo), per_branch);
+                    self.github_last_error = None;
+                }
+                GithubEvent::MyPullRequests(prs) => {
+                    self.github_my_pull_requests = prs;
                     self.github_last_error = None;
                 }
                 GithubEvent::Connected => {

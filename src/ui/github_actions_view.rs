@@ -35,9 +35,20 @@ pub fn draw(
     );
     app.rects.editor_panes.push((area, pane_id));
 
-    let flat = flatten_runs(app);
+    let mode = match app.panes.get(pane_id) {
+        Some(Pane::GithubActions(p)) => p.view_mode,
+        _ => return None,
+    };
+    let flat = match mode {
+        crate::github::ActionsViewMode::Recent => flatten_runs(app),
+        crate::github::ActionsViewMode::PerBranch => flatten_branch_runs(app),
+    };
     let total = flat.iter().filter(|r| r.kind == RowKind::Run).count();
-    let loading = !app.github_connected && app.github_workflow_runs.is_empty();
+    let cache_empty = match mode {
+        crate::github::ActionsViewMode::Recent => app.github_workflow_runs.is_empty(),
+        crate::github::ActionsViewMode::PerBranch => app.github_branch_runs.is_empty(),
+    };
+    let loading = !app.github_connected && cache_empty;
     let last_error = app.github_last_error.clone();
     let poll_secs = app.config.github.poll_secs_or_default();
     let configured = app.config.github.any_configured();
@@ -62,6 +73,13 @@ pub fn draw(
             format!("{total} run{}", if total == 1 { "" } else { "s" }),
             Style::default()
                 .fg(if total > 0 { t.fg } else { t.comment })
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" · view: {} (v to flip)", p.view_mode.label()),
+            Style::default()
+                .fg(t.yellow)
                 .bg(t.bg_dark)
                 .add_modifier(Modifier::BOLD),
         ),
@@ -155,9 +173,37 @@ pub fn draw(
                 ]));
             }
             RowKind::Run => {
-                let run = row.run.as_ref().expect("data row carries run");
                 let selected = i == p.selected;
                 let row_bg = if selected { t.bg2 } else { t.bg_dark };
+
+                let Some(run) = row.run.as_ref() else {
+                    // PerBranch row with no runs yet — show the branch with a placeholder.
+                    let branch = row.branch_label.as_deref().unwrap_or("?");
+                    lines.push(Line::from(vec![
+                        Span::styled(" ", Style::default().bg(row_bg)),
+                        Span::styled(
+                            "·  ",
+                            Style::default().fg(t.comment).bg(row_bg),
+                        ),
+                        Span::styled(
+                            format!("{:<6}", "—"),
+                            Style::default().fg(t.comment).bg(row_bg),
+                        ),
+                        Span::styled(
+                            format!("{:<15}", ""),
+                            Style::default().fg(t.comment).bg(row_bg),
+                        ),
+                        Span::styled(
+                            format!("{branch:<17}"),
+                            Style::default().fg(t.cyan).bg(row_bg),
+                        ),
+                        Span::styled(
+                            "(no runs yet)",
+                            Style::default().fg(t.comment).bg(row_bg),
+                        ),
+                    ]));
+                    continue;
+                };
 
                 let (glyph, status_color) = match run.state {
                     WorkflowRunState::Success => (run.state.glyph(), t.green),
@@ -181,7 +227,14 @@ pub fn draw(
                     "#?".to_string()
                 };
                 let workflow = truncate(&run.workflow_name, 14);
-                let target = truncate(run.target_ref.as_deref().unwrap_or("(no ref)"), 16);
+                // Prefer the row's branch_label (canonical in PerBranch
+                // mode) over the run's head_branch (Recent mode).
+                let ref_text = row
+                    .branch_label
+                    .as_deref()
+                    .or(run.target_ref.as_deref())
+                    .unwrap_or("(no ref)");
+                let target = truncate(ref_text, 16);
                 let dur = run
                     .duration_secs
                     .map(format_duration_secs)
@@ -192,7 +245,10 @@ pub fn draw(
                     .map(|ms| humanize_age((now_ms - ms).max(0)))
                     .unwrap_or_default();
                 let creator = truncate(run.creator.as_deref().unwrap_or(""), 20);
-                let event = run.event.as_deref().unwrap_or("");
+                let event_or_step = match (run.state, &run.running_step) {
+                    (WorkflowRunState::InProgress, Some(step)) => format!("▶ {step}"),
+                    _ => run.event.as_deref().unwrap_or("").to_string(),
+                };
 
                 lines.push(Line::from(vec![
                     Span::styled(" ", Style::default().bg(row_bg)),
@@ -228,7 +284,7 @@ pub fn draw(
                         Style::default().fg(t.fg).bg(row_bg),
                     ),
                     Span::styled(
-                        event.to_string(),
+                        event_or_step.clone(),
                         Style::default().fg(t.comment).bg(row_bg),
                     ),
                 ]));
@@ -254,6 +310,8 @@ pub struct FlatRow {
     pub header_label: String,
     pub repo_count: usize,
     pub run: Option<WorkflowRunRecord>,
+    /// Set on PerBranch data rows — the branch this row represents.
+    pub branch_label: Option<String>,
 }
 
 pub fn flatten_runs(app: &App) -> Vec<FlatRow> {
@@ -267,6 +325,7 @@ pub fn flatten_runs(app: &App) -> Vec<FlatRow> {
             header_label: format!("{}/{}", repo.owner, repo.repo),
             repo_count: count,
             run: None,
+            branch_label: None,
         });
         if let Some(v) = runs {
             for rec in v {
@@ -275,6 +334,37 @@ pub fn flatten_runs(app: &App) -> Vec<FlatRow> {
                     header_label: String::new(),
                     repo_count: 0,
                     run: Some(rec.clone()),
+                    branch_label: None,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Walk the configured repos and emit one Header + one data row per
+/// branch. Used when `view_mode == PerBranch`.
+pub fn flatten_branch_runs(app: &App) -> Vec<FlatRow> {
+    let mut out: Vec<FlatRow> = Vec::new();
+    for repo in &app.config.github.repos {
+        let key = (repo.owner.clone(), repo.repo.clone());
+        let per_branch = app.github_branch_runs.get(&key);
+        let count = per_branch.map(|v| v.len()).unwrap_or(0);
+        out.push(FlatRow {
+            kind: RowKind::Header,
+            header_label: format!("{}/{}", repo.owner, repo.repo),
+            repo_count: count,
+            run: None,
+            branch_label: None,
+        });
+        if let Some(v) = per_branch {
+            for (branch, run_opt) in v {
+                out.push(FlatRow {
+                    kind: RowKind::Run,
+                    header_label: String::new(),
+                    repo_count: 0,
+                    run: run_opt.clone(),
+                    branch_label: Some(branch.clone()),
                 });
             }
         }
@@ -286,7 +376,10 @@ pub fn selected_run(
     app: &App,
     pane: &crate::github::GithubActionsPane,
 ) -> Option<WorkflowRunRecord> {
-    let flat = flatten_runs(app);
+    let flat = match pane.view_mode {
+        crate::github::ActionsViewMode::Recent => flatten_runs(app),
+        crate::github::ActionsViewMode::PerBranch => flatten_branch_runs(app),
+    };
     flat.get(pane.selected).and_then(|r| r.run.clone())
 }
 

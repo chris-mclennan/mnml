@@ -21,9 +21,13 @@ pub mod actions_pane;
 pub mod api;
 pub mod pull_requests_pane;
 
-pub use actions_pane::GithubActionsPane;
+pub use actions_pane::{ActionsViewMode, GithubActionsPane};
 pub use api::{PullRequestRecord, PullRequestState, WorkflowRunRecord, WorkflowRunState};
-pub use pull_requests_pane::GithubPullRequestsPane;
+pub use pull_requests_pane::{GithubPullRequestsPane, GhPrViewMode};
+
+/// One row in the PerBranch actions cache. Sibling of
+/// [`crate::bitbucket::BranchPipelineSlot`].
+pub type BranchRunSlot = (String, Option<WorkflowRunRecord>);
 
 /// Backoff after a per-repo fetch failure before moving to the next repo
 /// in the same pass. Keeps a flaky repo from accelerating the rest.
@@ -31,18 +35,26 @@ const PER_REPO_ERROR_BACKOFF: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub enum GithubEvent {
-    /// Latest workflow runs for one repo, newest-first.
+    /// Latest workflow runs for one repo, newest-first (Recent view).
     WorkflowRuns {
         owner: String,
         repo: String,
         runs: Vec<WorkflowRunRecord>,
     },
-    /// Latest open pull requests for one repo.
+    /// Latest run per branch for one repo (PerBranch view).
+    BranchRuns {
+        owner: String,
+        repo: String,
+        per_branch: Vec<BranchRunSlot>,
+    },
+    /// Latest open pull requests for one repo (PerRepo view).
     PullRequests {
         owner: String,
         repo: String,
         pull_requests: Vec<PullRequestRecord>,
     },
+    /// Cross-repo PRs I authored (Mine view source — search/issues).
+    MyPullRequests(Vec<PullRequestRecord>),
     /// At least one successful poll has landed — the pane drops "loading…".
     Connected,
     /// User-facing error summary (auth / 404 / parse / …). Worker keeps polling.
@@ -123,9 +135,38 @@ fn run_thread(
     let auth_header = api::auth_header_value(&token);
     let poll_interval = Duration::from_secs(cfg.poll_secs_or_default());
 
+    // Fetch login once at spawn — cross-repo Mine PRs query needs it.
+    let login = match api::fetch_login(&client, &auth_header) {
+        Ok(l) => Some(l),
+        Err(e) => {
+            let _ = tx.send(GithubEvent::Failed(format!(
+                "fetching /user login: {e} — the \"mine\" PR view will be empty"
+            )));
+            None
+        }
+    };
+
     let mut have_sent_connected = false;
     while !cancel.load(Ordering::Relaxed) {
         wake.store(false, Ordering::Relaxed);
+
+        // ── Cross-repo: my open PRs via /search/issues ─────────────────
+        if let Some(login_str) = login.as_deref() {
+            match api::fetch_my_open_pull_requests(&client, &auth_header, login_str) {
+                Ok(prs) => {
+                    if !have_sent_connected {
+                        have_sent_connected = true;
+                        let _ = tx.send(GithubEvent::Connected);
+                    }
+                    let _ = tx.send(GithubEvent::MyPullRequests(prs));
+                }
+                Err(e) => {
+                    let _ = tx.send(GithubEvent::Failed(format!("my prs: {e}")));
+                }
+            }
+        }
+
+        // ── Per-repo: actions + open PRs + per-branch actions ──────────
         for repo in &cfg.repos {
             if cancel.load(Ordering::Relaxed) {
                 return;
@@ -154,6 +195,43 @@ fn run_thread(
             if cancel.load(Ordering::Relaxed) {
                 return;
             }
+            // Per-branch latest run.
+            let branches = resolve_branches(&client, &auth_header, repo, &cancel);
+            let mut per_branch: Vec<BranchRunSlot> = Vec::new();
+            for branch in &branches {
+                if cancel.load(Ordering::Relaxed) {
+                    return;
+                }
+                match api::fetch_latest_run_for_branch(&client, &auth_header, repo, branch) {
+                    Ok(Some(mut run)) => {
+                        // Running step on in-progress runs.
+                        if !run.state.is_terminal() && run.id > 0 {
+                            run.running_step = api::fetch_running_step(
+                                &client,
+                                &auth_header,
+                                &repo.owner,
+                                &repo.repo,
+                                run.id,
+                            );
+                        }
+                        per_branch.push((branch.clone(), Some(run)));
+                    }
+                    Ok(None) => {
+                        if repo.branches.iter().any(|b| b == branch) {
+                            per_branch.push((branch.clone(), None));
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+            let _ = tx.send(GithubEvent::BranchRuns {
+                owner: repo.owner.clone(),
+                repo: repo.repo.clone(),
+                per_branch,
+            });
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
             match api::fetch_open_pull_requests(&client, &auth_header, repo) {
                 Ok(pull_requests) => {
                     let _ = tx.send(GithubEvent::PullRequests {
@@ -174,6 +252,34 @@ fn run_thread(
         }
         sleep_cancellable_with_wake(poll_interval, &cancel, &wake);
     }
+}
+
+fn resolve_branches(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    repo: &GithubRepo,
+    cancel: &Arc<AtomicBool>,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for b in &repo.branches {
+        if !out.iter().any(|x| x == b) {
+            out.push(b.clone());
+        }
+    }
+    for b in crate::config::default_branches() {
+        if !out.iter().any(|x| x == b) {
+            out.push((*b).to_string());
+        }
+    }
+    if cancel.load(Ordering::Relaxed) {
+        return out;
+    }
+    for b in api::discover_release_branches(client, auth_header, repo, 2) {
+        if !out.iter().any(|x| x == &b) {
+            out.push(b);
+        }
+    }
+    out
 }
 
 fn sleep_cancellable_with_wake(dur: Duration, cancel: &Arc<AtomicBool>, wake: &Arc<AtomicBool>) {

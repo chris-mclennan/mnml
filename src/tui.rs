@@ -1087,6 +1087,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter => app.open_selected_github_pr_url(),
             KeyCode::Char('y') => app.copy_selected_github_pr_url(),
             KeyCode::Char('r') => app.refresh_active_github_pane(),
+            KeyCode::Char('v') => {
+                if let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(i) {
+                    let new_mode = p.cycle_view();
+                    app.toast(format!("github prs: view → {}", new_mode.label()));
+                }
+            }
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }
@@ -1141,6 +1147,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter => app.open_selected_github_run_url(),
             KeyCode::Char('y') => app.copy_selected_github_run_url(),
             KeyCode::Char('r') => app.refresh_active_github_pane(),
+            KeyCode::Char('v') => {
+                if let Some(Pane::GithubActions(p)) = app.panes.get_mut(i) {
+                    let new_mode = p.cycle_view();
+                    app.toast(format!("github actions: view → {}", new_mode.label()));
+                }
+            }
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }

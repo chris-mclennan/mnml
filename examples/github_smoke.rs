@@ -79,6 +79,19 @@ fn main() {
                     n = pull_requests.len(),
                 ));
             }
+            Ok(GithubEvent::BranchRuns {
+                owner,
+                repo,
+                per_branch,
+            }) => {
+                samples.push(format!(
+                    "  ⚙  {owner}/{repo}  per-branch: {n} branch(es)",
+                    n = per_branch.len(),
+                ));
+            }
+            Ok(GithubEvent::MyPullRequests(prs)) => {
+                samples.push(format!("  👤  mine: {n} PR(s)", n = prs.len()));
+            }
             Ok(GithubEvent::Connected) => connected = true,
             Ok(GithubEvent::Failed(msg)) => failures.push(msg),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}

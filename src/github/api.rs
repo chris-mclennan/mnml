@@ -1,14 +1,20 @@
 //! GitHub REST API plumbing for the Actions / Pull Requests panes.
 //!
-//! Endpoints used so far:
-//! * `GET /repos/{owner}/{repo}/actions/runs?per_page=N` (phase 1)
-//! * `GET /repos/{owner}/{repo}/pulls?state=open&per_page=N` (phase 3)
-//!
-//! Endpoints planned for phase 4 polish:
-//! * `GET /repos/{owner}/{repo}/pulls/{number}` — per-PR detail (review
-//!   request list with names, file count, mergeable flag).
-//! * `GET /repos/{owner}/{repo}/commits/{sha}/check-runs` — CI status
-//!   chips on the head commit.
+//! Endpoints used:
+//! * `GET /user` — authenticated user's `login` (cached at worker spawn).
+//! * `GET /search/issues?q=is:pr+is:open+author:@me+sort:updated-desc`
+//!   — cross-repo "my open PRs" (Mine view-mode source).
+//! * `GET /repos/{owner}/{repo}/actions/runs?per_page=N` — recent runs
+//!   for one repo (mixed branches).
+//! * `GET /repos/{owner}/{repo}/actions/runs?branch=<b>&per_page=1` —
+//!   single most-recent run for one branch (PerBranch view-mode).
+//! * `GET /repos/{owner}/{repo}/pulls?state=open&per_page=N` — per-repo
+//!   open PRs (PerRepo view-mode).
+//! * `GET /repos/{owner}/{repo}/actions/runs/{id}/jobs` — current job +
+//!   step on an in-progress run (the per-branch view's `▶ <step>`).
+//! * `GET /repos/{owner}/{repo}/git/matching-refs/heads/release` and
+//!   `/heads/hotfix` — active release/hotfix branch discovery for the
+//!   PerBranch view (mirrors BB's `refs/branches?q=` query).
 //!
 //! Auth: `Authorization: Bearer <token>`. All four current PAT shapes
 //! (classic `ghp_*`, fine-grained `github_pat_*`, app installation `ghs_*`,
@@ -141,6 +147,305 @@ fn project_pr(p: RawPullRequest, owner: &str, repo: &str) -> PullRequestRecord {
     }
 }
 
+/// Fetch the authenticated user's `login` — used to scope the
+/// cross-repo PR search. Cached once at worker spawn.
+pub fn fetch_login(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+) -> Result<String, String> {
+    let url = format!("{API_BASE}/user");
+    let resp = client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .map_err(|e| format!("send: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        let snippet = body.chars().take(200).collect::<String>();
+        return Err(format!("HTTP {status} — {snippet}"));
+    }
+    let body = resp.text().map_err(|e| format!("read body: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("parse json: {e}"))?;
+    v.get("login")
+        .and_then(|x| x.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "no login in /user response".to_string())
+}
+
+/// Cross-repo "my open PRs" via GH's search API. Single call, returns
+/// every open PR you authored across every repo you can read.
+/// Search has its own rate limit (30/min for authenticated users) but
+/// one call per poll cycle is well under.
+pub fn fetch_my_open_pull_requests(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    login: &str,
+) -> Result<Vec<PullRequestRecord>, String> {
+    let q = format!("is:pr is:open author:{login} sort:updated-desc");
+    // Search needs URL-encoded query, so use the params builder.
+    let url = format!("{API_BASE}/search/issues?per_page=50");
+    let resp = client
+        .get(&url)
+        .query(&[("q", &q)])
+        .header("Authorization", auth_header)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .map_err(|e| format!("send: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        let snippet = body.chars().take(200).collect::<String>();
+        return Err(format!("HTTP {status} — {snippet}"));
+    }
+    let body = resp.text().map_err(|e| format!("read body: {e}"))?;
+    parse_search_issues_response(&body)
+}
+
+pub fn parse_search_issues_response(body: &str) -> Result<Vec<PullRequestRecord>, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
+    let items = match v.get("items").and_then(|x| x.as_array()) {
+        Some(a) => a,
+        None => return Ok(Vec::new()),
+    };
+    let mut out = Vec::new();
+    for item in items {
+        // Search /issues returns issue-shaped objects for PRs. The
+        // `repository_url` is `https://api.github.com/repos/{owner}/{repo}`
+        // — parse owner/repo out of it.
+        let (owner, repo) = match item
+            .get("repository_url")
+            .and_then(|u| u.as_str())
+            .and_then(parse_owner_repo_from_url)
+        {
+            Some(pair) => pair,
+            None => continue,
+        };
+        let number = item.get("number").and_then(|n| n.as_u64()).unwrap_or(0);
+        let title = item
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+        let state_str = item.get("state").and_then(|s| s.as_str());
+        let draft = item.get("draft").and_then(|d| d.as_bool()).unwrap_or(false);
+        let state = PullRequestState::from_raw(state_str, draft);
+        let author = item
+            .get("user")
+            .and_then(|u| u.get("login"))
+            .and_then(|l| l.as_str())
+            .map(str::to_string);
+        let html_url = item
+            .get("html_url")
+            .and_then(|u| u.as_str())
+            .map(str::to_string);
+        let created_at_ms = item
+            .get("created_at")
+            .and_then(|t| t.as_str())
+            .and_then(parse_iso_ms);
+        let updated_at_ms = item
+            .get("updated_at")
+            .and_then(|t| t.as_str())
+            .and_then(parse_iso_ms);
+        let comments = item
+            .get("comments")
+            .and_then(|c| c.as_u64())
+            .map(|n| n as u32)
+            .unwrap_or(0);
+        let labels: Vec<_> = item
+            .get("labels")
+            .and_then(|l| l.as_array())
+            .map(|arr| arr.len() as u32)
+            .into_iter()
+            .collect();
+        // Search /issues doesn't surface source/dest branches or
+        // requested_reviewers. PR-only fields stay None for the Mine
+        // view — phase 4 polish can do a per-PR follow-up if accuracy
+        // becomes worth the cost.
+        let web_url = html_url.unwrap_or_else(|| {
+            format!("https://github.com/{owner}/{repo}/pull/{number}")
+        });
+        out.push(PullRequestRecord {
+            owner,
+            repo,
+            number,
+            title,
+            state,
+            author,
+            source_branch: None,
+            dest_branch: None,
+            reviewer_count: 0,
+            approved_count: 0,
+            changes_count: 0,
+            comment_count: comments,
+            // Labels count is not split issue/review on search results;
+            // we surface it under `review_comment_count` as a label-count
+            // signal — the renderer can show it as `🏷N` distinct from 💬N.
+            review_comment_count: labels.first().copied().unwrap_or(0),
+            created_at_ms,
+            updated_at_ms,
+            web_url,
+        });
+    }
+    Ok(out)
+}
+
+fn parse_owner_repo_from_url(url: &str) -> Option<(String, String)> {
+    // `https://api.github.com/repos/{owner}/{repo}` — split on `/repos/`.
+    let after = url.split_once("/repos/").map(|(_, rest)| rest)?;
+    let mut parts = after.splitn(2, '/');
+    let owner = parts.next()?.to_string();
+    let repo = parts.next()?.to_string();
+    if owner.is_empty() || repo.is_empty() {
+        None
+    } else {
+        Some((owner, repo))
+    }
+}
+
+/// Latest workflow run for one branch on one repo. `None` ⇒ no runs.
+pub fn fetch_latest_run_for_branch(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    repo: &GithubRepo,
+    branch: &str,
+) -> Result<Option<WorkflowRunRecord>, String> {
+    let url = format!(
+        "{API_BASE}/repos/{owner}/{repo}/actions/runs?per_page=1&branch={branch}",
+        owner = repo.owner,
+        repo = repo.repo,
+    );
+    let resp = client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .map_err(|e| format!("send: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        let snippet = body.chars().take(200).collect::<String>();
+        return Err(format!("HTTP {status} — {snippet}"));
+    }
+    let body = resp.text().map_err(|e| format!("read body: {e}"))?;
+    let runs = parse_runs_response(&body, &repo.owner, &repo.repo)?;
+    Ok(runs.into_iter().next())
+}
+
+/// For an in-progress run, find the currently-executing job + step
+/// name. GH's API returns jobs (one per workflow job) each with steps.
+/// We pick the first IN_PROGRESS job's first IN_PROGRESS step.
+pub fn fetch_running_step(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    owner: &str,
+    repo: &str,
+    run_id: u64,
+) -> Option<String> {
+    let url =
+        format!("{API_BASE}/repos/{owner}/{repo}/actions/runs/{run_id}/jobs?per_page=30");
+    let resp = client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body = resp.text().ok()?;
+    parse_running_step(&body)
+}
+
+pub fn parse_running_step(body: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    let jobs = v.get("jobs")?.as_array()?;
+    for job in jobs {
+        if job.get("status").and_then(|s| s.as_str()) != Some("in_progress") {
+            continue;
+        }
+        let job_name = job
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("(unnamed)");
+        let steps = job.get("steps").and_then(|s| s.as_array());
+        if let Some(steps) = steps {
+            for step in steps {
+                if step.get("status").and_then(|s| s.as_str()) == Some("in_progress") {
+                    let step_name = step
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("(unnamed)");
+                    return Some(format!("{job_name} / {step_name}"));
+                }
+            }
+        }
+        return Some(job_name.to_string());
+    }
+    None
+}
+
+/// Discover active release/hotfix branches via the matching-refs
+/// endpoint. Returns up to `max_n` per prefix (release/ then hotfix/).
+pub fn discover_release_branches(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    repo: &GithubRepo,
+    max_n: usize,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for prefix in &["release", "hotfix"] {
+        let url = format!(
+            "{API_BASE}/repos/{owner}/{repo}/git/matching-refs/heads/{prefix}",
+            owner = repo.owner,
+            repo = repo.repo,
+        );
+        let resp = match client
+            .get(&url)
+            .header("Authorization", auth_header)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send()
+        {
+            Ok(r) if r.status().is_success() => r,
+            _ => continue,
+        };
+        let body = match resp.text() {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let v: serde_json::Value = match serde_json::from_str(&body) {
+            Ok(x) => x,
+            Err(_) => continue,
+        };
+        let arr = match v.as_array() {
+            Some(a) => a,
+            None => continue,
+        };
+        for r in arr.iter().take(max_n) {
+            // `ref` is `refs/heads/release/2026.05` — strip the prefix.
+            let name = r
+                .get("ref")
+                .and_then(|n| n.as_str())
+                .and_then(|s| s.strip_prefix("refs/heads/"))
+                .map(str::to_string);
+            if let Some(b) = name
+                && !out.iter().any(|x| x == &b)
+            {
+                out.push(b);
+            }
+        }
+    }
+    out
+}
+
 pub fn fetch_recent_workflow_runs(
     client: &reqwest::blocking::Client,
     auth_header: &str,
@@ -217,6 +522,7 @@ fn project_run(r: RawWorkflowRun, owner: &str, repo: &str) -> WorkflowRunRecord 
         updated_at_ms,
         duration_secs,
         web_url,
+        running_step: None,
     }
 }
 
@@ -247,6 +553,10 @@ pub struct WorkflowRunRecord {
     /// `https://github.com/owner/repo/actions/runs/{id}` — opens the
     /// workflow's UI page.
     pub web_url: String,
+    /// For in-progress runs, the currently-executing job/step
+    /// (`"<job> / <step>"`). Populated by the worker via a follow-up
+    /// `/runs/{id}/jobs` call. `None` otherwise.
+    pub running_step: Option<String>,
 }
 
 /// Unified state for a GitHub Actions workflow run — folds the

@@ -30,9 +30,20 @@ pub fn draw(
     );
     app.rects.editor_panes.push((area, pane_id));
 
-    let flat = flatten_prs(app);
+    let mode = match app.panes.get(pane_id) {
+        Some(Pane::GithubPullRequests(p)) => p.view_mode,
+        _ => return None,
+    };
+    let flat = match mode {
+        crate::github::GhPrViewMode::PerRepo => flatten_prs(app),
+        crate::github::GhPrViewMode::Mine => flatten_my_prs(app),
+    };
     let total = flat.iter().filter(|r| r.kind == RowKind::Pr).count();
-    let loading = !app.github_connected && app.github_pull_requests.is_empty();
+    let cache_empty = match mode {
+        crate::github::GhPrViewMode::PerRepo => app.github_pull_requests.is_empty(),
+        crate::github::GhPrViewMode::Mine => app.github_my_pull_requests.is_empty(),
+    };
+    let loading = !app.github_connected && cache_empty;
     let last_error = app.github_last_error.clone();
     let poll_secs = app.config.github.poll_secs_or_default();
 
@@ -54,6 +65,13 @@ pub fn draw(
             format!("{total} open PR{}", if total == 1 { "" } else { "s" }),
             Style::default()
                 .fg(if total > 0 { t.fg } else { t.comment })
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" · view: {} (v to flip)", p.view_mode.label()),
+            Style::default()
+                .fg(t.yellow)
                 .bg(t.bg_dark)
                 .add_modifier(Modifier::BOLD),
         ),
@@ -165,7 +183,7 @@ pub fn draw(
                     PullRequestState::Unknown => ("?", t.fg),
                 };
 
-                lines.push(Line::from(vec![
+                let mut spans = vec![
                     Span::styled(" ", Style::default().bg(row_bg)),
                     Span::styled(
                         format!("{state_glyph}  "),
@@ -175,10 +193,19 @@ pub fn draw(
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(pr_num, Style::default().fg(t.fg).bg(row_bg)),
-                    Span::styled(
-                        format!("{title:<50}  "),
-                        Style::default().fg(t.fg).bg(row_bg),
-                    ),
+                ];
+                if matches!(mode, crate::github::GhPrViewMode::Mine) {
+                    let repo_label = truncate(&format!("{}/{}", pr.owner, pr.repo), 24);
+                    spans.push(Span::styled(
+                        format!("{repo_label:<25}"),
+                        Style::default().fg(t.purple).bg(row_bg),
+                    ));
+                }
+                spans.push(Span::styled(
+                    format!("{title:<50}  "),
+                    Style::default().fg(t.fg).bg(row_bg),
+                ));
+                spans.extend([
                     Span::styled(
                         format!("👀{:<2}", pr.reviewer_count),
                         Style::default().fg(t.fg).bg(row_bg),
@@ -196,7 +223,8 @@ pub fn draw(
                         Style::default().fg(t.comment).bg(row_bg),
                     ),
                     Span::styled(author, Style::default().fg(t.fg).bg(row_bg)),
-                ]));
+                ]);
+                lines.push(Line::from(spans));
             }
         }
     }
@@ -247,11 +275,34 @@ pub fn flatten_prs(app: &App) -> Vec<FlatRow> {
     out
 }
 
+pub fn flatten_my_prs(app: &App) -> Vec<FlatRow> {
+    let mut out: Vec<FlatRow> = Vec::new();
+    let prs = &app.github_my_pull_requests;
+    out.push(FlatRow {
+        kind: RowKind::Header,
+        header_label: "mine (cross-repo)".to_string(),
+        repo_count: prs.len(),
+        pr: None,
+    });
+    for rec in prs {
+        out.push(FlatRow {
+            kind: RowKind::Pr,
+            header_label: String::new(),
+            repo_count: 0,
+            pr: Some(rec.clone()),
+        });
+    }
+    out
+}
+
 pub fn selected_pr(
     app: &App,
     pane: &crate::github::GithubPullRequestsPane,
 ) -> Option<PullRequestRecord> {
-    let flat = flatten_prs(app);
+    let flat = match pane.view_mode {
+        crate::github::GhPrViewMode::PerRepo => flatten_prs(app),
+        crate::github::GhPrViewMode::Mine => flatten_my_prs(app),
+    };
     flat.get(pane.selected).and_then(|r| r.pr.clone())
 }
 

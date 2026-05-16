@@ -1,12 +1,34 @@
-//! `Pane::GithubActions` state — minimal mirror of
-//! [`crate::bitbucket::BitbucketPipelinesPane`]. Actual data lives on the
-//! App-level cache `App.github_workflow_runs`; this pane just tracks
-//! selection + scroll.
+//! `Pane::GithubActions` state. Sibling of
+//! [`crate::bitbucket::BitbucketPipelinesPane`] — same `v`-toggle
+//! between Recent and PerBranch.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ActionsViewMode {
+    #[default]
+    Recent,
+    PerBranch,
+}
+
+impl ActionsViewMode {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::Recent => Self::PerBranch,
+            Self::PerBranch => Self::Recent,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Recent => "recent",
+            Self::PerBranch => "per-branch",
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct GithubActionsPane {
     pub selected: usize,
     pub scroll: usize,
+    pub view_mode: ActionsViewMode,
 }
 
 impl GithubActionsPane {
@@ -15,7 +37,14 @@ impl GithubActionsPane {
     }
 
     pub fn tab_title(&self) -> String {
-        "GitHub Actions".to_string()
+        format!("GitHub Actions · {}", self.view_mode.label())
+    }
+
+    pub fn cycle_view(&mut self) -> ActionsViewMode {
+        self.view_mode = self.view_mode.cycle();
+        self.selected = 0;
+        self.scroll = 0;
+        self.view_mode
     }
 
     pub fn move_selection(&mut self, delta: i64, max_idx: usize) {
