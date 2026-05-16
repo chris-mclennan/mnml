@@ -64,6 +64,9 @@ pub enum PickerKind {
     /// open PR across the 4 SCM hosts (Bitbucket, GitHub, GitLab, Azure
     /// DevOps), reading from the per-host caches the SCM workers populate.
     OpenPullRequests,
+    /// `id` = the index (as a string) into `App::repos`. Accept ⇒
+    /// switch the active repo. Populated by `git.switch_repo`.
+    Repos,
 }
 
 #[derive(Debug, Clone)]

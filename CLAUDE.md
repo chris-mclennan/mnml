@@ -2119,6 +2119,20 @@ comment_count is hardcoded 0 because Azure's list endpoint doesn't
 return it (would need a per-PR `/threads` call). Free-tier signup
 walk-through in conversation history if a real test is needed.
 
+**Multi-repo workspace (rail switcher)** — `crate::git::repos::discover_repos`
+walks the workspace at startup looking for `.git/` markers (bounded depth,
+skips dot-dirs / `node_modules/` / `target/`). New `App.repos:
+Vec<RepoEntry>` + `App.active_repo: usize`; the git rail's `branches` /
+`worktrees` / `pulls` subsections + the `remote.origin.url` lookup all
+consult `App.active_repo_path()` instead of `App.workspace`. Workspace-
+is-a-repo case behaves unchanged (single entry, `is_workspace_root=true`).
+Multi-repo workspaces surface a `· <name>` chip after the GIT rail header
+and gain a `git.switch_repo` command (palette / `:`) opening a fuzzy
+picker over the discovered repos. Picker is a no-op when there's just
+one repo. Limitations (deferred to follow-ups): only the rail + pulls
+follow the active repo today — other git operations (status, diff,
+graph, browse) still run against `App.workspace`. New `PickerKind::Repos`.
+
 **Azure DevOps Mine — `creator_id` config override + auto-fallback** —
 the `searchCriteria.creatorId=me` shorthand was a flagged risk:
 recent API versions accept it, some don't. Two hardenings:

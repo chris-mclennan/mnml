@@ -1117,6 +1117,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.peek_git_change_at_cursor(),
         },
         Command {
+            id: "git.switch_repo",
+            title: "Git: switch active repo (multi-repo workspace)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_repo_picker(),
+        },
+        Command {
             id: "git.blame_toggle",
             title: "Git: toggle blame gutter",
             group: "git",

@@ -1585,6 +1585,17 @@ pub struct App {
     /// The persistent `GIT` section in the rail — local branches + worktrees,
     /// refreshed on every git-changing action via [`Self::after_git_change`].
     pub git_rail: crate::git::rail::GitRail,
+    /// Repos discovered inside the workspace. One entry per `.git/` found.
+    /// `[]` when the workspace contains no repo. Always-1-entry for the
+    /// single-repo case (workspace IS a repo). Multi-repo workspaces get
+    /// >1 entries; the rail's switcher then makes sense.
+    pub repos: Vec<crate::git::repos::RepoEntry>,
+    /// Index into `repos` of the currently-active repo. The git rail
+    /// (branches, worktrees, pulls) and `git_config`-based lookups consult
+    /// `repos[active_repo].path`. `0` when `repos` has 1 entry. Persisted
+    /// across launches by name (not index) so re-discovery order changes
+    /// don't shift selection.
+    pub active_repo: usize,
     /// Is the `> GIT` rail section expanded? Sibling of [`Self::tree_root_expanded`].
     /// Persisted in session.json. Default `true`.
     pub git_section_expanded: bool,
@@ -1912,9 +1923,18 @@ impl App {
         let lsp = crate::lsp::LspManager::new(&workspace, &config);
         let test_history = crate::playwright::history::TestHistory::load(&workspace);
         let keymap = crate::input::keymap::Keymap::build(&config);
+        // Discover repos in the workspace. The rail's `refresh` should run
+        // against the active repo (which is `workspace` itself in the
+        // single-repo case, but may be a sub-dir in the multi-repo case).
+        let repos = crate::git::repos::discover_repos(&workspace);
+        let active_repo = 0usize;
+        let rail_root: &std::path::Path = repos
+            .get(active_repo)
+            .map(|r| r.path.as_path())
+            .unwrap_or(workspace.as_path());
         let git_rail = {
             let mut r = crate::git::rail::GitRail::empty();
-            r.refresh(&workspace);
+            r.refresh(rail_root);
             r
         };
         let tree_width = config.ui.tree_width;
@@ -1967,6 +1987,8 @@ impl App {
             // in `try_restore_session`.
             tree_root_expanded: true,
             git_rail,
+            repos,
+            active_repo,
             git_section_expanded: true,
             rail_section: RailSection::Workspace,
             git,
@@ -3092,7 +3114,57 @@ impl App {
             PickerKind::OpenPullRequests => {
                 open_url_external(&item.id);
             }
+            PickerKind::Repos => {
+                if let Ok(idx) = item.id.parse::<usize>() {
+                    self.switch_active_repo(idx);
+                }
+            }
         }
+    }
+
+    /// Switch which repo the git rail (branches, worktrees, pulls) is
+    /// scoped to. No-op when `idx` is out of range or already active.
+    pub fn switch_active_repo(&mut self, idx: usize) {
+        if idx >= self.repos.len() {
+            return;
+        }
+        if idx == self.active_repo {
+            return;
+        }
+        let name = self.repos[idx].name.clone();
+        self.active_repo = idx;
+        let root = self.active_repo_path().to_path_buf();
+        self.git_rail.refresh(&root);
+        self.refresh_rail_pulls();
+        self.toast(format!("active repo → {name}"));
+    }
+
+    /// Open a fuzzy picker over the repos discovered in the workspace.
+    /// Accept ⇒ [`Self::switch_active_repo`]. No-op when there's only one
+    /// repo or none.
+    pub fn open_repo_picker(&mut self) {
+        use crate::picker::PickerItem;
+        if self.repos.len() <= 1 {
+            self.toast("only one repo in this workspace");
+            return;
+        }
+        let items: Vec<PickerItem> = self
+            .repos
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let active_marker = if i == self.active_repo { "● " } else { "  " };
+                let label = format!("{active_marker}{}", r.name);
+                let detail = r
+                    .path
+                    .strip_prefix(&self.workspace)
+                    .ok()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| r.path.to_string_lossy().into_owned());
+                PickerItem::new(i.to_string(), label, detail)
+            })
+            .collect();
+        self.open_picker(Picker::new(PickerKind::Repos, "Switch repo", items));
     }
 
     // ─── as-you-type LSP completion popup ───────────────────────────
@@ -11026,12 +11098,24 @@ impl App {
             }
         }
     }
+    /// The git-rooted path for the *currently-active* repo. In the
+    /// single-repo case (or no-repo case) this is the workspace itself;
+    /// in a multi-repo workspace it's whichever sub-repo
+    /// `[App::active_repo]` points at.
+    pub fn active_repo_path(&self) -> &std::path::Path {
+        self.repos
+            .get(self.active_repo)
+            .map(|r| r.path.as_path())
+            .unwrap_or(self.workspace.as_path())
+    }
+
     /// After any staging/commit change: refresh the cached status + all git
     /// panes + the rail's `GIT` section (the current branch may have moved /
     /// a branch may have been created).
     fn after_git_change(&mut self) {
         self.git.refresh();
-        self.git_rail.refresh(&self.workspace);
+        let root = self.active_repo_path().to_path_buf();
+        self.git_rail.refresh(&root);
         self.refresh_rail_pulls();
         self.refresh_git_status_panes();
         self.refresh_git_graph_panes();
@@ -11044,7 +11128,8 @@ impl App {
     pub fn refresh_rail_pulls(&mut self) {
         use crate::git::rail::PullRow;
         let mut out: Vec<PullRow> = Vec::new();
-        let remote = crate::git::browse::git_config(&self.workspace, "remote.origin.url");
+        let repo_path = self.active_repo_path().to_path_buf();
+        let remote = crate::git::browse::git_config(&repo_path, "remote.origin.url");
         let parsed = remote.as_deref().and_then(crate::git::browse::parse_remote);
         let current_branch = self.git_rail.current_branch.clone();
         if let Some((host, owner, repo)) = parsed {
@@ -20013,6 +20098,62 @@ GET https://example.com/second
             assert_eq!(idx_to_env(i), Some(env));
         }
         assert_eq!(idx_to_env(3), None);
+    }
+
+    #[test]
+    fn single_repo_workspace_lists_just_itself() {
+        let d = tempfile::tempdir().unwrap();
+        // Mark the workspace as a repo.
+        std::fs::create_dir(d.path().join(".git")).unwrap();
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        assert_eq!(app.repos.len(), 1);
+        assert_eq!(app.active_repo, 0);
+        assert!(app.repos[0].is_workspace_root);
+        // active_repo_path resolves to the workspace itself.
+        assert_eq!(app.active_repo_path(), app.workspace);
+    }
+
+    #[test]
+    fn multi_repo_workspace_discovers_subdirs() {
+        let d = tempfile::tempdir().unwrap();
+        for name in ["proj-a", "proj-b"] {
+            let p = d.path().join(name);
+            std::fs::create_dir(&p).unwrap();
+            std::fs::create_dir(p.join(".git")).unwrap();
+        }
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        assert_eq!(app.repos.len(), 2);
+        assert_eq!(app.active_repo, 0);
+        let first = app.repos[0].path.clone();
+        let second = app.repos[1].path.clone();
+        assert_eq!(app.active_repo_path(), first);
+        app.switch_active_repo(1);
+        assert_eq!(app.active_repo, 1);
+        assert_eq!(app.active_repo_path(), second);
+        // out-of-range no-op
+        app.switch_active_repo(99);
+        assert_eq!(app.active_repo, 1);
+    }
+
+    #[test]
+    fn no_repo_workspace_has_empty_repos() {
+        let d = tempfile::tempdir().unwrap();
+        // No `.git/` anywhere.
+        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        assert!(app.repos.is_empty());
+        assert_eq!(app.active_repo, 0);
+        // Falls back to the workspace path.
+        assert_eq!(app.active_repo_path(), app.workspace);
+    }
+
+    #[test]
+    fn open_repo_picker_no_op_when_single() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir(d.path().join(".git")).unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_repo_picker();
+        // Only one repo ⇒ no picker.
+        assert!(app.picker.is_none());
     }
 
     #[test]

@@ -90,7 +90,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let chev = section_chev(app.git_section_expanded, nerd);
-    let header_label = format!("{chev} GIT");
+    // Multi-repo workspaces append `· <repo-name>` to the GIT header so
+    // the user knows which repo the rail is currently scoped to. Single-
+    // repo case keeps the bare "GIT" label.
+    let multi_repo_chip = if app.repos.len() > 1 {
+        app.repos
+            .get(app.active_repo)
+            .map(|r| format!("  · {}", r.name))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let header_label = format!("{chev} GIT{multi_repo_chip}");
     let header_pad = width.saturating_sub(header_label.chars().count());
     let git_header_rect = Rect {
         x: area.x,
