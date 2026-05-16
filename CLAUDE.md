@@ -2119,6 +2119,16 @@ comment_count is hardcoded 0 because Azure's list endpoint doesn't
 return it (would need a per-PR `/threads` call). Free-tier signup
 walk-through in conversation history if a real test is needed.
 
+**E2E highlight regression coverage** — new `expect highlights at_least
+<N>` check in the `.test` format that asserts the active editor has
+≥ N total syntax-highlight spans across all lines. Catches regressions
+where a grammar's queries silently fail to compile / load. Four new
+test files cover the principal injection-heavy paths: `highlight_rust`
+(plain grammar), `highlight_markdown_injections` (markdown + inline +
+fenced rust), `highlight_typescript` (TS), and `highlight_html_injections`
+(HTML + CSS + JS injections). All four pass at floors that any
+future legitimate change will still clear (5-6 spans each).
+
 **the private integration 6b — `Pane::LogTail` with severity coloring** — dedicated
 streaming log viewer for CodeBuild CloudWatch streams (sibling to
 the existing pty-based `t` chord). Opened by `T` on a CodeBuilds

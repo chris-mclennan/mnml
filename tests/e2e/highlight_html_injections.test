@@ -1,0 +1,9 @@
+# Open an HTML file that embeds `<style>` (CSS injection) + `<script>`
+# (JavaScript injection). All three grammars contribute spans;
+# regression in injection routing means fewer total spans.
+write index.html <html><head><style>body { color: red; }</style><script>const x = 42;</script></head><body><div class="x">hi</div></body></html>\n
+open index.html
+expect pane "index.html"
+expect screen contains "<style>"
+expect screen contains "color: red"
+expect highlights at_least 6

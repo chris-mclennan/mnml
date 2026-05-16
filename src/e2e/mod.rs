@@ -75,6 +75,13 @@ enum Check {
         rel: String,
         text: String,
     },
+    /// Active editor's `highlights` field has at least `min` non-trivial
+    /// spans summed across all lines. Catches regressions where syntax
+    /// highlighting silently breaks (e.g. a grammar's queries fail to
+    /// compile and we end up emitting zero spans).
+    HighlightsAtLeast {
+        min: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -186,6 +193,21 @@ fn parse_expect(ln: usize, rest: &str) -> Result<Stmt, String> {
             _ => return Err(format!("line {ln}: expect dirty <true|false>")),
         },
         "pane" => Check::PaneTitle(unescape(arg)),
+        "highlights" => {
+            // `expect highlights at_least <N>` — total spans across all
+            // lines of the active editor must be ≥ N.
+            let (op, num) = split1(arg);
+            match op {
+                "at_least" => {
+                    let min: usize = num
+                        .trim()
+                        .parse()
+                        .map_err(|_| format!("line {ln}: expect highlights at_least <usize>"))?;
+                    Check::HighlightsAtLeast { min }
+                }
+                _ => return Err(format!("line {ln}: expect highlights at_least <N>")),
+            }
+        }
         "file" => {
             // `expect file <relpath> <contains|lacks> <text>`
             let (rel, rest1) = split1(arg);
@@ -428,6 +450,23 @@ fn run_check(app: &App, screen: &str, check: &Check) -> Result<(), String> {
                 Err(format!("file {rel} unexpectedly contains {text:?}"))
             } else {
                 Ok(())
+            }
+        }
+        Check::HighlightsAtLeast { min } => {
+            let count = match app.active_pane() {
+                Some(crate::pane::Pane::Editor(b)) => {
+                    b.highlights.iter().map(|line| line.len()).sum::<usize>()
+                }
+                _ => {
+                    return Err("expect highlights: no active editor pane".to_string());
+                }
+            };
+            if count >= *min {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected ≥ {min} highlight spans, got {count} (highlighting may be broken)"
+                ))
             }
         }
     }

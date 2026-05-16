@@ -1,0 +1,8 @@
+# Open a small TypeScript file; confirm the typescript grammar fires.
+# `interface` keyword, type annotations, and a string literal are the
+# minimum bait — at least a handful of spans across the 4 lines.
+write src/api.ts interface User {\n    name: string;\n    age: number;\n}\nexport const u: User = { name: "x", age: 1 };\n
+open src/api.ts
+expect pane "api.ts"
+expect screen contains "interface User"
+expect highlights at_least 6

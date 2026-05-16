@@ -1,0 +1,17 @@
+# Open a markdown file that exercises:
+#  - heading (`text.title` capture)
+#  - inline emphasis (`**bold**` — markdown_inline injection)
+#  - fenced rust code block (rust injection through markdown's
+#    `injection.language` capture)
+#
+# All three drive highlight spans through different injection paths;
+# a regression in any of them shows up as fewer total spans.
+write notes.md # Title\n\nThis is **bold** and *em* text.\n\n```rust\nfn main() { let x = 1; }\n```\n
+open notes.md
+expect pane "notes.md"
+expect screen contains "Title"
+expect screen contains "**bold**"
+expect screen contains "fn main()"
+# Heading + 2 emphasis runs + fenced code spans + rust grammar
+# inside the fence. ≥ 6 is conservative.
+expect highlights at_least 6

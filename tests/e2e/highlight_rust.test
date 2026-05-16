@@ -1,0 +1,12 @@
+# Open a small Rust file; confirm syntax highlighting fires.
+# Catches regressions where the rust grammar's queries fail to compile
+# or where we accidentally drop spans somewhere on the hot path.
+write src/lib.rs fn hello() -> u32 {\n    let x: u32 = 42;\n    x\n}\n
+open src/lib.rs
+expect pane "lib.rs"
+expect screen contains "fn hello"
+# `fn` (keyword), `hello` (function name), `u32` (type), `let` (keyword),
+# `x` (variable), `42` (number) — at minimum a half-dozen spans across
+# the 4 lines. Use a conservative floor that any future tweak should
+# still clear.
+expect highlights at_least 5
