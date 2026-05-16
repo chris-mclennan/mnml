@@ -114,6 +114,74 @@ impl NetEntry {
     }
 }
 
+/// Page performance metrics fetched via the eval flow in
+/// [`BrowserPane::fetch_perf`]. All fields are millisecond timings
+/// (relative to navigation start); `None` ⇒ the metric isn't
+/// available for this page (e.g. LCP only fires on real DOMs, not
+/// `about:blank`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PerfMetrics {
+    pub dns: Option<f64>,
+    pub tcp: Option<f64>,
+    pub ttfb: Option<f64>,
+    pub response: Option<f64>,
+    pub dom_interactive: Option<f64>,
+    pub load: Option<f64>,
+    pub fcp: Option<f64>,
+    pub lcp: Option<f64>,
+}
+
+/// The IIFE we eval to read `performance.*` timings + LCP. Wrapped
+/// in try/catch since some pages (file://, sandboxes) restrict
+/// access to PerformanceObserver entries.
+pub(crate) const PERF_EVAL_EXPR: &str = "(function(){\
+try{\
+const n=(performance.getEntriesByType('navigation')||[])[0]||{};\
+const paint=performance.getEntriesByType('paint')||[];\
+const fcpEntry=paint.find(p=>p.name==='first-contentful-paint');\
+let lcp=null;try{const a=performance.getEntriesByType('largest-contentful-paint')||[];if(a.length)lcp=a[a.length-1].startTime;}catch(_){}\
+return{\
+dns:n.domainLookupEnd-n.domainLookupStart,\
+tcp:n.connectEnd-n.connectStart,\
+ttfb:n.responseStart-n.requestStart,\
+response:n.responseEnd-n.responseStart,\
+dom_interactive:n.domInteractive-n.fetchStart,\
+load:n.loadEventEnd-n.fetchStart,\
+fcp:fcpEntry?fcpEntry.startTime:null,\
+lcp:lcp\
+};\
+}catch(e){return{error:String(e)};}\
+})()";
+
+/// Parse the `Runtime.evaluate` reply's value (the PERF IIFE return)
+/// into [`PerfMetrics`]. Returns `Err` when the eval reported a
+/// caught error (origin denied access).
+pub fn parse_perf_eval(v: &serde_json::Value) -> Result<PerfMetrics, String> {
+    if let Some(e) = v.get("error").and_then(serde_json::Value::as_str) {
+        return Err(e.to_string());
+    }
+    // Each field can be a number, NaN/null, or missing. JSON.stringify
+    // turns NaN/Infinity into `null`, and division-by-zero on a metric
+    // that hasn't fired yet (e.g. loadEventEnd=0) produces a negative
+    // number we want to treat as "not yet available" — coerce <= 0
+    // to None for that reason.
+    let pick = |k: &str| -> Option<f64> {
+        v.get(k)
+            .and_then(serde_json::Value::as_f64)
+            .filter(|n| n.is_finite() && *n > 0.0)
+    };
+    Ok(PerfMetrics {
+        dns: pick("dns"),
+        tcp: pick("tcp"),
+        ttfb: pick("ttfb"),
+        response: pick("response"),
+        dom_interactive: pick("dom_interactive"),
+        load: pick("load"),
+        fcp: pick("fcp"),
+        lcp: pick("lcp"),
+    })
+}
+
 /// One Web Storage entry (either `localStorage` or `sessionStorage`).
 /// Read via the eval flow in [`BrowserPane::fetch_storage`] —
 /// `Runtime.evaluate` against an IIFE that returns both storages so
@@ -496,6 +564,14 @@ pub struct BrowserPane {
     /// reply can be routed to the storage panel (not the regular eval
     /// log).
     pub pending_storage: Option<i64>,
+    /// Page performance metrics for the current page, fetched lazily
+    /// on the first `P` press and refreshed on `R` inside the panel.
+    pub perf: PerfMetrics,
+    /// True ⇒ the `P` performance panel is showing.
+    pub perf_focus: bool,
+    /// The id of an in-flight perf `Runtime.evaluate` so its reply
+    /// routes to the perf panel.
+    pub pending_perf: Option<i64>,
     /// Next JSON-RPC id for requests this pane issues.
     next_id: i64,
     /// The id of an in-flight `Runtime.evaluate`, so its reply can be matched.
@@ -550,6 +626,9 @@ impl BrowserPane {
             storage_focus: false,
             storage_sel: 0,
             pending_storage: None,
+            perf: PerfMetrics::default(),
+            perf_focus: false,
+            pending_perf: None,
             next_id: 100,
             pending_eval: None,
             pending_screenshot: None,
@@ -905,6 +984,19 @@ impl BrowserPane {
         self.pending_eval = Some(id);
     }
 
+    /// Fire-and-forget eval — doesn't push a `» …` log line, doesn't
+    /// claim `pending_eval` (so the reply falls through to the no-op
+    /// catch-all). Used by the storage / cookie edit/add/delete flows
+    /// where we don't care about the eval result.
+    pub fn eval_silent(&mut self, expr: &str) {
+        let expr = expr.trim();
+        if expr.is_empty() || self.closed {
+            return;
+        }
+        let e = expr.to_string();
+        self.send(|id| crate::cdp::evaluate(id, &e));
+    }
+
     /// `s` — `Page.captureScreenshot`; the PNG lands later (matched by id) and is
     /// written to `.mnml/screenshots/` (see `App::apply_cdp_message`).
     pub fn screenshot(&mut self) {
@@ -954,6 +1046,23 @@ impl BrowserPane {
     /// dispatcher to match a `DOM.getBoxModel` reply.
     pub fn is_pending_node_screenshot(&self, rpc_id: i64) -> bool {
         self.pending_node_screenshot == Some(rpc_id)
+    }
+
+    /// `P` (or refresh from the panel) — eval-fetch `performance.*`
+    /// timings + paint entries + LCP. Reply lands later as a
+    /// [`PerfMetrics`] (see `App::apply_cdp_message`).
+    pub fn fetch_perf(&mut self) {
+        if self.closed {
+            return;
+        }
+        self.push(LogKind::System, "fetching performance metrics…");
+        let id = self.send(|id| crate::cdp::evaluate(id, PERF_EVAL_EXPR));
+        self.pending_perf = Some(id);
+    }
+
+    /// True when `rpc_id` is the one stashed in `pending_perf`.
+    pub fn is_pending_perf(&self, rpc_id: i64) -> bool {
+        self.pending_perf == Some(rpc_id)
     }
 
     /// `L` (or refresh from the panel) — eval-fetch
@@ -1032,6 +1141,25 @@ impl BrowserPane {
         if self.cookies_sel >= n {
             self.cookies_sel = n.saturating_sub(1);
         }
+    }
+
+    /// `e` / `a` in the cookies panel — fire `Network.setCookie` with
+    /// the given `{name, value, domain, path}`. Same name+domain+path
+    /// as an existing cookie replaces it (the edit semantics); a new
+    /// tuple creates a fresh cookie. The reply is fire-and-forget; the
+    /// App refreshes via `R` to confirm.
+    pub fn set_cookie(&mut self, name: &str, value: &str, domain: &str, path: &str) {
+        if self.closed || name.is_empty() {
+            return;
+        }
+        let (n, v, d, p) = (
+            name.to_string(),
+            value.to_string(),
+            domain.to_string(),
+            path.to_string(),
+        );
+        self.send(|id| crate::cdp::set_cookie(id, &n, &v, &d, &p));
+        self.push(LogKind::System, format!("set cookie {name}={value}"));
     }
 
     /// `d` in the cookies panel — fire `Network.deleteCookies` for the
@@ -1671,6 +1799,35 @@ mod tests {
             .find(|m| m["method"] == "DOM.getBoxModel")
             .unwrap();
         assert_eq!(req["params"]["nodeId"], 42);
+    }
+
+    #[test]
+    fn parse_perf_eval_picks_positive_finite_numbers() {
+        let v = serde_json::json!({
+            "dns": 12.0,
+            "tcp": 0,        // zero ⇒ None (not yet available)
+            "ttfb": 234.5,
+            "response": -1,  // negative ⇒ None
+            "dom_interactive": 555,
+            "load": 0,
+            "fcp": 1700.0,
+            "lcp": null,
+        });
+        let m = parse_perf_eval(&v).unwrap();
+        assert_eq!(m.dns, Some(12.0));
+        assert!(m.tcp.is_none());
+        assert_eq!(m.ttfb, Some(234.5));
+        assert!(m.response.is_none());
+        assert_eq!(m.dom_interactive, Some(555.0));
+        assert!(m.load.is_none());
+        assert_eq!(m.fcp, Some(1700.0));
+        assert!(m.lcp.is_none());
+    }
+
+    #[test]
+    fn parse_perf_eval_propagates_error() {
+        let v = serde_json::json!({ "error": "SecurityError" });
+        assert!(parse_perf_eval(&v).is_err());
     }
 
     #[test]

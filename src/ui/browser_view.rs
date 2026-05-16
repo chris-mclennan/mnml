@@ -91,14 +91,16 @@ pub fn draw(
         }
     } else if b.cookies_focus {
         format!(
-            "  cookies ({}) · ↑↓ select · y copy · d delete · R re-fetch · esc back",
+            "  cookies ({}) · y copy · e edit · a add · d delete · R re-fetch · esc back",
             b.cookies.len()
         )
     } else if b.storage_focus {
         format!(
-            "  storage ({}) · ↑↓ select · y copy key=value · R re-fetch · esc back",
+            "  storage ({}) · y copy · e edit · a add · d delete · R re-fetch · esc back",
             b.storage.len()
         )
+    } else if b.perf_focus {
+        "  performance · R re-fetch · esc back".to_string()
     } else if b.net_focus {
         if b.net_filter_mode {
             format!(
@@ -118,7 +120,7 @@ pub fn draw(
             )
         }
     } else {
-        "  g navigate · ^R history · e eval · r reload · s shot · n net · D DOM · K cookies · L storage · esc → tree"
+        "  g nav · ^R hist · e eval · r reload · s shot · n net · D DOM · K cookies · L storage · P perf · esc → tree"
             .to_string()
     };
     lines.push(Line::from(Span::styled(
@@ -269,6 +271,65 @@ pub fn draw(
                     ),
                 ]));
             }
+        }
+        frame.render_widget(
+            Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),
+            area,
+        );
+        return None;
+    }
+
+    if b.perf_focus {
+        // ── performance panel: a fixed list of timings, color-coded ──
+        let m = &b.perf;
+        let fmt = |v: Option<f64>| match v {
+            Some(n) if n < 1000.0 => format!("{:.0} ms", n),
+            Some(n) => format!("{:.2} s", n / 1000.0),
+            None => "—".to_string(),
+        };
+        // Core Web Vitals thresholds (Google): LCP < 2.5s = green,
+        // < 4s = yellow, ≥ 4s = red. Used for FCP + LCP coloring.
+        let vital_color = |v: Option<f64>, good: f64, poor: f64| -> ratatui::style::Color {
+            match v {
+                Some(n) if n < good => t.green,
+                Some(n) if n < poor => t.yellow,
+                Some(_) => t.red,
+                None => t.comment,
+            }
+        };
+        let row = |label: &str, v: Option<f64>, color: ratatui::style::Color| -> Line<'static> {
+            Line::from(vec![
+                Span::styled("  ", Style::default().bg(t.bg_dark)),
+                Span::styled(
+                    format!("{label:<18}"),
+                    Style::default().fg(t.comment).bg(t.bg_dark),
+                ),
+                Span::styled(fmt(v), Style::default().fg(color).bg(t.bg_dark)),
+            ])
+        };
+        if b.pending_perf.is_some() && *m == crate::browser_pane::PerfMetrics::default() {
+            lines.push(Line::from(Span::styled(
+                "  fetching performance metrics…",
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            )));
+        } else {
+            lines.push(row("DNS lookup", m.dns, t.fg));
+            lines.push(row("TCP connect", m.tcp, t.fg));
+            lines.push(row("TTFB", m.ttfb, vital_color(m.ttfb, 800.0, 1800.0)));
+            lines.push(row("Response", m.response, t.fg));
+            lines.push(row("DOM interactive", m.dom_interactive, t.fg));
+            lines.push(row("Load event", m.load, t.fg));
+            lines.push(Line::from(Span::styled("", Style::default().bg(t.bg_dark))));
+            lines.push(row(
+                "First contentful paint",
+                m.fcp,
+                vital_color(m.fcp, 1800.0, 3000.0),
+            ));
+            lines.push(row(
+                "Largest contentful paint",
+                m.lcp,
+                vital_color(m.lcp, 2500.0, 4000.0),
+            ));
         }
         frame.render_widget(
             Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),

@@ -145,6 +145,22 @@ fn cdp_short_url(url: &str) -> String {
     }
 }
 
+/// Extract just the host (no scheme, no port, no path) from a URL.
+/// Returns empty when the URL has no recognizable host (e.g.
+/// `about:blank`). Used by the cookie-add flow to scope a new cookie
+/// to the active browser pane's origin.
+fn host_of_url(url: &str) -> String {
+    let s = url
+        .trim()
+        .strip_prefix("https://")
+        .or_else(|| url.trim().strip_prefix("http://"))
+        .unwrap_or(url.trim());
+    s.split(['/', '?', '#', ':'])
+        .next()
+        .unwrap_or("")
+        .to_string()
+}
+
 /// `DOM.getBoxModel.content` is `[x1, y1, x2, y2, x3, y3, x4, y4]` — the
 /// four corners of the node's content quad in viewport coords. Compute
 /// the axis-aligned bounding box `(x, y, width, height)` we can hand
@@ -1625,6 +1641,14 @@ pub struct App {
     /// `save_active_now`. Deadline behaves the same as
     /// `pending_format_save`: misbehaving LSPs can't gate save.
     pub pending_will_save: Option<(PathBuf, std::time::Instant)>,
+    /// Holds the `{name, domain, path}` of a cookie being edited via
+    /// the `e` chord — the BrowserCookieEdit prompt's accept reads
+    /// these three to round-trip through `Network.setCookie`.
+    pub pending_cookie_edit: Option<(String, String, String)>,
+    /// Holds the `(is_local, key)` of a Web Storage entry being edited
+    /// via the storage panel's `e` chord — the BrowserStorageEdit
+    /// prompt's accept reads this to scope its `setItem` call.
+    pub pending_storage_edit: Option<(bool, String)>,
     /// Is the workspace "section" inside the rail expanded? When `false` the
     /// rail shows just the `> WORKSPACE-NAME` header (clickable to expand);
     /// when `true` it shows the header (`v WORKSPACE-NAME`) + the file list.
@@ -2044,6 +2068,8 @@ impl App {
             last_click: None,
             pending_format_save: None,
             pending_will_save: None,
+            pending_cookie_edit: None,
+            pending_storage_edit: None,
             // VS-Code-style: the rail is shown with its workspace section
             // expanded by default. The last session's choice overrides this
             // in `try_restore_session`.
@@ -7932,6 +7958,29 @@ impl App {
         }
     }
 
+    /// `P` in a browser pane (or `browser.perf`) — fetch
+    /// `performance.*` metrics via Runtime.evaluate if we haven't
+    /// yet, and toggle into the perf panel. (`R` in the panel
+    /// re-fetches.) Closes the other panels.
+    pub fn browser_open_perf(&mut self) {
+        let Some(Pane::Browser(b)) = self
+            .panes
+            .iter_mut()
+            .find(|p| matches!(p, Pane::Browser(_)))
+        else {
+            self.toast("no browser pane open");
+            return;
+        };
+        if b.perf == crate::browser_pane::PerfMetrics::default() && b.pending_perf.is_none() {
+            b.fetch_perf();
+        }
+        b.perf_focus = true;
+        b.net_focus = false;
+        b.dom_focus = false;
+        b.cookies_focus = false;
+        b.storage_focus = false;
+    }
+
     /// `L` in a browser pane (or `browser.storage`) — fetch
     /// `localStorage` + `sessionStorage` via Runtime.evaluate if we
     /// haven't yet, and toggle into the Web Storage panel. (`R` in the
@@ -7954,6 +8003,139 @@ impl App {
         b.dom_focus = false;
         b.cookies_focus = false;
         b.storage_sel = b.storage_sel.min(b.storage.len().saturating_sub(1));
+    }
+
+    /// `e` in the storage panel — open a prompt seeded with the
+    /// selected entry's current value; accept ⇒ eval `setItem`.
+    pub fn edit_selected_storage(&mut self) {
+        let stash = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Browser(b)) => b
+                .selected_storage()
+                .map(|s| (s.is_local, s.key.clone(), s.value.clone())),
+            _ => None,
+        };
+        let Some((is_local, key, value)) = stash else {
+            self.toast("no storage entry selected");
+            return;
+        };
+        let scope = if is_local { "local" } else { "session" };
+        self.pending_storage_edit = Some((is_local, key.clone()));
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::BrowserStorageEdit,
+            format!("New value for {scope}.{key}"),
+            value,
+        ));
+    }
+
+    /// `a` in the storage panel — prompt for `local|key=value` or
+    /// `session|key=value`. The scope prefix picks the storage; default
+    /// is `local` if omitted.
+    pub fn add_storage_prompt(&mut self) {
+        if !matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Browser(_))
+        ) {
+            self.toast("no browser pane open");
+            return;
+        }
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::BrowserStorageAdd,
+            "New entry (local|key=value or session|key=value)",
+            "local|".to_string(),
+        ));
+    }
+
+    /// `d` in the storage panel — eval `removeItem` for the selected
+    /// entry. Drops the row locally; the `R` refresh confirms.
+    pub fn delete_selected_storage(&mut self) {
+        let stash = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Browser(b)) => b.selected_storage().map(|s| (s.is_local, s.key.clone())),
+            _ => None,
+        };
+        let Some((is_local, key)) = stash else {
+            self.toast("no storage entry selected");
+            return;
+        };
+        let scope = if is_local {
+            "localStorage"
+        } else {
+            "sessionStorage"
+        };
+        let expr = format!(
+            "{}.removeItem({})",
+            scope,
+            serde_json::Value::String(key.clone())
+        );
+        if let Some(Pane::Browser(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            b.eval_silent(&expr);
+            b.storage
+                .retain(|s| !(s.is_local == is_local && s.key == key));
+            if b.storage_sel >= b.storage.len() {
+                b.storage_sel = b.storage.len().saturating_sub(1);
+            }
+        }
+        self.toast(format!("deleted {key}"));
+    }
+
+    /// Accept handler for `BrowserStorageEdit` — eval `setItem` against
+    /// the `(is_local, key)` stash with the new value. Refreshes the
+    /// panel to show the update.
+    pub fn accept_storage_edit(&mut self, new_value: String) {
+        let Some((is_local, key)) = self.pending_storage_edit.take() else {
+            return;
+        };
+        let scope = if is_local {
+            "localStorage"
+        } else {
+            "sessionStorage"
+        };
+        let expr = format!(
+            "{}.setItem({}, {})",
+            scope,
+            serde_json::Value::String(key.clone()),
+            serde_json::Value::String(new_value),
+        );
+        if let Some(Pane::Browser(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            b.eval_silent(&expr);
+            b.fetch_storage();
+        }
+        self.toast(format!("updated {key}"));
+    }
+
+    /// Accept handler for `BrowserStorageAdd` — parse
+    /// `scope|key=value`; the scope (`local` / `session`) picks the
+    /// storage, default `local`. A bare `key=value` (no `|`) goes to
+    /// localStorage.
+    pub fn accept_storage_add(&mut self, input: String) {
+        let (scope, rest) = match input.split_once('|') {
+            Some((s, r)) => (s.trim().to_lowercase(), r.to_string()),
+            None => ("local".to_string(), input),
+        };
+        let (key, value) = match rest.split_once('=') {
+            Some((k, v)) => (k.trim().to_string(), v.to_string()),
+            None => (rest.trim().to_string(), String::new()),
+        };
+        if key.is_empty() {
+            self.toast("storage key required");
+            return;
+        }
+        let is_local = scope != "session";
+        let storage = if is_local {
+            "localStorage"
+        } else {
+            "sessionStorage"
+        };
+        let expr = format!(
+            "{}.setItem({}, {})",
+            storage,
+            serde_json::Value::String(key.clone()),
+            serde_json::Value::String(value),
+        );
+        if let Some(Pane::Browser(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            b.eval_silent(&expr);
+            b.fetch_storage();
+        }
+        self.toast(format!("added {key}"));
     }
 
     /// `y` in the storage panel — copy the selected entry's
@@ -7995,6 +8177,87 @@ impl App {
         b.dom_focus = false;
         b.storage_focus = false;
         b.cookies_sel = b.cookies_sel.min(b.cookies.len().saturating_sub(1));
+    }
+
+    /// `e` in the cookies panel — open a prompt seeded with the
+    /// selected cookie's current value; accept ⇒ `Network.setCookie`
+    /// with the new value, keeping name + domain + path the same.
+    pub fn edit_selected_cookie(&mut self) {
+        let stash = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Browser(b)) => b.selected_cookie().map(|c| {
+                (
+                    c.name.clone(),
+                    c.value.clone(),
+                    c.domain.clone(),
+                    c.path.clone(),
+                )
+            }),
+            _ => None,
+        };
+        let Some((name, value, domain, path)) = stash else {
+            self.toast("no cookie selected");
+            return;
+        };
+        self.pending_cookie_edit = Some((name.clone(), domain, path));
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::BrowserCookieEdit,
+            format!("New value for {name}"),
+            value,
+        ));
+    }
+
+    /// `a` in the cookies panel — prompt for `name=value`; accept ⇒
+    /// `Network.setCookie` scoped to the current page's domain (path
+    /// `/`). Quick way to seed a session token for testing.
+    pub fn add_cookie_prompt(&mut self) {
+        if !matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Browser(_))
+        ) {
+            self.toast("no browser pane open");
+            return;
+        }
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::BrowserCookieAdd,
+            "New cookie (name=value)",
+        ));
+    }
+
+    /// Accept handler for `BrowserCookieEdit` — round-trip the new
+    /// value through `Network.setCookie` for the `pending_cookie_edit`
+    /// stash. Refreshes the panel so the new value is visible.
+    pub fn accept_cookie_edit(&mut self, new_value: String) {
+        let Some((name, domain, path)) = self.pending_cookie_edit.take() else {
+            return;
+        };
+        if let Some(Pane::Browser(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            b.set_cookie(&name, &new_value, &domain, &path);
+            b.fetch_cookies();
+        }
+        self.toast(format!("updated cookie {name}"));
+    }
+
+    /// Accept handler for `BrowserCookieAdd` — parse `name=value` from
+    /// the input; domain comes from the active pane's URL host. A bare
+    /// name with no `=` adds an empty-value cookie (rare but legal).
+    pub fn accept_cookie_add(&mut self, input: String) {
+        let (name, value) = match input.split_once('=') {
+            Some((n, v)) => (n.trim().to_string(), v.to_string()),
+            None => (input.trim().to_string(), String::new()),
+        };
+        if name.is_empty() {
+            self.toast("cookie name required");
+            return;
+        }
+        let domain = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Browser(b)) => host_of_url(&b.url),
+            _ => String::new(),
+        };
+        if let Some(Pane::Browser(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            b.set_cookie(&name, &value, &domain, "/");
+            b.fetch_cookies();
+        }
+        self.toast(format!("added cookie {name}"));
     }
 
     /// `d` in the cookies panel — fire `Network.deleteCookies` for the
@@ -8187,6 +8450,32 @@ impl App {
         use crate::browser_pane::LogKind;
         // A reply to a request we issued?
         if let Some(id) = v.get("id").and_then(serde_json::Value::as_i64) {
+            if matches!(self.panes.get(idx), Some(Pane::Browser(b)) if b.is_pending_perf(id)) {
+                let value = v
+                    .get("result")
+                    .and_then(|r| r.get("result"))
+                    .and_then(|ro| ro.get("value"));
+                let parsed = value
+                    .map(crate::browser_pane::parse_perf_eval)
+                    .unwrap_or_else(|| Err("no value in reply".to_string()));
+                match parsed {
+                    Ok(m) => {
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.pending_perf = None;
+                            b.perf = m;
+                            b.push(LogKind::System, "performance loaded");
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.pending_perf = None;
+                            b.push(LogKind::ConsoleErr, format!("perf: {e}"));
+                        }
+                        self.toast(format!("perf: {e}"));
+                    }
+                }
+                return;
+            }
             if matches!(self.panes.get(idx), Some(Pane::Browser(b)) if b.is_pending_storage(id)) {
                 // Web Storage eval reply (`L` panel). The result is a
                 // `RemoteObject` with `type:'object', value:<obj>` —
@@ -9502,6 +9791,16 @@ impl App {
                 if let Some(Pane::Browser(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
                     b.navigate(&url);
                 }
+            }
+            crate::prompt::PromptKind::BrowserCookieEdit => {
+                self.accept_cookie_edit(p.input.clone())
+            }
+            crate::prompt::PromptKind::BrowserCookieAdd => self.accept_cookie_add(p.input.clone()),
+            crate::prompt::PromptKind::BrowserStorageEdit => {
+                self.accept_storage_edit(p.input.clone())
+            }
+            crate::prompt::PromptKind::BrowserStorageAdd => {
+                self.accept_storage_add(p.input.clone())
             }
             crate::prompt::PromptKind::BrowserEval => {
                 let expr = p.input.clone();

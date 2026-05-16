@@ -22,6 +22,21 @@ pub enum PromptKind {
     BrowserNavigate,
     /// Accept ⇒ `Runtime.evaluate` the typed JS in the active browser pane.
     BrowserEval,
+    /// Accept ⇒ `Network.setCookie` with the new value. Name, domain,
+    /// and path come from `App.pending_cookie_edit` (set when the chord
+    /// fires). Replaces the existing cookie.
+    BrowserCookieEdit,
+    /// Accept ⇒ `Network.setCookie` with a `name=value` payload (parsed
+    /// from the input). Domain comes from the active browser pane's
+    /// URL host; path is `/`. Adds a new cookie if no match exists.
+    BrowserCookieAdd,
+    /// Accept ⇒ Web Storage eval that sets the value for the
+    /// `(is_local, key)` stash on `App.pending_storage_edit`.
+    BrowserStorageEdit,
+    /// Accept ⇒ Web Storage eval that adds a `local|key=value` entry
+    /// (parsed from the input — the leading `local|` or `session|`
+    /// picks the storage).
+    BrowserStorageAdd,
     /// Accept ⇒ find the typed string in the active editor (case-insensitive
     /// ASCII), highlight matches, jump to the nearest one.
     Find,

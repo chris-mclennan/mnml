@@ -169,6 +169,24 @@ pub fn get_cookies(id: i64) -> String {
     rpc(id, "Network.getCookies", serde_json::json!({}))
 }
 
+/// `Network.setCookie` — create or update a cookie. Domain/path
+/// scope the cookie to a specific origin; passing the same name +
+/// domain + path as an existing one replaces it (which is how the
+/// `e` edit chord updates a value). Used by the cookies panel's
+/// `e` (edit) and `a` (add) chords.
+pub fn set_cookie(id: i64, name: &str, value: &str, domain: &str, path: &str) -> String {
+    rpc(
+        id,
+        "Network.setCookie",
+        serde_json::json!({
+            "name": name,
+            "value": value,
+            "domain": domain,
+            "path": path,
+        }),
+    )
+}
+
 /// `Network.deleteCookies` — clear a specific cookie. `name` is
 /// required; `domain` + `path` narrow the match (a name-only delete
 /// drops every cookie with that name across every domain, which is

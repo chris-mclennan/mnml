@@ -1769,7 +1769,24 @@ a new CDP domain or extract securityOrigin from the page URL.
 **`d` in the cookies panel deletes the selected cookie** (`browser.delete_cookie`) — fires `Network.deleteCookies`
 with the cookie's `{ name, domain, path }` so the match is narrow (a name-only delete drops the cookie across every
 domain, usually too broad). The row drops locally on dispatch (optimistic); the next `R` re-fetch confirms with the
-browser. Pairs naturally with the `K` cookies panel for "log out by clearing this session cookie" debug flows. `R` re-fetches, `D`
+browser. Pairs naturally with the `K` cookies panel for "log out by clearing this session cookie" debug flows.
+**`e` / `a` in the cookies panel edit / add cookies** (`browser.edit_cookie` / `browser.add_cookie`) — `e` opens a
+prompt seeded with the current value; accept fires `Network.setCookie` with the same name+domain+path so the existing
+cookie is replaced. `a` prompts for `name=value`; the cookie is scoped to the active pane's URL host (via `host_of_url`)
+with path `/`. Both refresh the panel via `fetch_cookies` after dispatch. Together with `d` (delete), the cookies panel
+now has full read/write/delete.
+**`e` / `a` / `d` in the storage panel** — symmetrical with cookies. `e` opens a prompt seeded with the current value
+of the selected entry; accept evals `localStorage.setItem` (or `sessionStorage.setItem`). `a` prompts for
+`scope|key=value` where scope is `local` (default) or `session`. `d` evals `removeItem` for the selected entry and
+drops the row locally. All three use `BrowserPane::eval_silent` (fire-and-forget eval that doesn't push a `» …` log
+line or claim `pending_eval`).
+**`P` toggles a performance panel** (`browser.perf`) — eval-fetches `performance.getEntriesByType('navigation')[0]`
+plus paint entries + LCP via `PERF_EVAL_EXPR` (a fixed IIFE). `parse_perf_eval` converts the result into
+`PerfMetrics{dns, tcp, ttfb, response, dom_interactive, load, fcp, lcp}` — each field is `Option<f64>` (None when ≤ 0
+or non-finite, since metrics that haven't fired yet show as 0 or NaN in the eval result). Renderer paints a
+fixed-list view: each row `label · value` formatted as `123 ms` or `1.23 s`. Core Web Vitals get traffic-light
+coloring (LCP < 2.5s green, < 4s yellow, ≥ 4s red; FCP < 1.8s/3s/≥3s; TTFB < 800ms/1.8s/≥1.8s). `R` re-fetches.
+Mutually exclusive with the other panels. `R` re-fetches, `D`
 (or Esc) leave the panel (Esc also clears any highlight via `Overlay.hideHighlight`). After `s` writes the PNG, `open_path_external` hands it to the OS default app (`open` on macOS,
 `xdg-open` on Linux, `cmd /C start` on Windows; best-effort, errors swallowed). `Target.setDiscoverTargets {discover:true}`
 is also sent on connect so popups / new-tabs show up as `⤴ new tab → url` log lines (`Target.targetCreated` with
