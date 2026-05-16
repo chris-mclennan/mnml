@@ -2608,6 +2608,22 @@ browser via the same `open_url_external` helper the per-host
 Empty caches ⇒ toast pointing at the four `[[<host>.repos]]` /
 `[[<host>.projects]]` config tables (no picker opens).
 
+**Treesitter-context (sticky scope)** — `[ui] sticky_context = true`
+(default off; `:set [no]stickycontext` runtime toggle, also `sticky` /
+`nosticky`; `:set stickycontext!` flips). When on, the top N rows of
+each editor pane are overwritten with the enclosing scope chain
+(function → class → method → …) — function headers that scrolled off
+the top are painted in bold `bg2` so you can always tell what you're
+inside. Reuses `regex_outline::extract_symbols` (rust/py/js/ts/go/rb/c/
+cpp) — same regex pass that already feeds the statusline `›` chip and
+the outline pane. Algorithm: walk symbols in source order maintaining
+a depth-monotonic stack; symbols with `line <= cursor.line` enter and
+pop any equal-or-deeper symbols from the stack first. Only paints the
+slice of the chain whose header line is strictly above the viewport
+(otherwise the user can already see it). Capped at 3 rows; when the
+chain is longer, the deepest scopes win. Sits between the existing
+fold sticky-scroll overlay and the body paragraph render.
+
 **mini.align** — `gA{motion}<char>` (Normal) and `gA<char>` (Visual) pad
 every line in the motion's range with spaces before the first occurrence
 of `<char>` so the chars line up at the same column. Lowercase `ga` is

@@ -916,6 +916,61 @@ pub fn draw_pane(
             *line = Line::from(Span::styled(txt, style));
         }
     }
+    // Treesitter-context — when `[ui] sticky_context` is on, paint the
+    // chain of enclosing scopes (function → class → method → …) that
+    // contain the cursor's row but whose header is ABOVE the viewport.
+    // Capped at 3 rows so the editor doesn't lose too much real estate.
+    // Reuses `regex_outline::extract_symbols` so it covers rust/py/js/ts/
+    // go/rb/c/cpp without an LSP. Other languages: no chain ⇒ no paint.
+    if app.config.ui.sticky_context
+        && let Some(ext) = buf.language_ext.as_deref()
+    {
+        let symbols = crate::regex_outline::extract_symbols(buf.editor.text(), ext);
+        if !symbols.is_empty() {
+            // Build the enclosing chain by walking symbols in source order
+            // and maintaining a depth-monotonic stack. A symbol `s` enters
+            // the chain when its line precedes the cursor; any symbol of
+            // equal-or-greater depth than `s.depth` already on top of the
+            // stack is popped first (since they're no longer enclosing).
+            let cur_line = buf.editor.row_col().0 as u32;
+            let scroll = buf.scroll as u32;
+            let mut stack: Vec<&crate::lsp::DocumentSymbol> = Vec::new();
+            for s in &symbols {
+                if s.line > cur_line {
+                    break;
+                }
+                while stack.last().is_some_and(|top| top.depth >= s.depth) {
+                    stack.pop();
+                }
+                stack.push(s);
+            }
+            // Only include symbols whose header is ABOVE the viewport —
+            // otherwise the user can already see it.
+            let chain: Vec<&crate::lsp::DocumentSymbol> =
+                stack.into_iter().filter(|s| s.line < scroll).collect();
+            const MAX_ROWS: usize = 3;
+            let rows = chain.len().min(MAX_ROWS).min(lines.len());
+            if rows > 0 {
+                let t = theme::cur();
+                // Skip the outermost when over-the-cap so the closest
+                // enclosing scope is always shown.
+                let start = chain.len().saturating_sub(rows);
+                for (i, sym) in chain.iter().skip(start).enumerate() {
+                    if let Some(line) = lines.get_mut(i) {
+                        let raw = buf.editor.line_str(sym.line as usize).to_string();
+                        let pad: String = " ".repeat(area.width as usize);
+                        let txt = format!("{raw}{pad}");
+                        let txt: String = txt.chars().take(area.width as usize).collect();
+                        let style = Style::default()
+                            .fg(t.fg)
+                            .bg(t.bg2)
+                            .add_modifier(ratatui::style::Modifier::BOLD);
+                        *line = Line::from(Span::styled(txt, style));
+                    }
+                }
+            }
+        }
+    }
     frame.render_widget(Paragraph::new(lines), area);
 
     if want_scrollbar && text_h > 0 {

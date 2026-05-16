@@ -531,6 +531,14 @@ pub struct UiConfig {
     /// markdown preview pane (`Pane::MdPreview`) is the canonical
     /// rendering. `:set [no]rendermarkdown` / `view.toggle_render_markdown`.
     pub render_markdown: bool,
+    /// Sticky scope context — when on, paints the enclosing scope chain
+    /// (functions / classes / methods that contain the cursor's line) as
+    /// dim header rows at the top of each editor pane. Reuses
+    /// `regex_outline::extract_symbols` so it works on rust/py/js/ts/go/
+    /// rb/c/cpp without an LSP. Off by default — useful in long files but
+    /// noisy for short ones. `:set [no]stickycontext` / `:set stickycontext!` /
+    /// `view.toggle_sticky_context`.
+    pub sticky_context: bool,
 }
 
 impl Default for Config {
@@ -575,6 +583,7 @@ impl Default for Config {
                 wrap: false,
                 highlight_todo_keywords: false,
                 render_markdown: false,
+                sticky_context: false,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -793,6 +802,7 @@ struct RawUi {
     wrap: Option<bool>,
     highlight_todo_keywords: Option<bool>,
     render_markdown: Option<bool>,
+    sticky_context: Option<bool>,
 }
 
 impl Config {
@@ -935,6 +945,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.render_markdown {
             self.ui.render_markdown = v;
+        }
+        if let Some(v) = raw.ui.sticky_context {
+            self.ui.sticky_context = v;
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;

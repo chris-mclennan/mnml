@@ -286,6 +286,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_render_markdown(),
         },
         Command {
+            id: "view.toggle_sticky_context",
+            title: "Toggle sticky scope context (treesitter-context-style header)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_sticky_context(),
+        },
+        Command {
             id: "project.next_todo",
             title: "Jump to next TODO / FIXME / HACK / XXX (vim ]t)",
             group: "project",

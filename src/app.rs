@@ -14098,6 +14098,15 @@ impl App {
         });
     }
 
+    pub fn toggle_sticky_context(&mut self) {
+        self.config.ui.sticky_context = !self.config.ui.sticky_context;
+        self.toast(if self.config.ui.sticky_context {
+            "sticky context: on"
+        } else {
+            "sticky context: off"
+        });
+    }
+
     /// `:set [no]bufferline` / `view.toggle_bufferline` — hide/show the
     /// open-tabs strip above the editor body. Useful for single-buffer
     /// workflows.
@@ -17932,6 +17941,14 @@ impl App {
                     self.toast("render markdown: off");
                 } else if matches!(opt, "rendermarkdown!" | "invrendermarkdown") {
                     self.toggle_render_markdown();
+                } else if matches!(opt, "stickycontext" | "sticky") {
+                    self.config.ui.sticky_context = true;
+                    self.toast("sticky context: on");
+                } else if matches!(opt, "nostickycontext" | "nosticky") {
+                    self.config.ui.sticky_context = false;
+                    self.toast("sticky context: off");
+                } else if matches!(opt, "stickycontext!" | "invstickycontext") {
+                    self.toggle_sticky_context();
                 } else if matches!(opt, "bufferline" | "bl") {
                     self.bufferline_visible = true;
                     self.toast("bufferline: on");
