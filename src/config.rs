@@ -412,6 +412,13 @@ pub struct EditorConfig {
     /// LSP request is fired on open + save; hints persist on the buffer
     /// until refreshed.
     pub inlay_hints: bool,
+    /// Use `semanticTokens/range` for just the visible viewport (instead
+    /// of `full` / `full/delta` for the whole file). Off by default — only
+    /// useful for very large files where full / delta is expensive. When
+    /// on, the App re-fires range on scroll (debounced by per-buffer
+    /// viewport diff). Requires server support for the `range` request;
+    /// servers that only support full / delta are unaffected by this flag.
+    pub semantic_tokens_viewport: bool,
     /// Show LSP code lenses (`5 references` / `Run | Debug`) as dim
     /// purple end-of-line chips. Default `true`. The MVP renderer is
     /// display-only — clicks aren't yet routed back to the server.
@@ -524,6 +531,7 @@ impl Default for Config {
                 format_on_type: false,
                 autosave_on_focus_loss: false,
                 inlay_hints: true,
+                semantic_tokens_viewport: false,
                 code_lens: true,
                 text_width: 80,
                 ensure_trailing_newline: true,
@@ -734,6 +742,7 @@ struct RawEditor {
     format_on_type: Option<bool>,
     autosave_on_focus_loss: Option<bool>,
     inlay_hints: Option<bool>,
+    semantic_tokens_viewport: Option<bool>,
     code_lens: Option<bool>,
     text_width: Option<usize>,
     ensure_trailing_newline: Option<bool>,
@@ -830,6 +839,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.inlay_hints {
             self.editor.inlay_hints = v;
+        }
+        if let Some(v) = raw.editor.semantic_tokens_viewport {
+            self.editor.semantic_tokens_viewport = v;
         }
         if let Some(v) = raw.editor.code_lens {
             self.editor.code_lens = v;

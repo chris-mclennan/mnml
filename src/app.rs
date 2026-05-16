@@ -4314,7 +4314,16 @@ impl App {
                 self.lsp.code_lens(&path);
                 self.lsp.document_link(&path);
                 self.lsp.document_color(&path);
-                self.lsp.semantic_tokens(&path, line_count);
+                let viewport = self.semantic_tokens_viewport_for(&path);
+                self.lsp.semantic_tokens(&path, line_count, viewport);
+                if viewport.is_some()
+                    && let Some(b) = self.panes.iter_mut().find_map(|p| match p {
+                        Pane::Editor(b) if b.path.as_deref() == Some(&path) => Some(b),
+                        _ => None,
+                    })
+                {
+                    b.last_semantic_viewport = viewport;
+                }
                 // Auto-open MD preview alongside, if enabled and not yet open.
                 // Passive (focus stays on the editor we just opened).
                 if self.config.ui.auto_md_preview && is_markdown_path(&path) {
@@ -4449,8 +4458,43 @@ impl App {
             self.lsp.code_lens(path);
             self.lsp.document_link(path);
             self.lsp.document_color(path);
-            self.lsp.semantic_tokens(path, line_count);
+            let viewport = self.semantic_tokens_viewport_for(path);
+            self.lsp.semantic_tokens(path, line_count, viewport);
+            if viewport.is_some()
+                && let Some(b) = self.panes.iter_mut().find_map(|p| match p {
+                    Pane::Editor(b) if b.path.as_deref() == Some(path) => Some(b),
+                    _ => None,
+                })
+            {
+                b.last_semantic_viewport = viewport;
+            }
         }
+    }
+
+    /// Compute the visible viewport `(start_line, end_line)` for `path`
+    /// to pass to `lsp.semantic_tokens` when `[editor]
+    /// semantic_tokens_viewport` is on. Returns `None` when the flag is
+    /// off or the pane isn't currently rendered (no rect known).
+    fn semantic_tokens_viewport_for(&self, path: &Path) -> Option<(u32, u32)> {
+        if !self.config.editor.semantic_tokens_viewport {
+            return None;
+        }
+        let (idx, scroll) = self.panes.iter().enumerate().find_map(|(i, p)| match p {
+            Pane::Editor(b) if b.path.as_deref() == Some(path) => Some((i, b.scroll)),
+            _ => None,
+        })?;
+        // Use the recorded pane rect height when available; fall back
+        // to a generous estimate of 100 rows for the first-render case
+        // (open_path before the first draw cycle).
+        let h = self
+            .rects
+            .editor_panes
+            .iter()
+            .find(|(_, pid)| *pid == idx)
+            .map(|(r, _)| r.height as u32)
+            .unwrap_or(100);
+        let s = scroll as u32;
+        Some((s, s.saturating_add(h)))
     }
 
     // ─── LSP commands ───────────────────────────────────────────────
@@ -16453,6 +16497,20 @@ impl App {
                 } else if matches!(opt, "nowillsavewaituntil" | "nowswu") {
                     self.config.editor.will_save_wait_until = false;
                     self.toast(":set nowillsavewaituntil");
+                } else if matches!(opt, "semantictokensviewport" | "stviewport") {
+                    self.config.editor.semantic_tokens_viewport = true;
+                    self.toast(":set semantictokensviewport");
+                } else if matches!(opt, "nosemantictokensviewport" | "nostviewport") {
+                    self.config.editor.semantic_tokens_viewport = false;
+                    // Drop the cached viewports so the next refresh
+                    // (now driven by the full/delta path) doesn't think
+                    // it already requested.
+                    for p in self.panes.iter_mut() {
+                        if let Pane::Editor(b) = p {
+                            b.last_semantic_viewport = None;
+                        }
+                    }
+                    self.toast(":set nosemantictokensviewport");
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }
@@ -16844,12 +16902,72 @@ impl App {
         self.block_insert_replay_if_done();
         self.repeat_insert_replay_if_done();
         self.refresh_stale_highlights();
+        self.refresh_scroll_semantic_tokens();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL
         {
             self.toast = None;
         }
     }
+
+    /// Scroll-driven viewport refresh for `[editor]
+    /// semantic_tokens_viewport`. For every open editor pane whose
+    /// current viewport diverges from `last_semantic_viewport` by more
+    /// than [`Self::VIEWPORT_REFIRE_THRESHOLD`] lines, fire a fresh
+    /// `semanticTokens/range` covering the new viewport. Cheap: a
+    /// no-op when the flag is off or every buffer's viewport is still
+    /// inside the cached one.
+    fn refresh_scroll_semantic_tokens(&mut self) {
+        if !self.config.editor.semantic_tokens_viewport {
+            return;
+        }
+        // Collect target (path, viewport) pairs without holding any
+        // &mut on panes — we want to consult `app.rects` (immutable
+        // borrow) and then mutate the matching buffer afterward.
+        let mut refire: Vec<(PathBuf, (u32, u32))> = Vec::new();
+        for p in self.panes.iter() {
+            let Pane::Editor(b) = p else { continue };
+            let Some(path) = b.path.clone() else { continue };
+            let Some(new_vp) = self.semantic_tokens_viewport_for(&path) else {
+                continue;
+            };
+            let stale = match b.last_semantic_viewport {
+                Some((s, e)) => {
+                    new_vp.0.abs_diff(s) > Self::VIEWPORT_REFIRE_THRESHOLD
+                        || new_vp.1.abs_diff(e) > Self::VIEWPORT_REFIRE_THRESHOLD
+                }
+                None => true,
+            };
+            if stale {
+                refire.push((path, new_vp));
+            }
+        }
+        for (path, viewport) in refire {
+            let line_count = self
+                .panes
+                .iter()
+                .find_map(|p| match p {
+                    Pane::Editor(b) if b.path.as_deref() == Some(path.as_path()) => {
+                        Some(b.editor.line_count() as u32)
+                    }
+                    _ => None,
+                })
+                .unwrap_or(0);
+            self.lsp.semantic_tokens(&path, line_count, Some(viewport));
+            if let Some(b) = self.panes.iter_mut().find_map(|p| match p {
+                Pane::Editor(b) if b.path.as_deref() == Some(path.as_path()) => Some(b),
+                _ => None,
+            }) {
+                b.last_semantic_viewport = Some(viewport);
+            }
+        }
+    }
+
+    /// Lines of viewport drift before [`Self::refresh_scroll_semantic_tokens`]
+    /// re-fires a `semanticTokens/range` request. 20 is a quiet middle
+    /// ground — small scrolls don't mash the server, but any meaningful
+    /// jump refreshes promptly.
+    const VIEWPORT_REFIRE_THRESHOLD: u32 = 20;
 
     /// Re-run tree-sitter on any editor buffer whose `highlights_dirty` is
     /// set AND whose last edit was more than ~120ms ago. Lets rapid

@@ -763,17 +763,26 @@ impossible to miss), `readonly` → ITALIC, `static` → BOLD, `defaultLibrary` 
 a fallback when the server advertises `range: true` but not `full`. Per-server
 capability flags (`supports_full` / `supports_delta` / `supports_range`) are captured
 from the `initialize` reply's `semanticTokensProvider.requests` and live in a shared
-`Arc<Mutex<SemServerCaps>>` so the App-thread `LspClient::semantic_tokens(path, line_count)`
-chooser can pick the best shape: delta > full > range. `parse_semantic_tokens_caps`
-handles every common shape (legacy `{ full: true }`, modern `{ full: { delta: true },
-range: true }`, bare provider, missing provider). Range replies don't carry a `resultId`
-useful for delta requests so receipt drops the per-path cache (the next request will
-fall back to full or range, not stale delta). `initialize` advertises `requests: {
-full: { delta: true }, range: true }`. **Limitations (first-cut still):** linear scan
-per cell (token volumes per file are typically hundreds, fine for now; sort-by-line +
-binary-search would help on massive files); range fallback always requests the whole
-file (0 → line_count), not the viewport — viewport-only range requests on scroll would
-be a future cut.
+`Arc<Mutex<SemServerCaps>>` so the App-thread
+`LspClient::semantic_tokens(path, line_count, viewport)` chooser can pick the best
+shape: viewport-range (when `viewport` is Some + server supports range) > delta > full
+> whole-file range. `parse_semantic_tokens_caps` handles every common shape (legacy
+`{ full: true }`, modern `{ full: { delta: true }, range: true }`, bare provider,
+missing provider). Range replies don't carry a `resultId` useful for delta requests so
+receipt drops the per-path cache (the next request will fall back to full or range,
+not stale delta). `initialize` advertises `requests: { full: { delta: true }, range:
+true }`. **Viewport-only mode** — `[editor] semantic_tokens_viewport` (default off;
+`:set stviewport` / `:set nostviewport` runtime toggle): when on, every semantic-tokens
+request becomes a viewport-shaped `semanticTokens/range` covering just the visible
+lines of the active pane (`[scroll, scroll + pane_height]`). `App::tick` runs
+`refresh_scroll_semantic_tokens` every cycle and re-fires range when the current
+viewport has drifted more than `VIEWPORT_REFIRE_THRESHOLD = 20` lines from
+`Buffer.last_semantic_viewport`. Smallest-scope dedupe — small scrolls don't mash the
+LSP, but any meaningful jump refreshes promptly. Useful for very large files where
+full/delta is expensive on every save; otherwise the default (delta > full) is faster.
+**Limitations (first-cut still):** linear scan per cell (token volumes per file are
+typically hundreds, fine for now; sort-by-line + binary-search would help on massive
+files).
 **`[ui] wrap` survives a relaunch** — the user's runtime `:set wrap` choice now persists in
 `session.json` (`SavedSession.wrap: Option<bool>`). Config-file changes still take precedence
 on a fresh workspace.

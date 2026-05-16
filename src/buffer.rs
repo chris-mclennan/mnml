@@ -180,6 +180,12 @@ pub struct Buffer {
     /// on top of tree-sitter highlights by the editor renderer (LSP wins
     /// where they overlap). Refreshed on save + after did_open.
     pub semantic_tokens: Vec<crate::lsp::SemanticToken>,
+    /// Last `(start_line, end_line)` viewport range we requested
+    /// semantic tokens for. Used by the scroll-driven refresh path
+    /// (`[editor] semantic_tokens_viewport = true`) to dedupe — a small
+    /// scroll within the cached viewport doesn't re-fire the request.
+    /// `None` ⇒ no viewport request has been made yet (default).
+    pub last_semantic_viewport: Option<(u32, u32)>,
     /// LSP code lenses — actionable annotations (like "5 references" or
     /// "Run | Debug") attached to specific lines. Rendered as dim chips
     /// at end-of-line. Refreshed on save.
@@ -291,6 +297,7 @@ impl Buffer {
             diagnostics: Vec::new(),
             inlay_hints: Vec::new(),
             semantic_tokens: Vec::new(),
+            last_semantic_viewport: None,
             code_lenses: Vec::new(),
             document_links: Vec::new(),
             color_decorations: Vec::new(),
@@ -363,6 +370,7 @@ impl Buffer {
             diagnostics: Vec::new(),
             inlay_hints: Vec::new(),
             semantic_tokens: Vec::new(),
+            last_semantic_viewport: None,
             code_lenses: Vec::new(),
             document_links: Vec::new(),
             color_decorations: Vec::new(),

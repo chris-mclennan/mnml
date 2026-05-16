@@ -824,16 +824,22 @@ impl LspManager {
         sent
     }
     /// Request semantic tokens — the client picks the best request shape
-    /// per advertised capability: `full/delta` (delta + cached resultId),
-    /// `full` (the typical path), or `range` (only when the server
-    /// doesn't advertise full). Reply arrives as
-    /// [`LspEvent::SemanticTokens`]. `line_count` is needed only for the
-    /// range fallback; pass the active buffer's line count.
-    pub fn semantic_tokens(&mut self, path: &Path, line_count: u32) -> bool {
+    /// per advertised capability: viewport-only `range` (when `viewport`
+    /// is `Some` AND the server supports range), `full/delta` (delta +
+    /// cached resultId), `full` (the typical path), or whole-file
+    /// `range` (the server doesn't advertise full). Reply arrives as
+    /// [`LspEvent::SemanticTokens`]. `line_count` is used only for the
+    /// whole-file range fallback.
+    pub fn semantic_tokens(
+        &mut self,
+        path: &Path,
+        line_count: u32,
+        viewport: Option<(u32, u32)>,
+    ) -> bool {
         let mut sent = false;
         for c in self.clients.values_mut() {
             if c.is_open(path) {
-                c.semantic_tokens(path, line_count);
+                c.semantic_tokens(path, line_count, viewport);
                 sent = true;
             }
         }

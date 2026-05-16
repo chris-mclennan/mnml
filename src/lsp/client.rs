@@ -470,20 +470,32 @@ impl LspClient {
     /// Request semantic tokens for `path`. Picks the best request shape
     /// for what the server advertises:
     ///
-    /// 1. `full/delta` when the server advertises delta AND we have a
+    /// 1. When `viewport` is `Some((s, e))` AND the server supports
+    ///    `range`, send `range` for just the visible viewport — replace
+    ///    semantics, tokens cover only that slice. Bypasses the
+    ///    delta/full chooser since the caller has explicitly opted into
+    ///    viewport-only highlighting.
+    /// 2. `full/delta` when the server advertises delta AND we have a
     ///    cached `resultId` — the cheapest update, sparse edits we
     ///    splice into the cached raw data.
-    /// 2. `full` when the server advertises full (the typical path).
-    /// 3. `range` (line 0 → `line_count`) when the server only
+    /// 3. `full` when the server advertises full (the typical path).
+    /// 4. `range` (line 0 → `line_count`) when the server only
     ///    advertises range — uncommon, but the rare path where neither
     ///    full nor delta is available.
-    /// 4. No-op when the server advertises none of the three.
+    /// 5. No-op when the server advertises none of the three.
     ///
-    /// `line_count` is needed only for the range fallback — pass the
-    /// active buffer's line count so the request covers the whole file.
-    /// Reply arrives as [`super::LspEvent::SemanticTokens`] in every case.
-    pub fn semantic_tokens(&mut self, path: &Path, line_count: u32) {
+    /// `line_count` is needed only for the whole-file range fallback —
+    /// pass the active buffer's line count. Reply arrives as
+    /// [`super::LspEvent::SemanticTokens`] in every case.
+    pub fn semantic_tokens(&mut self, path: &Path, line_count: u32, viewport: Option<(u32, u32)>) {
         let caps = self.sem_caps.lock().map(|c| c.clone()).unwrap_or_default();
+        // Viewport-only mode wins when the server supports range.
+        if let Some((s, e)) = viewport
+            && caps.supports_range
+        {
+            self.semantic_tokens_range(path, s, e);
+            return;
+        }
         let prev_id = self
             .sem_states
             .lock()
@@ -2562,6 +2574,17 @@ mod tests {
         // Bit beyond legend length ⇒ silently dropped.
         let mods = decode_modifier_bits(0b1000_0000, &legend);
         assert!(mods.is_empty());
+    }
+
+    #[test]
+    fn parse_semantic_tokens_caps_picks_range_when_full_absent() {
+        // Range-only servers (rare but valid) report this shape — we
+        // surface `supports_range = true` so the chooser falls through
+        // to the range path on the App side.
+        let provider = json!({ "requests": { "range": true } });
+        let caps = parse_semantic_tokens_caps(Some(&provider));
+        assert!(!caps.supports_full);
+        assert!(caps.supports_range);
     }
 
     #[test]
