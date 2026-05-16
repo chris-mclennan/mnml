@@ -87,7 +87,9 @@ pub fn draw(
     g.scroll = g.scroll.min(max_scroll);
 
     let mut rows: Vec<Line> = Vec::with_capacity(h);
+    let mut row_recordings: Vec<(u16, usize)> = Vec::with_capacity(h);
     for (i, c) in g.commits.iter().enumerate().skip(g.scroll).take(h) {
+        row_recordings.push(((i - g.scroll) as u16, i));
         let selected = i == g.selected;
         let row_bg = if selected { t.bg2 } else { t.bg_dark };
         let mut spans: Vec<Span> = Vec::new();
@@ -139,6 +141,21 @@ pub fn draw(
         Paragraph::new(rows).style(Style::default().bg(t.bg_dark)),
         list_area,
     );
+    for (visible_y, idx) in row_recordings {
+        let screen_y = list_area.y.saturating_add(visible_y);
+        if screen_y < list_area.y.saturating_add(list_area.height) {
+            app.rects.list_rows.push((
+                ratatui::layout::Rect {
+                    x: list_area.x,
+                    y: screen_y,
+                    width: list_area.width,
+                    height: 1,
+                },
+                pane_id,
+                idx,
+            ));
+        }
+    }
 
     // ── detail panel ───────────────────────────────────────────────
     if let (Some(da), Some(c), Some(detail)) =

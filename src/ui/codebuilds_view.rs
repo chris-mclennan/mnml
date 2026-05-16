@@ -100,7 +100,20 @@ pub fn draw(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
-    for (i, rec) in p.items.iter().enumerate().skip(p.scroll).take(body_h) {
+    for (visible_i, (i, rec)) in p.items.iter().enumerate().skip(p.scroll).take(body_h).enumerate() {
+        let row_y = area.y.saturating_add(2 + visible_i as u16);
+        if row_y < area.y.saturating_add(area.height) {
+            app.rects.list_rows.push((
+                ratatui::layout::Rect {
+                    x: area.x,
+                    y: row_y,
+                    width: area.width,
+                    height: 1,
+                },
+                pane_id,
+                i,
+            ));
+        }
         let selected = i == p.selected;
         let row_bg = if selected { t.bg2 } else { t.bg_dark };
         let (glyph, status_color) = match rec.status {

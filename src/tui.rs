@@ -2815,6 +2815,29 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
         }
         return;
     }
+    #[cfg(feature = "private")]
+    if matches!(app.panes.get(pane_id), Some(Pane::CodeBuilds(_))) {
+        if let Some(Pane::CodeBuilds(p)) = app.panes.get_mut(pane_id)
+            && flat_idx < p.items.len()
+        {
+            p.selected = flat_idx;
+        }
+        if is_double_click {
+            app.open_selected_codebuild_url();
+        }
+        return;
+    }
+    if matches!(app.panes.get(pane_id), Some(Pane::GitGraph(_))) {
+        if let Some(Pane::GitGraph(g)) = app.panes.get_mut(pane_id)
+            && flat_idx < g.commits.len()
+        {
+            g.selected = flat_idx;
+        }
+        if is_double_click {
+            app.open_selected_commit_diff();
+        }
+        return;
+    }
     if matches!(app.panes.get(pane_id), Some(Pane::CmdlineHistory(_))) {
         if let Some(Pane::CmdlineHistory(h)) = app.panes.get_mut(pane_id)
             && flat_idx < h.entries.len()
