@@ -2119,6 +2119,20 @@ comment_count is hardcoded 0 because Azure's list endpoint doesn't
 return it (would need a per-PR `/threads` call). Free-tier signup
 walk-through in conversation history if a real test is needed.
 
+**the private integration 6b — `Pane::LogTail` with severity coloring** — dedicated
+streaming log viewer for CodeBuild CloudWatch streams (sibling to
+the existing pty-based `t` chord). Opened by `T` on a CodeBuilds
+row. Spawns `aws logs tail --follow --format short ...` in a
+background thread; lines stream over an mpsc channel into the pane's
+buffer. Each line classified to a `LineSeverity` (`Error` / `Warn` /
+`Info` / `Debug` / `Plain`) by substring match on common loglib
+shapes (`[ERROR]`, `ERROR:`, `Exception`, `panicked at`, etc.);
+renderer paints each line in the severity's theme color.
+`scroll == usize::MAX` is the follow-the-tail mode; `j/k/g/G/F`
+navigate; `F` toggles follow. Per-line capacity cap (10k) for
+bounded memory. Single-tail-at-a-time model (the channel is App-
+wide).
+
 **the private integration 7b polish — `private.run_tests` pickers** — two opt-in pickers
 in front of the default run: `private.run_tests_pick_env` (dev/staging/
 prod) and `private.run_tests_pick_branch` (lists local branches; the

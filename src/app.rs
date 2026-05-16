@@ -1772,6 +1772,16 @@ pub struct App {
     /// [`Self::tick`] drains them into the `Pane::Browser`. `None` when no browser
     /// pane is open (only one at a time in the first cut).
     cdp_chan: Option<std::sync::mpsc::Receiver<crate::cdp::CdpEvent>>,
+    /// Receiver for the (single) LogTailPane's streaming aws CLI worker.
+    /// `App::tick` drains it into the open `Pane::LogTail`. `None` when
+    /// no tail pane is active.
+    #[cfg(feature = "private")]
+    log_tail_chan: Option<std::sync::mpsc::Receiver<crate::private::log_tail_pane::LogTailEvent>>,
+    /// Pane id of the currently-streaming LogTailPane (the one that owns
+    /// `log_tail_chan`). Set in `tail_selected_codebuild_logs_classified`,
+    /// cleared on EOF or pane close.
+    #[cfg(feature = "private")]
+    log_tail_pane_id: Option<crate::layout::PaneId>,
     /// Channel for background Bitbucket pipeline-log fetches.
     /// Each worker thread fetches one pipeline's combined log; the reply
     /// (Done/Failed) is matched to the open `Pane::BitbucketPipelineLog`
@@ -2038,6 +2048,10 @@ impl App {
             ai_chan: None,
             tests_chan: None,
             cdp_chan: None,
+            #[cfg(feature = "private")]
+            log_tail_chan: None,
+            #[cfg(feature = "private")]
+            log_tail_pane_id: None,
             pipeline_log_chan: None,
             pipeline_log_next_job: 1,
             #[cfg(feature = "private")]
@@ -5804,6 +5818,8 @@ impl App {
             Some(Pane::TestExecutions(_)) => None,
             #[cfg(feature = "private")]
             Some(Pane::CodeBuilds(_)) => None,
+            #[cfg(feature = "private")]
+            Some(Pane::LogTail(_)) => None,
         };
         let new_buf = match path {
             Some(p) => {
@@ -11801,6 +11817,8 @@ impl App {
             Pane::TestExecutions(_) => (None, None),
             #[cfg(feature = "private")]
             Pane::CodeBuilds(_) => (None, None),
+            #[cfg(feature = "private")]
+            Pane::LogTail(_) => (None, None),
         };
         if self.layout.contains(id) {
             self.layout.remove_leaf(id);
@@ -11908,6 +11926,8 @@ impl App {
             Pane::TestExecutions(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "private")]
             Pane::CodeBuilds(p) => Some((p.tab_title(), false)),
+            #[cfg(feature = "private")]
+            Pane::LogTail(p) => Some((p.tab_title(), false)),
         }
     }
 
@@ -16358,6 +16378,8 @@ impl App {
         self.drain_gitlab_events();
         self.drain_azdevops_events();
         self.drain_pipeline_log_events();
+        #[cfg(feature = "private")]
+        self.drain_log_tail_events();
         self.refresh_live_ai_panes();
         self.autosave_idle_buffers();
         self.check_external_file_changes();
@@ -17045,6 +17067,89 @@ impl App {
         };
         crate::app::open_url_external(&url);
         self.toast("opened build logs in browser");
+    }
+
+    /// `T` on the selected build → tail logs in a dedicated `Pane::LogTail`
+    /// with per-line severity coloring. Sibling to the pty-based
+    /// [`Self::tail_selected_codebuild_logs`] — same `aws logs tail
+    /// --follow` data source, different rendering.
+    pub fn tail_selected_codebuild_logs_classified(&mut self) {
+        let logs_info = self
+            .active
+            .and_then(|i| self.panes.get(i))
+            .and_then(|p| match p {
+                Pane::CodeBuilds(cb) => cb.selected_record(),
+                _ => None,
+            })
+            .and_then(|r| Some((r.logs_group.clone()?, r.logs_stream.clone()?)));
+        let Some((group, stream)) = logs_info else {
+            self.toast("no logs group/stream for this build");
+            return;
+        };
+        let region = self.config.ci.region.clone();
+        let cwd = self.workspace.clone();
+        // Drop any previous tail before starting a new one (single-stream
+        // model — the channel is shared, so two tails would interleave).
+        if let Some(prev_pid) = self.log_tail_pane_id.take() {
+            self.close_pane(prev_pid);
+        }
+        self.log_tail_chan = None;
+        match crate::private::log_tail_pane::LogTailPane::spawn(group, stream, region, cwd) {
+            Ok((pane, rx)) => {
+                self.log_tail_chan = Some(rx);
+                let pid = self.split_leaf_with(
+                    self.active.unwrap_or(0),
+                    crate::layout::SplitDir::Horizontal,
+                    Pane::LogTail(pane),
+                );
+                self.active = Some(pid);
+                self.log_tail_pane_id = Some(pid);
+                self.focus = Focus::Pane;
+                self.toast("tailing logs (colored) — Ctrl+W closes");
+            }
+            Err(e) => {
+                self.toast(format!("log tail failed: {e}"));
+            }
+        }
+    }
+
+    /// Drain the LogTail channel into the active `Pane::LogTail`. Called
+    /// by `App::tick`. No-op when no tail is running.
+    pub fn drain_log_tail_events(&mut self) {
+        let Some(rx) = &self.log_tail_chan else {
+            return;
+        };
+        let mut batch: Vec<crate::private::log_tail_pane::LogTailEvent> = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            batch.push(ev);
+        }
+        if batch.is_empty() {
+            return;
+        }
+        let Some(pid) = self.log_tail_pane_id else {
+            return;
+        };
+        for ev in batch {
+            use crate::private::log_tail_pane::LogTailEvent;
+            match ev {
+                LogTailEvent::Line(text) => {
+                    if let Some(Pane::LogTail(p)) = self.panes.get_mut(pid) {
+                        p.push_line(text);
+                    }
+                }
+                LogTailEvent::Exited(_) => {
+                    // The pane's `exited` Arc is already flipped by the
+                    // reader thread; just toast.
+                    self.toast("log tail: process exited");
+                }
+                LogTailEvent::Failed(msg) => {
+                    self.toast(format!(
+                        "log tail error: {}",
+                        msg.lines().next().unwrap_or("")
+                    ));
+                }
+            }
+        }
     }
 
     /// `t` on the selected build → live-tail its CloudWatch logs in a pty

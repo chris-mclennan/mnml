@@ -45,6 +45,8 @@ pub mod gitlab_pipelines_view;
 pub mod grep_view;
 pub mod hover;
 pub mod icons;
+#[cfg(feature = "private")]
+pub mod log_tail_view;
 pub mod md_preview;
 pub mod outline_view;
 pub mod picker;
@@ -312,6 +314,8 @@ fn render_layout(
                 Some(crate::pane::Pane::AzDevOpsBuilds(_)) => 25,
                 Some(crate::pane::Pane::AzDevOpsPullRequests(_)) => 26,
                 Some(crate::pane::Pane::BitbucketPipelineLog(_)) => 27,
+                #[cfg(feature = "private")]
+                Some(crate::pane::Pane::LogTail(_)) => 28,
                 _ => 0,
             };
             match kind {
@@ -349,6 +353,13 @@ fn render_layout(
                     if let Some(crate::pane::Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(*id)
                     {
                         pipeline_log_view::draw(frame, p, area);
+                    }
+                    None
+                }
+                #[cfg(feature = "private")]
+                28 => {
+                    if let Some(crate::pane::Pane::LogTail(p)) = app.panes.get_mut(*id) {
+                        log_tail_view::draw(frame, p, area);
                     }
                     None
                 }

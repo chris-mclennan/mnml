@@ -26,6 +26,8 @@ use crate::request_pane::RequestPane;
 #[cfg(feature = "private")]
 use crate::private::codebuilds_pane::CodeBuildsPane;
 #[cfg(feature = "private")]
+use crate::private::log_tail_pane::LogTailPane;
+#[cfg(feature = "private")]
 use crate::private::private_executions_pane::TestExecutionsPane;
 
 // `Editor`'s payload (`Buffer`) is much bigger than the others'; boxing it would
@@ -99,6 +101,11 @@ pub enum Pane {
     /// `private` Cargo feature.
     #[cfg(feature = "private")]
     CodeBuilds(CodeBuildsPane),
+    /// `aws logs tail --follow ...` streaming view with per-line
+    /// severity coloring. Sibling to the existing pty-based log tail.
+    /// `private` feature only.
+    #[cfg(feature = "private")]
+    LogTail(LogTailPane),
 }
 
 /// Vim's command-line window — `q:` opens a read-only list of recent ex
@@ -253,6 +260,8 @@ impl Pane {
             Pane::TestExecutions(p) => p.tab_title(),
             #[cfg(feature = "private")]
             Pane::CodeBuilds(p) => p.tab_title(),
+            #[cfg(feature = "private")]
+            Pane::LogTail(p) => p.tab_title(),
         }
     }
 
@@ -289,6 +298,8 @@ impl Pane {
             Pane::TestExecutions(_) => false,
             #[cfg(feature = "private")]
             Pane::CodeBuilds(_) => false,
+            #[cfg(feature = "private")]
+            Pane::LogTail(_) => false,
         }
     }
 

@@ -2026,6 +2026,13 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.open_private_branch_picker(),
         });
+        cmds.push(Command {
+            id: "private.tail_codebuild_logs_classified",
+            title: "the private integration: tail CodeBuild logs (severity-colored, in-app)",
+            group: "private",
+            keys: &[],
+            run: |app| app.tail_selected_codebuild_logs_classified(),
+        });
     }
     cmds
 }

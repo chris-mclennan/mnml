@@ -181,19 +181,12 @@ fn run_thread(
     let poll_interval = Duration::from_secs(cfg.poll_secs_or_default());
 
     // Fetch account_id once at spawn — required for the cross-repo
-    // /pullrequests/{account_id} endpoint. If this fails we still continue
-    // (the per-repo views work without it; the mine view will just stay
-    // empty).
-    let account_id = match api::fetch_account_id(&client, &auth_header) {
-        Ok(id) => Some(id),
-        Err(e) => {
-            let _ = tx.send(BitbucketEvent::Failed(format!(
-                "fetching account_id: {e} — the \"mine\" PR view will be \
-                 empty; per-repo views still work"
-            )));
-            None
-        }
-    };
+    // /pullrequests/{account_id} endpoint. Tokens without user-read scope
+    // (workspace-scoped tokens, most common) 403 here. The per-repo views
+    // still work, so we swallow the failure silently — the empty Mine PR
+    // view is self-documenting. Surfacing it as a Failed event would flash
+    // a banner that disappears on the first successful pipelines fetch.
+    let account_id = api::fetch_account_id(&client, &auth_header).ok();
 
     let mut have_sent_connected = false;
     while !cancel.load(Ordering::Relaxed) {

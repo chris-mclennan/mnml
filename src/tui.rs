@@ -1998,8 +1998,68 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter => app.open_selected_codebuild_url(),
             KeyCode::Char('y') => app.copy_selected_codebuild_url(),
             KeyCode::Char('t') => app.tail_selected_codebuild_logs(),
+            KeyCode::Char('T') => app.tail_selected_codebuild_logs_classified(),
             KeyCode::Char('x') => app.show_test_executions_for_selected_build(),
             KeyCode::Char('r') => app.refresh_active_codebuilds(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
+    // the private integration LogTailPane — scrollable + severity-colored aws-logs tail.
+    #[cfg(feature = "private")]
+    if matches!(app.panes.get(i), Some(Pane::LogTail(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::LogTail(p)) = app.panes.get_mut(i) {
+                    if p.scroll == usize::MAX {
+                        p.scroll = p.lines.len().saturating_sub(1);
+                    }
+                    p.scroll = p.scroll.saturating_sub(1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::LogTail(p)) = app.panes.get_mut(i)
+                    && p.scroll != usize::MAX
+                {
+                    p.scroll = p.scroll.saturating_add(1);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::LogTail(p)) = app.panes.get_mut(i) {
+                    if p.scroll == usize::MAX {
+                        p.scroll = p.lines.len().saturating_sub(1);
+                    }
+                    p.scroll = p.scroll.saturating_sub(10);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::LogTail(p)) = app.panes.get_mut(i)
+                    && p.scroll != usize::MAX
+                {
+                    p.scroll = p.scroll.saturating_add(10);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::LogTail(p)) = app.panes.get_mut(i) {
+                    p.scroll = 0;
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::LogTail(p)) = app.panes.get_mut(i) {
+                    p.scroll = usize::MAX;
+                }
+            }
+            KeyCode::Char('F') => {
+                // Toggle follow-the-tail mode.
+                if let Some(Pane::LogTail(p)) = app.panes.get_mut(i) {
+                    p.scroll = if p.scroll == usize::MAX {
+                        p.lines.len().saturating_sub(1)
+                    } else {
+                        usize::MAX
+                    };
+                }
+            }
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }
@@ -3263,6 +3323,21 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             #[cfg(feature = "private")]
             Some(Pane::CodeBuilds(p)) => {
                 p.move_selection(delta as i64);
+            }
+            #[cfg(feature = "private")]
+            Some(Pane::LogTail(p)) => {
+                let n = delta.unsigned_abs() as usize;
+                // Wheel-up = scroll up; if we were following (Max), break
+                // out into a fixed position near the bottom so the user
+                // can read older lines without the tail snapping back.
+                if delta < 0 {
+                    if p.scroll == usize::MAX {
+                        p.scroll = p.lines.len().saturating_sub(1);
+                    }
+                    p.scroll = p.scroll.saturating_sub(n);
+                } else {
+                    p.scroll = p.scroll.saturating_add(n);
+                }
             }
             Some(Pane::BitbucketPipelineLog(p)) => {
                 let n = delta.unsigned_abs() as usize;
