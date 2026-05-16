@@ -226,6 +226,7 @@ pub fn root() -> &'static Leader {
                             ('g', cmd("github.pull_requests", "github PRs")),
                             ('l', cmd("gitlab.merge_requests", "gitlab MRs")),
                             ('a', cmd("azdevops.pull_requests", "azure PRs")),
+                            ('p', cmd("pr.picker", "all-host fuzzy picker")),
                         ],
                     ),
                 ),

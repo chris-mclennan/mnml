@@ -142,8 +142,16 @@ pub fn draw(
                 let row_bg = if selected { t.bg2 } else { t.bg_dark };
                 let collapsed = collapsed_set.contains(&row.header_label);
                 let arrow = if nerd {
-                    if collapsed { CHEVRON_CLOSED_NERD } else { CHEVRON_OPEN_NERD }
-                } else if collapsed { "▸" } else { "▾" };
+                    if collapsed {
+                        CHEVRON_CLOSED_NERD
+                    } else {
+                        CHEVRON_OPEN_NERD
+                    }
+                } else if collapsed {
+                    "▸"
+                } else {
+                    "▾"
+                };
                 lines.push(Line::from(vec![
                     Span::styled("  ", Style::default().bg(row_bg)),
                     Span::styled(

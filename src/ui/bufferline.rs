@@ -195,13 +195,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Quickfix(_) => (if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().teal),
             Pane::CmdlineHistory(_) => (if nerd { "\u{eb15}" } else { "❯" }, theme::cur().comment),
             Pane::BitbucketPipelines(_) => (if nerd { "\u{f171}" } else { "⌥" }, theme::cur().cyan),
-            Pane::BitbucketPullRequests(_) => (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().cyan),
+            Pane::BitbucketPullRequests(_) => {
+                (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().cyan)
+            }
             Pane::GithubActions(_) => (if nerd { "\u{f09b}" } else { "⚙" }, theme::cur().purple),
-            Pane::GithubPullRequests(_) => (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().purple),
+            Pane::GithubPullRequests(_) => {
+                (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().purple)
+            }
             Pane::GitlabPipelines(_) => (if nerd { "\u{f171}" } else { "▴" }, theme::cur().orange),
-            Pane::GitlabMergeRequests(_) => (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().orange),
+            Pane::GitlabMergeRequests(_) => {
+                (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().orange)
+            }
             Pane::AzDevOpsBuilds(_) => (if nerd { "\u{f171}" } else { "⚡" }, theme::cur().blue),
-            Pane::AzDevOpsPullRequests(_) => (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().blue),
+            Pane::AzDevOpsPullRequests(_) => {
+                (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().blue)
+            }
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (if nerd { "\u{f0668}" } else { "⏵" }, theme::cur().teal),
             #[cfg(feature = "private")]

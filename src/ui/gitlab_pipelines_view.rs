@@ -207,9 +207,9 @@ pub fn draw(
                     PipelineState::Success => (pipe.state.glyph(), t.green),
                     PipelineState::Failed => (pipe.state.glyph(), t.red),
                     PipelineState::Running => (pipe.state.glyph(), t.yellow),
-                    PipelineState::Pending
-                    | PipelineState::Created
-                    | PipelineState::Preparing => (pipe.state.glyph(), t.cyan),
+                    PipelineState::Pending | PipelineState::Created | PipelineState::Preparing => {
+                        (pipe.state.glyph(), t.cyan)
+                    }
                     PipelineState::Canceled
                     | PipelineState::Skipped
                     | PipelineState::WaitingForResource
@@ -257,7 +257,10 @@ pub fn draw(
                         format!("{ref_text:<17}"),
                         Style::default().fg(t.cyan).bg(row_bg),
                     ),
-                    Span::styled(format!("{sha:<10}"), Style::default().fg(t.purple).bg(row_bg)),
+                    Span::styled(
+                        format!("{sha:<10}"),
+                        Style::default().fg(t.purple).bg(row_bg),
+                    ),
                     Span::styled(
                         format!("{dur:>7}  "),
                         Style::default().fg(t.comment).bg(row_bg),

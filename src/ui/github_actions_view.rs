@@ -152,7 +152,13 @@ pub fn draw(
         .unwrap_or(0);
 
     let body_start_offset = lines.len() as u16;
-    for (visible_i, (i, row)) in flat.iter().enumerate().skip(p.scroll).take(body_h).enumerate() {
+    for (visible_i, (i, row)) in flat
+        .iter()
+        .enumerate()
+        .skip(p.scroll)
+        .take(body_h)
+        .enumerate()
+    {
         let row_y = area.y.saturating_add(body_start_offset + visible_i as u16);
         if row_y < area.y.saturating_add(area.height) {
             let row_rect = ratatui::layout::Rect {
@@ -196,10 +202,7 @@ pub fn draw(
                     let branch = row.branch_label.as_deref().unwrap_or("?");
                     lines.push(Line::from(vec![
                         Span::styled("    ", Style::default().bg(row_bg)),
-                        Span::styled(
-                            "·  ",
-                            Style::default().fg(t.comment).bg(row_bg),
-                        ),
+                        Span::styled("·  ", Style::default().fg(t.comment).bg(row_bg)),
                         Span::styled(
                             format!("{:<6}", "—"),
                             Style::default().fg(t.comment).bg(row_bg),
@@ -212,10 +215,7 @@ pub fn draw(
                             format!("{branch:<17}"),
                             Style::default().fg(t.cyan).bg(row_bg),
                         ),
-                        Span::styled(
-                            "(no runs yet)",
-                            Style::default().fg(t.comment).bg(row_bg),
-                        ),
+                        Span::styled("(no runs yet)", Style::default().fg(t.comment).bg(row_bg)),
                     ]));
                     continue;
                 };

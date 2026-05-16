@@ -6,15 +6,15 @@
 use std::path::PathBuf;
 
 use crate::ai::AiPane;
+use crate::azdevops::{AzDevOpsBuildsPane, AzDevOpsPullRequestsPane};
 use crate::bitbucket::{BitbucketPipelinesPane, BitbucketPullRequestsPane};
 use crate::browser_pane::BrowserPane;
 use crate::buffer::Buffer;
-use crate::github::{GithubActionsPane, GithubPullRequestsPane};
-use crate::azdevops::{AzDevOpsBuildsPane, AzDevOpsPullRequestsPane};
-use crate::gitlab::{GitlabMergeRequestsPane, GitlabPipelinesPane};
 use crate::git::diff::Hunk;
 use crate::git::graph::GitGraphPane;
 use crate::git::stage::GitStatusPane;
+use crate::github::{GithubActionsPane, GithubPullRequestsPane};
+use crate::gitlab::{GitlabMergeRequestsPane, GitlabPipelinesPane};
 use crate::grep_pane::GrepPane;
 use crate::lsp::diagnostics_pane::DiagnosticsPane;
 use crate::lsp::outline_pane::OutlinePane;

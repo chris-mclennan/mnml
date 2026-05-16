@@ -102,7 +102,10 @@ pub fn draw(
     if total == 0 && !loading && last_error.is_none() {
         lines.push(Line::from(vec![
             Span::raw("  "),
-            Span::styled("(no open MRs)", Style::default().fg(t.comment).bg(t.bg_dark)),
+            Span::styled(
+                "(no open MRs)",
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            ),
         ]));
     }
 

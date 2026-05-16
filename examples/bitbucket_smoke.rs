@@ -101,7 +101,10 @@ fn main() {
                 ));
             }
             Ok(BitbucketEvent::MyPullRequests(prs)) => {
-                samples.push(format!("  👤  mine: {n} PR(s) across all repos", n = prs.len()));
+                samples.push(format!(
+                    "  👤  mine: {n} PR(s) across all repos",
+                    n = prs.len()
+                ));
             }
             Ok(BitbucketEvent::Connected) => connected = true,
             Ok(BitbucketEvent::Failed(msg)) => failures.push(msg),

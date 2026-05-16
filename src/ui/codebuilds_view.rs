@@ -100,7 +100,14 @@ pub fn draw(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
-    for (visible_i, (i, rec)) in p.items.iter().enumerate().skip(p.scroll).take(body_h).enumerate() {
+    for (visible_i, (i, rec)) in p
+        .items
+        .iter()
+        .enumerate()
+        .skip(p.scroll)
+        .take(body_h)
+        .enumerate()
+    {
         let row_y = area.y.saturating_add(2 + visible_i as u16);
         if row_y < area.y.saturating_add(area.height) {
             app.rects.list_rows.push((

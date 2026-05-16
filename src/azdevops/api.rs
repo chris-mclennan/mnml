@@ -143,12 +143,8 @@ fn http_get(
     resp.text().map_err(|e| format!("read body: {e}"))
 }
 
-pub fn parse_builds_response(
-    body: &str,
-    p: &AzDevOpsProject,
-) -> Result<Vec<BuildRecord>, String> {
-    let raw: RawBuildsPage =
-        serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
+pub fn parse_builds_response(body: &str, p: &AzDevOpsProject) -> Result<Vec<BuildRecord>, String> {
+    let raw: RawBuildsPage = serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
     Ok(raw.value.into_iter().map(|b| project_build(b, p)).collect())
 }
 
@@ -185,7 +181,10 @@ fn project_build(b: RawBuild, p: &AzDevOpsProject) -> BuildRecord {
         state,
         target_ref,
         commit_hash: b.source_version,
-        creator: b.requested_for.as_ref().and_then(|r| r.display_name.clone()),
+        creator: b
+            .requested_for
+            .as_ref()
+            .and_then(|r| r.display_name.clone()),
         reason: b.reason,
         started_at_ms,
         finished_at_ms,
@@ -206,10 +205,7 @@ pub fn parse_prs_response(
         .collect())
 }
 
-pub fn parse_prs_response_mine(
-    body: &str,
-    org: &str,
-) -> Result<Vec<PullRequestRecord>, String> {
+pub fn parse_prs_response_mine(body: &str, org: &str) -> Result<Vec<PullRequestRecord>, String> {
     let raw: RawPrsPage = serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
     Ok(raw
         .value
@@ -593,7 +589,13 @@ mod tests {
 
     #[test]
     fn pr_state_mapping() {
-        assert_eq!(PullRequestState::from_raw("active", false), PullRequestState::Active);
-        assert_eq!(PullRequestState::from_raw("active", true), PullRequestState::Draft);
+        assert_eq!(
+            PullRequestState::from_raw("active", false),
+            PullRequestState::Active
+        );
+        assert_eq!(
+            PullRequestState::from_raw("active", true),
+            PullRequestState::Draft
+        );
     }
 }

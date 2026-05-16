@@ -267,9 +267,8 @@ pub fn parse_search_issues_response(body: &str) -> Result<Vec<PullRequestRecord>
         // requested_reviewers. PR-only fields stay None for the Mine
         // view — phase 4 polish can do a per-PR follow-up if accuracy
         // becomes worth the cost.
-        let web_url = html_url.unwrap_or_else(|| {
-            format!("https://github.com/{owner}/{repo}/pull/{number}")
-        });
+        let web_url =
+            html_url.unwrap_or_else(|| format!("https://github.com/{owner}/{repo}/pull/{number}"));
         out.push(PullRequestRecord {
             owner,
             repo,
@@ -340,8 +339,7 @@ pub fn parse_reviews_summary(body: &str) -> Option<(u32, u32)> {
     let arr = v.as_array()?;
     // user.id (or login) → latest review state. GH's API returns reviews
     // in chronological order, so we let later entries overwrite earlier.
-    let mut latest: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
+    let mut latest: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for r in arr {
         let key = r
             .get("user")
@@ -410,8 +408,7 @@ pub fn fetch_running_step(
     repo: &str,
     run_id: u64,
 ) -> Option<String> {
-    let url =
-        format!("{API_BASE}/repos/{owner}/{repo}/actions/runs/{run_id}/jobs?per_page=30");
+    let url = format!("{API_BASE}/repos/{owner}/{repo}/actions/runs/{run_id}/jobs?per_page=30");
     let resp = client
         .get(&url)
         .header("Authorization", auth_header)
@@ -540,8 +537,7 @@ pub fn parse_runs_response(
     owner: &str,
     repo: &str,
 ) -> Result<Vec<WorkflowRunRecord>, String> {
-    let raw: RawRunsPage =
-        serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
+    let raw: RawRunsPage = serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
     let out = raw
         .workflow_runs
         .into_iter()
@@ -655,14 +651,8 @@ pub enum WorkflowRunState {
 
 impl WorkflowRunState {
     fn from_raw(status: &Option<String>, conclusion: &Option<String>) -> Self {
-        let status = status
-            .as_deref()
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        let conclusion = conclusion
-            .as_deref()
-            .unwrap_or("")
-            .to_ascii_lowercase();
+        let status = status.as_deref().unwrap_or("").to_ascii_lowercase();
+        let conclusion = conclusion.as_deref().unwrap_or("").to_ascii_lowercase();
         match status.as_str() {
             "in_progress" => Self::InProgress,
             "queued" => Self::Queued,
@@ -916,33 +906,22 @@ mod tests {
 
     #[test]
     fn auth_uses_bearer() {
-        assert_eq!(
-            auth_header_value("ghp_abc123"),
-            "Bearer ghp_abc123"
-        );
-        assert_eq!(
-            auth_header_value("github_pat_xyz"),
-            "Bearer github_pat_xyz"
-        );
+        assert_eq!(auth_header_value("ghp_abc123"), "Bearer ghp_abc123");
+        assert_eq!(auth_header_value("github_pat_xyz"), "Bearer github_pat_xyz");
         assert_eq!(auth_header_value("  ghs_token  "), "Bearer ghs_token");
     }
 
     #[test]
     fn state_completed_success() {
         assert_eq!(
-            WorkflowRunState::from_raw(
-                &Some("completed".into()),
-                &Some("success".into())
-            ),
+            WorkflowRunState::from_raw(&Some("completed".into()), &Some("success".into())),
             WorkflowRunState::Success
         );
     }
 
     #[test]
     fn state_completed_fans_out_by_conclusion() {
-        let mk = |c: &str| {
-            WorkflowRunState::from_raw(&Some("completed".into()), &Some(c.into()))
-        };
+        let mk = |c: &str| WorkflowRunState::from_raw(&Some("completed".into()), &Some(c.into()));
         assert_eq!(mk("failure"), WorkflowRunState::Failed);
         assert_eq!(mk("cancelled"), WorkflowRunState::Cancelled);
         assert_eq!(mk("skipped"), WorkflowRunState::Skipped);
@@ -957,10 +936,7 @@ mod tests {
         // status=in_progress should win even if conclusion still has a
         // previous-run value lingering.
         assert_eq!(
-            WorkflowRunState::from_raw(
-                &Some("in_progress".into()),
-                &Some("failure".into())
-            ),
+            WorkflowRunState::from_raw(&Some("in_progress".into()), &Some("failure".into())),
             WorkflowRunState::InProgress
         );
     }
@@ -1039,7 +1015,10 @@ mod tests {
           }]
         }"#;
         let rows = parse_runs_response(body, "ws", "repo").unwrap();
-        assert_eq!(rows[0].web_url, "https://github.com/ws/repo/actions/runs/99");
+        assert_eq!(
+            rows[0].web_url,
+            "https://github.com/ws/repo/actions/runs/99"
+        );
     }
 
     #[test]
@@ -1108,10 +1087,22 @@ mod tests {
 
     #[test]
     fn pr_state_classification() {
-        assert_eq!(PullRequestState::from_raw(Some("open"), false), PullRequestState::Open);
-        assert_eq!(PullRequestState::from_raw(Some("open"), true), PullRequestState::Draft);
-        assert_eq!(PullRequestState::from_raw(Some("closed"), false), PullRequestState::Closed);
-        assert_eq!(PullRequestState::from_raw(None, false), PullRequestState::Unknown);
+        assert_eq!(
+            PullRequestState::from_raw(Some("open"), false),
+            PullRequestState::Open
+        );
+        assert_eq!(
+            PullRequestState::from_raw(Some("open"), true),
+            PullRequestState::Draft
+        );
+        assert_eq!(
+            PullRequestState::from_raw(Some("closed"), false),
+            PullRequestState::Closed
+        );
+        assert_eq!(
+            PullRequestState::from_raw(None, false),
+            PullRequestState::Unknown
+        );
     }
 
     #[test]

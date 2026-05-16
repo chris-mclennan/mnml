@@ -987,9 +987,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                             app.bb_pipelines_collapsed.insert(row.header_label.clone());
                         }
                     } else {
-                        let parent_idx = (0..sel).rev().find(|&j| {
-                            flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
-                        });
+                        let parent_idx = (0..sel)
+                            .rev()
+                            .find(|&j| flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false));
                         if let Some(idx) = parent_idx
                             && let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i)
                         {
@@ -1018,7 +1018,11 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     };
                     app.toast(format!(
                         "{label}: {}",
-                        if now_collapsed { "collapsed" } else { "expanded" }
+                        if now_collapsed {
+                            "collapsed"
+                        } else {
+                            "expanded"
+                        }
                     ));
                 } else {
                     app.open_selected_bitbucket_pipeline_url();
@@ -1108,9 +1112,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                             app.bb_prs_collapsed.insert(row.header_label.clone());
                         }
                     } else {
-                        let parent_idx = (0..sel).rev().find(|&j| {
-                            flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
-                        });
+                        let parent_idx = (0..sel)
+                            .rev()
+                            .find(|&j| flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false));
                         if let Some(idx) = parent_idx
                             && let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i)
                         {
@@ -1138,7 +1142,11 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     };
                     app.toast(format!(
                         "{label}: {}",
-                        if now_collapsed { "collapsed" } else { "expanded" }
+                        if now_collapsed {
+                            "collapsed"
+                        } else {
+                            "expanded"
+                        }
                     ));
                 } else {
                     app.open_selected_bitbucket_pr_url();
@@ -1227,9 +1235,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                             app.gh_prs_collapsed.insert(row.header_label.clone());
                         }
                     } else {
-                        let parent_idx = (0..sel).rev().find(|&j| {
-                            flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
-                        });
+                        let parent_idx = (0..sel)
+                            .rev()
+                            .find(|&j| flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false));
                         if let Some(idx) = parent_idx
                             && let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(i)
                         {
@@ -1257,7 +1265,11 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     };
                     app.toast(format!(
                         "{label}: {}",
-                        if now_collapsed { "collapsed" } else { "expanded" }
+                        if now_collapsed {
+                            "collapsed"
+                        } else {
+                            "expanded"
+                        }
                     ));
                 } else {
                     app.open_selected_github_pr_url();
@@ -1348,9 +1360,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                             app.gh_actions_collapsed.insert(row.header_label.clone());
                         }
                     } else {
-                        let parent_idx = (0..sel).rev().find(|&j| {
-                            flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
-                        });
+                        let parent_idx = (0..sel)
+                            .rev()
+                            .find(|&j| flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false));
                         if let Some(idx) = parent_idx
                             && let Some(Pane::GithubActions(p)) = app.panes.get_mut(i)
                         {
@@ -1378,7 +1390,11 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     };
                     app.toast(format!(
                         "{label}: {}",
-                        if now_collapsed { "collapsed" } else { "expanded" }
+                        if now_collapsed {
+                            "collapsed"
+                        } else {
+                            "expanded"
+                        }
                     ));
                 } else {
                     app.open_selected_github_run_url();
@@ -1467,9 +1483,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                             app.gl_pipelines_collapsed.insert(row.header_label.clone());
                         }
                     } else {
-                        let parent_idx = (0..sel).rev().find(|&j| {
-                            flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
-                        });
+                        let parent_idx = (0..sel)
+                            .rev()
+                            .find(|&j| flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false));
                         if let Some(idx) = parent_idx
                             && let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(i)
                         {
@@ -1497,7 +1513,11 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     };
                     app.toast(format!(
                         "{label}: {}",
-                        if now_collapsed { "collapsed" } else { "expanded" }
+                        if now_collapsed {
+                            "collapsed"
+                        } else {
+                            "expanded"
+                        }
                     ));
                 } else {
                     app.open_selected_gitlab_pipeline_url();
@@ -1586,9 +1606,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                             app.gl_mrs_collapsed.insert(row.header_label.clone());
                         }
                     } else {
-                        let parent_idx = (0..sel).rev().find(|&j| {
-                            flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
-                        });
+                        let parent_idx = (0..sel)
+                            .rev()
+                            .find(|&j| flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false));
                         if let Some(idx) = parent_idx
                             && let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(i)
                         {
@@ -1616,7 +1636,11 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     };
                     app.toast(format!(
                         "{label}: {}",
-                        if now_collapsed { "collapsed" } else { "expanded" }
+                        if now_collapsed {
+                            "collapsed"
+                        } else {
+                            "expanded"
+                        }
                     ));
                 } else {
                     app.open_selected_gitlab_mr_url();
@@ -1705,9 +1729,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                             app.az_builds_collapsed.insert(row.header_label.clone());
                         }
                     } else {
-                        let parent_idx = (0..sel).rev().find(|&j| {
-                            flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
-                        });
+                        let parent_idx = (0..sel)
+                            .rev()
+                            .find(|&j| flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false));
                         if let Some(idx) = parent_idx
                             && let Some(Pane::AzDevOpsBuilds(p)) = app.panes.get_mut(i)
                         {
@@ -1735,7 +1759,11 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     };
                     app.toast(format!(
                         "{label}: {}",
-                        if now_collapsed { "collapsed" } else { "expanded" }
+                        if now_collapsed {
+                            "collapsed"
+                        } else {
+                            "expanded"
+                        }
                     ));
                 } else {
                     app.open_selected_azdevops_build_url();
@@ -1824,9 +1852,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                             app.az_prs_collapsed.insert(row.header_label.clone());
                         }
                     } else {
-                        let parent_idx = (0..sel).rev().find(|&j| {
-                            flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false)
-                        });
+                        let parent_idx = (0..sel)
+                            .rev()
+                            .find(|&j| flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false));
                         if let Some(idx) = parent_idx
                             && let Some(Pane::AzDevOpsPullRequests(p)) = app.panes.get_mut(i)
                         {
@@ -1842,9 +1870,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 };
                 let header_label = flat
                     .get(sel)
-                    .filter(|r| {
-                        r.kind == crate::ui::azdevops_pull_requests_view::RowKind::Header
-                    })
+                    .filter(|r| r.kind == crate::ui::azdevops_pull_requests_view::RowKind::Header)
                     .map(|r| r.header_label.clone());
                 if let Some(label) = header_label {
                     let now_collapsed = if app.az_prs_collapsed.contains(&label) {
@@ -1856,7 +1882,11 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     };
                     app.toast(format!(
                         "{label}: {}",
-                        if now_collapsed { "collapsed" } else { "expanded" }
+                        if now_collapsed {
+                            "collapsed"
+                        } else {
+                            "expanded"
+                        }
                     ));
                 } else {
                     app.open_selected_azdevops_pr_url();
@@ -3443,7 +3473,9 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
                     crate::ui::bitbucket_pipelines_view::flatten_branch_pipelines(app)
                 }
             };
-            let Some(row) = flat.get(flat_idx) else { return };
+            let Some(row) = flat.get(flat_idx) else {
+                return;
+            };
             let is_header = row.kind == crate::ui::bitbucket_pipelines_view::RowKind::Header;
             let header_label = row.header_label.clone();
             if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(pane_id) {
@@ -3468,7 +3500,9 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
                     crate::ui::bitbucket_pull_requests_view::flatten_my_prs(app)
                 }
             };
-            let Some(row) = flat.get(flat_idx) else { return };
+            let Some(row) = flat.get(flat_idx) else {
+                return;
+            };
             let is_header = row.kind == crate::ui::bitbucket_pull_requests_view::RowKind::Header;
             let header_label = row.header_label.clone();
             if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(pane_id) {
@@ -3493,7 +3527,9 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
                     crate::ui::github_actions_view::flatten_branch_runs(app)
                 }
             };
-            let Some(row) = flat.get(flat_idx) else { return };
+            let Some(row) = flat.get(flat_idx) else {
+                return;
+            };
             let is_header = row.kind == crate::ui::github_actions_view::RowKind::Header;
             let header_label = row.header_label.clone();
             if let Some(Pane::GithubActions(p)) = app.panes.get_mut(pane_id) {
@@ -3518,7 +3554,9 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
                     crate::ui::github_pull_requests_view::flatten_my_prs(app)
                 }
             };
-            let Some(row) = flat.get(flat_idx) else { return };
+            let Some(row) = flat.get(flat_idx) else {
+                return;
+            };
             let is_header = row.kind == crate::ui::github_pull_requests_view::RowKind::Header;
             let header_label = row.header_label.clone();
             if let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(pane_id) {
@@ -3543,7 +3581,9 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
                     crate::ui::gitlab_pipelines_view::flatten_branch_pipelines(app)
                 }
             };
-            let Some(row) = flat.get(flat_idx) else { return };
+            let Some(row) = flat.get(flat_idx) else {
+                return;
+            };
             let is_header = row.kind == crate::ui::gitlab_pipelines_view::RowKind::Header;
             let header_label = row.header_label.clone();
             if let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(pane_id) {
@@ -3568,7 +3608,9 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
                     crate::ui::gitlab_merge_requests_view::flatten_my_mrs(app)
                 }
             };
-            let Some(row) = flat.get(flat_idx) else { return };
+            let Some(row) = flat.get(flat_idx) else {
+                return;
+            };
             let is_header = row.kind == crate::ui::gitlab_merge_requests_view::RowKind::Header;
             let header_label = row.header_label.clone();
             if let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(pane_id) {
@@ -3593,7 +3635,9 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
                     crate::ui::azdevops_builds_view::flatten_branch_builds(app)
                 }
             };
-            let Some(row) = flat.get(flat_idx) else { return };
+            let Some(row) = flat.get(flat_idx) else {
+                return;
+            };
             let is_header = row.kind == crate::ui::azdevops_builds_view::RowKind::Header;
             let header_label = row.header_label.clone();
             if let Some(Pane::AzDevOpsBuilds(p)) = app.panes.get_mut(pane_id) {
@@ -3618,7 +3662,9 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
                     crate::ui::azdevops_pull_requests_view::flatten_my_prs(app)
                 }
             };
-            let Some(row) = flat.get(flat_idx) else { return };
+            let Some(row) = flat.get(flat_idx) else {
+                return;
+            };
             let is_header = row.kind == crate::ui::azdevops_pull_requests_view::RowKind::Header;
             let header_label = row.header_label.clone();
             if let Some(Pane::AzDevOpsPullRequests(p)) = app.panes.get_mut(pane_id) {

@@ -67,9 +67,7 @@ pub fn draw(
     let total_pipelines = flat.iter().filter(|r| r.kind == RowKind::Pipeline).count();
     let cache_empty = match mode {
         crate::bitbucket::PipelineViewMode::Recent => app.bitbucket_pipelines.is_empty(),
-        crate::bitbucket::PipelineViewMode::PerBranch => {
-            app.bitbucket_branch_pipelines.is_empty()
-        }
+        crate::bitbucket::PipelineViewMode::PerBranch => app.bitbucket_branch_pipelines.is_empty(),
     };
     let loading = !app.bitbucket_connected && cache_empty;
     let last_error = app.bitbucket_last_error.clone();
@@ -181,7 +179,13 @@ pub fn draw(
     // row index. lines.len() is the y-offset where the *next* line
     // lands inside `area`.
     let body_start_offset = lines.len() as u16;
-    for (visible_i, (i, row)) in flat.iter().enumerate().skip(p.scroll).take(body_h).enumerate() {
+    for (visible_i, (i, row)) in flat
+        .iter()
+        .enumerate()
+        .skip(p.scroll)
+        .take(body_h)
+        .enumerate()
+    {
         let row_y = area.y.saturating_add(body_start_offset + visible_i as u16);
         if row_y < area.y.saturating_add(area.height) {
             let row_rect = ratatui::layout::Rect {
@@ -230,10 +234,7 @@ pub fn draw(
                     let branch = row.branch_label.as_deref().unwrap_or("?");
                     lines.push(Line::from(vec![
                         Span::styled("    ", Style::default().bg(row_bg)),
-                        Span::styled(
-                            "·  ",
-                            Style::default().fg(t.comment).bg(row_bg),
-                        ),
+                        Span::styled("·  ", Style::default().fg(t.comment).bg(row_bg)),
                         Span::styled(
                             format!("{:<7}", "—"),
                             Style::default().fg(t.comment).bg(row_bg),
@@ -254,9 +255,7 @@ pub fn draw(
                     PipelineState::Successful => (pipe.state.glyph(), t.green),
                     PipelineState::Failed | PipelineState::Error => (pipe.state.glyph(), t.red),
                     PipelineState::InProgress => (pipe.state.glyph(), t.yellow),
-                    PipelineState::Pending | PipelineState::Paused => {
-                        (pipe.state.glyph(), t.cyan)
-                    }
+                    PipelineState::Pending | PipelineState::Paused => (pipe.state.glyph(), t.cyan),
                     PipelineState::Stopped | PipelineState::Halted | PipelineState::Expired => {
                         (pipe.state.glyph(), t.comment)
                     }
@@ -327,10 +326,7 @@ pub fn draw(
                         format!("{creator:<24}"),
                         Style::default().fg(t.fg).bg(row_bg),
                     ),
-                    Span::styled(
-                        step_or_trigger,
-                        Style::default().fg(t.comment).bg(row_bg),
-                    ),
+                    Span::styled(step_or_trigger, Style::default().fg(t.comment).bg(row_bg)),
                 ]));
             }
         }

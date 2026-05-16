@@ -23,7 +23,7 @@ pub mod pull_requests_pane;
 
 pub use actions_pane::{ActionsViewMode, GithubActionsPane};
 pub use api::{PullRequestRecord, PullRequestState, WorkflowRunRecord, WorkflowRunState};
-pub use pull_requests_pane::{GithubPullRequestsPane, GhPrViewMode};
+pub use pull_requests_pane::{GhPrViewMode, GithubPullRequestsPane};
 
 /// One row in the PerBranch actions cache. Sibling of
 /// [`crate::bitbucket::BranchPipelineSlot`].

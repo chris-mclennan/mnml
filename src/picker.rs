@@ -59,6 +59,11 @@ pub enum PickerKind {
     /// register's text at the cursor. Populated by `picker.clipboard`
     /// over `"0`-`"9` (yank + delete history) + lowercase named regs.
     Clipboard,
+    /// `id` = the PR/MR's web URL. Accept ⇒ open it in the OS browser.
+    /// Populated by `pr.picker` — a unified fuzzy picker over every
+    /// open PR across the 4 SCM hosts (Bitbucket, GitHub, GitLab, Azure
+    /// DevOps), reading from the per-host caches the SCM workers populate.
+    OpenPullRequests,
 }
 
 #[derive(Debug, Clone)]

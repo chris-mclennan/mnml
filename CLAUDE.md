@@ -2119,6 +2119,21 @@ comment_count is hardcoded 0 because Azure's list endpoint doesn't
 return it (would need a per-PR `/threads` call). Free-tier signup
 walk-through in conversation history if a real test is needed.
 
+**Cross-host PR picker** — `pr.picker` (`<leader>P p`) — one fuzzy
+picker over every open PR/MR across the 4 configured SCM hosts.
+Reads from the per-host caches the workers populate
+(`bitbucket_pull_requests` / `github_pull_requests` /
+`gitlab_merge_requests` / `azdevops_pull_requests`) — no fresh API
+calls; the list is as recent as the last poll cycle. Sorted by most-
+recent activity (`updated_at` ⇒ `created_at` fallback). Labels pack
+host tag + repo + number + title + state for fuzzy matching; the
+detail line shows author · `source→dest` · `👀N ✓N ✗N 💬N` counts ·
+humanized age. Accept opens the chosen PR's `web_url` in the OS
+browser via the same `open_url_external` helper the per-host
+`open_selected_*_pr_url` commands use. New `PickerKind::OpenPullRequests`.
+Empty caches ⇒ toast pointing at the four `[[<host>.repos]]` /
+`[[<host>.projects]]` config tables (no picker opens).
+
 ## Not set up yet (could add later)
 
 - `.mcp.json` — no project MCP servers needed yet.

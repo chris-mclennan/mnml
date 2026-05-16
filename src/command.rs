@@ -1906,6 +1906,16 @@ fn builtin_commands() -> Vec<Command> {
         keys: &[],
         run: |app| app.copy_selected_azdevops_pr_url(),
     });
+    // Cross-host: one fuzzy picker over every open PR across all 4 SCM
+    // hosts. Reads from the per-host caches the SCM workers populate;
+    // accept opens the chosen PR's web URL.
+    cmds.push(Command {
+        id: "pr.picker",
+        title: "Pull requests: fuzzy picker over all hosts",
+        group: "pr",
+        keys: &[],
+        run: |app| app.open_pr_picker(),
+    });
     #[cfg(feature = "private")]
     {
         cmds.push(Command {

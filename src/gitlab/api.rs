@@ -71,8 +71,9 @@ pub fn fetch_latest_pipeline_for_branch(
 ) -> Result<Option<PipelineRecord>, String> {
     let id = url_encode(&project.project);
     let branch_enc = url_encode(branch);
-    let url =
-        format!("{base_url}/projects/{id}/pipelines?ref={branch_enc}&per_page=1&order_by=id&sort=desc");
+    let url = format!(
+        "{base_url}/projects/{id}/pipelines?ref={branch_enc}&per_page=1&order_by=id&sort=desc"
+    );
     let body = http_get(client, &url, auth_header)?;
     let pipelines = parse_pipelines_response(&body, &project.project)?;
     Ok(pipelines.into_iter().next())
@@ -125,10 +126,7 @@ fn http_get(
     resp.text().map_err(|e| format!("read body: {e}"))
 }
 
-pub fn parse_pipelines_response(
-    body: &str,
-    project: &str,
-) -> Result<Vec<PipelineRecord>, String> {
+pub fn parse_pipelines_response(body: &str, project: &str) -> Result<Vec<PipelineRecord>, String> {
     let raw: Vec<RawPipeline> =
         serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
     Ok(raw
@@ -145,13 +143,9 @@ fn project_pipeline(p: RawPipeline, project: &str) -> PipelineRecord {
         .duration
         .filter(|&d| d >= 0)
         .map(|d| d as u64)
-        .or_else(|| {
-            match (created_at_ms, updated_at_ms) {
-                (Some(s), Some(e)) if e >= s && state.is_terminal() => {
-                    Some(((e - s) / 1000) as u64)
-                }
-                _ => None,
-            }
+        .or_else(|| match (created_at_ms, updated_at_ms) {
+            (Some(s), Some(e)) if e >= s && state.is_terminal() => Some(((e - s) / 1000) as u64),
+            _ => None,
         });
     PipelineRecord {
         project: project.to_string(),

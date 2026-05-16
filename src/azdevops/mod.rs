@@ -16,7 +16,7 @@ pub mod builds_pane;
 pub mod pull_requests_pane;
 
 pub use api::{BuildRecord, BuildState, PullRequestRecord, PullRequestState};
-pub use builds_pane::{AzDevOpsBuildsPane, AzBuildsViewMode};
+pub use builds_pane::{AzBuildsViewMode, AzDevOpsBuildsPane};
 pub use pull_requests_pane::{AzDevOpsPullRequestsPane, AzPrViewMode};
 
 pub type BranchBuildSlot = (String, Option<BuildRecord>);

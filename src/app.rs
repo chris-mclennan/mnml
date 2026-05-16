@@ -2621,6 +2621,178 @@ impl App {
         self.open_picker(Picker::new(PickerKind::Recent, "Recent files", items));
     }
 
+    /// Open a fuzzy picker over every open PR / MR across the configured
+    /// SCM hosts (Bitbucket, GitHub, GitLab, Azure DevOps). Reads from the
+    /// per-host caches the SCM workers populate — no fresh API calls; the
+    /// list is as recent as the last poll cycle. Items are sorted by
+    /// most-recent activity (updated_at ⇒ created_at fallback). Accept
+    /// opens the chosen PR's web URL in the OS browser.
+    pub fn open_pr_picker(&mut self) {
+        use crate::picker::PickerItem;
+        // Unified row shape — collected from all 4 hosts, sorted, then
+        // projected to PickerItem.
+        struct Row {
+            host_tag: &'static str,
+            repo_label: String,
+            number: String,
+            title: String,
+            state_label: &'static str,
+            author: Option<String>,
+            source: Option<String>,
+            dest: Option<String>,
+            reviewers: u32,
+            approved: u32,
+            changes: u32,
+            comments: u32,
+            ts_ms: i64,
+            web_url: String,
+        }
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let mut rows: Vec<Row> = Vec::new();
+        // Bitbucket — keyed by (workspace, slug).
+        for ((ws, slug), prs) in &self.bitbucket_pull_requests {
+            for pr in prs {
+                rows.push(Row {
+                    host_tag: "BB",
+                    repo_label: format!("{ws}/{slug}"),
+                    number: format!("#{}", pr.id),
+                    title: pr.title.clone(),
+                    state_label: pr.state.label(),
+                    author: pr.author.clone(),
+                    source: pr.source_branch.clone(),
+                    dest: pr.dest_branch.clone(),
+                    reviewers: pr.reviewer_count,
+                    approved: pr.approved_count,
+                    changes: pr.changes_count,
+                    comments: pr.comment_count,
+                    ts_ms: pr.updated_on_ms.or(pr.created_on_ms).unwrap_or(0),
+                    web_url: pr.web_url.clone(),
+                });
+            }
+        }
+        // GitHub — keyed by (owner, repo). Comments + review comments
+        // combined for the unified `comments` count.
+        for ((owner, repo), prs) in &self.github_pull_requests {
+            for pr in prs {
+                rows.push(Row {
+                    host_tag: "GH",
+                    repo_label: format!("{owner}/{repo}"),
+                    number: format!("#{}", pr.number),
+                    title: pr.title.clone(),
+                    state_label: pr.state.label(),
+                    author: pr.author.clone(),
+                    source: pr.source_branch.clone(),
+                    dest: pr.dest_branch.clone(),
+                    reviewers: pr.reviewer_count,
+                    approved: pr.approved_count,
+                    changes: pr.changes_count,
+                    comments: pr.comment_count + pr.review_comment_count,
+                    ts_ms: pr.updated_at_ms.or(pr.created_at_ms).unwrap_or(0),
+                    web_url: pr.web_url.clone(),
+                });
+            }
+        }
+        // GitLab — keyed by project label (numeric ID or "group/path").
+        // `!iid` is the URL-segment shape ("!17"), not "#17".
+        for (project, mrs) in &self.gitlab_merge_requests {
+            for mr in mrs {
+                rows.push(Row {
+                    host_tag: "GL",
+                    repo_label: project.clone(),
+                    number: format!("!{}", mr.iid),
+                    title: mr.title.clone(),
+                    state_label: mr.state.label(),
+                    author: mr.author.clone(),
+                    source: mr.source_branch.clone(),
+                    dest: mr.dest_branch.clone(),
+                    reviewers: mr.reviewer_count,
+                    approved: mr.approved_count,
+                    changes: mr.changes_count,
+                    comments: mr.comment_count,
+                    ts_ms: mr.updated_at_ms.or(mr.created_at_ms).unwrap_or(0),
+                    web_url: mr.web_url.clone(),
+                });
+            }
+        }
+        // Azure DevOps — label already shaped "org/project/repo".
+        for (label, prs) in &self.azdevops_pull_requests {
+            for pr in prs {
+                rows.push(Row {
+                    host_tag: "AZ",
+                    repo_label: label.clone(),
+                    number: format!("#{}", pr.id),
+                    title: pr.title.clone(),
+                    state_label: pr.state.label(),
+                    author: pr.author.clone(),
+                    source: pr.source_branch.clone(),
+                    dest: pr.dest_branch.clone(),
+                    reviewers: pr.reviewer_count,
+                    approved: pr.approved_count,
+                    changes: pr.changes_count,
+                    comments: pr.comment_count,
+                    ts_ms: pr.created_at_ms.unwrap_or(0),
+                    web_url: pr.web_url.clone(),
+                });
+            }
+        }
+        if rows.is_empty() {
+            self.toast(
+                "no open PRs in cache yet — configure [[bitbucket.repos]] / [[github.repos]] / [[gitlab.projects]] / [[azdevops.projects]] and wait one poll cycle",
+            );
+            return;
+        }
+        // Most recent activity first; ties keep insertion order.
+        rows.sort_by_key(|r| std::cmp::Reverse(r.ts_ms));
+        let items: Vec<PickerItem> = rows
+            .into_iter()
+            .map(|r| {
+                // Label is the fuzzy-match target — pack everything a user
+                // might type: host, repo, number, title, state.
+                let label = format!(
+                    "[{}] {} {} {} — {}",
+                    r.host_tag, r.repo_label, r.state_label, r.number, r.title
+                );
+                let branches = match (r.source.as_deref(), r.dest.as_deref()) {
+                    (Some(s), Some(d)) => format!("{s}→{d}"),
+                    (Some(s), None) => s.to_string(),
+                    (None, Some(d)) => format!("→{d}"),
+                    (None, None) => String::new(),
+                };
+                let counts = format!(
+                    "👀{} ✓{} ✗{} 💬{}",
+                    r.reviewers, r.approved, r.changes, r.comments
+                );
+                let age = if r.ts_ms > 0 {
+                    crate::ui::git_graph_view::humanize_age(now_ms.saturating_sub(r.ts_ms) / 1000)
+                } else {
+                    String::new()
+                };
+                let mut detail_parts: Vec<String> = Vec::new();
+                if let Some(a) = r.author.as_deref()
+                    && !a.is_empty()
+                {
+                    detail_parts.push(a.to_string());
+                }
+                if !branches.is_empty() {
+                    detail_parts.push(branches);
+                }
+                detail_parts.push(counts);
+                if !age.is_empty() {
+                    detail_parts.push(age);
+                }
+                PickerItem::new(r.web_url, label, detail_parts.join(" · "))
+            })
+            .collect();
+        self.open_picker(Picker::new(
+            PickerKind::OpenPullRequests,
+            "Pull requests · all hosts",
+            items,
+        ));
+    }
+
     /// Open the buffer switcher over the currently-open panes.
     pub fn open_buffer_picker(&mut self) {
         use crate::picker::PickerItem;
@@ -2890,6 +3062,9 @@ impl App {
             PickerKind::FileHistory => self.open_commit_diff(&item.id),
             PickerKind::AiSessions => self.open_ai_session_mirror(&item.id),
             PickerKind::Clipboard => self.paste_register(&item.id),
+            PickerKind::OpenPullRequests => {
+                open_url_external(&item.id);
+            }
         }
     }
 
@@ -16239,11 +16414,7 @@ impl App {
                 .collect(),
             ex_history: self.ex_history.clone(),
             bb_pipelines_view_mode: Some(self.bb_pipelines_view_mode),
-            bb_pipelines_collapsed: self
-                .bb_pipelines_collapsed
-                .iter()
-                .cloned()
-                .collect(),
+            bb_pipelines_collapsed: self.bb_pipelines_collapsed.iter().cloned().collect(),
             bb_prs_view_mode: Some(self.bb_prs_view_mode),
             bb_prs_collapsed: self.bb_prs_collapsed.iter().cloned().collect(),
             gh_actions_view_mode: Some(self.gh_actions_view_mode),
@@ -16935,8 +17106,7 @@ impl App {
             self.reveal_pane(id);
             return;
         }
-        let pane =
-            Pane::BitbucketPullRequests(crate::bitbucket::BitbucketPullRequestsPane::new());
+        let pane = Pane::BitbucketPullRequests(crate::bitbucket::BitbucketPullRequestsPane::new());
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
@@ -17174,7 +17344,9 @@ impl App {
 
     pub fn open_gitlab_pipelines_pane(&mut self) {
         if !self.config.gitlab.any_configured() {
-            self.toast("gitlab: add a [[gitlab.projects]] entry to ~/.config/mnml/config.toml first");
+            self.toast(
+                "gitlab: add a [[gitlab.projects]] entry to ~/.config/mnml/config.toml first",
+            );
             return;
         }
         self.ensure_gitlab_worker();
@@ -17208,7 +17380,9 @@ impl App {
 
     pub fn open_gitlab_merge_requests_pane(&mut self) {
         if !self.config.gitlab.any_configured() {
-            self.toast("gitlab: add a [[gitlab.projects]] entry to ~/.config/mnml/config.toml first");
+            self.toast(
+                "gitlab: add a [[gitlab.projects]] entry to ~/.config/mnml/config.toml first",
+            );
             return;
         }
         self.ensure_gitlab_worker();
@@ -18615,5 +18789,126 @@ GET https://example.com/second
         assert!(out.contains("PUT https://example.com/leading-EDITED"));
         assert!(out.contains("### second\nGET https://example.com/second"));
         assert!(!out.contains("GET https://example.com/leading\n"));
+    }
+
+    #[test]
+    fn open_pr_picker_aggregates_all_hosts_sorted_by_updated() {
+        // Seed one PR per host in `App`'s per-host caches, fire the picker,
+        // and check it lists all 4 + sorts the most-recently-updated first.
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // BB — oldest update.
+        app.bitbucket_pull_requests.insert(
+            ("exampleorg".into(), "example-api".into()),
+            vec![crate::bitbucket::PullRequestRecord {
+                workspace: "exampleorg".into(),
+                slug: "example-api".into(),
+                id: 42,
+                title: "BB fix thing".into(),
+                state: crate::bitbucket::PullRequestState::Open,
+                author: Some("alice".into()),
+                source_branch: Some("feature/bb".into()),
+                dest_branch: Some("main".into()),
+                reviewer_count: 2,
+                approved_count: 1,
+                changes_count: 0,
+                comment_count: 3,
+                task_count: 0,
+                created_on_ms: Some(1_000),
+                updated_on_ms: Some(1_000),
+                web_url: "https://bitbucket.org/exampleorg/example-api/pull-requests/42".into(),
+            }],
+        );
+        // GH — middle update.
+        app.github_pull_requests.insert(
+            ("private-org".into(), "repo".into()),
+            vec![crate::github::PullRequestRecord {
+                owner: "private-org".into(),
+                repo: "repo".into(),
+                number: 7,
+                title: "GH refactor".into(),
+                state: crate::github::PullRequestState::Open,
+                author: Some("bob".into()),
+                source_branch: Some("feature/gh".into()),
+                dest_branch: Some("main".into()),
+                reviewer_count: 1,
+                approved_count: 0,
+                changes_count: 1,
+                comment_count: 2,
+                review_comment_count: 4,
+                created_at_ms: Some(2_000),
+                updated_at_ms: Some(2_000),
+                web_url: "https://github.com/private-org/repo/pull/7".into(),
+            }],
+        );
+        // GL — newest update.
+        app.gitlab_merge_requests.insert(
+            "group/project".into(),
+            vec![crate::gitlab::MergeRequestRecord {
+                project: "group/project".into(),
+                iid: 17,
+                title: "GL feature".into(),
+                state: crate::gitlab::MergeRequestState::Opened,
+                author: Some("carol".into()),
+                source_branch: Some("feature/gl".into()),
+                dest_branch: Some("main".into()),
+                reviewer_count: 3,
+                approved_count: 2,
+                changes_count: 0,
+                comment_count: 0,
+                created_at_ms: Some(3_000),
+                updated_at_ms: Some(4_000),
+                web_url: "https://gitlab.com/group/project/-/merge_requests/17".into(),
+            }],
+        );
+        // AZ — second-newest (created-only).
+        app.azdevops_pull_requests.insert(
+            "org/project/repo".into(),
+            vec![crate::azdevops::PullRequestRecord {
+                label: "org/project/repo".into(),
+                id: 99,
+                title: "AZ chore".into(),
+                state: crate::azdevops::PullRequestState::Active,
+                author: Some("dave".into()),
+                source_branch: Some("feature/az".into()),
+                dest_branch: Some("main".into()),
+                reviewer_count: 1,
+                approved_count: 0,
+                changes_count: 0,
+                comment_count: 0,
+                created_at_ms: Some(3_500),
+                web_url: "https://dev.azure.com/org/project/_git/repo/pullrequest/99".into(),
+            }],
+        );
+        app.open_pr_picker();
+        let picker = app.picker.as_ref().expect("picker should have opened");
+        assert_eq!(picker.kind, crate::picker::PickerKind::OpenPullRequests);
+        let labels: Vec<String> = picker.items_view().map(|it| it.label.clone()).collect();
+        assert_eq!(labels.len(), 4, "all four hosts represented");
+        // Most-recently-updated first: GL (4000) > AZ (3500) > GH (2000) > BB (1000).
+        assert!(labels[0].contains("[GL]"), "GL first, got {:?}", labels[0]);
+        assert!(labels[1].contains("[AZ]"), "AZ second, got {:?}", labels[1]);
+        assert!(labels[2].contains("[GH]"), "GH third, got {:?}", labels[2]);
+        assert!(labels[3].contains("[BB]"), "BB fourth, got {:?}", labels[3]);
+        // The id should be the URL — accept opens it externally.
+        let ids: Vec<String> = picker.items_view().map(|it| it.id.clone()).collect();
+        assert!(ids[0].starts_with("https://gitlab.com/"));
+        // Fuzzy match shrinks to one host (label contains "private-org" and "refactor").
+        let mut picker = app.picker.take().unwrap();
+        for c in "refactor".chars() {
+            picker.type_char(c);
+        }
+        assert_eq!(picker.len(), 1, "fuzzy 'refactor' narrows to GH only");
+    }
+
+    #[test]
+    fn open_pr_picker_empty_toasts_and_does_not_open() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_pr_picker();
+        assert!(
+            app.picker.is_none(),
+            "picker should NOT open when every cache is empty"
+        );
     }
 }

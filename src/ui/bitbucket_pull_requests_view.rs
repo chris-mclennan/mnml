@@ -143,7 +143,13 @@ pub fn draw(
         .unwrap_or(0);
 
     let body_start_offset = lines.len() as u16;
-    for (visible_i, (i, row)) in flat.iter().enumerate().skip(p.scroll).take(body_h).enumerate() {
+    for (visible_i, (i, row)) in flat
+        .iter()
+        .enumerate()
+        .skip(p.scroll)
+        .take(body_h)
+        .enumerate()
+    {
         let row_y = area.y.saturating_add(body_start_offset + visible_i as u16);
         if row_y < area.y.saturating_add(area.height) {
             let row_rect = ratatui::layout::Rect {
@@ -246,10 +252,7 @@ pub fn draw(
                             .bg(row_bg)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        pr_num,
-                        Style::default().fg(t.fg).bg(row_bg),
-                    ),
+                    Span::styled(pr_num, Style::default().fg(t.fg).bg(row_bg)),
                 ];
                 // In Mine mode the data is cross-repo with no per-repo
                 // header grouping — surface the repo name inline so the

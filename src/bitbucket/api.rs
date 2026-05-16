@@ -94,8 +94,8 @@ pub fn fetch_account_id(
         return Err(format!("HTTP {status} — {snippet}"));
     }
     let body = resp.text().map_err(|e| format!("read body: {e}"))?;
-    let v: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| format!("parse json: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("parse json: {e}"))?;
     v.get("account_id")
         .and_then(|x| x.as_str())
         .map(str::to_string)
@@ -134,8 +134,7 @@ pub fn fetch_my_open_pull_requests(
 }
 
 pub fn parse_my_pull_requests_response(body: &str) -> Result<Vec<PullRequestRecord>, String> {
-    let raw: RawPrPage =
-        serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
+    let raw: RawPrPage = serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
     let mut out = Vec::new();
     for p in raw.values {
         // For the cross-repo endpoint, workspace/slug come from
@@ -164,9 +163,9 @@ pub fn parse_my_pull_requests_response(body: &str) -> Result<Vec<PullRequestReco
 /// (RFC 3986 §2.3) — that's enough for `account_id` values like
 /// `{abc-uuid}` and `user:1234`.
 fn url_encode_account_id(s: &str) -> std::borrow::Cow<'_, str> {
-    let needs_escape = s.bytes().any(|b| {
-        !(b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_' || b == b'~')
-    });
+    let needs_escape = s
+        .bytes()
+        .any(|b| !(b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_' || b == b'~'));
     if !needs_escape {
         return std::borrow::Cow::Borrowed(s);
     }
@@ -374,8 +373,7 @@ pub fn parse_pull_requests_response(
     workspace: &str,
     slug: &str,
 ) -> Result<Vec<PullRequestRecord>, String> {
-    let raw: RawPrPage =
-        serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
+    let raw: RawPrPage = serde_json::from_str(body).map_err(|e| format!("parse json: {e}"))?;
     let out = raw
         .values
         .into_iter()
@@ -398,10 +396,7 @@ fn project_pr(p: RawPullRequest, workspace: &str, slug: &str) -> PullRequestReco
         .as_ref()
         .and_then(|d| d.branch.as_ref())
         .and_then(|b| b.name.clone());
-    let author = p
-        .author
-        .as_ref()
-        .and_then(|a| a.display_name.clone());
+    let author = p.author.as_ref().and_then(|a| a.display_name.clone());
     // Bitbucket's "participants" list carries per-reviewer state. We surface:
     //   - approved_count   — `approved: true`
     //   - changes_count    — `state: "changes_requested"`
@@ -1172,10 +1167,22 @@ mod tests {
 
     #[test]
     fn pr_state_classification() {
-        assert_eq!(PullRequestState::from_raw(Some("OPEN")), PullRequestState::Open);
-        assert_eq!(PullRequestState::from_raw(Some("merged")), PullRequestState::Merged);
-        assert_eq!(PullRequestState::from_raw(Some("DECLINED")), PullRequestState::Declined);
-        assert_eq!(PullRequestState::from_raw(Some("SUPERSEDED")), PullRequestState::Superseded);
+        assert_eq!(
+            PullRequestState::from_raw(Some("OPEN")),
+            PullRequestState::Open
+        );
+        assert_eq!(
+            PullRequestState::from_raw(Some("merged")),
+            PullRequestState::Merged
+        );
+        assert_eq!(
+            PullRequestState::from_raw(Some("DECLINED")),
+            PullRequestState::Declined
+        );
+        assert_eq!(
+            PullRequestState::from_raw(Some("SUPERSEDED")),
+            PullRequestState::Superseded
+        );
         assert_eq!(PullRequestState::from_raw(None), PullRequestState::Unknown);
     }
 
@@ -1185,6 +1192,9 @@ mod tests {
           "values": [{ "id": 99, "state": "OPEN", "title": "t" }]
         }"#;
         let rows = parse_pull_requests_response(body, "ws", "repo").unwrap();
-        assert_eq!(rows[0].web_url, "https://bitbucket.org/ws/repo/pull-requests/99");
+        assert_eq!(
+            rows[0].web_url,
+            "https://bitbucket.org/ws/repo/pull-requests/99"
+        );
     }
 }

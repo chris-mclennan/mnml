@@ -98,7 +98,8 @@ pub fn draw(
     if g.unstaged.is_empty() {
         lines.push(empty_note(&t, "    (none)"));
     }
-    let mut row_indices: Vec<(usize, usize)> = Vec::with_capacity(g.unstaged.len() + g.staged.len());
+    let mut row_indices: Vec<(usize, usize)> =
+        Vec::with_capacity(g.unstaged.len() + g.staged.len());
     for (idx, e) in g.unstaged.iter().enumerate() {
         let sel = idx == g.selected;
         if sel {

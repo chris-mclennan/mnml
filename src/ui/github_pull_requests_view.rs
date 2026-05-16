@@ -135,7 +135,13 @@ pub fn draw(
         .unwrap_or(0);
 
     let body_start_offset = lines.len() as u16;
-    for (visible_i, (i, row)) in flat.iter().enumerate().skip(p.scroll).take(body_h).enumerate() {
+    for (visible_i, (i, row)) in flat
+        .iter()
+        .enumerate()
+        .skip(p.scroll)
+        .take(body_h)
+        .enumerate()
+    {
         let row_y = area.y.saturating_add(body_start_offset + visible_i as u16);
         if row_y < area.y.saturating_add(area.height) {
             let row_rect = ratatui::layout::Rect {
@@ -353,10 +359,7 @@ pub fn selected_pr(
 }
 
 #[allow(dead_code)] // headers are now selectable; kept for revisit.
-fn snap_selection_to_data(
-    pane: &mut crate::github::GithubPullRequestsPane,
-    flat: &[FlatRow],
-) {
+fn snap_selection_to_data(pane: &mut crate::github::GithubPullRequestsPane, flat: &[FlatRow]) {
     if flat.is_empty() {
         return;
     }
