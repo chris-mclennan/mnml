@@ -6468,6 +6468,25 @@ impl App {
         }
     }
 
+    /// `y` in a `Pane::Ai` — copy the rendered answer text to the clipboard.
+    /// No-op for `Asking` (nothing typed yet) and `Live` mirrors (those are
+    /// transcripts, not a single answer body).
+    pub fn copy_active_ai_answer(&mut self) {
+        let Some(cur) = self.active else { return };
+        let text = match self.panes.get(cur) {
+            Some(Pane::Ai(a)) => a.answer_text().map(str::to_string),
+            _ => return,
+        };
+        match text {
+            Some(t) if !t.is_empty() => {
+                let chars = t.chars().count();
+                self.clipboard.set(t, false);
+                self.toast(format!("copied AI answer ({chars} chars)"));
+            }
+            _ => self.toast("no AI answer to copy yet"),
+        }
+    }
+
     /// `c` in a `Pane::Ai`: open `claude --resume <session>` interactively (a split
     /// below) so you can carry the conversation further — and flip this pane into
     /// a live transcript mirror of that session.

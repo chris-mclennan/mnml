@@ -244,6 +244,18 @@ impl AiPane {
         matches!(self.state, AiState::Live { .. })
     }
 
+    /// The text the user sees in the answer body, suitable for copying.
+    /// `None` while no answer is rendered yet (Asking with no deltas) or
+    /// for `Live` mirrors (those are scroll-back transcripts, not a
+    /// single answer body — copy via the buffer instead).
+    pub fn answer_text(&self) -> Option<&str> {
+        match &self.state {
+            AiState::Streaming(s) | AiState::Done(s) => Some(s.as_str()),
+            AiState::Failed(s) => Some(s.as_str()),
+            AiState::Asking | AiState::Live { .. } => None,
+        }
+    }
+
     pub fn tab_title(&self) -> String {
         let marker = match self.state {
             AiState::Asking | AiState::Streaming(_) => "…",

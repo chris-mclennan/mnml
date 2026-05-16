@@ -2337,6 +2337,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('c') => app.continue_active_ai(),
             KeyCode::Char('a') => app.apply_ai_suggestion(),
             KeyCode::Char('x') => app.cancel_active_ai(),
+            KeyCode::Char('y') => app.copy_active_ai_answer(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }
