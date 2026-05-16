@@ -261,10 +261,48 @@ struct Restrict {
 /// On exit, `*prev_tree` is updated to the freshly produced tree (or cleared on
 /// failure). The caller is responsible for updating its own `prev_line_starts`
 /// to match `text`.
+/// A cache of injection-language trees keyed by lang name (e.g.
+/// `"markdown_inline"`, `"rust"`). Lives on `Buffer` alongside the outer
+/// `parse_tree` so cross-call reuse is possible — each call applies the
+/// outer text edits to every cached injection tree before reparsing, so
+/// tree-sitter can reuse unchanged subtrees of the inner grammars.
+///
+/// Stays small in practice (≤ 3-5 distinct inner languages per file);
+/// no eviction policy is needed.
+pub type InjectionTreeCache = std::collections::HashMap<String, Tree>;
+
 pub fn highlight_lines_with_cache(
     text: &str,
     ext: &str,
     prev_tree: &mut Option<Tree>,
+    edits: &[TextEdit],
+    prev_line_starts: &[usize],
+    prev_highlights: Vec<Vec<ColoredSpan>>,
+) -> Vec<Vec<ColoredSpan>> {
+    // Legacy wrapper — callers who don't pass an injection cache get a
+    // fresh one per call (no cross-call injection reuse for them).
+    let mut inj = InjectionTreeCache::new();
+    highlight_lines_with_cache_v2(
+        text,
+        ext,
+        prev_tree,
+        &mut inj,
+        edits,
+        prev_line_starts,
+        prev_highlights,
+    )
+}
+
+/// New API that also takes an injection-tree cache. Callers maintaining
+/// a long-lived buffer should use this so injection parsing can reuse
+/// unchanged inner subtrees across edits — the principal win on
+/// injection-heavy files (markdown with many paragraphs / fenced
+/// blocks). When the cache is empty the behavior matches the v1 API.
+pub fn highlight_lines_with_cache_v2(
+    text: &str,
+    ext: &str,
+    prev_tree: &mut Option<Tree>,
+    inj_cache: &mut InjectionTreeCache,
     edits: &[TextEdit],
     prev_line_starts: &[usize],
     prev_highlights: Vec<Vec<ColoredSpan>>,
@@ -285,6 +323,20 @@ pub fn highlight_lines_with_cache(
         && let Err(()) = apply_edits_to_tree(tree, edits, &line_starts, prev_line_starts)
     {
         *prev_tree = None;
+    }
+    // Same edit propagation for the per-injection-language tree cache.
+    // Any tree that fails the edit-apply check is dropped — it'll be
+    // reparsed fresh on its next use.
+    if !edits.is_empty() {
+        let mut bad_keys: Vec<String> = Vec::new();
+        for (lang, tree) in inj_cache.iter_mut() {
+            if apply_edits_to_tree(tree, edits, &line_starts, prev_line_starts).is_err() {
+                bad_keys.push(lang.clone());
+            }
+        }
+        for k in bad_keys {
+            inj_cache.remove(&k);
+        }
     }
 
     let mut parser = Parser::new();
@@ -334,16 +386,25 @@ pub fn highlight_lines_with_cache(
                     }
                 }
                 apply_query_to_spans(text, &line_starts, cfg, &tree, &mut out, Some(&restrict));
-                walk_injections(text, &line_starts, cfg, &tree, 0, &mut out, Some(&restrict));
+                walk_injections(
+                    text,
+                    &line_starts,
+                    cfg,
+                    &tree,
+                    0,
+                    &mut out,
+                    Some(&restrict),
+                    inj_cache,
+                );
                 out
             }
             None => {
                 // Couldn't safely plan an incremental window — full reparse.
-                full_query(text, &line_starts, cfg, &tree, n_lines)
+                full_query(text, &line_starts, cfg, &tree, n_lines, inj_cache)
             }
         }
     } else {
-        full_query(text, &line_starts, cfg, &tree, n_lines)
+        full_query(text, &line_starts, cfg, &tree, n_lines, inj_cache)
     };
 
     if out.len() != n_lines {
@@ -361,10 +422,11 @@ fn full_query(
     cfg: &LangConfig,
     tree: &Tree,
     n_lines: usize,
+    inj_cache: &mut InjectionTreeCache,
 ) -> Vec<Vec<ColoredSpan>> {
     let mut out = vec![Vec::new(); n_lines];
     apply_query_to_spans(text, line_starts, cfg, tree, &mut out, None);
-    walk_injections(text, line_starts, cfg, tree, 0, &mut out, None);
+    walk_injections(text, line_starts, cfg, tree, 0, &mut out, None, inj_cache);
     out
 }
 
@@ -621,6 +683,7 @@ fn advance_point_to_byte(
 /// `@injection.content` capture. `restrict` (when `Some`) narrows the query to
 /// a byte sub-range and clips emission to a dirty-row window — used by the
 /// incremental hot path.
+#[allow(clippy::too_many_arguments)]
 fn highlight_recursive(
     text: &str,
     line_starts: &[usize],
@@ -629,6 +692,8 @@ fn highlight_recursive(
     depth: u32,
     out: &mut [Vec<ColoredSpan>],
     restrict: Option<&Restrict>,
+    inj_cache: &mut InjectionTreeCache,
+    cache_key: Option<&str>,
 ) {
     if depth > MAX_INJECTION_DEPTH {
         return;
@@ -640,12 +705,36 @@ fn highlight_recursive(
     if !included_ranges.is_empty() && parser.set_included_ranges(included_ranges).is_err() {
         return;
     }
-    let Some(tree) = parser.parse(text, None) else {
+    // Reuse the per-language cached tree as a parse hint when available.
+    // `apply_edits_to_tree` already ran on each cached tree at the top of
+    // `highlight_lines_with_cache_v2`, so the tree's byte offsets are
+    // pre-shifted to match `text`. tree-sitter will reuse unchanged
+    // subtrees of the inner grammar even when the included_ranges change.
+    let prev_inner: Option<&Tree> = cache_key.and_then(|k| inj_cache.get(k));
+    let Some(tree) = parser.parse(text, prev_inner) else {
+        // Drop a potentially-stale entry on parse failure so the next
+        // call doesn't try to reuse a now-invalid tree.
+        if let Some(k) = cache_key {
+            inj_cache.remove(k);
+        }
         return;
     };
 
     apply_query_to_spans(text, line_starts, cfg, &tree, out, restrict);
-    walk_injections(text, line_starts, cfg, &tree, depth, out, restrict);
+    walk_injections(
+        text,
+        line_starts,
+        cfg,
+        &tree,
+        depth,
+        out,
+        restrict,
+        inj_cache,
+    );
+
+    if let Some(k) = cache_key {
+        inj_cache.insert(k.to_string(), tree);
+    }
 }
 
 /// Run `cfg.highlights_query` over `tree`, append per-line spans to `out`.
@@ -746,6 +835,7 @@ fn apply_query_to_spans(
 /// window) and injection content ranges that don't touch the window are
 /// skipped — the unchanged inner spans are already in the caller's
 /// `prev_highlights`-derived `out`.
+#[allow(clippy::too_many_arguments)]
 fn walk_injections(
     text: &str,
     line_starts: &[usize],
@@ -754,6 +844,7 @@ fn walk_injections(
     depth: u32,
     out: &mut [Vec<ColoredSpan>],
     restrict: Option<&Restrict>,
+    inj_cache: &mut InjectionTreeCache,
 ) {
     let (Some(query), Some(content_idx)) = (cfg.injections_query.as_ref(), cfg.inj_content_idx)
     else {
@@ -823,6 +914,12 @@ fn walk_injections(
         {
             continue;
         }
+        // Use the (normalized) language name as the cache key so the same
+        // logical injection language reuses its tree across calls. Each
+        // pattern match contributes one set of content_ranges; per-paragraph
+        // matches for markdown_inline merge into one cache entry via the
+        // shared key.
+        let normalized_key = lang_name.trim().to_ascii_lowercase();
         highlight_recursive(
             text,
             line_starts,
@@ -831,6 +928,8 @@ fn walk_injections(
             depth + 1,
             out,
             restrict,
+            inj_cache,
+            Some(&normalized_key),
         );
     }
 }
@@ -1168,6 +1267,35 @@ mod tests {
             lines[0].iter().any(|&(s, e, _)| s <= 8 && e >= 16),
             "expected the markdown_inline injection to mark the **bold** run: {:?}",
             lines[0]
+        );
+    }
+
+    #[test]
+    fn injection_tree_cache_populates_and_survives_calls() {
+        // After a markdown parse, the inj cache should contain entries for
+        // every injection language the file activated (markdown_inline at
+        // least; rust too because the source has a fenced rust block).
+        let src = "Hello **world**.\n\n```rust\nfn x() {}\n```\n";
+        let mut prev: Option<Tree> = None;
+        let mut inj = InjectionTreeCache::new();
+        let _ = highlight_lines_with_cache_v2(src, "md", &mut prev, &mut inj, &[], &[], Vec::new());
+        assert!(
+            inj.contains_key("markdown_inline"),
+            "expected markdown_inline tree to be cached, got keys: {:?}",
+            inj.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            inj.contains_key("rust"),
+            "expected rust tree to be cached, got keys: {:?}",
+            inj.keys().collect::<Vec<_>>()
+        );
+        // Same call with no edits should keep the cache populated.
+        let prev_count = inj.len();
+        let _ = highlight_lines_with_cache_v2(src, "md", &mut prev, &mut inj, &[], &[], Vec::new());
+        assert_eq!(
+            inj.len(),
+            prev_count,
+            "cache shouldn't shrink between equivalent calls"
         );
     }
 

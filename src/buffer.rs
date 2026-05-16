@@ -206,6 +206,11 @@ pub struct Buffer {
     /// first successful parse; cleared when an untracked edit happens (see
     /// `pending_tree_edits` below).
     pub parse_tree: Option<tree_sitter::Tree>,
+    /// Per-injection-language tree cache. Lives alongside `parse_tree` so
+    /// inner grammars (markdown_inline, rust-in-fenced-block, etc.) can
+    /// be reparsed incrementally with their previous tree as a hint —
+    /// the principal win on injection-heavy files like long markdown.
+    pub injection_trees: crate::highlight::InjectionTreeCache,
     /// Byte-position line-starts of the text that produced [`Self::parse_tree`].
     /// Used by `refresh_highlights` to compute the `Point` half of each
     /// `InputEdit` (tree-sitter wants byte AND (row, col) for each edit; the
@@ -288,6 +293,7 @@ impl Buffer {
             last_edited: None,
             highlights_dirty: false,
             parse_tree: None,
+            injection_trees: crate::highlight::InjectionTreeCache::new(),
             prev_line_starts: Vec::new(),
             pending_tree_edits: Vec::new(),
             disk_mtime: std::fs::metadata(path).and_then(|m| m.modified()).ok(),
@@ -358,6 +364,7 @@ impl Buffer {
             last_edited: None,
             highlights_dirty: false,
             parse_tree: None,
+            injection_trees: crate::highlight::InjectionTreeCache::new(),
             prev_line_starts: Vec::new(),
             pending_tree_edits: Vec::new(),
             disk_mtime: None,
@@ -394,10 +401,11 @@ impl Buffer {
         let ext = self.language_ext.as_deref().unwrap_or("");
         let edits = std::mem::take(&mut self.pending_tree_edits);
         let prev_highlights = std::mem::take(&mut self.highlights);
-        self.highlights = highlight::highlight_lines_with_cache(
+        self.highlights = highlight::highlight_lines_with_cache_v2(
             text,
             ext,
             &mut self.parse_tree,
+            &mut self.injection_trees,
             &edits,
             &self.prev_line_starts,
             prev_highlights,

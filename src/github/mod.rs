@@ -232,11 +232,7 @@ fn run_thread(
                         }
                         per_branch.push((branch.clone(), Some(run)));
                     }
-                    Ok(None) => {
-                        if repo.branches.iter().any(|b| b == branch) {
-                            per_branch.push((branch.clone(), None));
-                        }
-                    }
+                    Ok(None) => per_branch.push((branch.clone(), None)),
                     Err(_) => {}
                 }
             }
