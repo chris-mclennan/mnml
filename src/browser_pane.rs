@@ -315,6 +315,11 @@ pub struct BrowserPane {
     pub dom_focus: bool,
     /// Selected DOM row when `dom_focus`.
     pub dom_sel: usize,
+    /// True ⇒ every change in `dom_sel` fires `Overlay.highlightNode` so
+    /// the page's overlay box tracks the keyboard selection in real time.
+    /// Toggled via `H` in DOM-panel focus. Default off — explicit `h`
+    /// still draws a one-shot highlight without enabling follow.
+    pub dom_hover_highlight: bool,
     /// Next JSON-RPC id for requests this pane issues.
     next_id: i64,
     /// The id of an in-flight `Runtime.evaluate`, so its reply can be matched.
@@ -351,6 +356,7 @@ impl BrowserPane {
             dom: Vec::new(),
             dom_focus: false,
             dom_sel: 0,
+            dom_hover_highlight: false,
             next_id: 100,
             pending_eval: None,
             pending_screenshot: None,
@@ -701,6 +707,38 @@ impl BrowserPane {
         let max = self.dom.len() - 1;
         let cur = self.dom_sel.min(max) as isize;
         self.dom_sel = (cur + delta).clamp(0, max as isize) as usize;
+        self.maybe_hover_highlight();
+    }
+
+    /// Direct `dom_sel` setter — clamps to the list, then fires the
+    /// hover overlay (when enabled). Used by the `g` / `G` / `Home` /
+    /// `End` chords that jump rather than step.
+    pub fn set_dom_sel(&mut self, idx: usize) {
+        let max = self.dom.len().saturating_sub(1);
+        self.dom_sel = idx.min(max);
+        self.maybe_hover_highlight();
+    }
+
+    /// Toggle the DOM-hover follow mode. Entering follow mode immediately
+    /// fires the highlight for the current selection so the user gets
+    /// visible feedback on the toggle; leaving follow mode hides any
+    /// drawn overlay.
+    pub fn toggle_dom_hover_highlight(&mut self) {
+        self.dom_hover_highlight = !self.dom_hover_highlight;
+        if self.dom_hover_highlight {
+            self.highlight_selected_dom();
+        } else {
+            self.hide_highlight();
+        }
+    }
+
+    /// If follow mode is on, fire `Overlay.highlightNode` for the current
+    /// selection. Called on every selection change; cheap (one CDP
+    /// fire-and-forget WebSocket frame), no reply to wait on.
+    fn maybe_hover_highlight(&mut self) {
+        if self.dom_hover_highlight {
+            self.highlight_selected_dom();
+        }
     }
 
     /// The currently-selected DOM row, if the panel is non-empty.
@@ -974,5 +1012,104 @@ mod tests {
         // Detaching the main is a no-op (the main entry's session_id is "").
         p.note_detached_target("");
         assert_eq!(p.targets.len(), 1);
+    }
+
+    /// Drain every queued outbound CDP message and return its parsed
+    /// JSON. Used by the hover-highlight test to verify that selection
+    /// changes do (or don't) emit `Overlay.highlightNode` frames.
+    fn drain_cdp(rx: &std::sync::mpsc::Receiver<CdpCommand>) -> Vec<serde_json::Value> {
+        let mut out = Vec::new();
+        while let Ok(cmd) = rx.try_recv() {
+            if let CdpCommand::Send(json) = cmd
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&json)
+            {
+                out.push(v);
+            }
+        }
+        out
+    }
+
+    fn count_method(msgs: &[serde_json::Value], method: &str) -> usize {
+        msgs.iter().filter(|m| m["method"] == method).count()
+    }
+
+    #[test]
+    fn dom_hover_highlight_follows_selection_when_enabled() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        // Seed two dom rows so we can move the selection.
+        p.dom = vec![
+            DomRow {
+                depth: 0,
+                label: "<html>".into(),
+                selector: "html".into(),
+                node_id: 1,
+            },
+            DomRow {
+                depth: 0,
+                label: "<body>".into(),
+                selector: "body".into(),
+                node_id: 2,
+            },
+        ];
+        // Drain the initial `Page.navigate` so we see only what follows.
+        let _ = drain_cdp(&rx);
+
+        // Off by default — moving the selection doesn't fire highlightNode.
+        p.move_dom_sel(1);
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "Overlay.highlightNode"), 0);
+
+        // Toggle on — immediate fire for the current selection.
+        p.toggle_dom_hover_highlight();
+        assert!(p.dom_hover_highlight);
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "Overlay.highlightNode"), 1);
+
+        // Moving the selection now fires highlightNode again.
+        p.move_dom_sel(-1);
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "Overlay.highlightNode"), 1);
+
+        // Toggle off — hideHighlight fires once; subsequent moves are quiet.
+        p.toggle_dom_hover_highlight();
+        assert!(!p.dom_hover_highlight);
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "Overlay.hideHighlight"), 1);
+        p.move_dom_sel(1);
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "Overlay.highlightNode"), 0);
+    }
+
+    #[test]
+    fn set_dom_sel_clamps_and_fires_hover_when_enabled() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        p.dom = vec![
+            DomRow {
+                depth: 0,
+                label: "a".into(),
+                selector: "a".into(),
+                node_id: 11,
+            },
+            DomRow {
+                depth: 0,
+                label: "b".into(),
+                selector: "b".into(),
+                node_id: 22,
+            },
+        ];
+        let _ = drain_cdp(&rx);
+
+        p.set_dom_sel(99); // clamp to last
+        assert_eq!(p.dom_sel, 1);
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "Overlay.highlightNode"), 0); // off
+
+        p.toggle_dom_hover_highlight();
+        let _ = drain_cdp(&rx);
+        p.set_dom_sel(0);
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "Overlay.highlightNode"), 1); // on
     }
 }

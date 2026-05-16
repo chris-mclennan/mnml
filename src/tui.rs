@@ -759,8 +759,8 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
                 if b.dom_focus {
                     match jump {
-                        Some(usize::MAX) => b.dom_sel = b.dom.len().saturating_sub(1),
-                        Some(n) => b.dom_sel = n,
+                        Some(usize::MAX) => b.set_dom_sel(b.dom.len().saturating_sub(1)),
+                        Some(n) => b.set_dom_sel(n),
                         None => b.move_dom_sel(delta),
                     }
                 } else if b.net_focus {
@@ -814,6 +814,11 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     b.highlight_selected_dom();
                 }
             }
+            KeyCode::Char('H') if dom_focus => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.toggle_dom_hover_highlight();
+                }
+            }
             KeyCode::Enter if net_focus => app.open_net_entry_as_request(),
             KeyCode::Char('g') => app.browser_navigate_prompt(),
             KeyCode::Char('e') => app.browser_eval_prompt(),
@@ -825,6 +830,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
                         if b.dom_focus {
                             b.hide_highlight();
+                            b.dom_hover_highlight = false;
                         }
                         b.net_focus = false;
                         b.dom_focus = false;

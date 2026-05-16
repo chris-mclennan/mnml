@@ -1690,8 +1690,12 @@ the reply into a flat `Vec<DomRow{depth,label,selector,node_id}>` (whitespace te
 recursed); rows render indented + colour-coded (elements blue, text white, comments dim). ↑↓/jk/PgUp/PgDn/Home/End/g/G
 move the selection (wheel too), `c` copies the highlighted node's CSS-ish selector (`html > body > div#main.card`),
 **`h` draws the live highlight overlay on the page** (`Overlay.highlightNode {nodeId}` — `DOM.enable` + `Overlay.enable` are
-in the initial domain-enable set), `R` re-fetches, `D` (or Esc) leave the panel (Esc also clears any highlight via
-`Overlay.hideHighlight`). After `s` writes the PNG, `open_path_external` hands it to the OS default app (`open` on macOS,
+in the initial domain-enable set), **`H` toggles hover-follow mode** —
+`BrowserPane.dom_hover_highlight: bool` (default off); when on, every change in `dom_sel` (j/k/PgUp/PgDn/g/G/Home/End)
+fires `Overlay.highlightNode` so the page's overlay box tracks the keyboard selection in real time. `set_dom_sel` /
+`move_dom_sel` call `maybe_hover_highlight` after every selection change; toggling on immediately fires for the current
+selection, toggling off fires `Overlay.hideHighlight`. Esc on the DOM panel also resets the toggle. `R` re-fetches, `D`
+(or Esc) leave the panel (Esc also clears any highlight via `Overlay.hideHighlight`). After `s` writes the PNG, `open_path_external` hands it to the OS default app (`open` on macOS,
 `xdg-open` on Linux, `cmd /C start` on Windows; best-effort, errors swallowed). `Target.setDiscoverTargets {discover:true}`
 is also sent on connect so popups / new-tabs show up as `⤴ new tab → url` log lines (`Target.targetCreated` with
 `attached:false`). **Multi-page (`Target.attachToTarget`)** — the connect sequence also sends
