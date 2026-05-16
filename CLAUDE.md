@@ -1933,10 +1933,12 @@ ObjectId-or-string `_id`, BSON-datetime-or-epoch-ms `startedAt`, top-level or
 nested-under-`stats` counts, and a `sourceVersion` alias for `branch`. Errors
 surface as `DocDbEvent::Failed` banners and the loop retries after a 30s
 backoff. `DocDbHandle`'s `Drop` flips an `AtomicBool` + joins the thread so
-workers exit cleanly. Phase 4b (queued) adds change streams selectable via
-`[playwright.docdb] mode = "stream"` (DocumentDB 5.0 cluster `private-docdb5-0`
-has them enabled, 3-day resume window), with polling as the auto-fallback.
-CodeBuild + launcher absorption (separate tracks) come after.
+workers exit cleanly. **Phase 4b done** — `[playwright.docdb] mode = "stream"`
+opens `coll.watch()` (DocumentDB change streams; requires the cluster's
+`change_stream_log_retention_duration > 0`); `mode = "auto"` tries streams
+first and falls back to polling with a one-time toast on failure. CodeBuild
+absorption shipped as `Pane::CodeBuilds`; launcher absorption shipped as
+`[tasks.<name>]` config + the startup-tasks runner.
 **Bitbucket terminal dashboard (phases 1–3 done)** — `src/bitbucket/`
 (unconditional in the lean build; reuses `reqwest::blocking` from the `http` track,
 no Bitbucket SDK). One worker thread polls every configured `[[bitbucket.repos]]`
