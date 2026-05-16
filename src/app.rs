@@ -1739,6 +1739,10 @@ pub struct App {
     /// into the action at this index and apply it.
     pending_code_action_resolve: Option<usize>,
     pending_code_action_path: Option<PathBuf>,
+    /// `(pane_id, lens_index)` — set when a click on a stub lens fired a
+    /// `codeLens/resolve`. When the reply lands, the matching lens is
+    /// updated with the new command and the click is re-fired.
+    pending_code_lens_resolve: Option<(PaneId, usize)>,
     /// When true, the next code-action reply auto-applies the first
     /// returned action instead of opening the picker. Set by
     /// `lsp.quick_fix`; cleared whether the reply lands or the request
@@ -2105,6 +2109,7 @@ impl App {
             pending_code_actions: Vec::new(),
             pending_code_action_resolve: None,
             pending_code_action_path: None,
+            pending_code_lens_resolve: None,
             pending_code_action_auto_apply: false,
             pending_outline: false,
             selection_range_ladder: None,
@@ -5195,10 +5200,26 @@ impl App {
             self.toast("code lens needs a saved file");
             return;
         };
-        let Some(cmd) = lens.command.clone() else {
-            self.toast(format!("code lens '{}' has no command", lens.title));
+        // Stub: title-only lens that the server expects us to round-trip
+        // through `codeLens/resolve` for the command. Stash the click so
+        // the reply handler can re-fire it; toast a one-liner so the user
+        // knows we're working on it.
+        if lens.command.is_none() {
+            let Some(raw) = lens.raw.clone() else {
+                self.toast(format!("code lens '{}' has no command", lens.title));
+                return;
+            };
+            let title = lens.title.clone();
+            self.pending_code_lens_resolve = Some((pane_id, lens_idx));
+            if !self.lsp.code_lens_resolve(&path, raw, lens_idx) {
+                self.pending_code_lens_resolve = None;
+                self.toast(format!("code lens: no server for '{}'", title));
+                return;
+            }
+            self.toast(format!("code lens: resolving '{title}'…"));
             return;
-        };
+        }
+        let cmd = lens.command.clone().unwrap();
         let title = lens.title.clone();
         if !self.lsp.execute_command(&path, &cmd) {
             self.toast(format!("code lens: no server for '{}'", title));
@@ -5839,6 +5860,37 @@ impl App {
                     {
                         b.code_lenses = lenses;
                         break;
+                    }
+                }
+            }
+            LspEvent::CodeLensResolve {
+                path,
+                lens_index,
+                lens,
+            } => {
+                // Merge the resolved command back onto the original lens
+                // in the buffer (matched by index). Then re-fire the
+                // click that triggered the resolve.
+                let pending = self.pending_code_lens_resolve.take();
+                for (i, p) in self.panes.iter_mut().enumerate() {
+                    if let Pane::Editor(b) = p
+                        && b.path.as_deref() == Some(path.as_path())
+                    {
+                        if let Some(orig) = b.code_lenses.get_mut(lens_index) {
+                            if orig.command.is_none() {
+                                orig.command = lens.command;
+                            }
+                            // Clear `raw` so we don't resolve again on the
+                            // next click.
+                            orig.raw = None;
+                        }
+                        if let Some((pane_id, idx)) = pending
+                            && pane_id == i
+                            && idx == lens_index
+                        {
+                            self.trigger_code_lens(pane_id, lens_index);
+                        }
+                        return;
                     }
                 }
             }

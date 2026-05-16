@@ -178,6 +178,15 @@ pub enum LspEvent {
         path: PathBuf,
         lenses: Vec<CodeLens>,
     },
+    /// Result of a `codeLens/resolve` request — the server fills in the
+    /// command for a previously-stub lens. App merges the command back
+    /// onto the right lens (matched by `lens_index`) and re-runs the
+    /// click that triggered the resolve.
+    CodeLensResolve {
+        path: PathBuf,
+        lens_index: usize,
+        lens: CodeLens,
+    },
     /// Result of a `textDocument/documentLink` request — clickable links
     /// (URLs / file paths) the server identified in the buffer.
     DocumentLinks {
@@ -351,14 +360,20 @@ pub struct InlayHint {
 
 /// A single code lens — an actionable annotation on a line. The renderer
 /// paints `title` as an end-of-line chip; clicking the chip fires
-/// `command` (if any) via `workspace/executeCommand`. Lenses without a
-/// command are dropped at parse time today — they'd need `codeLens/resolve`
-/// to flesh out, which the MVP skips.
+/// `command` (if any) via `workspace/executeCommand`. Stubs (title-only
+/// lenses where the server held the command for a `codeLens/resolve`
+/// round-trip) keep the original JSON in `raw` so resolve can hand it
+/// back to the server verbatim.
 #[derive(Debug, Clone)]
 pub struct CodeLens {
     pub line: u32,
     pub title: String,
     pub command: Option<CodeCommand>,
+    /// The original lens JSON from the server. Servers that defer the
+    /// command to a `codeLens/resolve` round-trip expect us to hand the
+    /// whole object (`data` field included) back verbatim. `None` when
+    /// we don't need / can't do a resolve.
+    pub raw: Option<serde_json::Value>,
 }
 
 /// A single entry in a `textDocument/documentSymbol` reply. We keep just
@@ -755,6 +770,24 @@ impl LspManager {
         for c in self.clients.values_mut() {
             if c.is_open(path) {
                 c.code_action_resolve(action.clone());
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send a `codeLens/resolve` for `lens` (the original JSON the server
+    /// returned) against whichever server has `path` open. Reply arrives as
+    /// [`LspEvent::CodeLensResolve`] keyed by `lens_index`.
+    pub fn code_lens_resolve(
+        &mut self,
+        path: &Path,
+        lens: serde_json::Value,
+        lens_index: usize,
+    ) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.code_lens_resolve(lens.clone(), lens_index);
                 sent = true;
             }
         }

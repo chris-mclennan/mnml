@@ -205,7 +205,8 @@ impl LspClient {
                             "formats": ["relative"]
                         },
                         "codeLens": {
-                            "dynamicRegistration": false
+                            "dynamicRegistration": false,
+                            "resolveSupport": { "properties": ["command"] }
                         },
                         "onTypeFormatting": { "dynamicRegistration": false },
                         "foldingRange": {
@@ -318,6 +319,15 @@ impl LspClient {
     /// `LspEvent::CodeActionResolve`.
     pub fn code_action_resolve(&mut self, action: serde_json::Value) {
         self.request("codeAction/resolve", action);
+    }
+
+    /// `codeLens/resolve` — round-trip the original lens (with its
+    /// server-private `data` field) back so the server fills in the
+    /// lazy `command`. Reply arrives as `LspEvent::CodeLensResolve`;
+    /// the lens index is matched via the pending-context stash, which
+    /// the App passes through as `lens_index.to_string()`.
+    pub fn code_lens_resolve(&mut self, lens: serde_json::Value, lens_index: usize) {
+        self.request_with_context("codeLens/resolve", lens, None, Some(lens_index.to_string()));
     }
 
     /// `textDocument/references` (params carry the extra `context`).
@@ -1233,6 +1243,23 @@ fn handle_message(
                     let _ = tx.send(LspEvent::CodeLens { path, lenses });
                 }
             }
+            "codeLens/resolve" => {
+                // The reply is a single `CodeLens` with the lazy `command`
+                // filled in. Wrap it as a 1-element array so the existing
+                // parser does the work; pluck the lens off the front.
+                if let (Some(path), Some(opaque)) = (req_path, req_opaque)
+                    && let Ok(lens_index) = opaque.parse::<usize>()
+                {
+                    let lenses = parse_code_lenses(&serde_json::Value::Array(vec![result.clone()]));
+                    if let Some(lens) = lenses.into_iter().next() {
+                        let _ = tx.send(LspEvent::CodeLensResolve {
+                            path,
+                            lens_index,
+                            lens,
+                        });
+                    }
+                }
+            }
             "textDocument/documentLink" => {
                 if let Some(path) = req_path {
                     let links = parse_document_links(result);
@@ -2081,9 +2108,10 @@ fn parse_workspace_symbols(result: &serde_json::Value) -> Vec<crate::lsp::Worksp
 /// Returns `None` for null / empty replies so the open popup can stay put
 /// (the spec says null means "no change", not "dismiss").
 /// Parse a `textDocument/codeLens` reply (`CodeLens[]` or null) into our
-/// flat `(line, title)` form. Lenses without a command (i.e., requiring
-/// `codeLens/resolve` to flesh out) are dropped — the renderer needs the
-/// title text up front.
+/// `(line, title, command, raw)` form. Stub lenses (title present, command
+/// missing or empty) are kept with `raw` set — a click can then fire
+/// `codeLens/resolve` to flesh out the command. Lenses without a title are
+/// dropped (we need something to render the chip).
 pub fn parse_code_lenses(result: &serde_json::Value) -> Vec<crate::lsp::CodeLens> {
     let mut out = Vec::new();
     let Some(arr) = result.as_array() else {
@@ -2097,20 +2125,21 @@ pub fn parse_code_lenses(result: &serde_json::Value) -> Vec<crate::lsp::CodeLens
             continue;
         };
         let line = start.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let Some(cmd_obj) = lens.get("command") else {
-            continue;
-        };
+        let cmd_obj = lens.get("command");
         let title = cmd_obj
-            .get("title")
+            .and_then(|c| c.get("title"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        // Capture the command if both the title and command-id are present and
+        // non-empty. Empty / missing command string ⇒ stub (resolve will fill it).
         let command_str = cmd_obj
-            .get("command")
+            .and_then(|c| c.get("command"))
             .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
         let arguments = cmd_obj
-            .get("arguments")
+            .and_then(|c| c.get("arguments"))
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
@@ -2118,11 +2147,21 @@ pub fn parse_code_lenses(result: &serde_json::Value) -> Vec<crate::lsp::CodeLens
             command: c,
             arguments,
         });
+        // Stash the raw lens JSON so a later `codeLens/resolve` can hand it
+        // back to the server verbatim (the `data` field carries the server's
+        // private state). Only needed for stubs (command is None) — eager
+        // lenses don't need resolve so we don't carry the bytes around.
+        let raw = if command.is_none() {
+            Some(lens.clone())
+        } else {
+            None
+        };
         if !title.is_empty() {
             out.push(crate::lsp::CodeLens {
                 line,
                 title,
                 command,
+                raw,
             });
         }
     }
@@ -2824,16 +2863,33 @@ mod tests {
     }
 
     #[test]
-    fn parse_code_lenses_drops_title_only_lens() {
-        // A "command" object with just a title and no `command` field is
-        // still actionless — drop it (clicking would have nothing to fire).
+    fn parse_code_lenses_keeps_stub_with_raw() {
+        // A "command" object with title but missing command-id is a STUB
+        // — keep it with `raw` set so a click can fire `codeLens/resolve`
+        // to fill in the command.
         let reply = json!([{
             "range": { "start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0} },
-            "command": { "title": "Run | Debug" }
+            "command": { "title": "Run | Debug" },
+            "data": { "kind": "test", "id": 42 }
         }]);
         let lenses = parse_code_lenses(&reply);
         assert_eq!(lenses.len(), 1);
         assert!(lenses[0].command.is_none());
+        let raw = lenses[0].raw.as_ref().expect("raw retained for resolve");
+        assert_eq!(raw["data"]["id"], 42);
+    }
+
+    #[test]
+    fn parse_code_lenses_eager_drops_raw() {
+        // Eager lens (command present) doesn't need resolve so `raw` is None.
+        let reply = json!([{
+            "range": { "start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0} },
+            "command": { "title": "5 references", "command": "rust-analyzer.showRefs" }
+        }]);
+        let lenses = parse_code_lenses(&reply);
+        assert_eq!(lenses.len(), 1);
+        assert!(lenses[0].command.is_some());
+        assert!(lenses[0].raw.is_none());
     }
 
     #[test]

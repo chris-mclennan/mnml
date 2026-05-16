@@ -278,17 +278,20 @@ inside the open `Pane::Grep` and the cursor jumps to the source line.
 **LSP code lens** — `[editor] code_lens = true` (default; `:set [no]codelens` /
 `:set codelens!`). `LspManager::code_lens(path)` fires `textDocument/codeLens` on
 open + save; reply parsed by `parse_code_lenses` into
-`Vec<CodeLens{line, title, command: Option<CodeCommand>}>`. Lenses without a `command`
-object (would require `codeLens/resolve`) are dropped. Renderer paints them as dim
-purple `⚡ <title>` chips at end-of-line, with `|` separators between multiple
-lenses on the same line. **Clicks are routed** — each painted lens's rect lands on
-`app.rects.code_lens_chips`; the mouse-down handler dispatches
-`App::trigger_code_lens(pane_id, lens_idx)` which fires
-`workspace/executeCommand` against the buffer's language server (rust-analyzer's
-"5 references" / "Run | Debug" lenses, TypeScript's "go to implementations", etc.).
-`initialize` advertises the capability. Lazy `codeLens/resolve` for stubs (TypeScript
-sometimes returns title-only lenses that need a resolve round-trip for the command)
-is a follow-up — for now those are toast'd "no command".
+`Vec<CodeLens{line, title, command: Option<CodeCommand>, raw: Option<Value>}>`. Stub
+lenses (title present, command missing) keep `raw` set so a click can fire
+`codeLens/resolve` to fill in the command. Lenses without a title are dropped (no chip
+to render). Renderer paints them as dim purple `⚡ <title>` chips at end-of-line, with
+`|` separators between multiple lenses on the same line. **Clicks are routed** — each
+painted lens's rect lands on `app.rects.code_lens_chips`; the mouse-down handler
+dispatches `App::trigger_code_lens(pane_id, lens_idx)` which either fires
+`workspace/executeCommand` directly (eager lens) or fires `codeLens/resolve` with the
+original lens JSON and stashes the click in `App.pending_code_lens_resolve`. The
+reply lands as `LspEvent::CodeLensResolve { path, lens_index, lens }` →
+`apply_lsp_event` merges the new command back onto the buffer's lens and re-fires the
+stashed click. Resolves rust-analyzer's "Run | Debug" + TypeScript's lazy
+"references" lenses. `initialize` advertises both the capability and
+`resolveSupport: { properties: ["command"] }`.
 **Vim `Ctrl+W p` / `Ctrl+W _` / `Ctrl+W |` / `Ctrl+W f` / `Ctrl+W n` / `Ctrl+W d` /
 `Ctrl+W x`** — focus previously-active leaf (alias `buffer.last`); maximize active
 split's height / width by pushing the enclosing parent's ratio to 90/10 toward the
