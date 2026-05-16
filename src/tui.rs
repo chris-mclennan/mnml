@@ -155,6 +155,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // down still fire (e.g. exit overlays, leave visual mode).
     if key.code == KeyCode::Esc {
         app.toast = None;
+        app.toast_stack.clear();
     }
     // Flash intercept: when label overlay is up, Esc cancels; a printable
     // char matching a label commits the jump; an unmatched key cancels

@@ -2608,6 +2608,19 @@ browser via the same `open_url_external` helper the per-host
 Empty caches ⇒ toast pointing at the four `[[<host>.repos]]` /
 `[[<host>.projects]]` config tables (no picker opens).
 
+**Stacked notifications** — when more than one toast is live, the recent
+ones (capped at `TOAST_STACK_MAX = 5`, newest first) render as a
+vertical column of bordered boxes at the bottom-right above the
+statusline (nvim-notify style). Each entry ages out independently at
+`TOAST_TTL`. Single-toast case is unchanged — the statusline middle
+still shows the most recent message there. New `App.toast_stack:
+VecDeque<(String, Instant)>` fed by `App::toast` alongside the existing
+single-slot `App.toast`. `App::tick` walks the back of the deque and
+pops aged-out entries. Esc clears the whole stack (same gesture that
+already dismissed the single toast). New `src/ui/toast_stack.rs` paints
+the overlay; gated on `toast_stack.len() > 1` so the single-toast path
+doesn't double-render.
+
 **Tree-sitter text objects** — `if`/`af` (inner/around function), `ic`/`ac`
 (inner/around class/struct/enum/trait/interface/mod/namespace/impl),
 `ia`/`aa` (inner/around argument). New ops `SelectInnerFunction` /

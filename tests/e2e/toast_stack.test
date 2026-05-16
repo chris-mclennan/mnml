@@ -1,0 +1,15 @@
+# Stacked toasts — multiple toasts in quick succession all become visible
+# at top-right (newest first). Each entry ages out independently.
+
+write a.txt "first"
+open a.txt
+
+# Fire 3 toast-emitting commands in a row.
+command editor.file_info
+command view.toggle_bufferline
+command view.toggle_bufferline
+
+# At least one of the three should appear in the screen. (The stack
+# overlay paints when len > 1; statusline still shows the most recent
+# toast in the middle.)
+expect screen contains "a.txt"

@@ -64,6 +64,7 @@ pub mod statusline;
 pub mod test_executions_view;
 pub mod tests_view;
 pub mod theme;
+pub mod toast_stack;
 pub mod trace_view;
 pub mod tree_view;
 pub mod welcome;
@@ -233,6 +234,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Yank flash overlay: tints the yanked byte range yellow for ~200ms
     // (vim.highlight.on_yank() equivalent).
     yank_flash_overlay::draw(frame, app);
+    // Stacked toasts: top-right vertical column when more than one toast
+    // is live (rapid-fire toasts no longer clobber each other).
+    toast_stack::draw(frame, app);
     // Flash overlay: paints label glyphs over the editor body when a
     // `s<a><b>` jump is armed.
     if app.flash_state.is_some() {

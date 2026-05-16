@@ -19,6 +19,7 @@ use crate::picker::{Picker, PickerKind};
 use crate::tree::Tree;
 
 const TOAST_TTL: Duration = Duration::from_secs(4);
+const TOAST_STACK_MAX: usize = 5;
 
 /// Cap on `App::recent_files`. Tuned to "deep enough to remember a few tasks
 /// ago, short enough that the picker isn't a wall of text."
@@ -1775,6 +1776,12 @@ pub struct App {
     pub rail_section: RailSection,
     pub git: GitStatus,
     pub toast: Option<(String, Instant)>,
+    /// Stack of recent toasts (newest first), capped at `TOAST_STACK_MAX`.
+    /// Each entry expires individually after `TOAST_TTL`. Rendered as a
+    /// top-right vertical overlay when more than one entry is live, so
+    /// rapid-fire toasts ("staged hunk", "saved", "git refreshed") don't
+    /// clobber each other. nvim-notify-style stacked notifications.
+    pub toast_stack: std::collections::VecDeque<(String, Instant)>,
     pub should_quit: bool,
     /// Set alongside `should_quit` when the loop should exit *for a rebuild+relaunch*
     /// (the `run.sh` wrapper watches for the distinct exit code).
@@ -2192,6 +2199,7 @@ impl App {
             rail_section: RailSection::Workspace,
             git,
             toast: None,
+            toast_stack: std::collections::VecDeque::new(),
             should_quit: false,
             restart_requested: false,
             redraw_requested: false,
@@ -18338,7 +18346,13 @@ impl App {
         // `:silent <cmd>` suppresses the visible toast but the message
         // is still recorded in the log so `:messages` can recover it.
         if self.silent_depth == 0 {
-            self.toast = Some((s.clone(), Instant::now()));
+            let now = Instant::now();
+            self.toast = Some((s.clone(), now));
+            // Push onto the stack (newest at front). Cap at TOAST_STACK_MAX.
+            self.toast_stack.push_front((s.clone(), now));
+            while self.toast_stack.len() > TOAST_STACK_MAX {
+                self.toast_stack.pop_back();
+            }
         }
         self.message_log.push(s);
         if self.message_log.len() > MESSAGE_LOG_MAX {
@@ -18386,6 +18400,16 @@ impl App {
             && t.elapsed() >= TOAST_TTL
         {
             self.toast = None;
+        }
+        // Expire stacked toasts individually (entries are independent —
+        // a rapid burst of toasts ages out one-by-one rather than all
+        // at once).
+        while self
+            .toast_stack
+            .back()
+            .is_some_and(|(_, t)| t.elapsed() >= TOAST_TTL)
+        {
+            self.toast_stack.pop_back();
         }
     }
 
