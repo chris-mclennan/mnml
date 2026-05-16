@@ -14,6 +14,7 @@
 //! command <id>                   # run a registered command by id
 //! wait  <ms>                     # sleep + tick (for async/pty steps)
 //! snippet <scope> <trig> <expansion>  # seed a [snippets.<scope>] entry on app.config
+//! shell <cmd>                    # run `<cmd>` via $SHELL -c in workspace (non-zero exit fails)
 //! expect screen contains <text>  # the rendered virtual screen contains the substring
 //! expect screen lacks <text>     # …does not
 //! expect dirty <true|false>      # the active editor's dirty flag
@@ -55,6 +56,11 @@ enum Step {
         trigger: String,
         expansion: String,
     },
+    /// Run `<cmd>` via `$SHELL -c` (POSIX) / `cmd.exe /C` (Windows) in the
+    /// workspace tempdir. Non-zero exit fails the test with stderr in the
+    /// message. Useful for fixture setup that mnml itself can't do —
+    /// `git init`, creating non-text files, etc.
+    Shell(String),
 }
 
 #[derive(Debug, Clone)]
@@ -167,6 +173,13 @@ fn parse(text: &str) -> Result<Vec<Line>, String> {
                     trigger: trigger.to_string(),
                     expansion: unescape(expansion),
                 })
+            }
+            "shell" => {
+                let cmd = rest.trim();
+                if cmd.is_empty() {
+                    return Err(format!("line {ln}: `shell` needs a command"));
+                }
+                Stmt::Step(Step::Shell(cmd.to_string()))
             }
             "expect" => parse_expect(ln, rest)?,
             other => return Err(format!("line {ln}: unknown statement `{other}`")),
@@ -395,6 +408,39 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
                 .insert(trigger.clone(), expansion.clone());
             Ok(())
         }
+        Step::Shell(cmd) => {
+            // POSIX shells go through $SHELL -c; Windows uses cmd.exe /C.
+            // Workspace is cwd so paths in `<cmd>` resolve naturally.
+            #[cfg(windows)]
+            let mut shell = std::process::Command::new("cmd");
+            #[cfg(windows)]
+            shell.args(["/C", cmd]);
+            #[cfg(not(windows))]
+            let shell_path = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+            #[cfg(not(windows))]
+            let mut shell = std::process::Command::new(shell_path);
+            #[cfg(not(windows))]
+            shell.args(["-c", cmd]);
+            let out = shell
+                .current_dir(workspace)
+                .output()
+                .map_err(|e| format!("shell spawn: {e}"))?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                return Err(format!(
+                    "shell `{cmd}` exited {}: {}{}",
+                    out.status,
+                    stderr.trim(),
+                    if stderr.trim().is_empty() {
+                        stdout.trim().to_string()
+                    } else {
+                        String::new()
+                    }
+                ));
+            }
+            Ok(())
+        }
     }
 }
 
@@ -540,6 +586,20 @@ expect dirty false
     #[test]
     fn rejects_bad_key_spec() {
         assert!(parse("key ctrl+nope+x").is_err());
+    }
+
+    #[test]
+    fn parses_shell_step() {
+        let stmts = parse("shell echo hi\n").unwrap();
+        match &stmts[0].1 {
+            Stmt::Step(Step::Shell(cmd)) => assert_eq!(cmd, "echo hi"),
+            other => panic!("expected Shell, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_empty_shell_command() {
+        assert!(parse("shell   \n").is_err());
     }
 
     #[test]

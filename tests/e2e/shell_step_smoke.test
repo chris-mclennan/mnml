@@ -1,0 +1,22 @@
+# Smoke-test the new `shell` step: write a file, mutate it via shell,
+# then open + verify the mnml-visible content reflects the shell mutation.
+#
+# Also demonstrates the git-fixture idiom — `git init` in the workspace
+# so multi-repo / status-pane / blame tests have something real to read.
+
+write hello.txt "first"
+shell echo "appended" >> hello.txt
+open hello.txt
+expect screen contains "first"
+expect screen contains "appended"
+
+# Git fixture — init a repo in the workspace, configure user, commit.
+# This is the pattern future git-flow .test files will use.
+shell git init -q
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+shell git add hello.txt
+shell git commit -q -m "initial"
+
+# A non-zero exit should fail this test if uncommented:
+# shell exit 7

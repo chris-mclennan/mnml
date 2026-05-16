@@ -1,0 +1,29 @@
+# Git status pane — open the pane, observe an untracked file, stage it,
+# observe it move from "unstaged" to "staged". Exercises `git.status_pane`
+# and the stage/unstage flow.
+
+# Seed a real git repo.
+shell git init -q
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+
+# Initial commit so we have HEAD (some git ops require it).
+write seed.txt "seed"
+shell git add seed.txt
+shell git commit -q -m "initial"
+
+# Now create an untracked file. The status pane should show it as
+# untracked (?).
+write new.txt "untracked"
+
+command git.status_pane
+
+# Header includes branch + the change count. We can't easily assert the
+# exact branch name (git init default varies between versions — main vs
+# master) but the untracked file's name should be visible.
+expect screen contains "new.txt"
+
+# Stage every entry via the pane's `a` chord. After staging, the file
+# moves to the "staged" section but is still visible.
+key a
+expect screen contains "new.txt"
