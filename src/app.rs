@@ -1754,6 +1754,16 @@ pub struct App {
     /// [`Self::tick`] drains them into the `Pane::Browser`. `None` when no browser
     /// pane is open (only one at a time in the first cut).
     cdp_chan: Option<std::sync::mpsc::Receiver<crate::cdp::CdpEvent>>,
+    /// Channel for background Bitbucket pipeline-log fetches.
+    /// Each worker thread fetches one pipeline's combined log; the reply
+    /// (Done/Failed) is matched to the open `Pane::BitbucketPipelineLog`
+    /// by `job_id`. Lazily created when the first log is fetched.
+    pipeline_log_chan: Option<(
+        std::sync::mpsc::Sender<crate::bitbucket::PipelineLogEvent>,
+        std::sync::mpsc::Receiver<crate::bitbucket::PipelineLogEvent>,
+    )>,
+    /// Next job-id for a pipeline-log fetch (so re-fetches can drop stale replies).
+    pipeline_log_next_job: u64,
     /// DocumentDB worker channel for the `private` feature's
     /// [`crate::pane::Pane::TestExecutions`] pane. `Some` while a worker
     /// thread is alive. Drained by [`Self::tick`] into the open
@@ -1999,6 +2009,8 @@ impl App {
             ai_chan: None,
             tests_chan: None,
             cdp_chan: None,
+            pipeline_log_chan: None,
+            pipeline_log_next_job: 1,
             #[cfg(feature = "private")]
             docdb_handle: None,
             bitbucket_handle: None,
@@ -5689,6 +5701,7 @@ impl App {
             | Some(Pane::CmdlineHistory(_))
             | Some(Pane::BitbucketPipelines(_))
             | Some(Pane::BitbucketPullRequests(_))
+            | Some(Pane::BitbucketPipelineLog(_))
             | Some(Pane::GithubActions(_))
             | Some(Pane::GithubPullRequests(_))
             | Some(Pane::GitlabPipelines(_))
@@ -11673,6 +11686,7 @@ impl App {
             | Pane::CmdlineHistory(_)
             | Pane::BitbucketPipelines(_)
             | Pane::BitbucketPullRequests(_)
+            | Pane::BitbucketPipelineLog(_)
             | Pane::GithubActions(_)
             | Pane::GithubPullRequests(_)
             | Pane::GitlabPipelines(_)
@@ -11779,6 +11793,7 @@ impl App {
             Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
             Pane::BitbucketPipelines(p) => Some((p.tab_title(), false)),
             Pane::BitbucketPullRequests(p) => Some((p.tab_title(), false)),
+            Pane::BitbucketPipelineLog(p) => Some((p.title.clone(), false)),
             Pane::GithubActions(p) => Some((p.tab_title(), false)),
             Pane::GithubPullRequests(p) => Some((p.tab_title(), false)),
             Pane::GitlabPipelines(p) => Some((p.tab_title(), false)),
@@ -16238,6 +16253,7 @@ impl App {
         self.drain_github_events();
         self.drain_gitlab_events();
         self.drain_azdevops_events();
+        self.drain_pipeline_log_events();
         self.refresh_live_ai_panes();
         self.autosave_idle_buffers();
         self.check_external_file_changes();
@@ -17203,6 +17219,229 @@ impl App {
             return None;
         };
         crate::ui::bitbucket_pipelines_view::selected_pipeline(self, pane).map(|r| r.web_url)
+    }
+
+    /// `L` on the selected Bitbucket pipeline row — open / focus a
+    /// `Pane::BitbucketPipelineLog` and kick off a background fetch of
+    /// the combined per-step build log. Errors land in the pane's `Failed`
+    /// state (e.g. missing auth env var, network, 404).
+    pub fn open_bitbucket_pipeline_log(&mut self) {
+        let id = match self.active {
+            Some(id) => id,
+            None => {
+                self.toast("no pane focused");
+                return;
+            }
+        };
+        let Some(Pane::BitbucketPipelines(pane)) = self.panes.get(id) else {
+            self.toast("not a Bitbucket pipelines pane");
+            return;
+        };
+        let Some(pipeline) = crate::ui::bitbucket_pipelines_view::selected_pipeline(self, pane)
+        else {
+            self.toast("no pipeline selected");
+            return;
+        };
+        let title = format!(
+            "{}/{} · build #{}",
+            pipeline.workspace, pipeline.slug, pipeline.build_number
+        );
+        let job_id = self.pipeline_log_next_job;
+        self.pipeline_log_next_job = self.pipeline_log_next_job.wrapping_add(1);
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let log_pane = crate::bitbucket::PipelineLogPane::new(
+            title,
+            pipeline.workspace.clone(),
+            pipeline.slug.clone(),
+            pipeline.uuid.clone(),
+            pipeline.web_url.clone(),
+            job_id,
+            cancel.clone(),
+        );
+        // Open in a split below the active pane.
+        let pane_v = Pane::BitbucketPipelineLog(log_pane);
+        let new_id = self.split_leaf_with(id, crate::layout::SplitDir::Horizontal, pane_v);
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+        // Kick off the worker.
+        self.spawn_bitbucket_pipeline_log_fetch(
+            job_id,
+            pipeline.workspace,
+            pipeline.slug,
+            pipeline.uuid,
+            cancel,
+        );
+    }
+
+    /// Background-thread fetch of one pipeline's combined log. Reads the
+    /// auth token from the configured env var; reply lands on
+    /// `pipeline_log_chan` and is drained by `tick`.
+    fn spawn_bitbucket_pipeline_log_fetch(
+        &mut self,
+        job_id: u64,
+        workspace: String,
+        slug: String,
+        pipeline_uuid: String,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let tx = self.ensure_pipeline_log_chan_tx();
+        // Reuse the BB config's auth_env so the user has one place to
+        // configure their token (`[bitbucket] auth_env = "..."`).
+        let auth_env = self
+            .config
+            .bitbucket
+            .auth_env
+            .clone()
+            .unwrap_or_else(|| "BITBUCKET_TOKEN".to_string());
+        std::thread::spawn(move || {
+            use crate::bitbucket::PipelineLogEvent;
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+            let token = match std::env::var(&auth_env) {
+                Ok(v) => v,
+                Err(_) => {
+                    let _ = tx.send(PipelineLogEvent::Failed {
+                        job_id,
+                        err: format!("missing auth: set ${auth_env}"),
+                    });
+                    return;
+                }
+            };
+            let auth_header = crate::bitbucket::api::auth_header_value(&token);
+            let client = match crate::bitbucket::api::build_client() {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tx.send(PipelineLogEvent::Failed { job_id, err: e });
+                    return;
+                }
+            };
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+            match crate::bitbucket::api::fetch_combined_pipeline_log(
+                &client,
+                &auth_header,
+                &workspace,
+                &slug,
+                &pipeline_uuid,
+            ) {
+                Ok(log) => {
+                    let _ = tx.send(PipelineLogEvent::Done { job_id, log });
+                }
+                Err(err) => {
+                    let _ = tx.send(PipelineLogEvent::Failed { job_id, err });
+                }
+            }
+        });
+    }
+
+    fn ensure_pipeline_log_chan_tx(
+        &mut self,
+    ) -> std::sync::mpsc::Sender<crate::bitbucket::PipelineLogEvent> {
+        if let Some((tx, _)) = &self.pipeline_log_chan {
+            tx.clone()
+        } else {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let tx_clone = tx.clone();
+            self.pipeline_log_chan = Some((tx, rx));
+            tx_clone
+        }
+    }
+
+    /// Drain finished pipeline-log fetches into the matching pane.
+    /// Called by `App::tick`.
+    pub fn drain_pipeline_log_events(&mut self) {
+        let Some((_, rx)) = &self.pipeline_log_chan else {
+            return;
+        };
+        let mut events: Vec<crate::bitbucket::PipelineLogEvent> = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            events.push(ev);
+        }
+        for ev in events {
+            use crate::bitbucket::PipelineLogEvent;
+            use crate::bitbucket::PipelineLogState;
+            match ev {
+                PipelineLogEvent::Done { job_id, log } => {
+                    for pane in self.panes.iter_mut() {
+                        if let Pane::BitbucketPipelineLog(p) = pane
+                            && p.job_id == job_id
+                        {
+                            p.state = PipelineLogState::Done(log);
+                            break;
+                        }
+                    }
+                }
+                PipelineLogEvent::Failed { job_id, err } => {
+                    for pane in self.panes.iter_mut() {
+                        if let Pane::BitbucketPipelineLog(p) = pane
+                            && p.job_id == job_id
+                        {
+                            p.state = PipelineLogState::Failed(err);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// `r` in a `Pane::BitbucketPipelineLog` — re-fetch the log.
+    pub fn refetch_active_pipeline_log(&mut self) {
+        let id = match self.active {
+            Some(id) => id,
+            None => return,
+        };
+        let Some(Pane::BitbucketPipelineLog(pane)) = self.panes.get_mut(id) else {
+            return;
+        };
+        // Reset state. Spawn a fresh job so stale replies can't clobber.
+        pane.cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let new_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let new_job = self.pipeline_log_next_job;
+        self.pipeline_log_next_job = self.pipeline_log_next_job.wrapping_add(1);
+        let workspace = pane.workspace.clone();
+        let slug = pane.slug.clone();
+        let pipeline_uuid = pane.pipeline_uuid.clone();
+        pane.job_id = new_job;
+        pane.cancel = new_cancel.clone();
+        pane.state = crate::bitbucket::PipelineLogState::Fetching;
+        pane.scroll = 0;
+        self.spawn_bitbucket_pipeline_log_fetch(
+            new_job,
+            workspace,
+            slug,
+            pipeline_uuid,
+            new_cancel,
+        );
+    }
+
+    /// `Enter` in the pipeline-log pane — open the pipeline's web URL.
+    pub fn open_active_pipeline_log_url(&mut self) {
+        let Some(id) = self.active else {
+            return;
+        };
+        let Some(Pane::BitbucketPipelineLog(pane)) = self.panes.get(id) else {
+            return;
+        };
+        let url = pane.web_url.clone();
+        open_url_external(&url);
+        self.toast("opened pipeline in browser");
+    }
+
+    /// `y` in the pipeline-log pane — copy the URL.
+    pub fn copy_active_pipeline_log_url(&mut self) {
+        let Some(id) = self.active else {
+            return;
+        };
+        let Some(Pane::BitbucketPipelineLog(pane)) = self.panes.get(id) else {
+            return;
+        };
+        let url = pane.web_url.clone();
+        self.clipboard.set_yank(url, false);
+        self.toast("copied pipeline URL");
     }
 
     /// Open / focus the Bitbucket pull requests pane. Shares the worker
@@ -19680,6 +19919,78 @@ GET https://example.com/second
         assert_eq!(app.git_rail.pulls.len(), 1, "only matching host shows");
         assert_eq!(app.git_rail.pulls[0].host_tag, "GH");
         assert_eq!(app.git_rail.pulls[0].title, "GH match");
+    }
+
+    #[test]
+    fn drain_pipeline_log_events_routes_done_to_pane() {
+        // No real worker; we inject events on the channel directly.
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // Open a log pane manually.
+        let job = 42;
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pane = crate::bitbucket::PipelineLogPane::new(
+            "test pane".to_string(),
+            "ws".into(),
+            "slug".into(),
+            "{uuid-x}".into(),
+            "https://example/p/123".into(),
+            job,
+            cancel.clone(),
+        );
+        app.panes.push(Pane::BitbucketPipelineLog(pane));
+        let pane_id = app.panes.len() - 1;
+        // Hook up the channel + push a Done event.
+        let tx = app.ensure_pipeline_log_chan_tx();
+        tx.send(crate::bitbucket::PipelineLogEvent::Done {
+            job_id: job,
+            log: "hello world".to_string(),
+        })
+        .unwrap();
+        app.drain_pipeline_log_events();
+        // Pane state should have flipped to Done.
+        if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get(pane_id) {
+            match &p.state {
+                crate::bitbucket::PipelineLogState::Done(text) => {
+                    assert_eq!(text, "hello world");
+                }
+                other => panic!("expected Done, got {other:?}"),
+            }
+        } else {
+            panic!("expected BitbucketPipelineLog pane");
+        }
+    }
+
+    #[test]
+    fn drain_pipeline_log_events_routes_failed() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let job = 99;
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pane = crate::bitbucket::PipelineLogPane::new(
+            "x".to_string(),
+            "ws".into(),
+            "slug".into(),
+            "{u}".into(),
+            "https://example".into(),
+            job,
+            cancel,
+        );
+        app.panes.push(Pane::BitbucketPipelineLog(pane));
+        let pane_id = app.panes.len() - 1;
+        let tx = app.ensure_pipeline_log_chan_tx();
+        tx.send(crate::bitbucket::PipelineLogEvent::Failed {
+            job_id: job,
+            err: "boom".to_string(),
+        })
+        .unwrap();
+        app.drain_pipeline_log_events();
+        if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get(pane_id) {
+            match &p.state {
+                crate::bitbucket::PipelineLogState::Failed(msg) => assert_eq!(msg, "boom"),
+                other => panic!("expected Failed, got {other:?}"),
+            }
+        }
     }
 
     #[test]

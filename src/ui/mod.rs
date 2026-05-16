@@ -48,6 +48,7 @@ pub mod icons;
 pub mod md_preview;
 pub mod outline_view;
 pub mod picker;
+pub mod pipeline_log_view;
 pub mod prompt;
 pub mod pty_view;
 pub mod request_view;
@@ -306,6 +307,7 @@ fn render_layout(
                 Some(crate::pane::Pane::GitlabMergeRequests(_)) => 24,
                 Some(crate::pane::Pane::AzDevOpsBuilds(_)) => 25,
                 Some(crate::pane::Pane::AzDevOpsPullRequests(_)) => 26,
+                Some(crate::pane::Pane::BitbucketPipelineLog(_)) => 27,
                 _ => 0,
             };
             match kind {
@@ -339,6 +341,13 @@ fn render_layout(
                 24 => gitlab_merge_requests_view::draw(frame, app, *id, area, focused),
                 25 => azdevops_builds_view::draw(frame, app, *id, area, focused),
                 26 => azdevops_pull_requests_view::draw(frame, app, *id, area, focused),
+                27 => {
+                    if let Some(crate::pane::Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(*id)
+                    {
+                        pipeline_log_view::draw(frame, p, area);
+                    }
+                    None
+                }
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

@@ -268,6 +268,93 @@ pub fn fetch_running_step(
     parse_running_step(&body)
 }
 
+/// Walk every step of a pipeline and concatenate each step's `/log` output
+/// into one big string, with `══ step N: <name> (state) ══` headers between
+/// them. Used by the in-mnml pipeline-log viewer pane.
+///
+/// Returns `(combined_log, web_url_of_pipeline)` on success. Errors out at
+/// the first transport / non-2xx — we don't partial-fail because the user
+/// asked for the whole thing.
+pub fn fetch_combined_pipeline_log(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+    workspace: &str,
+    slug: &str,
+    pipeline_uuid: &str,
+) -> Result<String, String> {
+    let encoded = url_encode_account_id(pipeline_uuid);
+    let steps_url =
+        format!("{API_BASE}/repositories/{workspace}/{slug}/pipelines/{encoded}/steps/?pagelen=50");
+    let resp = client
+        .get(&steps_url)
+        .header("Authorization", auth_header)
+        .header("Accept", "application/json")
+        .send()
+        .map_err(|e| format!("steps fetch: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("steps fetch: HTTP {}", resp.status()));
+    }
+    let body = resp.text().map_err(|e| format!("steps body: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("steps json: {e}"))?;
+    let values = v
+        .get("values")
+        .and_then(|x| x.as_array())
+        .ok_or_else(|| "steps json: no `values` array".to_string())?;
+    let mut out = String::new();
+    for (i, step) in values.iter().enumerate() {
+        let step_uuid = step
+            .get("uuid")
+            .and_then(|s| s.as_str())
+            .ok_or_else(|| format!("step {}: missing uuid", i + 1))?;
+        let step_name = step
+            .get("name")
+            .and_then(|s| s.as_str())
+            .unwrap_or("(unnamed step)");
+        let state_name = step
+            .get("state")
+            .and_then(|s| s.get("name"))
+            .and_then(|s| s.as_str())
+            .unwrap_or("UNKNOWN");
+        out.push_str(&format!(
+            "\n══ step {}: {step_name}  ({state_name}) ══\n",
+            i + 1
+        ));
+        // Fetch this step's log. Bitbucket returns the *raw* log text for
+        // `/log` (not JSON), so we don't try to parse it.
+        let encoded_step = url_encode_account_id(step_uuid);
+        let log_url = format!(
+            "{API_BASE}/repositories/{workspace}/{slug}/pipelines/{encoded}/steps/{encoded_step}/log"
+        );
+        let resp = client
+            .get(&log_url)
+            .header("Authorization", auth_header)
+            .send()
+            .map_err(|e| format!("step {} log: {e}", i + 1))?;
+        // 404 on the log endpoint = "step never ran" (skipped / pending).
+        // Treat that as "(no log)" rather than failing the whole call.
+        if resp.status().as_u16() == 404 {
+            out.push_str("(no log)\n");
+            continue;
+        }
+        if !resp.status().is_success() {
+            out.push_str(&format!("(log fetch failed: HTTP {})\n", resp.status()));
+            continue;
+        }
+        let text = resp
+            .text()
+            .map_err(|e| format!("step {} body: {e}", i + 1))?;
+        out.push_str(&text);
+        if !text.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    if out.is_empty() {
+        out.push_str("(this pipeline has no steps yet)\n");
+    }
+    Ok(out)
+}
+
 pub fn parse_running_step(body: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(body).ok()?;
     let values = v.get("values")?.as_array()?;

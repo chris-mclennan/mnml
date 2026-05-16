@@ -1920,6 +1920,13 @@ fn builtin_commands() -> Vec<Command> {
     // `c` (on a PR row) and `P` (on a pipeline row) inside each pane —
     // these aliases keep them in the palette too for discovery.
     cmds.push(Command {
+        id: "bitbucket.pipeline_log",
+        title: "Bitbucket: open log for selected pipeline",
+        group: "bitbucket",
+        keys: &[],
+        run: |app| app.open_bitbucket_pipeline_log(),
+    });
+    cmds.push(Command {
         id: "bitbucket.jump_pr_to_pipeline",
         title: "Bitbucket: PR → pipeline on same branch",
         group: "bitbucket",

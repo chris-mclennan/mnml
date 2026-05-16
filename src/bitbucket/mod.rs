@@ -32,10 +32,12 @@ use std::time::Duration;
 use crate::config::{BitbucketConfig, BitbucketRepo};
 
 pub mod api;
+pub mod log_pane;
 pub mod pipelines_pane;
 pub mod pull_requests_pane;
 
 pub use api::{PipelineRecord, PipelineState, PullRequestRecord, PullRequestState};
+pub use log_pane::{PipelineLogEvent, PipelineLogPane, PipelineLogState};
 pub use pipelines_pane::{BitbucketPipelinesPane, PipelineViewMode};
 pub use pull_requests_pane::{BitbucketPullRequestsPane, PrViewMode};
 

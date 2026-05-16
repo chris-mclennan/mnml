@@ -1031,6 +1031,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('y') => app.copy_selected_bitbucket_pipeline_url(),
             KeyCode::Char('r') => app.refresh_active_bitbucket_pane(),
             KeyCode::Char('P') => app.jump_from_bb_pipeline_to_pr(),
+            KeyCode::Char('L') => app.open_bitbucket_pipeline_log(),
             KeyCode::Char('v') => {
                 let new_mode = app.bb_pipelines_view_mode.cycle();
                 app.bb_pipelines_view_mode = new_mode;
@@ -1040,6 +1041,48 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 }
                 app.toast(format!("bitbucket pipelines: view → {}", new_mode.label()));
             }
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
+
+    // Bitbucket pipeline-log viewer: scrollable text, no list selection.
+    if matches!(app.panes.get(i), Some(Pane::BitbucketPipelineLog(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_sub(1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_add(1);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_sub(10);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_add(10);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(i) {
+                    p.scroll = 0;
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(i) {
+                    p.scroll = usize::MAX; // clamped on next render
+                }
+            }
+            KeyCode::Char('r') => app.refetch_active_pipeline_log(),
+            KeyCode::Char('y') => app.copy_active_pipeline_log_url(),
+            KeyCode::Enter => app.open_active_pipeline_log_url(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }
@@ -3204,6 +3247,14 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             #[cfg(feature = "private")]
             Some(Pane::CodeBuilds(p)) => {
                 p.move_selection(delta as i64);
+            }
+            Some(Pane::BitbucketPipelineLog(p)) => {
+                let n = delta.unsigned_abs() as usize;
+                p.scroll = if delta < 0 {
+                    p.scroll.saturating_sub(n)
+                } else {
+                    p.scroll + n
+                };
             }
             Some(Pane::BitbucketPipelines(_))
             | Some(Pane::BitbucketPullRequests(_))

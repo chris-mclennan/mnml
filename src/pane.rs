@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::ai::AiPane;
 use crate::azdevops::{AzDevOpsBuildsPane, AzDevOpsPullRequestsPane};
-use crate::bitbucket::{BitbucketPipelinesPane, BitbucketPullRequestsPane};
+use crate::bitbucket::{BitbucketPipelinesPane, BitbucketPullRequestsPane, PipelineLogPane};
 use crate::browser_pane::BrowserPane;
 use crate::buffer::Buffer;
 use crate::git::diff::Hunk;
@@ -77,6 +77,8 @@ pub enum Pane {
     BitbucketPipelines(BitbucketPipelinesPane),
     /// Bitbucket Cloud open pull requests list — sibling of the pipelines pane.
     BitbucketPullRequests(BitbucketPullRequestsPane),
+    /// Bitbucket pipeline log viewer — opened by `L` on a BB pipeline row.
+    BitbucketPipelineLog(PipelineLogPane),
     /// GitHub Actions workflow runs list — symmetric to the Bitbucket pane.
     GithubActions(GithubActionsPane),
     /// GitHub open pull requests list.
@@ -240,6 +242,7 @@ impl Pane {
             Pane::CmdlineHistory(_) => "q:".to_string(),
             Pane::BitbucketPipelines(p) => p.tab_title(),
             Pane::BitbucketPullRequests(p) => p.tab_title(),
+            Pane::BitbucketPipelineLog(p) => p.title.clone(),
             Pane::GithubActions(p) => p.tab_title(),
             Pane::GithubPullRequests(p) => p.tab_title(),
             Pane::GitlabPipelines(p) => p.tab_title(),
@@ -275,6 +278,7 @@ impl Pane {
             | Pane::CmdlineHistory(_)
             | Pane::BitbucketPipelines(_)
             | Pane::BitbucketPullRequests(_)
+            | Pane::BitbucketPipelineLog(_)
             | Pane::GithubActions(_)
             | Pane::GithubPullRequests(_)
             | Pane::GitlabPipelines(_)

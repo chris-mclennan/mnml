@@ -198,6 +198,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::BitbucketPullRequests(_) => {
                 (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().cyan)
             }
+            Pane::BitbucketPipelineLog(_) => {
+                (if nerd { "\u{f120}" } else { "≡" }, theme::cur().cyan)
+            }
             Pane::GithubActions(_) => (if nerd { "\u{f09b}" } else { "⚙" }, theme::cur().purple),
             Pane::GithubPullRequests(_) => {
                 (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().purple)

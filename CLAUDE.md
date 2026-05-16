@@ -2119,6 +2119,20 @@ comment_count is hardcoded 0 because Azure's list endpoint doesn't
 return it (would need a per-PR `/threads` call). Free-tier signup
 walk-through in conversation history if a real test is needed.
 
+**Bitbucket pipeline-log viewer** — `L` on a BB pipeline row opens a
+`Pane::BitbucketPipelineLog` (split below the source) and a background
+thread fetches every step's `/log` endpoint, concatenating into one
+buffer with `══ step N: <name> (state) ══` separators between steps.
+Read-only, scrollable (↑↓/j/k/PgUp/PgDn/g/G/Home/End); `r` re-fetches
+(spawns a new job; stale replies dropped by `job_id` match); `y`
+copies the pipeline's web URL; `Enter` opens it in the browser;
+`Esc` returns to tree. Auth uses the BB worker's `auth_env`
+(`$BITBUCKET_TOKEN` by default); missing env ⇒ pane lands in
+`Failed("missing auth: set $...")`. New `crate::bitbucket::api::
+fetch_combined_pipeline_log` (steps GET → loop step `/log` GETs,
+treats 404 as "(no log)" for skipped/pending steps). One host only
+for now — GH Actions / GitLab / Azure DevOps follow in later commits.
+
 **Branch-rail "open PRs" subsection** — third sub-section in the GIT
 rail (below `branches` + `worktrees`). Lists open PRs/MRs for the
 *current* repo, resolved by parsing `git remote get-url origin` with
