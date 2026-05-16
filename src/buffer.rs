@@ -178,6 +178,12 @@ pub struct Buffer {
     /// — the diagnostics pane + gutter signs + statusline counts merge
     /// the two lists.
     pub linter_diagnostics: Vec<crate::lsp::Diagnostic>,
+    /// DAP breakpoint lines (0-based, sorted, unique). Painted as `●`
+    /// in the editor gutter (red); toggled via `dap.toggle_breakpoint`.
+    /// Persisted in session.json. The actual debug session is started
+    /// by `dap.run` (which sends `setBreakpoints` to the adapter); for
+    /// now this list is informational + persistence-only.
+    pub breakpoints: Vec<u32>,
     /// LSP inlay hints — virtual text the server suggests at specific
     /// positions. Refreshed on save (and after the initial `did_open`
     /// reply lands). Rendered as dim chips in the editor view.
@@ -307,6 +313,7 @@ impl Buffer {
             blame: None,
             diagnostics: Vec::new(),
             linter_diagnostics: Vec::new(),
+            breakpoints: Vec::new(),
             inlay_hints: Vec::new(),
             semantic_tokens: Vec::new(),
             last_semantic_viewport: None,
@@ -382,6 +389,7 @@ impl Buffer {
             blame: None,
             diagnostics: Vec::new(),
             linter_diagnostics: Vec::new(),
+            breakpoints: Vec::new(),
             inlay_hints: Vec::new(),
             semantic_tokens: Vec::new(),
             last_semantic_viewport: None,
@@ -474,6 +482,26 @@ impl Buffer {
         self.diagnostics
             .iter()
             .chain(self.linter_diagnostics.iter())
+    }
+
+    /// Toggle a breakpoint on `line` (0-based). Returns true if added,
+    /// false if removed.
+    pub fn toggle_breakpoint(&mut self, line: u32) -> bool {
+        match self.breakpoints.binary_search(&line) {
+            Ok(i) => {
+                self.breakpoints.remove(i);
+                false
+            }
+            Err(i) => {
+                self.breakpoints.insert(i, line);
+                true
+            }
+        }
+    }
+
+    /// True if `line` has a breakpoint.
+    pub fn has_breakpoint(&self, line: u32) -> bool {
+        self.breakpoints.binary_search(&line).is_ok()
     }
 
     pub fn display_name(&self) -> String {

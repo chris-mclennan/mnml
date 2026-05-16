@@ -1,0 +1,26 @@
+# DAP starter MVP — breakpoint marks track per editor buffer. Toggle on
+# the current cursor line; the gutter paints a red `●`. Listing summarizes
+# every breakpoint across open buffers.
+
+write code.rs "fn main() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n}\n"
+open code.rs
+command editor.use_vim
+
+# Cursor on line 1 (0-based). Toggle a breakpoint there.
+key j
+key j
+command dap.toggle_breakpoint
+expect screen contains "breakpoint set: line 3"
+
+# Toggle off — same line.
+command dap.toggle_breakpoint
+expect screen contains "breakpoint cleared: line 3"
+
+# Toggle again to verify list works.
+command dap.toggle_breakpoint
+command dap.list_breakpoints
+expect screen contains "code.rs"
+
+# Clear all.
+command dap.clear_all_breakpoints
+expect screen contains "cleared 1 breakpoint"

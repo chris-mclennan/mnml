@@ -422,7 +422,9 @@ pub fn draw_pane(
                 theme::cur().base16[0x03]
             })
             .bg(base_bg);
-        // The 1-cell sign column: an LSP severity dot wins, else the git change mark.
+        // The 1-cell sign column: a DAP breakpoint dot wins (red), then
+        // an LSP diagnostic severity dot, then the git change mark.
+        let has_bp = buf.has_breakpoint(line_no as u32);
         let sign = signs.and_then(|v| {
             v.binary_search_by_key(&line_no, |&(l, _)| l)
                 .ok()
@@ -430,6 +432,8 @@ pub fn draw_pane(
         });
         let sign_span = if is_continuation {
             Span::styled(" ", Style::default().bg(base_bg))
+        } else if has_bp {
+            Span::styled("●", Style::default().fg(theme::cur().red).bg(base_bg))
         } else if let Some(s) = diag_sev {
             Span::styled("●", Style::default().fg(diag_color(s)).bg(base_bg))
         } else {

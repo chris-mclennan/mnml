@@ -2608,6 +2608,21 @@ browser via the same `open_url_external` helper the per-host
 Empty caches ⇒ toast pointing at the four `[[<host>.repos]]` /
 `[[<host>.projects]]` config tables (no picker opens).
 
+**DAP debugging — starter MVP (breakpoints only)** — editor gutter
+breakpoint marks. `dap.toggle_breakpoint` (`F9` / `:Bp`) flips a
+breakpoint on the active editor's cursor line; painted as a red `●` in
+the 1-cell sign column (wins over LSP severity dots + git change marks).
+`dap.list_breakpoints` (`:Breakpoints`) toasts a summary across every
+open buffer; `dap.clear_all_breakpoints` (`:ClearBreakpoints`) drops
+them for the active buffer. `Buffer.breakpoints: Vec<u32>` (0-based,
+sorted, unique) persisted in `session.json` via `SavedBuffer.breakpoints`
+(stale lines past the file's current end-of-buffer are dropped on
+restore). `dap.run` (`:Debug` / `:Dap`) is a placeholder toast for
+now — actually driving a debug adapter (debugpy / `node --inspect` /
+lldb-vscode / etc.) is a follow-up; the protocol implementation +
+call-stack/variables/watches UI are substantial enough to warrant
+their own track.
+
 **Mason-style tools picker** — `tools.installer` (`:Tools` / `:Mason`)
 opens a fuzzy picker over `crate::tools::KNOWN_TOOLS` — a curated list
 of every LSP / formatter / linter mnml looks for. Each row shows ✓/✗

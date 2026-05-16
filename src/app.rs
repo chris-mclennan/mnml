@@ -906,6 +906,9 @@ struct SavedBuffer {
     path: String,
     cursor_byte: usize,
     scroll: usize,
+    /// DAP breakpoint lines (0-based) — restored on next open.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    breakpoints: Vec<u32>,
 }
 
 /// A serializable mirror of [`Layout`] where leaves carry indices into
@@ -6289,6 +6292,78 @@ impl App {
         }
         // No LSP formatter — try the external one.
         self.format_external_active();
+    }
+
+    /// `dap.toggle_breakpoint` — flip a breakpoint on the active
+    /// editor's cursor line. Painted as a red `●` in the gutter (wins
+    /// over LSP severity dots + git change marks). Persisted in
+    /// session.json. Starter MVP — `dap.run` doesn't actually drive a
+    /// debug adapter yet; that's a follow-up. Until then, breakpoints
+    /// are markers for the user's own debug workflow (e.g. eyeballing
+    /// where to set them externally).
+    pub fn dap_toggle_breakpoint(&mut self) {
+        let Some(b) = self.active_editor_mut() else {
+            self.toast("no active editor");
+            return;
+        };
+        let (row, _) = b.editor.row_col();
+        let added = b.toggle_breakpoint(row as u32);
+        let line_no = row + 1;
+        self.toast(if added {
+            format!("breakpoint set: line {line_no}")
+        } else {
+            format!("breakpoint cleared: line {line_no}")
+        });
+    }
+
+    /// `dap.clear_all_breakpoints` — clear every breakpoint in the
+    /// active buffer.
+    pub fn dap_clear_all_breakpoints(&mut self) {
+        let Some(b) = self.active_editor_mut() else {
+            self.toast("no active editor");
+            return;
+        };
+        let n = b.breakpoints.len();
+        b.breakpoints.clear();
+        self.toast(format!(
+            "cleared {n} breakpoint{}",
+            if n == 1 { "" } else { "s" }
+        ));
+    }
+
+    /// `dap.list_breakpoints` — toast a summary of all breakpoints
+    /// across every open editor buffer. Useful for "where are my
+    /// breakpoints?" pre-debug-session check.
+    pub fn dap_list_breakpoints(&mut self) {
+        let mut total = 0usize;
+        let mut parts: Vec<String> = Vec::new();
+        for p in &self.panes {
+            if let Pane::Editor(b) = p
+                && !b.breakpoints.is_empty()
+            {
+                total += b.breakpoints.len();
+                let name = b.display_name();
+                let lines: Vec<String> =
+                    b.breakpoints.iter().map(|l| (l + 1).to_string()).collect();
+                parts.push(format!("{name}: {}", lines.join(",")));
+            }
+        }
+        if total == 0 {
+            self.toast("no breakpoints set");
+        } else {
+            self.toast(format!("{total} breakpoint(s) — {}", parts.join(" · ")));
+        }
+    }
+
+    /// `dap.run` — placeholder for the real DAP adapter launch. mnml's
+    /// starter MVP only tracks breakpoints + paints them in the gutter;
+    /// running a debug session against a real adapter (debugpy,
+    /// `node --inspect`, lldb-vscode, etc.) is a follow-up. For now,
+    /// suggest the manual fallback.
+    pub fn dap_run(&mut self) {
+        self.toast(
+            "dap.run: starter MVP — set breakpoints, then run your debugger in a :term pane",
+        );
     }
 
     /// `tools.installer` — Mason-style picker over `KNOWN_TOOLS`. Each
@@ -15999,6 +16074,20 @@ impl App {
             "Tools" | "Mason" => {
                 crate::command::run("tools.installer", self);
             }
+            // DAP starter MVP — breakpoint marks only; no real adapter
+            // launch yet. `:Bp` is a short alias for the toggle.
+            "Breakpoint" | "ToggleBreakpoint" | "Bp" => {
+                crate::command::run("dap.toggle_breakpoint", self);
+            }
+            "Breakpoints" | "Bps" => {
+                crate::command::run("dap.list_breakpoints", self);
+            }
+            "BreakpointsClear" | "BpsClear" | "ClearBreakpoints" => {
+                crate::command::run("dap.clear_all_breakpoints", self);
+            }
+            "Debug" | "Dap" | "DapRun" => {
+                crate::command::run("dap.run", self);
+            }
             // `:LspRestart` — kill every running server; subsequent
             // `did_open` calls (e.g. opening a file in that language) spawn
             // fresh ones. "The LSP got stuck" recovery gesture.
@@ -18939,6 +19028,7 @@ impl App {
                     path: path.to_string_lossy().into_owned(),
                     cursor_byte: b.editor.cursor(),
                     scroll: b.scroll,
+                    breakpoints: b.breakpoints.clone(),
                 });
                 merged_cursors.insert(path.clone(), (b.editor.cursor(), b.scroll));
             }
@@ -19125,6 +19215,16 @@ impl App {
                     let (row, col) = byte_to_row_col(buf.editor.text(), b.cursor_byte);
                     buf.editor.place_cursor(row, col);
                     buf.scroll = b.scroll;
+                    // Restore DAP breakpoints (drop any past the file's
+                    // current end — file may have shrunk while mnml was
+                    // closed).
+                    let last_line = buf.editor.line_count().saturating_sub(1) as u32;
+                    buf.breakpoints = b
+                        .breakpoints
+                        .iter()
+                        .filter(|&&l| l <= last_line)
+                        .copied()
+                        .collect();
                 }
             }
         }
