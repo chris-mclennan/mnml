@@ -1743,7 +1743,11 @@ clears` while typing.
 `Page.captureScreenshot { clip: {x, y, width, height, scale: 1} }`. The PNG lands in `.mnml/screenshots/` via the same
 path as a full-page screenshot. New `BrowserPane.pending_node_screenshot` slot is distinct from `pending_screenshot` so
 the two reply paths don't collide. `node_id == 0` (synthetic / un-screenshottable) ⇒ no-op + toast; off-screen nodes
-where the bbox can't be computed log a `bbox unavailable` warning. `R` re-fetches, `D`
+where the bbox can't be computed log a `bbox unavailable` warning.
+**`Z` scrolls the selected DOM node into view** (`browser.scroll_node_into_view`) — fires
+`DOM.scrollIntoViewIfNeeded { nodeId }` so off-screen nodes become reachable by `S` (screenshot needs the bbox to be in
+the viewport for `Page.captureScreenshot` to land anything useful) and `h` (overlay highlight isn't visible if the node
+is scrolled off). Fire-and-forget — no reply handler needed; the page just scrolls. `R` re-fetches, `D`
 (or Esc) leave the panel (Esc also clears any highlight via `Overlay.hideHighlight`). After `s` writes the PNG, `open_path_external` hands it to the OS default app (`open` on macOS,
 `xdg-open` on Linux, `cmd /C start` on Windows; best-effort, errors swallowed). `Target.setDiscoverTargets {discover:true}`
 is also sent on connect so popups / new-tabs show up as `⤴ new tab → url` log lines (`Target.targetCreated` with

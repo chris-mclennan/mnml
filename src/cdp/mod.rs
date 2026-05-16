@@ -160,6 +160,19 @@ pub fn hide_highlight(id: i64) -> String {
     rpc(id, "Overlay.hideHighlight", serde_json::json!({}))
 }
 
+/// `DOM.scrollIntoViewIfNeeded` — scrolls the page so `node_id`'s
+/// bounding box is visible. Used by the `Z` chord in the DOM panel
+/// to bring off-screen nodes into view before subsequent gestures
+/// (`S` screenshot / `h` highlight / visual inspection). The reply
+/// carries nothing useful beyond the ack.
+pub fn scroll_into_view_if_needed(id: i64, node_id: i64) -> String {
+    rpc(
+        id,
+        "DOM.scrollIntoViewIfNeeded",
+        serde_json::json!({ "nodeId": node_id }),
+    )
+}
+
 /// Spawn Chrome (the first of [`CHROME_BINS`] that runs) with remote debugging on a
 /// free port, in a throwaway `profile_dir`, open `url` (`about:blank` if empty),
 /// connect to its first page, then pump the WebSocket ↔ command channel until told

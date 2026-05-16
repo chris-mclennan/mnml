@@ -906,6 +906,21 @@ impl BrowserPane {
         v.get(self.dom_sel).and_then(|&i| self.dom.get(i))
     }
 
+    /// `Z` in the DOM panel — `DOM.scrollIntoViewIfNeeded` for the
+    /// selected node, bringing it into the viewport. No-op if no node
+    /// is selected or `node_id == 0` (synthetic / un-scrollable).
+    /// Pairs naturally with `S` (node screenshot) and `h` (highlight)
+    /// which both require the node to be in-viewport.
+    pub fn scroll_selected_dom_into_view(&mut self) {
+        let Some(node_id) = self.selected_dom().map(|r| r.node_id) else {
+            return;
+        };
+        if node_id == 0 || self.closed {
+            return;
+        }
+        self.send(|id| crate::cdp::scroll_into_view_if_needed(id, node_id));
+    }
+
     /// `Overlay.highlightNode` for the selected DOM row (no-op if no node).
     pub fn highlight_selected_dom(&mut self) {
         let Some(node_id) = self.selected_dom().map(|r| r.node_id) else {
@@ -1372,6 +1387,43 @@ mod tests {
             .find(|m| m["method"] == "DOM.getBoxModel")
             .unwrap();
         assert_eq!(req["params"]["nodeId"], 42);
+    }
+
+    #[test]
+    fn scroll_selected_dom_into_view_fires_cdp() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        p.dom = vec![DomRow {
+            depth: 0,
+            label: "<button>".into(),
+            selector: "button".into(),
+            node_id: 99,
+        }];
+        let _ = drain_cdp(&rx);
+
+        p.scroll_selected_dom_into_view();
+        let msgs = drain_cdp(&rx);
+        let req = msgs
+            .iter()
+            .find(|m| m["method"] == "DOM.scrollIntoViewIfNeeded")
+            .expect("scroll request");
+        assert_eq!(req["params"]["nodeId"], 99);
+    }
+
+    #[test]
+    fn scroll_selected_dom_into_view_skips_synthetic() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = BrowserPane::new("about:blank".into(), tx);
+        p.dom = vec![DomRow {
+            depth: 0,
+            label: "<!DOCTYPE html>".into(),
+            selector: String::new(),
+            node_id: 0,
+        }];
+        let _ = drain_cdp(&rx);
+        p.scroll_selected_dom_into_view();
+        let msgs = drain_cdp(&rx);
+        assert_eq!(count_method(&msgs, "DOM.scrollIntoViewIfNeeded"), 0);
     }
 
     #[test]

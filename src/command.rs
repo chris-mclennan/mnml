@@ -1567,6 +1567,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.browser_screenshot_node(),
         },
         Command {
+            id: "browser.scroll_node_into_view",
+            title: "Browser: scroll the selected DOM node into view",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_scroll_node_into_view(),
+        },
+        Command {
             id: "browser.dom",
             title: "Browser: open the DOM panel (selectable nodes, copy selector)",
             group: "browser",

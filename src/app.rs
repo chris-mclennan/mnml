@@ -7694,6 +7694,33 @@ impl App {
         }
     }
 
+    /// `Z` in a browser pane's DOM panel (`browser.scroll_node_into_view`)
+    /// — `DOM.scrollIntoViewIfNeeded` for the selected node. Brings an
+    /// off-screen node into the viewport so subsequent `S` (screenshot)
+    /// / `h` (highlight) gestures actually see the node. Fire-and-forget;
+    /// no reply handling needed.
+    pub fn browser_scroll_node_into_view(&mut self) {
+        match self
+            .panes
+            .iter_mut()
+            .find(|p| matches!(p, Pane::Browser(_)))
+        {
+            Some(Pane::Browser(b)) => {
+                if !b.dom_focus {
+                    self.toast("scroll-into-view needs the DOM panel open (D)");
+                    return;
+                }
+                if b.selected_dom().map(|r| r.node_id).unwrap_or(0) == 0 {
+                    self.toast("no node selected");
+                    return;
+                }
+                b.scroll_selected_dom_into_view();
+                self.toast("scrolled node into view");
+            }
+            _ => self.toast("no browser pane open"),
+        }
+    }
+
     /// `S` in a browser pane's DOM panel (`browser.screenshot_node`) —
     /// capture a screenshot clipped to the selected DOM node's bounding
     /// box. Two-step CDP flow under the hood: `DOM.getBoxModel` →

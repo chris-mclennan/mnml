@@ -79,13 +79,13 @@ pub fn draw(
             )
         } else if !b.dom_filter.is_empty() {
             format!(
-                "  DOM ({}/{}) · / filter · ↑↓ select · h highlight · S screenshot · esc clear",
+                "  DOM ({}/{}) · / filter · ↑↓ select · h highlight · Z scroll · S screenshot · esc clear",
                 b.visible_dom_indices().len(),
                 b.dom.len()
             )
         } else {
             format!(
-                "  DOM ({}) · / filter · ↑↓ select · h highlight · S screenshot · c copy · R re-fetch · esc back",
+                "  DOM ({}) · / filter · h highlight · Z scroll · S shot · c copy · R re-fetch · esc back",
                 b.dom.len()
             )
         }

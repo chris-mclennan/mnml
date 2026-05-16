@@ -893,6 +893,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Char('S') if dom_focus => app.browser_screenshot_node(),
+            KeyCode::Char('Z') if dom_focus => app.browser_scroll_node_into_view(),
             KeyCode::Enter if net_focus => app.open_net_entry_as_request(),
             KeyCode::Char('g') => app.browser_navigate_prompt(),
             KeyCode::Char('e') => app.browser_eval_prompt(),
