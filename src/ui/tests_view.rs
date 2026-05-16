@@ -233,6 +233,35 @@ pub fn draw(
     }
     let max_scroll = rows.len().saturating_sub(h.min(rows.len()));
     tp.scroll = tp.scroll.min(max_scroll);
+
+    // Record per-test row rects so mouse click can select a test.
+    // `test_row[i]` is the rendered line number for test index `i`; a
+    // value of 0 means "not rendered this pass" (init default) unless
+    // it's actually the first row, which it can't be because rows[0]
+    // is always the header banner.
+    for (i, &line_y) in test_row.iter().enumerate() {
+        if line_y == 0 {
+            continue; // not rendered
+        }
+        if line_y < tp.scroll || line_y >= tp.scroll + h {
+            continue;
+        }
+        let visible_y = line_y - tp.scroll;
+        let screen_y = area.y.saturating_add(visible_y as u16);
+        if screen_y < area.y.saturating_add(area.height) {
+            app.rects.list_rows.push((
+                ratatui::layout::Rect {
+                    x: area.x,
+                    y: screen_y,
+                    width: area.width,
+                    height: 1,
+                },
+                pane_id,
+                i,
+            ));
+        }
+    }
+
     let view: Vec<Line> = rows.into_iter().skip(tp.scroll).take(h).collect();
     frame.render_widget(
         Paragraph::new(view).style(Style::default().bg(t.bg_dark)),

@@ -2781,6 +2781,67 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
         }
         return;
     }
+    if matches!(app.panes.get(pane_id), Some(Pane::Outline(_))) {
+        if let Some(Pane::Outline(o)) = app.panes.get_mut(pane_id) {
+            let len = o.visible_indices().len();
+            if flat_idx < len {
+                o.selected = flat_idx;
+            }
+        }
+        if is_double_click {
+            app.jump_to_selected_outline();
+        }
+        return;
+    }
+    if matches!(app.panes.get(pane_id), Some(Pane::Tests(_))) {
+        if let Some(Pane::Tests(t)) = app.panes.get_mut(pane_id)
+            && let crate::playwright::TestsState::Done(r) = &t.state
+            && flat_idx < r.tests.len()
+        {
+            t.selected = flat_idx;
+        }
+        if is_double_click {
+            app.jump_to_selected_test();
+        }
+        return;
+    }
+    if matches!(app.panes.get(pane_id), Some(Pane::GitStatus(_))) {
+        if let Some(Pane::GitStatus(g)) = app.panes.get_mut(pane_id) {
+            let total = g.unstaged.len() + g.staged.len();
+            if flat_idx < total {
+                g.selected = flat_idx;
+            }
+        }
+        if is_double_click {
+            app.git_status_open_diff();
+        }
+        return;
+    }
+    if matches!(
+        app.panes.get(pane_id),
+        Some(Pane::Grep(_)) | Some(Pane::Quickfix(_))
+    ) {
+        // Both share the GrepPane struct; treat them identically.
+        let len = match app.panes.get(pane_id) {
+            Some(Pane::Grep(g)) | Some(Pane::Quickfix(g)) => g.hits.len(),
+            _ => 0,
+        };
+        if let Some(pane) = app.panes.get_mut(pane_id) {
+            let target = match pane {
+                Pane::Grep(g) | Pane::Quickfix(g) => Some(g),
+                _ => None,
+            };
+            if let Some(g) = target
+                && flat_idx < len
+            {
+                g.selected = flat_idx;
+            }
+        }
+        if is_double_click {
+            app.jump_to_selected_grep_hit();
+        }
+        return;
+    }
     // SCM/CI panes — header-vs-data dispatch with collapse + URL open.
     match app.panes.get(pane_id) {
         Some(Pane::BitbucketPipelines(_)) => {

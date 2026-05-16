@@ -93,9 +93,8 @@ pub fn draw(
 
     let mut selected_row = lines.len();
     let mut last_rel: Option<&str> = None;
-    // For the per-file header, pre-count adjacent hits with the same `rel` so
-    // the header can show `(N)`.
     let mut counts_iter = group_counts(&g.hits).into_iter();
+    let mut row_indices: Vec<(usize, usize)> = Vec::with_capacity(g.hits.len());
     for (idx, hit) in g.hits.iter().enumerate() {
         if last_rel != Some(hit.rel.as_str()) {
             last_rel = Some(hit.rel.as_str());
@@ -106,10 +105,10 @@ pub fn draw(
         if sel {
             selected_row = lines.len();
         }
+        row_indices.push((lines.len(), idx));
         lines.push(hit_line(&t, hit, sel));
     }
 
-    // ── scroll to keep the selected row visible ────────────────────
     let h = area.height as usize;
     if selected_row < g.scroll {
         g.scroll = selected_row;
@@ -118,6 +117,26 @@ pub fn draw(
     }
     let max_scroll = lines.len().saturating_sub(h.min(lines.len()));
     g.scroll = g.scroll.min(max_scroll);
+
+    for (line_y, idx) in &row_indices {
+        if *line_y < g.scroll || *line_y >= g.scroll + h {
+            continue;
+        }
+        let visible_y = line_y - g.scroll;
+        let screen_y = area.y.saturating_add(visible_y as u16);
+        if screen_y < area.y.saturating_add(area.height) {
+            app.rects.list_rows.push((
+                ratatui::layout::Rect {
+                    x: area.x,
+                    y: screen_y,
+                    width: area.width,
+                    height: 1,
+                },
+                pane_id,
+                *idx,
+            ));
+        }
+    }
 
     let view: Vec<Line> = lines.into_iter().skip(g.scroll).take(h).collect();
     frame.render_widget(

@@ -156,6 +156,7 @@ pub fn draw(
     )));
 
     let mut selected_row = lines.len();
+    let mut row_indices: Vec<(usize, usize)> = Vec::with_capacity(visible.len());
     for (vi, &idx) in visible.iter().enumerate() {
         let sym = &o.items[idx];
         let sel = vi == o.selected;
@@ -163,10 +164,11 @@ pub fn draw(
         if sel {
             selected_row = lines.len();
         }
+        row_indices.push((lines.len(), vi));
         lines.push(item_line(&t, sym, sel, current));
+        let _ = sym;
     }
 
-    // Keep selected on-screen — same shape as the other list panes.
     let h = area.height as usize;
     let total = lines.len();
     if total > h {
@@ -176,6 +178,29 @@ pub fn draw(
     } else {
         o.scroll = 0;
     }
+
+    // Record click rects (mapping visible row idx in the outline →
+    // screen y after scroll has been resolved).
+    for (line_y, vi) in &row_indices {
+        if *line_y < o.scroll || *line_y >= o.scroll + h {
+            continue;
+        }
+        let visible_y = line_y - o.scroll;
+        let screen_y = area.y.saturating_add(visible_y as u16);
+        if screen_y < area.y.saturating_add(area.height) {
+            app.rects.list_rows.push((
+                ratatui::layout::Rect {
+                    x: area.x,
+                    y: screen_y,
+                    width: area.width,
+                    height: 1,
+                },
+                pane_id,
+                *vi,
+            ));
+        }
+    }
+
     let visible: Vec<Line> = lines.into_iter().skip(o.scroll).take(h).collect();
     frame.render_widget(
         Paragraph::new(visible).style(Style::default().bg(t.bg_dark)),
