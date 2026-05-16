@@ -723,4 +723,174 @@ mod tests {
             PullRequestState::Draft
         );
     }
+
+    fn project_fixture() -> crate::config::AzDevOpsProject {
+        crate::config::AzDevOpsProject {
+            org: "getprivate".to_string(),
+            project: "hello-world".to_string(),
+            repo: "hello-world".to_string(),
+            branches: vec![],
+        }
+    }
+
+    #[test]
+    fn parses_branch_build_response() {
+        // Shape verified against getprivate/hello-world on 2026-05-16.
+        let body = r#"{
+          "count": 1,
+          "value": [{
+            "id": 42,
+            "buildNumber": "20260516.1",
+            "status": "completed",
+            "result": "succeeded",
+            "sourceBranch": "refs/heads/main",
+            "sourceVersion": "abc1234deadbeef",
+            "startTime": "2026-05-16T14:00:00Z",
+            "finishTime": "2026-05-16T14:00:13Z",
+            "requestedFor": { "displayName": "Chris McLennan" },
+            "reason": "individualCI",
+            "_links": { "web": { "href": "https://dev.azure.com/getprivate/hello-world/_build/results?buildId=42" } }
+          }]
+        }"#;
+        let rows = parse_builds_response(body, &project_fixture()).unwrap();
+        assert_eq!(rows.len(), 1);
+        let b = &rows[0];
+        assert_eq!(b.id, 42);
+        assert_eq!(b.build_number, "20260516.1");
+        assert_eq!(b.state, BuildState::Succeeded);
+        // `refs/heads/main` → `main` after strip.
+        assert_eq!(b.target_ref.as_deref(), Some("main"));
+        assert_eq!(b.commit_hash.as_deref(), Some("abc1234deadbeef"));
+        assert_eq!(b.creator.as_deref(), Some("Chris McLennan"));
+        assert_eq!(b.reason.as_deref(), Some("individualCI"));
+        assert_eq!(b.duration_secs, Some(13));
+        assert!(b.web_url.contains("buildId=42"));
+        assert_eq!(b.label, "getprivate/hello-world/hello-world");
+    }
+
+    #[test]
+    fn pr_build_branch_ref_doesnt_strip_pull_form() {
+        // PR builds: Azure sets `sourceBranch: refs/pull/123/merge` instead
+        // of `refs/heads/...`. The strip_prefix-only logic should leave the
+        // ref intact (so users still see *something* identifying the PR).
+        let body = r#"{
+          "value": [{
+            "id": 50,
+            "buildNumber": "20260516.2",
+            "status": "completed",
+            "result": "succeeded",
+            "sourceBranch": "refs/pull/123/merge",
+            "reason": "pullRequest"
+          }]
+        }"#;
+        let rows = parse_builds_response(body, &project_fixture()).unwrap();
+        assert_eq!(rows[0].target_ref.as_deref(), Some("refs/pull/123/merge"));
+        assert_eq!(rows[0].reason.as_deref(), Some("pullRequest"));
+    }
+
+    #[test]
+    fn manual_build_with_no_source_branch() {
+        // Manual / triggered-by-API builds may have no sourceBranch at all.
+        let body = r#"{ "value": [{
+          "id": 51,
+          "buildNumber": "20260516.3",
+          "status": "completed",
+          "result": "succeeded",
+          "reason": "manual"
+        }] }"#;
+        let rows = parse_builds_response(body, &project_fixture()).unwrap();
+        assert_eq!(rows[0].target_ref, None);
+        assert_eq!(rows[0].reason.as_deref(), Some("manual"));
+        // No `_links.web.href` ⇒ synthesized URL.
+        assert!(rows[0].web_url.contains("buildId=51"));
+    }
+
+    #[test]
+    fn duration_omitted_when_finish_before_start() {
+        // Defensive: malformed timestamps shouldn't produce negative durations.
+        let body = r#"{ "value": [{
+          "id": 52,
+          "buildNumber": "x",
+          "status": "completed",
+          "result": "failed",
+          "startTime": "2026-05-16T14:00:13Z",
+          "finishTime": "2026-05-16T14:00:00Z"
+        }] }"#;
+        let rows = parse_builds_response(body, &project_fixture()).unwrap();
+        assert_eq!(rows[0].duration_secs, None);
+    }
+
+    #[test]
+    fn empty_value_array_is_ok() {
+        let body = r#"{ "count": 0, "value": [] }"#;
+        let rows = parse_builds_response(body, &project_fixture()).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn parses_pr_response_with_reviewers() {
+        // Reviewers vote: 10=approved, 5=approved-with-suggestions,
+        // -5=waiting, -10=rejected. Both ≥5 count as approved; <0 as
+        // change-requested.
+        let body = r#"{ "value": [{
+          "pullRequestId": 7,
+          "title": "TE-13216 add foo",
+          "status": "active",
+          "isDraft": false,
+          "createdBy": { "displayName": "alice" },
+          "sourceRefName": "refs/heads/feature/foo",
+          "targetRefName": "refs/heads/main",
+          "creationDate": "2026-05-16T14:00:00Z",
+          "reviewers": [
+            { "vote": 10 },
+            { "vote": 5 },
+            { "vote": -10 },
+            { "vote": 0 }
+          ],
+          "_links": { "web": { "href": "https://dev.azure.com/getprivate/hello-world/_git/hello-world/pullrequest/7" } }
+        }] }"#;
+        let rows = parse_prs_response(body, &project_fixture()).unwrap();
+        assert_eq!(rows.len(), 1);
+        let p = &rows[0];
+        assert_eq!(p.id, 7);
+        assert_eq!(p.title, "TE-13216 add foo");
+        assert_eq!(p.state, PullRequestState::Active);
+        assert_eq!(p.author.as_deref(), Some("alice"));
+        assert_eq!(p.source_branch.as_deref(), Some("feature/foo"));
+        assert_eq!(p.dest_branch.as_deref(), Some("main"));
+        assert_eq!(p.reviewer_count, 4);
+        assert_eq!(p.approved_count, 2);
+        assert_eq!(p.changes_count, 1);
+        assert!(p.web_url.contains("/pullrequest/7"));
+    }
+
+    #[test]
+    fn pr_draft_state_wins_over_active() {
+        let body = r#"{ "value": [{
+          "pullRequestId": 8,
+          "title": "WIP",
+          "status": "active",
+          "isDraft": true
+        }] }"#;
+        let rows = parse_prs_response(body, &project_fixture()).unwrap();
+        assert_eq!(rows[0].state, PullRequestState::Draft);
+    }
+
+    #[test]
+    fn pr_mine_response_uses_per_pr_label() {
+        // The Mine endpoint returns PRs across multiple repos in one org;
+        // each row's label comes from `repository.project.name` + `.name`
+        // (vs. a fixed project hint for the per-repo endpoint).
+        let body = r#"{ "value": [{
+          "pullRequestId": 9,
+          "title": "x",
+          "status": "active",
+          "repository": {
+            "name": "other-repo",
+            "project": { "name": "OtherProject" }
+          }
+        }] }"#;
+        let rows = parse_prs_response_mine(body, "getprivate").unwrap();
+        assert_eq!(rows[0].label, "getprivate/OtherProject/other-repo");
+    }
 }
