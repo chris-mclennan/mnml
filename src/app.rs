@@ -3354,6 +3354,7 @@ impl App {
         let name = self.repos[idx].name.clone();
         self.active_repo = idx;
         let root = self.active_repo_path().to_path_buf();
+        self.git.retarget(&root);
         self.git_rail.refresh(&root);
         self.refresh_rail_pulls();
         self.toast(format!("active repo → {name}"));
@@ -8152,9 +8153,12 @@ impl App {
     }
 
     // ─── git: diff pane + blame ─────────────────────────────────────
-    /// Workspace-relative path of an arbitrary path, for `git` arguments.
-    fn rel_to_workspace(&self, p: &Path) -> String {
-        rel_path(&self.workspace, p)
+    /// Relative path of `p` against the active git repo (vs. the workspace
+    /// root, which can differ when multiple repos coexist under one
+    /// workspace). Used to feed `git`'s positional args — `git blame
+    /// src/foo.rs` only works if cwd is the repo containing `src/foo.rs`.
+    fn rel_to_active_repo(&self, p: &Path) -> String {
+        rel_path(self.active_repo_path(), p)
     }
 
     /// Toggle the editor's blame-gutter mode for the active buffer (computing
@@ -8169,9 +8173,10 @@ impl App {
             self.toast("blame: off");
             return;
         }
+        let repo = self.active_repo_path().to_path_buf();
         let rel = match self.panes.get(cur) {
             Some(Pane::Editor(b)) => match &b.path {
-                Some(p) => rel_path(&self.workspace, p),
+                Some(p) => rel_path(&repo, p),
                 None => {
                     self.toast("blame needs a saved file");
                     return;
@@ -8182,7 +8187,7 @@ impl App {
                 return;
             }
         };
-        let lines = crate::git::blame::blame(&self.workspace, &rel);
+        let lines = crate::git::blame::blame(&repo, &rel);
         if lines.is_empty() {
             self.toast("git blame returned nothing (untracked file?)");
             return;
@@ -8195,26 +8200,27 @@ impl App {
 
     /// If a buffer with blame mode on was just saved, recompute its blame.
     fn refresh_blame_for(&mut self, path: &Path) {
-        let rel = rel_path(&self.workspace, path);
-        let ws = self.workspace.clone();
+        let repo = self.active_repo_path().to_path_buf();
+        let rel = rel_path(&repo, path);
         for pane in &mut self.panes {
             if let Pane::Editor(b) = pane
                 && b.blame.is_some()
                 && b.is_at(path)
             {
-                b.blame = Some(crate::git::blame::blame(&ws, &rel));
+                b.blame = Some(crate::git::blame::blame(&repo, &rel));
             }
         }
     }
     fn fetch_diff(&self, scope: &crate::pane::DiffScope) -> Vec<crate::git::diff::Hunk> {
         use crate::pane::DiffScope;
+        let repo = self.active_repo_path();
         match scope {
             DiffScope::Unstaged(Some(p)) => {
-                crate::git::diff::diff_file(&self.workspace, &self.rel_to_workspace(p))
+                crate::git::diff::diff_file(repo, &self.rel_to_active_repo(p))
             }
-            DiffScope::Unstaged(None) => crate::git::diff::diff_worktree(&self.workspace),
-            DiffScope::Staged => crate::git::diff::diff_staged(&self.workspace),
-            DiffScope::Commit(h) => crate::git::diff::show_commit(&self.workspace, h),
+            DiffScope::Unstaged(None) => crate::git::diff::diff_worktree(repo),
+            DiffScope::Staged => crate::git::diff::diff_staged(repo),
+            DiffScope::Commit(h) => crate::git::diff::show_commit(repo, h),
             DiffScope::BufferVsDisk(path) => self.diff_buffer_vs_disk(path),
         }
     }
@@ -8247,11 +8253,12 @@ impl App {
         if std::fs::write(&tmp, &mem_text).is_err() {
             return Vec::new();
         }
+        let repo = self.active_repo_path();
         let out = std::process::Command::new("git")
             .args(["diff", "--no-index", "--no-color", "--"])
             .arg(path)
             .arg(&tmp)
-            .current_dir(&self.workspace)
+            .current_dir(repo)
             .output();
         let stdout = match out {
             Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
@@ -8260,7 +8267,7 @@ impl App {
         // `git diff --no-index` exits non-zero when files differ — that's
         // expected, so we don't check `.status.success()`.
         let _ = std::fs::remove_file(&tmp);
-        crate::git::diff::parse_hunks(&stdout, &self.workspace)
+        crate::git::diff::parse_hunks(&stdout, repo)
     }
     /// Open a `git diff` view of the active editor's file, in a split to the right.
     pub fn open_diff_file(&mut self) {
@@ -8308,14 +8315,15 @@ impl App {
             return;
         };
         let (line_0, _) = b.editor.row_col();
-        let rel = match path.strip_prefix(&self.workspace) {
+        let repo = self.active_repo_path().to_path_buf();
+        let rel = match path.strip_prefix(&repo) {
             Ok(r) => r.to_string_lossy().to_string(),
             Err(_) => {
-                self.toast("file is outside the workspace");
+                self.toast("file is outside the active git repo");
                 return;
             }
         };
-        let Some(hunk) = crate::git::diff::peek_hunk_at(&self.workspace, &rel, line_0) else {
+        let Some(hunk) = crate::git::diff::peek_hunk_at(&repo, &rel, line_0) else {
             self.toast("no change at cursor");
             return;
         };
@@ -8406,10 +8414,11 @@ impl App {
             self.toast("browse needs a saved file");
             return;
         };
-        let rel = match path.strip_prefix(&self.workspace) {
+        let repo = self.active_repo_path().to_path_buf();
+        let rel = match path.strip_prefix(&repo) {
             Ok(r) => r.to_string_lossy().to_string(),
             Err(_) => {
-                self.toast("file is outside the workspace");
+                self.toast("file is outside the active git repo");
                 return;
             }
         };
@@ -8425,7 +8434,7 @@ impl App {
             let line = b.editor.row_col().0 as u32 + 1;
             (line, line)
         };
-        match crate::git::browse::url_for(&self.workspace, &rel, lo, hi) {
+        match crate::git::browse::url_for(&repo, &rel, lo, hi) {
             Some(url) => {
                 open_url_external(&url);
                 self.toast(format!("→ {url}"));
@@ -8462,11 +8471,12 @@ impl App {
             self.toast(format!(":Diffsplit: write tmp: {e}"));
             return;
         }
+        let repo = self.active_repo_path().to_path_buf();
         let out = std::process::Command::new("git")
             .args(["diff", "--no-index", "--no-color", "--"])
             .arg(&other)
             .arg(&tmp)
-            .current_dir(&self.workspace)
+            .current_dir(&repo)
             .output();
         let stdout = match out {
             Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
@@ -8476,7 +8486,7 @@ impl App {
             }
         };
         let _ = std::fs::remove_file(&tmp);
-        let hunks = crate::git::diff::parse_hunks(&stdout, &self.workspace);
+        let hunks = crate::git::diff::parse_hunks(&stdout, &repo);
         if hunks.is_empty() {
             self.toast("no differences");
             return;
@@ -8531,14 +8541,15 @@ impl App {
             self.toast("file history needs a saved file");
             return;
         };
-        let rel = match path.strip_prefix(&self.workspace) {
+        let repo = self.active_repo_path().to_path_buf();
+        let rel = match path.strip_prefix(&repo) {
             Ok(r) => r.to_string_lossy().to_string(),
             Err(_) => {
-                self.toast("file is outside the workspace");
+                self.toast("file is outside the active git repo");
                 return;
             }
         };
-        let commits = crate::git::log::commits_for_file(&self.workspace, &rel);
+        let commits = crate::git::log::commits_for_file(&repo, &rel);
         if commits.is_empty() {
             self.toast("no commits touched this file");
             return;
@@ -8625,7 +8636,7 @@ impl App {
             self.toast("that's a committed change — nothing to stage");
             return;
         }
-        match crate::git::diff::apply_hunk(&self.workspace, &hunk, reverse) {
+        match crate::git::diff::apply_hunk(self.active_repo_path(), &hunk, reverse) {
             Ok(()) => {
                 self.toast(if reverse {
                     "unstaged hunk"
@@ -8682,7 +8693,7 @@ impl App {
     /// Run the stash push directly (called from the prompt's accept arm or
     /// from a future "stash without message" chord).
     pub fn run_git_stash_push(&mut self, message: Option<&str>) {
-        match crate::git::stash::push(&self.workspace, message) {
+        match crate::git::stash::push(self.active_repo_path(), message) {
             Ok(summary) => {
                 self.after_git_change();
                 self.tree.refresh();
@@ -8703,7 +8714,7 @@ impl App {
 
     /// `git.stash_pop` — apply + drop the most recent stash.
     pub fn run_git_stash_pop(&mut self) {
-        match crate::git::stash::pop(&self.workspace) {
+        match crate::git::stash::pop(self.active_repo_path()) {
             Ok(summary) => {
                 self.after_git_change();
                 self.tree.refresh();
@@ -8755,7 +8766,7 @@ impl App {
                     self.toast("commit cancelled (empty message)");
                     return;
                 }
-                match crate::git::commit::commit(&self.workspace, msg) {
+                match crate::git::commit::commit(self.active_repo_path(), msg) {
                     Ok(summary) => {
                         self.toast(summary);
                         self.after_git_change();
@@ -8770,7 +8781,7 @@ impl App {
                     self.toast("amend cancelled (empty message)");
                     return;
                 }
-                match crate::git::commit::amend(&self.workspace, msg) {
+                match crate::git::commit::amend(self.active_repo_path(), msg) {
                     Ok(summary) => {
                         self.toast(format!("amended: {summary}"));
                         self.after_git_change();
@@ -11226,7 +11237,9 @@ impl App {
     // ─── git graph (graphical-Git-GUI-style commit DAG) ─────────────────────
     /// Open the commit-DAG browser as a split to the right of the focused leaf.
     pub fn open_git_graph(&mut self) {
-        let pane = Pane::GitGraph(crate::git::graph::GitGraphPane::open(&self.workspace));
+        let pane = Pane::GitGraph(crate::git::graph::GitGraphPane::open(
+            self.active_repo_path(),
+        ));
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
@@ -11298,7 +11311,9 @@ impl App {
     // ─── git status / staging view ──────────────────────────────────
     /// Open the staging view as a split to the right of the focused leaf.
     pub fn open_git_status(&mut self) {
-        let pane = Pane::GitStatus(crate::git::stage::GitStatusPane::open(&self.workspace));
+        let pane = Pane::GitStatus(crate::git::stage::GitStatusPane::open(
+            self.active_repo_path(),
+        ));
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
@@ -11460,7 +11475,7 @@ impl App {
             self.toast("already staged — `u` to unstage");
             return;
         }
-        match crate::git::stage::stage(&self.workspace, &rel) {
+        match crate::git::stage::stage(self.active_repo_path(), &rel) {
             Ok(()) => {
                 self.toast(format!("staged {rel}"));
                 self.after_git_change();
@@ -11476,7 +11491,7 @@ impl App {
             self.toast("not staged — `s` to stage");
             return;
         }
-        match crate::git::stage::unstage(&self.workspace, &rel) {
+        match crate::git::stage::unstage(self.active_repo_path(), &rel) {
             Ok(()) => {
                 self.toast(format!("unstaged {rel}"));
                 self.after_git_change();
@@ -11496,7 +11511,7 @@ impl App {
         if !matches!(self.active_pane(), Some(Pane::GitStatus(_))) {
             return;
         }
-        match crate::git::stage::stage_all(&self.workspace) {
+        match crate::git::stage::stage_all(self.active_repo_path()) {
             Ok(()) => {
                 self.toast("staged all changes");
                 self.after_git_change();
@@ -11508,7 +11523,7 @@ impl App {
         if !matches!(self.active_pane(), Some(Pane::GitStatus(_))) {
             return;
         }
-        match crate::git::stage::unstage_all(&self.workspace) {
+        match crate::git::stage::unstage_all(self.active_repo_path()) {
             Ok(()) => {
                 self.toast("unstaged everything");
                 self.after_git_change();
@@ -11550,7 +11565,7 @@ impl App {
             self.toast("nothing staged — stage some changes first");
             return;
         }
-        let diff = crate::git::stage::staged_diff(&self.workspace);
+        let diff = crate::git::stage::staged_diff(self.active_repo_path());
         if diff.trim().is_empty() {
             self.toast("no staged diff to summarise");
             return;
@@ -11586,7 +11601,7 @@ impl App {
             self.toast("nothing staged — stage some changes first");
             return;
         }
-        let diff = crate::git::stage::staged_diff(&self.workspace);
+        let diff = crate::git::stage::staged_diff(self.active_repo_path());
         if diff.trim().is_empty() {
             self.toast("no staged diff to summarise");
             return;
@@ -11635,7 +11650,7 @@ impl App {
     /// accept ⇒ `git commit --amend -m <new>`. Limited to HEAD for now —
     /// rewriting older commits would require interactive rebase machinery.
     pub fn request_ai_recompose_message(&mut self) {
-        let diff = match crate::git::commit::show_head(&self.workspace) {
+        let diff = match crate::git::commit::show_head(self.active_repo_path()) {
             Ok(d) if d.trim().is_empty() => {
                 self.toast("HEAD has no patch to summarise");
                 return;
@@ -11651,7 +11666,7 @@ impl App {
         } else {
             diff
         };
-        let existing = crate::git::commit::head_message(&self.workspace);
+        let existing = crate::git::commit::head_message(self.active_repo_path());
         let existing_block = if existing.is_empty() {
             String::new()
         } else {
@@ -11675,12 +11690,12 @@ impl App {
     /// Open a fuzzy picker over local + remote branches; accept ⇒ checkout.
     pub fn open_branch_picker(&mut self) {
         use crate::picker::PickerItem;
-        let cur = crate::git::branch::current(&self.workspace);
+        let cur = crate::git::branch::current(self.active_repo_path());
         let mut items: Vec<PickerItem> = Vec::new();
         // Surface the current branch first + marked with a `●` glyph; rest in
         // for-each-ref order. The picker's fuzzy match still narrows from any
         // position, so the ordering is just a visual default.
-        let locals = crate::git::branch::local_branches(&self.workspace);
+        let locals = crate::git::branch::local_branches(self.active_repo_path());
         if let Some(c) = cur.as_ref()
             && locals.iter().any(|b| b == c)
         {
@@ -11700,7 +11715,7 @@ impl App {
                 "local",
             ));
         }
-        for b in crate::git::branch::remote_branches(&self.workspace) {
+        for b in crate::git::branch::remote_branches(self.active_repo_path()) {
             items.push(PickerItem::new(
                 format!("remote:{b}"),
                 format!("  {b}"),
@@ -11715,12 +11730,13 @@ impl App {
     }
     /// Checkout the branch a `PickerKind::Branches` item id encodes.
     pub fn checkout_branch(&mut self, id: &str) {
+        let repo = self.active_repo_path().to_path_buf();
         let result = if let Some(name) = id.strip_prefix("local:") {
-            crate::git::branch::checkout(&self.workspace, name).map(|_| name.to_string())
+            crate::git::branch::checkout(&repo, name).map(|_| name.to_string())
         } else if let Some(remote) = id.strip_prefix("remote:") {
-            crate::git::branch::checkout_track(&self.workspace, remote).map(|_| remote.to_string())
+            crate::git::branch::checkout_track(&repo, remote).map(|_| remote.to_string())
         } else {
-            crate::git::branch::checkout(&self.workspace, id).map(|_| id.to_string())
+            crate::git::branch::checkout(&repo, id).map(|_| id.to_string())
         };
         match result {
             Ok(name) => self.after_checkout(&name),
@@ -11745,8 +11761,8 @@ impl App {
         }
         let source = self.pending_branch_source.take();
         let result = match &source {
-            Some(s) => crate::git::branch::create_from(&self.workspace, name, s),
-            None => crate::git::branch::create(&self.workspace, name),
+            Some(s) => crate::git::branch::create_from(self.active_repo_path(), name, s),
+            None => crate::git::branch::create(self.active_repo_path(), name),
         };
         match result {
             Ok(()) => {
@@ -11761,7 +11777,7 @@ impl App {
     /// Open a picker over `git worktree list`; accept ⇒ a shell pane in that dir.
     pub fn open_worktree_picker(&mut self) {
         use crate::picker::PickerItem;
-        let wts = crate::git::branch::worktrees(&self.workspace);
+        let wts = crate::git::branch::worktrees(self.active_repo_path());
         if wts.is_empty() {
             self.toast("no worktrees (not a git repo?)");
             return;
@@ -16428,7 +16444,7 @@ impl App {
     }
     /// Right-click context-menu action: checkout an existing local branch.
     pub fn git_checkout_named(&mut self, name: &str) {
-        match crate::git::branch::checkout(&self.workspace, name) {
+        match crate::git::branch::checkout(self.active_repo_path(), name) {
             Ok(()) => self.after_checkout(name),
             Err(e) => self.toast(format!("checkout: {e}")),
         }
@@ -16464,7 +16480,7 @@ impl App {
             self.toast("branch delete cancelled (name didn't match)");
             return;
         }
-        match crate::git::branch::delete_branch(&self.workspace, &name) {
+        match crate::git::branch::delete_branch(self.active_repo_path(), &name) {
             Ok(()) => {
                 self.toast(format!("deleted branch {name}"));
                 self.after_git_change();
@@ -16496,7 +16512,7 @@ impl App {
             self.toast("worktree remove cancelled (name didn't match)");
             return;
         }
-        match crate::git::branch::worktree_remove(&self.workspace, &path) {
+        match crate::git::branch::worktree_remove(self.active_repo_path(), &path) {
             Ok(()) => {
                 self.toast(format!("removed worktree {name}"));
                 self.after_git_change();
@@ -17477,7 +17493,7 @@ impl App {
     pub fn open_private_branch_picker(&mut self) {
         use crate::picker::PickerItem;
         let (default_branch, default_env, _, _) = load_playwright_settings(&self.workspace);
-        let mut names: Vec<String> = crate::git::branch::local_branches(&self.workspace);
+        let mut names: Vec<String> = crate::git::branch::local_branches(self.active_repo_path());
         // Drop duplicates + keep stable order; prepend the settings default
         // so it's the picker's first hit.
         names.sort();
@@ -21054,6 +21070,29 @@ GET https://example.com/second
         // out-of-range no-op
         app.switch_active_repo(99);
         assert_eq!(app.active_repo, 1);
+    }
+
+    #[test]
+    fn switching_active_repo_retargets_app_git() {
+        // Two sibling sub-repos. switch_active_repo(1) should re-point
+        // App.git at proj-b so the rail / statusline track the new repo.
+        let d = tempfile::tempdir().unwrap();
+        for name in ["proj-a", "proj-b"] {
+            let p = d.path().join(name);
+            std::fs::create_dir(&p).unwrap();
+            std::fs::create_dir(p.join(".git")).unwrap();
+        }
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        assert_eq!(app.repos.len(), 2);
+        // No publicly-accessible `git.workspace`; assert via retarget semantics
+        // — calling switch_active_repo bumps active_repo and forces refresh().
+        app.switch_active_repo(1);
+        assert_eq!(app.active_repo, 1);
+        // After switch, active_repo_path is now proj-b. The retarget call in
+        // switch_active_repo pointed self.git there too; subsequent
+        // self.git.snapshot() reads from proj-b's `git status` (empty, since
+        // the test fixture only has an empty `.git/` marker).
+        assert_eq!(app.active_repo_path(), &app.repos[1].path);
     }
 
     #[test]

@@ -74,6 +74,14 @@ impl GitStatus {
         self.snapshot = probe(&self.workspace);
         self.probed_at = Some(Instant::now());
     }
+
+    /// Re-point the cached workspace at a different repo root and force an
+    /// immediate refresh. Used when `App::switch_active_repo` flips to a
+    /// different repo so the rail + statusline + gutter line-signs follow.
+    pub fn retarget(&mut self, workspace: &Path) {
+        self.workspace = workspace.to_path_buf();
+        self.refresh();
+    }
 }
 
 fn probe(workspace: &Path) -> Snapshot {

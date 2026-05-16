@@ -2215,9 +2215,29 @@ is-a-repo case behaves unchanged (single entry, `is_workspace_root=true`).
 Multi-repo workspaces surface a `· <name>` chip after the GIT rail header
 and gain a `git.switch_repo` command (palette / `:`) opening a fuzzy
 picker over the discovered repos. Picker is a no-op when there's just
-one repo. Limitations (deferred to follow-ups): only the rail + pulls
-follow the active repo today — other git operations (status, diff,
-graph, browse) still run against `App.workspace`. New `PickerKind::Repos`.
+one repo. New `PickerKind::Repos`.
+
+**Multi-repo phase 2 — git operations follow active_repo_path** —
+every git op now routes through `App.active_repo_path()` (with
+`App.workspace` as the fallback for single-repo workspaces): status
+pane, commit graph, file diff / worktree diff / staged diff / commit
+diff, peek change at cursor, file history picker, hunk staging,
+stash push/pop, commit, amend, branch checkout / create / delete,
+worktree list / remove, blame gutter, `git.browse`, private branch
+picker. The top-level `App.git` (which feeds the rail + statusline +
+gutter line-signs) gets retargeted on `switch_active_repo` via the
+new `GitStatus::retarget(workspace)` method so the rail's branch
+chip + the per-file diff marks track the active repo. New helper
+`App::rel_to_active_repo(path)` factors the workspace-relative path
+computation for the active repo (vs. the existing
+`rel_to_workspace`, which got removed since every git caller switched
+over). Files-outside-the-active-repo toast `"file is outside the
+active git repo"` instead of the old `"file is outside the workspace"`.
+**Remaining limitation:** open `GitStatusPane` / `GitGraphPane`
+instances cache their own `workspace: PathBuf` at `::open()` time and
+don't re-point on `switch_active_repo` — that's arguably correct (a
+pane is tied to a specific repo) but means a user wanting fresh data
+on the *new* active repo needs to close + re-open the pane.
 
 **Azure DevOps Mine — `creator_id` config override + auto-fallback** —
 the `searchCriteria.creatorId=me` shorthand was a flagged risk:
