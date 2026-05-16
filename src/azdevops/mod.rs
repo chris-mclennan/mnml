@@ -116,6 +116,7 @@ fn run_thread(
     };
     let auth_header = api::auth_header_value(&token);
     let poll_interval = Duration::from_secs(cfg.poll_secs_or_default());
+    let creator_id = cfg.creator_id.clone();
 
     // Per-org dedup for Mine fetches.
     let mut orgs: Vec<String> = cfg.projects.iter().map(|p| p.org.clone()).collect();
@@ -132,7 +133,12 @@ fn run_thread(
             if cancel.load(Ordering::Relaxed) {
                 return;
             }
-            match api::fetch_my_open_pull_requests(&client, &auth_header, org) {
+            match api::fetch_my_open_pull_requests(
+                &client,
+                &auth_header,
+                org,
+                creator_id.as_deref(),
+            ) {
                 Ok(prs) => {
                     if !have_sent_connected {
                         have_sent_connected = true;

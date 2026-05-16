@@ -2119,6 +2119,20 @@ comment_count is hardcoded 0 because Azure's list endpoint doesn't
 return it (would need a per-PR `/threads` call). Free-tier signup
 walk-through in conversation history if a real test is needed.
 
+**Azure DevOps Mine — `creator_id` config override + auto-fallback** —
+the `searchCriteria.creatorId=me` shorthand was a flagged risk:
+recent API versions accept it, some don't. Two hardenings:
+(1) New `[azdevops] creator_id = "<guid>"` config — when set, the
+worker passes the GUID directly and skips the `me` keyword
+entirely.
+(2) When `me` errors with an HTTP status, the worker falls back to
+`https://app.vssps.visualstudio.com/_apis/profile/profiles/me`
+(returns the user's account GUID), then retries the Mine query
+with that GUID. Slower by one round-trip but works without
+manual config.
+Plus a new `examples/azdevops_smoke.rs` smoke binary for verifying
+end-to-end against a real org without launching the TUI.
+
 **TestExecutions mouse support** (private-gated) — clicks now route
 properly through the multi-env column layout. New
 `app.rects.test_executions_rows: Vec<(Rect, PaneId, env_idx, row_idx)>`

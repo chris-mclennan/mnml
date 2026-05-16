@@ -218,6 +218,12 @@ pub struct AzDevOpsConfig {
     pub auth_env: Option<String>,
     pub poll_secs: Option<u64>,
     pub projects: Vec<AzDevOpsProject>,
+    /// Override for the `searchCriteria.creatorId=me` literal in the
+    /// cross-org "my PRs" query. Azure DevOps accepts `me` in recent API
+    /// versions, but if your org's tenant rejects it (400/404), set this
+    /// to your account's GUID (visible at User Settings → Personal
+    /// access tokens, or via `https://app.vssps.visualstudio.com/_apis/profile/profiles/me`).
+    pub creator_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -599,6 +605,7 @@ struct RawConfig {
 struct RawAzDevOps {
     auth_env: Option<String>,
     poll_secs: Option<u64>,
+    creator_id: Option<String>,
     #[serde(default)]
     projects: Vec<RawAzDevOpsProject>,
 }
@@ -995,6 +1002,9 @@ impl Config {
         if let Some(v) = raw.azdevops.poll_secs {
             self.azdevops.poll_secs = Some(v);
         }
+        if let Some(v) = raw.azdevops.creator_id {
+            self.azdevops.creator_id = Some(v);
+        }
         for r in raw.azdevops.projects {
             self.azdevops.projects.push(AzDevOpsProject {
                 org: r.org,
@@ -1101,6 +1111,42 @@ slug      = "private-playwright"
         assert_eq!(cfg.bitbucket.repos[0].slug, "example-api");
         assert_eq!(cfg.bitbucket.repos[1].slug, "private-playwright");
         assert!(cfg.bitbucket.any_configured());
+    }
+
+    #[test]
+    fn azdevops_creator_id_override_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&cfg_path).unwrap();
+        writeln!(
+            f,
+            r#"
+[azdevops]
+auth_env   = "AZDO_TOKEN"
+creator_id = "abcdef12-3456-7890-abcd-ef1234567890"
+
+[[azdevops.projects]]
+org     = "private"
+project = "the private integration"
+repo    = "api"
+"#
+        )
+        .unwrap();
+
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&cfg_path);
+        assert_eq!(cfg.azdevops.auth_env_name(), "AZDO_TOKEN");
+        assert_eq!(
+            cfg.azdevops.creator_id.as_deref(),
+            Some("abcdef12-3456-7890-abcd-ef1234567890")
+        );
+        assert_eq!(cfg.azdevops.projects.len(), 1);
+    }
+
+    #[test]
+    fn azdevops_creator_id_defaults_to_none() {
+        let cfg = Config::default();
+        assert!(cfg.azdevops.creator_id.is_none());
     }
 
     #[test]

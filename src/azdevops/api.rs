@@ -105,22 +105,70 @@ pub fn fetch_my_open_pull_requests(
     client: &reqwest::blocking::Client,
     auth_header: &str,
     org: &str,
+    creator_id: Option<&str>,
 ) -> Result<Vec<PullRequestRecord>, String> {
-    // Cross-org-project: we'd ideally fetch by creatorId, but that's a
-    // GUID we have to look up first. To keep this simple, we use the
-    // `searchCriteria.creatorId=me` shorthand — Azure DevOps accepts
-    // the literal `me` keyword in some API versions. If a real user
-    // hits this and it doesn't work, follow up with a ConnectionData
-    // lookup and substitute the GUID.
+    // Cross-org-project — query by `searchCriteria.creatorId`. Azure
+    // DevOps accepts the literal `me` keyword in recent API versions; if
+    // a user's tenant rejects that (some on-prem TFS / older orgs do),
+    // they can configure their account's GUID via
+    // `[azdevops] creator_id = "..."` and we pass it directly.
+    //
+    // If the `me` form errors out, we fall through to `fetch_creator_id`
+    // (ConnectionData → user descriptor → GUID) and retry — slower (one
+    // extra round-trip) but works without manual config.
+    let id = creator_id.unwrap_or("me");
     let url = format!(
-        "https://dev.azure.com/{}/_apis/git/pullrequests?searchCriteria.status=active&searchCriteria.creatorId=me&$top=50&api-version={API_VERSION}",
+        "https://dev.azure.com/{}/_apis/git/pullrequests?searchCriteria.status=active&searchCriteria.creatorId={}&$top=50&api-version={API_VERSION}",
         url_encode(org),
+        url_encode(id),
     );
-    let body = http_get(client, &url, auth_header)?;
+    let resp_or_err = http_get(client, &url, auth_header);
+    let body = match resp_or_err {
+        Ok(b) => b,
+        Err(e) if creator_id.is_none() && e.contains("HTTP ") => {
+            // `me` likely rejected; try the GUID lookup path.
+            match fetch_creator_id(client, auth_header) {
+                Ok(guid) => {
+                    let url = format!(
+                        "https://dev.azure.com/{}/_apis/git/pullrequests?searchCriteria.status=active&searchCriteria.creatorId={}&$top=50&api-version={API_VERSION}",
+                        url_encode(org),
+                        url_encode(&guid),
+                    );
+                    http_get(client, &url, auth_header).map_err(|e2| {
+                        format!("Mine fetch (me + GUID retry both failed): {e} | {e2}")
+                    })?
+                }
+                Err(lookup_err) => {
+                    return Err(format!(
+                        "Mine fetch failed with `creatorId=me` ({e}); GUID lookup also failed ({lookup_err}). Set `[azdevops] creator_id` to your account GUID."
+                    ));
+                }
+            }
+        }
+        Err(e) => return Err(e),
+    };
     // For Mine we don't know the project/repo per-PR upfront — the
     // response carries repository.project.name + repository.name so
     // we use those.
     parse_prs_response_mine(&body, org)
+}
+
+/// Resolve the authenticated user's Azure DevOps account GUID via
+/// `https://app.vssps.visualstudio.com/_apis/profile/profiles/me`. Used
+/// when `creatorId=me` is rejected by the Mine endpoint.
+fn fetch_creator_id(
+    client: &reqwest::blocking::Client,
+    auth_header: &str,
+) -> Result<String, String> {
+    let url =
+        "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1-preview.3";
+    let body = http_get(client, url, auth_header)?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("profile json: {e}"))?;
+    v.get("id")
+        .and_then(|x| x.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "no `id` in profile/me response".to_string())
 }
 
 fn http_get(
