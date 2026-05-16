@@ -124,6 +124,15 @@ pub enum LspEvent {
         path: PathBuf,
         edits: Vec<(Range, String)>,
     },
+    /// Result of a `textDocument/willSaveWaitUntil` request — the
+    /// `TextEdit[]` the server wants applied *before* the file hits disk.
+    /// Same shape as `Formatting` but a separate variant so the save
+    /// state machine knows to chain into format-on-save (if enabled)
+    /// after applying these edits.
+    WillSaveWaitUntil {
+        path: PathBuf,
+        edits: Vec<(Range, String)>,
+    },
     /// Result of a `textDocument/codeAction` request — the available actions at
     /// the requested range, in server order.
     CodeAction(Vec<CodeAction>),
@@ -751,6 +760,19 @@ impl LspManager {
         for c in self.clients.values_mut() {
             if c.is_open(path) {
                 c.formatting(path, tab_size, insert_spaces);
+                sent = true;
+            }
+        }
+        sent
+    }
+    /// Send a `textDocument/willSaveWaitUntil` request — fired before
+    /// save, reply arrives as [`LspEvent::WillSaveWaitUntil`] and the
+    /// edits are spliced into the buffer *before* the disk write.
+    pub fn will_save_wait_until(&mut self, path: &Path) -> bool {
+        let mut sent = false;
+        for c in self.clients.values_mut() {
+            if c.is_open(path) {
+                c.will_save_wait_until(path);
                 sent = true;
             }
         }

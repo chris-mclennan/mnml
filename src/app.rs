@@ -1575,6 +1575,13 @@ pub struct App {
     /// the deadline passes without a reply, `tick` saves anyway (misbehaving
     /// LSPs can't gate save).
     pub pending_format_save: Option<(PathBuf, std::time::Instant)>,
+    /// When `[editor] will_save_wait_until = true`, `save_active` fires
+    /// `textDocument/willSaveWaitUntil` and stashes `(path, deadline)`
+    /// here. The reply applies edits, then chains into either
+    /// `pending_format_save` (if `format_on_save` is also on) or
+    /// `save_active_now`. Deadline behaves the same as
+    /// `pending_format_save`: misbehaving LSPs can't gate save.
+    pub pending_will_save: Option<(PathBuf, std::time::Instant)>,
     /// Is the workspace "section" inside the rail expanded? When `false` the
     /// rail shows just the `> WORKSPACE-NAME` header (clickable to expand);
     /// when `true` it shows the header (`v WORKSPACE-NAME`) + the file list.
@@ -1992,6 +1999,7 @@ impl App {
             nav_forward: Vec::new(),
             last_click: None,
             pending_format_save: None,
+            pending_will_save: None,
             // VS-Code-style: the rail is shown with its workspace section
             // expanded by default. The last session's choice overrides this
             // in `try_restore_session`.
@@ -5646,6 +5654,7 @@ impl App {
                 }
             }
             LspEvent::Formatting { path, edits } => self.apply_formatting_edits(path, edits),
+            LspEvent::WillSaveWaitUntil { path, edits } => self.apply_will_save_edits(path, edits),
             LspEvent::InlayHints { path, hints } => {
                 for p in self.panes.iter_mut() {
                     if let Pane::Editor(b) = p
@@ -5816,6 +5825,58 @@ impl App {
             self.pending_format_save = None;
             self.save_active_now();
         }
+        // Same for the willSaveWaitUntil pre-stage; on expiry we chain
+        // forward into the same "after will-save" path so format-on-save
+        // still gets a chance to run.
+        let expired_wsw = matches!(
+            &self.pending_will_save,
+            Some((_, deadline)) if std::time::Instant::now() > *deadline,
+        );
+        if expired_wsw {
+            self.pending_will_save = None;
+            self.save_active_after_will_save();
+        }
+    }
+
+    /// Apply the `TextEdit[]` returned by `textDocument/willSaveWaitUntil`
+    /// to the matching open buffer, then advance the save state machine.
+    /// Empty edits are a valid no-op reply (the server saw the save event
+    /// but had nothing to change) — we still chain forward so the save
+    /// completes.
+    fn apply_will_save_edits(&mut self, path: PathBuf, edits: Vec<(crate::lsp::Range, String)>) {
+        let was_pending = matches!(
+            &self.pending_will_save,
+            Some((p, _)) if p == &path,
+        );
+        if !was_pending {
+            return; // stale reply (deadline expired, save already chained)
+        }
+        let Some(idx) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&path)))
+        else {
+            self.pending_will_save = None;
+            return;
+        };
+        if !edits.is_empty() {
+            let ops = match self.panes.get(idx) {
+                Some(Pane::Editor(b)) => build_replace_ops(b.editor.text(), &edits),
+                _ => Vec::new(),
+            };
+            if !ops.is_empty() {
+                let clip = &mut self.clipboard;
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    b.apply_edit_ops(ops, clip, 0);
+                }
+                if let Some(Pane::Editor(b)) = self.panes.get(idx) {
+                    let t = b.editor.text().to_string();
+                    self.lsp.did_change(&path, &t);
+                }
+            }
+        }
+        self.pending_will_save = None;
+        self.save_active_after_will_save();
     }
 
     /// `lsp.format` (`Ctrl+Shift+I`) — ask the LSP to format the active
@@ -12330,10 +12391,29 @@ impl App {
             self.save_request_to_source();
             return;
         }
-        // Format-on-save: ask the LSP to format first; the reply will land
-        // async and chain into `save_active_now`. If the LSP isn't attached
-        // (no server, or the format request is rejected) we fall through and
-        // save immediately so the user isn't left holding a dirty buffer.
+        // willSaveWaitUntil → format-on-save → disk. Each pre-save hook
+        // fires its LSP request, stashes a (path, deadline) marker, and
+        // chains forward when its reply lands. The deadline catches
+        // misbehaving / unresponsive servers so a save can never be
+        // gated forever.
+        if self.config.editor.will_save_wait_until
+            && let Some(b) = self.active_editor()
+            && let Some(path) = b.path.clone()
+            && self.lsp.will_save_wait_until(&path)
+        {
+            self.pending_will_save = Some((
+                path,
+                std::time::Instant::now() + std::time::Duration::from_millis(2000),
+            ));
+            return;
+        }
+        self.save_active_after_will_save();
+    }
+
+    /// Second stage of `save_active`: format-on-save → disk. Reached
+    /// either directly (when `will_save_wait_until` is off) or after the
+    /// wsw reply lands.
+    fn save_active_after_will_save(&mut self) {
         if self.config.editor.format_on_save
             && let Some(b) = self.active_editor()
             && let Some(path) = b.path.clone()
@@ -16367,6 +16447,12 @@ impl App {
                 } else if matches!(opt, "noformatonsave" | "nofos") {
                     self.config.editor.format_on_save = false;
                     self.toast(":set noformatonsave");
+                } else if matches!(opt, "willsavewaituntil" | "wswu") {
+                    self.config.editor.will_save_wait_until = true;
+                    self.toast(":set willsavewaituntil");
+                } else if matches!(opt, "nowillsavewaituntil" | "nowswu") {
+                    self.config.editor.will_save_wait_until = false;
+                    self.toast(":set nowillsavewaituntil");
                 } else {
                     self.toast(format!(":set {rest} — not supported"));
                 }

@@ -111,7 +111,11 @@ impl LspClient {
                         "workDoneProgress": true
                     },
                     "textDocument": {
-                        "synchronization": { "didSave": true },
+                        "synchronization": {
+                            "didSave": true,
+                            "willSave": true,
+                            "willSaveWaitUntil": true
+                        },
                         "publishDiagnostics": {},
                         "hover": { "contentFormat": ["markdown", "plaintext"] },
                         "definition": { "linkSupport": true },
@@ -670,6 +674,23 @@ impl LspClient {
         );
     }
 
+    /// `textDocument/willSaveWaitUntil` — fired before a save. Reply is a
+    /// `TextEdit[]` (possibly null) the server wants applied *before* the
+    /// file hits disk. Different from `textDocument/formatting`: this is
+    /// the hook some servers (eslint --fix, organizeImports-on-save) use
+    /// because the protocol guarantees the edits apply *before* didSave
+    /// fires. We pass `reason: 1` (Manual — the user explicitly saved).
+    pub fn will_save_wait_until(&mut self, path: &Path) {
+        self.request_with_path(
+            "textDocument/willSaveWaitUntil",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "reason": 1
+            }),
+            Some(path),
+        );
+    }
+
     /// `textDocument/formatting` — reply is a `TextEdit[]` (possibly null).
     /// The path is stashed so we can route the reply to the right buffer.
     pub fn formatting(&mut self, path: &Path, tab_size: u32, insert_spaces: bool) {
@@ -955,6 +976,15 @@ fn handle_message(
                 let edits = parse_text_edits(result);
                 if let (false, Some(path)) = (edits.is_empty(), req_path) {
                     let _ = tx.send(LspEvent::Formatting { path, edits });
+                }
+            }
+            "textDocument/willSaveWaitUntil" => {
+                // Always emit (even empty) so the App can advance its
+                // save state machine — otherwise a no-op server would
+                // stall a save behind the deadline.
+                let edits = parse_text_edits(result);
+                if let Some(path) = req_path {
+                    let _ = tx.send(LspEvent::WillSaveWaitUntil { path, edits });
                 }
             }
             "textDocument/codeAction" => {

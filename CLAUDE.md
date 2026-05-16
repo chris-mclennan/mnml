@@ -935,6 +935,18 @@ apply the reply via the existing `apply_formatting_edits` path (the reply shape 
 to `textDocument/formatting`, so the client.rs match arm just joins them). `initialize`
 advertises `onTypeFormatting`. Off by default — an LSP rewriting half-typed code is
 surprising.
+**LSP `willSaveWaitUntil`** — `[editor] will_save_wait_until = true` (default off; `:set
+willsavewaituntil` / `:set nowillsavewaituntil` runtime toggle, also `wswu` / `nowswu`).
+Fires `textDocument/willSaveWaitUntil` before each save with `reason: 1` (Manual); the
+server's `TextEdit[]` reply is applied to the buffer *before* the file hits disk. The save
+state machine is now a three-stage chain: `save_active` → wsw (if enabled, sets
+`pending_will_save`) → `save_active_after_will_save` → format-on-save (if enabled, sets
+`pending_format_save`) → `save_active_now` (disk write + `did_save`). Both pre-save hooks
+have a 2-second deadline checked from `tick`; a misbehaving server can't gate save
+forever. `initialize` advertises `synchronization.{willSave, willSaveWaitUntil} = true`.
+The hook is the canonical pre-save mechanism for servers that do `eslint --fix` /
+`organizeImports`-on-save (formatting is for rustfmt / prettier-style whole-file rewrites);
+both can run in sequence when configured.
 **Ctrl+Click / Ctrl+Shift+Click** in an editor pane — plain `Ctrl+Click` places the cursor at
 the click and fires `lsp.goto_definition` (VS Code's "click through"); `Ctrl+Shift+Click`
 fires `lsp.references` (peek-references-style gesture). Modifier check happens in

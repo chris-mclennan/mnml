@@ -389,6 +389,13 @@ pub struct EditorConfig {
     /// per-workspace when you do. If the LSP isn't attached (or doesn't
     /// implement formatting), the save proceeds normally.
     pub format_on_save: bool,
+    /// Fire `textDocument/willSaveWaitUntil` before each save and apply
+    /// the server-returned `TextEdit[]` *before* the file hits disk. Off
+    /// by default — most servers don't register this; the ones that do
+    /// (eslint --fix, organizeImports-on-save) use it as their canonical
+    /// pre-save hook. Fires *before* `format_on_save`, so an
+    /// organize-imports pass and a format pass can both run in order.
+    pub will_save_wait_until: bool,
     /// When true, fire `textDocument/onTypeFormatting` after each typed
     /// trigger char (`}` / `;` / `\n`) and apply the resulting edits.
     /// Off by default — can be surprising to have an LSP rewrite your
@@ -513,6 +520,7 @@ impl Default for Config {
                 auto_pair: false,
                 auto_indent: true,
                 format_on_save: false,
+                will_save_wait_until: false,
                 format_on_type: false,
                 autosave_on_focus_loss: false,
                 inlay_hints: true,
@@ -722,6 +730,7 @@ struct RawEditor {
     auto_pair: Option<bool>,
     auto_indent: Option<bool>,
     format_on_save: Option<bool>,
+    will_save_wait_until: Option<bool>,
     format_on_type: Option<bool>,
     autosave_on_focus_loss: Option<bool>,
     inlay_hints: Option<bool>,
@@ -812,6 +821,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.format_on_save {
             self.editor.format_on_save = v;
+        }
+        if let Some(v) = raw.editor.will_save_wait_until {
+            self.editor.will_save_wait_until = v;
         }
         if let Some(v) = raw.editor.autosave_on_focus_loss {
             self.editor.autosave_on_focus_loss = v;
