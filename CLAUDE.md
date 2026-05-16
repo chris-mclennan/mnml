@@ -82,6 +82,40 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**NvChad-track add-ons (2026-05-16):** seven NvChad-style features landed in one sweep — (1) **startup
+dashboard** (NvDash) — when `Layout::Empty`, `ui::welcome` paints an ASCII `mnml` logo + workspace name +
+git branch chip + clickable recent-files list + shortcut hints; recent-file rows are click-targetable via
+new `app.rects.dashboard_rows` (the `tui::dispatch_mouse` head matches them when no panes are open and
+routes to `open_path`). (2) **Flash motion** (leap/lightspeed style) — vim Normal `s<a><b>` enters
+`Prefix::Flash1` → `Prefix::Flash2(a)` → escalates `AppCommand::FlashStart(a, b)`; `App::flash_start`
+scans the active editor's viewport for case-insensitive occurrences of the trigger pair, assigns each a
+1-char label from `LABEL_POOL` (excluding the trigger chars), stashes them on `App.flash_state`; `tui::
+dispatch_key`'s top intercepts the next keystroke and routes to `App::flash_consume_char` which jumps the
+cursor (pushing nav-back) or cancels. `ui::flash_overlay` paints the labels inline as bg2-on-yellow over
+each target's cell. Vim's `s` substitute (= `cl`) is displaced — leap.nvim convention. (3) **Harpoon**
+(pinned 1–9 files) — `App.harpoon: [Option<PathBuf>; 9]` persisted in session.json; commands
+`harpoon.add` / `harpoon.menu` / `harpoon.goto_1..9`; chords `<leader>1`..`<leader>9` jump, `<leader>H a`
+adds active, `<leader>H m` opens a `PickerKind::Harpoon` picker. Idempotent add — re-adding the same
+path is a no-op + toast. (4) **Cheatsheet pane** (NvCheatsheet) — new `Pane::Cheatsheet` rendering every
+chord → command grouped by `Command::group` via `crate::cheatsheet::CheatsheetPane::build(&keymap)`;
+`/`-filter narrows by chord / id / title; `j`/`k`/`PgUp`/`PgDn`/`g`/`G` navigate; Enter runs the
+highlighted command. Opens via `view.cheatsheet` / `<leader>?`. (5) **Inline rename preview**
+(inc-rename.nvim) — `lsp_rename` now also fills `App.rename_preview_state` with every whole-word
+occurrence of the original identifier in the active editor (`collect_whole_word_occurrences` —
+single-file MVP); while the prompt is open, `ui::rename_preview_overlay` paints the prompt's current
+text inline at each occurrence (green-on-bg_dark, bold). Cleared on prompt accept / cancel; the
+post-accept `RenamePreview` picker still handles cross-file scope. (6) **Multi-file diff browser** —
+new `DiffScope::AllVsHead` running `git diff HEAD` (covers staged + unstaged in one pane);
+`git.diff_all` command + `<leader>g A`; `f` / `F` in the diff pane jump to next / prev file's first
+hunk (`App::diff_jump_file`, wraps). Header toast shows changed file count on open. (7) **Inline-
+rendered markdown** (render-markdown.nvim) — `[ui] render_markdown = true` (default off; `:set
+[no]rendermarkdown` / `view.toggle_render_markdown`); `ui::md_inline_overlay` post-process pass repaints
+visible cells of markdown buffers: heading lines bold + depth-colored (red/orange/yellow/green/cyan/blue
+for `#`..`######`, `#`s dimmed), `**bold**` (markers dim, inner bold), `*italic*`/`_italic_` (markers
+dim, inner italic), `` `code` `` (backticks dim, inner with bg2 background), `[label](url)` (label
+underlined blue, brackets/URL dim). Bails when `[ui] wrap` is on (the simple row mapping wouldn't track
+wrapped continuation rows correctly). All seven covered by unit tests; 571 tests pass.
+
 P0–P3 done. Working: NvChad-ish layout; editable buffers via
 either `StandardInputHandler` (VSCode-style, modeless) or `VimInputHandler` (modal:
 Normal/Insert/Visual + `:`-line), swappable at runtime (`editor.toggle_keymap` /
@@ -1314,11 +1348,16 @@ allowed (bufferline shows all), `App.active` = focused pane = uniquely the focus
 `view.focus_next_split`, `view.close_split` commands, surfaced in the which-key `+split`
 submenu (`<leader>s …` / `Ctrl+K s …`); click a leaf to focus it, drag a divider to
 resize it; closing a dirty buffer pops a Save/Discard/Cancel overlay (`src/ui/close_prompt.rs`).
-tree-sitter syntax highlight (`src/highlight.rs`, 32 grammars: rs/js/jsx/ts/tsx/py/json/go/
-toml/css/bash/html/md/c/cpp/rb/java/cs/lua/yaml/scala/ex/hs/php/swift/make/zig/nix/ocaml/dart/sql/kt/regex — `build_config` maps file extensions →
-`(language, highlights, injections, locals)` query set; `config_for_lang` resolves *injected*
-languages so fenced code blocks in markdown / embedded HTML·CSS·JS get highlighted too, and the
-markdown `text.*` captures are in `HIGHLIGHT_NAMES`) + indent guides; hybrid relative line numbers (`[ui] relative_line_numbers`,
+tree-sitter syntax highlight (`src/highlight.rs`, 39 grammars: rs/js/jsx/ts/tsx/py/json/go/
+toml/css/bash/html/md/c/cpp/rb/java/cs/lua/yaml/scala/ex/hs/php/swift/make/zig/nix/ocaml/dart/sql/kt/regex
++ dockerfile (Containerfile/Dockerfile.* filenames too) + hcl (terraform/tf/tfvars) + proto + diff/patch +
+vue + svelte + astro — `build_config` maps file extensions → `(language, highlights, injections, locals)`
+query set; cheap aliases (jsonl/ndjson → json, mdx → md, sass → css, fish → sh) ride on the parent
+grammar's arm; `config_for_lang` resolves *injected* languages so fenced code blocks in markdown /
+embedded HTML·CSS·JS get highlighted too, and the markdown `text.*` captures are in `HIGHLIGHT_NAMES`.
+hcl + proto + vue have to vendor their highlights/injections queries under `queries/*.scm` — upstream
+hcl ships none, proto comments them out of the bindings, vue-next's build.rs cfg-gating mis-points at
+the query files — so we `include_str!` local copies.) + indent guides; hybrid relative line numbers (`[ui] relative_line_numbers`,
 `:set [no]relativenumber`, `view.toggle_relative_numbers` — cursor line absolute, others = distance).
 **Build version (`MNML_GIT_SHA`)** — `build.rs::emit_git_sha` reads `git rev-parse --short=9 HEAD`
 (+ `git status --porcelain` for a `-dirty` suffix) and emits it as `cargo:rustc-env=MNML_GIT_SHA=…`.
@@ -2568,6 +2607,19 @@ browser via the same `open_url_external` helper the per-host
 `open_selected_*_pr_url` commands use. New `PickerKind::OpenPullRequests`.
 Empty caches ⇒ toast pointing at the four `[[<host>.repos]]` /
 `[[<host>.projects]]` config tables (no picker opens).
+
+**mini.align** — `gA{motion}<char>` (Normal) and `gA<char>` (Visual) pad
+every line in the motion's range with spaces before the first occurrence
+of `<char>` so the chars line up at the same column. Lowercase `ga` is
+taken by vim's char-info, so this uses capital `A`. New `EditOp::AlignSelection
+{ on_char }` (operates on the live selection — finds each line's first hit
+column, computes the max, inserts padding descending so byte offsets stay
+valid). New `PendingOp::Align` + `Prefix::AlignCharWait`: in Normal,
+`gA{motion}` leaves the motion's selection live and transitions to
+char-wait; the char arrives and emits `[AlignSelection, SelectClear]`. In
+Visual, `gA` goes straight to char-wait since the selection already exists.
+Single edit op so one Undo reverts. Already-aligned input is a no-op (still
+drops the selection like the case-transform ops).
 
 ## Not set up yet (could add later)
 

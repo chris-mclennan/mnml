@@ -207,6 +207,10 @@ pub struct Buffer {
     /// Stamp of the last text-changing edit (used by `[editor] autosave_secs`).
     /// `None` until the first edit; cleared back to `None` on save.
     pub last_edited: Option<Instant>,
+    /// `(start_byte, end_byte, started_at)` of the most-recent yank — used
+    /// by the highlight-on-yank overlay to flash the region yellow for
+    /// ~200ms. Cleared by `App::tick` once the TTL expires.
+    pub yank_flash: Option<(usize, usize, Instant)>,
     /// `true` ⇒ `highlights` is stale and needs a refresh; `App::tick` will
     /// rebuild it after a short idle. Lets us hold the previous frame's
     /// highlights while the user is typing rapidly (avoids re-parsing the
@@ -303,6 +307,7 @@ impl Buffer {
             color_decorations: Vec::new(),
             document_highlights: Vec::new(),
             last_edited: None,
+            yank_flash: None,
             highlights_dirty: false,
             parse_tree: None,
             injection_trees: crate::highlight::InjectionTreeCache::new(),
@@ -376,6 +381,7 @@ impl Buffer {
             color_decorations: Vec::new(),
             document_highlights: Vec::new(),
             last_edited: None,
+            yank_flash: None,
             highlights_dirty: false,
             parse_tree: None,
             injection_trees: crate::highlight::InjectionTreeCache::new(),
@@ -629,6 +635,7 @@ impl Buffer {
                 // Snapshot per-op so single-point edits get accurate line
                 // deltas and folds can shift instead of being dropped.
                 for op in ops {
+                    let is_close_angle = matches!(op, crate::edit_op::EditOp::InsertChar('>'));
                     let cursor_line_before = self.editor.row_col().0;
                     let lines_before = self.editor.line_count();
                     let out = self.editor.apply(op, viewport_rows, clipboard);
@@ -646,6 +653,16 @@ impl Buffer {
                         } else {
                             self.pending_tree_edits.extend(out.text_edits);
                         }
+                    }
+                    if let Some((lo, hi)) = out.yanked_range {
+                        self.yank_flash = Some((lo, hi, Instant::now()));
+                    }
+                    // Auto-close HTML/JSX/Vue/Svelte/Astro tags: when the
+                    // user just typed `>` that completed `<TagName ...>`,
+                    // insert `</TagName>` after the cursor. Skip on void
+                    // (`<br>`, `<img>`, …) or self-closing (`<Foo />`).
+                    if is_close_angle && out.buffer_changed && self.is_html_family() {
+                        self.try_autoclose_tag();
                     }
                     changed |= out.buffer_changed;
                 }
@@ -725,6 +742,66 @@ impl Buffer {
     /// `at_line` (the cursor's line at edit time). `delta` is the net line
     /// change (`+1` for an inserted newline, `-1` for a removed line, etc.).
     /// Folds *entirely above* `at_line` are unchanged. Folds *entirely
+    /// True when the buffer's filetype is an HTML-family language that
+    /// benefits from auto-closing tags (`<div>` → `<div></div>`).
+    fn is_html_family(&self) -> bool {
+        matches!(
+            self.language_ext.as_deref(),
+            Some("html" | "htm" | "vue" | "svelte" | "astro" | "jsx" | "tsx" | "xml")
+        )
+    }
+
+    /// Auto-close HTML/JSX tags. Called immediately after `>` was typed.
+    /// Inspects the line backward from the cursor, identifies the
+    /// just-completed `<TagName ...>` opening, and inserts `</TagName>`
+    /// after the cursor. Bails on void elements (`br`, `img`, …),
+    /// self-closing (`<Foo />`), closing tags (`</Foo>`), or comments.
+    fn try_autoclose_tag(&mut self) {
+        let cursor = self.editor.cursor();
+        let text = self.editor.text();
+        if cursor == 0 || cursor > text.len() {
+            return;
+        }
+        // The char immediately before cursor must be `>` (we know it is,
+        // but be defensive — the cursor could have advanced).
+        if &text[cursor.saturating_sub(1)..cursor] != ">" {
+            return;
+        }
+        // Find the matching `<` on this line.
+        let line_start = text[..cursor].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let line_up_to_cursor = &text[line_start..cursor];
+        let Some(lt_rel) = line_up_to_cursor.rfind('<') else {
+            return;
+        };
+        let inside = &line_up_to_cursor[lt_rel + 1..line_up_to_cursor.len() - 1];
+        if inside.is_empty()
+            || inside.starts_with('/')
+            || inside.starts_with('!')
+            || inside.starts_with('?')
+            || inside.ends_with('/')
+        {
+            return;
+        }
+        // Extract tag name (alphanumerics + `_`/`-`/`:` for namespacing).
+        let name_end = inside
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':'))
+            .unwrap_or(inside.len());
+        if name_end == 0 {
+            return;
+        }
+        let name = &inside[..name_end];
+        // Void HTML elements — never get a close tag.
+        const VOID: &[&str] = &[
+            "br", "hr", "img", "input", "meta", "link", "area", "base", "col", "embed", "param",
+            "source", "track", "wbr",
+        ];
+        if VOID.iter().any(|v| v.eq_ignore_ascii_case(name)) {
+            return;
+        }
+        let close = format!("</{name}>");
+        self.editor.insert_str_at_cursor_no_advance(&close);
+    }
+
     /// below* shift by `delta`. Folds straddling `at_line` are dropped
     /// (they're likely broken). Negative deltas that would push a fold's
     /// start at-or-before `at_line` also drop the fold (collapsed too far).
@@ -944,7 +1021,15 @@ fn ext_for_filename(path: &Path) -> Option<String> {
         "Makefile" | "makefile" | "GNUmakefile" => "make",
         "Rakefile" | "Gemfile" | "Vagrantfile" | "Brewfile" | "Podfile" | "Fastfile" => "rb",
         ".env" | ".envrc" => "sh",
-        _ => return None,
+        "Dockerfile" | "dockerfile" | "Containerfile" | "containerfile" => "dockerfile",
+        _ => {
+            // `Dockerfile.dev`, `Dockerfile.prod`, etc. are common.
+            if name.starts_with("Dockerfile.") || name.starts_with("Containerfile.") {
+                "dockerfile"
+            } else {
+                return None;
+            }
+        }
     };
     Some(ext.to_string())
 }
@@ -1108,6 +1193,79 @@ mod tests {
         let mut clip = crate::clipboard::Clipboard::new();
         b.apply_edit_ops(vec![crate::edit_op::EditOp::InsertChar('x')], &mut clip, 0);
         assert!(b.folds.is_empty());
+    }
+
+    #[test]
+    fn autoclose_html_tag_inserts_closing() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.html");
+        fs::write(&p, "").unwrap();
+        let mut b = Buffer::open(&p, &Config::default()).unwrap();
+        let mut clip = crate::clipboard::Clipboard::new();
+        // Simulate typing `<div>`
+        for c in "<div>".chars() {
+            let key = ratatui::crossterm::event::KeyEvent::new(
+                ratatui::crossterm::event::KeyCode::Char(c),
+                ratatui::crossterm::event::KeyModifiers::NONE,
+            );
+            b.feed_key(key, &mut clip, 10, None);
+        }
+        assert_eq!(b.editor.text(), "<div></div>");
+        // Cursor sits between the tags.
+        assert_eq!(b.editor.cursor(), 5);
+    }
+
+    #[test]
+    fn autoclose_html_skips_void_elements() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.html");
+        fs::write(&p, "").unwrap();
+        let mut b = Buffer::open(&p, &Config::default()).unwrap();
+        let mut clip = crate::clipboard::Clipboard::new();
+        for c in "<br>".chars() {
+            let key = ratatui::crossterm::event::KeyEvent::new(
+                ratatui::crossterm::event::KeyCode::Char(c),
+                ratatui::crossterm::event::KeyModifiers::NONE,
+            );
+            b.feed_key(key, &mut clip, 10, None);
+        }
+        // No close tag inserted — `br` is void.
+        assert_eq!(b.editor.text(), "<br>");
+    }
+
+    #[test]
+    fn autoclose_html_skips_self_closing() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.jsx");
+        fs::write(&p, "").unwrap();
+        let mut b = Buffer::open(&p, &Config::default()).unwrap();
+        let mut clip = crate::clipboard::Clipboard::new();
+        for c in "<Foo />".chars() {
+            let key = ratatui::crossterm::event::KeyEvent::new(
+                ratatui::crossterm::event::KeyCode::Char(c),
+                ratatui::crossterm::event::KeyModifiers::NONE,
+            );
+            b.feed_key(key, &mut clip, 10, None);
+        }
+        // No double close.
+        assert_eq!(b.editor.text(), "<Foo />");
+    }
+
+    #[test]
+    fn autoclose_html_ignores_non_html_files() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.rs");
+        fs::write(&p, "").unwrap();
+        let mut b = Buffer::open(&p, &Config::default()).unwrap();
+        let mut clip = crate::clipboard::Clipboard::new();
+        for c in "<div>".chars() {
+            let key = ratatui::crossterm::event::KeyEvent::new(
+                ratatui::crossterm::event::KeyCode::Char(c),
+                ratatui::crossterm::event::KeyModifiers::NONE,
+            );
+            b.feed_key(key, &mut clip, 10, None);
+        }
+        assert_eq!(b.editor.text(), "<div>");
     }
 
     #[test]

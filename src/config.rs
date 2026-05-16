@@ -523,6 +523,14 @@ pub struct UiConfig {
     /// by default (some users find it noisy). `:set [no]todohl` /
     /// `view.toggle_todo_highlight`.
     pub highlight_todo_keywords: bool,
+    /// When true, paint inline markdown decorations (heading-line bold +
+    /// colored, `**bold**` rendered bold with markers dimmed, `*italic*`
+    /// italic with markers dimmed, `` `code` `` with bg2 background,
+    /// `[text](url)` rendered as just `text` colored as a link) IN the
+    /// editor pane — render-markdown.nvim style. Off by default — the
+    /// markdown preview pane (`Pane::MdPreview`) is the canonical
+    /// rendering. `:set [no]rendermarkdown` / `view.toggle_render_markdown`.
+    pub render_markdown: bool,
 }
 
 impl Default for Config {
@@ -566,6 +574,7 @@ impl Default for Config {
                 color_column: 0,
                 wrap: false,
                 highlight_todo_keywords: false,
+                render_markdown: false,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -783,6 +792,7 @@ struct RawUi {
     color_column: Option<usize>,
     wrap: Option<bool>,
     highlight_todo_keywords: Option<bool>,
+    render_markdown: Option<bool>,
 }
 
 impl Config {
@@ -922,6 +932,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.highlight_todo_keywords {
             self.ui.highlight_todo_keywords = v;
+        }
+        if let Some(v) = raw.ui.render_markdown {
+            self.ui.render_markdown = v;
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;

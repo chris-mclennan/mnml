@@ -156,6 +156,22 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     if key.code == KeyCode::Esc {
         app.toast = None;
     }
+    // Flash intercept: when label overlay is up, Esc cancels; a printable
+    // char matching a label commits the jump; an unmatched key cancels
+    // and falls through to normal dispatch.
+    if app.flash_state.is_some() {
+        if key.code == KeyCode::Esc {
+            app.flash_cancel();
+            return;
+        }
+        if let KeyCode::Char(c) = key.code
+            && app.flash_consume_char(c)
+        {
+            return;
+        }
+        // No match — drop state and re-dispatch the keystroke normally.
+        app.flash_cancel();
+    }
     // An open picker / palette overlay steals all keys until it's dismissed.
     if app.picker.is_some() {
         handle_picker_key(app, key);
@@ -531,6 +547,10 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('s') => app.apply_cursor_hunk(false),
             KeyCode::Char('u') => app.apply_cursor_hunk(true),
             KeyCode::Char('r') => app.refresh_active_diff(),
+            // f / F — jump to next / previous file in the diff (no-op
+            // for a single-file diff; wraps).
+            KeyCode::Char('f') => app.diff_jump_file(true),
+            KeyCode::Char('F') => app.diff_jump_file(false),
             KeyCode::Enter => app.jump_to_cursor_hunk(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
@@ -1048,6 +1068,107 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 if had_filter {
                     if let Some(Pane::Outline(o)) = app.panes.get_mut(i) {
                         o.filter_clear_and_exit();
+                    }
+                } else {
+                    app.focus_tree();
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+    // The cheatsheet pane: ↑↓ select, Enter → run the highlighted command,
+    // r refresh (rebuild from the active keymap), `/` filter, Esc → tree.
+    if matches!(app.panes.get(i), Some(Pane::Cheatsheet(_))) {
+        // Filter mode owns the keystroke stream until Enter / Esc.
+        if matches!(app.panes.get(i), Some(Pane::Cheatsheet(c)) if c.filter_mode) {
+            match key.code {
+                KeyCode::Esc => {
+                    if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                        c.query.clear();
+                        c.filter_mode = false;
+                        c.selected = 0;
+                    }
+                }
+                KeyCode::Enter => {
+                    if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                        c.filter_mode = false;
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                        c.query.pop();
+                        c.selected = 0;
+                    }
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(Pane::Cheatsheet(cp)) = app.panes.get_mut(i) {
+                        cp.query.push(c);
+                        cp.selected = 0;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                    c.move_up();
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                    c.move_down();
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                    c.page_up(viewport);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                    c.page_down(viewport);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                    c.jump_top();
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                    c.jump_bottom();
+                }
+            }
+            KeyCode::Enter => {
+                let cmd = match app.panes.get(i) {
+                    Some(Pane::Cheatsheet(c)) => c.selected_command_id(),
+                    _ => None,
+                };
+                if let Some(id) = cmd {
+                    crate::command::run(&id, app);
+                }
+            }
+            KeyCode::Char('/') => {
+                if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                    c.filter_mode = true;
+                }
+            }
+            KeyCode::Char('r') => {
+                let fresh = crate::cheatsheet::CheatsheetPane::build(&app.keymap);
+                if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                    *c = fresh;
+                }
+            }
+            KeyCode::Esc => {
+                let had_filter =
+                    matches!(app.panes.get(i), Some(Pane::Cheatsheet(c)) if !c.query.is_empty());
+                if had_filter {
+                    if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                        c.query.clear();
+                        c.selected = 0;
                     }
                 } else {
                     app.focus_tree();
@@ -2845,6 +2966,7 @@ fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
         BlockChangeStart => app.block_change_start(),
         CmdlineTabComplete => app.cmdline_tab_complete(),
         RepeatInsertStart { count, above } => app.repeat_insert_start(count as usize, above),
+        FlashStart(a, b) => app.flash_start(a, b),
     }
 }
 
@@ -2999,6 +3121,24 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     {
         app.close_pane(id);
         return;
+    }
+
+    // Dashboard (splash) recent-file click — only fires when Layout::Empty so
+    // we don't shadow editor clicks. Routes through `open_path`, which sets
+    // up the editor pane + LSP + tree state.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+        && matches!(app.layout, crate::layout::Layout::Empty)
+    {
+        let target = app
+            .rects
+            .dashboard_rows
+            .iter()
+            .find(|(r, _)| contains(*r, x, y))
+            .map(|(_, p)| p.clone());
+        if let Some(path) = target {
+            app.open_path(&path);
+            return;
+        }
     }
 
     // Middle-click in an editor pane pastes the clipboard at the clicked
@@ -3596,6 +3736,13 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 // match so the borrow on `app.panes` releases first — we
                 // need an immutable read of `app.config` to compute the
                 // flat-list max index.
+            }
+            Some(Pane::Cheatsheet(c)) => {
+                if delta < 0 {
+                    c.move_up();
+                } else {
+                    c.move_down();
+                }
             }
             None => {}
         }

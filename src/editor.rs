@@ -98,6 +98,392 @@ pub fn load_history_from(editor: &mut Editor, path: &Path) -> bool {
 /// `text`. "Whole word" means the chars immediately before and after the
 /// match aren't `[A-Za-z0-9_]`. Used by the "highlight word under cursor"
 /// render feature + the "select all occurrences" multi-cursor gesture.
+/// dial.nvim-style smart increment. Looks at the word under the cursor
+/// (on `line`) and tries to bump it by `delta`. Recognized shapes:
+/// `true`/`false`, `yes`/`no`, `on`/`off`, day-of-week, month names,
+/// ISO dates `YYYY-MM-DD`. Returns `(start_byte, end_byte, new_str)` on
+/// hit, or `None` to let the caller fall back to its number path.
+pub fn smart_increment_at(
+    text: &str,
+    cursor: usize,
+    line: usize,
+    delta: i64,
+) -> Option<(usize, usize, String)> {
+    let line_start = if line == 0 {
+        0
+    } else {
+        // Walk to the nth newline.
+        let mut n = 0;
+        let bytes = text.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() && n < line {
+            if bytes[i] == b'\n' {
+                n += 1;
+            }
+            i += 1;
+        }
+        i
+    };
+    let line_end = text[line_start..]
+        .find('\n')
+        .map(|p| line_start + p)
+        .unwrap_or(text.len());
+    let line_text = &text[line_start..line_end];
+    let cur_rel = cursor.saturating_sub(line_start).min(line_text.len());
+    // ISO date pattern first — broader span than the boolean word.
+    if let Some((rs, re, s)) = try_iso_date(line_text, cur_rel, delta) {
+        return Some((line_start + rs, line_start + re, s));
+    }
+    // Word-based matches.
+    let bytes = line_text.as_bytes();
+    let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut start = cur_rel.min(bytes.len());
+    while start > 0 && is_id(bytes[start - 1]) {
+        start -= 1;
+    }
+    let mut end = cur_rel.min(bytes.len());
+    while end < bytes.len() && is_id(bytes[end]) {
+        end += 1;
+    }
+    if start >= end {
+        return None;
+    }
+    let word = &line_text[start..end];
+    let new = swap_keyword(word, delta)?;
+    Some((line_start + start, line_start + end, new))
+}
+
+fn swap_keyword(word: &str, delta: i64) -> Option<String> {
+    // Case-preserving boolean / yes-no toggle. `delta` direction doesn't
+    // matter for booleans — both `Ctrl+A` and `Ctrl+X` toggle.
+    if let Some(p) = boolean_pair(word) {
+        return Some(p);
+    }
+    // Day-of-week / month names — cycle by delta.
+    if let Some(p) = cycle_named(
+        word,
+        &["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        delta,
+    ) {
+        return Some(p);
+    }
+    if let Some(p) = cycle_named(
+        word,
+        &[
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ],
+        delta,
+    ) {
+        return Some(p);
+    }
+    if let Some(p) = cycle_named(
+        word,
+        &[
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ],
+        delta,
+    ) {
+        return Some(p);
+    }
+    if let Some(p) = cycle_named(
+        word,
+        &[
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ],
+        delta,
+    ) {
+        return Some(p);
+    }
+    None
+}
+
+fn boolean_pair(word: &str) -> Option<String> {
+    // Case-preserving toggle.
+    let pairs = [
+        ("true", "false"),
+        ("True", "False"),
+        ("TRUE", "FALSE"),
+        ("yes", "no"),
+        ("Yes", "No"),
+        ("YES", "NO"),
+        ("on", "off"),
+        ("On", "Off"),
+        ("ON", "OFF"),
+    ];
+    for (a, b) in pairs {
+        if word == a {
+            return Some(b.to_string());
+        }
+        if word == b {
+            return Some(a.to_string());
+        }
+    }
+    None
+}
+
+fn cycle_named(word: &str, table: &[&str], delta: i64) -> Option<String> {
+    // Case-insensitive match; preserve the lookup table's case.
+    let idx = table.iter().position(|t| t.eq_ignore_ascii_case(word))?;
+    let n = table.len() as i64;
+    let new_idx = ((idx as i64 + delta).rem_euclid(n)) as usize;
+    Some(table[new_idx].to_string())
+}
+
+fn try_iso_date(line: &str, cur_rel: usize, delta: i64) -> Option<(usize, usize, String)> {
+    // Find an ISO date `YYYY-MM-DD` that straddles cur_rel.
+    let bytes = line.as_bytes();
+    if bytes.len() < 10 {
+        return None;
+    }
+    let cur_rel = cur_rel.min(bytes.len());
+    // Scan small windows around cur_rel.
+    let lo = cur_rel.saturating_sub(10);
+    let hi = (cur_rel + 10).min(bytes.len().saturating_sub(9));
+    for s in lo..=hi {
+        if s + 10 > bytes.len() {
+            break;
+        }
+        let slice = &line[s..s + 10];
+        if !looks_like_iso(slice) {
+            continue;
+        }
+        if !(s <= cur_rel && cur_rel <= s + 10) {
+            continue;
+        }
+        let new = bump_iso_date(slice, delta)?;
+        return Some((s, s + 10, new));
+    }
+    None
+}
+
+fn looks_like_iso(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() == 10
+        && bytes[0..4].iter().all(|b| b.is_ascii_digit())
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(|b| b.is_ascii_digit())
+        && bytes[7] == b'-'
+        && bytes[8..10].iter().all(|b| b.is_ascii_digit())
+}
+
+fn bump_iso_date(date: &str, delta: i64) -> Option<String> {
+    let y: i64 = date[0..4].parse().ok()?;
+    let m: u32 = date[5..7].parse().ok()?;
+    let d: u32 = date[8..10].parse().ok()?;
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let (ny, nm, nd) = add_days(y, m, d, delta);
+    Some(format!("{:04}-{:02}-{:02}", ny, nm, nd))
+}
+
+fn add_days(y: i64, m: u32, d: u32, delta: i64) -> (i64, u32, u32) {
+    // Convert to a Julian-ish day-number, add delta, convert back.
+    // Implementation: brute-force day-by-day for small deltas (which
+    // is the common case for Ctrl+A/X repeated presses). For large
+    // deltas we'd want a real algorithm; this covers ±365 in 365 ops.
+    let mut y = y;
+    let mut m = m;
+    let mut d = d;
+    let mut left = delta;
+    while left > 0 {
+        // Forward one day.
+        d += 1;
+        if d > days_in_month(y, m) {
+            d = 1;
+            m += 1;
+            if m > 12 {
+                m = 1;
+                y += 1;
+            }
+        }
+        left -= 1;
+    }
+    while left < 0 {
+        if d > 1 {
+            d -= 1;
+        } else {
+            m = if m == 1 {
+                y -= 1;
+                12
+            } else {
+                m - 1
+            };
+            d = days_in_month(y, m);
+        }
+        left += 1;
+    }
+    (y, m, d)
+}
+
+fn days_in_month(year: i64, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 0,
+    }
+}
+
+/// vim-matchup-style HTML/XML tag matching. If the cursor sits inside or
+/// on a `<TagName ...>` (or `</TagName>`), return the byte position of
+/// the matching tag's `<`. Returns `None` when the cursor isn't on a tag
+/// or no match exists (mismatched / self-closing / void).
+pub fn tag_match_at(text: &str, cursor: usize) -> Option<usize> {
+    // Find the enclosing tag — the `<` and `>` that bracket the cursor.
+    let (open_lt, close_gt, is_closing) = enclosing_tag(text, cursor)?;
+    let inside = &text[open_lt + 1..close_gt];
+    if inside.is_empty() {
+        return None;
+    }
+    // Self-closing or void: no match exists.
+    if inside.ends_with('/') {
+        return None;
+    }
+    let name = extract_tag_name(if is_closing { &inside[1..] } else { inside })?;
+    if name.is_empty() {
+        return None;
+    }
+    if is_closing {
+        find_opening_tag(text, name, open_lt)
+    } else {
+        find_closing_tag(text, name, close_gt)
+    }
+}
+
+/// Find the `<` and `>` that enclose `cursor`, plus whether it's a closing tag.
+fn enclosing_tag(text: &str, cursor: usize) -> Option<(usize, usize, bool)> {
+    let bytes = text.as_bytes();
+    let cursor = cursor.min(bytes.len());
+    // If the cursor sits ON a `<`, that's our open. Otherwise walk back.
+    let mut lt = if cursor < bytes.len() && bytes[cursor] == b'<' {
+        Some(cursor)
+    } else {
+        None
+    };
+    if lt.is_none() {
+        // Walk back to find `<`. Bail if we hit a `>` first (not in a tag).
+        let mut i = cursor;
+        while i > 0 {
+            i -= 1;
+            if bytes[i] == b'>' && lt.is_none() {
+                return None;
+            }
+            if bytes[i] == b'<' {
+                lt = Some(i);
+                break;
+            }
+        }
+    }
+    let lt = lt?;
+    // Walk forward to find the matching `>`.
+    let mut gt = None;
+    let mut j = lt + 1;
+    while j < bytes.len() {
+        if bytes[j] == b'>' {
+            gt = Some(j);
+            break;
+        }
+        if bytes[j] == b'<' {
+            return None; // nested `<` — malformed
+        }
+        j += 1;
+    }
+    let gt = gt?;
+    if gt < cursor {
+        return None;
+    }
+    let is_closing = gt > lt + 1 && bytes[lt + 1] == b'/';
+    Some((lt, gt, is_closing))
+}
+
+fn extract_tag_name(inside: &str) -> Option<&str> {
+    let end = inside
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':'))
+        .unwrap_or(inside.len());
+    if end == 0 { None } else { Some(&inside[..end]) }
+}
+
+fn find_opening_tag(text: &str, name: &str, before_byte: usize) -> Option<usize> {
+    // Walk backward looking for the matching `<TagName` at depth 0.
+    let mut depth = 1i32;
+    let mut i = before_byte;
+    while i > 0 {
+        // Find the previous `<`.
+        let prev_lt = text[..i].rfind('<')?;
+        let after = &text[prev_lt + 1..];
+        let is_close = after.starts_with('/');
+        let body = if is_close { &after[1..] } else { after };
+        if extract_tag_name(body).map(|n| n == name).unwrap_or(false) {
+            if is_close {
+                depth += 1;
+            } else {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(prev_lt);
+                }
+            }
+        }
+        i = prev_lt;
+    }
+    None
+}
+
+fn find_closing_tag(text: &str, name: &str, after_byte: usize) -> Option<usize> {
+    let mut depth = 1i32;
+    let mut search_from = after_byte;
+    while search_from < text.len() {
+        let next_lt_rel = text[search_from..].find('<')?;
+        let lt = search_from + next_lt_rel;
+        let after = &text[lt + 1..];
+        let is_close = after.starts_with('/');
+        let body = if is_close { &after[1..] } else { after };
+        if extract_tag_name(body).map(|n| n == name).unwrap_or(false) {
+            if is_close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(lt);
+                }
+            } else {
+                // Skip self-closing tags (`<Foo />`) — they don't add depth.
+                let close_gt = text[lt..].find('>').map(|p| lt + p);
+                if let Some(g) = close_gt
+                    && text[lt..g].ends_with('/')
+                {
+                    search_from = g + 1;
+                    continue;
+                }
+                depth += 1;
+            }
+        }
+        search_from = lt + 1;
+    }
+    None
+}
+
 pub fn find_whole_word_occurrences(text: &str, word: &str) -> Vec<(usize, usize)> {
     if word.is_empty() || word.len() > text.len() {
         return Vec::new();
@@ -813,6 +1199,16 @@ impl Editor {
     }
     pub fn cursor(&self) -> usize {
         self.cursor
+    }
+
+    /// Insert `s` at the cursor *without* moving the cursor forward — used
+    /// by buffer-side auto-close-tag so `<div>|` becomes `<div>|</div>`
+    /// (the `|` denotes cursor position).
+    pub fn insert_str_at_cursor_no_advance(&mut self, s: &str) {
+        if s.is_empty() {
+            return;
+        }
+        self.text.insert_str(self.cursor, s);
     }
 
     /// The identifier under the cursor — the maximal run of `[A-Za-z0-9_]`
@@ -2685,25 +3081,82 @@ impl Editor {
                 }
             }
             MoveLineUp => {
-                let line = self.current_line();
-                if line == 0 {
+                // Selection-aware: shift the whole selected block up by 1
+                // (the row above slides past the block to land just below
+                // it). Otherwise single-line swap.
+                let (start_row, end_row) = self
+                    .selection()
+                    .map(|(lo, hi)| {
+                        (
+                            self.row_col_at(lo).0,
+                            // The selection's exclusive endpoint sometimes
+                            // sits at the start of the line *after* the
+                            // last selected line; back it off in that case.
+                            {
+                                let (r, c) = self.row_col_at(hi);
+                                if c == 0 && r > self.row_col_at(lo).0 {
+                                    r - 1
+                                } else {
+                                    r
+                                }
+                            },
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        let l = self.current_line();
+                        (l, l)
+                    });
+                if start_row == 0 {
                     return;
                 }
                 self.checkpoint();
-                self.swap_lines(line - 1, line);
+                // Swap-walk: cycle the line above through the block.
+                for r in start_row..=end_row {
+                    self.swap_lines(r - 1, r);
+                }
+                let cur_line = self.current_line();
+                let new_line = cur_line.saturating_sub(1);
                 let col = self.goal_col;
-                self.cursor = self.byte_at_col(line - 1, col);
+                self.cursor = self.byte_at_col(new_line, col);
+                // Shift the anchor too so the selection follows.
+                if let Some(a) = self.anchor {
+                    let (ar, ac) = self.row_col_at(a);
+                    self.anchor = Some(self.byte_at_col(ar.saturating_sub(1), ac));
+                }
                 out.buffer_changed = true;
             }
             MoveLineDown => {
-                let line = self.current_line();
-                if line + 1 >= self.line_count() {
+                let (start_row, end_row) = self
+                    .selection()
+                    .map(|(lo, hi)| {
+                        (self.row_col_at(lo).0, {
+                            let (r, c) = self.row_col_at(hi);
+                            if c == 0 && r > self.row_col_at(lo).0 {
+                                r - 1
+                            } else {
+                                r
+                            }
+                        })
+                    })
+                    .unwrap_or_else(|| {
+                        let l = self.current_line();
+                        (l, l)
+                    });
+                if end_row + 1 >= self.line_count() {
                     return;
                 }
                 self.checkpoint();
-                self.swap_lines(line, line + 1);
+                for r in (start_row..=end_row).rev() {
+                    self.swap_lines(r, r + 1);
+                }
+                let cur_line = self.current_line();
+                let new_line = (cur_line + 1).min(self.line_count().saturating_sub(1));
                 let col = self.goal_col;
-                self.cursor = self.byte_at_col(line + 1, col);
+                self.cursor = self.byte_at_col(new_line, col);
+                if let Some(a) = self.anchor {
+                    let (ar, ac) = self.row_col_at(a);
+                    self.anchor = Some(self.byte_at_col(ar + 1, ac));
+                }
                 out.buffer_changed = true;
             }
             DuplicateLine => {
@@ -2747,6 +3200,19 @@ impl Editor {
                 }
             }
             ChangeNumberAtCursor { delta } => {
+                // Smart pre-pass: try to bump a "smart" token under the
+                // cursor (booleans, day-of-week names, month names, ISO
+                // dates). Falls through to the number path on no match.
+                if let Some((start, end, new_str)) =
+                    smart_increment_at(&self.text, self.cursor, self.current_line(), delta)
+                {
+                    self.checkpoint();
+                    self.text.replace_range(start..end, &new_str);
+                    self.cursor = start + new_str.len().saturating_sub(1);
+                    self.anchor = None;
+                    out.buffer_changed = true;
+                    return;
+                }
                 let line = self.current_line();
                 let bol = self.line_start(line);
                 let eol = self.line_end(line);
@@ -2883,6 +3349,57 @@ impl Editor {
                     }
                 }
             }
+            AlignSelection { on_char } => {
+                if let Some((lo, hi)) = self.selection() {
+                    let first_line = self.text[..lo].bytes().filter(|&b| b == b'\n').count();
+                    let mut last_line = self.text[..hi].bytes().filter(|&b| b == b'\n').count();
+                    if hi > lo && hi > 0 && self.text.as_bytes()[hi - 1] == b'\n' {
+                        last_line = last_line.saturating_sub(1);
+                    }
+                    if last_line >= first_line {
+                        let mut targets: Vec<(usize, usize)> = Vec::new();
+                        let mut max_col: usize = 0;
+                        for line in first_line..=last_line {
+                            let bol = self.line_start(line);
+                            let eol = self.line_end(line);
+                            let mut byte = bol;
+                            let mut hit = None;
+                            for (col, c) in self.text[bol..eol].chars().enumerate() {
+                                if c == on_char {
+                                    hit = Some((byte, col));
+                                    break;
+                                }
+                                byte += c.len_utf8();
+                            }
+                            if let Some((b, c)) = hit {
+                                targets.push((b, c));
+                                if c > max_col {
+                                    max_col = c;
+                                }
+                            }
+                        }
+                        let needs_change = targets.iter().any(|(_, c)| max_col - c > 0);
+                        if needs_change {
+                            self.checkpoint();
+                            // Insert padding descending so earlier byte offsets stay valid.
+                            for &(byte, col) in targets.iter().rev() {
+                                let pad = max_col - col;
+                                if pad > 0 {
+                                    self.text.insert_str(byte, &" ".repeat(pad));
+                                }
+                            }
+                            self.cursor = self.line_start(first_line).min(self.text.len());
+                            self.anchor = None;
+                            out.buffer_changed = true;
+                        } else {
+                            // Already aligned (or no `on_char` found on any line).
+                            // Drop the selection — matches case-transform ops.
+                            self.cursor = lo;
+                            self.anchor = None;
+                        }
+                    }
+                }
+            }
             JoinLines { keep_space } => {
                 // vim `J` (keep_space=true) / `gJ` (keep_space=false).
                 let line = self.current_line();
@@ -2942,11 +3459,16 @@ impl Editor {
             }
             YankLine => {
                 let line = self.current_line();
+                let (line_start, line_end) = self.line_byte_range(line);
                 let mut s = self.line_str(line).to_string();
                 s.push('\n');
                 clip.set_yank(s.clone(), true);
                 out.clipboard_set = Some(s);
                 out.clipboard_linewise = true;
+                // Include the trailing newline if there is one — the flash
+                // should cover the whole "line" the user yanked.
+                let end = line_end + if line_end < self.text.len() { 1 } else { 0 };
+                out.yanked_range = Some((line_start, end));
             }
             BlockSelectStart => {
                 self.block_anchor = Some(self.cursor);
@@ -2967,6 +3489,11 @@ impl Editor {
                     let joined = parts.join("\n");
                     clip.set_yank(joined.clone(), false);
                     out.clipboard_set = Some(joined);
+                    // Flash the rectangle's bounding byte range (from the
+                    // first range's start to the last range's end).
+                    if let (Some(&(lo, _)), Some(&(_, hi))) = (ranges.first(), ranges.last()) {
+                        out.yanked_range = Some((lo, hi));
+                    }
                     self.block_anchor = None;
                 }
             }
@@ -3052,6 +3579,7 @@ impl Editor {
                     let s = self.text[lo..hi].to_string();
                     clip.set_yank(s.clone(), false);
                     out.clipboard_set = Some(s);
+                    out.yanked_range = Some((lo, hi));
                     self.remember_selection();
                 }
             }
@@ -4131,6 +4659,55 @@ mod tests {
     }
 
     #[test]
+    fn align_selection_pads_lines_on_eq() {
+        // Three lines with `=` at different columns. Selection covers all
+        // three; AlignSelection('=') pads each line so the `=` line up.
+        let (mut e, mut c) = ed("let a = 1\nlet bb = 2\nlet ccc = 3");
+        e.cursor = 0;
+        e.apply(SelectAll, 10, &mut c);
+        e.apply(AlignSelection { on_char: '=' }, 10, &mut c);
+        let lines: Vec<&str> = e.text().lines().collect();
+        assert_eq!(lines.len(), 3);
+        let eq_cols: Vec<usize> = lines
+            .iter()
+            .map(|l| l.chars().position(|c| c == '=').unwrap())
+            .collect();
+        assert_eq!(eq_cols[0], eq_cols[1]);
+        assert_eq!(eq_cols[1], eq_cols[2]);
+        // The widest pre-`=` segment was "let ccc " — every line should be
+        // padded to that same width.
+        assert_eq!(lines[2], "let ccc = 3");
+    }
+
+    #[test]
+    fn align_selection_no_op_when_already_aligned() {
+        // Already aligned ⇒ no edit (also covers the "selection cleared"
+        // post-condition).
+        let (mut e, mut c) = ed("foo = 1\nbar = 2");
+        let before = e.text().to_string();
+        e.cursor = 0;
+        e.apply(SelectAll, 10, &mut c);
+        e.apply(AlignSelection { on_char: '=' }, 10, &mut c);
+        assert_eq!(e.text(), before);
+        assert!(e.anchor.is_none());
+    }
+
+    #[test]
+    fn align_selection_skips_lines_without_char() {
+        // Middle line has no `=`; it should be left alone, the others
+        // aligned against each other.
+        let (mut e, mut c) = ed("a = 1\nblank line here\nccc = 3");
+        e.cursor = 0;
+        e.apply(SelectAll, 10, &mut c);
+        e.apply(AlignSelection { on_char: '=' }, 10, &mut c);
+        let lines: Vec<&str> = e.text().lines().collect();
+        assert_eq!(lines[1], "blank line here");
+        let eq0 = lines[0].chars().position(|c| c == '=').unwrap();
+        let eq2 = lines[2].chars().position(|c| c == '=').unwrap();
+        assert_eq!(eq0, eq2);
+    }
+
+    #[test]
     fn reflow_paragraph_wraps_long_line_to_width() {
         // Long single-line paragraph wraps to the requested width.
         let (mut e, mut c) = ed("the quick brown fox jumps over the lazy dog");
@@ -4222,6 +4799,80 @@ mod tests {
         e.cursor = 0;
         e.apply(ChangeNumberAtCursor { delta: 1 }, 10, &mut c);
         assert_eq!(e.text(), "(-4)");
+    }
+
+    #[test]
+    fn tag_match_simple_pair() {
+        // Cursor on the `<` of `<div>`.
+        let text = "<div>hello</div>";
+        // pos 0 = `<` of `<div>`
+        let m = super::tag_match_at(text, 0);
+        // The matching tag starts at `</div>` which is at position 10.
+        assert_eq!(m, Some(10));
+        // From inside `</div>` look back to `<div>`.
+        let m2 = super::tag_match_at(text, 11);
+        assert_eq!(m2, Some(0));
+    }
+
+    #[test]
+    fn tag_match_handles_nesting() {
+        let text = "<a><a>inner</a></a>";
+        // Cursor on the outermost `<a>`.
+        let m = super::tag_match_at(text, 1);
+        // Outer closing `</a>` is at position 15.
+        assert_eq!(m, Some(15));
+    }
+
+    #[test]
+    fn tag_match_skips_self_closing() {
+        let text = "<root><Foo /></root>";
+        let m = super::tag_match_at(text, 0);
+        // Outer `<root>` closes at `</root>` at position 13.
+        assert_eq!(m, Some(13));
+    }
+
+    #[test]
+    fn change_number_toggles_boolean_words() {
+        let (mut e, mut c) = ed("flag = true");
+        e.cursor = 7;
+        e.apply(ChangeNumberAtCursor { delta: 1 }, 10, &mut c);
+        assert_eq!(e.text(), "flag = false");
+        e.cursor = 7;
+        e.apply(ChangeNumberAtCursor { delta: -1 }, 10, &mut c);
+        assert_eq!(e.text(), "flag = true");
+    }
+
+    #[test]
+    fn change_number_cycles_day_of_week() {
+        let (mut e, mut c) = ed("Mon");
+        e.cursor = 0;
+        e.apply(ChangeNumberAtCursor { delta: 1 }, 10, &mut c);
+        assert_eq!(e.text(), "Tue");
+        e.cursor = 0;
+        e.apply(ChangeNumberAtCursor { delta: 2 }, 10, &mut c);
+        assert_eq!(e.text(), "Thu");
+    }
+
+    #[test]
+    fn change_number_bumps_iso_date() {
+        let (mut e, mut c) = ed("2026-05-16");
+        e.cursor = 4;
+        e.apply(ChangeNumberAtCursor { delta: 1 }, 10, &mut c);
+        assert_eq!(e.text(), "2026-05-17");
+        e.cursor = 4;
+        e.apply(ChangeNumberAtCursor { delta: 30 }, 10, &mut c);
+        assert_eq!(e.text(), "2026-06-16");
+    }
+
+    #[test]
+    fn change_number_iso_date_handles_leap_year() {
+        let (mut e, mut c) = ed("2024-02-28");
+        e.cursor = 4;
+        e.apply(ChangeNumberAtCursor { delta: 1 }, 10, &mut c);
+        assert_eq!(e.text(), "2024-02-29");
+        e.cursor = 4;
+        e.apply(ChangeNumberAtCursor { delta: 1 }, 10, &mut c);
+        assert_eq!(e.text(), "2024-03-01");
     }
 
     #[test]

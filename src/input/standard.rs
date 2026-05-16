@@ -110,6 +110,9 @@ impl InputHandler for StandardInputHandler {
             KeyCode::Right => mv(MoveRight),
             KeyCode::Up if alt => InputResult::Ops(vec![MoveLineUp]),
             KeyCode::Down if alt => InputResult::Ops(vec![MoveLineDown]),
+            // Vim-aligned aliases for line shift in standard mode too.
+            KeyCode::Char('k' | 'K') if alt => InputResult::Ops(vec![MoveLineUp]),
+            KeyCode::Char('j' | 'J') if alt => InputResult::Ops(vec![MoveLineDown]),
             KeyCode::Up => mv(MoveUp),
             KeyCode::Down => mv(MoveDown),
 

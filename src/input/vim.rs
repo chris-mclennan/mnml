@@ -51,6 +51,10 @@ enum PendingOp {
     /// select-ops get stashed in `pending_surround_ops`, then we transition
     /// to `Prefix::SurroundAddCharWait` for the char keystroke.
     SurroundAdd,
+    /// mini.align `gA{motion}<char>` — align lines in the motion's range
+    /// on `<char>`. Like `SurroundAdd`, the alignment char arrives *after*
+    /// the motion completes (handler transitions to `Prefix::AlignCharWait`).
+    Align,
 }
 
 /// A multi-key prefix that isn't an operator (`g…`, `Z…`, `r…`).
@@ -119,6 +123,15 @@ enum Prefix {
     /// stashed in `pending_surround_ops` and merged into the final
     /// `[…select…, SurroundSelection(open, close), SelectClear]` Ops.
     SurroundAddCharWait,
+    /// flash/leap: saw `s`, waiting for the first char of the 2-char
+    /// target sequence. Esc cancels.
+    Flash1,
+    /// flash/leap: saw `s<a>`, waiting for the second char. Esc cancels.
+    /// On the next char `<b>`, escalate to `AppCommand::FlashStart(a, b)`.
+    Flash2(char),
+    /// mini.align `gA{motion}` already completed — selection is live; the
+    /// next typed char is the alignment column. Esc cancels.
+    AlignCharWait,
 }
 
 /// Ex commands offered for Tab completion on the first word. Curated rather
@@ -1141,7 +1154,8 @@ impl VimInputHandler {
                                 PendingOp::Indent
                                 | PendingOp::Outdent
                                 | PendingOp::Reflow
-                                | PendingOp::SurroundAdd => {
+                                | PendingOp::SurroundAdd
+                                | PendingOp::Align => {
                                     // Not meaningful for a find-match
                                     // range — drop silently.
                                     return InputResult::Consumed;
@@ -1163,6 +1177,15 @@ impl VimInputHandler {
                     // `g8` — show UTF-8 bytes of the char under the cursor.
                     KeyCode::Char('8') => {
                         InputResult::App(AppCommand::RunCommand("editor.char_utf8".into()))
+                    }
+                    // `gA{motion}<char>` — mini.align operator. Capital `A`
+                    // because lowercase `ga` is taken by char-info above.
+                    // Sets a pending op + waits for a motion (or `A` for
+                    // the doubled current-line form, though aligning a
+                    // single line is rarely useful).
+                    KeyCode::Char('A') => {
+                        self.op = Some(PendingOp::Align);
+                        InputResult::Consumed
                     }
                     _ => InputResult::Consumed,
                 };
@@ -1315,6 +1338,11 @@ impl VimInputHandler {
                         self.prefix = Prefix::SurroundAddCharWait;
                         return InputResult::Consumed;
                     }
+                    PendingOp::Align => {
+                        // Find-char span is single-line — alignment needs
+                        // multiple lines, so this is a no-op.
+                        return InputResult::Consumed;
+                    }
                 }
                 return InputResult::Ops(ops);
             }
@@ -1428,6 +1456,27 @@ impl VimInputHandler {
                         self.pending_surround_ops = ops.clone();
                         self.prefix = Prefix::SurroundAddCharWait;
                         return InputResult::Consumed;
+                    }
+                    PendingOp::Align => {
+                        // Build a live selection out of the text-object
+                        // (don't `SelectClear` — the alignment char arrives
+                        // next and `AlignSelection` reads `self.selection`).
+                        // The motion-emitted op produced the select_op
+                        // already; emit `SelectStart` first so anchor=cursor,
+                        // then the select_op extends. For text objects we
+                        // need to seed the anchor at the start of the
+                        // object — simplest path: emit the select_op
+                        // alone (it already sets cursor + anchor via the
+                        // editor's text-object implementation when no
+                        // selection is live). The TextObject select ops
+                        // (`SelectInnerParagraph`, etc.) all leave the
+                        // selection set, so dispatching them now is
+                        // enough.
+                        self.prefix = Prefix::AlignCharWait;
+                        // ops currently = [select_op]; return it so the
+                        // selection is live by the time the next key
+                        // arrives.
+                        return InputResult::Ops(ops);
                     }
                 }
                 return InputResult::Ops(ops);
@@ -1546,6 +1595,18 @@ impl VimInputHandler {
                 }
                 return InputResult::Consumed;
             }
+            Prefix::AlignCharWait => {
+                // mini.align — selection is already live; the next typed
+                // char is the alignment column. Esc cancels (drop selection).
+                self.reset_pending();
+                if key.code == KeyCode::Esc {
+                    return InputResult::Ops(vec![SelectClear]);
+                }
+                if let KeyCode::Char(c) = key.code {
+                    return InputResult::Ops(vec![AlignSelection { on_char: c }, SelectClear]);
+                }
+                return InputResult::Consumed;
+            }
             Prefix::SurroundChange(from) => {
                 if from == '\0' {
                     // First key: capture the FROM char.
@@ -1627,6 +1688,32 @@ impl VimInputHandler {
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));
             }
+            Prefix::Flash1 => {
+                // First char of `s<a><b>`. Esc cancels; otherwise stash.
+                if matches!(key.code, KeyCode::Esc) {
+                    self.reset_pending();
+                    return InputResult::Consumed;
+                }
+                if let KeyCode::Char(c) = key.code {
+                    self.prefix = Prefix::Flash2(c);
+                    return InputResult::Consumed;
+                }
+                self.reset_pending();
+                return InputResult::Consumed;
+            }
+            Prefix::Flash2(a) => {
+                // Second char arrives — escalate to the App which computes
+                // visible matches, paints labels, and intercepts the next key.
+                if matches!(key.code, KeyCode::Esc) {
+                    self.reset_pending();
+                    return InputResult::Consumed;
+                }
+                self.reset_pending();
+                if let KeyCode::Char(b) = key.code {
+                    return InputResult::App(AppCommand::FlashStart(a, b));
+                }
+                return InputResult::Consumed;
+            }
             Prefix::None => {}
         }
 
@@ -1644,6 +1731,7 @@ impl VimInputHandler {
                     | (PendingOp::Upper, KeyCode::Char('U'))
                     | (PendingOp::ToggleCase, KeyCode::Char('~'))
                     | (PendingOp::SurroundAdd, KeyCode::Char('s'))
+                    | (PendingOp::Align, KeyCode::Char('A'))
             );
             let n = self.count1();
             self.reset_pending();
@@ -1683,6 +1771,11 @@ impl VimInputHandler {
                         // `yss<c>` ⇒ surround the current line.
                         self.pending_surround_ops = vec![SelectLine];
                         self.prefix = Prefix::SurroundAddCharWait;
+                        InputResult::Consumed
+                    }
+                    PendingOp::Align => {
+                        // `gAA` — aligning a single line on a char is a
+                        // no-op (only one occurrence in scope). Drop.
                         InputResult::Consumed
                     }
                 };
@@ -1796,6 +1889,13 @@ impl VimInputHandler {
                         self.pending_surround_ops = ops.clone();
                         self.prefix = Prefix::SurroundAddCharWait;
                         return InputResult::Consumed;
+                    }
+                    PendingOp::Align => {
+                        // `gA{motion}` ⇒ leave the selection live, await
+                        // the alignment char. `ops` is `[SelectStart,
+                        // motion]` — exactly what we need.
+                        self.prefix = Prefix::AlignCharWait;
+                        return InputResult::Ops(ops);
                     }
                 }
                 return InputResult::Ops(ops);
@@ -1985,9 +2085,14 @@ impl VimInputHandler {
                 self.enter_insert();
                 InputResult::Ops(vec![DeleteToLineEnd])
             }
+            // flash/leap-style `s<a><b>` 2-char jump. mnml takes vim's
+            // rarely-used substitute chord (`s`) and gives it to flash;
+            // vim's substitute is still reachable via `cl`. The handler
+            // accumulates two chars, then escalates to `AppCommand::FlashStart`.
             KeyCode::Char('s') => {
-                self.enter_insert();
-                InputResult::Ops(vec![DeleteForward])
+                self.reset_pending();
+                self.prefix = Prefix::Flash1;
+                InputResult::Consumed
             }
             KeyCode::Char('S') => {
                 self.enter_insert();
@@ -2339,6 +2444,40 @@ impl VimInputHandler {
         use EditOp::*;
         let linewise = self.mode == VimMode::VisualLine;
 
+        // ── multi-key prefix arms that visual mode shares with normal ──
+        // Only a small subset matters in Visual today; expand as needed.
+        match self.prefix {
+            Prefix::G => {
+                self.reset_pending();
+                return match key.code {
+                    // `gA<char>` in Visual — the selection is already
+                    // live; the next char is the alignment column.
+                    KeyCode::Char('A') => {
+                        self.op = Some(PendingOp::Align);
+                        self.prefix = Prefix::AlignCharWait;
+                        InputResult::Consumed
+                    }
+                    // `gv` in Visual is a no-op (selection already live).
+                    KeyCode::Char('v') => InputResult::Consumed,
+                    // Other `g`-prefixes fall through silently.
+                    _ => InputResult::Consumed,
+                };
+            }
+            Prefix::AlignCharWait => {
+                self.reset_pending();
+                if key.code == KeyCode::Esc {
+                    self.enter_normal();
+                    return InputResult::Ops(vec![SelectClear]);
+                }
+                if let KeyCode::Char(c) = key.code {
+                    self.enter_normal();
+                    return InputResult::Ops(vec![AlignSelection { on_char: c }, SelectClear]);
+                }
+                return InputResult::Consumed;
+            }
+            _ => {}
+        }
+
         // count prefix inside visual
         if let KeyCode::Char(c @ '1'..='9') = key.code {
             let d = c as u32 - '0' as u32;
@@ -2663,6 +2802,7 @@ impl InputHandler for VimInputHandler {
                 PendingOp::Upper => s.push_str("gU"),
                 PendingOp::ToggleCase => s.push_str("g~"),
                 PendingOp::SurroundAdd => s.push_str("ys"),
+                PendingOp::Align => s.push_str("gA"),
             }
         }
         match self.prefix {
@@ -2702,6 +2842,12 @@ impl InputHandler for VimInputHandler {
                     s.push(from);
                 }
             }
+            Prefix::Flash1 => s.push('s'),
+            Prefix::Flash2(a) => {
+                s.push('s');
+                s.push(a);
+            }
+            Prefix::AlignCharWait => s.push_str("gA"),
             Prefix::None => {}
         }
         if self.mode == VimMode::VisualLine {

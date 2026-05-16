@@ -210,6 +210,12 @@ pub fn diff_file(workspace: &Path, rel: &str) -> Vec<Hunk> {
 pub fn diff_worktree(workspace: &Path) -> Vec<Hunk> {
     run_diff(workspace, &["diff", "--no-color"])
 }
+/// `git diff HEAD` — every change vs the last commit (both staged and
+/// unstaged combined, plus deleted/renamed/modified files). The
+/// diffview-style "show me everything I've touched" entry-point.
+pub fn diff_vs_head(workspace: &Path) -> Vec<Hunk> {
+    run_diff(workspace, &["diff", "HEAD", "--no-color"])
+}
 /// `git diff --cached` — the staged changes (index vs HEAD).
 pub fn diff_staged(workspace: &Path) -> Vec<Hunk> {
     run_diff(workspace, &["diff", "--no-color", "--cached"])

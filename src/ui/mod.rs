@@ -26,6 +26,7 @@ pub mod bitbucket_pipelines_view;
 pub mod bitbucket_pull_requests_view;
 pub mod browser_view;
 pub mod bufferline;
+pub mod cheatsheet_view;
 pub mod close_prompt;
 pub mod cmdline_history_view;
 #[cfg(feature = "private")]
@@ -36,6 +37,7 @@ pub mod diagnostics_view;
 pub mod diff_view;
 pub mod editor_view;
 pub mod flaky_view;
+pub mod flash_overlay;
 pub mod git_graph_view;
 pub mod git_status_view;
 pub mod github_actions_view;
@@ -47,12 +49,14 @@ pub mod hover;
 pub mod icons;
 #[cfg(feature = "private")]
 pub mod log_tail_view;
+pub mod md_inline_overlay;
 pub mod md_preview;
 pub mod outline_view;
 pub mod picker;
 pub mod pipeline_log_view;
 pub mod prompt;
 pub mod pty_view;
+pub mod rename_preview_overlay;
 pub mod request_view;
 pub mod signature;
 pub mod statusline;
@@ -64,6 +68,7 @@ pub mod trace_view;
 pub mod tree_view;
 pub mod welcome;
 pub mod whichkey;
+pub mod yank_flash_overlay;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout as RLayout, Rect};
@@ -219,6 +224,26 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         render_layout(frame, app, &layout, body_area, &mut path)
     };
 
+    // Inline-rendered markdown overlay: paints heading-line bold + colored,
+    // `**bold**` / `*italic*` / `` `code` `` / `[label](url)` decorations
+    // IN the editor pane for markdown buffers. Off by default.
+    if app.config.ui.render_markdown {
+        md_inline_overlay::draw(frame, app);
+    }
+    // Yank flash overlay: tints the yanked byte range yellow for ~200ms
+    // (vim.highlight.on_yank() equivalent).
+    yank_flash_overlay::draw(frame, app);
+    // Flash overlay: paints label glyphs over the editor body when a
+    // `s<a><b>` jump is armed.
+    if app.flash_state.is_some() {
+        flash_overlay::draw(frame, app);
+    }
+    // Inline rename preview: while an `lsp.rename` prompt is open, paint
+    // the new identifier at every whole-word occurrence in the active editor.
+    if app.rename_preview_state.is_some() {
+        rename_preview_overlay::draw(frame, app);
+    }
+
     // ── statusline ──
     statusline::draw(frame, app, statusline_area);
     app.rects.statusline = Some(statusline_area);
@@ -326,6 +351,7 @@ fn render_layout(
                 Some(crate::pane::Pane::BitbucketPipelineLog(_)) => 27,
                 #[cfg(feature = "private")]
                 Some(crate::pane::Pane::LogTail(_)) => 28,
+                Some(crate::pane::Pane::Cheatsheet(_)) => 29,
                 _ => 0,
             };
             match kind {
@@ -371,6 +397,10 @@ fn render_layout(
                     if let Some(crate::pane::Pane::LogTail(p)) = app.panes.get_mut(*id) {
                         log_tail_view::draw(frame, p, area);
                     }
+                    None
+                }
+                29 => {
+                    cheatsheet_view::draw(frame, app, *id, area, focused);
                     None
                 }
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),

@@ -966,13 +966,13 @@ fn config_for_lang(name: &str) -> Option<&'static LangConfig> {
         "typescript" | "ts" => "ts",
         "tsx" => "tsx",
         "python" | "py" => "py",
-        "json" | "jsonc" | "json5" => "json",
+        "json" | "jsonc" | "json5" | "jsonl" | "ndjson" => "json",
         "go" | "golang" => "go",
         "toml" => "toml",
-        "css" | "scss" => "css",
-        "bash" | "sh" | "shell" | "shellscript" | "zsh" | "console" => "sh",
+        "css" | "scss" | "sass" => "css",
+        "bash" | "sh" | "shell" | "shellscript" | "zsh" | "console" | "fish" => "sh",
         "html" | "htm" | "xml" => "html",
-        "markdown" | "md" => "md",
+        "markdown" | "md" | "mdx" => "md",
         "c" => "c",
         "cpp" | "c++" | "cxx" | "cc" => "cpp",
         "ruby" | "rb" => "rb",
@@ -994,6 +994,13 @@ fn config_for_lang(name: &str) -> Option<&'static LangConfig> {
         "make" | "makefile" => "make",
         "kotlin" | "kt" | "kts" => "kt",
         "regex" => "regex",
+        "dockerfile" | "containerfile" => "dockerfile",
+        "hcl" | "terraform" | "tf" | "tfvars" => "hcl",
+        "proto" | "protobuf" => "proto",
+        "diff" | "patch" => "diff",
+        "vue" => "vue",
+        "svelte" => "svelte",
+        "astro" => "astro",
         _ => return None,
     };
     config_for_ext(ext)
@@ -1017,7 +1024,7 @@ fn build_config(ext: &str) -> Option<LangConfig> {
             tree_sitter_python::HIGHLIGHTS_QUERY,
             "",
         ),
-        "json" => (
+        "json" | "jsonl" | "ndjson" => (
             tree_sitter_json::LANGUAGE.into(),
             tree_sitter_json::HIGHLIGHTS_QUERY,
             "",
@@ -1042,7 +1049,7 @@ fn build_config(ext: &str) -> Option<LangConfig> {
             tree_sitter_typescript::HIGHLIGHTS_QUERY,
             "",
         ),
-        "css" | "scss" => (
+        "css" | "scss" | "sass" => (
             tree_sitter_css::LANGUAGE.into(),
             tree_sitter_css::HIGHLIGHTS_QUERY,
             "",
@@ -1052,7 +1059,7 @@ fn build_config(ext: &str) -> Option<LangConfig> {
             tree_sitter_html::HIGHLIGHTS_QUERY,
             tree_sitter_html::INJECTIONS_QUERY,
         ),
-        "sh" | "bash" | "zsh" => (
+        "sh" | "bash" | "zsh" | "fish" => (
             tree_sitter_bash::LANGUAGE.into(),
             tree_sitter_bash::HIGHLIGHT_QUERY,
             "",
@@ -1061,7 +1068,7 @@ fn build_config(ext: &str) -> Option<LangConfig> {
         // and the *inline* grammar (emphasis, inline code, links) injected via
         // `INJECTION_QUERY_BLOCK` — `config_for_lang("markdown_inline")` resolves to
         // the arm below. Fenced code blocks inject their own language the same way.
-        "md" | "markdown" => (
+        "md" | "markdown" | "mdx" => (
             tree_sitter_md::LANGUAGE.into(),
             tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
             tree_sitter_md::INJECTION_QUERY_BLOCK,
@@ -1175,6 +1182,51 @@ fn build_config(ext: &str) -> Option<LangConfig> {
             tree_sitter_regex::LANGUAGE.into(),
             tree_sitter_regex::HIGHLIGHTS_QUERY,
             "",
+        ),
+        // Containerfile/Dockerfile share one grammar (the crate's name reflects
+        // the OCI / Podman alignment). Wire `.dockerfile` ext and bare-named
+        // `Dockerfile` files through to it.
+        "dockerfile" | "containerfile" => (
+            tree_sitter_containerfile::LANGUAGE.into(),
+            tree_sitter_containerfile::HIGHLIGHTS_QUERY,
+            tree_sitter_containerfile::INJECTIONS_QUERY,
+        ),
+        // tree-sitter-hcl ships no highlights query; mnml vendors a minimal
+        // one under queries/hcl.scm (Terraform-flavoured).
+        "hcl" | "tf" | "tfvars" | "terraform" => (
+            tree_sitter_hcl::LANGUAGE.into(),
+            include_str!("../queries/hcl.scm"),
+            "",
+        ),
+        // Same situation as HCL — upstream ships the .scm file but doesn't
+        // expose it as a const, so we vendor.
+        "proto" | "protobuf" => (
+            tree_sitter_proto::LANGUAGE.into(),
+            include_str!("../queries/proto.scm"),
+            "",
+        ),
+        "diff" | "patch" => (
+            tree_sitter_diff::LANGUAGE.into(),
+            tree_sitter_diff::HIGHLIGHTS_QUERY,
+            "",
+        ),
+        // tree-sitter-vue-next's build.rs gates HIGHLIGHTS_QUERY / INJECTIONS_QUERY
+        // behind cfg flags that never fire (it looks for the queries at the wrong
+        // path), so the consts are absent. Vendor the upstream queries instead.
+        "vue" => (
+            tree_sitter_vue_next::LANGUAGE.into(),
+            include_str!("../queries/vue.scm"),
+            include_str!("../queries/vue.injections.scm"),
+        ),
+        "svelte" => (
+            tree_sitter_svelte_ng::LANGUAGE.into(),
+            tree_sitter_svelte_ng::HIGHLIGHTS_QUERY,
+            tree_sitter_svelte_ng::INJECTIONS_QUERY,
+        ),
+        "astro" => (
+            tree_sitter_astro_next::LANGUAGE.into(),
+            tree_sitter_astro_next::HIGHLIGHTS_QUERY,
+            tree_sitter_astro_next::INJECTIONS_QUERY,
         ),
         _ => return None,
     };
@@ -1341,12 +1393,58 @@ mod tests {
                 "sql",
                 "SELECT id, name FROM users WHERE active = TRUE LIMIT 10;\n",
             ),
+            (
+                "dockerfile",
+                "FROM rust:1.95 AS build\nWORKDIR /src\nCOPY . .\nRUN cargo build\n",
+            ),
+            (
+                "tf",
+                "resource \"aws_instance\" \"web\" {\n  ami = \"ami-123\"\n  count = 2\n}\n",
+            ),
+            (
+                "proto",
+                "syntax = \"proto3\";\npackage demo;\nmessage Ping { string id = 1; }\n",
+            ),
+            ("diff", "--- a/x.rs\n+++ b/x.rs\n@@ -1 +1 @@\n-old\n+new\n"),
+            (
+                "vue",
+                "<template><div>{{ msg }}</div></template>\n<script>export default { data() { return { msg: 'hi' } } }</script>\n",
+            ),
+            (
+                "svelte",
+                "<script>let count = 0;</script>\n<button on:click={() => count++}>{count}</button>\n",
+            ),
+            (
+                "astro",
+                "---\nconst name = 'world';\n---\n<h1>Hello {name}</h1>\n",
+            ),
         ];
         for &(ext, src) in cases {
             let lines = highlight_lines(src, ext);
             assert!(
                 !lines.is_empty() && lines.iter().any(|l| !l.is_empty()),
                 "{ext}: expected some highlight spans, got {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cheap_aliases_resolve_to_their_grammars() {
+        // jsonl/ndjson → json; sass → css; fish → sh; mdx → md. Each should
+        // produce at least one span from a tiny snippet, matching the parent
+        // grammar's output shape.
+        let cases: &[(&str, &str)] = &[
+            ("jsonl", "{\"a\":1}\n{\"b\":2}\n"),
+            ("ndjson", "{\"a\":1}\n{\"b\":2}\n"),
+            ("sass", "a { color: red; }\n"),
+            ("fish", "echo hi\n"),
+            ("mdx", "# Title\n\nBody.\n"),
+        ];
+        for &(ext, src) in cases {
+            let lines = highlight_lines(src, ext);
+            assert!(
+                !lines.is_empty() && lines.iter().any(|l| !l.is_empty()),
+                "{ext}: expected some highlight spans (alias path), got {lines:?}"
             );
         }
     }

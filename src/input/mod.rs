@@ -112,6 +112,11 @@ pub enum AppCommand {
     /// its own (no workspace access), so the App owns the cycle state and
     /// rewrites the cmdline via `InputHandler::cmdline_set`.
     CmdlineTabComplete,
+    /// flash/leap-style 2-char jump motion. Handler accumulates the two
+    /// chars (`s<a><b>`) and hands them up; App computes every visible
+    /// occurrence in the active editor, assigns each a label, paints them,
+    /// and waits for the user to press the matching label key.
+    FlashStart(char, char),
 }
 
 /// Result of feeding one key to a handler.

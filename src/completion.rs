@@ -37,6 +37,43 @@ pub struct CompletionItem {
     /// (`$1` / `${1:default}` / `$0`) instead of literal text, and the
     /// accept path expands it through mnml's snippet placeholder machinery.
     pub is_snippet: bool,
+    /// LSP `CompletionItemKind` (1..=25 — 1=Text, 3=Function, 6=Method,
+    /// 7=Class, 10=Property, 13=Enum, etc.). 0 ⇒ unknown / not provided.
+    /// Drives the kind-glyph + color prefix on each popup row.
+    pub kind: u8,
+}
+
+/// Map an LSP CompletionItemKind enum value to (glyph, theme color name).
+/// The names match what's painted in `ui/completion.rs`.
+pub fn kind_glyph(kind: u8) -> (&'static str, &'static str) {
+    match kind {
+        2 => ("ƒ", "blue"),    // Method
+        3 => ("fn", "blue"),   // Function
+        4 => ("⊕", "purple"),  // Constructor
+        5 => ("◆", "cyan"),    // Field
+        6 => ("◆", "cyan"),    // Variable
+        7 => ("◇", "yellow"),  // Class
+        8 => ("◇", "yellow"),  // Interface
+        9 => ("◈", "green"),   // Module
+        10 => ("●", "cyan"),   // Property
+        11 => ("u", "orange"), // Unit
+        12 => ("=", "purple"), // Value
+        13 => ("∈", "yellow"), // Enum
+        14 => ("⌘", "purple"), // Keyword
+        15 => ("✂", "teal"),   // Snippet
+        16 => ("◧", "orange"), // Color
+        17 => ("≡", "fg"),     // File
+        18 => ("⇒", "purple"), // Reference
+        19 => ("📁", "fg"),    // Folder
+        20 => ("⊡", "yellow"), // EnumMember
+        21 => ("π", "orange"), // Constant
+        22 => ("⊞", "yellow"), // Struct
+        23 => ("⚡", "red"),   // Event
+        24 => ("•", "purple"), // Operator
+        25 => ("T", "cyan"),   // TypeParameter
+        1 => ("a", "fg"),      // Text
+        _ => (" ", "comment"), // Unknown
+    }
 }
 
 #[derive(Debug)]
@@ -164,6 +201,7 @@ mod tests {
             raw: None,
             resolved: false,
             is_snippet: false,
+            kind: 0,
         }
     }
 

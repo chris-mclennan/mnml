@@ -104,7 +104,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
             .push((rect, p.scroll + row_offset));
     }
 
-    let usable = area.width.saturating_sub(2) as usize; // drop the 1-col pad each side
+    // 1 col pad each side + 3 cols for the kind glyph slot (` x ` — space,
+    // glyph, space). Single-cell glyphs read consistently even on dense
+    // displays; the surrounding spaces keep things from butting against
+    // the label.
+    let kind_w = 3usize;
+    let usable = area.width.saturating_sub(2 + kind_w as u16) as usize;
     let mut lines: Vec<Line> = Vec::with_capacity(rows);
     for (row, it) in &visible {
         let sel = *row == selected;
@@ -112,6 +117,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
             (t.cyan, t.bg_darker, t.bg_darker)
         } else {
             (t.bg_darker, t.fg, t.grey_fg)
+        };
+        let (kind_glyph, kind_color_name) = crate::completion::kind_glyph(it.kind);
+        let kind_color = match kind_color_name {
+            "blue" => t.blue,
+            "purple" => t.purple,
+            "cyan" => t.cyan,
+            "yellow" => t.yellow,
+            "green" => t.green,
+            "orange" => t.orange,
+            "red" => t.red,
+            "teal" => t.teal,
+            "comment" => t.comment,
+            _ => t.fg,
         };
         let mut label: String = it.label.chars().take(usable).collect();
         if it.label.chars().count() > usable && usable >= 1 {
@@ -136,6 +154,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
             detail_span = Some(shown);
         }
         let mut spans = vec![
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(
+                format!("{:^1}", kind_glyph),
+                Style::default().fg(kind_color).bg(bg),
+            ),
             Span::styled(" ", Style::default().bg(bg)),
             Span::styled(
                 label,

@@ -71,6 +71,7 @@ pub struct Diagnostic {
 /// it on a `completionItem/resolve` request. `is_snippet` is `true` when
 /// the server marked the item with `insertTextFormat == 2` (the `insert`
 /// then holds LSP snippet syntax — `$1` / `${1:default}` / `$0`).
+// 7th element is the LSP `CompletionItemKind` (1..=25, 0 = unknown).
 pub type CompletionItemTuple = (
     String,
     String,
@@ -78,6 +79,7 @@ pub type CompletionItemTuple = (
     Option<String>,
     serde_json::Value,
     bool,
+    u8,
 );
 
 /// What the reader thread sends to the event loop.

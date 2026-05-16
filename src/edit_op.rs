@@ -296,6 +296,14 @@ pub enum EditOp {
     ReflowParagraph {
         width: usize,
     },
+    /// mini.align — for every line covered by the active selection, find
+    /// the first occurrence of `on_char` and pad each line with spaces
+    /// before that char so all occurrences line up at the same column. No-op
+    /// without a selection. Lines without `on_char` are left untouched.
+    /// Cursor lands at the start of the first aligned line.
+    AlignSelection {
+        on_char: char,
+    },
 
     // ── clipboard / registers ──
     /// Sets the clipboard's `pending_register` hint, consumed by the next
@@ -448,4 +456,8 @@ pub struct EditOutcome {
     /// cached parse tree and reparse from scratch. When `text_edits` is
     /// non-empty, the parser can reuse the prior tree.
     pub text_edits: Vec<TextEdit>,
+    /// Byte range `(start, end)` of text that was just yanked or deleted —
+    /// used by `App.yank_flash` for the inc-yank highlight overlay. None
+    /// when the op didn't yank/delete anything user-visible.
+    pub yanked_range: Option<(usize, usize)>,
 }

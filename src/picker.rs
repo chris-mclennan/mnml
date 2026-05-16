@@ -81,6 +81,10 @@ pub enum PickerKind {
     /// run playwright tests against that env (private-feature only).
     /// Populated by `private.run_tests_pick_env`.
     the private integrationEnv,
+    /// `id` = `"<slot1>"` (1..=9) for an occupied harpoon slot.
+    /// Accept ⇒ jump to that slot's pinned file. Empty-slot rows are
+    /// not added to the picker. Populated by `harpoon.menu`.
+    Harpoon,
     /// `id` = a branch name. Accept ⇒ run playwright tests with
     /// `BRANCH=<id>` (private-feature only). Populated by
     /// `private.run_tests_pick_branch`.

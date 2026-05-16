@@ -1826,6 +1826,12 @@ fn parse_completion(result: &serde_json::Value) -> Vec<super::CompletionItemTupl
             .and_then(|d| d.as_str())
             .map(str::to_string);
         let documentation = parse_completion_doc(it.get("documentation"));
+        let kind = it
+            .get("kind")
+            .and_then(|k| k.as_u64())
+            .filter(|&k| (1..=25).contains(&k))
+            .map(|k| k as u8)
+            .unwrap_or(0);
         out.push((
             label.to_string(),
             insert,
@@ -1833,6 +1839,7 @@ fn parse_completion(result: &serde_json::Value) -> Vec<super::CompletionItemTupl
             documentation,
             it.clone(),
             is_snippet,
+            kind,
         ));
     }
     out

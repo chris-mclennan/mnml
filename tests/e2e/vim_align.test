@@ -1,0 +1,20 @@
+# mini.align — `gA{motion}<char>` pads each line in the motion's range with
+# spaces before the first occurrence of `<char>` so they all line up.
+# `gAip=` aligns a paragraph on `=`. `gAap=` is identical here since the
+# paragraph has no trailing blank-line content.
+
+write code.txt "let a = 1\nlet bb = 2\nlet ccc = 3\n"
+open code.txt
+command editor.use_vim
+
+# Cursor at top. `gAip=` aligns the paragraph on `=`.
+key g
+key A
+key i
+key p
+key =
+
+# All three `=` should line up at the same column.
+expect screen contains "let a   = 1"
+expect screen contains "let bb  = 2"
+expect screen contains "let ccc = 3"

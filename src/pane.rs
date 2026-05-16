@@ -10,6 +10,7 @@ use crate::azdevops::{AzDevOpsBuildsPane, AzDevOpsPullRequestsPane};
 use crate::bitbucket::{BitbucketPipelinesPane, BitbucketPullRequestsPane, PipelineLogPane};
 use crate::browser_pane::BrowserPane;
 use crate::buffer::Buffer;
+use crate::cheatsheet::CheatsheetPane;
 use crate::git::diff::Hunk;
 use crate::git::graph::GitGraphPane;
 use crate::git::stage::GitStatusPane;
@@ -106,6 +107,10 @@ pub enum Pane {
     /// `private` feature only.
     #[cfg(feature = "private")]
     LogTail(LogTailPane),
+    /// NvCheatsheet-style browseable list of every active chord → command,
+    /// grouped by `Command::group`. `/`-filterable, scrollable. Opened
+    /// via `view.cheatsheet` / `<leader>?`.
+    Cheatsheet(CheatsheetPane),
 }
 
 /// Vim's command-line window — `q:` opens a read-only list of recent ex
@@ -185,6 +190,10 @@ pub enum DiffScope {
     /// Buffer text vs its on-disk version (vim `:DiffOrig` shape).
     /// Read-only — hunks can't be staged.
     BufferVsDisk(PathBuf),
+    /// `git diff HEAD` — every change vs the last commit, covering BOTH
+    /// staged and unstaged. The diffview-style "show me everything I've
+    /// changed across the workspace" entry-point.
+    AllVsHead,
 }
 
 pub struct DiffView {
@@ -222,6 +231,7 @@ impl DiffView {
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default()
             ),
+            DiffScope::AllVsHead => "diff: all vs HEAD".to_string(),
         }
     }
 }
@@ -262,6 +272,7 @@ impl Pane {
             Pane::CodeBuilds(p) => p.tab_title(),
             #[cfg(feature = "private")]
             Pane::LogTail(p) => p.tab_title(),
+            Pane::Cheatsheet(_) => "Cheatsheet".to_string(),
         }
     }
 
@@ -293,7 +304,8 @@ impl Pane {
             | Pane::GitlabPipelines(_)
             | Pane::GitlabMergeRequests(_)
             | Pane::AzDevOpsBuilds(_)
-            | Pane::AzDevOpsPullRequests(_) => false,
+            | Pane::AzDevOpsPullRequests(_)
+            | Pane::Cheatsheet(_) => false,
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => false,
             #[cfg(feature = "private")]

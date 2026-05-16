@@ -75,6 +75,44 @@ fn is_markdown_path(path: &Path) -> bool {
     )
 }
 
+/// Walk `text` and return every `(row, col_chars, len_chars)` for a whole-word
+/// occurrence of `word`. Char columns (not byte) so the renderer's per-cell
+/// painter can align without re-decoding UTF-8. Caps at 5000 hits — a hard
+/// safeguard against pathological cases (every occurrence of `the` in a
+/// novel-sized file).
+pub fn collect_whole_word_occurrences(text: &str, word: &str) -> Vec<(usize, usize, usize)> {
+    let word_chars: Vec<char> = word.chars().collect();
+    if word_chars.is_empty() {
+        return Vec::new();
+    }
+    let wlen = word_chars.len();
+    let is_id = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = Vec::new();
+    for (row, line) in text.split('\n').enumerate() {
+        let chars: Vec<char> = line.chars().collect();
+        let n = chars.len();
+        if n < wlen {
+            continue;
+        }
+        let mut i = 0;
+        while i + wlen <= n {
+            if chars[i..i + wlen] == word_chars[..]
+                && (i == 0 || !is_id(chars[i - 1]))
+                && (i + wlen == n || !is_id(chars[i + wlen]))
+            {
+                out.push((row, i, wlen));
+                if out.len() >= 5000 {
+                    return out;
+                }
+                i += wlen;
+            } else {
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 /// `p` made relative to `workspace` (for `git` arguments). Falls back to `p` if
 /// it isn't under `workspace`.
 fn rel_path(workspace: &Path, p: &Path) -> String {
@@ -807,6 +845,11 @@ struct SavedSession {
     az_prs_view_mode: Option<crate::azdevops::AzPrViewMode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     az_prs_collapsed: Vec<String>,
+    /// Harpoon-style pinned files — fixed 9-slot list, indices 0..9 mapped
+    /// to `<leader>1`..`<leader>9`. Each slot is either an absolute path or
+    /// empty. Persisted so pins survive relaunch.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    harpoon: Vec<Option<String>>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -1327,6 +1370,10 @@ pub struct PaneRects {
     /// (excluding the docs footer). Cleared + rebuilt every render. Click
     /// on a row ⇒ select + accept.
     pub completion_rows: Vec<(Rect, usize)>,
+    /// `(row_rect, target_path)` for each clickable "recent file" row on the
+    /// dashboard (the splash drawn when `Layout::Empty`). Click ⇒ `open_path`.
+    /// Cleared + rebuilt on every render.
+    pub dashboard_rows: Vec<(Rect, std::path::PathBuf)>,
     /// `(row_rect, pane_id, flat_row_index)` for every visible row in an
     /// SCM/CI pane (BB pipelines/PRs, GH actions/PRs). Cleared + rebuilt
     /// per render. Click on a row ⇒ select; click on a header row ⇒
@@ -1380,6 +1427,20 @@ pub struct CmdlineCompleteState {
 /// affected file. Used by the rename-preview stash and any future
 /// confirmation flow.
 pub type PendingRenameEdits = Vec<(PathBuf, Vec<(crate::lsp::Range, String)>)>;
+
+/// Inline rename preview state. Filled when the `lsp.rename` prompt opens;
+/// the renderer paints `prompt_text` (whatever the user has typed so far)
+/// at every cell range listed in `occurrences`. Single-file — the
+/// occurrences are scanned in the *active* editor at open-time only.
+#[derive(Debug, Clone)]
+pub struct RenamePreviewState {
+    pub pane_id: PaneId,
+    pub original_word: String,
+    /// `(row, col_chars, original_len_chars)` per whole-word occurrence in
+    /// the file (not just the viewport — the renderer clips to visible
+    /// rows itself).
+    pub occurrences: Vec<(usize, usize, usize)>,
+}
 
 /// Live state for the `lsp.selection_expand` / `_shrink` cycle. Holds the
 /// server-supplied ranges (smallest → largest) and the current index. Set
@@ -1525,6 +1586,10 @@ pub struct App {
     /// Most-recently-opened files, newest first, capped at `RECENT_FILES_MAX`.
     /// Updated every time `open_path` opens a file. Persisted in session.json.
     pub recent_files: Vec<PathBuf>,
+    /// Harpoon-style pinned files (9 fixed slots). Slot N (0-based) is
+    /// reached by `<leader>` + the digit `N+1`. Empty slots are `None`.
+    /// Persisted in `session.json` so pins survive relaunch.
+    pub harpoon: [Option<PathBuf>; 9],
     /// Most-recently-visited browser URLs, newest first, capped at
     /// [`BROWSER_URL_HISTORY_MAX`]. Built up from `Page.frameNavigated`
     /// events; surfaced via `browser.url_history` (Ctrl+R in a browser
@@ -1722,6 +1787,15 @@ pub struct App {
     /// `request_quit` then goes through. Cleared by saving.
     pub quit_armed: bool,
     pub rects: PaneRects,
+    /// flash/leap state — Some while labels are painted on the active editor
+    /// and the dispatcher is intercepting the next keystroke for a jump.
+    pub flash_state: Option<crate::flash::FlashState>,
+    /// inc-rename-style preview state — Some while an `lsp.rename` prompt is
+    /// open. The renderer paints the prompt's current text inline at every
+    /// whole-word occurrence of `original_word` in the active editor.
+    /// Single-file MVP — the post-accept `RenamePreview` picker still shows
+    /// the full cross-file effect.
+    pub rename_preview_state: Option<RenamePreviewState>,
     /// The active register / system-clipboard bridge, threaded into `Editor::apply`.
     pub clipboard: Clipboard,
     /// The fuzzy-picker / command-palette overlay, when open. Steals key input.
@@ -2072,6 +2146,7 @@ impl App {
             zen_mode: false,
             bufferline_visible: true,
             recent_files: Vec::new(),
+            harpoon: Default::default(),
             browser_url_history: Vec::new(),
             last_browser_device: None,
             closed_buffers: Vec::new(),
@@ -2122,6 +2197,8 @@ impl App {
             redraw_requested: false,
             quit_armed: false,
             rects: PaneRects::default(),
+            flash_state: None,
+            rename_preview_state: None,
             clipboard: Clipboard::new(),
             picker: None,
             keymap,
@@ -3353,6 +3430,11 @@ impl App {
         };
         match picker.kind {
             PickerKind::Files | PickerKind::Recent => self.open_path(Path::new(&item.id)),
+            PickerKind::Harpoon => {
+                if let Ok(slot1) = item.id.parse::<usize>() {
+                    self.harpoon_goto(slot1);
+                }
+            }
             PickerKind::Buffers => {
                 if let Ok(i) = item.id.parse::<usize>()
                     && i < self.panes.len()
@@ -4090,6 +4172,7 @@ impl App {
                 raw: None,
                 resolved: true,
                 is_snippet: false,
+                kind: 1, // Text — buffer-keyword matches aren't structural
             })
             .collect();
         let popup = crate::completion::CompletionPopup::new(path, items, &prefix);
@@ -4706,6 +4789,9 @@ impl App {
     }
     /// `lsp.rename` — open a one-line prompt (seeded with the identifier under
     /// the cursor); on accept, send `textDocument/rename` for that spot.
+    /// Also fills `rename_preview_state` so the renderer can paint the
+    /// proposed new identifier inline at every whole-word occurrence in the
+    /// active editor (single-file MVP).
     pub fn lsp_rename(&mut self) {
         let Some(b) = self.active_editor() else {
             self.toast("no active editor");
@@ -4717,6 +4803,19 @@ impl App {
         };
         let (row, col) = b.editor.row_col();
         let word = self.word_under_cursor();
+        // Fill rename preview state for the active pane (single-file).
+        if let (Some(pid), Some(w)) = (self.active, word.clone()) {
+            let text_owned = match self.panes.get(pid) {
+                Some(Pane::Editor(b)) => b.editor.text().to_string(),
+                _ => String::new(),
+            };
+            let occurrences = collect_whole_word_occurrences(&text_owned, &w);
+            self.rename_preview_state = Some(RenamePreviewState {
+                pane_id: pid,
+                original_word: w,
+                occurrences,
+            });
+        }
         self.pending_rename = Some((path, row as u32, col as u32));
         let kind = crate::prompt::PromptKind::LspRename;
         self.prompt = Some(match word {
@@ -5814,14 +5913,17 @@ impl App {
                     .into_iter()
                     .take(500)
                     .map(
-                        |(label, insert, detail, documentation, raw, is_snippet)| CompletionItem {
-                            label,
-                            insert,
-                            detail: detail.unwrap_or_default(),
-                            documentation: documentation.unwrap_or_default(),
-                            raw: Some(raw),
-                            resolved: false,
-                            is_snippet,
+                        |(label, insert, detail, documentation, raw, is_snippet, kind)| {
+                            CompletionItem {
+                                label,
+                                insert,
+                                detail: detail.unwrap_or_default(),
+                                documentation: documentation.unwrap_or_default(),
+                                raw: Some(raw),
+                                resolved: false,
+                                is_snippet,
+                                kind,
+                            }
                         },
                     )
                     .collect();
@@ -6428,6 +6530,7 @@ impl App {
             | Some(Pane::GitlabMergeRequests(_))
             | Some(Pane::AzDevOpsBuilds(_))
             | Some(Pane::AzDevOpsPullRequests(_))
+            | Some(Pane::Cheatsheet(_))
             | None => None,
             #[cfg(feature = "private")]
             Some(Pane::TestExecutions(_)) => None,
@@ -9445,6 +9548,7 @@ impl App {
             DiffScope::Staged => crate::git::diff::diff_staged(repo),
             DiffScope::Commit(h) => crate::git::diff::show_commit(repo, h),
             DiffScope::BufferVsDisk(path) => self.diff_buffer_vs_disk(path),
+            DiffScope::AllVsHead => crate::git::diff::diff_vs_head(repo),
         }
     }
 
@@ -9502,7 +9606,9 @@ impl App {
             Some(Pane::Editor(b)) => b.path.clone(),
             Some(Pane::Diff(d)) => match &d.scope {
                 crate::pane::DiffScope::Unstaged(p) => p.clone(),
-                crate::pane::DiffScope::Staged | crate::pane::DiffScope::Commit(_) => None,
+                crate::pane::DiffScope::Staged
+                | crate::pane::DiffScope::Commit(_)
+                | crate::pane::DiffScope::AllVsHead => None,
                 crate::pane::DiffScope::BufferVsDisk(p) => Some(p.clone()),
             },
             _ => None,
@@ -9831,6 +9937,69 @@ impl App {
         let id = self.panes.len() - 1;
         self.reveal_pane(id);
     }
+
+    /// Open a single diff pane showing every change vs HEAD — both staged
+    /// and unstaged combined. Diffview-style "everything I've touched"
+    /// browser. Use `]f` / `[f` inside the pane to jump file-by-file.
+    pub fn open_diff_all(&mut self) {
+        let scope = crate::pane::DiffScope::AllVsHead;
+        let hunks = self.fetch_diff(&scope);
+        if hunks.is_empty() {
+            self.toast("no changes vs HEAD");
+            return;
+        }
+        let file_count = {
+            let mut files: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+            for h in &hunks {
+                files.insert(&h.file_rel);
+            }
+            files.len()
+        };
+        self.panes
+            .push(Pane::Diff(crate::pane::DiffView::new(scope, hunks)));
+        let id = self.panes.len() - 1;
+        self.reveal_pane(id);
+        self.toast(format!("diff: {file_count} file(s) vs HEAD"));
+    }
+
+    /// Diff-pane file jump: move the cursor hunk to the first hunk of the
+    /// next file (`forward = true`) or the previous file's first hunk
+    /// (`forward = false`). Wraps. No-op when only one file is in the diff.
+    pub fn diff_jump_file(&mut self, forward: bool) {
+        let Some(cur) = self.active else { return };
+        let Some(Pane::Diff(d)) = self.panes.get_mut(cur) else {
+            return;
+        };
+        if d.hunks.is_empty() {
+            return;
+        }
+        let cur_file = d.hunks[d.cursor].file_rel.clone();
+        let n = d.hunks.len();
+        // Collect each file's first hunk index (in encounter order — the
+        // existing hunk vector is already file-grouped by `git diff`).
+        let mut firsts: Vec<usize> = Vec::new();
+        let mut seen: Option<&str> = None;
+        for (i, h) in d.hunks.iter().enumerate() {
+            if seen != Some(h.file_rel.as_str()) {
+                firsts.push(i);
+                seen = Some(h.file_rel.as_str());
+            }
+        }
+        if firsts.len() <= 1 {
+            return;
+        }
+        // Find the file the cursor is in.
+        let cur_file_idx = firsts
+            .iter()
+            .rposition(|&i| d.hunks[i].file_rel == cur_file)
+            .unwrap_or(0);
+        let next = if forward {
+            (cur_file_idx + 1) % firsts.len()
+        } else {
+            (cur_file_idx + firsts.len() - 1) % firsts.len()
+        };
+        d.cursor = firsts[next].min(n - 1);
+    }
     /// Re-run the active diff pane's `git diff` (after staging, or on demand).
     pub fn refresh_active_diff(&mut self) {
         let Some(cur) = self.active else { return };
@@ -9975,6 +10144,7 @@ impl App {
         self.pending_delete_branch = None;
         self.pending_worktree_remove = None;
         self.pending_branch_source = None;
+        self.rename_preview_state = None;
         if was_find {
             self.restore_find_preview_snapshot();
             self.find_pending_range = None;
@@ -10033,6 +10203,9 @@ impl App {
             }
             crate::prompt::PromptKind::LspRename => {
                 let new_name = p.input.trim().to_string();
+                // Clear the preview before either path returns — keeps the
+                // overlay from leaking past the accept moment.
+                self.rename_preview_state = None;
                 let Some((path, line, ch)) = self.pending_rename.take() else {
                     return;
                 };
@@ -12403,17 +12576,46 @@ impl App {
         self.toast(format!("g, → {}:{}", row + 1, col + 1));
     }
 
-    /// `editor.bracket_match` (`Ctrl+]`) — when the cursor sits on a bracket
-    /// (`()` / `[]` / `{}`), jump to its match. Toasts when there's none.
+    /// `editor.bracket_match` (`Ctrl+]` / vim `%`) — when the cursor sits
+    /// on a bracket (`()` / `[]` / `{}`), jump to its match. For
+    /// HTML-family files, also matches `<tag>` ↔ `</tag>` (vim-matchup).
+    /// Toasts when there's none.
     pub fn bracket_match_jump(&mut self) {
-        let target = self.active_editor().and_then(|b| b.editor.bracket_match());
-        let Some((row, col)) = target else {
-            self.toast("not on a bracket");
-            return;
+        let pid = match self.active {
+            Some(p) => p,
+            None => return,
         };
-        if let Some(b) = self.active_editor_mut() {
-            b.editor.place_cursor(row, col);
+        // First try the bracket matcher.
+        let bracket_target = match self.panes.get(pid) {
+            Some(Pane::Editor(b)) => b.editor.bracket_match(),
+            _ => None,
+        };
+        if let Some((row, col)) = bracket_target {
+            if let Some(Pane::Editor(b)) = self.panes.get_mut(pid) {
+                b.editor.place_cursor(row, col);
+            }
+            return;
         }
+        // Tag matcher — HTML-family files only.
+        let tag_target = match self.panes.get(pid) {
+            Some(Pane::Editor(b))
+                if matches!(
+                    b.language_ext.as_deref(),
+                    Some("html" | "htm" | "vue" | "svelte" | "astro" | "jsx" | "tsx" | "xml")
+                ) =>
+            {
+                crate::editor::tag_match_at(b.editor.text(), b.editor.cursor())
+            }
+            _ => None,
+        };
+        if let Some(byte) = tag_target {
+            if let Some(Pane::Editor(b)) = self.panes.get_mut(pid) {
+                let (r, c) = b.editor.row_col_at(byte);
+                b.editor.place_cursor(r, c);
+            }
+            return;
+        }
+        self.toast("not on a bracket / tag");
     }
 
     /// `editor.goto_line` (`Ctrl+G`) — prompt for a 1-based line number. The
@@ -13265,7 +13467,8 @@ impl App {
             | Pane::GitlabPipelines(_)
             | Pane::GitlabMergeRequests(_)
             | Pane::AzDevOpsBuilds(_)
-            | Pane::AzDevOpsPullRequests(_) => (None, None),
+            | Pane::AzDevOpsPullRequests(_)
+            | Pane::Cheatsheet(_) => (None, None),
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (None, None),
             #[cfg(feature = "private")]
@@ -13381,6 +13584,7 @@ impl App {
             Pane::CodeBuilds(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "private")]
             Pane::LogTail(p) => Some((p.tab_title(), false)),
+            Pane::Cheatsheet(_) => Some(("Cheatsheet".to_string(), false)),
         }
     }
 
@@ -13885,6 +14089,15 @@ impl App {
         });
     }
 
+    pub fn toggle_render_markdown(&mut self) {
+        self.config.ui.render_markdown = !self.config.ui.render_markdown;
+        self.toast(if self.config.ui.render_markdown {
+            "render markdown: on"
+        } else {
+            "render markdown: off"
+        });
+    }
+
     /// `:set [no]bufferline` / `view.toggle_bufferline` — hide/show the
     /// open-tabs strip above the editor body. Useful for single-buffer
     /// workflows.
@@ -13955,6 +14168,269 @@ impl App {
     }
     pub fn toggle_highlight_word_under_cursor(&mut self) {
         self.set_highlight_word_under_cursor(!self.config.ui.highlight_word_under_cursor);
+    }
+
+    /// Harpoon: pin the active editor's file into the lowest free slot
+    /// (1..=9). Toasts if the buffer has no path, the file is already
+    /// pinned, or every slot is full.
+    pub fn harpoon_add_active(&mut self) {
+        let Some(path) = self.active_editor().and_then(|b| b.path.clone()) else {
+            self.toast("harpoon: no file");
+            return;
+        };
+        if self.harpoon.iter().any(|s| s.as_ref() == Some(&path)) {
+            self.toast(format!(
+                "harpoon: already pinned ({})",
+                rel_path(&self.workspace, &path)
+            ));
+            return;
+        }
+        if let Some(slot) = self.harpoon.iter_mut().position(|s| s.is_none()) {
+            self.harpoon[slot] = Some(path.clone());
+            self.toast(format!(
+                "harpoon: slot {} = {}",
+                slot + 1,
+                rel_path(&self.workspace, &path)
+            ));
+        } else {
+            self.toast("harpoon: all 9 slots full (use harpoon.menu to free one)");
+        }
+    }
+
+    /// Harpoon: jump to slot N (1-based; the call sites `<leader>1`-`<leader>9`
+    /// pass the user's digit). Toasts if the slot is empty or the file
+    /// disappeared.
+    pub fn harpoon_goto(&mut self, slot1: usize) {
+        if !(1..=9).contains(&slot1) {
+            return;
+        }
+        let path = match self.harpoon[slot1 - 1].clone() {
+            Some(p) => p,
+            None => {
+                self.toast(format!("harpoon: slot {slot1} is empty"));
+                return;
+            }
+        };
+        if !path.exists() {
+            self.toast(format!(
+                "harpoon: slot {slot1} → file missing ({})",
+                path.display()
+            ));
+            return;
+        }
+        self.open_path(&path);
+    }
+
+    /// Harpoon: clear slot N (1-based). Used by the menu picker's accept
+    /// path when the user is asked to free a slot.
+    pub fn harpoon_clear(&mut self, slot1: usize) {
+        if !(1..=9).contains(&slot1) {
+            return;
+        }
+        self.harpoon[slot1 - 1] = None;
+        self.toast(format!("harpoon: slot {slot1} cleared"));
+    }
+
+    /// Harpoon: open a picker over the occupied slots. Accept ⇒ jump to
+    /// that slot's pinned file. Toasts if every slot is empty.
+    pub fn harpoon_open_menu(&mut self) {
+        let items: Vec<crate::picker::PickerItem> = self
+            .harpoon
+            .iter()
+            .enumerate()
+            .filter_map(|(i, slot)| {
+                let path = slot.as_ref()?;
+                let rel = rel_path(&self.workspace, path);
+                let exists = path.exists();
+                let detail = if exists {
+                    format!("slot {}", i + 1)
+                } else {
+                    format!("slot {} · missing", i + 1)
+                };
+                Some(crate::picker::PickerItem::new(
+                    (i + 1).to_string(),
+                    rel,
+                    detail,
+                ))
+            })
+            .collect();
+        if items.is_empty() {
+            self.toast("harpoon: nothing pinned (use <leader>Ha to pin the active file)");
+            return;
+        }
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Harpoon,
+            "Harpoon",
+            items,
+        ));
+    }
+
+    /// Apply a single edit op to the active editor through its
+    /// `apply_edit_ops` path — keeps the clipboard borrow scope short
+    /// so callers can be 1-liners.
+    pub fn apply_op_active(&mut self, op: crate::edit_op::EditOp) {
+        let vp = 10usize;
+        if let Some(pid) = self.active
+            && let Some(Pane::Editor(b)) = self.panes.get_mut(pid)
+        {
+            b.apply_edit_ops(vec![op], &mut self.clipboard, vp);
+        }
+    }
+
+    /// Open the cheatsheet pane in a split below the active leaf. Builds
+    /// it fresh each open (rebuilt against the current keymap so re-bound
+    /// chords show up immediately). If one's already open, focuses it.
+    pub fn open_cheatsheet(&mut self) {
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Cheatsheet(_)))
+        {
+            let fresh = crate::cheatsheet::CheatsheetPane::build(&self.keymap);
+            if let Some(Pane::Cheatsheet(c)) = self.panes.get_mut(id) {
+                *c = fresh;
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::Cheatsheet(crate::cheatsheet::CheatsheetPane::build(&self.keymap));
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// Flash/leap `s<a><b>` — find every visible occurrence of `ab` in the
+    /// active editor's viewport, label each, and arm the dispatcher to
+    /// intercept the next keystroke for a jump. Empty result ⇒ toast and
+    /// leave the cursor where it is.
+    pub fn flash_start(&mut self, a: char, b: char) {
+        let Some(pid) = self.active else {
+            return;
+        };
+        let Some(Pane::Editor(buf)) = self.panes.get(pid) else {
+            return;
+        };
+        let text = buf.editor.text();
+        let scroll = buf.scroll;
+        // Per-pane visible-row count — derived from the recorded text rect.
+        // If the rect isn't recorded yet (e.g. first frame), fall back to a
+        // reasonable height so flash still does something useful.
+        let vp_h = self
+            .rects
+            .editor_panes
+            .iter()
+            .find(|(_, p)| *p == pid)
+            .map(|(r, _)| r.height as usize)
+            .unwrap_or(40);
+
+        // Build line index for the viewport. Each entry is `(file_row,
+        // line_text)`.
+        let mut lines: Vec<(usize, &str)> = Vec::new();
+        let mut row = 0usize;
+        for line in text.split_inclusive('\n') {
+            if row >= scroll {
+                lines.push((row, line.trim_end_matches('\n')));
+                if lines.len() >= vp_h {
+                    break;
+                }
+            }
+            row += 1;
+        }
+        if row < scroll && lines.is_empty() {
+            // File shorter than the scroll position — nothing to label.
+            self.toast("flash: nothing visible");
+            return;
+        }
+
+        // Scan each line for case-insensitive `ab` occurrences.
+        let pair = (a, b);
+        let a_lower = a.to_ascii_lowercase();
+        let b_lower = b.to_ascii_lowercase();
+        let mut hits: Vec<(usize, usize)> = Vec::new();
+        for (file_row, line) in &lines {
+            let mut prev: Option<char> = None;
+            for (col_chars, c) in line.chars().enumerate() {
+                if let Some(p) = prev
+                    && p.to_ascii_lowercase() == a_lower
+                    && c.to_ascii_lowercase() == b_lower
+                {
+                    hits.push((*file_row, col_chars - 1));
+                    if hits.len() >= crate::flash::MAX_MATCHES {
+                        break;
+                    }
+                }
+                prev = Some(c);
+            }
+            if hits.len() >= crate::flash::MAX_MATCHES {
+                break;
+            }
+        }
+
+        if hits.is_empty() {
+            self.toast(format!("flash: no \"{a}{b}\" on screen"));
+            return;
+        }
+
+        let labels = crate::flash::pick_labels(pair, hits.len());
+        let targets: Vec<crate::flash::FlashTarget> = hits
+            .into_iter()
+            .zip(labels)
+            .map(|((row, col_chars), label)| crate::flash::FlashTarget {
+                row,
+                col_chars,
+                label,
+            })
+            .collect();
+        self.flash_state = Some(crate::flash::FlashState {
+            pane_id: pid,
+            pair,
+            targets,
+        });
+    }
+
+    /// Flash intercept: try to consume a character as a label. Returns
+    /// `true` if the keystroke was consumed (label matched or universal
+    /// cancel like Esc); `false` if the dispatcher should re-handle the
+    /// key normally.
+    pub fn flash_consume_char(&mut self, c: char) -> bool {
+        let Some(state) = self.flash_state.as_ref() else {
+            return false;
+        };
+        let target = state
+            .targets
+            .iter()
+            .find(|t| t.label == c)
+            .map(|t| (state.pane_id, t.row, t.col_chars));
+        self.flash_state = None;
+        if let Some((pid, row, col)) = target {
+            // Push current position on the back-stack so Alt+Left returns
+            // (mirrors editor.jump_*-style navigation).
+            if let Some(np) = self.current_nav_point() {
+                self.push_nav_back(np);
+                self.nav_forward.clear();
+            }
+            if let Some(Pane::Editor(buf)) = self.panes.get_mut(pid) {
+                buf.editor.place_cursor(row, col);
+            }
+            true
+        } else {
+            // Unknown label ⇒ cancel and let the key fall through.
+            false
+        }
+    }
+
+    pub fn flash_cancel(&mut self) {
+        self.flash_state = None;
     }
 
     /// Visual-block `I` / `A` ⇒ start a block-insert. Captures the rect,
@@ -17448,6 +17924,14 @@ impl App {
                     self.toast("todo highlight: off");
                 } else if matches!(opt, "todohl!" | "invtodohl") {
                     self.toggle_todo_highlight();
+                } else if matches!(opt, "rendermarkdown" | "rendermd") {
+                    self.config.ui.render_markdown = true;
+                    self.toast("render markdown: on");
+                } else if matches!(opt, "norendermarkdown" | "norendermd") {
+                    self.config.ui.render_markdown = false;
+                    self.toast("render markdown: off");
+                } else if matches!(opt, "rendermarkdown!" | "invrendermarkdown") {
+                    self.toggle_render_markdown();
                 } else if matches!(opt, "bufferline" | "bl") {
                     self.bufferline_visible = true;
                     self.toast("bufferline: on");
@@ -17878,6 +18362,7 @@ impl App {
         self.check_format_save_deadline();
         self.block_insert_replay_if_done();
         self.repeat_insert_replay_if_done();
+        self.expire_yank_flashes();
         self.refresh_stale_highlights();
         self.refresh_scroll_semantic_tokens();
         if let Some((_, t)) = &self.toast
@@ -17945,6 +18430,21 @@ impl App {
     /// ground — small scrolls don't mash the server, but any meaningful
     /// jump refreshes promptly.
     const VIEWPORT_REFIRE_THRESHOLD: u32 = 20;
+
+    /// Clear `Buffer.yank_flash` entries older than ~200ms so the
+    /// highlight-on-yank overlay fades naturally.
+    fn expire_yank_flashes(&mut self) {
+        const YANK_FLASH_TTL: std::time::Duration = std::time::Duration::from_millis(200);
+        let now = std::time::Instant::now();
+        for pane in self.panes.iter_mut() {
+            if let Pane::Editor(b) = pane
+                && let Some((_, _, started)) = b.yank_flash
+                && now.duration_since(started) >= YANK_FLASH_TTL
+            {
+                b.yank_flash = None;
+            }
+        }
+    }
 
     /// Re-run tree-sitter on any editor buffer whose `highlights_dirty` is
     /// set AND whose last edit was more than ~120ms ago. Lets rapid
@@ -18246,6 +18746,14 @@ impl App {
             az_builds_collapsed: self.az_builds_collapsed.iter().cloned().collect(),
             az_prs_view_mode: Some(self.az_prs_view_mode),
             az_prs_collapsed: self.az_prs_collapsed.iter().cloned().collect(),
+            harpoon: if self.harpoon.iter().all(|s| s.is_none()) {
+                Vec::new()
+            } else {
+                self.harpoon
+                    .iter()
+                    .map(|s| s.as_ref().map(|p| p.to_string_lossy().into_owned()))
+                    .collect()
+            },
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -18486,6 +18994,11 @@ impl App {
             self.az_prs_view_mode = m;
         }
         self.az_prs_collapsed = saved.az_prs_collapsed.into_iter().collect();
+        // Harpoon slots — restore up to 9 (silently drop any extras a
+        // hand-edited session.json might carry).
+        for (i, slot) in saved.harpoon.into_iter().take(9).enumerate() {
+            self.harpoon[i] = slot.map(PathBuf::from);
+        }
         // Per-file change list — restore for any buffer we just re-opened.
         // Cursor sits past the newest entry so the first `g;` lands on the
         // most recent edit (vim convention).
@@ -22639,6 +23152,202 @@ GET https://example.com/second
         assert!(
             app.picker.is_none(),
             "picker should NOT open when every cache is empty"
+        );
+    }
+
+    #[test]
+    fn flash_start_finds_visible_pairs_and_label_jumps() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("c.txt"), "abc abc abc\n").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_path(&d.path().join("c.txt"));
+        // Pretend the editor pane has been rendered so flash sees a viewport.
+        let pid = app.active.unwrap();
+        app.rects.editor_panes.push((
+            ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width: 40,
+                height: 10,
+            },
+            pid,
+        ));
+        app.flash_start('a', 'b');
+        let state = app.flash_state.as_ref().expect("flash should have armed");
+        assert_eq!(state.targets.len(), 3, "expected 3 'ab' matches on screen");
+        // First target lives at row 0, col 0 (the leading "ab").
+        let first = &state.targets[0];
+        assert_eq!((first.row, first.col_chars), (0, 0));
+        // Move cursor away then commit the jump via the third target's label.
+        if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+            b.editor.place_cursor(0, 7);
+        }
+        let third_label = state.targets[2].label;
+        let third_pos = (state.targets[2].row, state.targets[2].col_chars);
+        assert!(app.flash_consume_char(third_label));
+        // flash state cleared + cursor moved.
+        assert!(app.flash_state.is_none());
+        if let Some(Pane::Editor(b)) = app.panes.get(pid) {
+            assert_eq!(b.editor.row_col(), third_pos);
+        } else {
+            panic!("expected editor");
+        }
+    }
+
+    #[test]
+    fn diff_jump_file_walks_files() {
+        use crate::git::diff::{Hunk, HunkLine};
+        use crate::pane::{DiffScope, DiffView};
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // Synthetic 4-hunk diff spanning 3 files (A, B, B, C).
+        let mk = |file: &str| Hunk {
+            file: PathBuf::from(file),
+            file_rel: file.to_string(),
+            header: "@@ -1 +1 @@".into(),
+            new_start: 1,
+            lines: vec![HunkLine::Context("x".into())],
+            body: "@@ -1 +1 @@\n x\n".into(),
+        };
+        let hunks = vec![mk("a.txt"), mk("b.txt"), mk("b.txt"), mk("c.txt")];
+        app.panes
+            .push(Pane::Diff(DiffView::new(DiffScope::AllVsHead, hunks)));
+        let id = app.panes.len() - 1;
+        app.active = Some(id);
+        if let Some(Pane::Diff(d)) = app.panes.get_mut(id) {
+            d.cursor = 0;
+        }
+        // ]f from a.txt → b.txt (index 1).
+        app.diff_jump_file(true);
+        let cur = match app.panes.get(id) {
+            Some(Pane::Diff(d)) => d.cursor,
+            _ => unreachable!(),
+        };
+        assert_eq!(cur, 1);
+        // ]f from b.txt's first hunk → c.txt (index 3).
+        app.diff_jump_file(true);
+        let cur = match app.panes.get(id) {
+            Some(Pane::Diff(d)) => d.cursor,
+            _ => unreachable!(),
+        };
+        assert_eq!(cur, 3);
+        // ]f wraps → a.txt (index 0).
+        app.diff_jump_file(true);
+        let cur = match app.panes.get(id) {
+            Some(Pane::Diff(d)) => d.cursor,
+            _ => unreachable!(),
+        };
+        assert_eq!(cur, 0);
+        // [f from a.txt wraps backwards to c.txt (index 3).
+        app.diff_jump_file(false);
+        let cur = match app.panes.get(id) {
+            Some(Pane::Diff(d)) => d.cursor,
+            _ => unreachable!(),
+        };
+        assert_eq!(cur, 3);
+    }
+
+    #[test]
+    fn collect_whole_word_finds_three_hits() {
+        let text = "foo bar foo\nbaz foo qux\n";
+        let hits = super::collect_whole_word_occurrences(text, "foo");
+        assert_eq!(hits, vec![(0, 0, 3), (0, 8, 3), (1, 4, 3)]);
+    }
+
+    #[test]
+    fn collect_whole_word_respects_boundaries() {
+        // "foo" inside "foobar" is NOT a whole-word match; "foo." IS.
+        let text = "foobar foo\nfoo.bar afoo\n";
+        let hits = super::collect_whole_word_occurrences(text, "foo");
+        assert_eq!(hits, vec![(0, 7, 3), (1, 0, 3)]);
+    }
+
+    #[test]
+    fn lsp_rename_arms_preview_state() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("a.txt"), "alpha beta alpha\n").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_path(&d.path().join("a.txt"));
+        // Place cursor inside the first "alpha".
+        if let Some(pid) = app.active
+            && let Some(Pane::Editor(b)) = app.panes.get_mut(pid)
+        {
+            b.editor.place_cursor(0, 1);
+        }
+        app.lsp_rename();
+        let state = app
+            .rename_preview_state
+            .as_ref()
+            .expect("preview should be armed");
+        assert_eq!(state.original_word, "alpha");
+        assert_eq!(state.occurrences.len(), 2);
+        // The prompt should also be open with the seeded word.
+        let prompt = app.prompt.as_ref().expect("prompt should be open");
+        assert_eq!(prompt.input, "alpha");
+        // Cancel — preview should clear.
+        app.prompt_cancel();
+        assert!(app.rename_preview_state.is_none());
+    }
+
+    #[test]
+    fn harpoon_pins_and_jumps() {
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        let b = d.path().join("b.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.harpoon_add_active();
+        // a → slot 1
+        assert_eq!(app.harpoon[0].as_ref(), Some(&a));
+        // Open b.txt, pin it → slot 2.
+        app.open_path(&b);
+        app.harpoon_add_active();
+        assert_eq!(app.harpoon[1].as_ref(), Some(&b));
+        // Adding the same file again is a no-op (idempotent toast).
+        app.harpoon_add_active();
+        assert!(app.harpoon[2].is_none());
+        // Jump back to slot 1.
+        app.harpoon_goto(1);
+        let active = app.active.expect("active");
+        match app.panes.get(active) {
+            Some(Pane::Editor(buf)) => {
+                assert_eq!(buf.path.as_deref(), Some(a.as_path()));
+            }
+            _ => panic!("expected editor"),
+        }
+    }
+
+    #[test]
+    fn harpoon_session_round_trip() {
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.harpoon_add_active();
+        app.save_session_on_quit();
+        let mut app2 = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app2.try_restore_session();
+        assert_eq!(app2.harpoon[0].as_ref(), Some(&a));
+    }
+
+    #[test]
+    fn flash_start_no_match_skips_state() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("c.txt"), "hello world\n").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_path(&d.path().join("c.txt"));
+        let pid = app.active.unwrap();
+        app.rects.editor_panes.push((
+            ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width: 40,
+                height: 10,
+            },
+            pid,
+        ));
+        app.flash_start('z', 'z');
+        assert!(
+            app.flash_state.is_none(),
+            "flash with no matches should NOT leave state armed"
         );
     }
 }
