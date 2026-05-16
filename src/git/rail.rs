@@ -24,6 +24,8 @@ pub enum GitRailHit {
     Branch(usize),
     /// Index into `GitRail::worktrees`.
     Worktree(usize),
+    /// Index into `GitRail::pulls`.
+    Pull(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -33,14 +35,41 @@ pub struct BranchRow {
     pub is_current: bool,
 }
 
+/// One open PR/MR for the *current* repo. The rail section consults
+/// the per-host caches `App::bitbucket_pull_requests` / `github_pull_requests`
+/// / `gitlab_merge_requests` / `azdevops_pull_requests` and projects to
+/// this minimal shape so the renderer doesn't have to know about hosts.
+#[derive(Debug, Clone)]
+pub struct PullRow {
+    /// Short host tag for the glyph color (`"BB"`, `"GH"`, `"GL"`, `"AZ"`).
+    pub host_tag: &'static str,
+    /// Display label — short identifier (e.g. `"#42"` or `"!17"`).
+    pub number_label: String,
+    /// PR title.
+    pub title: String,
+    /// `source_branch` — useful for spot-checking if the PR is for the
+    /// branch the user is on.
+    pub source_branch: Option<String>,
+    /// Set on the row that matches `GitRail::current_branch` so the
+    /// renderer can highlight it (mirrors the `●` mark on the active
+    /// branch row).
+    pub is_current_branch: bool,
+    /// What `Enter` / click opens.
+    pub web_url: String,
+}
+
 #[derive(Debug)]
 pub struct GitRail {
     pub branches: Vec<BranchRow>,
     pub worktrees: Vec<Worktree>,
+    /// Open PRs/MRs for the current repo (best-effort match by remote URL
+    /// against the configured SCM hosts). Empty when there's no recognized
+    /// remote, when caches are still loading, or when there are no open PRs.
+    pub pulls: Vec<PullRow>,
     /// `git symbolic-ref --short HEAD`, or `None` on detached HEAD / not a repo.
     pub current_branch: Option<String>,
-    /// Cursor over the interactive rows: `[0..branches.len())` indexes a branch,
-    /// `[branches.len()..branches.len()+worktrees.len())` indexes a worktree.
+    /// Cursor over the interactive rows: branches → worktrees → pulls,
+    /// in that order. `row_count() == branches.len() + worktrees.len() + pulls.len()`.
     pub cursor: usize,
     /// First visible row in the section (set by the view to keep `cursor` on
     /// screen). Cleared on every refresh.
@@ -60,6 +89,7 @@ impl GitRail {
         GitRail {
             branches: Vec::new(),
             worktrees: Vec::new(),
+            pulls: Vec::new(),
             current_branch: None,
             cursor: 0,
             scroll: 0,
@@ -87,10 +117,10 @@ impl GitRail {
         self.last_refresh = Some(Instant::now());
     }
 
-    /// Total interactive (selectable) rows: branches + worktrees. Sub-section
-    /// labels don't count.
+    /// Total interactive (selectable) rows: branches + worktrees + pulls.
+    /// Sub-section labels don't count.
     pub fn row_count(&self) -> usize {
-        self.branches.len() + self.worktrees.len()
+        self.branches.len() + self.worktrees.len() + self.pulls.len()
     }
     pub fn is_empty(&self) -> bool {
         self.row_count() == 0
@@ -110,10 +140,13 @@ impl GitRail {
     /// What `cursor` points at, or `None` if the rail is empty.
     pub fn selected(&self) -> Option<GitRailHit> {
         let nb = self.branches.len();
+        let nw = self.worktrees.len();
         if self.cursor < nb {
             Some(GitRailHit::Branch(self.cursor))
-        } else if self.cursor < nb + self.worktrees.len() {
+        } else if self.cursor < nb + nw {
             Some(GitRailHit::Worktree(self.cursor - nb))
+        } else if self.cursor < nb + nw + self.pulls.len() {
+            Some(GitRailHit::Pull(self.cursor - nb - nw))
         } else {
             None
         }
@@ -123,11 +156,12 @@ impl GitRail {
     /// by row index, but the hit-test gives back a typed hit, so this is the
     /// adapter).
     pub fn focus(&mut self, hit: GitRailHit) {
+        let nb = self.branches.len();
+        let nw = self.worktrees.len();
         let idx = match hit {
-            GitRailHit::Branch(i) => i.min(self.branches.len().saturating_sub(1)),
-            GitRailHit::Worktree(i) => {
-                self.branches.len() + i.min(self.worktrees.len().saturating_sub(1))
-            }
+            GitRailHit::Branch(i) => i.min(nb.saturating_sub(1)),
+            GitRailHit::Worktree(i) => nb + i.min(nw.saturating_sub(1)),
+            GitRailHit::Pull(i) => nb + nw + i.min(self.pulls.len().saturating_sub(1)),
         };
         self.set_cursor(idx);
     }

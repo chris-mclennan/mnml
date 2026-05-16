@@ -423,6 +423,61 @@ fn draw_git_section(frame: &mut Frame, app: &mut App, area: Rect, start_y: u16, 
         }
     }
 
+    // ── pulls sub-section (open PRs / MRs for the current repo) ──
+    if !app.git_rail.pulls.is_empty() && ((row_y - area.y) as usize) < avail {
+        push_sublabel(&mut lines, "open prs", width, rail_bg);
+        row_y += 1;
+        let nb_and_nw = nb + app.git_rail.worktrees.len();
+        for (i, pr) in app.git_rail.pulls.iter().enumerate() {
+            if (row_y - area.y) as usize >= avail {
+                break;
+            }
+            let row_idx = nb_and_nw + i;
+            let is_cur_row = row_idx == cursor_row;
+            let bg = row_bg(is_cur_row, focused, rail_bg);
+            // Pick a per-host color so the glyph telegraphs which host the
+            // PR came from.
+            let host_color = match pr.host_tag {
+                "BB" => theme::cur().blue,
+                "GH" => theme::cur().fg,
+                "GL" => theme::cur().orange,
+                "AZ" => theme::cur().cyan,
+                _ => theme::cur().fg,
+            };
+            // The branch-marker convention: ● for the PR on the current branch,
+            // ○ otherwise — mirrors the branches sub-section.
+            let marker = if pr.is_current_branch { "●" } else { "○" };
+            // Truncate the title hard so wide titles don't blow out the row.
+            let avail_for_title =
+                width.saturating_sub(2 + 1 + 1 + pr.number_label.chars().count() + 1);
+            let title_disp = truncate_chars(&pr.title, avail_for_title);
+            let prefix = format!("  {marker} ");
+            let head = format!("{} ", pr.number_label);
+            let used = prefix.chars().count() + head.chars().count() + title_disp.chars().count();
+            let pad = width.saturating_sub(used);
+            let mut title_style = Style::default().fg(theme::cur().fg).bg(bg);
+            if pr.is_current_branch {
+                title_style = title_style.add_modifier(Modifier::BOLD);
+            }
+            lines.push(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(host_color).bg(bg)),
+                Span::styled(head, Style::default().fg(host_color).bg(bg)),
+                Span::styled(title_disp, title_style),
+                Span::styled(" ".repeat(pad), Style::default().bg(bg)),
+            ]));
+            app.rects.git_rail_rows.push((
+                Rect {
+                    x: area.x,
+                    y: row_y,
+                    width: area.width,
+                    height: 1,
+                },
+                GitRailHit::Pull(i),
+            ));
+            row_y += 1;
+        }
+    }
+
     if app.git_rail.is_empty() {
         // Friendly placeholder so the user sees the section even outside a repo.
         push_sublabel(&mut lines, "no git repo here", width, rail_bg);
@@ -430,6 +485,22 @@ fn draw_git_section(frame: &mut Frame, app: &mut App, area: Rect, start_y: u16, 
 
     let body = git_body_rect(area, start_y);
     frame.render_widget(Paragraph::new(lines), body);
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
+    let count = s.chars().count();
+    if count <= max {
+        return s.to_string();
+    }
+    if max <= 1 {
+        return s.chars().take(max).collect();
+    }
+    let mut out: String = s.chars().take(max - 1).collect();
+    out.push('…');
+    out
 }
 
 fn git_body_rect(area: Rect, start_y: u16) -> Rect {

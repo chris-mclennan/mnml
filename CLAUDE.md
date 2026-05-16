@@ -2119,6 +2119,24 @@ comment_count is hardcoded 0 because Azure's list endpoint doesn't
 return it (would need a per-PR `/threads` call). Free-tier signup
 walk-through in conversation history if a real test is needed.
 
+**Branch-rail "open PRs" subsection** — third sub-section in the GIT
+rail (below `branches` + `worktrees`). Lists open PRs/MRs for the
+*current* repo, resolved by parsing `git remote get-url origin` with
+the shared `crate::git::browse::parse_remote` helper, then matching
+the host (`bitbucket.org` / `github.com` / `gitlab` / `dev.azure.com`
+/ `visualstudio.com`) and `(owner/workspace, repo/slug)` against the
+per-host PR caches. Per-host glyph color (BB=blue / GH=fg / GL=orange
+/ AZ=cyan); `●` marks the PR whose `source_branch == current_branch`
+(matches the branches sub-section's "current" convention), `○`
+otherwise; current-branch PRs sort to the top. Each row label is
+`<#N> <title>` (truncated with `…`). Click ⇒ open the PR's web URL
+in the OS browser; right-click ⇒ "Open in browser" / "Copy URL". New
+`GitRailHit::Pull(usize)` + `GitRail.pulls: Vec<PullRow>`. The drain
+functions for all 4 SCM workers (`drain_{bitbucket,github,gitlab,azdevops}_events`)
+end with `App::refresh_rail_pulls()` so the rail tracks each poll
+cycle. Falls back to empty silently when there's no recognized
+remote — important for non-repo workspaces.
+
 **Cross-nav PR ↔ pipeline** — pane-level chords: `c` on a PR row jumps
 to the matching pipeline/build (selects the most-recent one whose
 `target_ref` equals the PR's `source_branch`); `P` on a pipeline/build

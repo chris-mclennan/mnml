@@ -42,7 +42,7 @@ pub fn commit_url(workspace: &Path, hash: &str) -> Option<String> {
     Some(format!("https://{host}/{owner}/{repo}/commit/{hash}"))
 }
 
-fn parse_remote(url: &str) -> Option<(String, String, String)> {
+pub fn parse_remote(url: &str) -> Option<(String, String, String)> {
     // SSH: `git@github.com:owner/repo.git` or `git@github.com:owner/repo`.
     if let Some(rest) = url.strip_prefix("git@") {
         let (host, path) = rest.split_once(':')?;
@@ -65,7 +65,7 @@ fn parse_remote(url: &str) -> Option<(String, String, String)> {
     None
 }
 
-fn git_config(workspace: &Path, key: &str) -> Option<String> {
+pub fn git_config(workspace: &Path, key: &str) -> Option<String> {
     let out = Command::new("git")
         .args(["config", "--get", key])
         .current_dir(workspace)

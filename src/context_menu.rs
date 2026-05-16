@@ -49,6 +49,12 @@ pub enum MenuAction {
     /// the tree (right-click an `.md`/`.markdown`/`.mdx`/`.mkd` file) and
     /// from a bufferline tab right-click on the same.
     PreviewMarkdown(PathBuf),
+    /// Open a URL via the OS default browser. Used by the git rail's
+    /// `Pull` row context menu.
+    OpenUrl(String),
+    /// Copy a literal string to the clipboard. Used by the git rail's
+    /// `Pull` row context menu ("Copy URL").
+    CopyText(String),
 }
 
 #[derive(Debug, Clone)]

@@ -2226,6 +2226,14 @@ impl App {
             GitWorktreeShell(path) => self.open_worktree_shell(&path.to_string_lossy()),
             GitWorktreeRemove(path) => self.git_worktree_remove_prompt(path),
             PreviewMarkdown(path) => self.open_md_preview_for_path(path, self.active, true),
+            OpenUrl(url) => {
+                open_url_external(&url);
+                self.toast("opened in browser");
+            }
+            CopyText(text) => {
+                self.clipboard.set(text.clone(), false);
+                self.toast("copied URL");
+            }
         }
     }
 
@@ -11004,8 +11012,101 @@ impl App {
     fn after_git_change(&mut self) {
         self.git.refresh();
         self.git_rail.refresh(&self.workspace);
+        self.refresh_rail_pulls();
         self.refresh_git_status_panes();
         self.refresh_git_graph_panes();
+    }
+
+    /// Project the per-host PR caches into `git_rail.pulls` — best-effort
+    /// match by `remote.origin.url`. Called after SCM workers update + on
+    /// every git change. Empty when there's no recognized remote or no
+    /// open PRs for the matched repo.
+    pub fn refresh_rail_pulls(&mut self) {
+        use crate::git::rail::PullRow;
+        let mut out: Vec<PullRow> = Vec::new();
+        let remote = crate::git::browse::git_config(&self.workspace, "remote.origin.url");
+        let parsed = remote.as_deref().and_then(crate::git::browse::parse_remote);
+        let current_branch = self.git_rail.current_branch.clone();
+        if let Some((host, owner, repo)) = parsed {
+            // Match the remote to whichever per-host cache shape uses it.
+            // Bitbucket / GitHub keys are `(owner-or-ws, repo-or-slug)`.
+            if host.ends_with("bitbucket.org") {
+                if let Some(prs) = self
+                    .bitbucket_pull_requests
+                    .get(&(owner.clone(), repo.clone()))
+                {
+                    for pr in prs {
+                        out.push(PullRow {
+                            host_tag: "BB",
+                            number_label: format!("#{}", pr.id),
+                            title: pr.title.clone(),
+                            source_branch: pr.source_branch.clone(),
+                            is_current_branch: pr.source_branch == current_branch,
+                            web_url: pr.web_url.clone(),
+                        });
+                    }
+                }
+            } else if host.contains("github.com") {
+                if let Some(prs) = self
+                    .github_pull_requests
+                    .get(&(owner.clone(), repo.clone()))
+                {
+                    for pr in prs {
+                        out.push(PullRow {
+                            host_tag: "GH",
+                            number_label: format!("#{}", pr.number),
+                            title: pr.title.clone(),
+                            source_branch: pr.source_branch.clone(),
+                            is_current_branch: pr.source_branch == current_branch,
+                            web_url: pr.web_url.clone(),
+                        });
+                    }
+                }
+            } else if host.contains("gitlab") {
+                // GitLab project key is either `"owner/repo"` (URL form) or
+                // a numeric ID. Try `"owner/repo"` first.
+                let url_form = format!("{owner}/{repo}");
+                if let Some(mrs) = self.gitlab_merge_requests.get(&url_form) {
+                    for mr in mrs {
+                        out.push(PullRow {
+                            host_tag: "GL",
+                            number_label: format!("!{}", mr.iid),
+                            title: mr.title.clone(),
+                            source_branch: mr.source_branch.clone(),
+                            is_current_branch: mr.source_branch == current_branch,
+                            web_url: mr.web_url.clone(),
+                        });
+                    }
+                }
+            } else if host.contains("dev.azure.com") || host.contains("visualstudio.com") {
+                // Azure DevOps key shape is `"org/project/repo"`. The remote
+                // URL doesn't carry the project distinct from the repo in
+                // every variant — match by suffix endsWith `/repo`.
+                for (label, prs) in &self.azdevops_pull_requests {
+                    if label.ends_with(&format!("/{repo}")) {
+                        for pr in prs {
+                            out.push(PullRow {
+                                host_tag: "AZ",
+                                number_label: format!("#{}", pr.id),
+                                title: pr.title.clone(),
+                                source_branch: pr.source_branch.clone(),
+                                is_current_branch: pr.source_branch == current_branch,
+                                web_url: pr.web_url.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        // Sort: current-branch PR(s) first, then everything else in insertion
+        // order (which is recency from the worker pass).
+        out.sort_by_key(|p| !p.is_current_branch);
+        self.git_rail.pulls = out;
+        // Clamp cursor in case the row count shrank.
+        let max = self.git_rail.row_count().saturating_sub(1);
+        if self.git_rail.cursor > max {
+            self.git_rail.cursor = max;
+        }
     }
     /// `(rel, is_staged)` for the highlighted file in the active git-status pane.
     fn git_status_selection(&self) -> Option<(String, bool)> {
@@ -15936,6 +16037,18 @@ impl App {
                 }
                 ContextMenu::new(title, anchor, items)
             }
+            crate::git::rail::GitRailHit::Pull(i) => {
+                let Some(p) = self.git_rail.pulls.get(i) else {
+                    return;
+                };
+                let url = p.web_url.clone();
+                let title = Some(format!("{} {} — {}", p.host_tag, p.number_label, p.title));
+                let items = vec![
+                    MenuItem::new("Open in browser", MenuAction::OpenUrl(url.clone())),
+                    MenuItem::new("Copy URL", MenuAction::CopyText(url)),
+                ];
+                ContextMenu::new(title, anchor, items)
+            }
         };
         self.context_menu = Some(menu);
     }
@@ -15959,6 +16072,14 @@ impl App {
                 };
                 let path = w.path.clone();
                 self.open_worktree_shell(&path.to_string_lossy());
+            }
+            crate::git::rail::GitRailHit::Pull(i) => {
+                let Some(p) = self.git_rail.pulls.get(i) else {
+                    return;
+                };
+                let url = p.web_url.clone();
+                open_url_external(&url);
+                self.toast(format!("opened {} in browser", p.number_label));
             }
         }
     }
@@ -17553,6 +17674,7 @@ impl App {
                 }
             }
         }
+        self.refresh_rail_pulls();
     }
 
     // ── GitLab ────────────────────────────────────────────────────────
@@ -17840,6 +17962,7 @@ impl App {
                 }
             }
         }
+        self.refresh_rail_pulls();
     }
 
     // ── Azure DevOps ──────────────────────────────────────────────────
@@ -18133,6 +18256,7 @@ impl App {
                 }
             }
         }
+        self.refresh_rail_pulls();
     }
 
     /// Pull pending pipeline updates off the Bitbucket channel into the
@@ -18185,6 +18309,8 @@ impl App {
                 }
             }
         }
+        // PR caches changed → rail's "open PRs" subsection follows.
+        self.refresh_rail_pulls();
     }
 }
 
@@ -19452,6 +19578,108 @@ GET https://example.com/second
         } else {
             panic!("not a pipelines pane");
         }
+    }
+
+    #[test]
+    fn refresh_rail_pulls_no_remote_leaves_pulls_empty() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // Seed a GH PR; tempdir has no `remote.origin.url` so the parser will
+        // produce no match and pulls should stay empty.
+        app.github_pull_requests.insert(
+            ("private-org".into(), "repo".into()),
+            vec![crate::github::PullRequestRecord {
+                owner: "private-org".into(),
+                repo: "repo".into(),
+                number: 7,
+                title: "X".into(),
+                state: crate::github::PullRequestState::Open,
+                author: None,
+                source_branch: Some("feat".into()),
+                dest_branch: Some("main".into()),
+                reviewer_count: 0,
+                approved_count: 0,
+                changes_count: 0,
+                comment_count: 0,
+                review_comment_count: 0,
+                created_at_ms: Some(0),
+                updated_at_ms: Some(0),
+                web_url: "https://github.com/private-org/repo/pull/7".into(),
+            }],
+        );
+        app.refresh_rail_pulls();
+        assert!(app.git_rail.pulls.is_empty(), "no remote → no rail pulls");
+    }
+
+    #[test]
+    fn refresh_rail_pulls_matches_by_parsed_remote() {
+        // Construct a tempdir, init it as a repo, set a fake GH remote so the
+        // parser resolves. Then seed the matching GH PR cache + the
+        // non-matching BB cache; only the GH PR should land in rail.pulls.
+        let d = tempfile::tempdir().unwrap();
+        // `git init` + set remote synchronously.
+        let _ = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(d.path())
+            .status();
+        let _ = std::process::Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:private-org/repo.git",
+            ])
+            .current_dir(d.path())
+            .status();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // GH cache (matching).
+        app.github_pull_requests.insert(
+            ("private-org".into(), "repo".into()),
+            vec![crate::github::PullRequestRecord {
+                owner: "private-org".into(),
+                repo: "repo".into(),
+                number: 7,
+                title: "GH match".into(),
+                state: crate::github::PullRequestState::Open,
+                author: None,
+                source_branch: Some("feat".into()),
+                dest_branch: Some("main".into()),
+                reviewer_count: 0,
+                approved_count: 0,
+                changes_count: 0,
+                comment_count: 0,
+                review_comment_count: 0,
+                created_at_ms: Some(0),
+                updated_at_ms: Some(0),
+                web_url: "https://github.com/private-org/repo/pull/7".into(),
+            }],
+        );
+        // BB cache (must NOT bleed through; we're on a GH remote).
+        app.bitbucket_pull_requests.insert(
+            ("other".into(), "other".into()),
+            vec![crate::bitbucket::PullRequestRecord {
+                workspace: "other".into(),
+                slug: "other".into(),
+                id: 99,
+                title: "BB should not show".into(),
+                state: crate::bitbucket::PullRequestState::Open,
+                author: None,
+                source_branch: Some("any".into()),
+                dest_branch: Some("main".into()),
+                reviewer_count: 0,
+                approved_count: 0,
+                changes_count: 0,
+                comment_count: 0,
+                task_count: 0,
+                created_on_ms: Some(0),
+                updated_on_ms: Some(0),
+                web_url: "https://bitbucket.org/other/other/pull-requests/99".into(),
+            }],
+        );
+        app.refresh_rail_pulls();
+        assert_eq!(app.git_rail.pulls.len(), 1, "only matching host shows");
+        assert_eq!(app.git_rail.pulls[0].host_tag, "GH");
+        assert_eq!(app.git_rail.pulls[0].title, "GH match");
     }
 
     #[test]
