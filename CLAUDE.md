@@ -81,38 +81,17 @@ user might be mid-edit *inside mnml* on something untouched.
   when there's room.
   After each landed feature: update this Status block + commit + `./run.sh restart`.
 
-## Queued tracks
-
-**Mixr pane** — embed mixr-rs (`~/Projects/mixr-rs`, mnml's sibling TUI
-DJ app whose file-based IPC pattern mnml borrowed) as a `Pane::Pty`
-spawned with a new `BinaryProfile::mixr(ws)`. Reuses the existing pty
-infrastructure (portable-pty + vt100), so mixr's full interactive TUI
-— keyboard, mouse, ratatui overlays, all rendered colors — works
-natively in the pane. One launch step (`mixr.show` / palette / chord),
-one terminal, one window.
-
-Why pty over the attach-via-IPC alternative: mnml stays open for days
-at a time so the "audio survives mnml restart" win from a detached
-external mixr doesn't apply. The pty pane gets native fidelity for ~30
-min of work; the attach-mode (read `~/.mixr/screen.txt`, write commands
-to `~/.mixr/command`) needs an ANSI re-parser + file watcher + status
-header for ~200 lines and would feel snapshot-y vs a real stream.
-
-`v` inside the pane is just forwarded to mixr's own `v` key (compact /
-full dashboard toggle) — no IPC translation needed since the pty
-forwards keystrokes verbatim.
-
-Implementation: new `BinaryProfile::mixr(ws)` in `src/pty_pane.rs`
-(mirrors `claude_code(ws)` / `codex(ws)` / `shell()`), new `mixr.show`
-command + default chord (`<leader>x`?), `Pane::Pty` variant reused as-is.
-Audio device exclusivity caveat: only one mixr can hold cpal at a time,
-so `mixr.show` should refuse if an external mixr is already running
-(detect via `~/.mixr/screen.txt` mtime within the last 3s, or
-`~/.mixr/auth.json` lock if one exists). Optional follow-up: mirror
-`~/.mixr/events.jsonl` into mnml's message log so the toast stack picks
-up mix-start / mix-complete events even when the pane isn't focused.
-
 ## Status
+
+**Mixr pane (2026-05-16):** `mixr.show` (`<leader>a M`) opens the sibling `mixr-rs` TUI DJ as a `Pane::Pty`
+spawned via new `BinaryProfile::mixr(workspace)` (mirrors `claude_code(ws)` / `codex(ws)` — `mixr --dashboard`
+in the workspace cwd). Reuses existing portable-pty + vt100 plumbing — mixr's interactive TUI (keys / mouse /
+overlays / colors) renders natively in the pane. Refuses cleanly with a toast when `mixr` isn't on `$PATH`
+(new `mixr_on_path()` helper walks `$PATH` rather than pulling in the `which` crate). Paired with mixr-rs
+commit `50fdae8` which added a `DashLayout::{Full, Panel}` + `PanelSection::{Queue, History, Browse, Log}`
+mode — `v` inside the mixr pane cycles `Full → Panel(Queue) → Panel(History) → Panel(Browse) → Panel(Log)
+→ Full` so the embedded view fits any split height. Mixr persists the layout choice in `~/.mixr/config.json`
+so the same layout reappears next time the pane opens.
 
 **NvChad-track add-ons (2026-05-16):** seven NvChad-style features landed in one sweep — (1) **startup
 dashboard** (NvDash) — when `Layout::Empty`, `ui::welcome` paints an ASCII `mnml` logo + workspace name +
