@@ -349,18 +349,35 @@ impl Layout {
     }
 
     /// After `app.panes.remove(removed)`, every leaf id past `removed` shifts down
-    /// by one. Apply that re-index to the tree.
+    /// by one. Leaves pointing AT `removed` become `Empty` (the pane is gone —
+    /// keeping the id would silently re-bind the leaf to whatever pane shifted
+    /// down to take that index). Splits with an `Empty` child collapse to the
+    /// other branch so the tree stays well-formed for re-rendering.
     pub fn shift_after(&mut self, removed: PaneId) {
         match self {
             Layout::Empty => {}
             Layout::Leaf(id) => {
-                if *id > removed {
+                if *id == removed {
+                    *self = Layout::Empty;
+                } else if *id > removed {
                     *id -= 1;
                 }
             }
             Layout::Split { first, second, .. } => {
                 first.shift_after(removed);
                 second.shift_after(removed);
+                // Collapse splits whose child became Empty. Take the
+                // surviving branch's contents in place to avoid a
+                // mid-tree placeholder.
+                let collapse = match (&**first, &**second) {
+                    (Layout::Empty, Layout::Empty) => Some(Layout::Empty),
+                    (Layout::Empty, _) => Some((**second).clone()),
+                    (_, Layout::Empty) => Some((**first).clone()),
+                    _ => None,
+                };
+                if let Some(replacement) = collapse {
+                    *self = replacement;
+                }
             }
         }
     }
@@ -535,6 +552,45 @@ mod tests {
         };
         l.shift_after(2); // pretend pane 2 was removed from app.panes
         assert_eq!(l.leaves(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn shift_after_drops_leaf_at_removed_id() {
+        // A leaf pointing at the removed pane id must become Empty
+        // (don't silently re-bind to whatever pane shifted into its
+        // slot). Splits collapse around the missing leaf.
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::Leaf(0)),
+            second: Box::new(Layout::Leaf(1)),
+        };
+        l.shift_after(0);
+        // Pane 0 removed: first leaf gone, second was Leaf(1) → Leaf(0).
+        // Split collapses to that leaf.
+        assert!(matches!(l, Layout::Leaf(0)));
+    }
+
+    #[test]
+    fn shift_after_collapses_nested_splits() {
+        // Removing both children of a nested split should propagate
+        // the Empty up so the parent collapses too.
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::Leaf(0)),
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Vertical,
+                ratio: 50,
+                first: Box::new(Layout::Leaf(1)),
+                second: Box::new(Layout::Leaf(2)),
+            }),
+        };
+        l.shift_after(1);
+        // After removing pane 1, the nested split's first child is
+        // dropped; the inner split collapses to Leaf(1) (was Leaf 2,
+        // shifted). The outer split survives with both leaves.
+        assert_eq!(l.leaves(), vec![0, 1]);
     }
 
     #[test]
