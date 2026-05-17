@@ -4070,6 +4070,19 @@ impl App {
         }
         if self.layout().contains(id) {
             self.active = Some(id);
+        } else if let Some(other_tab) = self
+            .layouts
+            .iter()
+            .enumerate()
+            .find_map(|(i, l)| (i != self.active_layout && l.contains(id)).then_some(i))
+        {
+            // Pane lives in another tab page — switch tabs so the
+            // invariant "each pane is in at most one leaf across all
+            // tabs" holds. Otherwise set_leaf_pane below would
+            // duplicate the leaf reference into the active tab.
+            self.remember_active_for_tab();
+            self.active_layout = other_tab;
+            self.active = Some(id);
         } else if let Some(cur) = self.active {
             self.layout_mut().set_leaf_pane(cur, id);
             self.active = Some(id);
@@ -22879,6 +22892,40 @@ mod tests {
         // `:tabprev 1` cycles back one (wraps if needed).
         app.run_ex_command("tabprev 1");
         assert_eq!(app.active_layout, 1);
+    }
+
+    #[test]
+    fn reveal_pane_switches_tab_when_pane_is_elsewhere() {
+        // Two tabs: tab 1 has a.txt, tab 2 has b.txt. We're on tab 2.
+        // Clicking the bufferline tab for a.txt should switch us to
+        // tab 1 (not duplicate the leaf into tab 2).
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        let b = d.path().join("b.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.tab_new(None);
+        app.open_path(&b);
+        let a_id = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(buf) if buf.is_at(&a)))
+            .unwrap();
+        let b_id = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(buf) if buf.is_at(&b)))
+            .unwrap();
+        assert_eq!(app.active_layout, 1, "should be on tab 2");
+        assert_eq!(app.active, Some(b_id));
+        // Reveal a.txt — should switch tabs.
+        app.reveal_pane(a_id);
+        assert_eq!(app.active_layout, 0, "should have switched to tab 1");
+        assert_eq!(app.active, Some(a_id));
+        // Tab 2's layout must still contain b.txt — not be empty.
+        assert!(
+            app.layouts[1].contains(b_id),
+            "tab 2 should still hold b.txt"
+        );
     }
 
     #[test]
