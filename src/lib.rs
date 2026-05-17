@@ -20,6 +20,7 @@ pub mod ai;
 pub mod app;
 pub mod azdevops;
 pub mod bitbucket;
+pub mod blit;
 pub mod browser_pane;
 pub mod buffer;
 pub mod cdp;

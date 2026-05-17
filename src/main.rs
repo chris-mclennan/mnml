@@ -85,6 +85,7 @@ fn test_subcommand(argv: Vec<String>) -> ExitCode {
 struct TuiArgs {
     workspace: PathBuf,
     headless: bool,
+    blit: Option<PathBuf>,
     input_style: Option<String>,
     ascii: bool,
     config_path: Option<PathBuf>,
@@ -93,6 +94,7 @@ struct TuiArgs {
 fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
     let mut workspace: Option<PathBuf> = None;
     let mut headless = false;
+    let mut blit: Option<PathBuf> = None;
     let mut input_style = None;
     let mut ascii = false;
     let mut config_path = None;
@@ -102,6 +104,11 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
         match arg.as_str() {
             "--headless" => headless = true,
             "--ascii" => ascii = true,
+            "--blit" => {
+                blit = Some(PathBuf::from(
+                    it.next().ok_or("--blit needs a socket path".to_string())?,
+                ));
+            }
             "--input" => {
                 input_style = Some(
                     it.next()
@@ -117,7 +124,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
                 println!(
                     "mnml — NvChad-style terminal IDE\n\n\
                      usage:\n  \
-                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless]\n  \
+                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--blit SOCKET]\n  \
                        mnml run FILE [--env NAME] [--workspace DIR]\n"
                 );
                 std::process::exit(0);
@@ -132,6 +139,13 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
         }
     }
 
+    if blit.is_none()
+        && let Ok(v) = std::env::var("MNML_BLIT_SOCKET")
+        && !v.is_empty()
+    {
+        blit = Some(PathBuf::from(v));
+    }
+
     let workspace =
         workspace.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let workspace = workspace
@@ -140,6 +154,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
     Ok(TuiArgs {
         workspace,
         headless,
+        blit,
         input_style,
         ascii,
         config_path,
@@ -180,7 +195,9 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // Re-open last session's buffers (no-op when [session] restore = false).
     app.try_restore_session();
 
-    let result = if args.headless {
+    let result = if let Some(socket) = &args.blit {
+        mnml::blit::run(app, socket)
+    } else if args.headless {
         mnml::headless::run(app)
     } else {
         mnml::tui::run(app)

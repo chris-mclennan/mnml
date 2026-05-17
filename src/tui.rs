@@ -39,8 +39,7 @@ pub fn run(mut app: App) -> Result<bool, String> {
         Some(name) if !name.is_empty() => format!("mnml — {name}"),
         _ => "mnml".to_string(),
     };
-    let mut term =
-        setup_terminal(&title).map_err(|e| format!("terminal setup failed: {e}"))?;
+    let mut term = setup_terminal(&title).map_err(|e| format!("terminal setup failed: {e}"))?;
     let result = run_loop(&mut term, &mut app);
     let _ = restore_terminal(&mut term);
     result
