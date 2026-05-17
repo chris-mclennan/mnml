@@ -77,8 +77,46 @@ user might be mid-edit *inside mnml* on something untouched.
 - The user is happy to have Claude pick which track/feature to do next ("keep going,
   you decide the order — we'll do them all eventually") — choose the most valuable;
   don't ask which. Lean toward *bounded* items when starting a fresh session; save the
-  big tracks (the `private` feature, CDP follow-ups, Git GUI phase 4) for when there's room.
+  big tracks (the `private` feature, CDP follow-ups, Git GUI phase 4, Mixr pane) for
+  when there's room.
   After each landed feature: update this Status block + commit + `./run.sh restart`.
+
+## Queued tracks
+
+**Mixr pane** (`Pane::Mixr`) — embed mixr-rs (`~/Projects/mixr-rs`)
+inside mnml as a read+control pane. mixr is the sibling TUI DJ app
+that mnml borrowed its file-based IPC pattern from, so the integration
+is almost trivial:
+
+- Read `~/.mixr/screen.txt` every tick (mixr dumps the current TUI
+  screen here continuously) and render it in the pane.
+- Forward keystrokes by writing `{"key":"<c>"}` to `~/.mixr/command`
+  (mixr already has a `key` IPC verb under "Utilities").
+- Forward mouse clicks via `{"click":{"col":N,"row":N,"shift":bool}}`
+  (mixr's `click` IPC verb — the file already supports this for
+  smoke tests).
+- `~/.mixr/quick.txt` (compact key=value, every tick) + `~/.mixr/status.json`
+  drive a small status header above the embedded screen so we can show
+  current track/BPM/transition without parsing the screen dump.
+- `v` inside the pane is just forwarded to mixr — mixr's own `v` key
+  toggles compact/full dashboard view; the user wanted `v` to "sway
+  views", and that's already what mixr does natively.
+
+Don't spawn mixr — it owns the audio device + runs persistently in its
+own terminal. mnml is just a viewer + remote. Detect "is it running"
+by `~/.mixr/screen.txt` mtime within the last few seconds. If mixr
+isn't running, the pane shows a "mixr is not running — launch
+`~/Projects/mixr-rs/run.sh` in a terminal" placeholder.
+
+Implementation: `Pane::Mixr(MixrPane{last_screen, status, scroll})`,
+`src/mixr/` subsystem (file watcher + IPC sender), `src/ui/mixr_view.rs`
+renderer that parses mixr's screen.txt (it's raw ANSI from ratatui;
+either render verbatim or strip ANSI and re-style cells against the
+active theme). Two follow-ups: handle the OAuth WebView popup (mixr
+spawns its own embedded wry+tao window — out of mnml's process; the
+pane just observes the screen.txt switch), and decide whether to also
+mirror `~/.mixr/events.jsonl` into mnml's message log so the toast
+stack picks up mix-start / mix-complete events.
 
 ## Status
 
