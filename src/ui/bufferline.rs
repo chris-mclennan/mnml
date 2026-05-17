@@ -94,8 +94,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let n_tabs = app.layouts.len();
     let mut right_w: u16 = 3 + 6; // ` + ` + ` TABS `
     for i in 0..n_tabs {
-        // Active = 3 (` N `); inactive = 5 (` N ` + `⊗ ` close).
-        right_w += if i == app.active_layout { 3 } else { 5 };
+        // Active = 2 + digits (` N `); inactive adds 2 more (`⊗ ` close).
+        let dig = (i + 1).to_string().chars().count() as u16;
+        right_w += if i == app.active_layout {
+            2 + dig
+        } else {
+            2 + dig + 2
+        };
     }
     right_w += 3 + 3; // ` ◯ ` + ` × `
     let tabs_max_x = area.x + area.width.saturating_sub(right_w);
@@ -412,9 +417,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Per-tabpage chips: ` <n> ` (active, yellow) or ` <n>⊗ ` (non-active).
     for i in 0..app.layouts.len() {
         let active = i == app.active_layout;
+        let label = format!(" {} ", i + 1);
+        let label_w = label.chars().count() as u16;
         if active {
             spans.push(Span::styled(
-                format!(" {} ", i + 1),
+                label,
                 Style::default()
                     .fg(t.bg_darker)
                     .bg(t.yellow)
@@ -424,29 +431,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 ratatui::layout::Rect {
                     x: cluster_x,
                     y: area.y,
-                    width: 3,
+                    width: label_w,
                     height: 1,
                 },
                 i,
             ));
-            cluster_x += 3;
+            cluster_x += label_w;
         } else {
             // Non-active: ` <n> ` then `⊗ ` close (one-cell glyph + trailing
             // space) — the chip and close button get separate rects.
-            spans.push(Span::styled(
-                format!(" {} ", i + 1),
-                Style::default().fg(t.fg).bg(t.bg2),
-            ));
+            spans.push(Span::styled(label, Style::default().fg(t.fg).bg(t.bg2)));
             app.rects.bufferline_tab_page_chips.push((
                 ratatui::layout::Rect {
                     x: cluster_x,
                     y: area.y,
-                    width: 3,
+                    width: label_w,
                     height: 1,
                 },
                 i,
             ));
-            cluster_x += 3;
+            cluster_x += label_w;
             spans.push(Span::styled(
                 "\u{2297} ",
                 Style::default().fg(t.red).bg(t.bg2),
