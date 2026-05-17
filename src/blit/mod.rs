@@ -61,6 +61,15 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
             },
         )
         .map_err(|e| format!("blit: hello: {e}"))?;
+        // Tell the renderer what to call this tab. Mirrors the OSC 0/2
+        // terminal-title sequence that `tui::run` would normally emit
+        // — under blit there's no real terminal to receive it, so we
+        // send it as a `Title` message instead.
+        let title = match app.workspace.file_name().and_then(|n| n.to_str()) {
+            Some(name) if !name.is_empty() => format!("mnml — {name}"),
+            _ => "mnml".to_string(),
+        };
+        write_message(&mut *w, &Message::Title(title)).map_err(|e| format!("blit: title: {e}"))?;
     }
 
     let (resize_tx, resize_rx) = channel::<(u16, u16)>();
