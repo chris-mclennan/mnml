@@ -70,6 +70,23 @@ pub enum FocusDir {
 
 /// True when `path`'s extension marks it as Markdown — used by the outline
 /// pane to extract headings directly instead of going through the LSP.
+/// True iff `mixr` resolves to an executable on `$PATH`. Walks `$PATH`
+/// entries and probes for the binary; cheap, sync, no extra crate.
+fn mixr_on_path() -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join("mixr");
+        if let Ok(meta) = std::fs::metadata(&candidate)
+            && meta.is_file()
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn is_markdown_path(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),
@@ -7417,6 +7434,16 @@ impl App {
         self.open_pty(crate::pty_pane::BinaryProfile::codex(
             self.workspace.clone(),
         ));
+    }
+    /// Open the sibling `mixr-rs` TUI DJ as a pty pane below the focused leaf.
+    /// Refuses cleanly when `mixr` isn't on PATH (toast + no pane). Mixr's
+    /// own `v` key cycles its Panel layouts to fit the available height.
+    pub fn open_mixr_pane(&mut self) {
+        if !mixr_on_path() {
+            self.toast("mixr not found on PATH — install mixr-rs first");
+            return;
+        }
+        self.open_pty(crate::pty_pane::BinaryProfile::mixr(self.workspace.clone()));
     }
 
     /// True if any pane is a pty (the event loop polls faster while one's open so

@@ -1784,6 +1784,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_codex(),
         },
         Command {
+            id: "mixr.show",
+            title: "Mixr: open the TUI DJ in a split below",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_mixr_pane(),
+        },
+        Command {
             id: "browser.open",
             title: "Browser: open Chrome (CDP) — console / nav / eval",
             group: "browser",

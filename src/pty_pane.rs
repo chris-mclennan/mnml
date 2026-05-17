@@ -113,6 +113,21 @@ impl BinaryProfile {
             session_id: None,
         }
     }
+
+    /// `mixr` — the sibling TUI DJ app (`~/Projects/mixr-rs`). Launches with
+    /// `--dashboard` so it lands directly on the controller view (skipping the
+    /// browser); the user can press `v` in mixr to cycle through its Panel
+    /// layouts to fit mnml's split.
+    pub fn mixr(workspace: PathBuf) -> Self {
+        BinaryProfile {
+            label: "mixr".to_string(),
+            exe: "mixr".to_string(),
+            args: vec!["--dashboard".to_string()],
+            cwd: Some(workspace),
+            env: Vec::new(),
+            session_id: None,
+        }
+    }
 }
 
 /// One live pty + child + vt100 grid. Drop to kill the child + join the reader.
