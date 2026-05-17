@@ -14613,6 +14613,43 @@ impl App {
         self.toast("only tab kept · others dropped");
     }
 
+    /// `view.move_to_new_tab` — vim `Ctrl+W T`. Move the active leaf
+    /// out of the current tab's layout into a fresh new tab page.
+    /// When the current tab has only one leaf, this is effectively
+    /// `tab.new` after the active tab (the leaf moves with it). When
+    /// there are siblings, the layout collapses around the removed
+    /// leaf via `remove_leaf`.
+    pub fn move_to_new_tab(&mut self) {
+        let Some(id) = self.active else {
+            return;
+        };
+        // Pluck the leaf out of the current layout. `remove_leaf`
+        // collapses splits around it; if it was the only leaf, the
+        // layout becomes Empty (an empty tab).
+        if self.layout().contains(id) {
+            self.layout_mut().remove_leaf(id);
+        }
+        // The current tab's "active" needs to retarget — pick its
+        // new first leaf (or None for the now-Empty single-pane case).
+        let new_cur_active = self.layout().first_leaf();
+        // Save the soon-to-be-outgoing tab's state.
+        if let Some(slot) = self.tab_actives.get_mut(self.active_layout) {
+            *slot = new_cur_active;
+        }
+        // Insert a fresh tab after the active with the moved leaf.
+        let insert_at = self.active_layout + 1;
+        self.layouts.insert(insert_at, Layout::Leaf(id));
+        self.tab_actives.insert(insert_at, Some(id));
+        self.active_layout = insert_at;
+        self.active = Some(id);
+        self.focus = Focus::Pane;
+        self.toast(format!(
+            "moved to tab {}/{}",
+            insert_at + 1,
+            self.layouts.len()
+        ));
+    }
+
     /// `tab.reopen` — pop the most-recently-closed tab off the stack
     /// and insert it after the active tab. Restored leaves still
     /// reference the original PaneIds (which may have shifted via
@@ -22973,6 +23010,32 @@ mod tests {
         // Should be back on tab 1 with no orphans.
         assert_eq!(app.layouts.len(), 2, "no orphan tab created");
         assert_eq!(app.active_layout, 0);
+    }
+
+    #[test]
+    fn move_to_new_tab_pulls_split_out() {
+        // Tab 1 has a.txt + b.txt as a split. Move b.txt to a new
+        // tab — tab 1 should collapse to just a.txt, tab 2 should
+        // hold b.txt as a single leaf.
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        let b = d.path().join("b.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.split_active(crate::layout::SplitDir::Horizontal);
+        app.open_path(&b);
+        assert!(matches!(app.layout(), Layout::Split { .. }));
+        let b_id = app.active.unwrap();
+        app.move_to_new_tab();
+        assert_eq!(app.layouts.len(), 2);
+        assert_eq!(app.active_layout, 1);
+        assert!(matches!(app.layout(), Layout::Leaf(id) if *id == b_id));
+        // Tab 1 collapsed to a single leaf (a.txt).
+        let a_id = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(buf) if buf.is_at(&a)))
+            .unwrap();
+        assert!(matches!(&app.layouts[0], Layout::Leaf(id) if *id == a_id));
     }
 
     #[test]

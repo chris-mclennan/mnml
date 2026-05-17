@@ -1726,6 +1726,11 @@ impl VimInputHandler {
                     // ratio toward the side that contains us.
                     KeyCode::Char('_') => "view.maximize_height",
                     KeyCode::Char('|') => "view.maximize_width",
+                    // `Ctrl+W T` — move the active leaf out into a new
+                    // tab page (vim canonical: "make the current window
+                    // a new tab page"). When the tab has only one leaf,
+                    // it's just a `tab.new` for the active buffer.
+                    KeyCode::Char('T') => "view.move_to_new_tab",
                     _ => return InputResult::Consumed,
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));

@@ -675,6 +675,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.maximize_split_width(),
         },
         Command {
+            id: "view.move_to_new_tab",
+            title: "Move active split to a new tab page (vim `Ctrl+W T`)",
+            group: "view",
+            keys: &[],
+            run: |app| app.move_to_new_tab(),
+        },
+        Command {
             id: "view.equalize_splits",
             title: "Equalize every split's ratio to 50/50 (vim `Ctrl+W =`)",
             group: "view",
