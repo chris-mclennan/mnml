@@ -318,13 +318,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let (mut spans, used) = render_left(&left, arrows, theme::cur().statusline);
     let (right_spans, right_used) = render_right(&right, arrows, theme::cur().statusline);
 
-    // middle: toast / pending-key hint, centered in the leftover space.
+    // middle: chord-pending hint, centered in the leftover space. The vim `:`
+    // cmdline and live toast now own the cmdline-bar row below the statusline,
+    // so we only paint the *non-cmdline* part of `pending_display()` here
+    // (`d`, `gqap`, `cw`, …) — the chord shorthand the user is mid-typing.
     let mid_avail = width.saturating_sub(used + right_used);
-    let middle = app
-        .pending_display()
-        .or_else(|| app.live_toast().map(|s| s.to_string()))
-        .unwrap_or_default();
-    let is_pending = app.pending_display().is_some();
+    let pending = app.pending_display();
+    let is_pending = pending
+        .as_deref()
+        .map(|s| !s.starts_with(':'))
+        .unwrap_or(false);
+    let middle = if is_pending {
+        pending.unwrap_or_default()
+    } else {
+        String::new()
+    };
     let mid_text: String = {
         let m = if middle.is_empty() {
             String::new()

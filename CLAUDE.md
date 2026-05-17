@@ -83,6 +83,15 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Cmdline bar (2026-05-16):** new 1-row strip below the statusline (`src/ui/cmdline_bar.rs`,
+wired into `ui::draw`'s bottom split which now reserves 2 rows: statusline + cmdline_bar).
+Hosts vim's `:` ex-command line (yellow + bold against `bg_darker`) when `pending_display()`
+starts with `:`; otherwise mirrors the most-recent live toast dimmed so messages persist in
+a known spot instead of just floating top-right. The statusline middle gap no longer
+double-shows the `:` cmdline or toasts — it's reserved for the chord-pending state alone
+(`d`, `gqap`, `cw`, …). Zen mode (`view.zen`) still skips both rows. No new keymaps —
+existing `:` chord opens the cmdline as before; the row is purely a render-side relocation.
+
 **Mixr pane (2026-05-16):** `mixr.show` (`<leader>a M`) opens the sibling `mixr-rs` TUI DJ as a `Pane::Pty`
 spawned via new `BinaryProfile::mixr(workspace)` (mirrors `claude_code(ws)` / `codex(ws)` — `mixr --dashboard`
 in the workspace cwd). Reuses existing portable-pty + vt100 plumbing — mixr's interactive TUI (keys / mouse /

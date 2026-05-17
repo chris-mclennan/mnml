@@ -28,6 +28,7 @@ pub mod browser_view;
 pub mod bufferline;
 pub mod cheatsheet_view;
 pub mod close_prompt;
+pub mod cmdline_bar;
 pub mod cmdline_history_view;
 #[cfg(feature = "private")]
 pub mod codebuilds_view;
@@ -149,9 +150,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         return;
     }
 
-    // Split off the bottom statusline (full width).
-    let v = RLayout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
-    let (upper, statusline_area) = (v[0], v[1]);
+    // Split off the bottom statusline + cmdline bar (each 1 row, full width).
+    // Cmdline bar sits BELOW the statusline (vim/neovim convention: the
+    // statusline shows steady state, the cmdline below it shows the live `:`
+    // line + transient echo messages).
+    let v = RLayout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .split(area);
+    let (upper, statusline_area, cmdline_bar_area) = (v[0], v[1], v[2]);
 
     // tree rail | right column. `tree_visible` here means "the rail itself is
     // showing" (toggled by `Ctrl+B`); a separate `tree_root_expanded` flag,
@@ -252,6 +261,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // ── statusline ──
     statusline::draw(frame, app, statusline_area);
     app.rects.statusline = Some(statusline_area);
+
+    // ── cmdline bar (below statusline) ──
+    cmdline_bar::draw(frame, app, cmdline_bar_area);
 
     // ── overlays (picker / palette, then which-key) ──
     if app.picker.is_some() {
