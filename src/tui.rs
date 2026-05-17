@@ -16,7 +16,7 @@ use ratatui::crossterm::event::{
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode, enable_raw_mode,
     supports_keyboard_enhancement,
 };
 use ratatui::layout::Rect;
@@ -32,7 +32,15 @@ use crate::{command, ui};
 /// Run the terminal UI. `Ok(true)` ⇒ exit for a rebuild+relaunch (the `run.sh`
 /// wrapper watches for that); `Ok(false)` ⇒ normal quit.
 pub fn run(mut app: App) -> Result<bool, String> {
-    let mut term = setup_terminal().map_err(|e| format!("terminal setup failed: {e}"))?;
+    // Workspace basename for the terminal-window title — picks up the
+    // current project name so multiple mnml tabs are distinguishable
+    // ("mnml — mnml", "mnml — tmnl", "mnml — private", …).
+    let title = match app.workspace.file_name().and_then(|s| s.to_str()) {
+        Some(name) if !name.is_empty() => format!("mnml — {name}"),
+        _ => "mnml".to_string(),
+    };
+    let mut term =
+        setup_terminal(&title).map_err(|e| format!("terminal setup failed: {e}"))?;
     let result = run_loop(&mut term, &mut app);
     let _ = restore_terminal(&mut term);
     result
@@ -40,14 +48,19 @@ pub fn run(mut app: App) -> Result<bool, String> {
         .map_err(|e| format!("{e}"))
 }
 
-fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
+fn setup_terminal(title: &str) -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
     let mut out = io::stdout();
     if let Err(e) = execute!(
         out,
         EnterAlternateScreen,
         EnableMouseCapture,
-        SetCursorStyle::SteadyBar
+        SetCursorStyle::SteadyBar,
+        // OSC 0/2 — sets the terminal window/tab title. Most terminals
+        // (Apple Terminal, iTerm2, tmnl, Kitty, WezTerm, …) read this
+        // and display the title in the tab strip. Falls back silently on
+        // terminals that don't honor OSC sequences.
+        SetTitle(title),
     ) {
         let _ = disable_raw_mode();
         return Err(e);
