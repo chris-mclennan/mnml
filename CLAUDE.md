@@ -83,6 +83,14 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**`:tabmove [N]` (2026-05-17):** vim canonical for reordering tabs.
+Accepts bare or `$` (→ last), `0` (→ first), 1-based absolute N, or
+relative `+N` / `-N`. Out-of-range clamps. `:tabm` alias. The
+underlying primitive is `App::tab_swap(a, b)` which also powers
+bufferline drag-to-reorder (`App::dragging_tab_page` set on chip
+mousedown, swaps on drag over a different chip's rect, cleared on
+left-up — symmetric with the tmnl chip drag-to-reorder).
+
 **Multi-tab session persistence (2026-05-17):** `SavedSession` gained
 `layouts: Option<Vec<Option<SavedLayout>>>` + `active_layout:
 Option<usize>` (new), keeping the existing `layout: Option<SavedLayout>`
