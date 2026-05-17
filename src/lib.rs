@@ -29,6 +29,7 @@ pub mod command;
 pub mod completion;
 pub mod config;
 pub mod context_menu;
+pub mod dap;
 pub mod e2e;
 pub mod edit_op;
 pub mod editor;

@@ -2608,20 +2608,40 @@ browser via the same `open_url_external` helper the per-host
 Empty caches ⇒ toast pointing at the four `[[<host>.repos]]` /
 `[[<host>.projects]]` config tables (no picker opens).
 
-**DAP debugging — starter MVP (breakpoints only)** — editor gutter
-breakpoint marks. `dap.toggle_breakpoint` (`F9` / `:Bp`) flips a
-breakpoint on the active editor's cursor line; painted as a red `●` in
-the 1-cell sign column (wins over LSP severity dots + git change marks).
-`dap.list_breakpoints` (`:Breakpoints`) toasts a summary across every
-open buffer; `dap.clear_all_breakpoints` (`:ClearBreakpoints`) drops
-them for the active buffer. `Buffer.breakpoints: Vec<u32>` (0-based,
+**DAP debugging — real adapter wire protocol** — `dap.run` (`F5` /
+`:Dap`) spawns the configured debug adapter for the active buffer's
+filetype (`[dap.<lang>] cmd = "..." args = [...] launch.* = ...`) over
+Content-Length-framed JSON-RPC on stdio, runs the canonical handshake
+(`initialize` → on `initialized` event → `setBreakpoints` per open
+buffer that has any → `launch` → `configurationDone`), and pumps
+adapter events back into `App.dap`. `${file}` / `${workspace}` /
+`${workspaceFolder}` / `${fileBasename}` / `${fileDirname}` are
+substituted in the `launch.*` body. Step controls: `F5` continue,
+`F10` next, `F11` step in, `Shift+F11` step out, `Shift+F5` resume
+(alt continue), `dap.pause` / `dap.terminate` via palette. On
+`Stopped`, the active editor jumps to the top frame's source line +
+the gutter paints a yellow `▶` arrow (wins over breakpoint `●` and
+LSP severity dots). `dap.toggle_breakpoint` (`F9`) re-fires
+`setBreakpoints` to the live adapter when a session is initialized
+so toggles take effect immediately. Mirrors `lsp::client` patterns:
+reader thread + `Pending` map keyed by `seq` + `DapEvent` mpsc
+channel drained in `App::tick`. New `src/dap/mod.rs` +
+`src/dap/client.rs`. One session at a time for the MVP; the event
+loop polls at 40ms while `App.dap.is_some()` so output/stopped
+events surface promptly. Limitations (still): no `Pane::Debug` for
+call stack / variables / watches (events surface as toasts +
+message_log for now); no conditional breakpoints; no `attach` flow
+yet (the launch body's `request` field can say "attach" and we'll
+send it, but the workflow isn't polished).
+
+**DAP breakpoint marks** — `Buffer.breakpoints: Vec<u32>` (0-based,
 sorted, unique) persisted in `session.json` via `SavedBuffer.breakpoints`
 (stale lines past the file's current end-of-buffer are dropped on
-restore). `dap.run` (`:Debug` / `:Dap`) is a placeholder toast for
-now — actually driving a debug adapter (debugpy / `node --inspect` /
-lldb-vscode / etc.) is a follow-up; the protocol implementation +
-call-stack/variables/watches UI are substantial enough to warrant
-their own track.
+restore). `dap.toggle_breakpoint` (`F9` / `:Bp`) flips on the active
+editor's cursor line; painted as a red `●` in the 1-cell sign column.
+`dap.list_breakpoints` (`:Breakpoints`) toasts a summary across every
+open buffer; `dap.clear_all_breakpoints` (`:ClearBreakpoints`) drops
+them for the active buffer.
 
 **Mason-style tools picker** — `tools.installer` (`:Tools` / `:Mason`)
 opens a fuzzy picker over `crate::tools::KNOWN_TOOLS` — a curated list

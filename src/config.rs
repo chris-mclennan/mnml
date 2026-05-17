@@ -62,6 +62,12 @@ pub struct Config {
     /// entries override the built-in `DEFAULT_LINTERS` (eslint for
     /// js/ts, ruff for py, shellcheck for sh).
     pub linters: BTreeMap<String, crate::linter::LinterEntry>,
+    /// `[dap.<lang>]` — debug adapter configs. Each entry is
+    /// `cmd = "..."` + optional `args = [...]` + an optional
+    /// `launch.*` sub-table that's substituted (`${file}`, `${workspace}`)
+    /// and passed verbatim to the adapter on `launch`. Parsed into
+    /// `crate::dap::AdapterConfig` at runtime via `dap::parse_adapters`.
+    pub dap: BTreeMap<String, toml::Value>,
     pub browser: BrowserConfig,
     pub playwright: PlaywrightConfig,
     pub ci: CiConfig,
@@ -611,6 +617,7 @@ impl Default for Config {
             abbreviations: BTreeMap::new(),
             formatters: BTreeMap::new(),
             linters: BTreeMap::new(),
+            dap: BTreeMap::new(),
             browser: BrowserConfig {
                 headless: false,
                 profile_mode: "workspace".to_string(),
@@ -653,6 +660,8 @@ struct RawConfig {
     formatters: BTreeMap<String, crate::formatter::FormatterEntry>,
     #[serde(default)]
     linters: BTreeMap<String, crate::linter::LinterEntry>,
+    #[serde(default)]
+    dap: BTreeMap<String, toml::Value>,
     #[serde(default)]
     browser: RawBrowser,
     #[serde(default)]
@@ -1006,6 +1015,9 @@ impl Config {
         }
         for (ext, entry) in raw.linters {
             self.linters.insert(ext, entry);
+        }
+        for (name, v) in raw.dap {
+            self.dap.insert(name, v);
         }
         if let Some(v) = raw.browser.headless {
             self.browser.headless = v;

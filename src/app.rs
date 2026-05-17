@@ -1969,6 +1969,20 @@ pub struct App {
         std::sync::mpsc::Sender<LinterJobDone>,
         std::sync::mpsc::Receiver<LinterJobDone>,
     )>,
+    /// Active DAP session (one at a time for the MVP). When `Some`, the
+    /// App drains events in `tick`. Cleared on adapter terminated /
+    /// exited.
+    pub dap: Option<crate::dap::DapManager>,
+    /// Current execution arrow `(path, line0)` — set on `Stopped`,
+    /// cleared on `Continued` / `Terminated`. Editor gutter paints `▶`.
+    pub dap_arrow: Option<(std::path::PathBuf, u32)>,
+    /// Last thread id we saw a `Stopped` event for — used to target
+    /// step commands without the user picking a thread.
+    pub dap_thread: Option<i64>,
+    /// Substituted `launch.*` body stashed by `dap.run` until the
+    /// `Initialized` event lands and we can fire `launch`. Cleared
+    /// when consumed.
+    pub dap_pending_launch: Option<serde_json::Value>,
     /// Receiver for the (single) CDP browser session's worker — events stream in,
     // The per-pane CDP receiver lives on `BrowserPane.event_rx` now —
     // `drain_cdp_events` walks every browser pane each tick.
@@ -2263,6 +2277,10 @@ impl App {
             ai_chan: None,
             tests_chan: None,
             linter_chan: None,
+            dap: None,
+            dap_arrow: None,
+            dap_thread: None,
+            dap_pending_launch: None,
             #[cfg(feature = "private")]
             log_tail_chan: None,
             #[cfg(feature = "private")]
@@ -6297,10 +6315,10 @@ impl App {
     /// `dap.toggle_breakpoint` — flip a breakpoint on the active
     /// editor's cursor line. Painted as a red `●` in the gutter (wins
     /// over LSP severity dots + git change marks). Persisted in
-    /// session.json. Starter MVP — `dap.run` doesn't actually drive a
-    /// debug adapter yet; that's a follow-up. Until then, breakpoints
-    /// are markers for the user's own debug workflow (e.g. eyeballing
-    /// where to set them externally).
+    /// session.json. If a DAP session is live, also re-sends the
+    /// updated breakpoint list to the adapter so it takes effect
+    /// immediately (DAP `setBreakpoints` is per-file, not per-line, so
+    /// we send the whole list).
     pub fn dap_toggle_breakpoint(&mut self) {
         let Some(b) = self.active_editor_mut() else {
             self.toast("no active editor");
@@ -6309,11 +6327,20 @@ impl App {
         let (row, _) = b.editor.row_col();
         let added = b.toggle_breakpoint(row as u32);
         let line_no = row + 1;
+        let path = b.path.clone();
+        let lines = b.breakpoints.clone();
         self.toast(if added {
             format!("breakpoint set: line {line_no}")
         } else {
             format!("breakpoint cleared: line {line_no}")
         });
+        // If the adapter is live + initialized, push the new list.
+        if let (Some(mgr), Some(p)) = (self.dap.as_mut(), path)
+            && mgr.initialized
+            && let Err(e) = mgr.client.set_breakpoints(&p, &lines)
+        {
+            self.toast(format!("dap setBreakpoints: {e}"));
+        }
     }
 
     /// `dap.clear_all_breakpoints` — clear every breakpoint in the
@@ -6355,15 +6382,257 @@ impl App {
         }
     }
 
-    /// `dap.run` — placeholder for the real DAP adapter launch. mnml's
-    /// starter MVP only tracks breakpoints + paints them in the gutter;
-    /// running a debug session against a real adapter (debugpy,
-    /// `node --inspect`, lldb-vscode, etc.) is a follow-up. For now,
-    /// suggest the manual fallback.
+    /// `dap.run` — spawn the configured DAP adapter for the active
+    /// buffer's filetype, send the canonical handshake (initialize →
+    /// launch → setBreakpoints (per open buffer) → configurationDone),
+    /// and pump adapter events back into `App.dap`. Toasts when no
+    /// `[dap.<lang>]` config matches the active filetype.
+    ///
+    /// Only one session at a time for the MVP — calling this with a
+    /// session already live drops the old one (Drop sends `disconnect`).
     pub fn dap_run(&mut self) {
-        self.toast(
-            "dap.run: starter MVP — set breakpoints, then run your debugger in a :term pane",
-        );
+        // Pick an adapter by the active buffer's language extension.
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let lang = match b.language_ext.as_deref() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => {
+                self.toast("dap: no filetype");
+                return;
+            }
+        };
+        let raw = match self.config.dap.get(&lang) {
+            Some(v) => v.clone(),
+            None => {
+                self.toast(format!("dap: no [dap.{lang}] config"));
+                return;
+            }
+        };
+        let cfg = match crate::dap::AdapterConfig::from_toml(&raw) {
+            Ok(c) => c,
+            Err(e) => {
+                self.toast(format!("dap: config error: {e}"));
+                return;
+            }
+        };
+        let active_path = b.path.clone();
+        let workspace = self.workspace.clone();
+        // Drop any existing session first.
+        self.dap = None;
+        self.dap_arrow = None;
+        self.dap_thread = None;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let client = match crate::dap::DapClient::spawn(&cfg, &workspace, tx) {
+            Ok(c) => c,
+            Err(e) => {
+                self.toast(format!("dap spawn failed: {e}"));
+                return;
+            }
+        };
+        let mut mgr = crate::dap::DapManager::new(client, rx);
+        // initialize. The `initialized` event lands later; the App
+        // continues the handshake from there (sets breakpoints, then
+        // launches with the substituted body).
+        if let Err(e) = mgr.client.initialize() {
+            self.toast(format!("dap init failed: {e}"));
+            return;
+        }
+        // Stash the substituted launch body + active path on the manager
+        // (we'll send launch after `Initialized` to give the adapter time
+        // to register).
+        let mut launch_body = cfg.launch.clone();
+        crate::dap::substitute_vars(&mut launch_body, &workspace, active_path.as_deref());
+        self.dap = Some(mgr);
+        // Push the launch body + active path onto a deferred slot the
+        // drain consumes when `Initialized` lands.
+        self.dap_pending_launch = Some(launch_body);
+        self.toast(format!("dap: spawned {} adapter", cfg.cmd));
+    }
+
+    /// Continue execution. No-op when no session / not stopped.
+    pub fn dap_continue(&mut self) {
+        let Some(mgr) = self.dap.as_mut() else {
+            return;
+        };
+        let Some(tid) = self.dap_thread else {
+            self.toast("dap: not stopped");
+            return;
+        };
+        if let Err(e) = mgr.client.cont(tid) {
+            self.toast(format!("dap continue: {e}"));
+        }
+    }
+    pub fn dap_next(&mut self) {
+        let Some(mgr) = self.dap.as_mut() else {
+            return;
+        };
+        let Some(tid) = self.dap_thread else {
+            return;
+        };
+        if let Err(e) = mgr.client.next(tid) {
+            self.toast(format!("dap next: {e}"));
+        }
+    }
+    pub fn dap_step_in(&mut self) {
+        let Some(mgr) = self.dap.as_mut() else {
+            return;
+        };
+        let Some(tid) = self.dap_thread else {
+            return;
+        };
+        if let Err(e) = mgr.client.step_in(tid) {
+            self.toast(format!("dap step_in: {e}"));
+        }
+    }
+    pub fn dap_step_out(&mut self) {
+        let Some(mgr) = self.dap.as_mut() else {
+            return;
+        };
+        let Some(tid) = self.dap_thread else {
+            return;
+        };
+        if let Err(e) = mgr.client.step_out(tid) {
+            self.toast(format!("dap step_out: {e}"));
+        }
+    }
+    pub fn dap_pause(&mut self) {
+        let Some(mgr) = self.dap.as_mut() else {
+            return;
+        };
+        let tid = self.dap_thread.unwrap_or(1);
+        if let Err(e) = mgr.client.pause(tid) {
+            self.toast(format!("dap pause: {e}"));
+        }
+    }
+    pub fn dap_terminate(&mut self) {
+        if let Some(mgr) = self.dap.as_mut() {
+            let _ = mgr.client.terminate();
+        }
+        self.dap = None;
+        self.dap_arrow = None;
+        self.dap_thread = None;
+        self.toast("dap: terminated");
+    }
+
+    /// Drain adapter events each tick. Drives the handshake state
+    /// machine (sends `launch` + breakpoints after `Initialized`),
+    /// surfaces output as toasts (for now), and on `Stopped` jumps
+    /// the active editor to the source line + paints the execution
+    /// arrow + requests a stack trace.
+    pub fn drain_dap_events(&mut self) {
+        let Some(mgr) = self.dap.as_mut() else {
+            return;
+        };
+        let events: Vec<crate::dap::DapEvent> = mgr.rx.try_iter().collect();
+        if events.is_empty() {
+            return;
+        }
+        for ev in events {
+            match ev {
+                crate::dap::DapEvent::Initialized => {
+                    if let Some(mgr) = self.dap.as_mut() {
+                        mgr.initialized = true;
+                    }
+                    // Send breakpoints for every open buffer that has any.
+                    let bp_sets: Vec<(std::path::PathBuf, Vec<u32>)> = self
+                        .panes
+                        .iter()
+                        .filter_map(|p| match p {
+                            Pane::Editor(b) if !b.breakpoints.is_empty() => {
+                                Some((b.path.clone()?, b.breakpoints.clone()))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    if let Some(mgr) = self.dap.as_mut() {
+                        for (path, lines) in &bp_sets {
+                            let _ = mgr.client.set_breakpoints(path, lines);
+                        }
+                    }
+                    // Now fire `launch` (with the stashed substituted body).
+                    if let Some(body) = self.dap_pending_launch.take()
+                        && let Some(mgr) = self.dap.as_mut()
+                        && let Err(e) = mgr.client.launch(body)
+                    {
+                        self.toast(format!("dap launch: {e}"));
+                    }
+                    // And the obligatory configurationDone after our
+                    // breakpoints are registered.
+                    if let Some(mgr) = self.dap.as_mut() {
+                        let _ = mgr.client.configuration_done();
+                    }
+                }
+                crate::dap::DapEvent::Running => {
+                    if let Some(mgr) = self.dap.as_mut() {
+                        mgr.running = true;
+                    }
+                    self.dap_arrow = None;
+                }
+                crate::dap::DapEvent::Output { category, text } => {
+                    // Quiet noisy stdout — telemetry / log / stdout chunks. For
+                    // the MVP we just push them into the message log; the pane
+                    // (a `Pane::Debug` with a tailing output buffer) lands next.
+                    let preview: String =
+                        text.lines().next().unwrap_or("").chars().take(80).collect();
+                    if !preview.is_empty() {
+                        self.toast(format!("dap[{category}]: {preview}"));
+                    }
+                }
+                crate::dap::DapEvent::Stopped {
+                    reason,
+                    thread_id,
+                    description,
+                } => {
+                    self.dap_thread = Some(thread_id);
+                    if let Some(mgr) = self.dap.as_mut() {
+                        mgr.stopped_at = Some((thread_id, None, 0, reason.clone()));
+                        let _ = mgr.client.stack_trace(thread_id);
+                    }
+                    let label = description.unwrap_or(reason);
+                    self.toast(format!("dap: stopped ({label})"));
+                }
+                crate::dap::DapEvent::Continued => {
+                    if let Some(mgr) = self.dap.as_mut() {
+                        mgr.stopped_at = None;
+                    }
+                    self.dap_arrow = None;
+                }
+                crate::dap::DapEvent::StackTrace { frames, .. } => {
+                    let top = frames.first().cloned();
+                    if let Some(mgr) = self.dap.as_mut() {
+                        mgr.stack_frames = frames;
+                    }
+                    if let Some(f) = top
+                        && let Some(src) = f.source
+                    {
+                        // DAP lines are 1-based on the wire; we sent
+                        // `linesStartAt1: true` in `initialize`.
+                        let line0 = f.line.saturating_sub(1);
+                        self.dap_arrow = Some((src.clone(), line0));
+                        // Jump the active editor to the stopped frame.
+                        self.open_path(&src);
+                        if let Some(b) = self.active_editor_mut() {
+                            b.editor.place_cursor(line0 as usize, 0);
+                        }
+                    }
+                }
+                crate::dap::DapEvent::Exited { exit_code } => {
+                    self.toast(format!("dap: exited (code {exit_code})"));
+                }
+                crate::dap::DapEvent::Terminated => {
+                    self.dap = None;
+                    self.dap_arrow = None;
+                    self.dap_thread = None;
+                    self.toast("dap: session ended");
+                    return;
+                }
+                crate::dap::DapEvent::Failed(msg) => {
+                    self.toast(msg);
+                }
+            }
+        }
     }
 
     /// `tools.installer` — Mason-style picker over `KNOWN_TOOLS`. Each
@@ -18749,6 +19018,7 @@ impl App {
         self.drain_ai_jobs();
         self.drain_tests_jobs();
         self.drain_linter_jobs();
+        self.drain_dap_events();
         self.drain_lsp_events();
         self.drain_cdp_events();
         #[cfg(feature = "private")]

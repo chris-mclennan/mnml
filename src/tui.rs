@@ -114,11 +114,15 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
             break;
         }
         // Poll faster while a pty is open so streaming output stays smooth.
-        let timeout = Duration::from_millis(if app.has_pty_pane() || app.has_pending_ai() {
-            40
-        } else {
-            120
-        });
+        // DAP sessions also need fast polling so stopped/output events
+        // surface promptly.
+        let timeout = Duration::from_millis(
+            if app.has_pty_pane() || app.has_pending_ai() || app.dap.is_some() {
+                40
+            } else {
+                120
+            },
+        );
         if event::poll(timeout)? {
             match event::read()? {
                 Event::Key(k) if k.kind != KeyEventKind::Release => dispatch_key(app, k),
