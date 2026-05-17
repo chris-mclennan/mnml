@@ -1100,12 +1100,26 @@ impl VimInputHandler {
                     KeyCode::Char('#') => {
                         InputResult::App(AppCommand::RunCommand("find.word_backward".into()))
                     }
-                    // `gt` / `gT` — vim "next/prev tab page".
+                    // `gt` / `gT` — vim "next/prev tab page". With a
+                    // count, `[N]gt` jumps to absolute tab N and
+                    // `[N]gT` jumps N tabs back.
                     KeyCode::Char('t') => {
-                        InputResult::App(AppCommand::RunCommand("tab.next".into()))
+                        let n = self.count.take();
+                        match n {
+                            Some(n) => {
+                                InputResult::App(AppCommand::ExCommand(format!("tabnext {n}")))
+                            }
+                            None => InputResult::App(AppCommand::RunCommand("tab.next".into())),
+                        }
                     }
                     KeyCode::Char('T') => {
-                        InputResult::App(AppCommand::RunCommand("tab.prev".into()))
+                        let n = self.count.take();
+                        match n {
+                            Some(n) => {
+                                InputResult::App(AppCommand::ExCommand(format!("tabprev {n}")))
+                            }
+                            None => InputResult::App(AppCommand::RunCommand("tab.prev".into())),
+                        }
                     }
                     KeyCode::Char(c @ ('n' | 'N')) => {
                         let forward = c == 'n';

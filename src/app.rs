@@ -16447,8 +16447,37 @@ impl App {
             "bn" | "bnext" => self.next_buffer(),
             "bp" | "bprev" | "bprevious" => self.prev_buffer(),
             // Vim tab pages — each is an independent split tree.
-            "tabn" | "tabnext" => self.tab_next(),
-            "tabp" | "tabprev" | "tabprevious" | "tabN" | "tabNext" => self.tab_prev(),
+            // `:tabn` / `:tabnext` bare cycles forward; with a count
+            // jumps to absolute tab N (1-based). `:tabp` is the mirror.
+            "tabn" | "tabnext" => {
+                if rest.is_empty() {
+                    self.tab_next();
+                } else if let Ok(n) = rest.parse::<usize>() {
+                    let target = if n == 0 {
+                        0
+                    } else {
+                        (n - 1).min(self.layouts.len().saturating_sub(1))
+                    };
+                    self.switch_tab(target);
+                } else {
+                    self.toast(":tabnext — bad arg");
+                }
+            }
+            "tabp" | "tabprev" | "tabprevious" | "tabN" | "tabNext" => {
+                if rest.is_empty() {
+                    self.tab_prev();
+                } else if let Ok(n) = rest.parse::<usize>() {
+                    // Vim: `:tabp N` goes N tabs back (wrapping).
+                    let len = self.layouts.len();
+                    if len > 0 {
+                        let cur = self.active_layout;
+                        let target = (cur + len - (n % len)) % len;
+                        self.switch_tab(target);
+                    }
+                } else {
+                    self.toast(":tabprev — bad arg");
+                }
+            }
             "tabfirst" | "tabfir" | "tabrewind" | "tabr" => self.tab_first(),
             "tablast" | "tabl" => self.tab_last(),
             "tabclose" | "tabc" => self.tab_close(),
@@ -22768,6 +22797,32 @@ mod tests {
             }
             other => panic!("expected a Split, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn tabnext_with_count_jumps_to_absolute_index() {
+        let (d, mut app) = app_with_files();
+        fs::write(d.path().join("c.txt"), "charlie").unwrap();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        let b = d.path().join("b.txt").canonicalize().unwrap();
+        let c = d.path().join("c.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.tab_new(None);
+        app.open_path(&b);
+        app.tab_new(None);
+        app.open_path(&c);
+        // We're on tab 3. `:tabnext 1` jumps to tab 1 (active_layout=0).
+        app.run_ex_command("tabnext 1");
+        assert_eq!(app.active_layout, 0);
+        // `:tabnext 3` jumps to tab 3.
+        app.run_ex_command("tabnext 3");
+        assert_eq!(app.active_layout, 2);
+        // Out-of-range clamps.
+        app.run_ex_command("tabnext 99");
+        assert_eq!(app.active_layout, 2);
+        // `:tabprev 1` cycles back one (wraps if needed).
+        app.run_ex_command("tabprev 1");
+        assert_eq!(app.active_layout, 1);
     }
 
     #[test]
