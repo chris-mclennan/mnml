@@ -46,6 +46,10 @@ const FIND_HISTORY_MAX: usize = 50;
 /// Cap on the recently-closed-buffers stack — newer entries push older ones off.
 const CLOSED_BUFFERS_MAX: usize = 20;
 
+/// Cap on the recently-closed-tabs stack — `tab.reopen` pops the most-recent
+/// entry; older entries fall off when this is exceeded.
+const CLOSED_TAB_LAYOUTS_MAX: usize = 20;
+
 /// Cap on `App.message_log` — vim `:messages` shows up to this many recent toasts.
 const MESSAGE_LOG_MAX: usize = 200;
 
@@ -1702,6 +1706,12 @@ pub struct App {
     /// cleared on mouse-up; while `Some`, a mouse-drag over a
     /// different chip's rect swaps the two tab pages.
     pub dragging_tab_page: Option<usize>,
+    /// Stack of recently-closed tab layouts (newest-last). Capped at
+    /// `CLOSED_TAB_LAYOUTS_MAX`. Popped by `tab.reopen`. Each entry
+    /// is the dropped tab's split tree — its leaves still reference
+    /// PaneIds in `panes`, which `remove_pane_storage` shifts in
+    /// lockstep with `self.layouts` so the stack stays consistent.
+    pub closed_tab_layouts: Vec<Layout>,
     /// Pending `textDocument/rename` edits awaiting Apply/Cancel from the
     /// preview picker. `Some` ⇒ the picker is open and the edits are
     /// stashed. Cancel drops them; Apply runs `apply_rename_edits`.
@@ -2260,6 +2270,7 @@ impl App {
             repeat_insert_state: None,
             drag_select: None,
             dragging_tab_page: None,
+            closed_tab_layouts: Vec::new(),
             pending_rename_preview: None,
             cmdline_complete_state: None,
             macro_buffer: std::collections::HashMap::new(),
@@ -7244,6 +7255,12 @@ impl App {
         // pane removed from `app.panes` re-indexes references across all
         // tabs that hold leaves with id > removed.
         for layout in &mut self.layouts {
+            layout.shift_after(removed);
+        }
+        // The closed-tab stack holds layouts referencing the same PaneId
+        // space; keep them aligned so `tab.reopen` doesn't restore a tab
+        // whose leaves point at the wrong panes.
+        for layout in &mut self.closed_tab_layouts {
             layout.shift_after(removed);
         }
         // Same shift for each tab's last-focused slot.
@@ -14510,8 +14527,13 @@ impl App {
         }
         // Save active before any reshuffle.
         self.remember_active_for_tab();
-        self.layouts.remove(idx);
+        // Stash the dropped layout for `tab.reopen`. Cap the stack.
+        let dropped = self.layouts.remove(idx);
         self.tab_actives.remove(idx);
+        self.closed_tab_layouts.push(dropped);
+        if self.closed_tab_layouts.len() > CLOSED_TAB_LAYOUTS_MAX {
+            self.closed_tab_layouts.remove(0);
+        }
         if self.active_layout == idx {
             // Closed the active tab — adopt the new "previous-or-clamp" tab.
             if self.active_layout >= self.layouts.len() {
@@ -14538,47 +14560,70 @@ impl App {
 
     /// `:tabclose` / `:tabc` — drop the active tab. Panes that were in its
     /// layout become background buffers (still in `panes`, accessible via the
-    /// bufferline / picker). Refuses when there's only one tab open.
+    /// bufferline / picker). Refuses when there's only one tab open. The
+    /// dropped layout is stashed for `tab.reopen`.
     pub fn tab_close(&mut self) {
+        self.tab_close_at(self.active_layout);
+    }
+
+    /// `:tabonly` / `:tabo` — drop every tab except the active one. Each
+    /// dropped layout is stashed for `tab.reopen`.
+    pub fn tab_only(&mut self) {
         if self.layouts.len() <= 1 {
-            self.toast(":tabclose — only one tab open");
             return;
         }
-        // Drop the layout. Its panes are now background — the bufferline
-        // still shows them. (Vim's `:tabclose` works the same way for
-        // unlisted buffers.)
-        self.layouts.remove(self.active_layout);
-        self.tab_actives.remove(self.active_layout);
-        if self.active_layout >= self.layouts.len() {
-            self.active_layout = self.layouts.len() - 1;
+        // Pull the keep-tab aside, push every other layout onto the
+        // closed-tab stack, then put the keep-tab back as the only entry.
+        let keep_layout = std::mem::replace(
+            self.layouts.get_mut(self.active_layout).unwrap(),
+            Layout::Empty,
+        );
+        let keep_active = self.tab_actives[self.active_layout];
+        // Drain remaining layouts onto closed-stack (skipping the keep).
+        for i in (0..self.layouts.len()).rev() {
+            if i == self.active_layout {
+                continue;
+            }
+            let dropped = self.layouts.remove(i);
+            self.tab_actives.remove(i);
+            self.closed_tab_layouts.push(dropped);
+            if self.closed_tab_layouts.len() > CLOSED_TAB_LAYOUTS_MAX {
+                self.closed_tab_layouts.remove(0);
+            }
         }
-        // Adopt the new active tab's focused pane.
-        let restored = self
-            .tab_actives
-            .get(self.active_layout)
-            .copied()
-            .unwrap_or(None)
-            .or_else(|| self.layout().first_leaf());
-        self.active = restored;
+        self.layouts = vec![keep_layout];
+        self.tab_actives = vec![keep_active];
+        self.active_layout = 0;
+        self.toast("only tab kept · others dropped");
+    }
+
+    /// `tab.reopen` — pop the most-recently-closed tab off the stack
+    /// and insert it after the active tab. Restored leaves still
+    /// reference the original PaneIds (which may have shifted via
+    /// `remove_pane_storage`); panes that were closed individually
+    /// since the tab close get filtered out as the layout is walked.
+    pub fn tab_reopen(&mut self) {
+        let Some(layout) = self.closed_tab_layouts.pop() else {
+            self.toast("no closed tabs to reopen");
+            return;
+        };
+        self.remember_active_for_tab();
+        let insert_at = (self.active_layout + 1).min(self.layouts.len());
+        let first_leaf = layout.first_leaf();
+        self.layouts.insert(insert_at, layout);
+        self.tab_actives.insert(insert_at, first_leaf);
+        self.active_layout = insert_at;
+        self.active = first_leaf;
         self.focus = if self.active.is_some() {
             Focus::Pane
         } else {
             Focus::Tree
         };
-        self.toast(format!("tab closed · {} remaining", self.layouts.len()));
-    }
-
-    /// `:tabonly` / `:tabo` — drop every tab except the active one.
-    pub fn tab_only(&mut self) {
-        if self.layouts.len() <= 1 {
-            return;
-        }
-        let keep = self.layouts.remove(self.active_layout);
-        let keep_active = self.tab_actives.remove(self.active_layout);
-        self.layouts = vec![keep];
-        self.tab_actives = vec![keep_active];
-        self.active_layout = 0;
-        self.toast("only tab kept · others dropped");
+        self.toast(format!(
+            "tab reopened · {}/{}",
+            insert_at + 1,
+            self.layouts.len()
+        ));
     }
 
     /// Swap two tabs by index (used by bufferline drag-to-reorder).
@@ -16553,6 +16598,7 @@ impl App {
             "tabonly" | "tabo" => self.tab_only(),
             "tabs" => self.tab_list(),
             "tabmove" | "tabm" => self.tab_move(rest),
+            "tabreopen" | "tabundo" => self.tab_reopen(),
             // `:badd <path>` — load `<path>` as a buffer but keep focus on the
             // active pane (vim canonical "buffer-add"). Implemented as a
             // background open that reveals the prior active afterwards.
@@ -22892,6 +22938,45 @@ mod tests {
         // `:tabprev 1` cycles back one (wraps if needed).
         app.run_ex_command("tabprev 1");
         assert_eq!(app.active_layout, 1);
+    }
+
+    #[test]
+    fn tab_reopen_restores_last_closed() {
+        // Three tabs; close tab 2; reopen → it lands back as tab 2.
+        let (d, mut app) = app_with_files();
+        fs::write(d.path().join("c.txt"), "charlie").unwrap();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        let b = d.path().join("b.txt").canonicalize().unwrap();
+        let c = d.path().join("c.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.tab_new(None);
+        app.open_path(&b);
+        app.tab_new(None);
+        app.open_path(&c);
+        assert_eq!(app.layouts.len(), 3);
+        // Close tab 2 (the b.txt one). active_layout was 2; tab_close_at(1)
+        // shifts active down to 1.
+        app.tab_close_at(1);
+        assert_eq!(app.layouts.len(), 2);
+        assert_eq!(app.closed_tab_layouts.len(), 1);
+        // Reopen.
+        app.tab_reopen();
+        assert_eq!(app.layouts.len(), 3);
+        assert_eq!(app.closed_tab_layouts.len(), 0);
+        // The b.txt pane should still exist as a leaf in the reopened tab.
+        let b_id = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(buf) if buf.is_at(&b)))
+            .unwrap();
+        let restored_idx = app.active_layout;
+        assert!(
+            app.layouts[restored_idx].contains(b_id),
+            "reopened tab should hold b.txt"
+        );
+        // No closed tabs to reopen ⇒ toast, no-op.
+        app.tab_reopen();
+        assert_eq!(app.layouts.len(), 3);
     }
 
     #[test]

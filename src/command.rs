@@ -1108,6 +1108,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_tab_picker(),
         },
         Command {
+            id: "tab.reopen",
+            title: "Reopen last closed tab page",
+            group: "tab",
+            keys: &[],
+            run: |app| app.tab_reopen(),
+        },
+        Command {
             id: "tab.goto_1",
             title: "Jump to tab page 1",
             group: "tab",
