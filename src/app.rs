@@ -14459,7 +14459,23 @@ impl App {
     }
 
     /// `:tabnew [path]` — open a fresh tab page after the active one.
+    /// If `path` is already open in some other tab, switch to that
+    /// tab instead of leaving an orphaned empty tab behind (mnml is
+    /// file-deduped — one pane per path).
     pub fn tab_new(&mut self, path: Option<&Path>) {
+        if let Some(p) = path {
+            let canon = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+            if let Some(i) = self
+                .panes
+                .iter()
+                .position(|pane| matches!(pane, Pane::Editor(b) if b.is_at(&canon)))
+            {
+                // Already open — reveal it (will cross-tab switch if
+                // it's in a different tab).
+                self.reveal_pane(i);
+                return;
+            }
+        }
         self.remember_active_for_tab();
         let insert_at = self.active_layout + 1;
         self.layouts.insert(insert_at, Layout::Empty);
@@ -22938,6 +22954,25 @@ mod tests {
         // `:tabprev 1` cycles back one (wraps if needed).
         app.run_ex_command("tabprev 1");
         assert_eq!(app.active_layout, 1);
+    }
+
+    #[test]
+    fn tab_new_with_existing_path_switches_tabs_not_orphans() {
+        // Tab 1 has a.txt. `:tabnew a.txt` should switch back to tab 1,
+        // NOT create an orphaned empty tab 2.
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        let b = d.path().join("b.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.tab_new(None);
+        app.open_path(&b);
+        assert_eq!(app.layouts.len(), 2);
+        assert_eq!(app.active_layout, 1);
+        // Now from tab 2, try `:tabnew a.txt` (a.txt is in tab 1).
+        app.tab_new(Some(&a));
+        // Should be back on tab 1 with no orphans.
+        assert_eq!(app.layouts.len(), 2, "no orphan tab created");
+        assert_eq!(app.active_layout, 0);
     }
 
     #[test]
