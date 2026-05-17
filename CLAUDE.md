@@ -83,6 +83,20 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Multi-tab session persistence (2026-05-17):** `SavedSession` gained
+`layouts: Option<Vec<Option<SavedLayout>>>` + `active_layout:
+Option<usize>` (new), keeping the existing `layout: Option<SavedLayout>`
+populated with the active tab's layout for back-compat with older mnml
+binaries reading the same session.json. Save writes one entry per tab
+page in display order; restore prefers `layouts` when present and falls
+back to legacy `layout` as the only tab when not. New `tab_actives` is
+seeded from each restored layout's `first_leaf` so per-tab focus comes
+back. Tabs whose SavedLayout can't be remapped (a leaf pointing at a
+buffer that no longer exists) fall back to `Layout::Empty`. Coverage:
+new test `session_round_trips_multi_tab_layouts` in `app.rs::tests`
+(opens two tabs with different files, saves, restores, asserts both
+layouts + the previously-active index land).
+
 **Bufferline right cluster (2026-05-17):** NvChad-style chrome on the right
 side of the bufferline strip — `+` new-tab (purple, `tab.new`), `TABS` label
 (blue, decorative), per-tab-page chips (active = yellow + bold, non-active =

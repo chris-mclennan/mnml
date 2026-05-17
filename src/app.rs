@@ -737,9 +737,19 @@ struct SavedSession {
     active: Option<usize>,
     /// The split tree, with leaves keyed by index into `open`. `None` ⇒ restore
     /// opens the buffers serially (the previously-active one ends up in a single
-    /// leaf, the others remain as background tabs).
+    /// leaf, the others remain as background tabs). Kept for back-compat read
+    /// with older mnml binaries; new code prefers `layouts`/`active_layout`.
     #[serde(default)]
     layout: Option<SavedLayout>,
+    /// One SavedLayout per tab page, in display order. Added in
+    /// 2026-05-17 alongside vim tab pages. `None` (missing field) ⇒
+    /// fall back to single-tab restore via `layout`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    layouts: Option<Vec<Option<SavedLayout>>>,
+    /// Index into `layouts` for the previously-active tab. `None`
+    /// when `layouts` itself is missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    active_layout: Option<usize>,
     /// Was the file-tree rail visible? `None` (missing field, e.g. an old
     /// session.json) ⇒ keep whatever the runtime default is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -931,7 +941,7 @@ struct SavedBuffer {
 
 /// A serializable mirror of [`Layout`] where leaves carry indices into
 /// `SavedSession.open` instead of `PaneId`s.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum SavedLayout {
     Empty,
     Leaf(usize),
@@ -19664,15 +19674,25 @@ impl App {
         // Try to mirror the split tree. If any leaf isn't an editor we can save
         // (e.g. a transient pty / diff / browser pane), drop layout — the buffer
         // list alone is enough for the most common case.
-        // MVP: persist only the active tab page's layout. Multi-tab restore
-        // is a follow-up (vim itself doesn't persist tabs across sessions
-        // either, so this is the principle-of-least-surprise default).
-        let layout = saved_layout_from(self.layout(), &pane_to_idx);
+        //
+        // Multi-tab persistence: write one SavedLayout per tab page in
+        // `layouts`, plus `active_layout` so restore lands on the right
+        // tab. Keep `layout` (single-tab field) populated with the
+        // active tab's layout so older mnml binaries reading this
+        // session.json still get a sensible single-tab restore.
+        let layouts: Vec<Option<SavedLayout>> = self
+            .layouts
+            .iter()
+            .map(|l| saved_layout_from(l, &pane_to_idx))
+            .collect();
+        let layout = layouts.get(self.active_layout).cloned().unwrap_or(None);
         let saved = SavedSession {
             workspace: self.workspace.to_string_lossy().into_owned(),
             open,
             active,
             layout,
+            layouts: Some(layouts),
+            active_layout: Some(self.active_layout),
             tree_visible: Some(self.tree_visible),
             tree_root_expanded: Some(self.tree_root_expanded),
             tree_width: Some(self.tree_width),
@@ -19859,10 +19879,33 @@ impl App {
                 }
             }
         }
-        // If the saved layout maps cleanly, rebuild the split tree from it.
-        if let Some(sl) = saved.layout.as_ref()
+        // Multi-tab layouts: prefer the new `layouts` Vec when
+        // present. Each tab restores independently; tabs whose
+        // SavedLayout can't be remapped (a leaf pointed at a buffer
+        // that no longer exists) fall back to Layout::Empty.
+        if let Some(saved_layouts) = saved.layouts.as_ref()
+            && !saved_layouts.is_empty()
+        {
+            let mut restored_layouts: Vec<Layout> = Vec::with_capacity(saved_layouts.len());
+            let mut restored_actives: Vec<Option<PaneId>> = Vec::with_capacity(saved_layouts.len());
+            for slot in saved_layouts {
+                let lay = slot
+                    .as_ref()
+                    .and_then(|sl| layout_from_saved(sl, &idx_to_pane))
+                    .unwrap_or(Layout::Empty);
+                let first = lay.first_leaf();
+                restored_layouts.push(lay);
+                restored_actives.push(first);
+            }
+            self.layouts = restored_layouts;
+            self.tab_actives = restored_actives;
+            self.active_layout = saved.active_layout.unwrap_or(0).min(self.layouts.len() - 1);
+            // Sync top-level active with the restored layout's first leaf.
+            self.active = self.tab_actives[self.active_layout];
+        } else if let Some(sl) = saved.layout.as_ref()
             && let Some(restored) = layout_from_saved(sl, &idx_to_pane)
         {
+            // Legacy single-tab session.json — load it as the only tab.
             *self.layout_mut() = restored;
         }
         // Restore the file-tree visibility flag too (`None` ⇒ leave the
@@ -22628,6 +22671,45 @@ mod tests {
             }
             other => panic!("expected a Split, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn session_round_trips_multi_tab_layouts() {
+        // Two tab pages, each with a different active file. Save +
+        // restore should re-open the buffers AND land on the same tab
+        // with the same active layout.
+        let (d, mut app) = app_with_files();
+        let a_path = d.path().join("a.txt").canonicalize().unwrap();
+        let b_path = d.path().join("b.txt").canonicalize().unwrap();
+        // Tab 1: a.txt
+        app.open_path(&a_path);
+        // Tab 2: b.txt
+        app.tab_new(None);
+        app.open_path(&b_path);
+        assert_eq!(app.layouts.len(), 2);
+        assert_eq!(app.active_layout, 1);
+        app.save_session_on_quit();
+
+        let mut app2 = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app2.try_restore_session();
+        assert_eq!(
+            app2.layouts.len(),
+            2,
+            "should restore both tabs, got {}",
+            app2.layouts.len()
+        );
+        assert_eq!(app2.active_layout, 1);
+        // Both files should be open as panes.
+        let _a = app2
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&a_path)))
+            .expect("a.txt should be re-opened");
+        let _b = app2
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&b_path)))
+            .expect("b.txt should be re-opened");
     }
 
     #[test]
