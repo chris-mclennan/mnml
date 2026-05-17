@@ -1576,10 +1576,20 @@ pub struct App {
     pub workspace: PathBuf,
     pub config: Config,
     pub panes: Vec<Pane>,
-    pub layout: Layout,
+    /// Vim-style tab pages: each entry is one independent split tree. Always
+    /// non-empty (`vec![Layout::Empty]` when no panes are open). The active tab
+    /// is `layouts[active_layout]`; helpers `layout()` / `layout_mut()` return
+    /// it. A pane is referenced by at most one leaf across all layouts.
+    pub layouts: Vec<Layout>,
+    /// Index of the active tab page. Always `< layouts.len()`.
+    pub active_layout: usize,
+    /// Per-tab last-focused pane, parallel to `layouts`. Restored to `active`
+    /// when the user `:tabnext`s back to a tab they'd left.
+    pub tab_actives: Vec<Option<PaneId>>,
     /// The focused pane id. Invariant (see [`crate::layout`]): every pane is in
-    /// exactly one leaf, so this uniquely identifies the focused leaf. `None` ⇔
-    /// `layout == Empty` ⇔ no panes open.
+    /// at most one leaf across all tab pages, so this uniquely identifies the
+    /// focused leaf. `None` ⇔ active layout is `Empty` ⇔ no panes open in this
+    /// tab.
     pub active: Option<PaneId>,
     pub focus: Focus,
     pub tree: Tree,
@@ -2166,6 +2176,15 @@ type TestsJobDone = (u64, Result<crate::playwright::TestRun, String>);
 type LinterJobDone = (PathBuf, String, Result<Vec<crate::lsp::Diagnostic>, String>);
 
 impl App {
+    /// Active tab page's split tree (immutable view).
+    pub fn layout(&self) -> &Layout {
+        &self.layouts[self.active_layout]
+    }
+    /// Active tab page's split tree (mutable view).
+    pub fn layout_mut(&mut self) -> &mut Layout {
+        &mut self.layouts[self.active_layout]
+    }
+
     pub fn new(workspace: PathBuf, config: Config) -> Result<App, String> {
         let workspace = workspace
             .canonicalize()
@@ -2194,7 +2213,9 @@ impl App {
             workspace,
             config,
             panes: Vec::new(),
-            layout: Layout::Empty,
+            layouts: vec![Layout::Empty],
+            active_layout: 0,
+            tab_actives: vec![None],
             active: None,
             focus: Focus::Tree,
             tree,
@@ -3967,13 +3988,13 @@ impl App {
                 self.lsp.did_save(&p, &text);
             }
         }
-        if self.layout.contains(id) {
+        if self.layout().contains(id) {
             self.active = Some(id);
         } else if let Some(cur) = self.active {
-            self.layout.set_leaf_pane(cur, id);
+            self.layout_mut().set_leaf_pane(cur, id);
             self.active = Some(id);
         } else {
-            self.layout = Layout::Leaf(id);
+            *self.layout_mut() = Layout::Leaf(id);
             self.active = Some(id);
         }
         if prior != self.active {
@@ -5036,7 +5057,7 @@ impl App {
                 None => {
                     self.panes.push(pane);
                     let id = self.panes.len() - 1;
-                    self.layout = Layout::Leaf(id);
+                    *self.layout_mut() = Layout::Leaf(id);
                     self.active = Some(id);
                 }
             }
@@ -7000,7 +7021,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
+                *self.layout_mut() = Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -7075,7 +7096,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
+                *self.layout_mut() = Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -7126,7 +7147,20 @@ impl App {
             return;
         }
         self.panes.remove(removed);
-        self.layout.shift_after(removed);
+        // Shift PaneIds in EVERY tab's layout, not just the active one — a
+        // pane removed from `app.panes` re-indexes references across all
+        // tabs that hold leaves with id > removed.
+        for layout in &mut self.layouts {
+            layout.shift_after(removed);
+        }
+        // Same shift for each tab's last-focused slot.
+        for slot in &mut self.tab_actives {
+            *slot = match *slot {
+                Some(a) if a == removed => None,
+                Some(a) if a > removed => Some(a - 1),
+                other => other,
+            };
+        }
         self.active = self
             .active
             .map(|a| if a > removed { a - 1 } else { a })
@@ -7219,7 +7253,7 @@ impl App {
     ) -> PaneId {
         self.panes.push(pane);
         let new_id = self.panes.len() - 1;
-        self.layout.replace_leaf(
+        self.layout_mut().replace_leaf(
             leaf,
             Layout::Split {
                 dir,
@@ -7331,7 +7365,7 @@ impl App {
             } else {
                 self.panes.push(preview);
                 let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
+                *self.layout_mut() = Layout::Leaf(id);
                 id
             };
             // Passive auto-open: leave focus where it was.
@@ -7399,7 +7433,7 @@ impl App {
                     None => {
                         self.panes.push(pane);
                         let id = self.panes.len() - 1;
-                        self.layout = Layout::Leaf(id);
+                        *self.layout_mut() = Layout::Leaf(id);
                         self.active = Some(id);
                     }
                 }
@@ -7502,7 +7536,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
+                *self.layout_mut() = Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -7770,7 +7804,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
+                *self.layout_mut() = Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -8233,7 +8267,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
+                *self.layout_mut() = Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -8328,7 +8362,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
+                *self.layout_mut() = Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -8682,7 +8716,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
+                *self.layout_mut() = Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -11382,7 +11416,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
+                *self.layout_mut() = Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -12092,7 +12126,7 @@ impl App {
     /// `view.equalize_splits` — vim `Ctrl+W =`. Reset every split's ratio to
     /// 50/50 so the panes share the screen evenly at every nesting level.
     pub fn equalize_splits(&mut self) {
-        self.layout.equalize_splits();
+        self.layout_mut().equalize_splits();
     }
 
     /// `view.maximize_height` — vim `Ctrl+W _`. Push the active leaf's
@@ -12101,7 +12135,7 @@ impl App {
     pub fn maximize_split_height(&mut self) {
         let Some(cur) = self.active else { return };
         if !self
-            .layout
+            .layout_mut()
             .maximize_split_ratio_for(cur, crate::layout::SplitDir::Vertical)
         {
             self.toast("no vertical split to maximize");
@@ -12111,7 +12145,7 @@ impl App {
     pub fn maximize_split_width(&mut self) {
         let Some(cur) = self.active else { return };
         if !self
-            .layout
+            .layout_mut()
             .maximize_split_ratio_for(cur, crate::layout::SplitDir::Horizontal)
         {
             self.toast("no horizontal split to maximize");
@@ -12128,7 +12162,7 @@ impl App {
     /// canonical behavior promotes the leaf to the outermost split).
     pub fn move_active_split_edge(&mut self, dir: crate::layout::SplitDir, to_second: bool) {
         let Some(cur) = self.active else { return };
-        if !self.layout.move_active_to(cur, dir, to_second) {
+        if !self.layout_mut().move_active_to(cur, dir, to_second) {
             self.toast("nothing to rearrange");
         }
     }
@@ -12137,7 +12171,7 @@ impl App {
     /// smallest split that contains the active leaf.
     pub fn rotate_splits(&mut self) {
         let Some(cur) = self.active else { return };
-        if self.layout.swap_siblings_containing(cur) {
+        if self.layout_mut().swap_siblings_containing(cur) {
             self.toast("rotated splits");
         }
     }
@@ -12148,7 +12182,7 @@ impl App {
     /// ratio by `delta` (clamped to 10..=90).
     pub fn adjust_split(&mut self, dir: crate::layout::SplitDir, delta: i32) {
         let Some(cur) = self.active else { return };
-        if !self.layout.adjust_split_ratio_for(cur, dir, delta) {
+        if !self.layout_mut().adjust_split_ratio_for(cur, dir, delta) {
             self.toast("no enclosing split in that direction");
         }
     }
@@ -13350,7 +13384,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
+                *self.layout_mut() = Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -13424,7 +13458,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
+                *self.layout_mut() = Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -13986,7 +14020,7 @@ impl App {
 
     /// Cycle focus to the next leaf (left-to-right / top-to-bottom order).
     pub fn focus_next_split(&mut self) {
-        let leaves = self.layout.leaves();
+        let leaves = self.layout().leaves();
         if leaves.len() < 2 {
             return;
         }
@@ -14023,7 +14057,7 @@ impl App {
         if let Some(d) = &self.dragging {
             let ratio = d.ratio_for(x, y);
             let path = d.path.clone();
-            self.layout.set_ratio_at(&path, ratio);
+            self.layout_mut().set_ratio_at(&path, ratio);
         }
     }
     pub fn end_divider_drag(&mut self) {
@@ -14144,11 +14178,11 @@ impl App {
             #[cfg(feature = "private")]
             Pane::LogTail(_) => (None, None),
         };
-        if self.layout.contains(id) {
-            self.layout.remove_leaf(id);
+        if self.layout().contains(id) {
+            self.layout_mut().remove_leaf(id);
         }
         if self.active == Some(id) {
-            self.active = self.layout.first_leaf();
+            self.active = self.layout().first_leaf();
         }
         self.remove_pane_storage(id);
         // If no other editor pane still shows that file, tell the LSP server.
@@ -14272,6 +14306,166 @@ impl App {
         }
         let cur = self.active.unwrap_or(0);
         self.reveal_pane((cur + self.panes.len() - 1) % self.panes.len());
+    }
+
+    // ── Vim tab pages ─────────────────────────────────────────────────────
+    //
+    // Each tab page is one independent split tree (`Layout`). Pane storage
+    // (`App.panes`) is shared — closing a tab leaves its panes as background
+    // buffers (still in the bufferline). `tab_actives` remembers the last-
+    // focused pane per tab so switching back lands where you left off.
+
+    /// Save the current focus into the active tab's slot. Call before
+    /// switching tabs.
+    fn remember_active_for_tab(&mut self) {
+        if let Some(slot) = self.tab_actives.get_mut(self.active_layout) {
+            *slot = self.active;
+        }
+    }
+
+    /// Switch to tab `idx` (no-op if out of range or already there). Saves
+    /// the current focus into the outgoing tab's slot first; restores the
+    /// incoming tab's last-focused pane.
+    pub fn switch_tab(&mut self, idx: usize) {
+        if idx >= self.layouts.len() || idx == self.active_layout {
+            return;
+        }
+        self.remember_active_for_tab();
+        self.active_layout = idx;
+        let restored = self
+            .tab_actives
+            .get(idx)
+            .copied()
+            .unwrap_or(None)
+            .or_else(|| self.layout().first_leaf());
+        self.active = restored;
+        // The active pane might be in a different tab now — clear the leaf
+        // that's currently rendered as focused.
+        self.focus = if self.active.is_some() {
+            Focus::Pane
+        } else {
+            Focus::Tree
+        };
+    }
+
+    /// `:tabnew [path]` — open a fresh tab page after the active one.
+    pub fn tab_new(&mut self, path: Option<&Path>) {
+        self.remember_active_for_tab();
+        let insert_at = self.active_layout + 1;
+        self.layouts.insert(insert_at, Layout::Empty);
+        self.tab_actives.insert(insert_at, None);
+        self.active_layout = insert_at;
+        self.active = None;
+        if let Some(p) = path {
+            // open_path will install a leaf in the (now-empty) active tab.
+            self.open_path(p);
+        } else {
+            self.focus = Focus::Tree;
+        }
+        self.toast(format!("tab {}/{}", insert_at + 1, self.layouts.len()));
+    }
+
+    /// `:tabnext` / `:tabn` — go to the next tab (wraps).
+    pub fn tab_next(&mut self) {
+        if self.layouts.len() <= 1 {
+            return;
+        }
+        let next = (self.active_layout + 1) % self.layouts.len();
+        self.switch_tab(next);
+        self.toast(format!("tab {}/{}", next + 1, self.layouts.len()));
+    }
+
+    /// `:tabprev` / `:tabp` — go to the previous tab (wraps).
+    pub fn tab_prev(&mut self) {
+        if self.layouts.len() <= 1 {
+            return;
+        }
+        let prev = (self.active_layout + self.layouts.len() - 1) % self.layouts.len();
+        self.switch_tab(prev);
+        self.toast(format!("tab {}/{}", prev + 1, self.layouts.len()));
+    }
+
+    /// `:tabfirst` — jump to tab 1.
+    pub fn tab_first(&mut self) {
+        if self.layouts.len() <= 1 {
+            return;
+        }
+        self.switch_tab(0);
+        self.toast(format!("tab 1/{}", self.layouts.len()));
+    }
+
+    /// `:tablast` — jump to the last tab.
+    pub fn tab_last(&mut self) {
+        if self.layouts.len() <= 1 {
+            return;
+        }
+        let last = self.layouts.len() - 1;
+        self.switch_tab(last);
+        self.toast(format!("tab {}/{}", last + 1, self.layouts.len()));
+    }
+
+    /// `:tabclose` / `:tabc` — drop the active tab. Panes that were in its
+    /// layout become background buffers (still in `panes`, accessible via the
+    /// bufferline / picker). Refuses when there's only one tab open.
+    pub fn tab_close(&mut self) {
+        if self.layouts.len() <= 1 {
+            self.toast(":tabclose — only one tab open");
+            return;
+        }
+        // Drop the layout. Its panes are now background — the bufferline
+        // still shows them. (Vim's `:tabclose` works the same way for
+        // unlisted buffers.)
+        self.layouts.remove(self.active_layout);
+        self.tab_actives.remove(self.active_layout);
+        if self.active_layout >= self.layouts.len() {
+            self.active_layout = self.layouts.len() - 1;
+        }
+        // Adopt the new active tab's focused pane.
+        let restored = self
+            .tab_actives
+            .get(self.active_layout)
+            .copied()
+            .unwrap_or(None)
+            .or_else(|| self.layout().first_leaf());
+        self.active = restored;
+        self.focus = if self.active.is_some() {
+            Focus::Pane
+        } else {
+            Focus::Tree
+        };
+        self.toast(format!("tab closed · {} remaining", self.layouts.len()));
+    }
+
+    /// `:tabonly` / `:tabo` — drop every tab except the active one.
+    pub fn tab_only(&mut self) {
+        if self.layouts.len() <= 1 {
+            return;
+        }
+        let keep = self.layouts.remove(self.active_layout);
+        let keep_active = self.tab_actives.remove(self.active_layout);
+        self.layouts = vec![keep];
+        self.tab_actives = vec![keep_active];
+        self.active_layout = 0;
+        self.toast("only tab kept · others dropped");
+    }
+
+    /// `:tabs` — toast a one-line summary of every tab page.
+    pub fn tab_list(&mut self) {
+        let n = self.layouts.len();
+        if n <= 1 {
+            self.toast("1 tab (no others)");
+            return;
+        }
+        let mut parts = Vec::with_capacity(n);
+        for i in 0..n {
+            let marker = if i == self.active_layout {
+                '●'
+            } else {
+                '○'
+            };
+            parts.push(format!("{marker}{}", i + 1));
+        }
+        self.toast(parts.join(" "));
     }
 
     pub fn save_active(&mut self) {
@@ -14975,7 +15169,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -15047,7 +15241,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
+                *self.layout_mut() = Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -15301,7 +15495,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -15350,7 +15544,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -16118,26 +16312,14 @@ impl App {
             }
             "bn" | "bnext" => self.next_buffer(),
             "bp" | "bprev" | "bprevious" => self.prev_buffer(),
-            // Tab aliases — mnml has buffers, not tabs, but vim users reach
-            // for these reflexively. Match them to buffer ops.
-            "tabn" | "tabnext" => self.next_buffer(),
-            "tabp" | "tabprev" | "tabprevious" | "tabN" | "tabNext" => self.prev_buffer(),
-            "tabfirst" | "tabfir" | "tabrewind" | "tabr" => {
-                if let Some(idx) = self.panes.iter().position(|p| matches!(p, Pane::Editor(_))) {
-                    self.reveal_pane(idx);
-                }
-            }
-            "tablast" | "tabl" => {
-                if let Some(idx) = self
-                    .panes
-                    .iter()
-                    .rposition(|p| matches!(p, Pane::Editor(_)))
-                {
-                    self.reveal_pane(idx);
-                }
-            }
-            "tabclose" | "tabc" => self.close_active_pane(),
-            "tabonly" | "tabo" => self.close_other_panes(),
+            // Vim tab pages — each is an independent split tree.
+            "tabn" | "tabnext" => self.tab_next(),
+            "tabp" | "tabprev" | "tabprevious" | "tabN" | "tabNext" => self.tab_prev(),
+            "tabfirst" | "tabfir" | "tabrewind" | "tabr" => self.tab_first(),
+            "tablast" | "tabl" => self.tab_last(),
+            "tabclose" | "tabc" => self.tab_close(),
+            "tabonly" | "tabo" => self.tab_only(),
+            "tabs" => self.tab_list(),
             // `:badd <path>` — load `<path>` as a buffer but keep focus on the
             // active pane (vim canonical "buffer-add"). Implemented as a
             // background open that reveals the prior active afterwards.
@@ -16314,13 +16496,14 @@ impl App {
                     self.open_path(&p);
                 }
             }
-            // Vim-ish `:tabnew` / `:tabe` — mnml has buffers, not tabs;
-            // alias the closest concept (open the file as a new buffer).
+            // Vim tab pages — open a fresh tab; optional path opens it in the
+            // new tab's first leaf.
             "tabnew" | "tabe" | "tabedit" => {
                 if rest.is_empty() {
-                    self.toast(":tabnew <path> — path required");
+                    self.tab_new(None);
                 } else {
-                    self.open_path(&self.workspace.join(rest));
+                    let p = self.workspace.join(rest);
+                    self.tab_new(Some(&p));
                 }
             }
             // `:only` / `:on` — close every pane except the active one.
@@ -19434,7 +19617,10 @@ impl App {
         // Try to mirror the split tree. If any leaf isn't an editor we can save
         // (e.g. a transient pty / diff / browser pane), drop layout — the buffer
         // list alone is enough for the most common case.
-        let layout = saved_layout_from(&self.layout, &pane_to_idx);
+        // MVP: persist only the active tab page's layout. Multi-tab restore
+        // is a follow-up (vim itself doesn't persist tabs across sessions
+        // either, so this is the principle-of-least-surprise default).
+        let layout = saved_layout_from(self.layout(), &pane_to_idx);
         let saved = SavedSession {
             workspace: self.workspace.to_string_lossy().into_owned(),
             open,
@@ -19630,7 +19816,7 @@ impl App {
         if let Some(sl) = saved.layout.as_ref()
             && let Some(restored) = layout_from_saved(sl, &idx_to_pane)
         {
-            self.layout = restored;
+            *self.layout_mut() = restored;
         }
         // Restore the file-tree visibility flag too (`None` ⇒ leave the
         // launch-time default alone — an older session.json without the field).
@@ -19888,7 +20074,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = Layout::Leaf(id);
+                *self.layout_mut() = Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -19934,7 +20120,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -20367,7 +20553,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -20982,7 +21168,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -21173,7 +21359,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -21240,7 +21426,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -21463,7 +21649,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -21499,7 +21685,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -21749,7 +21935,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -21783,7 +21969,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                self.layout = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
                 self.active = Some(id);
             }
         }
@@ -22329,7 +22515,7 @@ mod tests {
         assert!(app.panes.is_empty());
         assert!(app.active.is_none());
         assert_eq!(app.focus, Focus::Tree);
-        assert!(matches!(app.layout, Layout::Empty));
+        assert!(matches!(app.layout(), Layout::Empty));
     }
 
     #[test]
@@ -22373,12 +22559,12 @@ mod tests {
         app.open_path(&a_path);
         app.split_active(crate::layout::SplitDir::Horizontal);
         app.open_path(&b_path);
-        assert!(matches!(app.layout, Layout::Split { .. }));
+        assert!(matches!(app.layout(), Layout::Split { .. }));
         app.save_session_on_quit();
 
         let mut app2 = App::new(d.path().to_path_buf(), Config::default()).unwrap();
         app2.try_restore_session();
-        match &app2.layout {
+        match app2.layout() {
             Layout::Split { first, second, .. } => {
                 let a = app2
                     .panes
@@ -22694,7 +22880,7 @@ mod tests {
         ));
         app.panes.push(pane);
         let id = app.panes.len() - 1;
-        app.layout = Layout::Leaf(id);
+        *app.layout_mut() = Layout::Leaf(id);
         app.active = Some(id);
         app.focus = Focus::Pane;
 
@@ -22739,7 +22925,7 @@ mod tests {
         app.panes.push(pane);
         let grep_id = app.panes.len() - 1;
         // Make the grep pane the active one (so run_grep_replace targets it).
-        app.layout = Layout::Leaf(grep_id);
+        *app.layout_mut() = Layout::Leaf(grep_id);
         app.active = Some(grep_id);
 
         app.run_grep_replace("BAR".into());
@@ -22800,7 +22986,7 @@ mod tests {
         ));
         app.panes.push(pane);
         let grep_id = app.panes.len() - 1;
-        app.layout = Layout::Leaf(grep_id);
+        *app.layout_mut() = Layout::Leaf(grep_id);
         app.active = Some(grep_id);
 
         app.run_grep_replace("BAR".into());

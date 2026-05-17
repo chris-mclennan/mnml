@@ -218,6 +218,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             theme::cur().purple,
         ));
     }
+    // Tab-page chip — `tab N/M` when more than one tab page is open. Vim
+    // users navigate with `gt`/`gT`/`:tabnext`/etc.; the chip is the only
+    // hint that there are tabs at all (the bufferline shows all panes
+    // regardless of tab).
+    if app.layouts.len() > 1 {
+        right.push(Seg::new(
+            format!(" tab {}/{} ", app.active_layout + 1, app.layouts.len()),
+            theme::cur().bg_darker,
+            theme::cur().yellow,
+        ));
+    }
     // Autosave indicator — `[AS Ns]` chip when `[editor] autosave_secs > 0`.
     // Lets the user see at a glance that idle saves are armed.
     let autosave = app.config.editor.autosave_secs;

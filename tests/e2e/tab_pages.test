@@ -1,0 +1,44 @@
+# Vim tab pages: each tab is one independent split tree (Layout). Opening
+# a tab switches the visible layout; the bufferline keeps showing every
+# pane regardless of which tab it lives in.
+
+write a.txt alpha file
+write b.txt bravo file
+write c.txt charlie file
+
+open a.txt
+expect pane "a.txt"
+
+# `tab.new` opens a fresh tab. Open b.txt in the new tab's first leaf.
+command tab.new
+open b.txt
+expect pane "b.txt"
+
+# Another tab with c.txt.
+command tab.new
+open c.txt
+expect pane "c.txt"
+
+# `tab.next` cycles forward (wraps from 3 → 1).
+command tab.next
+expect pane "a.txt"
+
+# `tab.prev` cycles backward (wraps from 1 → 3).
+command tab.prev
+expect pane "c.txt"
+
+# `tab.first` jumps to tab 1 (a.txt).
+command tab.first
+expect pane "a.txt"
+
+# `tab.last` jumps to the last tab (c.txt).
+command tab.last
+expect pane "c.txt"
+
+# `tab.close` drops the active tab; the prior one takes focus.
+command tab.close
+expect pane "b.txt"
+
+# `tab.only` drops every other tab. We're left with just b.txt's tab.
+command tab.only
+expect pane "b.txt"

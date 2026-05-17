@@ -83,6 +83,26 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Vim tab pages (2026-05-17):** real `:tab*` ex commands, replacing the prior aliases-to-buffer-ops.
+`App.layout: Layout` rename → `App.layouts: Vec<Layout>` + `App.active_layout: usize` (each entry is
+one tab page's independent split tree) + parallel `App.tab_actives: Vec<Option<PaneId>>` (per-tab
+last-focused pane). Accessor methods `App::layout()` / `layout_mut()` keep the call-site diff small
+(every `self.layout.foo()` → `self.layout_mut().foo()` for `&mut` methods, `self.layout().foo()` for
+`&`; assignments became `*self.layout_mut() = X`). New helpers: `tab_new(Option<&Path>)` /
+`tab_close` / `tab_next` / `tab_prev` / `tab_first` / `tab_last` / `tab_only` / `tab_list` /
+`switch_tab(idx)`. Ex commands `:tabnew [path]` / `:tabnext` / `:tabprev` / `:tabfirst` /
+`:tablast` / `:tabclose` / `:tabonly` / `:tabs` route to those. Palette commands `tab.new` /
+`tab.next` / `tab.prev` / `tab.first` / `tab.last` / `tab.close` / `tab.only` / `tab.list` (all
+in the `tab` group). Vim `gt` / `gT` chords were aliased to next/prev-buffer; now they fire
+`tab.next` / `tab.prev`. Statusline yellow `tab N/M` chip surfaces when `layouts.len() > 1` (the
+only visible cue, since the bufferline keeps showing every pane regardless of tab — vim's
+"buffers persist when their window closes" model). PaneId shifts on close fan out across every
+layout (one removed pane re-indexes leaves in every tab). Session-restore persists only the
+active tab's layout (`saved_layout_from(self.layout(), ...)`); multi-tab persistence is a
+follow-up. Coverage: new `tests/e2e/tab_pages.test` (open in N tabs, cycle, close, only);
+legacy `vim_literal_next_tab_aliases.test` retargeted to `:bnext` / `:bprev` since the tab
+aliases now mean something different.
+
 **Cmdline bar (2026-05-16):** new 1-row strip below the statusline (`src/ui/cmdline_bar.rs`,
 wired into `ui::draw`'s bottom split which now reserves 2 rows: statusline + cmdline_bar).
 Hosts vim's `:` ex-command line (yellow + bold against `bg_darker`) when `pending_display()`

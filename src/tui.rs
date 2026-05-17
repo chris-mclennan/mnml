@@ -3167,7 +3167,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // we don't shadow editor clicks. Routes through `open_path`, which sets
     // up the editor pane + LSP + tree state.
     if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
-        && matches!(app.layout, crate::layout::Layout::Empty)
+        && matches!(app.layout(), crate::layout::Layout::Empty)
     {
         let target = app
             .rects

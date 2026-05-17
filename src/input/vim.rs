@@ -1100,10 +1100,13 @@ impl VimInputHandler {
                     KeyCode::Char('#') => {
                         InputResult::App(AppCommand::RunCommand("find.word_backward".into()))
                     }
-                    // `gt` / `gT` — vim "next/prev tab". mnml has buffers,
-                    // not tabs; route to next/prev buffer.
-                    KeyCode::Char('t') => InputResult::App(AppCommand::NextBuffer),
-                    KeyCode::Char('T') => InputResult::App(AppCommand::PrevBuffer),
+                    // `gt` / `gT` — vim "next/prev tab page".
+                    KeyCode::Char('t') => {
+                        InputResult::App(AppCommand::RunCommand("tab.next".into()))
+                    }
+                    KeyCode::Char('T') => {
+                        InputResult::App(AppCommand::RunCommand("tab.prev".into()))
+                    }
                     KeyCode::Char(c @ ('n' | 'N')) => {
                         let forward = c == 'n';
                         if let Some(op) = pending_op {

@@ -1,4 +1,8 @@
-# Vim insert `Ctrl+V` (literal-next) and `:tab*` aliases.
+# Vim insert `Ctrl+V` (literal-next) — typing the next key verbatim instead
+# of going through the chord / tab-expand path. (The previous version of
+# this test also exercised :tabprev / :tabnext / :tabfirst / :tablast as
+# buffer-cycling aliases; those are now real vim tab pages — see
+# tests/e2e/tab_pages.test. Buffer cycling moved to :bnext / :bprev.)
 
 write data.txt "hello"
 open data.txt
@@ -12,29 +16,17 @@ key escape
 command file.save
 expect file data.txt contains "hello\t"
 
-# Test `:tabnext` — second buffer.
+# Buffer cycling via :bnext / :bprev across two open buffers.
 write more.txt "world"
 open more.txt
-# Now active is more.txt. :tabp ⇒ data.txt
+# Now active is more.txt. :bprev ⇒ data.txt
 key :
-type "tabprev"
+type "bprev"
 key enter
 expect pane "data.txt"
 
-# :tabnext ⇒ more.txt
+# :bnext ⇒ more.txt
 key :
-type "tabnext"
-key enter
-expect pane "more.txt"
-
-# :tabfirst ⇒ data.txt (first editor pane).
-key :
-type "tabfirst"
-key enter
-expect pane "data.txt"
-
-# :tablast ⇒ more.txt.
-key :
-type "tablast"
+type "bnext"
 key enter
 expect pane "more.txt"
