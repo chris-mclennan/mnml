@@ -83,6 +83,56 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Tab pages polish wave (2026-05-17):** lots of follow-up after the
+initial `:tab*` ex commands landed. Headline additions:
+* `Ctrl+W T` (`view.move_to_new_tab`) — vim canonical: pluck the
+  active leaf out of the current tab's layout and insert it as a
+  single-leaf new tab page. Old tab collapses via `remove_leaf`.
+* `Alt+1`..`Alt+9` chords + 9 `tab.goto_N` palette commands for
+  direct tab jumps (NvChad / iTerm convention). Out-of-range
+  indices are no-ops.
+* `tab.picker` / `PickerKind::Tabs` — fuzzy picker over open tab
+  pages; each row labels tab N + headline pane title + a `● dirty`
+  chip when any pane in the tab has unsaved changes. Active tab
+  sorts last (mirrors buffer picker's "alternate buffer" pattern).
+* `tab.reopen` (`:tabreopen` / `:tabundo`) — pops the most-recently-
+  closed tab off `App.closed_tab_layouts` (cap 20) and re-inserts
+  the layout after the active tab. `remove_pane_storage` now shifts
+  PaneIds in the closed-tab stack too so a re-opened layout doesn't
+  point at the wrong pane after a separate `close_pane`.
+* `[count]gt` / `[count]gT` — vim `gt` chord now consumes a pending
+  count: bare cycles, with N jumps absolute (`5gt` → tab 5). Routes
+  through `:tabnext N` / `:tabprev N` (which themselves now accept
+  counts).
+* `:tabdo {cmd}` — actually iterates tab pages now (was an alias for
+  `:bufdo` since mnml lacked real tabs). Switches to each tab in
+  turn, runs the command in that tab's window, leaves the cursor
+  on the last tab.
+* `tab.move_left` / `tab.move_right` — palette wrappers for
+  `:tabmove -1` / `:tabmove +1`.
+* `:tabs` now toasts pane names alongside the tab number (e.g.
+  `●1 a.txt · ○2 b.txt`).
+* Bufferline tab chip — leading `●` glyph when any pane in the tab
+  is dirty (`App::tab_has_dirty_buffer(idx)`). right_w + chip rects
+  scale with digit count so 10+ tabs no longer overlap the buffer
+  strip.
+* `tab_new(Some(path))` — when the path is already open in another
+  tab, switch to that tab instead of leaving an orphaned empty tab
+  behind. Mnml is file-deduped (one pane per path).
+* `reveal_pane` — when the target pane lives in a non-active tab's
+  layout, switch tabs instead of duplicating the leaf reference
+  (preserves the "each pane in at most one leaf across all tabs"
+  invariant).
+* `layout::shift_after` — now handles `Leaf(removed)` by setting it
+  to `Empty` and collapses splits whose child became Empty. The
+  pre-multi-tab world never had leaves pointing at the removed pane
+  (close_pane removed them first); with multi-tab + the closed-tab
+  stack, other layouts can hold such leaves and would otherwise
+  silently re-bind to the wrong pane after shift.
+* Zen mode + `:set nobufferline` — both now clear the new tab-page
+  right-cluster rects so stale rects from the prior frame don't
+  catch clicks.
+
 **`:tabmove [N]` (2026-05-17):** vim canonical for reordering tabs.
 Accepts bare or `$` (→ last), `0` (→ first), 1-based absolute N, or
 relative `+N` / `-N`. Out-of-range clamps. `:tabm` alias. The
