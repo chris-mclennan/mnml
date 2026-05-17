@@ -1122,6 +1122,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.tab_reopen(),
         },
         Command {
+            id: "tab.move_left",
+            title: "Move active tab page one position left",
+            group: "tab",
+            keys: &[],
+            run: |app| app.tab_move("-1"),
+        },
+        Command {
+            id: "tab.move_right",
+            title: "Move active tab page one position right",
+            group: "tab",
+            keys: &[],
+            run: |app| app.tab_move("+1"),
+        },
+        Command {
             id: "tab.goto_1",
             title: "Jump to tab page 1",
             group: "tab",

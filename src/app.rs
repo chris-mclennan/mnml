@@ -14764,9 +14764,22 @@ impl App {
             } else {
                 '○'
             };
-            parts.push(format!("{marker}{}", i + 1));
+            // Headline: last-focused pane in this tab, fallback to
+            // first leaf, fallback to "(empty)".
+            let head = self
+                .tab_actives
+                .get(i)
+                .copied()
+                .unwrap_or(None)
+                .or_else(|| self.layouts.get(i)?.first_leaf())
+                .and_then(|id| self.panes.get(id))
+                .map(|p| p.title())
+                .unwrap_or_else(|| "(empty)".to_string());
+            // Truncate to keep the toast readable when many tabs.
+            let title: String = head.chars().take(20).collect();
+            parts.push(format!("{marker}{} {title}", i + 1));
         }
-        self.toast(parts.join(" "));
+        self.toast(parts.join(" · "));
     }
 
     pub fn save_active(&mut self) {
