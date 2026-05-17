@@ -3371,6 +3371,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .find(|(r, _)| contains(*r, x, y))
             {
                 app.switch_tab(idx);
+                // Arm a drag — a subsequent mouse-drag over a
+                // different chip's rect swaps the two tabs.
+                app.dragging_tab_page = Some(app.active_layout);
                 return;
             }
             if let Some(r) = app.rects.bufferline_theme_toggle
@@ -3549,6 +3552,25 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
+            // Tab-page chip drag-to-reorder. If the user pressed on a
+            // chip and is dragging across another chip's rect, swap
+            // the two tabs. Update dragging_tab_page so the cursor
+            // can continue to drag the same tab further.
+            if let Some(src) = app.dragging_tab_page {
+                let dst = app
+                    .rects
+                    .bufferline_tab_page_chips
+                    .iter()
+                    .find(|(r, _)| contains(*r, x, y))
+                    .map(|(_, idx)| *idx);
+                if let Some(dst) = dst
+                    && dst != src
+                {
+                    app.tab_swap(src, dst);
+                    app.dragging_tab_page = Some(dst);
+                }
+                return;
+            }
             if app.dragging_tree_edge {
                 // Hand the full screen width to the clamp logic.
                 let screen_w = app
@@ -3591,6 +3613,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             app.end_tree_edge_drag();
             app.end_divider_drag();
             app.drag_select = None;
+            app.dragging_tab_page = None;
         }
         MouseEventKind::ScrollUp => scroll_under(app, x, y, -3),
         MouseEventKind::ScrollDown => scroll_under(app, x, y, 3),

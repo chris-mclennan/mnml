@@ -1697,6 +1697,11 @@ pub struct App {
     /// `Drag(Left)` jumps the cursor back to the origin, drops the anchor,
     /// and jumps to the drag point; subsequent drags just move the cursor.
     pub drag_select: Option<(PaneId, usize, usize, bool)>,
+    /// Index of the tab page currently being dragged via the
+    /// bufferline tab-page chips. Set on mouse-down on a chip,
+    /// cleared on mouse-up; while `Some`, a mouse-drag over a
+    /// different chip's rect swaps the two tab pages.
+    pub dragging_tab_page: Option<usize>,
     /// Pending `textDocument/rename` edits awaiting Apply/Cancel from the
     /// preview picker. `Some` ⇒ the picker is open and the edits are
     /// stashed. Cancel drops them; Apply runs `apply_rename_edits`.
@@ -2254,6 +2259,7 @@ impl App {
             block_insert_state: None,
             repeat_insert_state: None,
             drag_select: None,
+            dragging_tab_page: None,
             pending_rename_preview: None,
             cmdline_complete_state: None,
             macro_buffer: std::collections::HashMap::new(),
@@ -14506,6 +14512,22 @@ impl App {
         self.toast("only tab kept · others dropped");
     }
 
+    /// Swap two tabs by index (used by bufferline drag-to-reorder).
+    /// Active layout follows the swap so the visible tab doesn't
+    /// change.
+    pub fn tab_swap(&mut self, a: usize, b: usize) {
+        if a == b || a >= self.layouts.len() || b >= self.layouts.len() {
+            return;
+        }
+        self.layouts.swap(a, b);
+        self.tab_actives.swap(a, b);
+        if self.active_layout == a {
+            self.active_layout = b;
+        } else if self.active_layout == b {
+            self.active_layout = a;
+        }
+    }
+
     /// `:tabmove [N]` — move the active tab to position N (1-based).
     /// Accepts: bare (→ last), `0` (→ first), `$` (→ last), `+N` /
     /// `-N` (relative), absolute N.
@@ -22727,6 +22749,31 @@ mod tests {
             }
             other => panic!("expected a Split, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn tab_swap_keeps_active_pinned_to_its_pane() {
+        // Two tabs, focused on tab 2. Swap with tab 1; active_layout
+        // should follow the swap (so the user sees the same tab even
+        // though indices changed).
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        let b = d.path().join("b.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.tab_new(None);
+        app.open_path(&b);
+        let was_active = app.active_layout;
+        assert_eq!(was_active, 1);
+        app.tab_swap(0, 1);
+        assert_eq!(app.active_layout, 0, "active follows the swap");
+        // Now swap back.
+        app.tab_swap(1, 0);
+        assert_eq!(app.active_layout, 1);
+        // No-op for equal / out-of-range.
+        app.tab_swap(1, 1);
+        assert_eq!(app.active_layout, 1);
+        app.tab_swap(0, 99);
+        assert_eq!(app.active_layout, 1);
     }
 
     #[test]
