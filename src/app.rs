@@ -18279,7 +18279,7 @@ impl App {
                 let scope = if per_file { "unique file " } else { "" };
                 self.toast(format!(":{cmd} {inner:?} — ran on {ran} {scope}entry/ies"));
             }
-            "bufdo" | "tabdo" | "argdo" => {
+            "bufdo" | "argdo" => {
                 let inner = rest.trim();
                 if inner.is_empty() {
                     self.toast(":bufdo <ex-command>");
@@ -18308,6 +18308,25 @@ impl App {
                     self.run_ex_command(&inner);
                 }
                 self.toast(format!(":bufdo · ran on {count} buffer(s)"));
+            }
+            "tabdo" => {
+                // Vim canonical: switch to each tab in turn, run the
+                // command in that tab's active window, leave the
+                // cursor on the last tab.
+                let inner = rest.trim();
+                if inner.is_empty() {
+                    self.toast(":tabdo <ex-command>");
+                    return;
+                }
+                let count = self.layouts.len();
+                let inner = inner.to_string();
+                for i in 0..count {
+                    if i != self.active_layout {
+                        self.switch_tab(i);
+                    }
+                    self.run_ex_command(&inner);
+                }
+                self.toast(format!(":tabdo · ran on {count} tab(s)"));
             }
             // `:cd <path>` — vim's "change current directory". mnml's
             // workspace is fixed for the session, so we treat this as

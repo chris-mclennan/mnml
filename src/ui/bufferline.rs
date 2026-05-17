@@ -94,7 +94,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let n_tabs = app.layouts.len();
     let mut right_w: u16 = 3 + 6; // ` + ` + ` TABS `
     for i in 0..n_tabs {
-        right_w += if i == app.active_layout { 3 } else { 4 };
+        // Active = 3 (` N `); inactive = 5 (` N ` + `⊗ ` close).
+        right_w += if i == app.active_layout { 3 } else { 5 };
     }
     right_w += 3 + 3; // ` ◯ ` + ` × `
     let tabs_max_x = area.x + area.width.saturating_sub(right_w);
