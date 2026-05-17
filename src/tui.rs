@@ -3346,6 +3346,45 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.reveal_pane(id);
                 return;
             }
+            // Bufferline right cluster — `+` new tab, per-tabpage chip / close,
+            // theme toggle, window close. Order matters (the `⊗` rect sits
+            // adjacent to its chip; check close before chip).
+            if let Some(r) = app.rects.bufferline_new_tab_button
+                && contains(r, x, y)
+            {
+                app.tab_new(None);
+                return;
+            }
+            if let Some(&(_, idx)) = app
+                .rects
+                .bufferline_tab_page_close
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+            {
+                app.tab_close_at(idx);
+                return;
+            }
+            if let Some(&(_, idx)) = app
+                .rects
+                .bufferline_tab_page_chips
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+            {
+                app.switch_tab(idx);
+                return;
+            }
+            if let Some(r) = app.rects.bufferline_theme_toggle
+                && contains(r, x, y)
+            {
+                app.open_theme_picker();
+                return;
+            }
+            if let Some(r) = app.rects.bufferline_window_close
+                && contains(r, x, y)
+            {
+                app.close_active_pane();
+                return;
+            }
             // The `> WORKSPACE-NAME` section header — clicking it toggles the
             // workspace section's expand/collapse state (VS-Code Explorer-style).
             if let Some(tr) = app.rects.tree_toggle

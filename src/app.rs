@@ -1355,6 +1355,14 @@ pub struct PaneRects {
     pub bufferline: Option<Rect>,
     /// `(rect, pane_id)` for each tab in the bufferline (whole tab → activate).
     pub bufferline_tabs: Vec<(Rect, PaneId)>,
+    /// Bufferline right-cluster click targets (NvChad-style): `+` new-tab,
+    /// `TABS` label, per-tabpage chip, per-tabpage close `⊗`, theme toggle,
+    /// window close `×`. Cleared + repopulated per bufferline render.
+    pub bufferline_new_tab_button: Option<Rect>,
+    pub bufferline_tab_page_chips: Vec<(Rect, usize)>,
+    pub bufferline_tab_page_close: Vec<(Rect, usize)>,
+    pub bufferline_theme_toggle: Option<Rect>,
+    pub bufferline_window_close: Option<Rect>,
     /// `(rect, pane_id)` for each tab's close badge (the trailing `×`/`●` → close).
     pub bufferline_tab_close: Vec<(Rect, PaneId)>,
     /// The whole central split-tree area.
@@ -14402,6 +14410,45 @@ impl App {
         let last = self.layouts.len() - 1;
         self.switch_tab(last);
         self.toast(format!("tab {}/{}", last + 1, self.layouts.len()));
+    }
+
+    /// Close a specific tab page by index. Used by the bufferline's per-tab
+    /// `⊗` click — closing a non-active tab leaves focus where it was; closing
+    /// the active tab falls back to the new last tab (vim convention).
+    pub fn tab_close_at(&mut self, idx: usize) {
+        if self.layouts.len() <= 1 {
+            self.toast(":tabclose — only one tab open");
+            return;
+        }
+        if idx >= self.layouts.len() {
+            return;
+        }
+        // Save active before any reshuffle.
+        self.remember_active_for_tab();
+        self.layouts.remove(idx);
+        self.tab_actives.remove(idx);
+        if self.active_layout == idx {
+            // Closed the active tab — adopt the new "previous-or-clamp" tab.
+            if self.active_layout >= self.layouts.len() {
+                self.active_layout = self.layouts.len() - 1;
+            }
+            let restored = self
+                .tab_actives
+                .get(self.active_layout)
+                .copied()
+                .unwrap_or(None)
+                .or_else(|| self.layout().first_leaf());
+            self.active = restored;
+            self.focus = if self.active.is_some() {
+                Focus::Pane
+            } else {
+                Focus::Tree
+            };
+        } else if self.active_layout > idx {
+            // Removed before the active — shift the active index down.
+            self.active_layout -= 1;
+        }
+        self.toast(format!("tab closed · {} remaining", self.layouts.len()));
     }
 
     /// `:tabclose` / `:tabc` — drop the active tab. Panes that were in its

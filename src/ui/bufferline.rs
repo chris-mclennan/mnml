@@ -79,13 +79,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     app.rects.bufferline_tabs.clear();
     app.rects.bufferline_tab_close.clear();
+    app.rects.bufferline_new_tab_button = None;
+    app.rects.bufferline_tab_page_chips.clear();
+    app.rects.bufferline_tab_page_close.clear();
+    app.rects.bufferline_theme_toggle = None;
+    app.rects.bufferline_window_close = None;
     if area.width == 0 {
         return;
     }
     let nerd = !app.config.ui.ascii_icons;
-    let cap_label = " TABS ";
-    let cap_w = cap_label.chars().count() as u16;
-    let tabs_max_x = area.x + area.width.saturating_sub(cap_w);
+    // Right cluster (NvChad-style): ` + ` ` TABS ` per-tabpage chips
+    // ` ◯ ` ` × `. Pre-compute its total width so the per-buffer tab strip
+    // knows where to stop.
+    let n_tabs = app.layouts.len();
+    let mut right_w: u16 = 3 + 6; // ` + ` + ` TABS `
+    for i in 0..n_tabs {
+        right_w += if i == app.active_layout { 3 } else { 4 };
+    }
+    right_w += 3 + 3; // ` ◯ ` + ` × `
+    let tabs_max_x = area.x + area.width.saturating_sub(right_w);
 
     // Disambiguated labels — when two open editors share a filename, prepend
     // the parent dir to both (`git/mod.rs` vs `ai/mod.rs`).
@@ -361,14 +373,126 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         });
     }
     let _ = last_drawn;
-    // right cap
+
+    // ── Right cluster (NvChad-style chrome) ──
+    //
+    //   `+` new-tab · `TABS` label · `<n>` per-tabpage chips (`⊗` close on
+    //   non-active) · `◯` theme toggle · `×` close-active-pane.
+    //
+    // Each segment registers its rect in `app.rects` so `tui::dispatch_mouse`
+    // can route clicks. Painted left-to-right starting at `tabs_max_x`; the
+    // bufferline scroll math reserved exactly `right_w` cells.
+    let t = theme::cur();
+    let mut cluster_x = tabs_max_x;
+
+    // `+` new-tab button.
     spans.push(Span::styled(
-        cap_label,
+        " + ",
+        Style::default().fg(t.bg_darker).bg(t.purple),
+    ));
+    app.rects.bufferline_new_tab_button = Some(ratatui::layout::Rect {
+        x: cluster_x,
+        y: area.y,
+        width: 3,
+        height: 1,
+    });
+    cluster_x += 3;
+
+    // `TABS` label (decorative).
+    spans.push(Span::styled(
+        " TABS ",
         Style::default()
-            .fg(theme::cur().bg_darker)
-            .bg(theme::cur().blue)
+            .fg(t.bg_darker)
+            .bg(t.blue)
             .add_modifier(Modifier::BOLD),
     ));
+    cluster_x += 6;
+
+    // Per-tabpage chips: ` <n> ` (active, yellow) or ` <n>⊗ ` (non-active).
+    for i in 0..app.layouts.len() {
+        let active = i == app.active_layout;
+        if active {
+            spans.push(Span::styled(
+                format!(" {} ", i + 1),
+                Style::default()
+                    .fg(t.bg_darker)
+                    .bg(t.yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            app.rects.bufferline_tab_page_chips.push((
+                ratatui::layout::Rect {
+                    x: cluster_x,
+                    y: area.y,
+                    width: 3,
+                    height: 1,
+                },
+                i,
+            ));
+            cluster_x += 3;
+        } else {
+            // Non-active: ` <n> ` then `⊗ ` close (one-cell glyph + trailing
+            // space) — the chip and close button get separate rects.
+            spans.push(Span::styled(
+                format!(" {} ", i + 1),
+                Style::default().fg(t.fg).bg(t.bg2),
+            ));
+            app.rects.bufferline_tab_page_chips.push((
+                ratatui::layout::Rect {
+                    x: cluster_x,
+                    y: area.y,
+                    width: 3,
+                    height: 1,
+                },
+                i,
+            ));
+            cluster_x += 3;
+            spans.push(Span::styled(
+                "\u{2297} ",
+                Style::default().fg(t.red).bg(t.bg2),
+            ));
+            app.rects.bufferline_tab_page_close.push((
+                ratatui::layout::Rect {
+                    x: cluster_x,
+                    y: area.y,
+                    width: 1,
+                    height: 1,
+                },
+                i,
+            ));
+            cluster_x += 1;
+            // Trailing space cell still belongs to bg2 — keep it inert.
+            cluster_x += 1;
+        }
+    }
+
+    // `◯` theme toggle (opens the theme picker).
+    spans.push(Span::styled(
+        " \u{25CB} ",
+        Style::default().fg(t.fg).bg(t.bg_darker),
+    ));
+    app.rects.bufferline_theme_toggle = Some(ratatui::layout::Rect {
+        x: cluster_x,
+        y: area.y,
+        width: 3,
+        height: 1,
+    });
+    cluster_x += 3;
+
+    // `×` close-active-pane (matches `Ctrl+W` muscle memory).
+    spans.push(Span::styled(
+        " \u{00D7} ",
+        Style::default()
+            .fg(t.bg_darker)
+            .bg(t.red)
+            .add_modifier(Modifier::BOLD),
+    ));
+    app.rects.bufferline_window_close = Some(ratatui::layout::Rect {
+        x: cluster_x,
+        y: area.y,
+        width: 3,
+        height: 1,
+    });
+    let _ = cluster_x;
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }

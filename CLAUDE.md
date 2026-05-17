@@ -83,6 +83,21 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Bufferline right cluster (2026-05-17):** NvChad-style chrome on the right
+side of the bufferline strip — `+` new-tab (purple, `tab.new`), `TABS` label
+(blue, decorative), per-tab-page chips (active = yellow + bold, non-active =
+`bg2` with a red `⊗` close button), `◯` theme toggle (opens `theme.pick`),
+`×` close-active-pane (red). The prior statusline `tab N/M` chip is gone —
+the right cluster carries the tab info visually. All segments are click-
+targetable: `bufferline_new_tab_button`, `bufferline_tab_page_chips: Vec<(Rect,
+tab_idx)>`, `bufferline_tab_page_close: Vec<(Rect, tab_idx)>`,
+`bufferline_theme_toggle`, `bufferline_window_close` on `UiRects`. New
+`App::tab_close_at(idx)` closes a specific tab by index (used by the per-tab
+`⊗` so closing a non-active tab leaves focus where it was; closing the active
+tab clamps to the previous one — vim convention). The bufferline's
+`tabs_max_x` math now subtracts the cluster width (3 + 6 + per-tab + 6) so
+the per-buffer strip never overlaps.
+
 **Vim tab pages (2026-05-17):** real `:tab*` ex commands, replacing the prior aliases-to-buffer-ops.
 `App.layout: Layout` rename → `App.layouts: Vec<Layout>` + `App.active_layout: usize` (each entry is
 one tab page's independent split tree) + parallel `App.tab_actives: Vec<Option<PaneId>>` (per-tab
