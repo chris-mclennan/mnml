@@ -95,11 +95,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut right_w: u16 = 3 + 6; // ` + ` + ` TABS `
     for i in 0..n_tabs {
         // Active = 2 + digits (` N `); inactive adds 2 more (`⊗ ` close).
+        // Dirty tab gets a leading `●` glyph → +1 cell.
         let dig = (i + 1).to_string().chars().count() as u16;
+        let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
         right_w += if i == app.active_layout {
-            2 + dig
+            2 + dig + dirty
         } else {
-            2 + dig + 2
+            2 + dig + dirty + 2
         };
     }
     right_w += 3 + 3; // ` ◯ ` + ` × `
@@ -415,9 +417,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     cluster_x += 6;
 
     // Per-tabpage chips: ` <n> ` (active, yellow) or ` <n>⊗ ` (non-active).
+    // Dirty tabs get a leading `●`.
     for i in 0..app.layouts.len() {
         let active = i == app.active_layout;
-        let label = format!(" {} ", i + 1);
+        let dirty = app.tab_has_dirty_buffer(i);
+        let label = if dirty {
+            format!(" \u{25CF}{} ", i + 1)
+        } else {
+            format!(" {} ", i + 1)
+        };
         let label_w = label.chars().count() as u16;
         if active {
             spans.push(Span::styled(

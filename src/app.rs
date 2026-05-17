@@ -14750,6 +14750,19 @@ impl App {
         self.toast(format!("tab moved → {}/{}", target + 1, self.layouts.len()));
     }
 
+    /// Returns true when any editor pane in the tab page at `idx`
+    /// has unsaved changes. Used by the bufferline chip + `:tabs`
+    /// summary to flag tabs that need saving.
+    pub fn tab_has_dirty_buffer(&self, idx: usize) -> bool {
+        let Some(layout) = self.layouts.get(idx) else {
+            return false;
+        };
+        layout
+            .leaves()
+            .into_iter()
+            .any(|id| matches!(self.panes.get(id), Some(Pane::Editor(b)) if b.dirty))
+    }
+
     /// `:tabs` — toast a one-line summary of every tab page.
     pub fn tab_list(&mut self) {
         let n = self.layouts.len();
@@ -23023,6 +23036,29 @@ mod tests {
         // Should be back on tab 1 with no orphans.
         assert_eq!(app.layouts.len(), 2, "no orphan tab created");
         assert_eq!(app.active_layout, 0);
+    }
+
+    #[test]
+    fn tab_has_dirty_buffer_walks_layout() {
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        let b = d.path().join("b.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.tab_new(None);
+        app.open_path(&b);
+        assert!(!app.tab_has_dirty_buffer(0));
+        assert!(!app.tab_has_dirty_buffer(1));
+        // Dirty tab 0 by editing a.txt.
+        let a_id = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(buf) if buf.is_at(&a)))
+            .unwrap();
+        if let Some(Pane::Editor(buf)) = app.panes.get_mut(a_id) {
+            buf.dirty = true;
+        }
+        assert!(app.tab_has_dirty_buffer(0));
+        assert!(!app.tab_has_dirty_buffer(1));
     }
 
     #[test]
