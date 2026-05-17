@@ -83,40 +83,34 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Queued tracks
 
-**Mixr pane** (`Pane::Mixr`) — embed mixr-rs (`~/Projects/mixr-rs`)
-inside mnml as a read+control pane. mixr is the sibling TUI DJ app
-that mnml borrowed its file-based IPC pattern from, so the integration
-is almost trivial:
+**Mixr pane** — embed mixr-rs (`~/Projects/mixr-rs`, mnml's sibling TUI
+DJ app whose file-based IPC pattern mnml borrowed) as a `Pane::Pty`
+spawned with a new `BinaryProfile::mixr(ws)`. Reuses the existing pty
+infrastructure (portable-pty + vt100), so mixr's full interactive TUI
+— keyboard, mouse, ratatui overlays, all rendered colors — works
+natively in the pane. One launch step (`mixr.show` / palette / chord),
+one terminal, one window.
 
-- Read `~/.mixr/screen.txt` every tick (mixr dumps the current TUI
-  screen here continuously) and render it in the pane.
-- Forward keystrokes by writing `{"key":"<c>"}` to `~/.mixr/command`
-  (mixr already has a `key` IPC verb under "Utilities").
-- Forward mouse clicks via `{"click":{"col":N,"row":N,"shift":bool}}`
-  (mixr's `click` IPC verb — the file already supports this for
-  smoke tests).
-- `~/.mixr/quick.txt` (compact key=value, every tick) + `~/.mixr/status.json`
-  drive a small status header above the embedded screen so we can show
-  current track/BPM/transition without parsing the screen dump.
-- `v` inside the pane is just forwarded to mixr — mixr's own `v` key
-  toggles compact/full dashboard view; the user wanted `v` to "sway
-  views", and that's already what mixr does natively.
+Why pty over the attach-via-IPC alternative: mnml stays open for days
+at a time so the "audio survives mnml restart" win from a detached
+external mixr doesn't apply. The pty pane gets native fidelity for ~30
+min of work; the attach-mode (read `~/.mixr/screen.txt`, write commands
+to `~/.mixr/command`) needs an ANSI re-parser + file watcher + status
+header for ~200 lines and would feel snapshot-y vs a real stream.
 
-Don't spawn mixr — it owns the audio device + runs persistently in its
-own terminal. mnml is just a viewer + remote. Detect "is it running"
-by `~/.mixr/screen.txt` mtime within the last few seconds. If mixr
-isn't running, the pane shows a "mixr is not running — launch
-`~/Projects/mixr-rs/run.sh` in a terminal" placeholder.
+`v` inside the pane is just forwarded to mixr's own `v` key (compact /
+full dashboard toggle) — no IPC translation needed since the pty
+forwards keystrokes verbatim.
 
-Implementation: `Pane::Mixr(MixrPane{last_screen, status, scroll})`,
-`src/mixr/` subsystem (file watcher + IPC sender), `src/ui/mixr_view.rs`
-renderer that parses mixr's screen.txt (it's raw ANSI from ratatui;
-either render verbatim or strip ANSI and re-style cells against the
-active theme). Two follow-ups: handle the OAuth WebView popup (mixr
-spawns its own embedded wry+tao window — out of mnml's process; the
-pane just observes the screen.txt switch), and decide whether to also
-mirror `~/.mixr/events.jsonl` into mnml's message log so the toast
-stack picks up mix-start / mix-complete events.
+Implementation: new `BinaryProfile::mixr(ws)` in `src/pty_pane.rs`
+(mirrors `claude_code(ws)` / `codex(ws)` / `shell()`), new `mixr.show`
+command + default chord (`<leader>x`?), `Pane::Pty` variant reused as-is.
+Audio device exclusivity caveat: only one mixr can hold cpal at a time,
+so `mixr.show` should refuse if an external mixr is already running
+(detect via `~/.mixr/screen.txt` mtime within the last 3s, or
+`~/.mixr/auth.json` lock if one exists). Optional follow-up: mirror
+`~/.mixr/events.jsonl` into mnml's message log so the toast stack picks
+up mix-start / mix-complete events even when the pane isn't focused.
 
 ## Status
 
