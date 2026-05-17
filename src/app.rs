@@ -14506,6 +14506,61 @@ impl App {
         self.toast("only tab kept · others dropped");
     }
 
+    /// `:tabmove [N]` — move the active tab to position N (1-based).
+    /// Accepts: bare (→ last), `0` (→ first), `$` (→ last), `+N` /
+    /// `-N` (relative), absolute N.
+    pub fn tab_move(&mut self, arg: &str) {
+        if self.layouts.len() <= 1 {
+            return;
+        }
+        let cur = self.active_layout;
+        let last = self.layouts.len() - 1;
+        let target: usize = if arg.is_empty() || arg == "$" {
+            last
+        } else if let Some(rest) = arg.strip_prefix('+') {
+            let n: usize = match rest.parse() {
+                Ok(n) => n,
+                Err(_) => {
+                    self.toast(":tabmove — bad arg");
+                    return;
+                }
+            };
+            (cur + n).min(last)
+        } else if let Some(rest) = arg.strip_prefix('-') {
+            let n: usize = match rest.parse() {
+                Ok(n) => n,
+                Err(_) => {
+                    self.toast(":tabmove — bad arg");
+                    return;
+                }
+            };
+            cur.saturating_sub(n)
+        } else {
+            // 1-based from the user's perspective; 0 also means "first"
+            // (vim convention).
+            let n: usize = match arg.parse() {
+                Ok(n) => n,
+                Err(_) => {
+                    self.toast(":tabmove — bad arg");
+                    return;
+                }
+            };
+            if n == 0 { 0 } else { (n - 1).min(last) }
+        };
+        if target == cur {
+            return;
+        }
+        // Reshuffle by removing the active and re-inserting at the
+        // target index. tab_actives moves with the tab to keep per-
+        // tab focus memory aligned.
+        let lay = self.layouts.remove(cur);
+        let act = self.tab_actives.remove(cur);
+        self.layouts.insert(target, lay);
+        self.tab_actives.insert(target, act);
+        self.active_layout = target;
+        self.toast(format!("tab moved → {}/{}", target + 1, self.layouts.len()));
+    }
+
     /// `:tabs` — toast a one-line summary of every tab page.
     pub fn tab_list(&mut self) {
         let n = self.layouts.len();
@@ -16377,6 +16432,7 @@ impl App {
             "tabclose" | "tabc" => self.tab_close(),
             "tabonly" | "tabo" => self.tab_only(),
             "tabs" => self.tab_list(),
+            "tabmove" | "tabm" => self.tab_move(rest),
             // `:badd <path>` — load `<path>` as a buffer but keep focus on the
             // active pane (vim canonical "buffer-add"). Implemented as a
             // background open that reveals the prior active afterwards.
@@ -22671,6 +22727,38 @@ mod tests {
             }
             other => panic!("expected a Split, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn tab_move_reorders_active() {
+        // Three tabs; move tab 3 (active) to position 1.
+        let (d, mut app) = app_with_files();
+        fs::write(d.path().join("c.txt"), "charlie").unwrap();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        let b = d.path().join("b.txt").canonicalize().unwrap();
+        let c = d.path().join("c.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.tab_new(None);
+        app.open_path(&b);
+        app.tab_new(None);
+        app.open_path(&c);
+        assert_eq!(app.active_layout, 2);
+        // Move active (tab 3) to position 1.
+        app.tab_move("1");
+        assert_eq!(app.active_layout, 0, "active should land at index 0");
+        assert_eq!(app.layouts.len(), 3, "tab count unchanged");
+        // `+1` moves it back to index 1.
+        app.tab_move("+1");
+        assert_eq!(app.active_layout, 1);
+        // `$` jumps it to the end.
+        app.tab_move("$");
+        assert_eq!(app.active_layout, 2);
+        // Out-of-range clamps.
+        app.tab_move("99");
+        assert_eq!(app.active_layout, 2);
+        // No-op when target == current.
+        app.tab_move("3");
+        assert_eq!(app.active_layout, 2);
     }
 
     #[test]
