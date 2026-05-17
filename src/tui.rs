@@ -1183,6 +1183,29 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // The DAP debug pane: ↑↓ select stack frame, Enter → jump active
+    // editor to that frame's source line, r → re-fetch stack trace
+    // (no-op when not stopped), Esc → tree.
+    if matches!(app.panes.get(i), Some(Pane::Debug(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.debug_pane_move(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.debug_pane_move(1),
+            KeyCode::PageUp => app.debug_pane_move(-(viewport as isize)),
+            KeyCode::PageDown => app.debug_pane_move(viewport as isize),
+            KeyCode::Home | KeyCode::Char('g') => app.debug_pane_move(isize::MIN / 2),
+            KeyCode::End | KeyCode::Char('G') => app.debug_pane_move(isize::MAX / 2),
+            KeyCode::Enter => app.debug_pane_accept(),
+            KeyCode::Char('r') => {
+                let (mgr, tid) = (app.dap.as_mut(), app.dap_thread);
+                if let (Some(mgr), Some(tid)) = (mgr, tid) {
+                    let _ = mgr.client.stack_trace(tid);
+                }
+            }
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
     // The flaky-test dashboard: ↑↓ select, Enter → jump to the test in source,
     // r refresh (rebuild from the latest history), Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::Flaky(_))) {
@@ -3748,6 +3771,12 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 } else {
                     c.move_down();
                 }
+            }
+            Some(Pane::Debug(_)) => {
+                // Wheel over the debug pane moves the stack selection.
+                let d = delta.signum() as isize;
+                let n = delta.unsigned_abs() as isize;
+                app.debug_pane_move(d * n);
             }
             None => {}
         }

@@ -111,6 +111,24 @@ pub enum Pane {
     /// grouped by `Command::group`. `/`-filterable, scrollable. Opened
     /// via `view.cheatsheet` / `<leader>?`.
     Cheatsheet(CheatsheetPane),
+    /// Live DAP session view — call stack + recent adapter output.
+    /// `App.dap` is the source of truth; this pane is stateless beyond
+    /// `{selected, scroll}`. Enter on a stack-frame row jumps the active
+    /// editor to that frame's source line. Reads from
+    /// `App.dap.stack_frames` + `App.dap_output_log`.
+    Debug(DebugPane),
+}
+
+/// State for the live-DAP `Pane::Debug` — pure UI cursor; underlying
+/// data lives on `App.dap`.
+#[derive(Debug, Clone, Default)]
+pub struct DebugPane {
+    /// Selected stack-frame index (into `App.dap.stack_frames`).
+    pub selected: usize,
+    /// Scroll offset for the call-stack list.
+    pub scroll: usize,
+    /// Scroll offset for the output log section.
+    pub output_scroll: usize,
 }
 
 /// Vim's command-line window — `q:` opens a read-only list of recent ex
@@ -273,6 +291,7 @@ impl Pane {
             #[cfg(feature = "private")]
             Pane::LogTail(p) => p.tab_title(),
             Pane::Cheatsheet(_) => "Cheatsheet".to_string(),
+            Pane::Debug(_) => "Debug".to_string(),
         }
     }
 
@@ -305,7 +324,8 @@ impl Pane {
             | Pane::GitlabMergeRequests(_)
             | Pane::AzDevOpsBuilds(_)
             | Pane::AzDevOpsPullRequests(_)
-            | Pane::Cheatsheet(_) => false,
+            | Pane::Cheatsheet(_)
+            | Pane::Debug(_) => false,
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => false,
             #[cfg(feature = "private")]

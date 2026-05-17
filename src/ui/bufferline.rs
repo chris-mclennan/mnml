@@ -227,6 +227,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             #[cfg(feature = "private")]
             Pane::LogTail(_) => (if nerd { "\u{f120}" } else { "≡" }, theme::cur().teal),
             Pane::Cheatsheet(_) => (if nerd { "\u{f128}" } else { "?" }, theme::cur().yellow),
+            Pane::Debug(_) => (if nerd { "\u{f188}" } else { "🐛" }, theme::cur().red),
         };
         let badge = if pane.is_dirty() { "●" } else { "×" };
         let diag = &diag_chips[i];

@@ -2628,11 +2628,18 @@ reader thread + `Pending` map keyed by `seq` + `DapEvent` mpsc
 channel drained in `App::tick`. New `src/dap/mod.rs` +
 `src/dap/client.rs`. One session at a time for the MVP; the event
 loop polls at 40ms while `App.dap.is_some()` so output/stopped
-events surface promptly. Limitations (still): no `Pane::Debug` for
-call stack / variables / watches (events surface as toasts +
-message_log for now); no conditional breakpoints; no `attach` flow
-yet (the launch body's `request` field can say "attach" and we'll
-send it, but the workflow isn't polished).
+events surface promptly. **Pane::Debug** (`dap.show` / `:DapShow`)
+shows the live call stack + tailing output log: a 3-section split
+(status chip · call-stack list · output log). Enter on a stack-frame
+row jumps the active editor to that frame's source line; `j`/`k`/
+PgUp/PgDn/g/G navigate; `r` re-fetches the stack trace; Esc → tree.
+Output log accumulates every adapter-output line categorized by
+`stdout` / `stderr` / `console` / `telemetry` (capped at
+`DAP_LOG_MAX = 500`); `stderr` / `important` categories also toast.
+Cleared on `dap.terminate`. Limitations (still): no variables tree
+or watches; no conditional breakpoints; no polished `attach` flow
+(the launch body's `request` field can say `"attach"` and we'll
+send it, but no helper to fish for a running process).
 
 **DAP breakpoint marks** — `Buffer.breakpoints: Vec<u32>` (0-based,
 sorted, unique) persisted in `session.json` via `SavedBuffer.breakpoints`

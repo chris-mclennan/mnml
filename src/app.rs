@@ -20,6 +20,7 @@ use crate::tree::Tree;
 
 const TOAST_TTL: Duration = Duration::from_secs(4);
 const TOAST_STACK_MAX: usize = 5;
+const DAP_LOG_MAX: usize = 500;
 
 /// Cap on `App::recent_files`. Tuned to "deep enough to remember a few tasks
 /// ago, short enough that the picker isn't a wall of text."
@@ -1983,6 +1984,11 @@ pub struct App {
     /// `Initialized` event lands and we can fire `launch`. Cleared
     /// when consumed.
     pub dap_pending_launch: Option<serde_json::Value>,
+    /// Adapter output log entries (`(category, line)` in arrival order,
+    /// newest at the back, capped at `DAP_LOG_MAX`). Rendered by
+    /// `Pane::Debug` so the user can see program stdout/stderr without
+    /// every chunk landing as a toast. Cleared on `dap.terminate`.
+    pub dap_output_log: Vec<(String, String)>,
     /// Receiver for the (single) CDP browser session's worker — events stream in,
     // The per-pane CDP receiver lives on `BrowserPane.event_rx` now —
     // `drain_cdp_events` walks every browser pane each tick.
@@ -2281,6 +2287,7 @@ impl App {
             dap_arrow: None,
             dap_thread: None,
             dap_pending_launch: None,
+            dap_output_log: Vec::new(),
             #[cfg(feature = "private")]
             log_tail_chan: None,
             #[cfg(feature = "private")]
@@ -6513,6 +6520,7 @@ impl App {
         self.dap = None;
         self.dap_arrow = None;
         self.dap_thread = None;
+        self.dap_output_log.clear();
         self.toast("dap: terminated");
     }
 
@@ -6571,13 +6579,28 @@ impl App {
                     self.dap_arrow = None;
                 }
                 crate::dap::DapEvent::Output { category, text } => {
-                    // Quiet noisy stdout — telemetry / log / stdout chunks. For
-                    // the MVP we just push them into the message log; the pane
-                    // (a `Pane::Debug` with a tailing output buffer) lands next.
-                    let preview: String =
-                        text.lines().next().unwrap_or("").chars().take(80).collect();
-                    if !preview.is_empty() {
-                        self.toast(format!("dap[{category}]: {preview}"));
+                    // Push every non-empty line into the persistent log;
+                    // the `Pane::Debug` renders the tail. Skip toasts for
+                    // ordinary stdout chunks (would spam), but surface
+                    // stderr / important categories.
+                    for line in text.lines() {
+                        let trimmed = line.trim_end_matches(['\r', '\n']);
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        self.dap_output_log
+                            .push((category.clone(), trimmed.to_string()));
+                    }
+                    if self.dap_output_log.len() > DAP_LOG_MAX {
+                        let drop = self.dap_output_log.len() - DAP_LOG_MAX;
+                        self.dap_output_log.drain(..drop);
+                    }
+                    if matches!(category.as_str(), "stderr" | "important") {
+                        let preview: String =
+                            text.lines().next().unwrap_or("").chars().take(80).collect();
+                        if !preview.is_empty() {
+                            self.toast(format!("dap[{category}]: {preview}"));
+                        }
                     }
                 }
                 crate::dap::DapEvent::Stopped {
@@ -7147,6 +7170,7 @@ impl App {
             | Some(Pane::AzDevOpsBuilds(_))
             | Some(Pane::AzDevOpsPullRequests(_))
             | Some(Pane::Cheatsheet(_))
+            | Some(Pane::Debug(_))
             | None => None,
             #[cfg(feature = "private")]
             Some(Pane::TestExecutions(_)) => None,
@@ -14084,7 +14108,8 @@ impl App {
             | Pane::GitlabMergeRequests(_)
             | Pane::AzDevOpsBuilds(_)
             | Pane::AzDevOpsPullRequests(_)
-            | Pane::Cheatsheet(_) => (None, None),
+            | Pane::Cheatsheet(_)
+            | Pane::Debug(_) => (None, None),
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (None, None),
             #[cfg(feature = "private")]
@@ -14201,6 +14226,7 @@ impl App {
             #[cfg(feature = "private")]
             Pane::LogTail(p) => Some((p.tab_title(), false)),
             Pane::Cheatsheet(_) => Some(("Cheatsheet".to_string(), false)),
+            Pane::Debug(_) => Some(("Debug".to_string(), false)),
         }
     }
 
@@ -14904,6 +14930,73 @@ impl App {
 
     /// Open the cheatsheet pane in a split below the active leaf. Builds
     /// it fresh each open (rebuilt against the current keymap so re-bound
+    /// `dap.show` — open (or focus) the live debug pane (`Pane::Debug`).
+    /// Shows the call stack + tailing output log. Independent of
+    /// `dap.run`; safe to open before a session is live (just shows
+    /// "no session").
+    pub fn open_debug_pane(&mut self) {
+        if let Some(id) = self.panes.iter().position(|p| matches!(p, Pane::Debug(_))) {
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::Debug(crate::pane::DebugPane::default());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                self.layout = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+    }
+
+    /// Move the debug pane's stack selection by `delta` (positive = down).
+    pub fn debug_pane_move(&mut self, delta: isize) {
+        let n = self.dap.as_ref().map(|m| m.stack_frames.len()).unwrap_or(0);
+        if n == 0 {
+            return;
+        }
+        let Some(id) = self.active else { return };
+        let Some(Pane::Debug(p)) = self.panes.get_mut(id) else {
+            return;
+        };
+        let new = (p.selected as isize + delta).clamp(0, n as isize - 1) as usize;
+        p.selected = new;
+        // Keep selection on screen — body_h isn't known here so we use
+        // a simple scroll-to-include heuristic.
+        if new < p.scroll {
+            p.scroll = new;
+        } else if new >= p.scroll + 20 {
+            p.scroll = new - 19;
+        }
+    }
+
+    /// Enter on a debug-pane stack-frame row — jump the active editor to
+    /// that frame's source line.
+    pub fn debug_pane_accept(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::Debug(p)) = self.panes.get(id) else {
+            return;
+        };
+        let selected = p.selected;
+        let frame = self
+            .dap
+            .as_ref()
+            .and_then(|m| m.stack_frames.get(selected).cloned());
+        let Some(f) = frame else { return };
+        if let Some(src) = f.source {
+            let line0 = f.line.saturating_sub(1) as usize;
+            self.open_path(&src);
+            if let Some(b) = self.active_editor_mut() {
+                b.editor.place_cursor(line0, 0);
+            }
+        }
+    }
+
     /// chords show up immediately). If one's already open, focuses it.
     pub fn open_cheatsheet(&mut self) {
         if let Some(id) = self
@@ -16356,6 +16449,14 @@ impl App {
             }
             "Debug" | "Dap" | "DapRun" => {
                 crate::command::run("dap.run", self);
+            }
+            // `:DapShow` / `:DebugPane` — open the live call-stack +
+            // output pane independent of dap.run.
+            "DapShow" | "DebugPane" => {
+                crate::command::run("dap.show", self);
+            }
+            "DapTerminate" | "DapStop" => {
+                crate::command::run("dap.terminate", self);
             }
             // `:LspRestart` — kill every running server; subsequent
             // `did_open` calls (e.g. opening a file in that language) spawn

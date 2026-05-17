@@ -33,6 +33,7 @@ pub mod cmdline_history_view;
 pub mod codebuilds_view;
 pub mod completion;
 pub mod context_menu;
+pub mod debug_view;
 pub mod diagnostics_view;
 pub mod diff_view;
 pub mod editor_view;
@@ -356,6 +357,7 @@ fn render_layout(
                 #[cfg(feature = "private")]
                 Some(crate::pane::Pane::LogTail(_)) => 28,
                 Some(crate::pane::Pane::Cheatsheet(_)) => 29,
+                Some(crate::pane::Pane::Debug(_)) => 30,
                 _ => 0,
             };
             match kind {
@@ -405,6 +407,10 @@ fn render_layout(
                 }
                 29 => {
                     cheatsheet_view::draw(frame, app, *id, area, focused);
+                    None
+                }
+                30 => {
+                    debug_view::draw(frame, app, *id, area);
                     None
                 }
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),

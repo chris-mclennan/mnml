@@ -1598,6 +1598,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.dap_terminate(),
         },
         Command {
+            id: "dap.show",
+            title: "DAP: show debug pane (call stack + output)",
+            group: "dap",
+            keys: &[],
+            run: |app| app.open_debug_pane(),
+        },
+        Command {
             id: "lsp.code_action",
             title: "LSP: code actions at cursor (→ picker)",
             group: "lsp",
