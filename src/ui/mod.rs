@@ -101,6 +101,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.bufferline_tab_close.clear();
         app.rects.bufferline_overflow_left = None;
         app.rects.bufferline_overflow_right = None;
+        app.rects.bufferline_new_tab_button = None;
+        app.rects.bufferline_tab_page_chips.clear();
+        app.rects.bufferline_tab_page_close.clear();
+        app.rects.bufferline_theme_toggle = None;
+        app.rects.bufferline_window_close = None;
         app.rects.statusline = None;
         app.rects.body = Some(area);
         app.rects.editor_panes.clear();
@@ -213,6 +218,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.bufferline_tab_close.clear();
         app.rects.bufferline_overflow_left = None;
         app.rects.bufferline_overflow_right = None;
+        app.rects.bufferline_new_tab_button = None;
+        app.rects.bufferline_tab_page_chips.clear();
+        app.rects.bufferline_tab_page_close.clear();
+        app.rects.bufferline_theme_toggle = None;
+        app.rects.bufferline_window_close = None;
     }
 
     // ── the split-tree of pane bodies ──
