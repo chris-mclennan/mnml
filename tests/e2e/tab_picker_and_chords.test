@@ -1,0 +1,34 @@
+# Tab fuzzy picker + Alt+1..9 direct-jump chords.
+
+write a.txt alpha file
+write b.txt bravo file
+write c.txt charlie file
+
+open a.txt
+expect pane "a.txt"
+
+command tab.new
+open b.txt
+expect pane "b.txt"
+
+command tab.new
+open c.txt
+expect pane "c.txt"
+
+# Alt+1 jumps to tab 1 directly.
+command tab.goto_1
+expect pane "a.txt"
+
+# Alt+2 jumps to tab 2.
+command tab.goto_2
+expect pane "b.txt"
+
+# Alt+9 with only 3 tabs is a no-op (no panic).
+command tab.goto_9
+expect pane "b.txt"
+
+# tab.picker opens a Switch tab page picker.
+command tab.picker
+expect screen contains "Switch tab page"
+key esc
+expect pane "b.txt"

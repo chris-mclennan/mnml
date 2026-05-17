@@ -94,6 +94,9 @@ pub enum PickerKind {
     /// `tools.installer` (mnml's Mason-style picker — lists every LSP /
     /// formatter / linter mnml looks for + installed status + install hint).
     Tools,
+    /// `id` = a tab index (as a string). Accept ⇒ switch to that tab
+    /// page. Populated by `tab.picker`.
+    Tabs,
 }
 
 #[derive(Debug, Clone)]

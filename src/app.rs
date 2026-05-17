@@ -3213,6 +3213,55 @@ impl App {
         }
         self.open_picker(Picker::new(PickerKind::Buffers, "Switch buffer", items));
     }
+
+    /// `tab.picker` — fuzzy picker over the tab pages. Each row labels
+    /// the tab number, the active pane's display name (or `(empty)`),
+    /// and a `●` chip when any pane in the tab has unsaved changes.
+    /// The active tab sorts last so the picker opens cursored on the
+    /// second-most-recent (mirrors `open_buffer_picker`).
+    pub fn open_tab_picker(&mut self) {
+        use crate::picker::PickerItem;
+        if self.layouts.len() <= 1 {
+            self.toast("only one tab");
+            return;
+        }
+        let active = self.active_layout;
+        let mut order: Vec<usize> = (0..self.layouts.len()).filter(|&i| i != active).collect();
+        order.push(active);
+        let items: Vec<PickerItem> = order
+            .into_iter()
+            .map(|i| {
+                // Tab's "headline" — last-focused pane's title.
+                let head_title = self
+                    .tab_actives
+                    .get(i)
+                    .copied()
+                    .unwrap_or(None)
+                    .or_else(|| self.layouts.get(i)?.first_leaf())
+                    .and_then(|id| self.panes.get(id))
+                    .map(|p| p.title())
+                    .unwrap_or_else(|| "(empty)".to_string());
+                // Dirty if any editor pane in the tab is dirty.
+                let dirty = self
+                    .layouts
+                    .get(i)
+                    .map(|l| l.leaves())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .any(|id| matches!(self.panes.get(id), Some(Pane::Editor(b)) if b.dirty));
+                let mark = if i == active { "●" } else { "" };
+                PickerItem::new(
+                    i.to_string(),
+                    format!("{} {} {}", i + 1, mark, head_title)
+                        .trim()
+                        .to_string(),
+                    if dirty { "● dirty" } else { "" }.to_string(),
+                )
+            })
+            .collect();
+        self.open_picker(Picker::new(PickerKind::Tabs, "Switch tab page", items));
+    }
+
     /// `picker.marks` (`<leader>m m`) — fuzzy picker over every set mark.
     /// Buffer-local (lowercase) marks first, then global (uppercase) ones.
     /// Each row labels the letter, the file (relative), the line/col, and a
@@ -3551,6 +3600,13 @@ impl App {
                     && i < self.panes.len()
                 {
                     self.reveal_pane(i);
+                }
+            }
+            PickerKind::Tabs => {
+                if let Ok(i) = item.id.parse::<usize>()
+                    && i < self.layouts.len()
+                {
+                    self.switch_tab(i);
                 }
             }
             PickerKind::Commands => {
