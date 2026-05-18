@@ -455,19 +455,37 @@ pub fn draw_pane(
                 .ok()
                 .map(|i| v[i].1)
         });
+        // Sign column priority: continuation row → debug-arrow → breakpoint
+        // → error/warning diagnostic → git change → info/hint diagnostic →
+        // empty. Info+hint defer to git changes so a buffer full of hint
+        // squiggles doesn't hide which lines were edited (the user's
+        // real signal for "what's uncommitted").
+        let hi_diag = diag_sev.filter(|s| {
+            matches!(
+                s,
+                crate::lsp::Severity::Error | crate::lsp::Severity::Warning
+            )
+        });
+        let lo_diag = diag_sev.filter(|s| {
+            matches!(
+                s,
+                crate::lsp::Severity::Info | crate::lsp::Severity::Hint
+            )
+        });
         let sign_span = if is_continuation {
             Span::styled(" ", Style::default().bg(base_bg))
         } else if has_arrow {
             Span::styled("▶", Style::default().fg(theme::cur().yellow).bg(base_bg))
         } else if has_bp {
             Span::styled("●", Style::default().fg(theme::cur().red).bg(base_bg))
-        } else if let Some(s) = diag_sev {
+        } else if let Some(s) = hi_diag {
+            Span::styled("●", Style::default().fg(diag_color(s)).bg(base_bg))
+        } else if let Some(k) = sign {
+            Span::styled("▎", Style::default().fg(sign_color(k)).bg(base_bg))
+        } else if let Some(s) = lo_diag {
             Span::styled("●", Style::default().fg(diag_color(s)).bg(base_bg))
         } else {
-            match sign {
-                Some(k) => Span::styled("▎", Style::default().fg(sign_color(k)).bg(base_bg)),
-                None => Span::styled(" ", Style::default().bg(base_bg)),
-            }
+            Span::styled(" ", Style::default().bg(base_bg))
         };
 
         // Word-match ranges (in char cols) on this line, converted from the

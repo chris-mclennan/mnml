@@ -141,14 +141,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             if g.behind > 0 {
                 txt.push_str(&format!(" ⇣{}", g.behind));
             }
-            if g.staged > 0 {
-                txt.push_str(&format!("  ✚{}", g.staged));
+            // NvChad-style file counts: + (added) ● (changed) - (removed),
+            // followed by ⚠ conflicts. Collapses the staged/unstaged
+            // distinction into "what's the net change" — matches gitsigns.
+            if g.added > 0 {
+                txt.push_str(&format!("  \u{F0419}{}", g.added)); //  added
             }
-            if g.modified > 0 {
-                txt.push_str(&format!("  ●{}", g.modified));
+            if g.changed > 0 {
+                txt.push_str(&format!("  \u{F06D5}{}", g.changed)); //  changed
             }
-            if g.untracked > 0 {
-                txt.push_str(&format!("  …{}", g.untracked));
+            if g.removed > 0 {
+                txt.push_str(&format!("  \u{F0374}{}", g.removed)); //  removed
             }
             if g.conflicts > 0 {
                 txt.push_str(&format!("  ⚠{}", g.conflicts));

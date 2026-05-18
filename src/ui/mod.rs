@@ -208,19 +208,30 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // blank top line, so the mouse maths line up.)
     if let Some(ta) = tree_area {
         tree_view::draw(frame, app, ta);
-        // Visible drag handle — paint the rail's rightmost column with a
-        // thin vertical line in `comment` grey. Without this the resize
-        // handle (already wired via `app.rects.tree_edge`) is invisible.
-        if let Some(edge) = app.rects.tree_edge {
+        // Tiny drag-handle indicator — a 3-row vertical grip centered on
+        // the rail's right edge (not a full-height border). Telegraphs
+        // "you can drag this column to resize" without painting a visible
+        // separator line down the whole rail.
+        if let Some(edge) = app.rects.tree_edge
+            && edge.height >= 3
+        {
             let t = theme::cur();
-            let glyph = if app.config.ui.ascii_icons { "|" } else { "│" };
-            let line = std::iter::repeat_n(glyph, edge.height as usize)
+            let glyph = if app.config.ui.ascii_icons { "|" } else { "┃" };
+            let grip_h: u16 = 3;
+            let grip_y = edge.y + edge.height.saturating_sub(grip_h) / 2;
+            let grip_rect = Rect {
+                x: edge.x,
+                y: grip_y,
+                width: 1,
+                height: grip_h,
+            };
+            let line = std::iter::repeat_n(glyph, grip_h as usize)
                 .collect::<Vec<_>>()
                 .join("\n");
             frame.render_widget(
                 ratatui::widgets::Paragraph::new(line)
                     .style(Style::default().fg(t.comment).bg(t.bg_darker)),
-                edge,
+                grip_rect,
             );
         }
     } else {

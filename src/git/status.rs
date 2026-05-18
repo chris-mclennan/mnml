@@ -27,6 +27,15 @@ pub struct Snapshot {
     pub staged: usize,
     pub untracked: usize,
     pub conflicts: usize,
+    /// NvChad-style semantic file-status counts — collapse the
+    /// staged/unstaged distinction in favor of "what changed".
+    /// `added` = files newly added (A in either column) or untracked;
+    /// `changed` = files modified; `removed` = files deleted (D in
+    /// either column). Used by the statusline's
+    /// `+N ●N -N` chips.
+    pub added: usize,
+    pub changed: usize,
+    pub removed: usize,
     /// Path → state, for the tree tint. Keys are absolute (workspace-joined).
     pub files: HashMap<PathBuf, FileState>,
     /// Path → gutter line-signs (added/modified/removed), from `git diff HEAD`.
@@ -161,6 +170,7 @@ fn probe(workspace: &Path) -> Snapshot {
                 FileState::Conflicted
             } else if x == '?' && y == '?' {
                 snap.untracked += 1;
+                snap.added += 1;
                 FileState::Untracked
             } else {
                 if x != ' ' && x != '?' {
@@ -168,6 +178,16 @@ fn probe(workspace: &Path) -> Snapshot {
                 }
                 if y != ' ' && y != '?' {
                     snap.modified += 1;
+                }
+                // Semantic counts (NvChad-style). A file is "added" once
+                // even if it was staged-added then modified (D/M counts as
+                // added → removed, etc; we pick the most-recent action).
+                if x == 'A' || y == 'A' {
+                    snap.added += 1;
+                } else if x == 'D' || y == 'D' {
+                    snap.removed += 1;
+                } else if x == 'M' || y == 'M' || x == 'R' || y == 'R' {
+                    snap.changed += 1;
                 }
                 if y != ' ' {
                     FileState::Modified
