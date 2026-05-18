@@ -461,12 +461,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         cluster_x += label_w;
         if active {
             // Close glyph + trailing space (2 cells). `nf-md-close-circle`
-            // (\u{F0159}) — circled X variant. Renders larger / more
-            // visually grounded than the bare `nf-md-close` (\u{F0156})
-            // and matches the reference look (`⊗` on the active chip).
+            // (\u{F0159}) — circled X variant; bold so the strokes
+            // render thicker (the Mono nerd-font variant squeezes the
+            // outline thin otherwise).
             spans.push(Span::styled(
                 "\u{F0159} ",
-                Style::default().fg(chip_fg).bg(chip_bg),
+                Style::default()
+                    .fg(chip_fg)
+                    .bg(chip_bg)
+                    .add_modifier(Modifier::BOLD),
             ));
             app.rects.bufferline_tab_page_close.push((
                 ratatui::layout::Rect {
