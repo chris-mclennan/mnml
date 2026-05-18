@@ -51,8 +51,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .unwrap_or("workspace")
         .to_string();
     let chev = section_chev(app.tree_root_expanded, nerd);
-    let header_label = format!("{chev} {ws_name}");
-    let header_pad = width.saturating_sub(header_label.chars().count());
+    // Leading space + chevron in muted grey + name in bold fg. The leading
+    // space keeps the chevron off the rail's left border; coloring the
+    // chevron with `comment` matches the row-level chevrons inside the
+    // tree (so all `>` glyphs share one shade).
+    let chev_str = format!(" {chev} ");
+    let header_used = chev_str.chars().count() + ws_name.chars().count();
+    let header_pad = width.saturating_sub(header_used);
     let header_rect = Rect {
         x: area.x,
         y: area.y + 1,
@@ -62,7 +67,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                header_label,
+                chev_str,
+                Style::default().fg(theme::cur().comment).bg(rail_bg),
+            ),
+            Span::styled(
+                ws_name.clone(),
                 Style::default()
                     .fg(theme::cur().fg)
                     .bg(rail_bg)
@@ -113,8 +122,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         String::new()
     };
-    let header_label = format!("{chev} GIT{multi_repo_chip}");
-    let header_pad = width.saturating_sub(header_label.chars().count());
+    let chev_str = format!(" {chev} ");
+    let label_str = format!("GIT{multi_repo_chip}");
+    let header_used = chev_str.chars().count() + label_str.chars().count();
+    let header_pad = width.saturating_sub(header_used);
     let git_header_rect = Rect {
         x: area.x,
         y: git_header_y,
@@ -124,7 +135,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                header_label,
+                chev_str,
+                Style::default().fg(theme::cur().comment).bg(rail_bg),
+            ),
+            Span::styled(
+                label_str,
                 Style::default()
                     .fg(theme::cur().fg)
                     .bg(rail_bg)
@@ -413,8 +428,9 @@ fn draw_extra_workspace_section(
         (ws.name.clone(), ws.expanded)
     };
     let chev = section_chev(expanded, nerd);
-    let label = format!("{chev} {name}");
-    let pad = width.saturating_sub(label.chars().count());
+    let chev_str = format!(" {chev} ");
+    let used = chev_str.chars().count() + name.chars().count();
+    let pad = width.saturating_sub(used);
     let header_rect = Rect {
         x: area.x,
         y: header_y,
@@ -424,7 +440,11 @@ fn draw_extra_workspace_section(
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                label,
+                chev_str,
+                Style::default().fg(theme::cur().comment).bg(rail_bg),
+            ),
+            Span::styled(
+                name.clone(),
                 Style::default()
                     .fg(theme::cur().fg)
                     .bg(rail_bg)
