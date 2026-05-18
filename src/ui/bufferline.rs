@@ -94,11 +94,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let n_tabs = app.layouts.len();
     let mut right_w: u16 = 3 + 6; // ` + ` + ` TABS `
     for i in 0..n_tabs {
-        // Both active and inactive: ` <n> ` (3 cells base) + `⊗ ` close
-        // (2 cells). Dirty tab gets a leading `●` → +1 cell.
+        // Active = ` <n>󰅖 ` (3 cells label + 2 cells close glyph).
+        // Inactive = ` <n> ` (3 cells label only). Dirty tab gets a
+        // leading `●` → +1 cell.
         let dig = (i + 1).to_string().chars().count() as u16;
         let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
-        right_w += 2 + dig + dirty + 2;
+        right_w += 2 + dig + dirty;
+        if i == app.active_layout {
+            right_w += 2; // close glyph + trailing space
+        }
     }
     right_w += 4 + 3; // ` ●━ ` + ` × `
     let tabs_max_x = area.x + area.width.saturating_sub(right_w);
@@ -389,9 +393,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let t = theme::cur();
     let mut cluster_x = tabs_max_x;
 
-    // `+` new-tab button.
+    // New-tab button. `nf-md-plus` (\u{F0415}) — thicker than ASCII `+`,
+    // same glyph NvChad uses for `TabNewBtn`.
     spans.push(Span::styled(
-        " + ",
+        " \u{F0415} ",
         Style::default().fg(t.bg_darker).bg(t.purple),
     ));
     app.rects.bufferline_new_tab_button = Some(ratatui::layout::Rect {
@@ -403,21 +408,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     cluster_x += 3;
 
     // `TABS` label (decorative). Light grey chip with dark bold text —
-    // matches NvChad's tabufline.
+    // matches NvChad's tabufline (which uses the theme's `light_grey`).
     spans.push(Span::styled(
         " TABS ",
         Style::default()
             .fg(t.bg_darker)
-            .bg(t.bg3)
+            .bg(t.comment)
             .add_modifier(Modifier::BOLD),
     ));
     cluster_x += 6;
 
-    // Per-tabpage chips: ` <n>󰅖 ` for every tab. Active = light-blue bg with
-    // dark text (matches NvChad's selected-tab look); inactive = dim bg2 with
-    // comment-grey text. The close glyph is `nf-md-close` (\u{F0156}, the
-    // same Material-Design glyph NvChad uses) — renders thicker than the
-    // Unicode `⊗`. Dirty tabs get a leading `●`.
+    // Per-tabpage chips: active = ` <n>󰅖 ` (light-blue bg, dark text,
+    // close glyph), inactive = ` <n> ` (dim bg2, comment-grey text, NO
+    // close — keeps the strip uncluttered; users close via the active
+    // chip or `:bd`). The close glyph is `nf-md-close` (\u{F0156}) —
+    // same Material-Design glyph NvChad uses. Dirty tabs get a leading
+    // `●`.
     for i in 0..app.layouts.len() {
         let active = i == app.active_layout;
         let dirty = app.tab_has_dirty_buffer(i);
@@ -447,32 +453,34 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             i,
         ));
         cluster_x += label_w;
-        // Close glyph + trailing space (2 cells). Close glyph color matches
-        // the chip's text color so it visually belongs to the chip.
-        spans.push(Span::styled(
-            "\u{F0156} ",
-            Style::default().fg(chip_fg).bg(chip_bg),
-        ));
-        app.rects.bufferline_tab_page_close.push((
-            ratatui::layout::Rect {
-                x: cluster_x,
-                y: area.y,
-                width: 1,
-                height: 1,
-            },
-            i,
-        ));
-        cluster_x += 2;
+        if active {
+            // Close glyph + trailing space (2 cells). Color matches the
+            // chip's text so it visually belongs to the chip.
+            spans.push(Span::styled(
+                "\u{F0156} ",
+                Style::default().fg(chip_fg).bg(chip_bg),
+            ));
+            app.rects.bufferline_tab_page_close.push((
+                ratatui::layout::Rect {
+                    x: cluster_x,
+                    y: area.y,
+                    width: 1,
+                    height: 1,
+                },
+                i,
+            ));
+            cluster_x += 2;
+        }
     }
 
-    // Theme toggle — 2-cell composed pill (`●━`): filled circle + heavy
-    // horizontal line, both on a `bg2` chip background. Reads as "iOS-style
-    // toggle with handle on the left" without depending on the
-    // single-cell-wide nerd-font FA glyph that renders too narrow in Mono
-    // variants. Total slot is 4 cells: ` ●━ `.
+    // Theme toggle — 2-cell composed pill: `●` handle in bright fg + `━`
+    // rail in `comment` grey (darker than the handle but still visible
+    // against the chip bg). Reads as an iOS-style toggle with the handle on
+    // the left. Total slot is 4 cells: ` ●━ `.
+    spans.push(Span::styled(" \u{25CF}", Style::default().fg(t.fg).bg(t.bg2)));
     spans.push(Span::styled(
-        " \u{25CF}\u{2501} ",
-        Style::default().fg(t.fg).bg(t.bg2),
+        "\u{2501} ",
+        Style::default().fg(t.comment).bg(t.bg2),
     ));
     app.rects.bufferline_theme_toggle = Some(ratatui::layout::Rect {
         x: cluster_x,
