@@ -21,6 +21,16 @@ pub const FOLDER_OPEN: Icon = ("\u{F07C}", FOLDER_BLUE);
 pub const FOLDER_CLOSED_ASCII: Icon = ("\u{25B6}", FOLDER_BLUE); // ▶
 pub const FOLDER_OPEN_ASCII: Icon = ("\u{25BC}", FOLDER_BLUE); // ▼
 
+// Git-repo folder: a distinct glyph + orange tint so the tree's depth-0
+// repo headers in a multi-repo workspace read as "this is its own repo,
+// not a regular dir". Live theme overrides the color at render time so
+// themes can recolor.
+const REPO_ORANGE: Color = Color::Rgb(0xE5, 0xC0, 0x7B);
+pub const REPO_CLOSED: Icon = ("\u{E702}", REPO_ORANGE); //  (nf-dev-git)
+pub const REPO_OPEN: Icon = ("\u{E702}", REPO_ORANGE);
+pub const REPO_CLOSED_ASCII: Icon = ("\u{25B6}", REPO_ORANGE);
+pub const REPO_OPEN_ASCII: Icon = ("\u{25BC}", REPO_ORANGE);
+
 /// Resolve an icon for `path`. `is_dir` distinguishes folders; `is_expanded`
 /// only matters when `is_dir`. `nerd_font` switches between real glyphs and
 /// single-char ASCII stand-ins (so column widths stay stable).

@@ -2222,7 +2222,7 @@ impl App {
         let workspace = workspace
             .canonicalize()
             .map_err(|e| format!("cannot open workspace {}: {e}", workspace.display()))?;
-        let tree = Tree::open(&workspace);
+        let mut tree = Tree::open(&workspace);
         let git = GitStatus::new(&workspace);
         let lsp = crate::lsp::LspManager::new(&workspace, &config);
         let test_history = crate::playwright::history::TestHistory::load(&workspace);
@@ -2232,6 +2232,16 @@ impl App {
         // single-repo case, but may be a sub-dir in the multi-repo case).
         let repos = crate::git::repos::discover_repos(&workspace);
         let active_repo = 0usize;
+        // Multi-repo workspace: collapse every depth-0 dir except the active
+        // repo's, so the tree opens with the repos as a clean list of
+        // collapsible headers rather than every repo's contents stacked
+        // together. Single-repo case (workspace is itself a repo, or no
+        // sub-repos at all) keeps Tree::open's default first-level expansion.
+        if repos.len() > 1
+            && let Some(active) = repos.get(active_repo)
+        {
+            tree.expand_only([active.path.clone()]);
+        }
         let rail_root: &std::path::Path = repos
             .get(active_repo)
             .map(|r| r.path.as_path())

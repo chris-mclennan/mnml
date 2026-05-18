@@ -81,6 +81,27 @@ impl Tree {
         self.expanded.iter().cloned().collect()
     }
 
+    /// Replace the auto-expansion set with exactly `paths` (validated against
+    /// existing dirs — unknown paths drop silently). Useful when the caller
+    /// has a specific notion of what should be open on first launch, e.g.
+    /// the multi-repo workspace case where only the *active* repo dir should
+    /// start expanded — non-active repo dirs render as collapsed headers
+    /// the user can drill into.
+    pub fn expand_only<I: IntoIterator<Item = PathBuf>>(&mut self, paths: I) {
+        let present: BTreeSet<PathBuf> = self
+            .entries
+            .iter()
+            .filter(|e| e.is_dir)
+            .map(|e| e.path.clone())
+            .collect();
+        self.expanded = paths
+            .into_iter()
+            .filter(|p| present.contains(p))
+            .collect::<BTreeSet<_>>();
+        self.cursor = 0;
+        self.scroll = 0;
+    }
+
     /// Replace the expansion set with `dirs` (paths previously returned by
     /// [`Self::expanded_dirs`]). Paths that no longer point at directories are
     /// silently dropped. Resets the cursor + scroll to the top.
@@ -434,6 +455,20 @@ mod tests {
         let d = workspace();
         let t = Tree::open(d.path());
         assert!(t.selected_file().is_none()); // on `src` (a dir)
+    }
+
+    #[test]
+    fn expand_only_replaces_default_expansion() {
+        let d = workspace();
+        let mut t = Tree::open(d.path());
+        // Default: `src` is expanded → `main.rs` visible.
+        assert!(t.visible_rows().iter().any(|r| r.name == "main.rs"));
+        // Restrict the expansion to just the workspace root (i.e. nothing
+        // at depth 0 stays expanded) — `src/`'s children disappear.
+        t.expand_only::<Vec<PathBuf>>(Vec::new());
+        let names: Vec<String> = t.visible_rows().iter().map(|r| r.name.clone()).collect();
+        assert!(names.contains(&"src".to_string()));
+        assert!(!names.contains(&"main.rs".to_string()));
     }
 
     #[test]

@@ -234,11 +234,39 @@ fn draw_workspace_files(
     let git_files = &app.git.snapshot().files;
     let focused = app.focus == Focus::Tree && app.rail_section == RailSection::Workspace;
 
+    // Pre-compute a per-row "is this a repo dir?" lookup for the multi-repo
+    // case. Only check depth-0 dirs (sub-repos aren't supported by
+    // discover_repos and matching wouldn't fire), and only when there's
+    // more than one repo (single-repo workspaces — including ones where
+    // the workspace itself is the repo — don't get repo decoration so
+    // the tree looks unchanged).
+    let multi_repo = app.repos.len() > 1;
+    let active_repo_path = app.repos.get(app.active_repo).map(|r| r.path.clone());
+
     let mut lines: Vec<Line> = Vec::with_capacity(h);
     const ROOT_INDENT: &str = "  ";
     for (vi, row) in rows.iter().enumerate().skip(app.tree.scroll).take(h) {
         let is_cursor = vi == cursor;
-        let (glyph, icon_color) = icons::for_path(&row.path, row.is_dir, row.is_expanded, nerd);
+        let is_repo_row = multi_repo
+            && row.is_dir
+            && row.depth == 0
+            && app.repos.iter().any(|r| r.path == row.path);
+        let is_active_repo = is_repo_row && active_repo_path.as_ref() == Some(&row.path);
+        let (glyph, icon_color) = if is_repo_row {
+            if nerd {
+                if row.is_expanded {
+                    icons::REPO_OPEN
+                } else {
+                    icons::REPO_CLOSED
+                }
+            } else if row.is_expanded {
+                icons::REPO_OPEN_ASCII
+            } else {
+                icons::REPO_CLOSED_ASCII
+            }
+        } else {
+            icons::for_path(&row.path, row.is_dir, row.is_expanded, nerd)
+        };
         let indent = format!("{ROOT_INDENT}{}", "  ".repeat(row.depth));
         let prefix = if nerd {
             let chev = if row.is_dir {
@@ -259,7 +287,9 @@ fn draw_workspace_files(
         } else {
             git_files.get(&row.path).copied()
         };
-        let name_color = if row.is_dir {
+        let name_color = if is_repo_row {
+            theme::cur().yellow
+        } else if row.is_dir {
             theme::cur().blue
         } else {
             match git_state {
@@ -274,7 +304,14 @@ fn draw_workspace_files(
         if row.is_dir || (is_cursor && focused) {
             name_style = name_style.add_modifier(Modifier::BOLD);
         }
-        let prefix_color = if row.is_dir {
+        // Non-active repo dirs render slightly dimmed to make the active
+        // one pop visually (matches the `●` / `○` convention).
+        if is_repo_row && !is_active_repo {
+            name_style = name_style.add_modifier(Modifier::DIM);
+        }
+        let prefix_color = if is_repo_row {
+            theme::cur().yellow
+        } else if row.is_dir {
             theme::cur().blue
         } else {
             icon_color
@@ -289,13 +326,35 @@ fn draw_workspace_files(
             None => ("", theme::cur().fg),
         };
         let badge_width = if badge.is_empty() { 0 } else { 2 };
-        let used = prefix.chars().count() + row.name.chars().count() + badge_width;
+        // Repo dirs get a leading `● ` (active) or `○ ` (non-active) marker
+        // before the name — same convention the git rail uses for branches.
+        // Reserves 2 cells regardless of state so name columns align across
+        // active and non-active repo rows.
+        let (repo_marker, repo_marker_color) = if is_repo_row {
+            if is_active_repo {
+                ("● ", theme::cur().green)
+            } else {
+                ("○ ", theme::cur().comment)
+            }
+        } else {
+            ("", theme::cur().fg)
+        };
+        let repo_marker_width = repo_marker.chars().count();
+        let used =
+            prefix.chars().count() + repo_marker_width + row.name.chars().count() + badge_width;
         let pad = width.saturating_sub(used);
-        let mut spans = vec![
-            Span::styled(prefix, Style::default().fg(prefix_color).bg(bg)),
-            Span::styled(row.name.clone(), name_style),
-            Span::styled(" ".repeat(pad), Style::default().bg(bg)),
-        ];
+        let mut spans = vec![Span::styled(
+            prefix,
+            Style::default().fg(prefix_color).bg(bg),
+        )];
+        if !repo_marker.is_empty() {
+            spans.push(Span::styled(
+                repo_marker,
+                Style::default().fg(repo_marker_color).bg(bg),
+            ));
+        }
+        spans.push(Span::styled(row.name.clone(), name_style));
+        spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
         if !badge.is_empty() {
             spans.push(Span::styled(
                 format!("{badge} "),

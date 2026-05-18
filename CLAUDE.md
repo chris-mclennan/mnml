@@ -83,6 +83,21 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Multi-repo tree decoration (phase 1, 2026-05-17):** when the workspace
+contains more than one git repo, the depth-0 repo dirs in the file tree now
+render as distinct "repo headers" rather than regular folders. Each gets the
+`` (nf-dev-git) glyph (ASCII fallback `▶`/`▼`), a yellow name, and a leading
+`● ` (active) or `○ ` (non-active) marker — same visual language the git rail
+uses for branches. Non-active repos render dimmed. On launch, only the active
+repo's dir is auto-expanded (via new `Tree::expand_only`); other repo dirs
+render collapsed, so the tree opens with a clean list of repo headers the user
+can drill into. Clicking a depth-0 repo dir in the tree both expands/collapses
+it AND switches `active_repo` (so the git rail / branches / PRs follow the
+user's tree focus — keeps the picker gesture in sync with the visual one).
+Single-repo workspaces are unchanged. Phase 2 (multi-root workspace config —
+multiple workspaces stacked, each with their own repos) is queued; would need
+a config table + cross-workspace scope for find/grep/recents/session.
+
 **Tab pages polish wave (2026-05-17):** lots of follow-up after the
 initial `:tab*` ex commands landed. Headline additions:
 * `Ctrl+W T` (`view.move_to_new_tab`) — vim canonical: pluck the

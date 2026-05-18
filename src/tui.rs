@@ -3415,6 +3415,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         app.tree.set_cursor(idx);
                         if let Some(row) = app.tree.selected_row() {
                             if row.is_dir {
+                                // Multi-repo workspace: clicking a depth-0
+                                // repo dir also switches the active repo
+                                // (so the git rail / branches / PRs follow
+                                // the user's focus). The dir then expands /
+                                // collapses normally.
+                                if row.depth == 0 && app.repos.len() > 1 {
+                                    let repo_hit =
+                                        app.repos.iter().position(|r| r.path == row.path);
+                                    if let Some(idx) = repo_hit
+                                        && idx != app.active_repo
+                                    {
+                                        app.switch_active_repo(idx);
+                                    }
+                                }
                                 app.tree.toggle_current();
                             } else {
                                 app.open_path(&row.path);
