@@ -3480,13 +3480,32 @@ impl App {
     pub fn take_pending_plugin_invocations(&mut self) -> Vec<String> {
         std::mem::take(&mut self.pending_plugin_invocations)
     }
-    /// Open the theme picker over the built-in themes.
+    /// Open the theme picker over the built-in themes. Each row's detail
+    /// column flags the currently-active theme and the configured default
+    /// (`[ui] theme` from config.toml) so the user can tell at a glance
+    /// which is which — useful when they've live-switched away.
     pub fn open_theme_picker(&mut self) {
         use crate::picker::PickerItem;
         let cur = crate::ui::theme::cur().name;
+        let default_name = self.config.ui.theme.clone();
+        let toggle_name = self.config.ui.theme_toggle.clone();
         let items: Vec<PickerItem> = crate::ui::theme::names()
             .into_iter()
-            .map(|n| PickerItem::new(n, n, if n == cur { "current" } else { "" }))
+            .map(|n| {
+                let mut tags: Vec<&str> = Vec::new();
+                if n == cur {
+                    tags.push("current");
+                }
+                if n.eq_ignore_ascii_case(&default_name) {
+                    tags.push("default");
+                }
+                if let Some(alt) = toggle_name.as_deref()
+                    && n.eq_ignore_ascii_case(alt)
+                {
+                    tags.push("toggle");
+                }
+                PickerItem::new(n, n, tags.join(" · "))
+            })
             .collect();
         self.open_picker(Picker::new(PickerKind::Themes, "Theme", items));
     }
