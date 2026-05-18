@@ -290,13 +290,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         spans.push(Span::styled(
             format!(" {glyph} "),
-            Style::default()
-                .fg(if active {
-                    icon_color
-                } else {
-                    theme::cur().grey
-                })
-                .bg(bg),
+            // Icons keep their natural devicon color on every tab — active
+            // or inactive — so file types stay recognizable at a glance
+            // (matches NvChad's tabufline). Only the name + close badge
+            // dim on inactive chips.
+            Style::default().fg(icon_color).bg(bg),
         ));
         spans.push(Span::styled(format!("{name} "), name_style));
         if !diag.is_empty() {
