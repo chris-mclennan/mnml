@@ -460,12 +460,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ));
         cluster_x += label_w;
         if active {
-            // Close glyph + trailing space (2 cells). `nf-md-close-circle`
-            // (\u{F0159}) — circled X variant; bold so the strokes
-            // render thicker (the Mono nerd-font variant squeezes the
-            // outline thin otherwise).
+            // Close glyph + trailing space (2 cells). `nf-md-close-thick`
+            // (\u{F0683}) — purpose-built thick X. Bold modifier kept as
+            // belt-and-suspenders; fonts that respect it get an extra
+            // weight bump.
             spans.push(Span::styled(
-                "\u{F0159} ",
+                "\u{F0683} ",
                 Style::default()
                     .fg(chip_fg)
                     .bg(chip_bg)
