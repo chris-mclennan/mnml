@@ -83,6 +83,27 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Real-bug polish — toggle-comment for HTML/CSS + editorconfig brace
+expansion (2026-05-18 cont.):** two genuine bugs found while surveying
+TODO markers. (1) **`ToggleLineComment` on HTML / CSS / XML / Vue /
+Svelte / Astro** used to prepend `<!-- ` with no closing `-->` —
+corrupting files. Editor now tracks a `comment_token_close` field
+(empty for line-comment languages like Rust / Python / Lua; non-empty
+for block-comment families). `comment_token_for(ext)` returns
+`(open, close)`. The `ToggleLineComment` arm splices the close at EOL
+(rightmost edit first so byte offsets stay valid) and strips both
+tokens on untoggle. Round-trip safe. New unit tests cover HTML
+(`<!-- foo -->`) + CSS (`/* foo */`). (2) **`.editorconfig` brace
+expansion + char classes** — patterns like `[*.{js,ts,jsx,tsx}]` (the
+most common shape in real configs) used to silently match nothing.
+New `expand_braces(pattern) -> Vec<String>` walks depth-aware braces
+and expands `{a,b}` to alternatives — handles nested `{a,{b,c}}` and
+multi-group `{a,b}-{c,d}` (cartesian product). `glob_match` grew a
+char-class arm (`[abc]` / `[a-z]` / `[!abc]` / `[^abc]` for negation).
+Updated existing "skipped safely" test → real matching assertion; 3
+new tests cover brace expansion + char class. 639 lean lib tests
+total (+5 new).
+
 **Polish wave 2 — 5 bounded items (2026-05-18 cont.):** (1) **Reverse-
 debugging DAP commands** — `DapClient::step_back` + `reverse_continue`
 hitting the `stepBack` / `reverseContinue` DAP requests; palette

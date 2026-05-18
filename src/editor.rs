@@ -732,6 +732,11 @@ pub struct Editor {
     goal_col: usize,
     tab_width: usize,
     comment_token: String,
+    /// Closing token for block-comment-style line toggling (HTML's `-->`,
+    /// CSS's `*/`). Empty for languages where the line-comment is a pure
+    /// prefix (`//`, `#`, `--`). Wrapped + unwrapped together with
+    /// `comment_token` in `ToggleLineComment`.
+    comment_token_close: String,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
     /// True while a coalescing run of `InsertChar` is in progress.
@@ -788,6 +793,7 @@ impl Editor {
             goal_col: 0,
             tab_width: tab_width.max(1),
             comment_token: "// ".to_string(),
+            comment_token_close: String::new(),
             undo: Vec::new(),
             redo: Vec::new(),
             in_insert_run: false,
@@ -1295,6 +1301,9 @@ impl Editor {
     }
     pub fn set_comment_token(&mut self, token: impl Into<String>) {
         self.comment_token = token.into();
+    }
+    pub fn set_comment_token_close(&mut self, token: impl Into<String>) {
+        self.comment_token_close = token.into();
     }
     /// Move the cursor to `(row, col)` (both clamped), clearing any selection.
     /// Update the tab width. Used by .editorconfig per-buffer overrides.
@@ -3125,7 +3134,10 @@ impl Editor {
             ToggleLineComment => {
                 self.checkpoint();
                 let token = self.comment_token.clone();
+                let close = self.comment_token_close.clone();
                 let trimmed = token.trim_end().to_string();
+                let close_trimmed = close.trim_start().to_string();
+                let has_close = !close_trimmed.is_empty();
                 // Decide add vs remove from the first selected line's leading content.
                 let first_line = self.text
                     [..self.selection().map(|(l, _)| l).unwrap_or(self.cursor)]
@@ -3158,8 +3170,34 @@ impl Editor {
                             break;
                         }
                     }
+                    // End-of-line byte (exclusive of `\n`). Used to splice
+                    // / strip the close token for block-comment languages.
+                    let eol = {
+                        let mut e = ie;
+                        for ch in ed.text[ie..].chars() {
+                            if ch == '\n' {
+                                break;
+                            }
+                            e += ch.len_utf8();
+                        }
+                        e
+                    };
                     if already {
-                        if ed.text[ie..].starts_with(&token) {
+                        // Strip the close first (rightmost edit) so the
+                        // open's strip below doesn't shift the close offset.
+                        let mut close_delta: isize = 0;
+                        if has_close {
+                            if ed.text[..eol].ends_with(&close) {
+                                let cut = eol - close.len();
+                                ed.text.replace_range(cut..eol, "");
+                                close_delta = -(close.len() as isize);
+                            } else if ed.text[..eol].ends_with(&close_trimmed) {
+                                let cut = eol - close_trimmed.len();
+                                ed.text.replace_range(cut..eol, "");
+                                close_delta = -(close_trimmed.len() as isize);
+                            }
+                        }
+                        let open_delta = if ed.text[ie..].starts_with(&token) {
                             ed.text.replace_range(ie..ie + token.len(), "");
                             -(token.len() as isize)
                         } else if ed.text[ie..].starts_with(&trimmed) {
@@ -3167,10 +3205,18 @@ impl Editor {
                             -(trimmed.len() as isize)
                         } else {
                             0
-                        }
+                        };
+                        open_delta + close_delta
                     } else {
+                        // Splice the close at EOL first (rightmost edit) so
+                        // the open insert below doesn't shift EOL.
+                        let mut close_delta: isize = 0;
+                        if has_close {
+                            ed.text.insert_str(eol, &close);
+                            close_delta = close.len() as isize;
+                        }
                         ed.text.insert_str(ie, &token);
-                        token.len() as isize
+                        token.len() as isize + close_delta
                     }
                 });
                 if changed {
@@ -4840,6 +4886,37 @@ mod tests {
         e.apply(SelectAll, 10, &mut c);
         e.apply(ToggleLineComment, 10, &mut c);
         assert_eq!(e.text(), "foo();\nbar();");
+    }
+
+    #[test]
+    fn toggle_line_comment_html_wraps_with_close_token() {
+        // HTML uses `<!-- ... -->` — open + close tokens must round-trip.
+        let (mut e, mut c) = ed("<div>foo</div>\n<span>bar</span>");
+        e.set_comment_token("<!-- ");
+        e.set_comment_token_close(" -->");
+        e.apply(SelectAll, 10, &mut c);
+        e.apply(ToggleLineComment, 10, &mut c);
+        assert_eq!(
+            e.text(),
+            "<!-- <div>foo</div> -->\n<!-- <span>bar</span> -->"
+        );
+        e.apply(SelectAll, 10, &mut c);
+        e.apply(ToggleLineComment, 10, &mut c);
+        assert_eq!(e.text(), "<div>foo</div>\n<span>bar</span>");
+    }
+
+    #[test]
+    fn toggle_line_comment_css_wraps_with_close_token() {
+        // CSS uses `/* ... */`.
+        let (mut e, mut c) = ed("body { color: red; }");
+        e.set_comment_token("/* ");
+        e.set_comment_token_close(" */");
+        e.apply(SelectAll, 10, &mut c);
+        e.apply(ToggleLineComment, 10, &mut c);
+        assert_eq!(e.text(), "/* body { color: red; } */");
+        e.apply(SelectAll, 10, &mut c);
+        e.apply(ToggleLineComment, 10, &mut c);
+        assert_eq!(e.text(), "body { color: red; }");
     }
 
     #[test]

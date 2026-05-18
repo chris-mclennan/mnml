@@ -20635,7 +20635,7 @@ impl App {
             // `:r !cmd` / `:read !cmd` — fire `cmd` through the shell, splice
             // its stdout into the active editor below the cursor's line.
             // Vim convention: line is added below the *current* line, not at
-            // the cursor's column. Without `!` (`:r path`) read a file (TODO).
+            // the cursor's column. Without `!` (`:r path`) reads a file.
             "r" | "read" => {
                 if let Some(rest) = rest.strip_prefix('!') {
                     let rest = rest.trim();

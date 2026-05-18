@@ -274,7 +274,11 @@ pub enum EditOp {
     /// Indent the current line / each line of the selection by one tab-width.
     Indent,
     Outdent,
-    /// Toggle a line comment on the current line / selection (language token wired later; `//` for now).
+    /// Toggle a line comment on the current line / selection. Uses the
+    /// editor's per-language `(open, close)` tokens — `// ` / `# ` / `-- `
+    /// for line-comment languages; `<!-- … -->` / `/* … */` for
+    /// block-comment-only families (HTML / CSS / XML / Vue / Svelte).
+    /// See `comment_token_for` in `buffer.rs`.
     ToggleLineComment,
     /// Swap the current line with the one above / below.
     MoveLineUp,

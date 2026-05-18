@@ -308,7 +308,9 @@ impl Buffer {
             .map(|s| s.to_string())
             .or_else(|| ext_for_filename(path));
         let mut editor = Editor::new(text.clone(), cfg.editor.tab_width);
-        editor.set_comment_token(comment_token_for(ext.as_deref()));
+        let (ct_open, ct_close) = comment_token_for(ext.as_deref());
+        editor.set_comment_token(ct_open);
+        editor.set_comment_token_close(ct_close);
         editor.auto_pair = cfg.editor.auto_pair;
         editor.auto_indent = cfg.editor.auto_indent;
         editor.language_ext = ext.clone();
@@ -1122,18 +1124,26 @@ fn ext_for_filename(path: &Path) -> Option<String> {
     Some(ext.to_string())
 }
 
-fn comment_token_for(ext: Option<&str>) -> &'static str {
+/// Per-language line-comment tokens. Returns `(open, close)` where `close`
+/// is empty for languages whose line-comment is a simple prefix (Rust /
+/// Python / Lua / etc.) and non-empty for block-comment-only families
+/// like HTML/XML (`<!-- … -->`). The toggle wraps + unwraps accordingly.
+fn comment_token_for(ext: Option<&str>) -> (&'static str, &'static str) {
     match ext {
         Some(
             "rs" | "ts" | "tsx" | "js" | "jsx" | "cjs" | "mjs" | "c" | "cpp" | "h" | "hpp" | "cs"
             | "go" | "java" | "kt" | "swift" | "php" | "scss" | "less",
-        ) => "// ",
+        ) => ("// ", ""),
         Some("py" | "rb" | "sh" | "bash" | "zsh" | "toml" | "yaml" | "yml" | "ini" | "conf") => {
-            "# "
+            ("# ", "")
         }
-        Some("lua" | "sql") => "-- ",
-        Some("html" | "htm" | "xml" | "vue" | "svelte") => "<!-- ", // close token is wired with comment support later
-        _ => "// ",
+        Some("lua" | "sql") => ("-- ", ""),
+        // HTML-family: block-comment wrap. The toggle inserts ` -->` at
+        // end-of-line so the closing tag survives a round-trip.
+        Some("html" | "htm" | "xml" | "vue" | "svelte" | "astro") => ("<!-- ", " -->"),
+        // CSS-family: `/* … */` block-comment wrap.
+        Some("css") => ("/* ", " */"),
+        _ => ("// ", ""),
     }
 }
 
