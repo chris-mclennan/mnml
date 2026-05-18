@@ -195,7 +195,12 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
         terminal
             .draw(|f| ui::draw(f, &mut app))
             .map_err(|e| format!("blit: draw: {e}"))?;
-        let cursor = terminal.get_cursor_position().ok();
+        // `ui::draw` populates `app.rects.drawn_cursor_pos` only when it
+        // actually called `set_cursor_position` this frame. Using
+        // `terminal.get_cursor_position()` instead would return a stale
+        // (0, 0) on the welcome screen and tmnl would paint a white flash
+        // at the top-left before mnml has shown anything.
+        let cursor = app.rects.drawn_cursor_pos;
 
         let buf = terminal.backend().buffer();
         // Authoritative dims come from the buffer itself, not our cols/rows
@@ -234,8 +239,8 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
             seq: frame_seq,
             cols: bw,
             rows: bh,
-            cursor_col: cursor.as_ref().map(|p| p.x).unwrap_or(0),
-            cursor_row: cursor.as_ref().map(|p| p.y).unwrap_or(0),
+            cursor_col: cursor.map(|(x, _)| x).unwrap_or(0),
+            cursor_row: cursor.map(|(_, y)| y).unwrap_or(0),
             cursor_shape,
             cursor_visible: u8::from(cursor.is_some()),
             runs,

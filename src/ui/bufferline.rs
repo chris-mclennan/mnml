@@ -478,12 +478,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    // `󰔡` (nf-md-toggle_switch_off) — slider-style theme toggle. Material
-    // Design's variant renders thicker / pill-shaped vs. FontAwesome's tiny
-    // dumbbell.
+    // Theme toggle — render as a chip with a `bg2` background so the whole
+    // 3-cell slot reads as a "button" with a dot inside (mimics the iOS-style
+    // slider look that the FA / MDI toggle glyphs can't deliver in a single
+    // monospace cell).
     spans.push(Span::styled(
-        " \u{F0521} ",
-        Style::default().fg(t.fg).bg(t.bg_darker),
+        " \u{25CF} ",
+        Style::default().fg(t.fg).bg(t.bg2),
     ));
     app.rects.bufferline_theme_toggle = Some(ratatui::layout::Rect {
         x: cluster_x,

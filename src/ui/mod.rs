@@ -84,6 +84,11 @@ use crate::focus::Focus;
 use crate::layout::{Layout, SplitDir, split_rects};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    // Reset the per-frame cursor capture — populated below whenever this
+    // draw calls `set_cursor_position`. Blit reads it to gate
+    // `cursor_visible` on the wire, suppressing the stale-(0,0) flash that
+    // tmnl would otherwise paint before mnml has shown anything.
+    app.rects.drawn_cursor_pos = None;
     let area = frame.area();
     frame.render_widget(
         Block::default().style(Style::default().bg(theme::cur().bg_dark)),
@@ -147,10 +152,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
         if let Some((x, y)) = app.rects.prompt_caret.or(app.rects.picker_caret) {
             frame.set_cursor_position((x, y));
+            app.rects.drawn_cursor_pos = Some((x, y));
         } else if app.focus == Focus::Pane
             && let Some((x, y)) = cursor_pos
         {
             frame.set_cursor_position((x, y));
+            app.rects.drawn_cursor_pos = Some((x, y));
         }
         return;
     }
@@ -318,6 +325,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // up; otherwise nothing.
     if let Some((x, y)) = app.rects.prompt_caret.or(app.rects.picker_caret) {
         frame.set_cursor_position((x, y));
+        app.rects.drawn_cursor_pos = Some((x, y));
     } else if app.focus == Focus::Pane
         && app.whichkey.is_none()
         && app.close_prompt.is_none()
@@ -325,6 +333,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         && let Some((x, y)) = cursor_pos
     {
         frame.set_cursor_position((x, y));
+        app.rects.drawn_cursor_pos = Some((x, y));
     }
 }
 

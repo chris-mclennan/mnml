@@ -1363,6 +1363,14 @@ pub struct PaneRects {
     /// The `> GIT` section header row in the rail (when the rail's visible).
     /// Click → `App::toggle_git_section_expanded`.
     pub git_section_toggle: Option<Rect>,
+    /// Cursor position `(x, y)` that `ui::draw` *actually* set on the frame
+    /// via `set_cursor_position`. Reset to `None` at the start of every
+    /// draw; populated only when ui::draw decided a cursor should be shown
+    /// (active editor pane with a cursor, an open prompt / picker caret).
+    /// Read by `blit::run` to decide `cursor_visible` on the wire — without
+    /// this, tmnl would paint a stale (0, 0) cursor before mnml has shown
+    /// anything (the white flash during startup).
+    pub drawn_cursor_pos: Option<(u16, u16)>,
     /// `(rect, ws_idx, scroll)` per extra-workspace section's body — the rect
     /// is the file-list area, ws_idx is the index into `App.extra_workspaces`,
     /// scroll is the tree's scroll offset at render time so a click can be
