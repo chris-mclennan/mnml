@@ -5,7 +5,7 @@
 //! fallback) into `MNML_GIT_SHA` so the statusline can show "you're running
 //! commit X".
 
-use std::env;z
+use std::env;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
