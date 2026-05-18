@@ -158,6 +158,18 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_tree_root_expanded(),
         },
         Command {
+            id: "view.toggle_hidden",
+            title: "Toggle hidden files in tree (`.dotfiles`)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.tree.show_hidden = !app.tree.show_hidden;
+                app.tree.refresh();
+                let on = app.tree.show_hidden;
+                app.toast(if on { "hidden: on" } else { "hidden: off" }.to_string());
+            },
+        },
+        Command {
             id: "view.zen",
             title: "Zen mode (hide tree + bufferline + statusline)",
             group: "view",

@@ -340,6 +340,14 @@ fn draw_workspace_files(
         if is_repo_row && !is_active_repo {
             name_style = name_style.add_modifier(Modifier::DIM);
         }
+        // Hidden entries (filename starts with `.`) render dimmed when
+        // they're visible — only happens when `show_hidden = true`, but
+        // the dim hint is useful regardless to tell users "this is a
+        // dotfile / dot-dir".
+        let is_hidden = row.name.starts_with('.');
+        if is_hidden {
+            name_style = name_style.add_modifier(Modifier::DIM);
+        }
         let prefix_color = if is_repo_row {
             theme::cur().yellow
         } else if row.is_dir {
@@ -546,6 +554,9 @@ fn draw_extra_workspace_section(
             name_style = name_style.add_modifier(Modifier::BOLD);
         }
         if is_repo_row && !is_active_repo {
+            name_style = name_style.add_modifier(Modifier::DIM);
+        }
+        if row.name.starts_with('.') {
             name_style = name_style.add_modifier(Modifier::DIM);
         }
         let prefix_color = if is_repo_row {
