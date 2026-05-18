@@ -105,8 +105,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // ── left ──
     let (mode_label, mode_bg) = mode_chip(app);
-    let mut left =
-        vec![Seg::new(format!(" {mode_label} "), theme::cur().bg_darker, mode_bg).bold()];
+    // Prefix the vim-mode chips with the `nf-custom-vim` glyph (`\u{e7c5}`,
+    // the diamond-V logo) when nerd fonts are on — matches NvChad's
+    // st_modes styling. EDIT/VIEW/TREE chips stay icon-less (standard
+    // input mode / file-rail focus aren't "vim").
+    let is_vim_mode = matches!(
+        app.editing_mode(),
+        EditingMode::Insert | EditingMode::Replace | EditingMode::Visual | EditingMode::Normal
+    );
+    let mode_seg_text = if nerd && is_vim_mode {
+        format!(" \u{e7c5} {mode_label} ")
+    } else {
+        format!(" {mode_label} ")
+    };
+    let mut left = vec![Seg::new(mode_seg_text, theme::cur().bg_darker, mode_bg).bold()];
     {
         let g = app.git.snapshot();
         if let Some(branch) = &g.branch {

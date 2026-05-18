@@ -280,20 +280,24 @@ fn draw_workspace_files(
             icons::for_path(&row.path, row.is_dir, row.is_expanded, nerd)
         };
         let indent = format!("{ROOT_INDENT}{}", "  ".repeat(row.depth));
-        let prefix = if nerd {
-            let chev = if row.is_dir {
-                if row.is_expanded {
-                    CHEVRON_OPEN
-                } else {
-                    CHEVRON_CLOSED
-                }
+        // Split chevron + icon so the chevron renders in a muted grey
+        // (VS Code / NvChad tree style) while the folder/file icon keeps
+        // its devicon color.
+        let (chev_part, icon_part) = if nerd && row.is_dir {
+            let c = if row.is_expanded {
+                CHEVRON_OPEN
             } else {
-                " "
+                CHEVRON_CLOSED
             };
-            format!("{indent}{chev} {glyph} ")
+            (format!("{indent}{c} "), format!("{glyph} "))
+        } else if nerd {
+            // File row — pad the chevron column with spaces so icons
+            // align with sibling dir rows.
+            (format!("{indent}  "), format!("{glyph} "))
         } else {
-            format!("{indent}{glyph} ")
+            (indent.clone(), format!("{glyph} "))
         };
+        let prefix_width = chev_part.chars().count() + icon_part.chars().count();
         let git_state = if row.is_dir {
             None
         } else {
@@ -352,13 +356,12 @@ fn draw_workspace_files(
             ("", theme::cur().fg)
         };
         let repo_marker_width = repo_marker.chars().count();
-        let used =
-            prefix.chars().count() + repo_marker_width + row.name.chars().count() + badge_width;
+        let used = prefix_width + repo_marker_width + row.name.chars().count() + badge_width;
         let pad = width.saturating_sub(used);
-        let mut spans = vec![Span::styled(
-            prefix,
-            Style::default().fg(prefix_color).bg(bg),
-        )];
+        let mut spans = vec![
+            Span::styled(chev_part, Style::default().fg(theme::cur().comment).bg(bg)),
+            Span::styled(icon_part, Style::default().fg(prefix_color).bg(bg)),
+        ];
         if !repo_marker.is_empty() {
             spans.push(Span::styled(
                 repo_marker,
@@ -498,20 +501,19 @@ fn draw_extra_workspace_section(
             icons::for_path(&row.path, row.is_dir, row.is_expanded, nerd)
         };
         let indent = format!("{ROOT_INDENT}{}", "  ".repeat(row.depth));
-        let prefix = if nerd {
-            let chev = if row.is_dir {
-                if row.is_expanded {
-                    CHEVRON_OPEN
-                } else {
-                    CHEVRON_CLOSED
-                }
+        let (chev_part, icon_part) = if nerd && row.is_dir {
+            let c = if row.is_expanded {
+                CHEVRON_OPEN
             } else {
-                " "
+                CHEVRON_CLOSED
             };
-            format!("{indent}{chev} {glyph} ")
+            (format!("{indent}{c} "), format!("{glyph} "))
+        } else if nerd {
+            (format!("{indent}  "), format!("{glyph} "))
         } else {
-            format!("{indent}{glyph} ")
+            (indent.clone(), format!("{glyph} "))
         };
+        let prefix_width = chev_part.chars().count() + icon_part.chars().count();
         let name_color = if is_repo_row {
             theme::cur().yellow
         } else if row.is_dir {
@@ -542,12 +544,18 @@ fn draw_extra_workspace_section(
         } else {
             ("", theme::cur().fg)
         };
-        let used = prefix.chars().count() + repo_marker.chars().count() + row.name.chars().count();
+        let used = prefix_width + repo_marker.chars().count() + row.name.chars().count();
         let pad_n = width.saturating_sub(used);
-        let mut spans = vec![Span::styled(
-            prefix,
-            Style::default().fg(prefix_color).bg(rail_bg),
-        )];
+        let mut spans = vec![
+            Span::styled(
+                chev_part,
+                Style::default().fg(theme::cur().comment).bg(rail_bg),
+            ),
+            Span::styled(
+                icon_part,
+                Style::default().fg(prefix_color).bg(rail_bg),
+            ),
+        ];
         if !repo_marker.is_empty() {
             spans.push(Span::styled(
                 repo_marker,
