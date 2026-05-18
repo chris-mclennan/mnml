@@ -83,6 +83,29 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Wave 3 polish — PR badge + outline depth + stale-doc cleanup (2026-05-18 cont.):**
+two real features + several stale-doc / stale-TODO cleanups.
+(1) **Statusline PR badge** — when the current branch has an open PR/MR
+across any of the four configured SCM hosts (BB / GH / GL / AZ), the
+statusline left side now shows a `BB#123` / `GH#42` / `GL!7` / `AZ#9`
+chip in purple. Reuses the existing `App.git_rail.pulls` lookup
+(populated by `refresh_rail_pulls` against the per-host caches). Zero
+new state — same is_current_branch flag the rail's PR section already
+uses. (2) **Regex outline depth** — `extract_symbols` used to emit
+every symbol at `depth: 0`, so nested methods inside classes / impls
+rendered flat. New `indent_depth(line)` heuristic: each leading tab = 1
+level + (leading spaces / 4) = 1 level (capped at 8). Methods inside
+`impl S {` / `class Foo:` etc. now indent under their parent in the
+outline pane. 3 new tests (`indent_depth_counts_tabs_and_spaces`,
+`rust_impl_methods_get_depth_1`, `python_class_methods_get_depth_1`).
+**Stale-doc cleanups**: bufferline TODO (every item in the cluster
+shipped); statusline TODO (git chip's `+N ~N -N` + ahead/behind are
+already wired; only the PR badge was missing — now done); editorconfig
+brace-expansion limitation note (now supported); `:r path` TODO (was
+shipped); DAP drain-events doc claim that output "surfaces as toasts"
+(actually goes to `dap_output_log` for the Pane::Debug output
+section). 642 lean / 676 private lib tests (+3 new).
+
 **Real-bug polish — toggle-comment for HTML/CSS + editorconfig brace
 expansion (2026-05-18 cont.):** two genuine bugs found while surveying
 TODO markers. (1) **`ToggleLineComment` on HTML / CSS / XML / Vue /

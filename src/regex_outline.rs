@@ -16,8 +16,16 @@ use crate::lsp::DocumentSymbol;
 use regex::Regex;
 use std::sync::OnceLock;
 
-/// Public entry — `(text, ext)` → flat list of symbols (depth 0 for now).
-/// Lines are 0-based; the outline pane handles display.
+/// Public entry — `(text, ext)` → flat list of symbols with approximate
+/// depth derived from leading whitespace. Lines are 0-based; the outline
+/// pane handles display.
+///
+/// Depth heuristic: each leading tab = one depth level, plus
+/// `leading_spaces / 4` (best-guess indent width; configurable indent
+/// detection would be nicer but this matches the common case for
+/// rust / js / ts / py / rb / c / go where conventional indentation is
+/// 2 or 4 spaces / 1 tab per scope). Sufficient for nested-method
+/// rendering under classes / structs / impls.
 pub fn extract_symbols(text: &str, ext: &str) -> Vec<DocumentSymbol> {
     let patterns = patterns_for(ext);
     if patterns.is_empty() {
@@ -34,13 +42,29 @@ pub fn extract_symbols(text: &str, ext: &str) -> Vec<DocumentSymbol> {
                     kind,
                     line: line_no as u32,
                     character: line[..name.start()].chars().count() as u32,
-                    depth: 0,
+                    depth: indent_depth(line),
                 });
                 break; // one match per line
             }
         }
     }
     out
+}
+
+/// Count leading-indent depth: each `\t` = 1, each 4 leading spaces = 1.
+/// Mixed indents (rare) sum both. Capped at 8 so a wildly-indented line
+/// doesn't push the outline column past the panel width.
+fn indent_depth(line: &str) -> u32 {
+    let mut tabs = 0u32;
+    let mut spaces = 0u32;
+    for ch in line.chars() {
+        match ch {
+            '\t' => tabs += 1,
+            ' ' => spaces += 1,
+            _ => break,
+        }
+    }
+    (tabs + spaces / 4).min(8)
 }
 
 /// Per-language pattern list (regex + symbol kind label). Cached behind
@@ -308,5 +332,58 @@ type Baz struct{}
     fn unknown_ext_returns_empty() {
         let s = extract_symbols("anything goes here", "xyz");
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn indent_depth_counts_tabs_and_spaces() {
+        assert_eq!(indent_depth("no_indent"), 0);
+        assert_eq!(indent_depth("    four_spaces"), 1);
+        assert_eq!(indent_depth("        eight_spaces"), 2);
+        assert_eq!(indent_depth("\tone_tab"), 1);
+        assert_eq!(indent_depth("\t\t\tthree_tabs"), 3);
+        // Mixed: 1 tab + 4 spaces = depth 2.
+        assert_eq!(indent_depth("\t    mixed"), 2);
+        // Partial groups under 4 spaces don't bump.
+        assert_eq!(indent_depth("  two_spaces"), 0);
+    }
+
+    #[test]
+    fn rust_impl_methods_get_depth_1() {
+        // Conventional 4-space rust indent: methods inside `impl` get depth 1
+        // so the outline pane indents them under the impl header.
+        let src = "\
+impl S {
+    pub fn method(&self) {}
+    async fn other(&self) {}
+}
+";
+        let s = extract_symbols(src, "rs");
+        // First symbol is the impl header at depth 0; next two are methods at depth 1.
+        assert_eq!(s[0].name, "S");
+        assert_eq!(s[0].depth, 0);
+        assert_eq!(s[1].name, "method");
+        assert_eq!(s[1].depth, 1);
+        assert_eq!(s[2].name, "other");
+        assert_eq!(s[2].depth, 1);
+    }
+
+    #[test]
+    fn python_class_methods_get_depth_1() {
+        let src = "\
+class Foo:
+    def method(self):
+        pass
+
+    async def amethod(self):
+        pass
+";
+        let s = extract_symbols(src, "py");
+        // class at depth 0; both methods at depth 1.
+        assert_eq!(s[0].name, "Foo");
+        assert_eq!(s[0].depth, 0);
+        assert_eq!(s[1].name, "method");
+        assert_eq!(s[1].depth, 1);
+        assert_eq!(s[2].name, "amethod");
+        assert_eq!(s[2].depth, 1);
     }
 }

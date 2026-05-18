@@ -2,10 +2,10 @@
 //! the pane body only, not above the tree rail. A small `TABS` cap is pinned to
 //! the right.
 //!
-//! TODO(later): flesh out the right-hand cluster to match NvChad — a `+`
-//! "new file" button, the `TABS` label, tabpage indicators (`1` `2` …), a
-//! tabpage close `×`, a theme-toggle slider, and a window close `×`. Each is a
-//! clickable segment (record its rect in `app.rects` like the buffer tabs).
+//! Right-hand cluster (NvChad parity): `+` new-tab button, `TABS` label,
+//! tab-page chips (with per-tab `⊗` close), theme toggle (`◯`), window close
+//! (`×`). Every segment registers its rect on `app.rects` so clicks route
+//! to the corresponding command. See `App::tab_*` for the tab-page state.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;

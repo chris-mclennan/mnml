@@ -14,8 +14,6 @@
 //!   spaces yet beyond the width)
 //! - `end_of_line` — line endings are LF-only for now
 //! - `charset` — UTF-8 only
-//! - Brace expansion `{js,ts}` in section globs — only `*.<ext>`, exact name,
-//!   and `*` are matched. `[*.{js,ts}]` falls back to no-match (skip).
 //!
 //! Re-read on every `Buffer::open` (cheap — typical .editorconfig is <1KB
 //! and we touch at most 4-5 dirs walking up).

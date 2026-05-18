@@ -6,8 +6,11 @@
 //! Right: `[Ln:Col] [<folder> workspace] [language]`
 //! The gap holds a centered toast / pending-key hint.
 //!
-//! TODO: when the git track lands, flesh the left side out — split git changes
-//! into `+N ~N -N`, add a sync/ahead-behind indicator, a GitHub/PR badge, etc.
+//! Git chip carries branch + provider glyph + ahead/behind (`⇡N ⇣N`) +
+//! per-file added / changed / removed (NvChad-style with nerd glyphs) +
+//! conflicts (`⚠N`). The remaining unstarted bit is a PR badge — would
+//! cross-reference the active branch against open PRs across the four
+//! SCM hosts (`bitbucket_pull_requests` / `github_pull_requests` / etc.).
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -169,6 +172,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             txt.push(' ');
             left.push(Seg::new(txt, theme::cur().green, theme::cur().bg2));
         }
+    }
+    // PR badge: when the current branch has an open PR/MR across any of
+    // the four configured SCM hosts, show `BB#123` / `GH#42` / `GL!7` /
+    // `AZ#9` so the user can see at a glance "yes, there's a PR on this".
+    // Read from `app.git_rail.pulls` which the SCM workers populate +
+    // `App::refresh_rail_pulls` keeps in sync. Picks the *first* current-
+    // branch PR (sorted to front by refresh_rail_pulls), since most repos
+    // have at most one PR per branch.
+    if let Some(pr) = app.git_rail.pulls.iter().find(|p| p.is_current_branch) {
+        let chip = format!("  {}{} ", pr.host_tag, pr.number_label);
+        left.push(Seg::new(chip, theme::cur().purple, theme::cur().bg2));
     }
     // file segment: icon (its devicon color) + name + dirty marker, both on STATUSLINE bg.
     match app.active_editor() {

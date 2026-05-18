@@ -7890,10 +7890,12 @@ impl App {
     }
 
     /// Drain adapter events each tick. Drives the handshake state
-    /// machine (sends `launch` + breakpoints after `Initialized`),
-    /// surfaces output as toasts (for now), and on `Stopped` jumps
-    /// the active editor to the source line + paints the execution
-    /// arrow + requests a stack trace.
+    /// machine (sends `launch` + breakpoints after `Initialized`), pushes
+    /// program output into `dap_output_log` (the `Pane::Debug` output
+    /// section renders the tail; only `stderr` / `important` categories
+    /// also toast), and on `Stopped` jumps the active editor to the
+    /// source line + paints the execution arrow + requests a stack trace
+    /// + threads.
     pub fn drain_dap_events(&mut self) {
         let Some(mgr) = self.dap.as_mut() else {
             return;
