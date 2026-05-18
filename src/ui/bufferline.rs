@@ -407,15 +407,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     });
     cluster_x += 3;
 
-    // `TABS` label (decorative). Light grey chip with dark bold text —
-    // `comment` is NvChad's `light_grey` (#6f737b in onedark), clearly
-    // visible against the chrome bg. `lightbg` looked the same as the bg
-    // on dark themes.
+    // `TABS` label (decorative). White-ish chip with dark bold text —
+    // uses `t.fg` (NvChad's `white`, #abb2bf in onedark) for max
+    // contrast against the dark chrome. `comment` was still rendering
+    // too dim.
     spans.push(Span::styled(
         " TABS ",
         Style::default()
             .fg(t.bg_darker)
-            .bg(t.comment)
+            .bg(t.fg)
             .add_modifier(Modifier::BOLD),
     ));
     cluster_x += 6;
@@ -438,7 +438,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let (chip_fg, chip_bg) = if active {
             (t.bg_darker, t.blue)
         } else {
-            (t.comment, t.bg2)
+            // Inactive tab text: `fg` (white) is readable on `bg2`;
+            // `comment` was washing out too dim for the number to
+            // register at a glance.
+            (t.fg, t.bg2)
         };
         let mut chip_style = Style::default().fg(chip_fg).bg(chip_bg);
         if active {
