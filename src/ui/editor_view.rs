@@ -42,10 +42,7 @@ pub fn draw_pane(
     } else {
         None
     };
-    // Top row: a breadcrumb (parent-dir path) when applicable, otherwise a
-    // 1-row blank pad so the editor's first line isn't kissing the
-    // bufferline tabs. Either way the editor body shifts down by 1 row.
-    let (crumb_area, area) = if area.height >= 3 {
+    let (crumb_area, area) = if crumb_label.is_some() {
         (
             Some(Rect {
                 x: area.x,
@@ -63,18 +60,8 @@ pub fn draw_pane(
     } else {
         (None, area)
     };
-    if let Some(ca) = crumb_area {
-        if let Some(label) = crumb_label {
-            draw_breadcrumb(frame, ca, &label);
-        } else {
-            // Blank padding row — paint the chrome bg so it visually
-            // continues from the bufferline above.
-            let t = theme::cur();
-            frame.render_widget(
-                Paragraph::new("").style(Style::default().bg(t.bg_darker)),
-                ca,
-            );
-        }
+    if let (Some(ca), Some(label)) = (crumb_area, crumb_label) {
+        draw_breadcrumb(frame, ca, &label);
     }
 
     let tab_w = app.config.editor.tab_width.max(1);
