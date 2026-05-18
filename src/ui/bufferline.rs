@@ -407,13 +407,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     });
     cluster_x += 3;
 
-    // `TABS` label (decorative). Light chip with dark bold text — uses
-    // `lightbg` (NvChad's `light_bg`, designed for tab-chip surfaces).
+    // `TABS` label (decorative). Light grey chip with dark bold text —
+    // `comment` is NvChad's `light_grey` (#6f737b in onedark), clearly
+    // visible against the chrome bg. `lightbg` looked the same as the bg
+    // on dark themes.
     spans.push(Span::styled(
         " TABS ",
         Style::default()
             .fg(t.bg_darker)
-            .bg(t.lightbg)
+            .bg(t.comment)
             .add_modifier(Modifier::BOLD),
     ));
     cluster_x += 6;
