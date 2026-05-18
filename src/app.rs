@@ -2261,6 +2261,14 @@ pub struct App {
     /// channel survives pane open/close churn.
     #[cfg(feature = "private")]
     docdb_handle: Option<crate::private::docdb::DocDbHandle>,
+    /// App-level cache of every `TestExecutionRecord` seen on the DocDB
+    /// channel, keyed by record id. Populated by [`Self::drain_docdb_events`]
+    /// in parallel to the per-pane push so the cache survives `Pane::
+    /// TestExecutions` open/close churn and is available to other panes
+    /// (notably `Pane::CodeBuilds`, which surfaces a per-row test-result
+    /// chip via [`Self::match_test_executions_for_build`]).
+    #[cfg(feature = "private")]
+    pub private_executions: std::collections::HashMap<String, crate::private::TestExecutionRecord>,
     /// Bitbucket REST worker handle. `Some` while a worker thread is alive
     /// polling the configured `[[bitbucket.repos]]` for recent pipelines.
     /// Spawned lazily on first `bitbucket.*` command (phase 2+); phase 1
@@ -2605,6 +2613,8 @@ impl App {
             pipeline_log_next_job: 1,
             #[cfg(feature = "private")]
             docdb_handle: None,
+            #[cfg(feature = "private")]
+            private_executions: std::collections::HashMap::new(),
             bitbucket_handle: None,
             bitbucket_pipelines: std::collections::HashMap::new(),
             bitbucket_pull_requests: std::collections::HashMap::new(),
@@ -22152,7 +22162,10 @@ impl App {
     /// Open the AWS CodeBuild builds-list pane for the project configured
     /// in `[ci] project = "..."`. Re-focuses an existing pane if open;
     /// otherwise spawns a refresh worker and splits a new pane in below
-    /// the focused leaf.
+    /// the focused leaf. Also spawns the DocDB worker (if not already
+    /// running) so `App.private_executions` populates and the per-row
+    /// test-result chip can render without requiring the TE pane to be
+    /// open separately.
     pub fn open_codebuilds_pane(&mut self) {
         let project = match self.config.ci.project.clone() {
             Some(p) => p,
@@ -22161,6 +22174,14 @@ impl App {
                 return;
             }
         };
+        // Side-spawn the DocDB worker so test executions stream into
+        // App.private_executions in the background; renderer reads from
+        // there without forcing the user to also open the TE pane.
+        if self.docdb_handle.is_none() {
+            self.docdb_handle = Some(crate::private::docdb::spawn(
+                self.config.playwright.docdb.clone(),
+            ));
+        }
         // Re-focus existing pane (refresh worker may still be pumping).
         if let Some(id) = self
             .panes
@@ -22471,33 +22492,37 @@ impl App {
     /// refocuses it) and switches the active env + selection to the
     /// matching record (`record.build_id == build_number.to_string()`).
     pub fn show_test_executions_for_selected_build(&mut self) {
-        let build_num = self
+        let build = self
             .active
             .and_then(|i| self.panes.get(i))
             .and_then(|p| match p {
                 Pane::CodeBuilds(cb) => cb.selected_record(),
                 _ => None,
             })
-            .map(|r| r.build_number)
-            .unwrap_or(0);
-        if build_num == 0 {
-            self.toast("no build number for this build");
+            .cloned();
+        let Some(build) = build else {
+            self.toast("no build selected");
             return;
-        }
-        // Make sure the TestExecutions pane exists. open_private_executions_pane
-        // is a no-op-refocus when one's already open.
+        };
+        // Use the App-level matcher (build_id primary, branch + time
+        // window fallback) — works even when the TE pane hasn't been
+        // opened yet because the App cache populates from drain_docdb_events.
+        let candidates = self.match_test_executions_for_build(&build);
+        // Prefer the newest record by started_at_ms — the private integration may run the
+        // same suite against multiple envs per build; jump to whichever
+        // ran most recently.
+        let target = candidates
+            .iter()
+            .max_by_key(|r| r.started_at_ms)
+            .map(|r| (r.env, r.id.clone()));
+        // Open the TE pane (the cross-nav destination) — also a no-op-refocus
+        // when one's already open.
         self.open_private_executions_pane();
-        let build_id_str = build_num.to_string();
-        let target = self.panes.iter().find_map(|p| match p {
-            Pane::TestExecutions(te) => te
-                .records
-                .iter()
-                .find(|r| r.build_id.as_deref() == Some(&build_id_str))
-                .map(|r| (r.env, r.id.clone())),
-            _ => None,
-        });
         let Some((env, id)) = target else {
-            self.toast(format!("no TestExecutions record for build #{build_num}"));
+            self.toast(format!(
+                "no TestExecutions record for build #{}",
+                build.build_number
+            ));
             return;
         };
         if let Some(pane) = self.panes.iter_mut().find_map(|p| match p {
@@ -22513,7 +22538,8 @@ impl App {
             pane.selected_row.insert(env, idx);
         }
         self.toast(format!(
-            "jumped to TestExecution for build #{build_num} ({})",
+            "jumped to TestExecution for build #{} ({})",
+            build.build_number,
             env.label()
         ));
     }
@@ -22544,6 +22570,13 @@ impl App {
         if events.is_empty() {
             return;
         }
+        // Mirror every Record event into the App-level cache so non-TE panes
+        // (currently CodeBuilds) can correlate without needing a TE pane open.
+        for ev in &events {
+            if let DocDbEvent::Record(r) = ev {
+                self.private_executions.insert(r.id.clone(), r.clone());
+            }
+        }
         for pane in self.panes.iter_mut() {
             if let Pane::TestExecutions(p) = pane {
                 for ev in &events {
@@ -22558,6 +22591,17 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Return every [`crate::private::TestExecutionRecord`] in the App-level
+    /// cache that correlates with `build`. Thin wrapper over the pure
+    /// [`crate::private::correlate_executions_with_build`] free function —
+    /// see that doc for the match rules.
+    pub fn match_test_executions_for_build(
+        &self,
+        build: &crate::private::codebuild::CodeBuildRecord,
+    ) -> Vec<&crate::private::TestExecutionRecord> {
+        crate::private::correlate_executions_with_build(self.private_executions.values(), build)
     }
 }
 

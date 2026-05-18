@@ -83,6 +83,27 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**the private integration phase 8 — DocDB ↔ CodeBuild correlation (2026-05-18 cont.):**
+the CodeBuilds pane now surfaces an inline test-execution chip on each
+row (`· ✓N ✗M ≈K ⊘L` aggregated across every TE record that matches
+the build). New App-level cache `App.private_executions: HashMap<String,
+TestExecutionRecord>` populated alongside `Pane::TestExecutions` in
+`drain_docdb_events` so the chip works without forcing the TE pane
+open. `open_codebuilds_pane` side-spawns the DocDB worker when not
+already running so records stream into the cache from the start. New
+pure free function `crate::private::correlate_executions_with_build`
+implements the matcher — primary on `te.build_id ==
+build.build_number.to_string()`, fallback on `te.started_at_ms` in
+`[build.start, build.start + duration + 30min]` AND `te.branch` matching
+`build.source_version` (exact or 7-char SHA prefix, case-insensitive;
+ARN source_versions disable the branch path). The `x` chord on a
+CodeBuilds row now uses the matcher so jumping to the matching TE
+record works even when `build_id` isn't populated. 7 new unit tests
+cover build_id exact match, branch+time-window fallback, short SHA
+prefix, time-window exclusion, ARN-disables-fallback, no-match, and
+multi-env-same-build. 668 lib tests under `--features private`, all
+passing.
+
 **DAP vars copy/watch + CDP filter parity (2026-05-18 cont.):** three
 more bounded items. (1) **`y` in debug variables panel** copies the
 selected row's value (or label when no inlined value) to the system

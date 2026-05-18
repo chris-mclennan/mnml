@@ -31,10 +31,60 @@ pub fn draw(
     );
     app.rects.editor_panes.push((area, pane_id));
 
-    let Some(Pane::CodeBuilds(p)) = app.panes.get_mut(pane_id) else {
-        return None;
+    // Extract everything we need from the pane up front, then drop the
+    // mut borrow so `app.match_test_executions_for_build` (immut) can run.
+    let (items_window, p_selected, items_count, loading, last_error_msg) = {
+        let Some(Pane::CodeBuilds(p)) = app.panes.get_mut(pane_id) else {
+            return None;
+        };
+        let body_h = (area.height as usize).saturating_sub(2);
+        if body_h > 0 {
+            if p.selected < p.scroll {
+                p.scroll = p.selected;
+            }
+            if p.selected >= p.scroll + body_h {
+                p.scroll = p.selected + 1 - body_h;
+            }
+        }
+        let items_window: Vec<(usize, crate::private::codebuild::CodeBuildRecord)> = p
+            .items
+            .iter()
+            .enumerate()
+            .skip(p.scroll)
+            .take(body_h)
+            .map(|(i, r)| (i, r.clone()))
+            .collect();
+        (
+            items_window,
+            p.selected,
+            p.items.len(),
+            p.loading,
+            p.last_error.clone(),
+        )
     };
-    let n = p.items.len();
+
+    // Phase 8: per-build test-execution stat tuples (passed, failed, skipped,
+    // flaky) aggregated across every matched TE record. None when no record
+    // correlates with the build.
+    let stats_per_visible: Vec<Option<(u32, u32, u32, u32)>> = items_window
+        .iter()
+        .map(|(_, rec)| {
+            let matched = app.match_test_executions_for_build(rec);
+            if matched.is_empty() {
+                return None;
+            }
+            let mut acc = (0u32, 0u32, 0u32, 0u32);
+            for r in matched {
+                acc.0 += r.passed;
+                acc.1 += r.failed;
+                acc.2 += r.skipped;
+                acc.3 += r.flaky;
+            }
+            Some(acc)
+        })
+        .collect();
+
+    let n = items_count;
     let mut lines: Vec<Line> = Vec::new();
 
     // ── header banner ─────────────────────────────────────────────
@@ -55,26 +105,26 @@ pub fn draw(
                 .add_modifier(Modifier::BOLD),
         ),
     ];
-    if p.loading {
+    if loading {
         header.push(Span::styled(
             "  · loading…",
             Style::default().fg(t.comment).bg(t.bg_dark),
         ));
     }
-    if let Some(err) = &p.last_error {
+    if let Some(err) = &last_error_msg {
         header.push(Span::styled(
             format!("  · err: {err}"),
             Style::default().fg(t.red).bg(t.bg_dark),
         ));
     }
     header.push(Span::styled(
-        "    (r refresh · Enter open in browser · y copy url · Esc tree)",
+        "    (r refresh · Enter open · y copy url · t/T tail · x jump to TE · Esc tree)",
         Style::default().fg(t.comment).bg(t.bg_dark),
     ));
     lines.push(Line::from(header));
     lines.push(Line::from(""));
 
-    if n == 0 && !p.loading && p.last_error.is_none() {
+    if n == 0 && !loading && last_error_msg.is_none() {
         lines.push(Line::from(vec![
             Span::raw("  "),
             Span::styled(
@@ -84,28 +134,14 @@ pub fn draw(
         ]));
     }
 
-    // Scroll clamp.
-    let body_h = (area.height as usize).saturating_sub(2);
-    if body_h > 0 {
-        if p.selected < p.scroll {
-            p.scroll = p.selected;
-        }
-        if p.selected >= p.scroll + body_h {
-            p.scroll = p.selected + 1 - body_h;
-        }
-    }
-
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
-    for (visible_i, (i, rec)) in p
-        .items
+    for (visible_i, ((i, rec), stats)) in items_window
         .iter()
-        .enumerate()
-        .skip(p.scroll)
-        .take(body_h)
+        .zip(stats_per_visible.iter())
         .enumerate()
     {
         let row_y = area.y.saturating_add(2 + visible_i as u16);
@@ -118,10 +154,10 @@ pub fn draw(
                     height: 1,
                 },
                 pane_id,
-                i,
+                *i,
             ));
         }
-        let selected = i == p.selected;
+        let selected = *i == p_selected;
         let row_bg = if selected { t.bg2 } else { t.bg_dark };
         let (glyph, status_color) = match rec.status {
             BuildStatus::Succeeded => (rec.status.glyph(), t.green),
@@ -163,7 +199,7 @@ pub fn draw(
             .map(|s| truncate(s, 28))
             .unwrap_or_default();
 
-        lines.push(Line::from(vec![
+        let mut spans = vec![
             Span::styled(" ", Style::default().bg(row_bg)),
             Span::styled(
                 format!("{glyph}  "),
@@ -189,7 +225,37 @@ pub fn draw(
                 Style::default().fg(t.comment).bg(row_bg),
             ),
             Span::styled(initiator, Style::default().fg(t.fg).bg(row_bg)),
-        ]));
+        ];
+        // Phase 8: append per-build test-execution chip when one matches.
+        if let Some((passed, failed, skipped, flaky)) = stats {
+            spans.push(Span::styled(
+                "  · ",
+                Style::default().fg(t.comment).bg(row_bg),
+            ));
+            spans.push(Span::styled(
+                format!("✓{passed}"),
+                Style::default().fg(t.green).bg(row_bg),
+            ));
+            if *failed > 0 {
+                spans.push(Span::styled(
+                    format!(" ✗{failed}"),
+                    Style::default().fg(t.red).bg(row_bg),
+                ));
+            }
+            if *flaky > 0 {
+                spans.push(Span::styled(
+                    format!(" ≈{flaky}"),
+                    Style::default().fg(t.purple).bg(row_bg),
+                ));
+            }
+            if *skipped > 0 {
+                spans.push(Span::styled(
+                    format!(" ⊘{skipped}"),
+                    Style::default().fg(t.comment).bg(row_bg),
+                ));
+            }
+        }
+        lines.push(Line::from(spans));
     }
 
     frame.render_widget(Paragraph::new(lines), area);
