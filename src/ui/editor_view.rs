@@ -30,12 +30,19 @@ pub fn draw_pane(
         area,
     );
 
-    // Optional breadcrumb row at the top — the workspace-relative file path,
-    // dim, on its own row. Especially useful with splits (you can tell which
-    // pane is which without scanning the bufferline). Off ⇒ the editor uses
-    // the whole `area`.
-    let want_breadcrumb = app.config.editor.breadcrumb && area.height >= 3;
-    let (crumb_area, area) = if want_breadcrumb {
+    // Optional breadcrumb row at the top — the workspace-relative parent
+    // directory of the active file, dim, on its own row. Especially useful
+    // with splits (you can tell which pane is which without scanning the
+    // bufferline). The filename itself is omitted — it's already on the
+    // bufferline tab, no point showing it twice. Workspace-root files
+    // (no parent dir) get no breadcrumb row at all — the editor takes
+    // the whole `area` there.
+    let crumb_label = if app.config.editor.breadcrumb && area.height >= 3 {
+        breadcrumb_label(app, pane_id)
+    } else {
+        None
+    };
+    let (crumb_area, area) = if crumb_label.is_some() {
         (
             Some(Rect {
                 x: area.x,
@@ -53,8 +60,8 @@ pub fn draw_pane(
     } else {
         (None, area)
     };
-    if let Some(ca) = crumb_area {
-        draw_breadcrumb(frame, app, pane_id, ca);
+    if let (Some(ca), Some(label)) = (crumb_area, crumb_label) {
+        draw_breadcrumb(frame, ca, &label);
     }
 
     let tab_w = app.config.editor.tab_width.max(1);
@@ -1198,10 +1205,29 @@ fn semantic_token_modifier(modifiers: &[String]) -> ratatui::style::Modifier {
     m
 }
 
-/// One-row workspace-relative path header (dim) above the editor body. Drawn
-/// when `[editor] breadcrumb = true` and the pane has enough room. Truncates
-/// the middle with `…` if the path is wider than the pane.
-fn draw_breadcrumb(frame: &mut Frame, app: &App, pane_id: PaneId, area: Rect) {
+/// Workspace-relative *parent directory* of the pane's file, suitable for
+/// breadcrumb display. `None` when the pane isn't an editor, the buffer has
+/// no path, or the file sits at the workspace root (no parent dir → no
+/// useful breadcrumb, since the filename is already on the bufferline tab).
+fn breadcrumb_label(app: &App, pane_id: PaneId) -> Option<String> {
+    let Some(Pane::Editor(b)) = app.panes.get(pane_id) else {
+        return None;
+    };
+    let path = b.path.as_ref()?;
+    let rel = path.strip_prefix(&app.workspace).unwrap_or(path);
+    let parent = rel.parent()?;
+    let s = parent.to_string_lossy();
+    if s.is_empty() {
+        return None;
+    }
+    Some(format!("{}/", s))
+}
+
+/// One-row breadcrumb header (dim) above the editor body. Caller has
+/// already resolved the label via [`breadcrumb_label`] and decided to
+/// render. Truncates the middle with `…` if the label is wider than
+/// the pane.
+fn draw_breadcrumb(frame: &mut Frame, area: Rect, label: &str) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -1210,22 +1236,10 @@ fn draw_breadcrumb(frame: &mut Frame, app: &App, pane_id: PaneId, area: Rect) {
         Paragraph::new("").style(Style::default().bg(t.bg_darker)),
         area,
     );
-    let label = match app.panes.get(pane_id) {
-        Some(Pane::Editor(b)) => match &b.path {
-            Some(p) => p
-                .strip_prefix(&app.workspace)
-                .unwrap_or(p)
-                .to_string_lossy()
-                .into_owned(),
-            None => b.display_name(),
-        },
-        _ => return,
-    };
     let max = area.width.saturating_sub(2) as usize;
     let display = if label.chars().count() <= max {
-        label
+        label.to_string()
     } else if max > 3 {
-        // `start…end` — keep the leading "domain" + the trailing filename.
         let half = (max - 1) / 2;
         let chars: Vec<char> = label.chars().collect();
         let head: String = chars.iter().take(half).collect();
