@@ -461,7 +461,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             cluster_x += label_w;
             spans.push(Span::styled(
                 "\u{2297} ",
-                Style::default().fg(t.red).bg(t.bg2),
+                Style::default().fg(t.comment).bg(t.bg2),
             ));
             app.rects.bufferline_tab_page_close.push((
                 ratatui::layout::Rect {
