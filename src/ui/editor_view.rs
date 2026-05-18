@@ -433,6 +433,7 @@ pub fn draw_pane(
         // then a breakpoint dot (red), then an LSP diagnostic severity
         // dot, then the git change mark.
         let has_bp = buf.has_breakpoint(line_no as u32);
+        let has_cond_bp = has_bp && buf.breakpoint_conditions.contains_key(&(line_no as u32));
         let has_arrow = matches!(
             app.dap_arrow.as_ref(),
             Some((p, l)) if buf.path.as_deref() == Some(p) && (*l as usize) == line_no
@@ -453,16 +454,16 @@ pub fn draw_pane(
                 crate::lsp::Severity::Error | crate::lsp::Severity::Warning
             )
         });
-        let lo_diag = diag_sev.filter(|s| {
-            matches!(
-                s,
-                crate::lsp::Severity::Info | crate::lsp::Severity::Hint
-            )
-        });
+        let lo_diag = diag_sev
+            .filter(|s| matches!(s, crate::lsp::Severity::Info | crate::lsp::Severity::Hint));
         let sign_span = if is_continuation {
             Span::styled(" ", Style::default().bg(base_bg))
         } else if has_arrow {
             Span::styled("▶", Style::default().fg(theme::cur().yellow).bg(base_bg))
+        } else if has_cond_bp {
+            // Conditional breakpoints render as a diamond so the user
+            // can see at a glance which stops are gated by a condition.
+            Span::styled("◆", Style::default().fg(theme::cur().red).bg(base_bg))
         } else if has_bp {
             Span::styled("●", Style::default().fg(theme::cur().red).bg(base_bg))
         } else if let Some(s) = hi_diag {
@@ -554,6 +555,22 @@ pub fn draw_pane(
         } else {
             &[]
         };
+        // Project semantic tokens to just this line (sorted by
+        // start_char) so the per-cell loop below can binary-search
+        // instead of linear-scanning the whole buffer's token list.
+        // Empty for buffers without an LSP attached — the per-cell
+        // lookup short-circuits on an empty slice.
+        let line_sem_tokens = if buf.semantic_tokens.is_empty() {
+            Vec::new()
+        } else {
+            tokens_for_line(&buf.semantic_tokens, line_no)
+        };
+        // Bake the tree-sitter span list into a per-cell color grid
+        // once per row, so the per-cell loop below indexes O(1) into
+        // it instead of doing a reverse linear scan over every span.
+        // Worth ~5-10x on Rust files with many small identifier spans
+        // per line (typical 50-80 spans on a dense line).
+        let line_color_grid = line_color_grid(spans_for_line, n);
         // When `highlight_trailing_ws` is on, find where the trailing-ws run
         // begins. `None` ⇒ no trailing ws on this line (or a blank line —
         // we don't highlight pure-whitespace lines since the user isn't
@@ -661,10 +678,18 @@ pub fn draw_pane(
                     // this cell, fall back to tree-sitter; if both empty,
                     // use the theme foreground. Semantic tokens may carry
                     // a modifier-bitmask style (DIM / BOLD / ITALIC / etc.).
-                    let (fg, sem_mod) = match semantic_style(&buf.semantic_tokens, line_no, c) {
+                    let (fg, sem_mod) = match semantic_style(&line_sem_tokens, c) {
                         Some((c, m)) => (c, m),
                         None => (
-                            syntax_color(spans_for_line, c).unwrap_or(theme::cur().fg),
+                            // O(1) grid lookup; falls back to the
+                            // original linear-scan helper for cells
+                            // past the grid (shouldn't happen in
+                            // practice — `n` covers the line).
+                            line_color_grid
+                                .get(c)
+                                .and_then(|x| *x)
+                                .or_else(|| syntax_color(spans_for_line, c))
+                                .unwrap_or(theme::cur().fg),
                             ratatui::style::Modifier::empty(),
                         ),
                     };
@@ -1141,6 +1166,34 @@ fn syntax_color(spans: &[crate::highlight::ColoredSpan], c: usize) -> Option<Col
         .map(|&(_, _, color)| color)
 }
 
+/// Precompute the per-cell syntax color for one line. Iterates spans
+/// in source order, writing each span's color to every covered cell —
+/// so later (more specific / innermost) spans overwrite earlier ones.
+/// Mirrors the `spans.iter().rev().find(...)` semantics of
+/// [`syntax_color`] but amortizes the work across the row: cost is
+/// O(sum_of_span_widths + line_width) instead of O(spans × cells).
+///
+/// `line_width_chars` caps the array — spans extending past EOL get
+/// clipped (cheap to do here vs. checking per-cell). Returns an empty
+/// vec when there are no spans (caller short-circuits to theme fg).
+fn line_color_grid(
+    spans: &[crate::highlight::ColoredSpan],
+    line_width_chars: usize,
+) -> Vec<Option<Color>> {
+    if spans.is_empty() || line_width_chars == 0 {
+        return Vec::new();
+    }
+    let mut grid: Vec<Option<Color>> = vec![None; line_width_chars];
+    for &(s, e, color) in spans {
+        let lo = s.min(line_width_chars);
+        let hi = e.min(line_width_chars);
+        for slot in &mut grid[lo..hi] {
+            *slot = Some(color);
+        }
+    }
+    grid
+}
+
 /// LSP semantic-tokens style override for cell `(line, c)`. Returns `Some`
 /// when a token covers this cell — caller layers this on top of the
 /// tree-sitter `syntax_color` (LSP wins where they overlap, per spec).
@@ -1151,28 +1204,55 @@ fn syntax_color(spans: &[crate::highlight::ColoredSpan], c: usize) -> Option<Col
 /// readonly ⇒ ITALIC, static ⇒ BOLD, defaultLibrary ⇒ DIM); multiple
 /// modifiers OR together via `Modifier`'s bitflags semantics.
 ///
-/// Linear scan over the buffer's tokens — fine for the typical token
-/// volume per file (hundreds, not thousands). A future optimization
-/// could pre-sort by line and binary-search.
+/// Binary-search for the semantic token that covers column `c` on the
+/// pre-filtered list of tokens already known to be on this line and
+/// sorted by `start_char`. The caller builds the per-line list once
+/// (see [`tokens_for_line`]) and re-uses it across every cell on that
+/// line, taking us from O(tokens × cells × lines) for the whole buffer
+/// to O(log(tokens_on_line) × cells × lines). On a 12k-line Rust file
+/// that's the difference between syntax highlighting blocking a
+/// render frame and not.
 fn semantic_style(
-    tokens: &[crate::lsp::SemanticToken],
-    line: usize,
+    line_tokens: &[&crate::lsp::SemanticToken],
     c: usize,
 ) -> Option<(Color, ratatui::style::Modifier)> {
-    let line_u32 = line as u32;
-    let c_u32 = c as u32;
-    for tok in tokens {
-        if tok.line != line_u32 {
-            continue;
-        }
-        if c_u32 >= tok.start_char && c_u32 < tok.start_char + tok.length {
-            return Some((
-                semantic_token_color(&tok.type_name),
-                semantic_token_modifier(&tok.modifiers),
-            ));
-        }
+    if line_tokens.is_empty() {
+        return None;
     }
-    None
+    let c_u32 = c as u32;
+    // Binary-search for the right-most token whose `start_char` ≤ c.
+    // Since tokens on one line don't overlap (per LSP spec), at most
+    // one candidate can contain c; we either hit it or get None.
+    let idx = match line_tokens.binary_search_by(|tok| tok.start_char.cmp(&c_u32)) {
+        Ok(i) => i,
+        Err(0) => return None,
+        Err(i) => i - 1,
+    };
+    let tok = line_tokens[idx];
+    if c_u32 < tok.start_char + tok.length {
+        Some((
+            semantic_token_color(&tok.type_name),
+            semantic_token_modifier(&tok.modifiers),
+        ))
+    } else {
+        None
+    }
+}
+
+/// Build the per-line token slice (sorted by `start_char`) from the
+/// buffer's flat token list. Called once per rendered line before
+/// the per-cell loop. LSP guarantees tokens within one line don't
+/// overlap, but doesn't guarantee they arrive sorted — the sort
+/// here makes the binary-search in [`semantic_style`] correct.
+fn tokens_for_line(
+    tokens: &[crate::lsp::SemanticToken],
+    line: usize,
+) -> Vec<&crate::lsp::SemanticToken> {
+    let line_u32 = line as u32;
+    let mut out: Vec<&crate::lsp::SemanticToken> =
+        tokens.iter().filter(|t| t.line == line_u32).collect();
+    out.sort_by_key(|t| t.start_char);
+    out
 }
 
 /// Map an LSP semantic-token type name to a theme color. Mirrors the
@@ -1310,6 +1390,48 @@ mod tests {
     }
 
     #[test]
+    fn line_color_grid_matches_linear_scan_innermost_wins() {
+        // Tree-sitter span shape: outer "function" span (cols 0-10),
+        // inner "identifier" span (cols 4-7). Innermost (later in
+        // source order) should win the overlap.
+        let spans: Vec<crate::highlight::ColoredSpan> = vec![
+            (0, 10, Color::Red),
+            (4, 7, Color::Blue), // inner
+        ];
+        let grid = line_color_grid(&spans, 10);
+        for c in 0..10 {
+            let expected = syntax_color(&spans, c);
+            let got = grid.get(c).copied().unwrap_or(None);
+            assert_eq!(got, expected, "mismatch at col {c}");
+        }
+        // The blue inner span won the overlap (cols 4..7).
+        assert_eq!(grid[5], Some(Color::Blue));
+        // Outer span owns the edges.
+        assert_eq!(grid[0], Some(Color::Red));
+        assert_eq!(grid[9], Some(Color::Red));
+    }
+
+    #[test]
+    fn line_color_grid_empty_when_no_spans() {
+        let grid = line_color_grid(&[], 10);
+        assert!(grid.is_empty());
+        let grid = line_color_grid(&[(0, 5, Color::Red)], 0);
+        assert!(grid.is_empty());
+    }
+
+    #[test]
+    fn line_color_grid_clips_spans_past_eol() {
+        // A span extending past EOL shouldn't OOB the grid.
+        let spans: Vec<crate::highlight::ColoredSpan> = vec![(2, 50, Color::Green)];
+        let grid = line_color_grid(&spans, 5);
+        assert_eq!(grid.len(), 5);
+        assert_eq!(grid[0], None);
+        assert_eq!(grid[1], None);
+        assert_eq!(grid[2], Some(Color::Green));
+        assert_eq!(grid[4], Some(Color::Green));
+    }
+
+    #[test]
     fn semantic_token_modifier_drops_unknown_names() {
         // Unmapped names contribute nothing; known names still apply.
         let m = semantic_token_modifier(&[
@@ -1334,12 +1456,54 @@ mod tests {
             type_name: "function".to_string(),
             modifiers: vec!["deprecated".to_string()],
         }];
-        let Some((_, m)) = semantic_style(&tokens, 3, 6) else {
+        let line_tokens = tokens_for_line(&tokens, 3);
+        let Some((_, m)) = semantic_style(&line_tokens, 6) else {
             panic!("expected token coverage");
         };
         assert_eq!(m, Modifier::CROSSED_OUT);
         // Outside the range ⇒ None.
-        assert!(semantic_style(&tokens, 3, 9).is_none());
-        assert!(semantic_style(&tokens, 2, 5).is_none());
+        assert!(semantic_style(&line_tokens, 9).is_none());
+        // Different line ⇒ empty per-line projection.
+        let line2 = tokens_for_line(&tokens, 2);
+        assert!(semantic_style(&line2, 5).is_none());
+    }
+
+    #[test]
+    fn tokens_for_line_sorts_by_start_char() {
+        // Server can emit tokens out of order; the binary-search in
+        // semantic_style requires sorted-by-start_char input.
+        let tokens = vec![
+            crate::lsp::SemanticToken {
+                line: 0,
+                start_char: 20,
+                length: 3,
+                type_name: "function".to_string(),
+                modifiers: vec![],
+            },
+            crate::lsp::SemanticToken {
+                line: 0,
+                start_char: 5,
+                length: 3,
+                type_name: "keyword".to_string(),
+                modifiers: vec![],
+            },
+            crate::lsp::SemanticToken {
+                line: 0,
+                start_char: 12,
+                length: 4,
+                type_name: "variable".to_string(),
+                modifiers: vec![],
+            },
+        ];
+        let projected = tokens_for_line(&tokens, 0);
+        let starts: Vec<u32> = projected.iter().map(|t| t.start_char).collect();
+        assert_eq!(starts, vec![5, 12, 20]);
+        // Binary-search resolves each column to the right token.
+        assert!(semantic_style(&projected, 6).is_some());
+        assert!(semantic_style(&projected, 13).is_some());
+        assert!(semantic_style(&projected, 21).is_some());
+        // Gaps between tokens ⇒ None.
+        assert!(semantic_style(&projected, 9).is_none());
+        assert!(semantic_style(&projected, 17).is_none());
     }
 }

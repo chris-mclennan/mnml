@@ -793,6 +793,8 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             perf_focus,
             net_filter_mode,
             dom_filter_mode,
+            cookies_filter_mode,
+            storage_filter_mode,
         ) = match app.panes.get(i) {
             Some(Pane::Browser(b)) => (
                 b.net_focus,
@@ -802,8 +804,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 b.perf_focus,
                 b.net_filter_mode,
                 b.dom_filter_mode,
+                b.cookies_filter_mode,
+                b.storage_filter_mode,
             ),
-            _ => (false, false, false, false, false, false, false),
+            _ => (
+                false, false, false, false, false, false, false, false, false,
+            ),
         };
         let any_panel = net_focus || dom_focus || cookies_focus || storage_focus || perf_focus;
         // Filter-mode on either panel takes priority over every
@@ -861,6 +867,58 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             return;
         }
+        if cookies_filter_mode {
+            match key.code {
+                KeyCode::Esc => {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.cookies_filter_clear_and_exit();
+                    }
+                }
+                KeyCode::Enter => {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.cookies_filter_mode = false;
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.cookies_filter_pop();
+                    }
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.cookies_filter_push(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        if storage_filter_mode {
+            match key.code {
+                KeyCode::Esc => {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.storage_filter_clear_and_exit();
+                    }
+                }
+                KeyCode::Enter => {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.storage_filter_mode = false;
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.storage_filter_pop();
+                    }
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.storage_filter_push(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         // In the net / DOM panel ↑↓/jk/PgUp/PgDn/g/G/Home/End move the row
         // selection; otherwise they scroll the log.
         let scroll_or_select = |app: &mut App, delta: isize, jump: Option<usize>| {
@@ -880,16 +938,32 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                         None => b.move_net_sel(delta),
                     }
                 } else if b.cookies_focus {
+                    // Selection indexes into the *filtered* list now;
+                    // clamp against that count so a held filter doesn't
+                    // get out-of-range jumps.
+                    let n = b.visible_cookies_indices().len();
                     match jump {
-                        Some(usize::MAX) => b.cookies_sel = b.cookies.len().saturating_sub(1),
-                        Some(n) => b.cookies_sel = n,
+                        Some(usize::MAX) => b.cookies_sel = n.saturating_sub(1),
+                        Some(n2) => b.cookies_sel = n2,
                         None => b.move_cookies_sel(delta),
                     }
                 } else if b.storage_focus {
+                    let n = b.visible_storage_indices().len();
                     match jump {
-                        Some(usize::MAX) => b.storage_sel = b.storage.len().saturating_sub(1),
-                        Some(n) => b.storage_sel = n,
+                        Some(usize::MAX) => b.storage_sel = n.saturating_sub(1),
+                        Some(n2) => b.storage_sel = n2,
                         None => b.move_storage_sel(delta),
+                    }
+                } else if b.snapshot_diff_open {
+                    // Scroll the diff panel. usize::MAX clamps to end —
+                    // the next render reclamps.
+                    match jump {
+                        Some(usize::MAX) => b.snapshot_diff_scroll = usize::MAX,
+                        Some(n) => b.snapshot_diff_scroll = n,
+                        None => {
+                            let cur = b.snapshot_diff_scroll as isize;
+                            b.snapshot_diff_scroll = (cur + delta).max(0) as usize;
+                        }
                     }
                 } else {
                     match jump {
@@ -934,6 +1008,16 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     b.dom_filter_mode = true;
                 }
             }
+            KeyCode::Char('/') if cookies_focus => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.cookies_filter_mode = true;
+                }
+            }
+            KeyCode::Char('/') if storage_focus => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.storage_filter_mode = true;
+                }
+            }
             KeyCode::Char('D') => app.browser_open_dom(),
             KeyCode::Char('R') if dom_focus => {
                 if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
@@ -941,6 +1025,30 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Char('y') if net_focus => app.copy_net_entry_curl(),
+            KeyCode::Char('i') if net_focus => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                    b.net_detail_open = !b.net_detail_open;
+                    b.net_detail_scroll = 0;
+                }
+            }
+            // Scroll the detail panel — `j`/`k` are taken by row
+            // selection, so use `]`/`[` (pager convention) for the
+            // detail-scroll chord. usize::MAX clamp is fine — the
+            // next render re-clamps against the actual line count.
+            KeyCode::Char(']') if net_focus => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i)
+                    && b.net_detail_open
+                {
+                    b.scroll_net_detail(1, usize::MAX);
+                }
+            }
+            KeyCode::Char('[') if net_focus => {
+                if let Some(Pane::Browser(b)) = app.panes.get_mut(i)
+                    && b.net_detail_open
+                {
+                    b.scroll_net_detail(-1, usize::MAX);
+                }
+            }
             KeyCode::Char('K') => app.browser_open_cookies(),
             KeyCode::Char('y') if cookies_focus => app.copy_cookie_name_value(),
             KeyCode::Char('d') if cookies_focus => app.delete_selected_cookie(),
@@ -990,6 +1098,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('s') => app.browser_screenshot(),
             KeyCode::Char('p') if !any_panel => app.browser_print_pdf(),
             KeyCode::Char('m') if !any_panel => app.open_browser_device_picker(),
+            // Snapshot/diff chords — `X` (shift+x) captures, `x`
+            // toggles the diff panel. Only active when no other panel
+            // has focus (DOM / cookies / storage / etc. own those
+            // letters in their own contexts).
+            KeyCode::Char('X') if !any_panel => app.browser_snapshot(),
+            KeyCode::Char('x') if !any_panel => app.browser_diff_snapshot(),
             KeyCode::Char('T') => app.open_browser_target_picker(),
             KeyCode::Esc => {
                 // On either panel, Esc-with-a-held-filter clears the
@@ -1003,6 +1117,18 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     app.panes.get(i),
                     Some(Pane::Browser(b)) if b.dom_focus && !b.dom_filter.is_empty()
                 );
+                let has_cookies_filter = matches!(
+                    app.panes.get(i),
+                    Some(Pane::Browser(b)) if b.cookies_focus && !b.cookies_filter.is_empty()
+                );
+                let has_storage_filter = matches!(
+                    app.panes.get(i),
+                    Some(Pane::Browser(b)) if b.storage_focus && !b.storage_filter.is_empty()
+                );
+                let diff_open = matches!(
+                    app.panes.get(i),
+                    Some(Pane::Browser(b)) if b.snapshot_diff_open
+                );
                 if has_net_filter {
                     if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
                         b.net_filter_clear_and_exit();
@@ -1010,6 +1136,14 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 } else if has_dom_filter {
                     if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
                         b.dom_filter_clear_and_exit();
+                    }
+                } else if has_cookies_filter {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.cookies_filter_clear_and_exit();
+                    }
+                } else if has_storage_filter {
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.storage_filter_clear_and_exit();
                     }
                 } else if any_panel {
                     if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
@@ -1022,6 +1156,13 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                         b.cookies_focus = false;
                         b.storage_focus = false;
                         b.perf_focus = false;
+                    }
+                } else if diff_open {
+                    // First Esc closes the diff panel (returns to
+                    // log view); second Esc → tree (the standard
+                    // browser-pane path).
+                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                        b.snapshot_diff_open = false;
                     }
                 } else {
                     app.focus_tree();
@@ -1195,25 +1336,180 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // The DAP debug pane: ↑↓ select stack frame, Enter → jump active
-    // editor to that frame's source line, r → re-fetch stack trace
-    // (no-op when not stopped), Esc → tree.
+    // The DAP debug pane: ↑↓ select within the focused section (call
+    // stack OR variables — Tab toggles), Enter → jump (stack) or
+    // expand/collapse (variables), r → re-fetch stack trace, Esc →
+    // tree.
     if matches!(app.panes.get(i), Some(Pane::Debug(_))) {
+        // Read focused section once per dispatch so the per-key
+        // routing doesn't need to re-borrow the pane.
+        let section = match app.panes.get(i) {
+            Some(Pane::Debug(p)) => p.section,
+            _ => crate::pane::DebugSection::Stack,
+        };
+        let move_fn = |app: &mut App, delta: isize| match section {
+            crate::pane::DebugSection::Stack => app.debug_pane_move(delta),
+            crate::pane::DebugSection::Variables => app.debug_pane_vars_move(delta),
+        };
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => app.debug_pane_move(-1),
-            KeyCode::Down | KeyCode::Char('j') => app.debug_pane_move(1),
-            KeyCode::PageUp => app.debug_pane_move(-(viewport as isize)),
-            KeyCode::PageDown => app.debug_pane_move(viewport as isize),
-            KeyCode::Home | KeyCode::Char('g') => app.debug_pane_move(isize::MIN / 2),
-            KeyCode::End | KeyCode::Char('G') => app.debug_pane_move(isize::MAX / 2),
+            KeyCode::Up | KeyCode::Char('k') => move_fn(app, -1),
+            KeyCode::Down | KeyCode::Char('j') => move_fn(app, 1),
+            KeyCode::PageUp => move_fn(app, -(viewport as isize)),
+            KeyCode::PageDown => move_fn(app, viewport as isize),
+            KeyCode::Home | KeyCode::Char('g') => move_fn(app, isize::MIN / 2),
+            KeyCode::End | KeyCode::Char('G') => move_fn(app, isize::MAX / 2),
             KeyCode::Enter => app.debug_pane_accept(),
+            KeyCode::Tab => app.debug_pane_toggle_section(),
             KeyCode::Char('r') => {
                 let (mgr, tid) = (app.dap.as_mut(), app.dap_thread);
                 if let (Some(mgr), Some(tid)) = (mgr, tid) {
                     let _ = mgr.client.stack_trace(tid);
                 }
             }
+            // `y` / `w` are variables-section chords: copy value /
+            // promote to watch. Only active when that section has
+            // focus; otherwise `y`/`w` are unused.
+            KeyCode::Char('y') if section == crate::pane::DebugSection::Variables => {
+                app.debug_pane_yank_var();
+            }
+            KeyCode::Char('w') if section == crate::pane::DebugSection::Variables => {
+                app.debug_pane_watch_var();
+            }
             KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
+    // The DAP REPL pane: text input on the bottom row, history above.
+    // Enter submits, Up/Down walks command history, Esc → tree. Printable
+    // chars / Left / Right / Backspace / Delete / Home / End / Ctrl+U/W
+    // all edit the input line.
+    if matches!(app.panes.get(i), Some(Pane::DapRepl(_))) {
+        match key.code {
+            KeyCode::Enter => app.dap_repl_submit(),
+            // Shift+Up/Down move row selection (for `o` expand).
+            // Plain Up/Down still walk command history (cmdline-like).
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                app.dap_repl_select_move(-1)
+            }
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                app.dap_repl_select_move(1)
+            }
+            KeyCode::Up => app.dap_repl_history_walk(-1),
+            KeyCode::Down => app.dap_repl_history_walk(1),
+            KeyCode::Esc => {
+                // First Esc clears the row selection (if any); second
+                // Esc → tree. Mirrors the panel-then-tree gesture
+                // elsewhere in the codebase.
+                let had_sel = matches!(
+                    app.panes.get(i),
+                    Some(Pane::DapRepl(p)) if p.selected.is_some()
+                );
+                if had_sel {
+                    if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {
+                        p.selected = None;
+                    }
+                } else {
+                    app.focus_tree();
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i)
+                    && p.cursor > 0
+                {
+                    let prev = p.input[..p.cursor]
+                        .char_indices()
+                        .next_back()
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                    p.input.replace_range(prev..p.cursor, "");
+                    p.cursor = prev;
+                }
+            }
+            KeyCode::Delete => {
+                if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i)
+                    && p.cursor < p.input.len()
+                {
+                    let next = p.input[p.cursor..]
+                        .char_indices()
+                        .nth(1)
+                        .map(|(i, _)| p.cursor + i)
+                        .unwrap_or(p.input.len());
+                    p.input.replace_range(p.cursor..next, "");
+                }
+            }
+            KeyCode::Left => {
+                if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i)
+                    && p.cursor > 0
+                {
+                    let prev = p.input[..p.cursor]
+                        .char_indices()
+                        .next_back()
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                    p.cursor = prev;
+                }
+            }
+            KeyCode::Right => {
+                if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i)
+                    && p.cursor < p.input.len()
+                {
+                    let next = p.input[p.cursor..]
+                        .char_indices()
+                        .nth(1)
+                        .map(|(i, _)| p.cursor + i)
+                        .unwrap_or(p.input.len());
+                    p.cursor = next;
+                }
+            }
+            KeyCode::Home => {
+                if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {
+                    p.cursor = 0;
+                }
+            }
+            KeyCode::End => {
+                if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {
+                    p.cursor = p.input.len();
+                }
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {
+                    p.input.clear();
+                    p.cursor = 0;
+                }
+            }
+            KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {
+                    let head = &p.input[..p.cursor];
+                    let trimmed = head.trim_end_matches(' ');
+                    let cut = trimmed
+                        .char_indices()
+                        .rev()
+                        .find(|(_, c)| c.is_whitespace() || matches!(*c, '.' | '/' | '(' | '['))
+                        .map(|(i, c)| i + c.len_utf8())
+                        .unwrap_or(0);
+                    p.input.replace_range(cut..p.cursor, "");
+                    p.cursor = cut;
+                }
+            }
+            // `o` (open) on a selected REPL row expands a composite
+            // result — fetches its children via `variables` and renders
+            // them indented below. Only when a row is actually selected;
+            // otherwise `o` is just a printable char going into the input.
+            KeyCode::Char('o')
+                if matches!(
+                    app.panes.get(i),
+                    Some(Pane::DapRepl(p)) if p.selected.is_some()
+                ) =>
+            {
+                app.dap_repl_toggle_expand();
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {
+                    p.input.insert(p.cursor, c);
+                    p.cursor += c.len_utf8();
+                }
+            }
             _ => {}
         }
         return;
@@ -3888,11 +4184,41 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     c.move_down();
                 }
             }
-            Some(Pane::Debug(_)) => {
-                // Wheel over the debug pane moves the stack selection.
+            Some(Pane::Debug(p)) => {
+                // Wheel moves whichever sub-section currently has
+                // keyboard focus — same routing rule as j/k.
                 let d = delta.signum() as isize;
                 let n = delta.unsigned_abs() as isize;
-                app.debug_pane_move(d * n);
+                let section = p.section;
+                match section {
+                    crate::pane::DebugSection::Stack => app.debug_pane_move(d * n),
+                    crate::pane::DebugSection::Variables => app.debug_pane_vars_move(d * n),
+                }
+            }
+            Some(Pane::DapRepl(_)) => {
+                // Scroll the history. usize::MAX ⇒ pinned to tail;
+                // any upward scroll lands at a concrete index.
+                let mag = delta.unsigned_abs() as usize;
+                if delta < 0 {
+                    if let Some(Pane::DapRepl(p)) = app.panes.get_mut(pid) {
+                        let total = p.history.len();
+                        let cur = if p.scroll == usize::MAX {
+                            total
+                        } else {
+                            p.scroll
+                        };
+                        p.scroll = cur.saturating_sub(mag);
+                    }
+                } else if let Some(Pane::DapRepl(p)) = app.panes.get_mut(pid) {
+                    let total = p.history.len();
+                    let new = if p.scroll == usize::MAX {
+                        usize::MAX
+                    } else {
+                        let next = p.scroll.saturating_add(mag);
+                        if next >= total { usize::MAX } else { next }
+                    };
+                    p.scroll = new;
+                }
             }
             None => {}
         }

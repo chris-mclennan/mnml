@@ -76,6 +76,84 @@ pub enum FocusDir {
 /// pane to extract headings directly instead of going through the LSP.
 /// True iff `mixr` resolves to an executable on `$PATH`. Walks `$PATH`
 /// entries and probes for the binary; cheap, sync, no extra crate.
+/// One row in the `dap.attach` picker. `pid` is the OS process id;
+/// `user` is the owning user (best-effort — empty when `ps` doesn't
+/// surface it); `cmd` is the command line, truncated for legibility.
+#[derive(Debug, Clone)]
+pub struct AttachableProcess {
+    pub pid: i64,
+    pub user: String,
+    pub cmd: String,
+}
+
+/// Shell out to `ps` and parse the user / pid / command columns into
+/// a list of running processes. Returns an empty vec on any error
+/// (the caller toasts "no processes found"). macOS + Linux both have
+/// `ps -eo user,pid,command`; Windows would need a different shape
+/// but mnml's DAP track isn't packaged for Windows yet.
+fn list_attachable_processes() -> Vec<AttachableProcess> {
+    let Ok(out) = std::process::Command::new("ps")
+        .args(["-eo", "user,pid,command"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut rows: Vec<AttachableProcess> = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        if i == 0 {
+            continue; // header
+        }
+        let line = line.trim_start();
+        let mut parts = line.splitn(3, char::is_whitespace);
+        let Some(user) = parts.next() else { continue };
+        // Skip any extra whitespace between user and pid (splitn keeps
+        // the third arg verbatim, but the second can be a tab + space
+        // run that splitn doesn't compress). Re-trim per-field.
+        let Some(pid_str) = parts.next() else {
+            continue;
+        };
+        let pid_str = pid_str.trim();
+        if pid_str.is_empty() {
+            // user column was double-wide; re-split.
+            let mut p2 = line.split_whitespace();
+            let user = p2.next().unwrap_or("").to_string();
+            let Some(pid_str) = p2.next() else { continue };
+            let Ok(pid) = pid_str.parse::<i64>() else {
+                continue;
+            };
+            let rest: String = p2.collect::<Vec<&str>>().join(" ");
+            let cmd = if rest.chars().count() > 80 {
+                let keep: String = rest.chars().take(79).collect();
+                format!("{keep}…")
+            } else {
+                rest
+            };
+            rows.push(AttachableProcess { pid, user, cmd });
+            continue;
+        }
+        let Ok(pid) = pid_str.parse::<i64>() else {
+            continue;
+        };
+        let cmd = parts.next().unwrap_or("").trim().to_string();
+        let cmd = if cmd.chars().count() > 80 {
+            let keep: String = cmd.chars().take(79).collect();
+            format!("{keep}…")
+        } else {
+            cmd
+        };
+        rows.push(AttachableProcess {
+            pid,
+            user: user.to_string(),
+            cmd,
+        });
+    }
+    rows
+}
+
 fn mixr_on_path() -> bool {
     let Some(path) = std::env::var_os("PATH") else {
         return false;
@@ -851,6 +929,11 @@ struct SavedSession {
     /// cmdline walks through them). Oldest-first; capped at 100.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     ex_history: Vec<String>,
+    /// `App.dap_watches` — user-added watch expressions, restored so
+    /// debugger workflows survive a relaunch. Cached results aren't
+    /// persisted (they re-eval on the next stop anyway).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    dap_watches: Vec<String>,
     /// View-mode + collapsed-headers state for each SCM/CI pane.
     /// Persisted so flipping `v` or collapsing a repo header sticks
     /// across `q!` and relaunches.
@@ -965,6 +1048,17 @@ struct SavedBuffer {
     /// DAP breakpoint lines (0-based) — restored on next open.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     breakpoints: Vec<u32>,
+    /// Conditional-breakpoint expressions keyed by 0-based line —
+    /// restored on next open (paired with `breakpoints` above).
+    /// Conditions for lines absent from `breakpoints` are dropped on
+    /// load (defensive — invariants should already hold but this
+    /// survives a hand-edited session.json).
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    breakpoint_conditions: std::collections::HashMap<u32, String>,
+    /// Hit-count expressions keyed by 0-based line — restored
+    /// alongside conditions. Same orphan-line cleanup on load.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    breakpoint_hit_conditions: std::collections::HashMap<u32, String>,
 }
 
 /// A serializable mirror of [`Layout`] where leaves carry indices into
@@ -1357,6 +1451,18 @@ pub enum FsAction {
     NewFolder { parent: PathBuf },
     Rename { path: PathBuf },
     Delete { path: PathBuf },
+}
+
+/// One watch row's most-recent evaluation. `expression` keys the
+/// `App.dap_watch_results` map; `value` is the adapter's formatted
+/// string; `ty` is the type name (when the adapter advertised
+/// `supportsVariableType`); `err` carries the error message when the
+/// adapter rejected the evaluation (e.g. "name 'foo' is not defined").
+#[derive(Debug, Clone)]
+pub struct WatchResult {
+    pub value: String,
+    pub ty: Option<String>,
+    pub err: Option<String>,
 }
 
 /// Which section of the left rail has the keyboard when `Focus::Tree` is
@@ -2111,6 +2217,18 @@ pub struct App {
     /// `Pane::Debug` so the user can see program stdout/stderr without
     /// every chunk landing as a toast. Cleared on `dap.terminate`.
     pub dap_output_log: Vec<(String, String)>,
+    /// User-added watch expressions — re-evaluated at every stop +
+    /// rendered as a top section of the variables panel. Persisted
+    /// in `session.json` so workflows survive a relaunch.
+    pub dap_watches: Vec<String>,
+    /// Last `evaluate` result per watch expression. Keyed by the
+    /// original expression string (matches `dap_watches`). `value` is
+    /// the adapter's formatted result; `ty` may be present.
+    pub dap_watch_results: std::collections::HashMap<String, WatchResult>,
+    /// Stashed `(line0, path)` from `dap.toggle_breakpoint_conditional`
+    /// waiting for the user to type a condition. The accept handler
+    /// consumes it via `std::mem::take`; Esc-cancel just clears it.
+    pub dap_pending_bp_condition: Option<(u32, std::path::PathBuf)>,
     /// Receiver for the (single) CDP browser session's worker — events stream in,
     // The per-pane CDP receiver lives on `BrowserPane.event_rx` now —
     // `drain_cdp_events` walks every browser pane each tick.
@@ -2476,6 +2594,9 @@ impl App {
             dap_thread: None,
             dap_pending_launch: None,
             dap_output_log: Vec::new(),
+            dap_watches: Vec::new(),
+            dap_watch_results: std::collections::HashMap::new(),
+            dap_pending_bp_condition: None,
             #[cfg(feature = "private")]
             log_tail_chan: None,
             #[cfg(feature = "private")]
@@ -3920,6 +4041,26 @@ impl App {
                     self.clipboard.set(tool.install, false);
                     self.toast(format!("copied install: {}", tool.install));
                 }
+            }
+            PickerKind::DapWatchRemove => {
+                // `id` is the watch expression itself.
+                let expr = item.id;
+                self.dap_watches.retain(|w| w != &expr);
+                self.dap_watch_results.remove(&expr);
+                self.toast(format!("watch: − {expr}"));
+            }
+            PickerKind::DapAttach => {
+                if let Ok(pid) = item.id.parse::<i64>() {
+                    self.dap_attach_to_pid(pid);
+                }
+            }
+            PickerKind::DapThread => {
+                if let Ok(tid) = item.id.parse::<i64>() {
+                    self.dap_switch_thread(tid);
+                }
+            }
+            PickerKind::DapException => {
+                self.dap_toggle_exception_filter(&item.id);
             }
         }
     }
@@ -6875,15 +7016,22 @@ impl App {
         let line_no = row + 1;
         let path = b.path.clone();
         let lines = b.breakpoints.clone();
+        let conds = b.breakpoint_conditions.clone();
+        let hits = b.breakpoint_hit_conditions.clone();
         self.toast(if added {
             format!("breakpoint set: line {line_no}")
         } else {
             format!("breakpoint cleared: line {line_no}")
         });
-        // If the adapter is live + initialized, push the new list.
+        // If the adapter is live + initialized, push the new list —
+        // include condition + hit-condition maps so any pre-existing
+        // conditional / hit-count BPs on other lines survive a toggle
+        // elsewhere.
         if let (Some(mgr), Some(p)) = (self.dap.as_mut(), path)
             && mgr.initialized
-            && let Err(e) = mgr.client.set_breakpoints(&p, &lines)
+            && let Err(e) = mgr
+                .client
+                .set_breakpoints_with_conditions(&p, &lines, &conds, &hits)
         {
             self.toast(format!("dap setBreakpoints: {e}"));
         }
@@ -6997,6 +7145,100 @@ impl App {
         self.toast(format!("dap: spawned {} adapter", cfg.cmd));
     }
 
+    /// `dap.attach` — open a picker over running processes and attach
+    /// the adapter to the picked PID. Same shape as `dap_run` but forces
+    /// `request: "attach"` and injects `pid` into the launch body. The
+    /// user's `[dap.<lang>]` config can pre-fill other attach fields
+    /// (e.g. `host`, `port` for remote attach).
+    pub fn open_dap_attach_picker(&mut self) {
+        let candidates = list_attachable_processes();
+        if candidates.is_empty() {
+            self.toast("dap: no processes found (is `ps` on PATH?)");
+            return;
+        }
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let items: Vec<PickerItem> = candidates
+            .into_iter()
+            .map(|p| {
+                PickerItem::new(
+                    p.pid.to_string(),
+                    format!("{:>6}  {}", p.pid, p.cmd),
+                    &p.user,
+                )
+            })
+            .collect();
+        self.picker = Some(Picker::new(
+            PickerKind::DapAttach,
+            "Attach to process",
+            items,
+        ));
+    }
+
+    /// Accept callback for the [`PickerKind::DapAttach`] picker. Runs
+    /// the dap_run handshake but forces `request: "attach"` and
+    /// `pid: <picked>`. Adapter config still comes from
+    /// `[dap.<active-language>]`.
+    pub fn dap_attach_to_pid(&mut self, pid: i64) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let lang = match b.language_ext.as_deref() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => {
+                self.toast("dap: no filetype");
+                return;
+            }
+        };
+        let raw = match self.config.dap.get(&lang) {
+            Some(v) => v.clone(),
+            None => {
+                self.toast(format!("dap: no [dap.{lang}] config"));
+                return;
+            }
+        };
+        let cfg = match crate::dap::AdapterConfig::from_toml(&raw) {
+            Ok(c) => c,
+            Err(e) => {
+                self.toast(format!("dap: config error: {e}"));
+                return;
+            }
+        };
+        let active_path = b.path.clone();
+        let workspace = self.workspace.clone();
+        self.dap = None;
+        self.dap_arrow = None;
+        self.dap_thread = None;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let client = match crate::dap::DapClient::spawn(&cfg, &workspace, tx) {
+            Ok(c) => c,
+            Err(e) => {
+                self.toast(format!("dap spawn failed: {e}"));
+                return;
+            }
+        };
+        let mut mgr = crate::dap::DapManager::new(client, rx);
+        if let Err(e) = mgr.client.initialize() {
+            self.toast(format!("dap init failed: {e}"));
+            return;
+        }
+        // Build the attach body: copy the user's config + force
+        // `request: "attach"` + inject the picked pid. The user's
+        // pre-existing `attach.*` fields (host, port, etc.) survive.
+        let mut attach_body = cfg.launch.clone();
+        if let Some(obj) = attach_body.as_object_mut() {
+            obj.insert(
+                "request".to_string(),
+                serde_json::Value::String("attach".to_string()),
+            );
+            obj.insert("pid".to_string(), serde_json::json!(pid));
+        }
+        crate::dap::substitute_vars(&mut attach_body, &workspace, active_path.as_deref());
+        self.dap = Some(mgr);
+        self.dap_pending_launch = Some(attach_body);
+        self.toast(format!("dap: attaching to pid {pid}"));
+    }
+
     /// Continue execution. No-op when no session / not stopped.
     pub fn dap_continue(&mut self) {
         let Some(mgr) = self.dap.as_mut() else {
@@ -7052,6 +7294,516 @@ impl App {
             self.toast(format!("dap pause: {e}"));
         }
     }
+    /// `dap.add_watch` — open a prompt for a new watch expression. Any
+    /// non-empty expression is pushed onto `dap_watches` and evaluated
+    /// immediately if a stopped session is open.
+    pub fn open_dap_add_watch_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::DapAddWatch,
+            "Watch expression",
+        ));
+    }
+
+    /// `dap.remove_watch` — fuzzy picker over the current watch list;
+    /// accept drops the chosen expression from `dap_watches` + its
+    /// cached result. No-op when there are no watches.
+    pub fn open_dap_remove_watch_picker(&mut self) {
+        if self.dap_watches.is_empty() {
+            self.toast("no watches to remove");
+            return;
+        }
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let items: Vec<PickerItem> = self
+            .dap_watches
+            .iter()
+            .map(|w| {
+                // Detail line shows the cached value (or "(no value yet)"
+                // when the watch hasn't been evaluated) so the user
+                // can pick by content as well as expression text.
+                let detail = self
+                    .dap_watch_results
+                    .get(w)
+                    .map(|r| {
+                        if let Some(err) = &r.err {
+                            format!("err: {err}")
+                        } else {
+                            r.value.clone()
+                        }
+                    })
+                    .unwrap_or_else(|| "(no value yet)".to_string());
+                PickerItem::new(w, w, detail)
+            })
+            .collect();
+        self.picker = Some(Picker::new(
+            PickerKind::DapWatchRemove,
+            "Remove watch",
+            items,
+        ));
+    }
+
+    /// `dap.clear_watches` — drop every watch expression + its cached
+    /// result. No prompt — the picker handles per-item removal.
+    pub fn dap_clear_watches(&mut self) {
+        let n = self.dap_watches.len();
+        self.dap_watches.clear();
+        self.dap_watch_results.clear();
+        self.toast(format!("watches: cleared {n}"));
+    }
+
+    /// `dap.toggle_breakpoint_conditional` — open a prompt for a
+    /// condition expression at the cursor's line. Empty input ⇒ plain
+    /// breakpoint (no condition); non-empty ⇒ DAP-conditional. Stashes
+    /// the `(line0, path)` on `dap_pending_bp_condition` until accept.
+    pub fn open_dap_breakpoint_conditional_prompt(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("buffer has no path");
+            return;
+        };
+        let (row, _) = b.editor.row_col();
+        let line0 = row as u32;
+        // Pre-fill any existing condition so the user can edit instead
+        // of re-typing.
+        let seed = b
+            .breakpoint_conditions
+            .get(&line0)
+            .cloned()
+            .unwrap_or_default();
+        self.dap_pending_bp_condition = Some((line0, path));
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::DapBreakpointCondition,
+            format!("Breakpoint condition (line {})", line0 + 1),
+            seed,
+        ));
+    }
+
+    /// `dap.set_breakpoint_hit_count` — open a prompt for a hit-count
+    /// expression on the cursor's line. Empty input clears the
+    /// existing hit-count (the line stays a regular / conditional BP).
+    /// Pre-fills any existing hit-condition so the user can edit
+    /// rather than re-type. Reuses `dap_pending_bp_condition` for
+    /// the stash (only one BP prompt is open at a time).
+    pub fn open_dap_breakpoint_hit_count_prompt(&mut self) {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("buffer has no path");
+            return;
+        };
+        let (row, _) = b.editor.row_col();
+        let line0 = row as u32;
+        let seed = b
+            .breakpoint_hit_conditions
+            .get(&line0)
+            .cloned()
+            .unwrap_or_default();
+        self.dap_pending_bp_condition = Some((line0, path));
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::DapBreakpointHitCount,
+            format!(
+                "Hit-count condition (line {})  e.g. >= 5  or  % 10",
+                line0 + 1
+            ),
+            seed,
+        ));
+    }
+
+    /// Apply a hit-count condition at `(path, line0)`. Empty input
+    /// drops the condition (without removing the breakpoint itself).
+    /// Non-empty records it + ensures a breakpoint exists on that line.
+    /// Re-fires `setBreakpoints` to the live adapter.
+    pub fn set_breakpoint_hit_condition(
+        &mut self,
+        path: &std::path::Path,
+        line0: u32,
+        hit: String,
+    ) {
+        let mut sync_lines: Option<Vec<u32>> = None;
+        let mut sync_conds: Option<std::collections::HashMap<u32, String>> = None;
+        let mut sync_hits: Option<std::collections::HashMap<u32, String>> = None;
+        for p in self.panes.iter_mut() {
+            if let Pane::Editor(b) = p
+                && b.path.as_deref() == Some(path)
+            {
+                if !b.breakpoints.contains(&line0) {
+                    b.breakpoints.push(line0);
+                    b.breakpoints.sort_unstable();
+                }
+                if hit.is_empty() {
+                    b.breakpoint_hit_conditions.remove(&line0);
+                } else {
+                    b.breakpoint_hit_conditions.insert(line0, hit.clone());
+                }
+                sync_lines = Some(b.breakpoints.clone());
+                sync_conds = Some(b.breakpoint_conditions.clone());
+                sync_hits = Some(b.breakpoint_hit_conditions.clone());
+                break;
+            }
+        }
+        let (Some(lines), Some(conds), Some(hits)) = (sync_lines, sync_conds, sync_hits) else {
+            return;
+        };
+        if let Some(mgr) = self.dap.as_mut()
+            && mgr.initialized
+        {
+            let _ = mgr
+                .client
+                .set_breakpoints_with_conditions(path, &lines, &conds, &hits);
+        }
+        self.toast(format!(
+            "bp line {} hit-count {}",
+            line0 + 1,
+            if hit.is_empty() {
+                "cleared".to_string()
+            } else {
+                hit
+            }
+        ));
+    }
+
+    /// Apply a condition to a breakpoint at `(path, line0)`. Empty
+    /// condition ⇒ plain breakpoint (also added if missing); non-empty
+    /// ⇒ records the condition + adds the line to `breakpoints` if
+    /// missing. Re-syncs to the live adapter via `setBreakpoints`.
+    pub fn set_breakpoint_condition(&mut self, path: &std::path::Path, line0: u32, cond: String) {
+        // Find the buffer that owns `path`; update both the
+        // breakpoints list (idempotent add) and the condition map.
+        let mut sync_lines: Option<Vec<u32>> = None;
+        let mut sync_conds: Option<std::collections::HashMap<u32, String>> = None;
+        let mut sync_hits: Option<std::collections::HashMap<u32, String>> = None;
+        for p in self.panes.iter_mut() {
+            if let Pane::Editor(b) = p
+                && b.path.as_deref() == Some(path)
+            {
+                if !b.breakpoints.contains(&line0) {
+                    b.breakpoints.push(line0);
+                    b.breakpoints.sort_unstable();
+                }
+                if cond.is_empty() {
+                    b.breakpoint_conditions.remove(&line0);
+                } else {
+                    b.breakpoint_conditions.insert(line0, cond.clone());
+                }
+                sync_lines = Some(b.breakpoints.clone());
+                sync_conds = Some(b.breakpoint_conditions.clone());
+                sync_hits = Some(b.breakpoint_hit_conditions.clone());
+                break;
+            }
+        }
+        let (Some(lines), Some(conds), Some(hits)) = (sync_lines, sync_conds, sync_hits) else {
+            return;
+        };
+        // Re-fire the live adapter's breakpoint set for this source so
+        // the new condition takes effect immediately.
+        if let Some(mgr) = self.dap.as_mut()
+            && mgr.initialized
+        {
+            let _ = mgr
+                .client
+                .set_breakpoints_with_conditions(path, &lines, &conds, &hits);
+        }
+        self.toast(format!(
+            "bp line {}{}",
+            line0 + 1,
+            if cond.is_empty() {
+                String::new()
+            } else {
+                format!(": {cond}")
+            }
+        ));
+    }
+
+    /// `dap.repl` — open (or focus) the DAP REPL pane.
+    pub fn open_dap_repl_pane(&mut self) {
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::DapRepl(_)))
+        {
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::DapRepl(crate::pane::DapReplPane::default());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// Submit the REPL pane's current input — fire `evaluate` with
+    /// `context: "repl"`, push a pending entry into history, clear
+    /// the input. No-op when there's no live DAP session.
+    pub fn dap_repl_submit(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::DapRepl(repl)) = self.panes.get_mut(id) else {
+            return;
+        };
+        let expr = repl.input.trim().to_string();
+        if expr.is_empty() {
+            return;
+        }
+        // Push history + clear input.
+        repl.history.push(crate::pane::DapReplEntry {
+            expression: expr.clone(),
+            value: String::new(),
+            ty: None,
+            err: None,
+            pending: true,
+            variables_ref: 0,
+            expanded: false,
+        });
+        if repl.command_history.last() != Some(&expr) {
+            repl.command_history.push(expr.clone());
+        }
+        repl.command_history_idx = None;
+        repl.input.clear();
+        repl.cursor = 0;
+        repl.scroll = usize::MAX; // pin to tail
+        // Now fire evaluate. Prefer the current stopped frame's id;
+        // global eval (no frame) is fine too — some adapters accept it.
+        let frame_id = self
+            .dap
+            .as_ref()
+            .and_then(|m| m.stack_frames.first().map(|f| f.id));
+        if let Some(mgr) = self.dap.as_mut() {
+            if let Err(e) = mgr.client.evaluate(&expr, frame_id, "repl") {
+                // Mark the pending entry as failed locally so the user
+                // sees feedback instead of an endless "evaluating…".
+                if let Some(Pane::DapRepl(repl)) = self.panes.get_mut(id)
+                    && let Some(last) = repl.history.last_mut()
+                {
+                    last.pending = false;
+                    last.err = Some(format!("client error: {e}"));
+                }
+            }
+        } else if let Some(Pane::DapRepl(repl)) = self.panes.get_mut(id)
+            && let Some(last) = repl.history.last_mut()
+        {
+            last.pending = false;
+            last.err = Some("no DAP session (run dap.run first)".to_string());
+        }
+    }
+
+    /// Move the REPL's row selection by `delta`. None ⇒ defocus the
+    /// row + return focus to the input (vim cmdline convention).
+    /// Initial press starts at the bottom of history.
+    pub fn dap_repl_select_move(&mut self, delta: isize) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::DapRepl(repl)) = self.panes.get_mut(id) else {
+            return;
+        };
+        let n = repl.history.len();
+        if n == 0 {
+            return;
+        }
+        let cur = repl.selected.unwrap_or(n);
+        let new = (cur as isize + delta).clamp(0, n as isize - 1) as usize;
+        repl.selected = Some(new);
+        repl.scroll = new.min(n.saturating_sub(1));
+    }
+
+    /// `o` (open) in the REPL pane — expand the selected row if it's
+    /// composite (`variables_ref > 0`). Fetches children if not yet
+    /// cached. Toggles off on second press (children disappear).
+    pub fn dap_repl_toggle_expand(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::DapRepl(repl)) = self.panes.get_mut(id) else {
+            return;
+        };
+        let Some(sel) = repl.selected else {
+            return;
+        };
+        let Some(entry) = repl.history.get_mut(sel) else {
+            return;
+        };
+        if entry.variables_ref == 0 {
+            return;
+        }
+        let r = entry.variables_ref;
+        entry.expanded = !entry.expanded;
+        let want_fetch = entry.expanded;
+        // Trigger variables fetch when expanding. The reply lands on
+        // `DapManager.variables[ref]`; the REPL renderer reads from
+        // the same cache that drives the variables panel.
+        if want_fetch
+            && let Some(mgr) = self.dap.as_mut()
+            && !mgr.variables.contains_key(&r)
+        {
+            let _ = mgr.client.variables(r);
+        }
+    }
+
+    /// Walk the REPL's command history. `dir = -1` ⇒ older; `+1` ⇒
+    /// newer. Reaching past newest restores the typed input (vim
+    /// cmdline convention).
+    pub fn dap_repl_history_walk(&mut self, dir: isize) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::DapRepl(repl)) = self.panes.get_mut(id) else {
+            return;
+        };
+        let h = &repl.command_history;
+        if h.is_empty() {
+            return;
+        }
+        let next = match (repl.command_history_idx, dir.signum()) {
+            (None, -1) => Some(h.len() - 1),
+            (Some(0), -1) => Some(0),
+            (Some(i), -1) => Some(i - 1),
+            (None, _) => return,
+            (Some(i), 1) if i + 1 < h.len() => Some(i + 1),
+            (Some(_), 1) => None,
+            _ => return,
+        };
+        match next {
+            Some(i) => {
+                repl.input = h[i].clone();
+                repl.cursor = repl.input.len();
+                repl.command_history_idx = Some(i);
+            }
+            None => {
+                repl.input.clear();
+                repl.cursor = 0;
+                repl.command_history_idx = None;
+            }
+        }
+    }
+
+    /// `dap.pick_thread` — open a picker over the adapter's current
+    /// thread list (refreshed on each `Stopped`). Accept changes
+    /// `App.dap_thread` + re-fetches the stack trace for the new
+    /// thread. No-op when no session is live OR there's only one
+    /// thread (the picker would be useless).
+    pub fn open_dap_thread_picker(&mut self) {
+        let threads: Vec<crate::dap::ThreadInfo> = self
+            .dap
+            .as_ref()
+            .map(|m| m.threads.clone())
+            .unwrap_or_default();
+        if threads.is_empty() {
+            self.toast("dap: no threads (start a session first)");
+            return;
+        }
+        if threads.len() == 1 {
+            self.toast(format!(
+                "dap: only one thread ({}#{})",
+                threads[0].name, threads[0].id
+            ));
+            return;
+        }
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let current = self.dap_thread;
+        let items: Vec<PickerItem> = threads
+            .into_iter()
+            .map(|t| {
+                let marker = if Some(t.id) == current { "● " } else { "  " };
+                PickerItem::new(
+                    t.id.to_string(),
+                    format!("{marker}{}", t.name),
+                    format!("tid {}", t.id),
+                )
+            })
+            .collect();
+        self.picker = Some(Picker::new(PickerKind::DapThread, "Switch thread", items));
+    }
+
+    /// `dap.exceptions` — open a picker over the adapter's exception
+    /// filters. Each row shows the current on/off state with a `●`
+    /// marker; accept toggles that one filter + re-fires
+    /// `setExceptionBreakpoints` with the new enabled set. Repeated
+    /// picks toggle individual filters; close with Esc.
+    pub fn open_dap_exception_picker(&mut self) {
+        let filters: Vec<crate::dap::ExceptionFilter> = self
+            .dap
+            .as_ref()
+            .map(|m| m.exception_filters.clone())
+            .unwrap_or_default();
+        if filters.is_empty() {
+            self.toast("dap: adapter advertised no exception filters");
+            return;
+        }
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let enabled = self
+            .dap
+            .as_ref()
+            .map(|m| m.enabled_exception_filters.clone())
+            .unwrap_or_default();
+        let items: Vec<PickerItem> = filters
+            .into_iter()
+            .map(|f| {
+                let marker = if enabled.contains(&f.filter) {
+                    "● "
+                } else {
+                    "○ "
+                };
+                let detail = if f.default {
+                    format!("{} · default-on", f.filter)
+                } else {
+                    f.filter.clone()
+                };
+                PickerItem::new(f.filter, format!("{marker}{}", f.label), detail)
+            })
+            .collect();
+        self.picker = Some(Picker::new(
+            PickerKind::DapException,
+            "Toggle exception breakpoint",
+            items,
+        ));
+    }
+
+    /// Accept callback for [`PickerKind::DapException`]. Toggles the
+    /// filter in `enabled_exception_filters` and pushes the new set
+    /// to the adapter.
+    pub fn dap_toggle_exception_filter(&mut self, filter_id: &str) {
+        let new_enabled: Vec<String> = if let Some(mgr) = self.dap.as_mut() {
+            if mgr.enabled_exception_filters.contains(filter_id) {
+                mgr.enabled_exception_filters.remove(filter_id);
+            } else {
+                mgr.enabled_exception_filters.insert(filter_id.to_string());
+            }
+            mgr.enabled_exception_filters.iter().cloned().collect()
+        } else {
+            return;
+        };
+        let on = self
+            .dap
+            .as_ref()
+            .map(|m| m.enabled_exception_filters.contains(filter_id))
+            .unwrap_or(false);
+        if let Some(mgr) = self.dap.as_mut() {
+            let _ = mgr.client.set_exception_breakpoints(&new_enabled);
+        }
+        self.toast(format!(
+            "exception {filter_id}: {}",
+            if on { "on" } else { "off" }
+        ));
+    }
+
+    /// Switch the tracked DAP thread + re-fetch its stack trace so
+    /// the call-stack / variables panels reflect the new thread.
+    pub fn dap_switch_thread(&mut self, thread_id: i64) {
+        self.dap_thread = Some(thread_id);
+        if let Some(mgr) = self.dap.as_mut() {
+            mgr.scopes.clear();
+            mgr.variables.clear();
+            let _ = mgr.client.stack_trace(thread_id);
+        }
+        self.toast(format!("dap: thread {thread_id}"));
+    }
+
     pub fn dap_terminate(&mut self) {
         if let Some(mgr) = self.dap.as_mut() {
             let _ = mgr.client.terminate();
@@ -7060,6 +7812,9 @@ impl App {
         self.dap_arrow = None;
         self.dap_thread = None;
         self.dap_output_log.clear();
+        // Watch *expressions* (user input) survive a terminate so the
+        // user doesn't lose their list; just the cached results go.
+        self.dap_watch_results.clear();
         self.toast("dap: terminated");
     }
 
@@ -7083,19 +7838,33 @@ impl App {
                         mgr.initialized = true;
                     }
                     // Send breakpoints for every open buffer that has any.
-                    let bp_sets: Vec<(std::path::PathBuf, Vec<u32>)> = self
+                    // Include condition + hit-condition maps so
+                    // conditional + hit-count BPs that survived a
+                    // session restart take effect immediately.
+                    type BpSet = (
+                        std::path::PathBuf,
+                        Vec<u32>,
+                        std::collections::HashMap<u32, String>,
+                        std::collections::HashMap<u32, String>,
+                    );
+                    let bp_sets: Vec<BpSet> = self
                         .panes
                         .iter()
                         .filter_map(|p| match p {
-                            Pane::Editor(b) if !b.breakpoints.is_empty() => {
-                                Some((b.path.clone()?, b.breakpoints.clone()))
-                            }
+                            Pane::Editor(b) if !b.breakpoints.is_empty() => Some((
+                                b.path.clone()?,
+                                b.breakpoints.clone(),
+                                b.breakpoint_conditions.clone(),
+                                b.breakpoint_hit_conditions.clone(),
+                            )),
                             _ => None,
                         })
                         .collect();
                     if let Some(mgr) = self.dap.as_mut() {
-                        for (path, lines) in &bp_sets {
-                            let _ = mgr.client.set_breakpoints(path, lines);
+                        for (path, lines, conds, hits) in &bp_sets {
+                            let _ = mgr
+                                .client
+                                .set_breakpoints_with_conditions(path, lines, conds, hits);
                         }
                     }
                     // Now fire `launch` (with the stashed substituted body).
@@ -7151,20 +7920,77 @@ impl App {
                     if let Some(mgr) = self.dap.as_mut() {
                         mgr.stopped_at = Some((thread_id, None, 0, reason.clone()));
                         let _ = mgr.client.stack_trace(thread_id);
+                        // Refresh the thread list — the multi-thread
+                        // picker shows the current set, and adapters
+                        // can spawn / join threads between stops.
+                        let _ = mgr.client.threads();
                     }
                     let label = description.unwrap_or(reason);
                     self.toast(format!("dap: stopped ({label})"));
                 }
+                crate::dap::DapEvent::Threads(ts) => {
+                    if let Some(mgr) = self.dap.as_mut() {
+                        mgr.threads = ts;
+                    }
+                }
+                crate::dap::DapEvent::InitializeCaps { exception_filters } => {
+                    // Cache the filters; auto-enable any the adapter
+                    // flagged `default = true` (debugpy's "uncaught"
+                    // is typically default-on, "raised" is not). The
+                    // user can toggle via `dap.exceptions`.
+                    let defaults: Vec<String> = exception_filters
+                        .iter()
+                        .filter(|f| f.default)
+                        .map(|f| f.filter.clone())
+                        .collect();
+                    if let Some(mgr) = self.dap.as_mut() {
+                        mgr.exception_filters = exception_filters;
+                        mgr.enabled_exception_filters = defaults.iter().cloned().collect();
+                        // Tell the adapter about the defaults. This
+                        // happens between `Initialized` (where
+                        // setBreakpoints fires) and `configurationDone`
+                        // — DAP allows it any time before resume.
+                        let _ = mgr.client.set_exception_breakpoints(&defaults);
+                    }
+                }
                 crate::dap::DapEvent::Continued => {
                     if let Some(mgr) = self.dap.as_mut() {
                         mgr.stopped_at = None;
+                        // Variable references go stale across resume —
+                        // drop the cached scopes + vars + expansion
+                        // state. The next Stopped event will refetch.
+                        mgr.scopes.clear();
+                        mgr.variables.clear();
+                        mgr.expanded_vars.clear();
                     }
                     self.dap_arrow = None;
+                    // Watch results from the prior stop don't reflect
+                    // the new program state — drop them. Each watch
+                    // re-evaluates on the next Stopped event.
+                    self.dap_watch_results.clear();
                 }
                 crate::dap::DapEvent::StackTrace { frames, .. } => {
                     let top = frames.first().cloned();
+                    let top_frame_id = top.as_ref().map(|f| f.id);
                     if let Some(mgr) = self.dap.as_mut() {
                         mgr.stack_frames = frames;
+                        mgr.scopes.clear();
+                        mgr.variables.clear();
+                    }
+                    // Auto-fetch scopes for the top frame so the
+                    // variables panel populates as soon as we hit a
+                    // breakpoint — no extra keystroke needed.
+                    if let (Some(mgr), Some(fid)) = (self.dap.as_mut(), top_frame_id) {
+                        let _ = mgr.client.scopes(fid);
+                    }
+                    // Re-evaluate every user-added watch expression
+                    // against the new top frame so the watch panel
+                    // reflects the current stop point.
+                    let watches = self.dap_watches.clone();
+                    if let (Some(mgr), Some(fid)) = (self.dap.as_mut(), top_frame_id) {
+                        for expr in &watches {
+                            let _ = mgr.client.evaluate(expr, Some(fid), "watch");
+                        }
                     }
                     if let Some(f) = top
                         && let Some(src) = f.source
@@ -7177,6 +8003,75 @@ impl App {
                         self.open_path(&src);
                         if let Some(b) = self.active_editor_mut() {
                             b.editor.place_cursor(line0 as usize, 0);
+                        }
+                    }
+                }
+                crate::dap::DapEvent::Scopes { scopes, .. } => {
+                    // Auto-expand non-expensive scopes (typically
+                    // "Locals" / "Arguments") and request their
+                    // contents. Expensive scopes ("Globals") stay
+                    // collapsed — the user can drill in manually.
+                    let refs_to_fetch: Vec<i64> = scopes
+                        .iter()
+                        .filter(|s| s.variables_reference > 0 && !s.expensive)
+                        .map(|s| s.variables_reference)
+                        .collect();
+                    if let Some(mgr) = self.dap.as_mut() {
+                        mgr.scopes = scopes;
+                        for r in &refs_to_fetch {
+                            mgr.expanded_vars.insert(*r);
+                        }
+                        for r in &refs_to_fetch {
+                            let _ = mgr.client.variables(*r);
+                        }
+                    }
+                }
+                crate::dap::DapEvent::Variables {
+                    variables_ref,
+                    variables,
+                } => {
+                    if let Some(mgr) = self.dap.as_mut() {
+                        mgr.variables.insert(variables_ref, variables);
+                    }
+                }
+                crate::dap::DapEvent::Evaluate {
+                    expression,
+                    value,
+                    ty,
+                    err,
+                    variables_ref,
+                } => {
+                    // Watches and REPL evals share the same channel.
+                    // The watch row always reflects the latest value
+                    // (handy in REPL too — re-typing an expression
+                    // is rare); REPL pane attaches the result to its
+                    // pending history entry.
+                    self.dap_watch_results.insert(
+                        expression.clone(),
+                        WatchResult {
+                            value: value.clone(),
+                            ty: ty.clone(),
+                            err: err.clone(),
+                        },
+                    );
+                    // Find the *most recent* pending REPL entry whose
+                    // expression matches and fill it in. Matching by
+                    // expression handles the typical "type expr, hit
+                    // Enter" flow; if the user types two evals fast
+                    // we still fill in arrival order.
+                    for p in self.panes.iter_mut() {
+                        if let Pane::DapRepl(repl) = p
+                            && let Some(idx) = repl
+                                .history
+                                .iter()
+                                .rposition(|e| e.pending && e.expression == expression)
+                        {
+                            let entry = &mut repl.history[idx];
+                            entry.value = value.clone();
+                            entry.ty = ty.clone();
+                            entry.err = err.clone();
+                            entry.pending = false;
+                            entry.variables_ref = variables_ref;
                         }
                     }
                 }
@@ -7729,6 +8624,7 @@ impl App {
             | Some(Pane::AzDevOpsPullRequests(_))
             | Some(Pane::Cheatsheet(_))
             | Some(Pane::Debug(_))
+            | Some(Pane::DapRepl(_))
             | None => None,
             #[cfg(feature = "private")]
             Some(Pane::TestExecutions(_)) => None,
@@ -9287,6 +10183,60 @@ impl App {
             Some(b) => b.print_pdf(),
             None => self.toast("no browser pane open"),
         }
+    }
+
+    /// `browser.snapshot` — freeze the active browser pane's state
+    /// (URL + network + cookies + storage) into [`BrowserPane::snapshots`].
+    /// Always refreshes cookies + storage first so the snapshot
+    /// captures the latest server state, not just what was cached the
+    /// last time the panels were opened.
+    pub fn browser_snapshot(&mut self) {
+        let Some(b) = self.active_browser_mut() else {
+            self.toast("no browser pane open");
+            return;
+        };
+        // Trigger cookie + storage refresh — these are fire-and-forget
+        // (their replies arrive async via the CDP channel). The
+        // capture below uses whatever's already cached; the diff a
+        // few seconds later will reflect any updates that landed.
+        b.fetch_cookies();
+        b.fetch_storage();
+        let n = b.capture_snapshot();
+        let label = b
+            .snapshots
+            .last()
+            .map(|s| s.label.clone())
+            .unwrap_or_default();
+        self.toast(format!("snapshot #{n} captured at {label}"));
+    }
+
+    /// `browser.diff_snapshot` — open the diff panel comparing the
+    /// most-recent snapshot against the current live state. Toggle
+    /// off when already open. Toasts when there's no snapshot yet.
+    pub fn browser_diff_snapshot(&mut self) {
+        let Some(b) = self.active_browser_mut() else {
+            self.toast("no browser pane open");
+            return;
+        };
+        if b.snapshots.is_empty() {
+            self.toast("no snapshot to diff against — capture one with browser.snapshot");
+            return;
+        }
+        b.snapshot_diff_open = !b.snapshot_diff_open;
+        b.snapshot_diff_scroll = 0;
+    }
+
+    /// `browser.clear_snapshots` — drop every captured snapshot for
+    /// the active pane and close the diff panel.
+    pub fn browser_clear_snapshots(&mut self) {
+        let Some(b) = self.active_browser_mut() else {
+            self.toast("no browser pane open");
+            return;
+        };
+        let n = b.snapshots.len();
+        b.snapshots.clear();
+        b.snapshot_diff_open = false;
+        self.toast(format!("cleared {n} snapshot(s)"));
     }
 
     /// `Z` in a browser pane's DOM panel (`browser.scroll_node_into_view`)
@@ -11412,6 +12362,42 @@ impl App {
                 let msg = p.input.trim();
                 let msg_opt = if msg.is_empty() { None } else { Some(msg) };
                 self.run_git_stash_push(msg_opt);
+            }
+            crate::prompt::PromptKind::DapAddWatch => {
+                let expr = p.input.trim().to_string();
+                if expr.is_empty() {
+                    return;
+                }
+                if !self.dap_watches.iter().any(|w| w == &expr) {
+                    self.dap_watches.push(expr.clone());
+                }
+                // Fire an immediate `evaluate` if we're stopped at a
+                // breakpoint so the row populates without waiting for
+                // the next stop. No-op when no session is active.
+                let frame_id = self
+                    .dap
+                    .as_ref()
+                    .and_then(|m| m.stack_frames.first().map(|f| f.id));
+                if let (Some(mgr), Some(fid)) = (self.dap.as_mut(), frame_id) {
+                    let _ = mgr.client.evaluate(&expr, Some(fid), "watch");
+                }
+                self.toast(format!("watch: + {expr}"));
+            }
+            crate::prompt::PromptKind::DapBreakpointCondition => {
+                let cond = p.input.trim().to_string();
+                let pending = self.dap_pending_bp_condition.take();
+                let Some((line0, path)) = pending else {
+                    return;
+                };
+                self.set_breakpoint_condition(&path, line0, cond);
+            }
+            crate::prompt::PromptKind::DapBreakpointHitCount => {
+                let hit = p.input.trim().to_string();
+                let pending = self.dap_pending_bp_condition.take();
+                let Some((line0, path)) = pending else {
+                    return;
+                };
+                self.set_breakpoint_hit_condition(&path, line0, hit);
             }
             crate::prompt::PromptKind::AiAsk => {
                 let q = p.input.trim();
@@ -14014,6 +15000,17 @@ impl App {
             .unwrap_or(self.workspace.as_path())
     }
 
+    /// Which workspace section the rail considers "focused" — i.e. where a
+    /// section-scoped command (like `view.toggle_hidden`) should land.
+    /// Picks the extra workspace whose root contains the active repo;
+    /// `None` ⇒ the primary tree.
+    pub fn focused_tree_workspace_idx(&self) -> Option<usize> {
+        let active = self.active_repo_path().to_path_buf();
+        self.extra_workspaces
+            .iter()
+            .position(|w| active.starts_with(&w.root))
+    }
+
     #[doc(hidden)]
     pub fn after_git_change_pub_for_test(&mut self) {
         self.after_git_change();
@@ -14702,7 +15699,8 @@ impl App {
             | Pane::AzDevOpsBuilds(_)
             | Pane::AzDevOpsPullRequests(_)
             | Pane::Cheatsheet(_)
-            | Pane::Debug(_) => (None, None),
+            | Pane::Debug(_)
+            | Pane::DapRepl(_) => (None, None),
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (None, None),
             #[cfg(feature = "private")]
@@ -14820,6 +15818,7 @@ impl App {
             Pane::LogTail(p) => Some((p.tab_title(), false)),
             Pane::Cheatsheet(_) => Some(("Cheatsheet".to_string(), false)),
             Pane::Debug(_) => Some(("Debug".to_string(), false)),
+            Pane::DapRepl(_) => Some(("DAP REPL".to_string(), false)),
         }
     }
 
@@ -15946,25 +16945,197 @@ impl App {
     }
 
     /// Enter on a debug-pane stack-frame row — jump the active editor to
-    /// that frame's source line.
+    /// that frame's source line. When the Variables sub-section is
+    /// focused, Enter expands / collapses the highlighted variable
+    /// instead.
     pub fn debug_pane_accept(&mut self) {
         let Some(id) = self.active else { return };
         let Some(Pane::Debug(p)) = self.panes.get(id) else {
             return;
         };
-        let selected = p.selected;
-        let frame = self
-            .dap
-            .as_ref()
-            .and_then(|m| m.stack_frames.get(selected).cloned());
-        let Some(f) = frame else { return };
-        if let Some(src) = f.source {
-            let line0 = f.line.saturating_sub(1) as usize;
-            self.open_path(&src);
-            if let Some(b) = self.active_editor_mut() {
-                b.editor.place_cursor(line0, 0);
+        match p.section {
+            crate::pane::DebugSection::Stack => {
+                let selected = p.selected;
+                let frame_id = self
+                    .dap
+                    .as_ref()
+                    .and_then(|m| m.stack_frames.get(selected).cloned());
+                let Some(f) = frame_id else { return };
+                // Stack-frame switch: re-fetch scopes for the picked
+                // frame so the variables panel shows that frame's
+                // locals (was showing the top frame's).
+                if let Some(mgr) = self.dap.as_mut() {
+                    mgr.scopes.clear();
+                    let _ = mgr.client.scopes(f.id);
+                }
+                if let Some(src) = f.source {
+                    let line0 = f.line.saturating_sub(1) as usize;
+                    self.open_path(&src);
+                    if let Some(b) = self.active_editor_mut() {
+                        b.editor.place_cursor(line0, 0);
+                    }
+                }
+            }
+            crate::pane::DebugSection::Variables => {
+                self.debug_pane_toggle_var();
             }
         }
+    }
+
+    /// `y` in the debug pane's variables section — copy the selected
+    /// row's value to the clipboard. For composite rows (no inlined
+    /// value), copy the label instead so the user gets *something*.
+    /// Scope-header rows copy their name (useful for "Locals" /
+    /// "Globals" tagging in notes).
+    pub fn debug_pane_yank_var(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::Debug(p)) = self.panes.get(id) else {
+            return;
+        };
+        let sel = p.vars_selected;
+        let rows = self
+            .dap
+            .as_ref()
+            .map(|m| m.variable_rows())
+            .unwrap_or_default();
+        let Some(row) = rows.get(sel).cloned() else {
+            return;
+        };
+        let payload = if !row.value.is_empty() {
+            row.value.clone()
+        } else {
+            row.label.clone()
+        };
+        self.clipboard.set(&payload, false);
+        let short: String = payload.chars().take(40).collect();
+        let ellipsis = if payload.chars().count() > 40 {
+            "…"
+        } else {
+            ""
+        };
+        self.toast(format!("yanked: {short}{ellipsis}"));
+    }
+
+    /// `w` in the debug pane's variables section — promote the
+    /// selected variable's name into a watch expression. The watch
+    /// list is App-wide (independent of which frame the var came from
+    /// — adapters can re-evaluate any name in the current frame's
+    /// scope). For row labels like `foo: i32` we strip the type
+    /// suffix so the watch expression is just `foo`.
+    pub fn debug_pane_watch_var(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::Debug(p)) = self.panes.get(id) else {
+            return;
+        };
+        let sel = p.vars_selected;
+        let rows = self
+            .dap
+            .as_ref()
+            .map(|m| m.variable_rows())
+            .unwrap_or_default();
+        let Some(row) = rows.get(sel).cloned() else {
+            return;
+        };
+        if row.is_scope {
+            self.toast("can't watch a scope row");
+            return;
+        }
+        // Strip ` : type` suffix if present — keep just the name.
+        let name = row
+            .label
+            .split(" : ")
+            .next()
+            .unwrap_or(&row.label)
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            return;
+        }
+        if self.dap_watches.iter().any(|w| w == &name) {
+            self.toast(format!("watch: already tracking {name}"));
+            return;
+        }
+        self.dap_watches.push(name.clone());
+        // Fire immediate eval against the current top frame so the
+        // watch row populates without waiting for the next stop.
+        let frame_id = self
+            .dap
+            .as_ref()
+            .and_then(|m| m.stack_frames.first().map(|f| f.id));
+        if let (Some(mgr), Some(fid)) = (self.dap.as_mut(), frame_id) {
+            let _ = mgr.client.evaluate(&name, Some(fid), "watch");
+        }
+        self.toast(format!("watch: + {name}"));
+    }
+
+    /// Toggle expansion of the highlighted variable row. If it's
+    /// expandable and we haven't fetched its children yet, fire the
+    /// `variables` request; the reply lands in `mgr.variables[ref]`.
+    pub fn debug_pane_toggle_var(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::Debug(p)) = self.panes.get(id) else {
+            return;
+        };
+        let sel = p.vars_selected;
+        let rows = self
+            .dap
+            .as_ref()
+            .map(|m| m.variable_rows())
+            .unwrap_or_default();
+        let Some(row) = rows.get(sel).cloned() else {
+            return;
+        };
+        if !row.expandable || row.var_ref == 0 {
+            return;
+        }
+        let r = row.var_ref;
+        let Some(mgr) = self.dap.as_mut() else { return };
+        if mgr.expanded_vars.contains(&r) {
+            mgr.expanded_vars.remove(&r);
+        } else {
+            mgr.expanded_vars.insert(r);
+            // Fetch children on first expand only — already-cached
+            // refs (re-collapsed, re-opened) don't re-fire.
+            if !mgr.variables.contains_key(&r) {
+                let _ = mgr.client.variables(r);
+            }
+        }
+    }
+
+    /// Move the variables-panel selection by `delta`.
+    pub fn debug_pane_vars_move(&mut self, delta: isize) {
+        let n = self
+            .dap
+            .as_ref()
+            .map(|m| m.variable_rows().len())
+            .unwrap_or(0);
+        if n == 0 {
+            return;
+        }
+        let Some(id) = self.active else { return };
+        let Some(Pane::Debug(p)) = self.panes.get_mut(id) else {
+            return;
+        };
+        let new = (p.vars_selected as isize + delta).clamp(0, n as isize - 1) as usize;
+        p.vars_selected = new;
+        if new < p.vars_scroll {
+            p.vars_scroll = new;
+        } else if new >= p.vars_scroll + 20 {
+            p.vars_scroll = new - 19;
+        }
+    }
+
+    /// Tab in the debug pane — cycle keyboard focus between the call-
+    /// stack list and the variables panel.
+    pub fn debug_pane_toggle_section(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::Debug(p)) = self.panes.get_mut(id) else {
+            return;
+        };
+        p.section = match p.section {
+            crate::pane::DebugSection::Stack => crate::pane::DebugSection::Variables,
+            crate::pane::DebugSection::Variables => crate::pane::DebugSection::Stack,
+        };
     }
 
     /// chords show up immediately). If one's already open, focuses it.
@@ -20409,6 +21580,8 @@ impl App {
                     cursor_byte: b.editor.cursor(),
                     scroll: b.scroll,
                     breakpoints: b.breakpoints.clone(),
+                    breakpoint_conditions: b.breakpoint_conditions.clone(),
+                    breakpoint_hit_conditions: b.breakpoint_hit_conditions.clone(),
                 });
                 merged_cursors.insert(path.clone(), (b.editor.cursor(), b.scroll));
             }
@@ -20556,6 +21729,7 @@ impl App {
                 })
                 .collect(),
             ex_history: self.ex_history.clone(),
+            dap_watches: self.dap_watches.clone(),
             bb_pipelines_view_mode: Some(self.bb_pipelines_view_mode),
             bb_pipelines_collapsed: self.bb_pipelines_collapsed.iter().cloned().collect(),
             bb_prs_view_mode: Some(self.bb_prs_view_mode),
@@ -20633,6 +21807,25 @@ impl App {
                         .iter()
                         .filter(|&&l| l <= last_line)
                         .copied()
+                        .collect();
+                    // Restore conditional-breakpoint conditions, but
+                    // only for lines that survived the breakpoints
+                    // filter above — orphaned conditions (e.g. line was
+                    // never a breakpoint, or got trimmed for shrinkage)
+                    // would never be applied.
+                    let live: std::collections::HashSet<u32> =
+                        buf.breakpoints.iter().copied().collect();
+                    buf.breakpoint_conditions = b
+                        .breakpoint_conditions
+                        .iter()
+                        .filter(|(l, _)| live.contains(l))
+                        .map(|(l, c)| (*l, c.clone()))
+                        .collect();
+                    buf.breakpoint_hit_conditions = b
+                        .breakpoint_hit_conditions
+                        .iter()
+                        .filter(|(l, _)| live.contains(l))
+                        .map(|(l, c)| (*l, c.clone()))
                         .collect();
                 }
             }
@@ -20840,6 +22033,11 @@ impl App {
                     b.input.set_ex_history(self.ex_history.clone());
                 }
             }
+        }
+        // DAP watch expressions — restore the list (cached results
+        // re-eval on the next stop and aren't persisted).
+        if !saved.dap_watches.is_empty() {
+            self.dap_watches = saved.dap_watches;
         }
         // SCM/CI pane view-mode + collapse state.
         if let Some(m) = saved.bb_pipelines_view_mode {

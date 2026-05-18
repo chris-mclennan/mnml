@@ -78,6 +78,20 @@ pub enum PromptKind {
     /// Accept ⇒ `git stash push -u -m <input>` (or no `-m` if empty) — the
     /// optional message form of `git.stash`. Esc ⇒ cancel without stashing.
     GitStashMessage,
+    /// Accept ⇒ add the typed expression to `App.dap_watches`. If a
+    /// session is stopped at a breakpoint, immediately fires `evaluate`
+    /// against the top frame so the watch row's value populates.
+    DapAddWatch,
+    /// Accept ⇒ toggle a conditional breakpoint at the cursor line in
+    /// the active editor. Empty input ⇒ plain breakpoint (no condition);
+    /// non-empty ⇒ the adapter only stops when the expression is truthy.
+    DapBreakpointCondition,
+    /// Accept ⇒ set a hit-count condition on the breakpoint at the
+    /// cursor's line. Empty input ⇒ clear the hit count. Non-empty ⇒
+    /// the adapter interprets it (e.g. `">= 5"` stops after 5+ hits,
+    /// `"% 10"` every 10th hit). Independent of `DapBreakpointCondition`
+    /// — a line can have both.
+    DapBreakpointHitCount,
 }
 
 #[derive(Debug)]

@@ -1,0 +1,10 @@
+# DAP exception filters — `dap.exceptions` opens a picker over the
+# adapter's advertised filters. Without a live adapter the cached
+# filter list is empty, so the command should toast a clear message
+# instead of opening an empty picker.
+
+write code.py "print('hi')\n"
+open code.py
+
+command dap.exceptions
+expect screen contains "adapter advertised no exception filters"

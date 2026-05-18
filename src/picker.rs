@@ -105,6 +105,23 @@ pub enum PickerKind {
     /// `id` = a tab index (as a string). Accept ⇒ switch to that tab
     /// page. Populated by `tab.picker`.
     Tabs,
+    /// `id` = the watch expression string. Accept ⇒ remove that
+    /// expression from `App::dap_watches` + drop its cached result.
+    /// Populated by `dap.remove_watch`.
+    DapWatchRemove,
+    /// `id` = a PID (as a string). Accept ⇒ spawn the active
+    /// language's DAP adapter and send `attach` with that pid.
+    /// Populated by `dap.attach`.
+    DapAttach,
+    /// `id` = a thread id (as a string). Accept ⇒ switch the debug
+    /// pane's tracked thread + re-fetch its stack trace. Populated by
+    /// `dap.pick_thread`.
+    DapThread,
+    /// `id` = an exception-filter id (e.g. `"raised"` / `"uncaught"`).
+    /// Accept ⇒ toggle that filter on/off in
+    /// `DapManager.enabled_exception_filters` and re-fire
+    /// `setExceptionBreakpoints`. Populated by `dap.exceptions`.
+    DapException,
 }
 
 #[derive(Debug, Clone)]

@@ -25,3 +25,12 @@ expect screen contains "no browser pane open"
 
 command browser.perf
 expect screen contains "no browser pane open"
+
+command browser.snapshot
+expect screen contains "no browser pane open"
+
+command browser.diff_snapshot
+expect screen contains "no browser pane open"
+
+command browser.clear_snapshots
+expect screen contains "no browser pane open"

@@ -34,6 +34,7 @@ pub mod cmdline_history_view;
 pub mod codebuilds_view;
 pub mod completion;
 pub mod context_menu;
+pub mod dap_repl_view;
 pub mod debug_view;
 pub mod diagnostics_view;
 pub mod diff_view;
@@ -216,7 +217,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             && edge.height >= 3
         {
             let t = theme::cur();
-            let glyph = if app.config.ui.ascii_icons { "|" } else { "┃" };
+            let glyph = if app.config.ui.ascii_icons {
+                "|"
+            } else {
+                "┃"
+            };
             let grip_h: u16 = 2;
             let grip_y = edge.y + edge.height.saturating_sub(grip_h) / 2;
             let grip_rect = Rect {
@@ -415,6 +420,7 @@ fn render_layout(
                 Some(crate::pane::Pane::LogTail(_)) => 28,
                 Some(crate::pane::Pane::Cheatsheet(_)) => 29,
                 Some(crate::pane::Pane::Debug(_)) => 30,
+                Some(crate::pane::Pane::DapRepl(_)) => 31,
                 _ => 0,
             };
             match kind {
@@ -468,6 +474,10 @@ fn render_layout(
                 }
                 30 => {
                     debug_view::draw(frame, app, *id, area);
+                    None
+                }
+                31 => {
+                    dap_repl_view::draw(frame, app, *id, area, focused);
                     None
                 }
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),

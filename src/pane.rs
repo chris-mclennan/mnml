@@ -117,6 +117,67 @@ pub enum Pane {
     /// editor to that frame's source line. Reads from
     /// `App.dap.stack_frames` + `App.dap_output_log`.
     Debug(DebugPane),
+    /// DAP REPL — type an expression, see the adapter's `evaluate`
+    /// result. Shares the watch-evaluation infrastructure but uses
+    /// `context: "repl"` so adapters with REPL-specific shorthands
+    /// (debugpy's `pp`, gdb's `info`) work as expected.
+    DapRepl(DapReplPane),
+}
+
+/// State for [`Pane::DapRepl`]. `input` is the single-line entry;
+/// `history` holds `(expression, value_or_error)` pairs in arrival
+/// order (newest at the bottom). Scroll is row-based; usize::MAX ⇒
+/// pinned to tail. Up/Down walk command history (Vec re-uses the
+/// same expression strings).
+#[derive(Debug, Clone, Default)]
+pub struct DapReplPane {
+    pub input: String,
+    pub cursor: usize,
+    pub history: Vec<DapReplEntry>,
+    /// Command history for the Up/Down chord — distinct from
+    /// `history` since failed evals shouldn't replay.
+    pub command_history: Vec<String>,
+    pub command_history_idx: Option<usize>,
+    /// Top rendered row (in `history`). `usize::MAX` ⇒ follow tail.
+    pub scroll: usize,
+    /// Which history entry the `o` (expand) chord acts on. `None` ⇒
+    /// no selection (the user hasn't moved focus off the input).
+    /// Set when the user moves the selection with PgUp / Shift+Up.
+    pub selected: Option<usize>,
+}
+
+/// One row in the REPL history. `err` is set when the adapter
+/// rejected the expression; otherwise `value` carries the formatted
+/// result (and `ty` is the type when known).
+#[derive(Debug, Clone)]
+pub struct DapReplEntry {
+    pub expression: String,
+    pub value: String,
+    pub ty: Option<String>,
+    pub err: Option<String>,
+    /// True while waiting for the adapter to reply. Renders as a dim
+    /// "evaluating..." placeholder; flipped off when the matching
+    /// `DapEvent::Evaluate` lands.
+    pub pending: bool,
+    /// Non-zero ⇒ the result is a composite (struct / object / array)
+    /// and can be lazy-expanded via `variables(variables_ref)`. The
+    /// reply lands on `DapManager.variables` keyed by ref. The user
+    /// triggers the expansion via `o` (open) on the REPL row.
+    pub variables_ref: i64,
+    /// True ⇒ the user expanded this row + the variables landed.
+    /// Children render indented below the value row. Toggled by `o`.
+    pub expanded: bool,
+}
+
+/// Which sub-section of the debug pane has the keyboard. j/k/PgUp/etc.
+/// move within the focused section; Tab cycles. Variables-section
+/// keys also drive Enter (expand/collapse) so the dispatcher needs to
+/// know which list it's targeting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DebugSection {
+    #[default]
+    Stack,
+    Variables,
 }
 
 /// State for the live-DAP `Pane::Debug` — pure UI cursor; underlying
@@ -129,6 +190,12 @@ pub struct DebugPane {
     pub scroll: usize,
     /// Scroll offset for the output log section.
     pub output_scroll: usize,
+    /// Selected row in the variables panel (into `mgr.variable_rows()`).
+    pub vars_selected: usize,
+    /// Scroll offset for the variables panel.
+    pub vars_scroll: usize,
+    /// Which sub-section (call stack vs variables) takes keyboard.
+    pub section: DebugSection,
 }
 
 /// Vim's command-line window — `q:` opens a read-only list of recent ex
@@ -292,6 +359,7 @@ impl Pane {
             Pane::LogTail(p) => p.tab_title(),
             Pane::Cheatsheet(_) => "Cheatsheet".to_string(),
             Pane::Debug(_) => "Debug".to_string(),
+            Pane::DapRepl(_) => "DAP REPL".to_string(),
         }
     }
 
@@ -325,7 +393,8 @@ impl Pane {
             | Pane::AzDevOpsBuilds(_)
             | Pane::AzDevOpsPullRequests(_)
             | Pane::Cheatsheet(_)
-            | Pane::Debug(_) => false,
+            | Pane::Debug(_)
+            | Pane::DapRepl(_) => false,
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => false,
             #[cfg(feature = "private")]

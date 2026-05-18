@@ -17,7 +17,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::App;
 use crate::layout::PaneId;
-use crate::pane::{DebugPane, Pane};
+use crate::pane::{DebugPane, DebugSection, Pane};
 use crate::ui::theme;
 
 pub fn draw(frame: &mut Frame, app: &App, pane_id: PaneId, area: Rect) {
@@ -25,16 +25,20 @@ pub fn draw(frame: &mut Frame, app: &App, pane_id: PaneId, area: Rect) {
         return;
     };
     let t = theme::cur();
-    // Split: 1 row header, 60% call stack, 40% output log.
+    // Split: 1-row header, then four equal-ish sections:
+    //   call stack (35%) · variables (35%) · output log (rest)
+    // Variables panel is read-from-mgr; output rounds out the bottom.
     let chunks = Layout::vertical([
         Constraint::Length(1),
-        Constraint::Percentage(60),
+        Constraint::Percentage(35),
+        Constraint::Percentage(35),
         Constraint::Min(1),
     ])
     .split(area);
     draw_header(frame, app, chunks[0]);
     draw_stack(frame, app, p, chunks[1]);
-    draw_output(frame, app, p, chunks[2]);
+    draw_variables(frame, app, p, chunks[2]);
+    draw_output(frame, app, p, chunks[3]);
     let _ = t;
 }
 
@@ -78,10 +82,12 @@ fn draw_stack(frame: &mut Frame, app: &App, p: &DebugPane, area: Rect) {
         .unwrap_or(&[]);
     let body_h = area.height.saturating_sub(1) as usize;
     let mut lines: Vec<Line> = Vec::with_capacity(body_h + 1);
+    let focused = p.section == DebugSection::Stack;
+    let title_fg = if focused { t.yellow } else { t.fg };
     lines.push(Line::from(Span::styled(
         " Call stack",
         Style::default()
-            .fg(t.fg)
+            .fg(title_fg)
             .bg(t.bg_dark)
             .add_modifier(Modifier::BOLD),
     )));
@@ -93,8 +99,10 @@ fn draw_stack(frame: &mut Frame, app: &App, p: &DebugPane, area: Rect) {
     } else {
         for (i, f) in frames.iter().enumerate().skip(p.scroll).take(body_h) {
             let sel = i == p.selected;
-            let (bg, fg, marker) = if sel {
+            let (bg, fg, marker) = if sel && focused {
                 (t.cyan, t.bg_darker, "▶ ")
+            } else if sel {
+                (t.bg2, t.fg, "▶ ")
             } else {
                 (t.bg_dark, t.fg, "  ")
             };
@@ -108,6 +116,141 @@ fn draw_stack(frame: &mut Frame, app: &App, p: &DebugPane, area: Rect) {
             lines.push(Line::from(Span::styled(
                 line,
                 Style::default().fg(fg).bg(bg),
+            )));
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),
+        area,
+    );
+}
+
+fn draw_variables(frame: &mut Frame, app: &App, p: &DebugPane, area: Rect) {
+    let t = theme::cur();
+    let rows = app
+        .dap
+        .as_ref()
+        .map(|m| m.variable_rows())
+        .unwrap_or_default();
+    let mut lines: Vec<Line> = Vec::new();
+    let focused = p.section == DebugSection::Variables;
+    let title_fg = if focused { t.yellow } else { t.fg };
+    let watch_count = app.dap_watches.len();
+    let title = if watch_count > 0 {
+        format!(
+            " Variables  ({watch_count} watch{})  (Tab · Enter expands · y yank · w +watch)",
+            if watch_count == 1 { "" } else { "es" }
+        )
+    } else {
+        " Variables  (Tab to focus · Enter expands · y yank · w +watch)".to_string()
+    };
+    lines.push(Line::from(Span::styled(
+        title,
+        Style::default()
+            .fg(title_fg)
+            .bg(t.bg_dark)
+            .add_modifier(Modifier::BOLD),
+    )));
+    // Watches — render first so they always sit at the top of the panel.
+    // Selection rendering targets scope/var rows only; the watches list
+    // is read-only here.
+    let max_w = area.width.saturating_sub(1) as usize;
+    for expr in &app.dap_watches {
+        let prefix = "👁 ";
+        let value = match app.dap_watch_results.get(expr) {
+            Some(r) if r.err.is_some() => {
+                format!("err: {}", r.err.as_deref().unwrap_or(""))
+            }
+            Some(r) if !r.value.is_empty() => {
+                if let Some(ty) = &r.ty {
+                    format!("{} : {}", r.value, ty)
+                } else {
+                    r.value.clone()
+                }
+            }
+            _ => "(no value)".to_string(),
+        };
+        let mut text = format!("{prefix}{expr} = {value}");
+        if text.chars().count() > max_w {
+            text = text
+                .chars()
+                .take(max_w.saturating_sub(1))
+                .collect::<String>()
+                + "…";
+        }
+        let err = app.dap_watch_results.get(expr).and_then(|r| r.err.clone());
+        let fg = if err.is_some() { t.red } else { t.cyan };
+        lines.push(Line::from(Span::styled(
+            text,
+            Style::default().fg(fg).bg(t.bg_dark),
+        )));
+    }
+    if !app.dap_watches.is_empty() {
+        // Separator row between watches and scope/var tree.
+        lines.push(Line::from(Span::styled(
+            " ──────────────",
+            Style::default().fg(t.comment).bg(t.bg_dark),
+        )));
+    }
+    // Recompute remaining height after rendering watches + separator
+    // so the scope/var tree doesn't push past the pane.
+    let remaining = area
+        .height
+        .saturating_sub(1)
+        .saturating_sub(lines.len().saturating_sub(1) as u16);
+    let scope_body_h = remaining as usize;
+    if rows.is_empty() {
+        let hint = if app.dap.is_some() {
+            "  (waiting for stopped state…)"
+        } else {
+            "  (no session — start one with dap.run)"
+        };
+        lines.push(Line::from(Span::styled(
+            hint,
+            Style::default().fg(t.comment).bg(t.bg_dark),
+        )));
+    } else {
+        for (i, row) in rows
+            .iter()
+            .enumerate()
+            .skip(p.vars_scroll)
+            .take(scope_body_h)
+        {
+            let sel = i == p.vars_selected;
+            let (bg, fg) = if sel && focused {
+                (t.cyan, t.bg_darker)
+            } else if sel {
+                (t.bg2, t.fg)
+            } else {
+                (t.bg_dark, t.fg)
+            };
+            let indent = "  ".repeat(row.depth);
+            let chevron = if row.expandable {
+                if row.expanded { "▾ " } else { "▸ " }
+            } else {
+                "  "
+            };
+            // Compose: indent + chevron + label = value
+            // Scope rows render `▾ Locals`, leaf rows `   foo: i32 = 42`,
+            // composite rows `▸ bar: Vec`.
+            let mut text = format!("{indent}{chevron}{}", row.label);
+            if !row.value.is_empty() {
+                text.push_str(" = ");
+                text.push_str(&row.value);
+            }
+            // Truncate to area width.
+            let max = area.width.saturating_sub(1) as usize;
+            if text.chars().count() > max {
+                text = text.chars().take(max.saturating_sub(1)).collect::<String>() + "…";
+            }
+            let modifier = if row.is_scope {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            };
+            lines.push(Line::from(Span::styled(
+                text,
+                Style::default().fg(fg).bg(bg).add_modifier(modifier),
             )));
         }
     }

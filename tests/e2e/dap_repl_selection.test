@@ -1,0 +1,28 @@
+# DAP REPL row selection — Shift+Up moves the row selector off the
+# input onto the history; printable chars on a selected row stop
+# inserting into the input (Esc returns focus). Verifies the dual-
+# mode (input ⇄ history) behavior without a live adapter.
+
+write code.rs "fn main() {}\n"
+open code.rs
+
+command dap.repl
+
+# Submit one expression so there's a history entry to select.
+type "x"
+key enter
+
+# Without selection, typing inserts into the input.
+type "y"
+expect screen contains "(repl) > y"
+
+# Shift+Up moves the selector onto the history row + clears the
+# input focus for chord-style keys. Subsequent `y` shouldn't change
+# the input (the row chord swallows it — but `o` is the only chord
+# tied to this; other letters still pass through).
+key shift+up
+# Esc clears the selection — back to input focus.
+key escape
+# Now typing inserts again.
+type "z"
+expect screen contains "(repl) > yz"

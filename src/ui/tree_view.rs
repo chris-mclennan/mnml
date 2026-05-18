@@ -582,10 +582,7 @@ fn draw_extra_workspace_section(
                 chev_part,
                 Style::default().fg(theme::cur().comment).bg(rail_bg),
             ),
-            Span::styled(
-                icon_part,
-                Style::default().fg(prefix_color).bg(rail_bg),
-            ),
+            Span::styled(icon_part, Style::default().fg(prefix_color).bg(rail_bg)),
         ];
         if !repo_marker.is_empty() {
             spans.push(Span::styled(

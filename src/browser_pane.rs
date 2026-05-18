@@ -98,6 +98,45 @@ impl NetEntry {
         out
     }
 
+    /// Render the request as a list of detail lines suitable for the
+    /// network panel's lower split — request line, headers, optional
+    /// body, then the response side. Caller decides on truncation and
+    /// scroll; the lines themselves stay raw.
+    pub fn detail_lines(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        out.push(format!("> {} {}", self.method, self.url));
+        if self.headers.is_empty() {
+            out.push("> (no request headers)".to_string());
+        } else {
+            out.push("> request headers:".to_string());
+            for (k, v) in &self.headers {
+                out.push(format!(">   {k}: {v}"));
+            }
+        }
+        if let Some(body) = &self.post_data {
+            out.push("> request body:".to_string());
+            for line in body.lines() {
+                out.push(format!(">   {line}"));
+            }
+        }
+        out.push(String::new());
+        match (&self.status, &self.failed, &self.mime) {
+            (_, Some(reason), _) => {
+                out.push(format!("< ✗ failed: {reason}"));
+            }
+            (Some(s), _, Some(m)) => {
+                out.push(format!("< {s}  {m}"));
+            }
+            (Some(s), _, None) => {
+                out.push(format!("< {s}"));
+            }
+            (None, None, _) => {
+                out.push("< (pending — no response yet)".to_string());
+            }
+        }
+        out
+    }
+
     /// As an [`crate::http::Request`] — for opening in a `Pane::Request`.
     pub fn to_request(&self) -> crate::http::Request {
         crate::http::Request {
@@ -579,6 +618,89 @@ pub const DEVICE_PRESETS: &[DevicePreset] = &[
     },
 ];
 
+/// One rendered row in the snapshot-diff panel.
+#[derive(Debug, Clone)]
+pub struct SnapshotDiffLine {
+    pub kind: DiffLineKind,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffLineKind {
+    /// Section header (URL / Network / Cookies / Storage) — bold.
+    Section,
+    /// Entry present in snapshot, absent in current — red `-`.
+    Removed,
+    /// Entry present in current, absent in snapshot — green `+`.
+    Added,
+    /// Entry present in both but with a different value (status,
+    /// cookie value, storage value) — yellow `~`.
+    Changed,
+}
+
+/// Pre-format the current wall clock as `HH:MM:SS` in the local
+/// timezone. Used as the snapshot's display label so two captures
+/// taken seconds apart are still distinguishable. Reuses the
+/// statusline's local-tz offset cache implicitly via the same
+/// approach — but inlined here so this module doesn't depend on
+/// `ui::statusline`. Falls back to `00:00:00` if anything goes
+/// wrong (the label is cosmetic).
+fn local_hms_label() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    // Use $TZ_OFFSET_HOURS if present (mirrors statusline.rs cache);
+    // fall back to UTC otherwise — the label is cosmetic so we don't
+    // shell out to `date` here.
+    let off_secs = std::env::var("TZ_OFFSET_HOURS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .map(|h| h * 3600)
+        .unwrap_or(0);
+    let local = now.saturating_add(off_secs);
+    let day_secs = local.rem_euclid(86_400);
+    let hh = day_secs / 3600;
+    let mm = (day_secs / 60) % 60;
+    let ss = day_secs % 60;
+    format!("{hh:02}:{mm:02}:{ss:02}")
+}
+
+/// Cap on `BrowserPane.snapshots` — keep memory bounded across an
+/// indefinite browser session. Oldest entries get dropped FIFO.
+pub const SNAPSHOT_MAX: usize = 5;
+
+/// One frozen state-capture of a [`BrowserPane`]. Each `browser.snapshot`
+/// records the current URL, network requests (URL + method + status —
+/// not body bytes; that'd blow up memory), cookies, and storage. The
+/// diff command compares the most-recent snapshot against the current
+/// live state.
+///
+/// Snapshots are intentionally lossy: only fields that are practical to
+/// compare set-wise (added / removed / changed) make it in. Network
+/// post bodies, response payloads, performance metrics, and the DOM
+/// are excluded.
+#[derive(Debug, Clone)]
+pub struct BrowserSnapshot {
+    /// Wall-clock label so the user can tell two captures apart.
+    /// Format: `HH:MM:SS` in local time.
+    pub label: String,
+    pub url: String,
+    /// Network requests at capture time — keyed by `(method, url)` and
+    /// carrying status for diff display.
+    pub net: Vec<SnapshotNetEntry>,
+    pub cookies: Vec<CookieEntry>,
+    pub storage: Vec<StorageEntry>,
+}
+
+/// A compact projection of a [`NetEntry`] for [`BrowserSnapshot`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotNetEntry {
+    pub method: String,
+    pub url: String,
+    pub status: Option<i64>,
+}
+
 pub struct BrowserPane {
     /// The page's current URL (updated on `Page.frameNavigated`).
     pub url: String,
@@ -609,6 +731,24 @@ pub struct BrowserPane {
     /// Backspace pops). Enter exits filter mode (keeps the filter); Esc
     /// clears the filter + exits the filter mode.
     pub net_filter_mode: bool,
+    /// When true, the network panel splits horizontally: the upper half
+    /// stays the row list; the lower half shows full details for the
+    /// selected request (every header pair, post body, status, mime,
+    /// failure reason). Toggled with `i` (info) when `net_focus`.
+    pub net_detail_open: bool,
+    /// Scroll offset for the detail pane (lines hidden above the
+    /// viewport). 0 ⇒ pinned to top.
+    pub net_detail_scroll: usize,
+    /// Frozen captures of the browser's state — URL, network requests,
+    /// cookies, and storage. Each call to `browser.snapshot` pushes one
+    /// onto the back; `browser.diff_snapshot` compares the most-recent
+    /// snapshot against the current live state. Capped at
+    /// [`SNAPSHOT_MAX`] so repeated captures don't pile up memory.
+    pub snapshots: Vec<BrowserSnapshot>,
+    /// True ⇒ the diff panel is showing (overrides the regular log).
+    pub snapshot_diff_open: bool,
+    /// Scroll offset for the diff panel.
+    pub snapshot_diff_scroll: usize,
     /// Flattened DOM rows (lazy — populated on the first `D` press, refreshed on `R`).
     pub dom: Vec<DomRow>,
     /// True ⇒ the `D` DOM panel is showing.
@@ -641,6 +781,10 @@ pub struct BrowserPane {
     /// can be matched (the panel shows a "fetching cookies…" hint until
     /// it lands).
     pub pending_cookies: Option<i64>,
+    /// Live fuzzy filter for the cookies panel (typed via `/` while
+    /// `cookies_focus`). Matched against `name=value · domain · path`.
+    pub cookies_filter: String,
+    pub cookies_filter_mode: bool,
     /// `localStorage` + `sessionStorage` entries for the current page,
     /// fetched lazily on the first `L` press (and refreshed on `R`
     /// inside the panel). Populated via the eval flow described on
@@ -654,6 +798,10 @@ pub struct BrowserPane {
     /// reply can be routed to the storage panel (not the regular eval
     /// log).
     pub pending_storage: Option<i64>,
+    /// Live fuzzy filter for the storage panel (typed via `/` while
+    /// `storage_focus`). Matched against `[L|S] key=value`.
+    pub storage_filter: String,
+    pub storage_filter_mode: bool,
     /// Page performance metrics for the current page, fetched lazily
     /// on the first `P` press and refreshed on `R` inside the panel.
     pub perf: PerfMetrics,
@@ -715,6 +863,11 @@ impl BrowserPane {
             net_sel: 0,
             net_filter: String::new(),
             net_filter_mode: false,
+            net_detail_open: false,
+            net_detail_scroll: 0,
+            snapshots: Vec::new(),
+            snapshot_diff_open: false,
+            snapshot_diff_scroll: 0,
             dom: Vec::new(),
             dom_focus: false,
             dom_sel: 0,
@@ -725,10 +878,14 @@ impl BrowserPane {
             cookies_focus: false,
             cookies_sel: 0,
             pending_cookies: None,
+            cookies_filter: String::new(),
+            cookies_filter_mode: false,
             storage: Vec::new(),
             storage_focus: false,
             storage_sel: 0,
             pending_storage: None,
+            storage_filter: String::new(),
+            storage_filter_mode: false,
             perf: PerfMetrics::default(),
             perf_focus: false,
             pending_perf: None,
@@ -875,17 +1032,280 @@ impl BrowserPane {
     }
 
     /// Clamp + move the (filtered) network-panel selection by `delta`.
+    /// Capture the current state into [`Self::snapshots`]. Caller is
+    /// responsible for refreshing cookies / storage first if it wants
+    /// those columns to reflect the latest server state — the snapshot
+    /// just freezes whatever's already cached.
+    pub fn capture_snapshot(&mut self) -> usize {
+        let label = local_hms_label();
+        let net: Vec<SnapshotNetEntry> = self
+            .net
+            .iter()
+            .map(|e| SnapshotNetEntry {
+                method: e.method.clone(),
+                url: e.url.clone(),
+                status: e.status,
+            })
+            .collect();
+        self.snapshots.push(BrowserSnapshot {
+            label,
+            url: self.url.clone(),
+            net,
+            cookies: self.cookies.clone(),
+            storage: self.storage.clone(),
+        });
+        if self.snapshots.len() > SNAPSHOT_MAX {
+            let drop = self.snapshots.len() - SNAPSHOT_MAX;
+            self.snapshots.drain(..drop);
+        }
+        self.snapshots.len()
+    }
+
+    /// Compute the diff between the most-recent snapshot and the
+    /// current live state. Returns one labelled line per change — the
+    /// renderer paints them with section dividers + add/remove glyphs.
+    /// Returns `None` when there's no snapshot yet (the caller toasts
+    /// "no snapshot to diff against").
+    pub fn diff_against_latest_snapshot(&self) -> Option<Vec<SnapshotDiffLine>> {
+        let snap = self.snapshots.last()?;
+        let mut out: Vec<SnapshotDiffLine> = Vec::new();
+        // URL.
+        if snap.url != self.url {
+            out.push(SnapshotDiffLine {
+                kind: DiffLineKind::Section,
+                text: "URL".into(),
+            });
+            out.push(SnapshotDiffLine {
+                kind: DiffLineKind::Removed,
+                text: snap.url.clone(),
+            });
+            out.push(SnapshotDiffLine {
+                kind: DiffLineKind::Added,
+                text: self.url.clone(),
+            });
+        }
+        // Network — set diff by `(method, url)`. Status-only changes
+        // surface as "changed" lines.
+        let cur_net: Vec<SnapshotNetEntry> = self
+            .net
+            .iter()
+            .map(|e| SnapshotNetEntry {
+                method: e.method.clone(),
+                url: e.url.clone(),
+                status: e.status,
+            })
+            .collect();
+        let mut net_added: Vec<&SnapshotNetEntry> = Vec::new();
+        let mut net_removed: Vec<&SnapshotNetEntry> = Vec::new();
+        let mut net_changed: Vec<(&SnapshotNetEntry, &SnapshotNetEntry)> = Vec::new();
+        for ce in &cur_net {
+            if let Some(se) = snap
+                .net
+                .iter()
+                .find(|s| s.method == ce.method && s.url == ce.url)
+            {
+                if se.status != ce.status {
+                    net_changed.push((se, ce));
+                }
+            } else {
+                net_added.push(ce);
+            }
+        }
+        for se in &snap.net {
+            if !cur_net
+                .iter()
+                .any(|c| c.method == se.method && c.url == se.url)
+            {
+                net_removed.push(se);
+            }
+        }
+        if !(net_added.is_empty() && net_removed.is_empty() && net_changed.is_empty()) {
+            out.push(SnapshotDiffLine {
+                kind: DiffLineKind::Section,
+                text: format!(
+                    "Network  (+{} -{} ~{})",
+                    net_added.len(),
+                    net_removed.len(),
+                    net_changed.len()
+                ),
+            });
+            for e in &net_removed {
+                out.push(SnapshotDiffLine {
+                    kind: DiffLineKind::Removed,
+                    text: format!("{} {}", e.method, e.url),
+                });
+            }
+            for e in &net_added {
+                let status = e.status.map(|s| format!("[{s}] ")).unwrap_or_default();
+                out.push(SnapshotDiffLine {
+                    kind: DiffLineKind::Added,
+                    text: format!("{status}{} {}", e.method, e.url),
+                });
+            }
+            for (before, after) in &net_changed {
+                let from = before
+                    .status
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "…".into());
+                let to = after
+                    .status
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "…".into());
+                out.push(SnapshotDiffLine {
+                    kind: DiffLineKind::Changed,
+                    text: format!("{} {}  [{from} → {to}]", after.method, after.url),
+                });
+            }
+        }
+        // Cookies — set diff by `(name, domain, path)`. Value changes
+        // surface as "changed" lines.
+        let mut cookies_added: Vec<&CookieEntry> = Vec::new();
+        let mut cookies_removed: Vec<&CookieEntry> = Vec::new();
+        let mut cookies_changed: Vec<(&CookieEntry, &CookieEntry)> = Vec::new();
+        for cc in &self.cookies {
+            if let Some(sc) = snap
+                .cookies
+                .iter()
+                .find(|x| x.name == cc.name && x.domain == cc.domain && x.path == cc.path)
+            {
+                if sc != cc {
+                    cookies_changed.push((sc, cc));
+                }
+            } else {
+                cookies_added.push(cc);
+            }
+        }
+        for sc in &snap.cookies {
+            if !self
+                .cookies
+                .iter()
+                .any(|c| c.name == sc.name && c.domain == sc.domain && c.path == sc.path)
+            {
+                cookies_removed.push(sc);
+            }
+        }
+        if !(cookies_added.is_empty() && cookies_removed.is_empty() && cookies_changed.is_empty()) {
+            out.push(SnapshotDiffLine {
+                kind: DiffLineKind::Section,
+                text: format!(
+                    "Cookies  (+{} -{} ~{})",
+                    cookies_added.len(),
+                    cookies_removed.len(),
+                    cookies_changed.len()
+                ),
+            });
+            for c in &cookies_removed {
+                out.push(SnapshotDiffLine {
+                    kind: DiffLineKind::Removed,
+                    text: format!("{}={}  ({}{})", c.name, c.value, c.domain, c.path),
+                });
+            }
+            for c in &cookies_added {
+                out.push(SnapshotDiffLine {
+                    kind: DiffLineKind::Added,
+                    text: format!("{}={}  ({}{})", c.name, c.value, c.domain, c.path),
+                });
+            }
+            for (before, after) in &cookies_changed {
+                out.push(SnapshotDiffLine {
+                    kind: DiffLineKind::Changed,
+                    text: format!(
+                        "{}  ({}{})  [{} → {}]",
+                        after.name, after.domain, after.path, before.value, after.value
+                    ),
+                });
+            }
+        }
+        // Storage — set diff by `(is_local, key)`. Value changes
+        // surface as "changed".
+        let mut storage_added: Vec<&StorageEntry> = Vec::new();
+        let mut storage_removed: Vec<&StorageEntry> = Vec::new();
+        let mut storage_changed: Vec<(&StorageEntry, &StorageEntry)> = Vec::new();
+        for cc in &self.storage {
+            if let Some(sc) = snap
+                .storage
+                .iter()
+                .find(|x| x.is_local == cc.is_local && x.key == cc.key)
+            {
+                if sc.value != cc.value {
+                    storage_changed.push((sc, cc));
+                }
+            } else {
+                storage_added.push(cc);
+            }
+        }
+        for sc in &snap.storage {
+            if !self
+                .storage
+                .iter()
+                .any(|c| c.is_local == sc.is_local && c.key == sc.key)
+            {
+                storage_removed.push(sc);
+            }
+        }
+        if !(storage_added.is_empty() && storage_removed.is_empty() && storage_changed.is_empty()) {
+            out.push(SnapshotDiffLine {
+                kind: DiffLineKind::Section,
+                text: format!(
+                    "Storage  (+{} -{} ~{})",
+                    storage_added.len(),
+                    storage_removed.len(),
+                    storage_changed.len()
+                ),
+            });
+            for s in &storage_removed {
+                let chip = if s.is_local { "L" } else { "S" };
+                out.push(SnapshotDiffLine {
+                    kind: DiffLineKind::Removed,
+                    text: format!("[{chip}] {}={}", s.key, s.value),
+                });
+            }
+            for s in &storage_added {
+                let chip = if s.is_local { "L" } else { "S" };
+                out.push(SnapshotDiffLine {
+                    kind: DiffLineKind::Added,
+                    text: format!("[{chip}] {}={}", s.key, s.value),
+                });
+            }
+            for (before, after) in &storage_changed {
+                let chip = if after.is_local { "L" } else { "S" };
+                out.push(SnapshotDiffLine {
+                    kind: DiffLineKind::Changed,
+                    text: format!(
+                        "[{chip}] {}  [{} → {}]",
+                        after.key, before.value, after.value
+                    ),
+                });
+            }
+        }
+        Some(out)
+    }
+
     /// `net_sel` is an index into [`Self::visible_net_indices`], so the
-    /// clamp is against the *filtered* row count.
+    /// clamp is against the *filtered* row count. Also resets the
+    /// detail panel's scroll — moving to a new row should land at the
+    /// top of its detail rather than at the previous row's mid-scroll.
     pub fn move_net_sel(&mut self, delta: isize) {
         let n = self.visible_net_indices().len();
         if n == 0 {
             self.net_sel = 0;
+            self.net_detail_scroll = 0;
             return;
         }
         let max = n - 1;
         let cur = self.net_sel.min(max) as isize;
         self.net_sel = (cur + delta).clamp(0, max as isize) as usize;
+        self.net_detail_scroll = 0;
+    }
+
+    /// Scroll the lower detail-panel by `delta` rows (positive ⇒ down).
+    /// Caller passes the visible height so the scroll can clamp; if it
+    /// doesn't know yet, use [`usize::MAX`] and the next render will
+    /// clamp on its own.
+    pub fn scroll_net_detail(&mut self, delta: isize, max_scroll: usize) {
+        let cur = self.net_detail_scroll as isize;
+        let new = (cur + delta).max(0) as usize;
+        self.net_detail_scroll = new.min(max_scroll);
     }
 
     /// The currently-selected network entry, resolved through the filter.
@@ -1267,21 +1687,55 @@ impl BrowserPane {
         }
     }
 
-    /// Clamp + move the storage-panel selection by `delta`.
+    /// Clamp + move the storage-panel selection by `delta`. Selection
+    /// indexes into [`Self::visible_storage_indices`] so the clamp
+    /// is against the filtered count.
     pub fn move_storage_sel(&mut self, delta: isize) {
-        if self.storage.is_empty() {
+        let n = self.visible_storage_indices().len();
+        if n == 0 {
             self.storage_sel = 0;
             return;
         }
-        let max = self.storage.len() - 1;
+        let max = n - 1;
         let cur = self.storage_sel.min(max) as isize;
         self.storage_sel = (cur + delta).clamp(0, max as isize) as usize;
     }
 
-    /// The currently-selected storage entry, if the panel is non-empty.
+    /// The currently-selected storage entry (resolves through filter).
     pub fn selected_storage(&self) -> Option<&StorageEntry> {
+        let v = self.visible_storage_indices();
+        v.get(self.storage_sel).and_then(|&i| self.storage.get(i))
+    }
+
+    /// Indices into [`Self::storage`] visible after the current filter.
+    /// Empty filter ⇒ every index. Match target is `[L|S] key=value`.
+    pub fn visible_storage_indices(&self) -> Vec<usize> {
+        if self.storage_filter.is_empty() {
+            return (0..self.storage.len()).collect();
+        }
         self.storage
-            .get(self.storage_sel.min(self.storage.len().saturating_sub(1)))
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| {
+                let chip = if e.is_local { "L" } else { "S" };
+                let hay = format!("{chip} {} {}", e.key, e.value);
+                crate::fuzzy::fuzzy_match(&self.storage_filter, &hay).map(|_| i)
+            })
+            .collect()
+    }
+
+    pub fn storage_filter_push(&mut self, c: char) {
+        self.storage_filter.push(c);
+        self.storage_sel = 0;
+    }
+    pub fn storage_filter_pop(&mut self) {
+        self.storage_filter.pop();
+        self.storage_sel = 0;
+    }
+    pub fn storage_filter_clear_and_exit(&mut self) {
+        self.storage_filter.clear();
+        self.storage_filter_mode = false;
+        self.storage_sel = 0;
     }
 
     /// `K` (or refresh from the panel) — `Network.getCookies`; the
@@ -1356,21 +1810,55 @@ impl BrowserPane {
         Some(name)
     }
 
-    /// Clamp + move the cookies-panel selection by `delta`.
+    /// Clamp + move the cookies-panel selection by `delta`. Selection
+    /// indexes into [`Self::visible_cookies_indices`] so the clamp
+    /// is against the filtered count.
     pub fn move_cookies_sel(&mut self, delta: isize) {
-        if self.cookies.is_empty() {
+        let n = self.visible_cookies_indices().len();
+        if n == 0 {
             self.cookies_sel = 0;
             return;
         }
-        let max = self.cookies.len() - 1;
+        let max = n - 1;
         let cur = self.cookies_sel.min(max) as isize;
         self.cookies_sel = (cur + delta).clamp(0, max as isize) as usize;
     }
 
-    /// The currently-selected cookie, if the panel is non-empty.
+    /// The currently-selected cookie (resolves through filter).
     pub fn selected_cookie(&self) -> Option<&CookieEntry> {
+        let v = self.visible_cookies_indices();
+        v.get(self.cookies_sel).and_then(|&i| self.cookies.get(i))
+    }
+
+    /// Indices into [`Self::cookies`] visible after the current filter.
+    /// Empty filter ⇒ every index. Match target is
+    /// `name=value · domain · path`.
+    pub fn visible_cookies_indices(&self) -> Vec<usize> {
+        if self.cookies_filter.is_empty() {
+            return (0..self.cookies.len()).collect();
+        }
         self.cookies
-            .get(self.cookies_sel.min(self.cookies.len().saturating_sub(1)))
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| {
+                let hay = format!("{}={} {} {}", c.name, c.value, c.domain, c.path);
+                crate::fuzzy::fuzzy_match(&self.cookies_filter, &hay).map(|_| i)
+            })
+            .collect()
+    }
+
+    pub fn cookies_filter_push(&mut self, c: char) {
+        self.cookies_filter.push(c);
+        self.cookies_sel = 0;
+    }
+    pub fn cookies_filter_pop(&mut self) {
+        self.cookies_filter.pop();
+        self.cookies_sel = 0;
+    }
+    pub fn cookies_filter_clear_and_exit(&mut self) {
+        self.cookies_filter.clear();
+        self.cookies_filter_mode = false;
+        self.cookies_sel = 0;
     }
 
     /// `D` (or refresh from the panel) — `DOM.getDocument`; the parsed tree lands
@@ -1564,6 +2052,168 @@ mod tests {
             mime: Some("application/json".into()),
             failed: None,
         }
+    }
+
+    fn empty_pane() -> BrowserPane {
+        let (tx, _rx) = std::sync::mpsc::channel::<CdpCommand>();
+        BrowserPane::new("https://example.com/".to_string(), tx)
+    }
+
+    #[test]
+    fn snapshot_diff_detects_cookie_add_remove_change() {
+        let mut p = empty_pane();
+        p.cookies = vec![
+            CookieEntry {
+                name: "session".into(),
+                value: "abc".into(),
+                domain: "example.com".into(),
+                path: "/".into(),
+                expires: -1,
+                http_only: true,
+                secure: true,
+                same_site: "Lax".into(),
+            },
+            CookieEntry {
+                name: "csrf".into(),
+                value: "111".into(),
+                domain: "example.com".into(),
+                path: "/".into(),
+                expires: -1,
+                http_only: false,
+                secure: true,
+                same_site: "Lax".into(),
+            },
+        ];
+        p.capture_snapshot();
+        // After capture: session cookie value changes; csrf gets dropped;
+        // a new tracking cookie is added.
+        p.cookies = vec![
+            CookieEntry {
+                name: "session".into(),
+                value: "xyz".into(), // changed
+                domain: "example.com".into(),
+                path: "/".into(),
+                expires: -1,
+                http_only: true,
+                secure: true,
+                same_site: "Lax".into(),
+            },
+            CookieEntry {
+                name: "ad_id".into(), // added
+                value: "42".into(),
+                domain: "example.com".into(),
+                path: "/".into(),
+                expires: -1,
+                http_only: false,
+                secure: true,
+                same_site: "Lax".into(),
+            },
+        ];
+        let diff = p.diff_against_latest_snapshot().unwrap();
+        // Should contain one Cookies section + entries for the 3 deltas.
+        let kinds: Vec<DiffLineKind> = diff.iter().map(|l| l.kind).collect();
+        assert!(kinds.contains(&DiffLineKind::Section));
+        assert!(kinds.contains(&DiffLineKind::Added));
+        assert!(kinds.contains(&DiffLineKind::Removed));
+        assert!(kinds.contains(&DiffLineKind::Changed));
+        // Cookie value diff appears in the Changed line for "session".
+        let session_changed = diff
+            .iter()
+            .find(|l| l.kind == DiffLineKind::Changed && l.text.starts_with("session"))
+            .expect("session changed row");
+        assert!(session_changed.text.contains("abc"));
+        assert!(session_changed.text.contains("xyz"));
+    }
+
+    #[test]
+    fn snapshot_diff_empty_when_state_unchanged() {
+        let mut p = empty_pane();
+        p.cookies = vec![CookieEntry {
+            name: "session".into(),
+            value: "abc".into(),
+            domain: "example.com".into(),
+            path: "/".into(),
+            expires: -1,
+            http_only: true,
+            secure: true,
+            same_site: "Lax".into(),
+        }];
+        p.capture_snapshot();
+        // No state changes.
+        let diff = p.diff_against_latest_snapshot().unwrap();
+        assert!(diff.is_empty(), "expected empty diff, got {diff:?}");
+    }
+
+    #[test]
+    fn cookies_filter_narrows_by_name_or_domain() {
+        let mut p = empty_pane();
+        p.cookies = vec![
+            CookieEntry {
+                name: "session_token".into(),
+                value: "abc".into(),
+                domain: "example.com".into(),
+                path: "/".into(),
+                expires: -1,
+                http_only: true,
+                secure: true,
+                same_site: "Lax".into(),
+            },
+            CookieEntry {
+                name: "ad_id".into(),
+                value: "42".into(),
+                domain: "tracker.io".into(),
+                path: "/".into(),
+                expires: -1,
+                http_only: false,
+                secure: false,
+                same_site: String::new(),
+            },
+        ];
+        assert_eq!(p.visible_cookies_indices(), vec![0, 1]);
+        p.cookies_filter = "session".into();
+        assert_eq!(p.visible_cookies_indices(), vec![0]);
+        p.cookies_filter = "tracker".into();
+        assert_eq!(p.visible_cookies_indices(), vec![1]);
+        // A query with chars that can't subsequence-match either row.
+        p.cookies_filter = "zzzzzzz".into();
+        assert!(p.visible_cookies_indices().is_empty());
+    }
+
+    #[test]
+    fn storage_filter_narrows_by_key_or_scope() {
+        let mut p = empty_pane();
+        p.storage = vec![
+            StorageEntry {
+                key: "theme".into(),
+                value: "dark".into(),
+                is_local: true,
+            },
+            StorageEntry {
+                key: "user_id".into(),
+                value: "u-42".into(),
+                is_local: false,
+            },
+        ];
+        assert_eq!(p.visible_storage_indices(), vec![0, 1]);
+        p.storage_filter = "user".into();
+        assert_eq!(p.visible_storage_indices(), vec![1]);
+        p.storage_filter = "theme".into();
+        assert_eq!(p.visible_storage_indices(), vec![0]);
+    }
+
+    #[test]
+    fn snapshot_diff_none_without_snapshot() {
+        let p = empty_pane();
+        assert!(p.diff_against_latest_snapshot().is_none());
+    }
+
+    #[test]
+    fn capture_snapshot_caps_at_snapshot_max() {
+        let mut p = empty_pane();
+        for _ in 0..SNAPSHOT_MAX + 3 {
+            p.capture_snapshot();
+        }
+        assert_eq!(p.snapshots.len(), SNAPSHOT_MAX);
     }
 
     #[test]

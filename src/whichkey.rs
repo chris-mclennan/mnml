@@ -84,6 +84,8 @@ pub fn root() -> &'static Leader {
                             ('e', cmd("view.toggle_tree", "explorer")),
                             ('k', cmd("editor.toggle_keymap", "vim ⇄ standard")),
                             ('t', cmd("theme.pick", "theme…")),
+                            ('h', cmd("view.toggle_hidden", "hidden files (focused)")),
+                            ('H', cmd("view.toggle_hidden_all", "hidden files (all)")),
                         ],
                     ),
                 ),

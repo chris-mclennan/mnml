@@ -1,0 +1,25 @@
+# DAP watches — add an expression via the prompt; the panel shows it
+# even without an active session (it just renders "(no value)"). Clear
+# wipes the list. The watch list is independent of any live adapter,
+# so the wiring can be exercised without spawning one.
+
+write src/main.rs "fn main() {}\n"
+open src/main.rs
+
+# Open the debug pane so the variables panel (which hosts watches) is
+# visible. dap.show works without an active session.
+command dap.show
+expect screen contains "Debug"
+
+# Add a watch.
+command dap.add_watch
+expect screen contains "Watch expression"
+type "my_var.field"
+key enter
+expect screen contains "watch: + my_var.field"
+
+# Open the remove picker and accept the only entry — clears the watch.
+command dap.remove_watch
+expect screen contains "Remove watch"
+key enter
+expect screen contains "watch: − my_var.field"

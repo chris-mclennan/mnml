@@ -104,15 +104,41 @@ pub fn draw(
             )
         }
     } else if b.cookies_focus {
-        format!(
-            "  cookies ({}) · y copy · e edit · a add · d delete · R re-fetch · esc back",
-            b.cookies.len()
-        )
+        if b.cookies_filter_mode {
+            format!(
+                "  cookies filter: {}_ · Backspace deletes · Enter applies · Esc clears",
+                b.cookies_filter
+            )
+        } else if !b.cookies_filter.is_empty() {
+            format!(
+                "  cookies ({}/{}) · / filter · y copy · e edit · a add · d delete · esc clear",
+                b.visible_cookies_indices().len(),
+                b.cookies.len()
+            )
+        } else {
+            format!(
+                "  cookies ({}) · / filter · y copy · e edit · a add · d delete · R re-fetch · esc back",
+                b.cookies.len()
+            )
+        }
     } else if b.storage_focus {
-        format!(
-            "  storage ({}) · y copy · e edit · a add · d delete · R re-fetch · esc back",
-            b.storage.len()
-        )
+        if b.storage_filter_mode {
+            format!(
+                "  storage filter: {}_ · Backspace deletes · Enter applies · Esc clears",
+                b.storage_filter
+            )
+        } else if !b.storage_filter.is_empty() {
+            format!(
+                "  storage ({}/{}) · / filter · y copy · e edit · a add · d delete · esc clear",
+                b.visible_storage_indices().len(),
+                b.storage.len()
+            )
+        } else {
+            format!(
+                "  storage ({}) · / filter · y copy · e edit · a add · d delete · R re-fetch · esc back",
+                b.storage.len()
+            )
+        }
     } else if b.perf_focus {
         "  performance · R re-fetch · esc back".to_string()
     } else if b.net_focus {
@@ -133,6 +159,11 @@ pub fn draw(
                 b.net.len()
             )
         }
+    } else if b.snapshot_diff_open {
+        format!(
+            "  diff (snap {})  ↑↓/PgUp/PgDn scroll · x close · esc back",
+            b.snapshots.last().map(|s| s.label.as_str()).unwrap_or("?")
+        )
     } else {
         "  g nav · ^R hist · e eval · r reload · s shot · n net · D DOM · K cookies · L storage · P perf · esc → tree"
             .to_string()
@@ -217,6 +248,7 @@ pub fn draw(
 
     if b.cookies_focus {
         // ── cookies panel: one selectable row per cookie ───────────
+        let visible = b.visible_cookies_indices();
         if b.cookies.is_empty() {
             lines.push(Line::from(Span::styled(
                 if b.pending_cookies.is_some() {
@@ -226,14 +258,24 @@ pub fn draw(
                 },
                 Style::default().fg(t.comment).bg(t.bg_dark),
             )));
+        } else if visible.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("  (no matches for '{}')", b.cookies_filter),
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            )));
         } else {
-            let sel = b.cookies_sel.min(b.cookies.len() - 1);
+            let sel = b.cookies_sel.min(visible.len() - 1);
             let first = if body_rows == 0 || sel < body_rows {
                 0
             } else {
                 sel + 1 - body_rows
             };
-            for (idx, c) in b.cookies.iter().enumerate().skip(first).take(body_rows) {
+            for (row_idx, &raw_idx) in visible.iter().enumerate().skip(first).take(body_rows) {
+                let c = match b.cookies.get(raw_idx) {
+                    Some(c) => c,
+                    None => continue,
+                };
+                let idx = row_idx;
                 let on = idx == sel;
                 let row_bg = if on { t.bg2 } else { t.bg_dark };
                 let marker = if on { "▶ " } else { "  " };
@@ -379,6 +421,7 @@ pub fn draw(
 
     if b.storage_focus {
         // ── Web Storage panel: one row per localStorage / sessionStorage entry ──
+        let visible = b.visible_storage_indices();
         if b.storage.is_empty() {
             lines.push(Line::from(Span::styled(
                 if b.pending_storage.is_some() {
@@ -388,14 +431,24 @@ pub fn draw(
                 },
                 Style::default().fg(t.comment).bg(t.bg_dark),
             )));
+        } else if visible.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("  (no matches for '{}')", b.storage_filter),
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            )));
         } else {
-            let sel = b.storage_sel.min(b.storage.len() - 1);
+            let sel = b.storage_sel.min(visible.len() - 1);
             let first = if body_rows == 0 || sel < body_rows {
                 0
             } else {
                 sel + 1 - body_rows
             };
-            for (idx, e) in b.storage.iter().enumerate().skip(first).take(body_rows) {
+            for (row_idx, &raw_idx) in visible.iter().enumerate().skip(first).take(body_rows) {
+                let e = match b.storage.get(raw_idx) {
+                    Some(e) => e,
+                    None => continue,
+                };
+                let idx = row_idx;
                 let on = idx == sel;
                 let row_bg = if on { t.bg2 } else { t.bg_dark };
                 let marker = if on { "▶ " } else { "  " };
@@ -445,6 +498,30 @@ pub fn draw(
 
     if b.net_focus {
         // ── network panel: one selectable row per captured request ─────
+        // When `net_detail_open`, split the area in two: list on top,
+        // a per-request detail (full headers + body + response status)
+        // on the bottom. The detail tracks the selected row.
+        let (list_area, detail_area) = if b.net_detail_open {
+            let lh = area.height / 2;
+            let dh = area.height.saturating_sub(lh);
+            (
+                Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
+                    height: lh,
+                },
+                Some(Rect {
+                    x: area.x,
+                    y: area.y + lh,
+                    width: area.width,
+                    height: dh,
+                }),
+            )
+        } else {
+            (area, None)
+        };
+        let list_body_rows = list_area.height.saturating_sub(1) as usize;
         let visible = b.visible_net_indices();
         if b.net.is_empty() {
             lines.push(Line::from(Span::styled(
@@ -459,12 +536,12 @@ pub fn draw(
         } else {
             let sel = b.net_sel.min(visible.len() - 1);
             // Keep the selected row inside the viewport.
-            let first = if body_rows == 0 || sel < body_rows {
+            let first = if list_body_rows == 0 || sel < list_body_rows {
                 0
             } else {
-                sel + 1 - body_rows
+                sel + 1 - list_body_rows
             };
-            for (row_idx, &raw_idx) in visible.iter().enumerate().skip(first).take(body_rows) {
+            for (row_idx, &raw_idx) in visible.iter().enumerate().skip(first).take(list_body_rows) {
                 let Some(e) = b.net.get(raw_idx) else {
                     continue;
                 };
@@ -473,9 +550,9 @@ pub fn draw(
                 let y_off = lines.len() as u16;
                 list_rows.push((
                     Rect {
-                        x: area.x,
-                        y: area.y + y_off,
-                        width: area.width,
+                        x: list_area.x,
+                        y: list_area.y + y_off,
+                        width: list_area.width,
                         height: 1,
                     },
                     pane_id,
@@ -515,6 +592,97 @@ pub fn draw(
                     ));
                 }
                 lines.push(Line::from(spans));
+            }
+        }
+        frame.render_widget(
+            Paragraph::new(lines).style(Style::default().bg(t.bg_dark)),
+            list_area,
+        );
+        if let Some(detail) = detail_area
+            && detail.height > 0
+        {
+            let sel_entry = b.selected_net();
+            let mut det_lines: Vec<Line> = Vec::new();
+            // Title with hint chip — make it clear `i` toggles back.
+            det_lines.push(Line::from(Span::styled(
+                " request detail  (i to close · [/] to scroll) ",
+                Style::default()
+                    .fg(t.bg_dark)
+                    .bg(t.cyan)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            if let Some(e) = sel_entry {
+                let raw = e.detail_lines();
+                let body_rows = detail.height.saturating_sub(1) as usize;
+                let start = b.net_detail_scroll.min(raw.len().saturating_sub(1));
+                for line in raw.iter().skip(start).take(body_rows) {
+                    let style = if line.starts_with('>') {
+                        Style::default().fg(t.fg).bg(t.bg_dark)
+                    } else if line.starts_with('<') {
+                        Style::default().fg(t.green).bg(t.bg_dark)
+                    } else {
+                        Style::default().fg(t.comment).bg(t.bg_dark)
+                    };
+                    det_lines.push(Line::from(Span::styled(line.clone(), style)));
+                }
+            } else {
+                det_lines.push(Line::from(Span::styled(
+                    "  (no row selected)",
+                    Style::default().fg(t.comment).bg(t.bg_dark),
+                )));
+            }
+            frame.render_widget(
+                Paragraph::new(det_lines).style(Style::default().bg(t.bg_dark)),
+                detail,
+            );
+        }
+        app.rects.list_rows = list_rows;
+        return None;
+    }
+
+    // ── snapshot diff panel: replaces the log when toggled on ───────
+    if b.snapshot_diff_open {
+        let diff = b.diff_against_latest_snapshot();
+        match diff {
+            None => {
+                lines.push(Line::from(Span::styled(
+                    "  (no snapshot to diff against — capture one with browser.snapshot)",
+                    Style::default().fg(t.comment).bg(t.bg_dark),
+                )));
+            }
+            Some(rows) if rows.is_empty() => {
+                lines.push(Line::from(Span::styled(
+                    "  (no changes since last snapshot)",
+                    Style::default().fg(t.comment).bg(t.bg_dark),
+                )));
+            }
+            Some(rows) => {
+                let max_w = area.width.saturating_sub(1) as usize;
+                let start = b.snapshot_diff_scroll.min(rows.len().saturating_sub(1));
+                for row in rows.iter().skip(start).take(body_rows) {
+                    let (prefix, color) = match row.kind {
+                        crate::browser_pane::DiffLineKind::Section => ("── ", t.fg),
+                        crate::browser_pane::DiffLineKind::Removed => ("- ", t.red),
+                        crate::browser_pane::DiffLineKind::Added => ("+ ", t.green),
+                        crate::browser_pane::DiffLineKind::Changed => ("~ ", t.yellow),
+                    };
+                    let mut text = format!("{prefix}{}", row.text);
+                    if text.chars().count() > max_w {
+                        text = text
+                            .chars()
+                            .take(max_w.saturating_sub(1))
+                            .collect::<String>()
+                            + "…";
+                    }
+                    let style = match row.kind {
+                        crate::browser_pane::DiffLineKind::Section => Style::default()
+                            .fg(color)
+                            .bg(t.bg_dark)
+                            .add_modifier(Modifier::BOLD),
+                        _ => Style::default().fg(color).bg(t.bg_dark),
+                    };
+                    lines.push(Line::from(Span::styled(text, style)));
+                }
             }
         }
         frame.render_widget(

@@ -1,0 +1,20 @@
+# Conditional breakpoint flow — toggle at cursor opens a prompt; accept
+# records the condition + flips the gutter from `●` to `◆`. Empty input
+# falls back to a plain breakpoint.
+
+write code.rs "fn main() {\n    for i in 0..10 {\n        println!(\"{}\", i);\n    }\n}\n"
+open code.rs
+command editor.use_vim
+
+# Cursor on the println line. After `open` + 3 `j`s we're on row 3
+# (0-based), which the toast renders as line 4 (1-based vim conv).
+key j
+key j
+key j
+command dap.toggle_breakpoint_conditional
+expect screen contains "Breakpoint condition"
+
+# Type a condition + accept.
+type "i == 5"
+key enter
+expect screen contains "bp line 4: i == 5"

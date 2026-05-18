@@ -83,6 +83,226 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**DAP vars copy/watch + CDP filter parity (2026-05-18 cont.):** three
+more bounded items. (1) **`y` in debug variables panel** copies the
+selected row's value (or label when no inlined value) to the system
+clipboard; toast confirms with the first 40 chars. (2) **`w` in debug
+variables panel** promotes the selected variable's name into a watch
+expression (strips ` : type` suffix to get just the bare name).
+Pre-existing watches are detected + skipped with a toast. Fires
+immediate eval against the current top frame so the watch row
+populates without waiting for the next stop. (3) **CDP cookies +
+storage filters** — `/` while focused enters filter mode (Backspace
+pops, Enter applies, Esc clears), mirroring the existing net + DOM
+filter UX. New `visible_cookies_indices` / `visible_storage_indices`
+match against `name=value · domain · path` / `[L|S] key=value` via
+`crate::fuzzy::fuzzy_match`. Selection now indexes into the filtered
+list (sel clamps against `visible.len()`), and the header hint
+shows `N/M` while a filter is held. Esc-clears-filter wired into
+the browser pane's existing two-step UX. Two new unit tests verify
+the filters narrow correctly. 642 lib+integration tests + 84 e2e,
+all passing.
+
+**REPL lazy-expand + tree-sitter perf (2026-05-18 cont.):** three more
+small wins. (1) **DAP REPL lazy-expand** — `DapReplEntry` now tracks
+`variables_ref` + `expanded` slots, populated when the `evaluate`
+reply arrives. New `DapReplPane.selected: Option<usize>` for row
+focus; `Shift+Up`/`Shift+Down` move it (plain Up/Down still walks
+command history). `o` on a selected row toggles expansion — first
+press fires `variables(variables_ref)` (cached on `DapManager.variables`,
+shared with the variables panel); children render indented below the
+result. Tail-pinned scroll math now walks backward from the end
+counting `entry_render_rows` so an expanded row at the bottom still
+fits without bumping older entries off-screen. (2) **Tree-sitter
+syntax perf** — `line_color_grid(spans, line_width)` pre-bakes a
+per-cell color array once per row (O(sum_of_span_widths +
+line_width)); the per-cell loop now does O(1) indexed lookup instead
+of the prior `spans.iter().rev().find(...)` linear scan. For a 200-
+char Rust line with 60 spans that's a 60× per-cell reduction. Caller
+falls back to the old helper for OOB cells. 3 new tests verify the
+grid matches the linear-scan output, handles empty input, and clips
+spans past EOL. (3) **DAP REPL selection e2e** — `dap_repl_selection.test`
+covers the Shift+Up → row focus → Esc → input-focus cycle. 84 e2e
+tests total, 640 lib/integration tests, all passing.
+
+**DAP exception breakpoints + hit-count breakpoints (2026-05-18 cont.):**
+finishing the last two real DAP gaps. (1) **Exception breakpoints** —
+new `setExceptionBreakpoints` request + `DapEvent::InitializeCaps
+{ exception_filters }` captured from the `initialize` reply. New
+`ExceptionFilter { filter, label, default }` struct; cached on
+`DapManager.exception_filters` + `enabled_exception_filters`. App
+auto-enables any filter with `default = true` (debugpy's "uncaught"
+is typical) immediately after init. New `dap.exceptions` opens a
+picker over the cached filters with `●`/`○` markers showing the
+current state; accept toggles that one filter + re-fires
+`setExceptionBreakpoints` with the new enabled set. (2) **Hit-count
+breakpoints** — new `Buffer.breakpoint_hit_conditions` parallel to
+`breakpoint_conditions` (DAP supports both per line, independently).
+`DapClient::set_breakpoints_with_conditions` grew a fourth arg for
+the hit-condition map; all three call sites updated. New
+`dap.set_breakpoint_hit_count` opens a prompt seeded with any
+existing hit-condition; accepts expressions like `">= 5"` (stop
+after 5+ hits) or `"% 10"` (every 10th hit). Empty input clears the
+hit-condition without removing the BP. Persisted in
+`SavedBuffer.breakpoint_hit_conditions` with the same orphan-line
+cleanup as conditions. Two new e2e tests cover the no-adapter
+graceful-toast path (`dap_exception_breakpoints.test`) and the
+prompt flow (`dap_hit_count.test`) — 83 e2e tests total.
+
+**CDP snapshot diffs + DAP test coverage (2026-05-18 cont.):** two more
+items shipped. (1) **CDP snapshot diffs** — new `BrowserSnapshot
+{ label, url, net, cookies, storage }` and `browser.snapshot` command
+that freezes the active browser pane's state into
+`BrowserPane.snapshots` (capped at `SNAPSHOT_MAX = 5`, oldest FIFO).
+`browser.diff_snapshot` toggles a diff panel that compares the
+most-recent snapshot vs the current live state — set-diff per
+collection. URL changes show as a section. Network entries diff by
+`(method, url)`: pure adds + removes plus a "changed" line for
+status-only deltas. Cookies diff by `(name, domain, path)` with
+value/flag changes surfacing as "changed". Storage diffs by
+`(is_local, key)` with value changes as "changed". Renderer paints
+section headers bold, `-`/`+`/`~` glyphs in red/green/yellow.
+Keyboard chords `X` (capture) and `x` (toggle diff) when no other
+panel is focused; Esc closes the diff first then walks back to the
+tree. `browser.clear_snapshots` drops them all. Capture refreshes
+cookies + storage fire-and-forget so the snapshot has the latest
+server state. Cookies / storage labels use a per-process local-time
+HMS via env-var-only resolution (no shell-out from this hot path).
+4 new unit tests cover the diff logic (add/remove/change detection,
+empty diff when unchanged, no-snapshot returns None, cap enforced).
+(2) **DAP `.test` coverage** — three new e2e tests cover the new DAP
+surface area: `dap_conditional_breakpoint.test` exercises the
+conditional-breakpoint prompt flow (no live adapter needed — the
+buffer state + toast still work); `dap_watches.test` adds a watch
+expression via the prompt + the remove-picker round-trip;
+`dap_repl_pane.test` opens the REPL pane and submits an expression
+(no session → "no DAP session" feedback row, plumbing verified).
+The existing `browser_commands_no_pane.test` grew to cover the new
+`browser.snapshot` / `diff_snapshot` / `clear_snapshots` no-pane
+paths. 81 e2e tests total, all passing.
+
+**DAP completion wave + indent text objects + semantic perf (2026-05-18 cont.):**
+five bounded items in one push. (1) **DAP attach workflow** — new
+`dap.attach` command opens a picker over `ps -eo user,pid,command` output
+(`AttachableProcess { pid, user, cmd }`). Accept reuses the existing
+`dap_run` adapter-spawn / init handshake but forces `request: "attach"`
++ injects `pid` into the launch body — the user's `[dap.<lang>].launch.*`
+fields (host/port/etc) survive for remote-attach configs. (2) **DAP
+multi-thread UI** — new `DapEvent::Threads(Vec<ThreadInfo>)` + auto-fired
+`threads` request on every `Stopped` so `DapManager.threads` always
+reflects the current set. `dap.pick_thread` opens a picker over them
+(active thread chipped with `●`); accept switches `App.dap_thread` +
+re-fetches the stack trace for the new thread. Single-thread programs
+toast "only one thread" instead of opening a useless picker. (3) **DAP
+REPL pane** — new `Pane::DapRepl(DapReplPane)`: persistent
+`(expression, value)` history list + single-line input. `dap.repl`
+opens (or focuses) the pane. Enter fires `evaluate` with
+`context: "repl"` — the same channel watches use, so adapter REPL
+shorthands (debugpy's `pp`, gdb's `info`) work. Pending entries
+render `(evaluating…)`; errors render in red; results green (with
+type when known). Up/Down walks command history. Watch + REPL share
+`DapEvent::Evaluate` — the App routes the reply to whichever pane is
+expecting it, matching by `expression` string. Custom bufferline glyph
+(nf-md-console `\u{F018D}`). (4) **Python/Ruby indent text objects**
+— `if`/`af` / `ic`/`ac` now work in indent-scoped languages. New
+`Editor::enclosing_indent_scope(ext, header_kinds, inner)` walks
+forward from the header line until the first non-blank line whose
+indent ≤ the header's; that's the body extent. For Ruby, the closing
+`end` line is included in `around` mode (matches vim convention).
+Python is pure-indent. The SelectInner/AroundFunction + Class arms
+branch on `ext ∈ {py, rb}` to pick indent-scope vs the existing
+brace-scope path. (5) **Semantic tokens perf** — replaced the linear
+scan-per-cell in `semantic_style` with a per-line projection
+(`tokens_for_line(tokens, line)`) sorted by `start_char` + a
+binary-search inside `semantic_style`. The per-line list is built
+once before each row's cell loop. For a 12k-line file with 50 tokens
+per line, the per-row cost drops from O(total_tokens × cols) to
+O(tokens_on_line + log(tokens_on_line) × cols) — the difference
+between syntax highlighting blocking a render frame and not. Tests
+verify the binary-search-with-sort path catches every column it
+should + the right token wins when multiple are on the same line.
+
+**DAP watches + conditional breakpoints + CDP detail panel (2026-05-18 cont.):**
+finishing the queued bigger tracks. (1) **DAP watch expressions** — new
+`DapClient::evaluate(expression, frame_id, context)` request + `DapEvent::Evaluate
+{ expression, value, ty, err, variables_ref }` reply (echoes the input expression
+via a new `aux_str` field on `PendingReq` so the reader can route the reply to
+the right row). `App.dap_watches: Vec<String>` + `App.dap_watch_results:
+HashMap<String, WatchResult { value, ty, err }>`. Auto-re-eval on every
+`StackTrace` against the top frame so the panel always reflects the current
+stop. Failed evals (`name 'foo' is not defined` etc.) land on the watch row's
+`err` slot — red text in the panel — instead of toast spam. Watches render as
+the top section of the variables panel with a `👁` prefix; counts surface in
+the panel title. Results clear on `Continued`; the expression list survives
+terminates. Commands `dap.add_watch` (prompt) / `dap.remove_watch` (picker —
+detail shows current value or err) / `dap.clear_watches`. Watches persisted in
+session.json (`SavedSession.dap_watches`). (2) **Conditional breakpoints** —
+`Buffer.breakpoint_conditions: HashMap<u32, String>` parallel to `breakpoints`;
+`DapClient::set_breakpoints_with_conditions(source, lines, conditions)` wraps
+each line as `{ line, condition }`. The condition map persists in session.json
+(`SavedBuffer.breakpoint_conditions`) and gets re-applied via the conditional
+setter on `Initialized`. Gutter renders `◆` (diamond) for conditional vs `●`
+(circle) for plain — wins over plain BPs in the sign-column priority chain.
+`dap.toggle_breakpoint_conditional` (`Shift+F9`) opens a prompt seeded with
+the existing condition (if any); empty input ⇒ plain BP. Toggling a BP off
+also drops its condition. (3) **CDP request-detail panel** — `i` while
+net-focused splits the network panel: rows on top, per-request detail on the
+bottom (request line · headers · body · response status · mime · failure
+reason). New `NetEntry::detail_lines() -> Vec<String>` is the formatter;
+`BrowserPane.net_detail_open` / `net_detail_scroll` are the state; `[`/`]`
+scroll within the detail panel (vim pager convention, since `j`/`k` are
+taken by row selection). Switching rows resets the scroll. Lets the user
+inspect a captured request without re-sending it through a Request pane.
+
+**Bigger tracks NOT done (with reasons):** *Image rendering (Sixel / Kitty
+graphics)* — multi-week, terminal-protocol heavy; out of scope for one
+session. *AI: real Anthropic SDK client* — `mnml-deferred-nvchad-tracks.md`
+memory explicitly notes the user previously deferred this indefinitely;
+not touched without re-confirmation. *the private integration phase 8 (DocDB diff alongside
+CodeBuild output)* — feature-gated track; queued. *Git GUI phase 4* —
+investigation: the branch rail UI, commit-with-Codex (`git.codex_commit`),
+recompose-with-AI (`git.ai_recompose`), and multi-repo polish are *all
+already shipped* (see earlier Status entries). What's left there is
+substantive UX polish rather than missing features — defer to a focused
+session.
+
+**Polish + DAP variables (2026-05-18):** four queued NvChad polish items landed
+in one sweep. (1) **Vim mode glyph orange tint** — the `\u{e7c5}` diamond-V chip
+prefix in the statusline now renders in its own span with `theme.orange` fg (or
+`bg_darker` when the mode bg is itself orange — REPLACE mode — to avoid
+clashing). The mode label keeps the normal dark-on-color contrast. Tiny visual
+accent that makes the vim-mode chips feel distinctly vim-y. (2) **Per-workspace
+`view.toggle_hidden`** — formerly propagated to every workspace; now targets
+just the workspace section that owns the active repo (computed via new
+`App::focused_tree_workspace_idx`). The "toggle everywhere" behavior moved to a
+new sibling command `view.toggle_hidden_all`. Both surfaced in the `+toggle`
+which-key group at `<leader>th` / `<leader>tH` (the queued default keybinding).
+(3) **DAP variables tree** — biggest of the four. New `Scope` + `Variable`
+types + `DapEvent::Scopes` / `Variables` round-trip; `DapClient::scopes(frame_id)`
++ `variables(ref)` requests with a new `PendingReq{command, aux}` so the reader
+can attach the original ref/frame_id to the reply (DAP responses don't echo
+those). On `StackTrace` arrival the App auto-fires `scopes` for the top frame;
+on `Scopes` arrival it auto-expands non-expensive scopes and fires `variables`
+for each. The `Pane::Debug` layout grew a third section between call stack and
+output — a flat-tree variables panel (`DapManager::variable_rows()` walks
+scopes → vars → expanded composites recursively into `Vec<VarRow {depth,
+is_scope, label, value, var_ref, expanded, expandable}>`). `▾`/`▸` chevrons
+mark expandable rows; `=` separates name and value; scope rows render bold;
+expensive scopes render dim `(expensive)`. New `DebugSection::{Stack,
+Variables}` on `DebugPane` — Tab cycles focus; j/k/PgUp/PgDn/g/G/wheel route
+to whichever section is focused; Enter expands/collapses the highlighted var
+(in Variables) or jumps to the picked frame *and* re-fires `scopes` for it
+(in Stack — so the vars panel follows the user's frame pick). First-expand
+of a composite fires `variables`; re-collapse/re-expand reuses the cache.
+On `Continued`, scopes + variables + expanded_vars all clear (the refs go
+stale at resume). Picking a non-top frame in the stack also re-fires scopes
+so the panel shows that frame's locals (instead of the top's). What's still
+missing for "complete DAP": watch expressions, conditional breakpoints, a
+polished `attach` workflow. Tests: `variable_rows_flattens_scopes_and_expanded_composites`
+covers the recursive flatten; `parse_scope_extracts_ref_and_expensive` +
+`parse_variable_handles_type_and_ref` + `parse_variable_handles_missing_type`
+cover the parsers.
+
 **Multi-root workspaces (phase 2a, 2026-05-17):** new `[[workspaces]]` config
 table — `name = "private"`, `path = "~/Projects/private-claude-workspace"` per
 entry (path supports `~/`-expansion). Each configured workspace renders as an

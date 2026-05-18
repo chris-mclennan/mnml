@@ -159,7 +159,40 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.toggle_hidden",
-            title: "Toggle hidden files in tree (`.dotfiles`)",
+            title: "Toggle hidden files in focused tree section",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                // Toggle only the workspace section the active repo lives in.
+                // For a primary-rooted active repo (or no extra workspaces),
+                // that's `app.tree`; for an extra workspace, just that one.
+                // Use `view.toggle_hidden_all` to propagate across every
+                // section in one shot.
+                let ws_idx = app.focused_tree_workspace_idx();
+                let (target, label) = if let Some(i) = ws_idx {
+                    let w = &mut app.extra_workspaces[i];
+                    w.tree.show_hidden = !w.tree.show_hidden;
+                    w.tree.refresh();
+                    (w.tree.show_hidden, w.name.clone())
+                } else {
+                    app.tree.show_hidden = !app.tree.show_hidden;
+                    app.tree.refresh();
+                    let name = app
+                        .workspace
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "workspace".to_string());
+                    (app.tree.show_hidden, name)
+                };
+                app.toast(format!(
+                    "hidden ({label}): {}",
+                    if target { "on" } else { "off" }
+                ));
+            },
+        },
+        Command {
+            id: "view.toggle_hidden_all",
+            title: "Toggle hidden files across every workspace section",
             group: "view",
             keys: &[],
             run: |app| {
@@ -172,7 +205,14 @@ fn builtin_commands() -> Vec<Command> {
                     w.tree.show_hidden = target;
                     w.tree.refresh();
                 }
-                app.toast(if target { "hidden: on" } else { "hidden: off" }.to_string());
+                app.toast(
+                    if target {
+                        "hidden (all): on"
+                    } else {
+                        "hidden (all): off"
+                    }
+                    .to_string(),
+                );
             },
         },
         Command {
@@ -1811,6 +1851,69 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_debug_pane(),
         },
         Command {
+            id: "dap.add_watch",
+            title: "DAP: add a watch expression",
+            group: "dap",
+            keys: &[],
+            run: |app| app.open_dap_add_watch_prompt(),
+        },
+        Command {
+            id: "dap.remove_watch",
+            title: "DAP: remove a watch expression (→ picker)",
+            group: "dap",
+            keys: &[],
+            run: |app| app.open_dap_remove_watch_picker(),
+        },
+        Command {
+            id: "dap.clear_watches",
+            title: "DAP: clear all watch expressions",
+            group: "dap",
+            keys: &[],
+            run: |app| app.dap_clear_watches(),
+        },
+        Command {
+            id: "dap.toggle_breakpoint_conditional",
+            title: "DAP: toggle conditional breakpoint at cursor",
+            group: "dap",
+            keys: &["shift+f9"],
+            run: |app| app.open_dap_breakpoint_conditional_prompt(),
+        },
+        Command {
+            id: "dap.attach",
+            title: "DAP: attach to a running process (→ picker)",
+            group: "dap",
+            keys: &[],
+            run: |app| app.open_dap_attach_picker(),
+        },
+        Command {
+            id: "dap.pick_thread",
+            title: "DAP: switch to a different thread (→ picker)",
+            group: "dap",
+            keys: &[],
+            run: |app| app.open_dap_thread_picker(),
+        },
+        Command {
+            id: "dap.repl",
+            title: "DAP: open the REPL pane (evaluate expressions)",
+            group: "dap",
+            keys: &[],
+            run: |app| app.open_dap_repl_pane(),
+        },
+        Command {
+            id: "dap.exceptions",
+            title: "DAP: toggle exception breakpoints (→ picker)",
+            group: "dap",
+            keys: &[],
+            run: |app| app.open_dap_exception_picker(),
+        },
+        Command {
+            id: "dap.set_breakpoint_hit_count",
+            title: "DAP: set hit-count on breakpoint (e.g. >= 5, % 10)",
+            group: "dap",
+            keys: &[],
+            run: |app| app.open_dap_breakpoint_hit_count_prompt(),
+        },
+        Command {
             id: "lsp.code_action",
             title: "LSP: code actions at cursor (→ picker)",
             group: "lsp",
@@ -2023,6 +2126,27 @@ fn builtin_commands() -> Vec<Command> {
             group: "browser",
             keys: &[],
             run: |app| app.browser_print_pdf(),
+        },
+        Command {
+            id: "browser.snapshot",
+            title: "Browser: snapshot state (URL + network + cookies + storage)",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_snapshot(),
+        },
+        Command {
+            id: "browser.diff_snapshot",
+            title: "Browser: diff latest snapshot vs current state",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_diff_snapshot(),
+        },
+        Command {
+            id: "browser.clear_snapshots",
+            title: "Browser: clear all captured snapshots",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_clear_snapshots(),
         },
         Command {
             id: "browser.device_picker",

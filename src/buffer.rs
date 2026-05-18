@@ -184,6 +184,19 @@ pub struct Buffer {
     /// by `dap.run` (which sends `setBreakpoints` to the adapter); for
     /// now this list is informational + persistence-only.
     pub breakpoints: Vec<u32>,
+    /// Conditional-breakpoint expressions keyed by 0-based line.
+    /// Present only for the *subset* of `breakpoints` that have a
+    /// condition — plain breakpoints aren't in the map. Painted as a
+    /// red `◆` (diamond) instead of `●`. Set via
+    /// `dap.toggle_breakpoint_conditional`; persisted in session.json.
+    pub breakpoint_conditions: std::collections::HashMap<u32, String>,
+    /// Hit-count breakpoint expressions keyed by 0-based line — e.g.
+    /// `">= 5"` (stop after 5+ hits) or `"% 10"` (every 10th hit).
+    /// Independent of `breakpoint_conditions`; can pair (a line with
+    /// both: only break when both expression is true AND hit-count
+    /// matches). Set via `dap.set_breakpoint_hit_count`; persisted in
+    /// session.json.
+    pub breakpoint_hit_conditions: std::collections::HashMap<u32, String>,
     /// LSP inlay hints — virtual text the server suggests at specific
     /// positions. Refreshed on save (and after the initial `did_open`
     /// reply lands). Rendered as dim chips in the editor view.
@@ -314,6 +327,8 @@ impl Buffer {
             diagnostics: Vec::new(),
             linter_diagnostics: Vec::new(),
             breakpoints: Vec::new(),
+            breakpoint_conditions: std::collections::HashMap::new(),
+            breakpoint_hit_conditions: std::collections::HashMap::new(),
             inlay_hints: Vec::new(),
             semantic_tokens: Vec::new(),
             last_semantic_viewport: None,
@@ -390,6 +405,8 @@ impl Buffer {
             diagnostics: Vec::new(),
             linter_diagnostics: Vec::new(),
             breakpoints: Vec::new(),
+            breakpoint_conditions: std::collections::HashMap::new(),
+            breakpoint_hit_conditions: std::collections::HashMap::new(),
             inlay_hints: Vec::new(),
             semantic_tokens: Vec::new(),
             last_semantic_viewport: None,
@@ -485,11 +502,15 @@ impl Buffer {
     }
 
     /// Toggle a breakpoint on `line` (0-based). Returns true if added,
-    /// false if removed.
+    /// false if removed. Removing a line also drops any condition or
+    /// hit-condition attached to it — pairing the visual + adapter
+    /// state correctly.
     pub fn toggle_breakpoint(&mut self, line: u32) -> bool {
         match self.breakpoints.binary_search(&line) {
             Ok(i) => {
                 self.breakpoints.remove(i);
+                self.breakpoint_conditions.remove(&line);
+                self.breakpoint_hit_conditions.remove(&line);
                 false
             }
             Err(i) => {

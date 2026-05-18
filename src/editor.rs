@@ -592,6 +592,25 @@ fn match_close_for(open: char) -> char {
 /// point at a `{`) and returns the byte offset of the matching `}` or
 /// `None` if unbalanced. Bare scan — doesn't respect strings/comments
 /// (good enough for the text-object MVP; refinement is a follow-up).
+/// Indent width of the line starting at `line_start`. Treats tabs
+/// as 8 spaces (Python's `tabnanny`-compatible default; also matches
+/// vim's `tabstop=8` historical default). Used by
+/// [`Editor::enclosing_indent_scope`] for indent-scoped languages.
+fn line_indent(text: &str, line_start: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut n = 0;
+    let mut i = line_start;
+    while i < bytes.len() {
+        match bytes[i] {
+            b' ' => n += 1,
+            b'\t' => n += 8,
+            _ => break,
+        }
+        i += 1;
+    }
+    n
+}
+
 fn match_close_after(text: &str, open_byte: usize) -> Option<usize> {
     let bytes = text.as_bytes();
     if bytes.get(open_byte) != Some(&b'{') {
@@ -2406,7 +2425,12 @@ impl Editor {
                 let inner = matches!(op, SelectInnerFunction);
                 if let Some(ext) = self.language_ext.as_deref() {
                     let kinds: &[&str] = &["fn"];
-                    if let Some((lo, hi)) = self.enclosing_function_range(ext, kinds, inner) {
+                    let range = if matches!(ext, "py" | "rb") {
+                        self.enclosing_indent_scope(ext, kinds, inner)
+                    } else {
+                        self.enclosing_function_range(ext, kinds, inner)
+                    };
+                    if let Some((lo, hi)) = range {
                         self.anchor = Some(lo);
                         self.cursor = hi;
                     }
@@ -2426,7 +2450,12 @@ impl Editor {
                         "namespace",
                         "impl",
                     ];
-                    if let Some((lo, hi)) = self.enclosing_function_range(ext, kinds, inner) {
+                    let range = if matches!(ext, "py" | "rb") {
+                        self.enclosing_indent_scope(ext, kinds, inner)
+                    } else {
+                        self.enclosing_function_range(ext, kinds, inner)
+                    };
+                    if let Some((lo, hi)) = range {
                         self.anchor = Some(lo);
                         self.cursor = hi;
                     }
@@ -4258,6 +4287,93 @@ impl Editor {
     ///
     /// Indent-scoped languages (Python, Ruby) aren't supported here
     /// (returns None) — for the MVP we only handle braced bodies.
+    /// Indent-scoped enclosing-scope range — for languages without
+    /// brace-bounded bodies (Python, Ruby). The body is the run of
+    /// lines whose indent strictly exceeds the header's; the scope
+    /// closes at the first non-blank line whose indent ≤ the header's.
+    /// For Ruby, the closing `end` line is included in `around` mode
+    /// (vim-ish convention — `ad` matches `def…end`); Python has no
+    /// `end` to include.
+    ///
+    /// `inner` ⇒ the body lines only (header excluded, closing `end`
+    /// excluded). `around` ⇒ header through closing `end` (Ruby) or
+    /// through the last body line (Python).
+    pub fn enclosing_indent_scope(
+        &self,
+        ext: &str,
+        header_kinds: &[&str],
+        inner: bool,
+    ) -> Option<(usize, usize)> {
+        let text = self.text.as_str();
+        let symbols = crate::regex_outline::extract_symbols(text, ext);
+        if symbols.is_empty() {
+            return None;
+        }
+        let (cur_row, _) = self.row_col();
+        let total_lines = self.line_count();
+        for s in symbols.iter().rev() {
+            if s.line as usize > cur_row {
+                continue;
+            }
+            if !header_kinds.contains(&s.kind) {
+                continue;
+            }
+            let header_line_start = self.line_start(s.line as usize);
+            let header_indent = line_indent(text, header_line_start);
+            // Walk forward to find the first non-blank line whose
+            // indent ≤ header_indent — that's the scope boundary.
+            let mut body_end_excl = self.text.len();
+            let mut closing_end_line: Option<usize> = None;
+            let mut line_no = s.line as usize + 1;
+            while line_no < total_lines {
+                let ls = self.line_start(line_no);
+                let (lo, hi) = self.line_byte_range(line_no);
+                let line = &text[lo..hi];
+                if line.trim().is_empty() {
+                    line_no += 1;
+                    continue;
+                }
+                let indent = line_indent(text, ls);
+                if indent <= header_indent {
+                    if ext == "rb" && line.trim_start().starts_with("end") {
+                        closing_end_line = Some(line_no);
+                    }
+                    body_end_excl = ls;
+                    break;
+                }
+                line_no += 1;
+            }
+            // Cursor must be inside the scope (header through end of
+            // body) to count.
+            let max_inclusive = match closing_end_line {
+                Some(l) => self.line_byte_range(l).1,
+                None => body_end_excl,
+            };
+            if self.cursor < header_line_start || self.cursor > max_inclusive {
+                continue;
+            }
+            return Some(if inner {
+                // Body = lines after the header up to (but not including)
+                // the closing line.
+                let body_start = if (s.line as usize) + 1 >= total_lines {
+                    self.text.len()
+                } else {
+                    self.line_start((s.line as usize) + 1)
+                };
+                (body_start, body_end_excl)
+            } else {
+                // Around = header through closing `end` (Ruby) or through
+                // last body line (Python).
+                let end_byte = match closing_end_line {
+                    Some(l) => self.line_byte_range(l).1,
+                    None => body_end_excl,
+                };
+                (header_line_start, end_byte)
+            });
+        }
+        None
+    }
+
     pub fn enclosing_function_range(
         &self,
         ext: &str,
@@ -4910,6 +5026,48 @@ mod tests {
         let around = &e.text()[sel.0..sel.1];
         assert!(around.starts_with("fn outer()"));
         assert!(around.contains('}'));
+    }
+
+    #[test]
+    fn inner_function_python_indent_scoped() {
+        let src = "def outer():\n    a = 1\n    b = 2\n\nother = 0\n";
+        let (mut e, mut c) = ed(src);
+        e.language_ext = Some("py".into());
+        e.cursor = src.find("a = 1").unwrap();
+        e.apply(SelectInnerFunction, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        let body = &e.text()[sel.0..sel.1];
+        assert!(body.contains("a = 1"), "body: {body:?}");
+        assert!(body.contains("b = 2"));
+        assert!(!body.contains("def outer"));
+        assert!(!body.contains("other = 0"));
+    }
+
+    #[test]
+    fn around_function_ruby_includes_end() {
+        let src = "def hello\n  puts 'hi'\n  puts 'bye'\nend\n";
+        let (mut e, mut c) = ed(src);
+        e.language_ext = Some("rb".into());
+        e.cursor = src.find("puts 'hi'").unwrap();
+        e.apply(SelectAroundFunction, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        let around = &e.text()[sel.0..sel.1];
+        assert!(around.starts_with("def hello"), "around: {around:?}");
+        assert!(around.trim_end().ends_with("end"));
+    }
+
+    #[test]
+    fn inner_class_python_indent_scoped() {
+        let src = "class Foo:\n    def a(self):\n        pass\n    def b(self):\n        pass\n";
+        let (mut e, mut c) = ed(src);
+        e.language_ext = Some("py".into());
+        e.cursor = src.find("def a").unwrap();
+        e.apply(SelectInnerClass, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        let body = &e.text()[sel.0..sel.1];
+        assert!(body.contains("def a(self)"));
+        assert!(body.contains("def b(self)"));
+        assert!(!body.contains("class Foo"));
     }
 
     #[test]

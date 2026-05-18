@@ -113,12 +113,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         app.editing_mode(),
         EditingMode::Insert | EditingMode::Replace | EditingMode::Visual | EditingMode::Normal
     );
-    let mode_seg_text = if nerd && is_vim_mode {
-        format!(" \u{e7c5} {mode_label} ")
+    let mut left: Vec<Seg> = Vec::new();
+    if nerd && is_vim_mode {
+        // Split the vim chip so the diamond-V glyph gets its own orange tint
+        // (NvChad-style vim accent), then the label uses the mode's normal
+        // dark-on-color contrast. Orange-on-orange (REPLACE mode) would
+        // disappear, so fall back to bg_darker there.
+        let glyph_fg = if mode_bg == theme::cur().orange {
+            theme::cur().bg_darker
+        } else {
+            theme::cur().orange
+        };
+        left.push(Seg::new(" \u{e7c5} ".to_string(), glyph_fg, mode_bg).bold());
+        left.push(Seg::new(format!("{mode_label} "), theme::cur().bg_darker, mode_bg).bold());
     } else {
-        format!(" {mode_label} ")
-    };
-    let mut left = vec![Seg::new(mode_seg_text, theme::cur().bg_darker, mode_bg).bold()];
+        left.push(Seg::new(format!(" {mode_label} "), theme::cur().bg_darker, mode_bg).bold());
+    }
     {
         let g = app.git.snapshot();
         if let Some(branch) = &g.branch {
