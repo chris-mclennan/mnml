@@ -122,7 +122,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     {
         let g = app.git.snapshot();
         if let Some(branch) = &g.branch {
-            let mut txt = format!("  {branch}");
+            // Provider icon (GitHub /GitLab / Bitbucket / Azure / generic
+            // git fallback) when nerd fonts are on. Falls back to nf-fa-
+            // code-fork () for non-recognized remotes or no remote.
+            let provider = if nerd {
+                g.provider_icon.unwrap_or("\u{F126}")
+            } else {
+                ""
+            };
+            let mut txt = if provider.is_empty() {
+                format!(" {branch}")
+            } else {
+                format!(" {provider} {branch}")
+            };
             if g.ahead > 0 {
                 txt.push_str(&format!("  ⇡{}", g.ahead));
             }

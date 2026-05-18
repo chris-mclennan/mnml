@@ -32,6 +32,10 @@ pub struct Snapshot {
     /// Path → gutter line-signs (added/modified/removed), from `git diff HEAD`.
     /// Keys are absolute. Sorted by line within each entry.
     pub line_changes: super::diff::LineSigns,
+    /// Nerd-font icon for the git provider (GitHub / GitLab / Bitbucket /
+    /// Azure DevOps / generic) — resolved from `remote.origin.url`. `None`
+    /// when the workspace has no `origin` remote or isn't a git repo.
+    pub provider_icon: Option<&'static str>,
 }
 
 impl Snapshot {
@@ -86,6 +90,7 @@ impl GitStatus {
 
 fn probe(workspace: &Path) -> Snapshot {
     let mut snap = Snapshot::default();
+    snap.provider_icon = super::browse::provider_icon_for(workspace);
 
     // Branch (gracefully degrade on detached HEAD / not a repo).
     if let Ok(out) = Command::new("git")

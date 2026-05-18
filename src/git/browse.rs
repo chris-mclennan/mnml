@@ -65,6 +65,34 @@ pub fn parse_remote(url: &str) -> Option<(String, String, String)> {
     None
 }
 
+/// Map a host string (from `parse_remote`) to a nerd-font icon — used by
+/// the statusline to show a GitHub / GitLab / Bitbucket / Azure DevOps
+/// glyph alongside the branch name. Falls back to the generic git glyph
+/// for unrecognized hosts.
+pub fn provider_icon(host: &str) -> &'static str {
+    let h = host.to_ascii_lowercase();
+    if h.contains("github.com") {
+        "\u{F09B}" //  nf-fa-github
+    } else if h.contains("gitlab") {
+        "\u{F296}" //  nf-fa-gitlab
+    } else if h.contains("bitbucket") {
+        "\u{E703}" //  nf-dev-bitbucket
+    } else if h.contains("dev.azure.com") || h.contains("visualstudio.com") {
+        "\u{F0805}" // 󰠅 nf-md-microsoft (closest available)
+    } else {
+        "\u{E702}" //  nf-dev-git (generic)
+    }
+}
+
+/// Resolve the git-provider icon for `workspace` by reading
+/// `remote.origin.url` and matching the host. Returns `None` when the
+/// workspace isn't a git repo or has no `origin` remote.
+pub fn provider_icon_for(workspace: &Path) -> Option<&'static str> {
+    let url = git_config(workspace, "remote.origin.url")?;
+    let (host, _, _) = parse_remote(&url)?;
+    Some(provider_icon(&host))
+}
+
 pub fn git_config(workspace: &Path, key: &str) -> Option<String> {
     let out = Command::new("git")
         .args(["config", "--get", key])
