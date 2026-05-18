@@ -53,7 +53,7 @@ impl Tree {
             expanded: BTreeSet::new(),
             cursor: 0,
             scroll: 0,
-            show_hidden: false,
+            show_hidden: true,
             filter: String::new(),
             filter_mode: false,
         };

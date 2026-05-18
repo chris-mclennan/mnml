@@ -772,6 +772,9 @@ struct SavedSession {
     /// session.json without the field) ⇒ keep the default first-level expand.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tree_expanded_dirs: Option<Vec<String>>,
+    /// Persist the `view.toggle_hidden` choice. `None` ⇒ use the launch default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tree_show_hidden: Option<bool>,
     /// Most-recently-opened files, newest first (capped on save).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     recent_files: Vec<String>,
@@ -20208,6 +20211,7 @@ impl App {
                     .map(|p| p.to_string_lossy().into_owned())
                     .collect(),
             ),
+            tree_show_hidden: Some(self.tree.show_hidden),
             recent_files: self
                 .recent_files
                 .iter()
@@ -20429,6 +20433,12 @@ impl App {
         if let Some(dirs) = saved.tree_expanded_dirs {
             self.tree
                 .set_expanded_dirs(dirs.into_iter().map(PathBuf::from));
+        }
+        if let Some(v) = saved.tree_show_hidden
+            && self.tree.show_hidden != v
+        {
+            self.tree.show_hidden = v;
+            self.tree.refresh();
         }
         if !saved.recent_files.is_empty() {
             // Honor the saved order (most-recent first), capping at the runtime
