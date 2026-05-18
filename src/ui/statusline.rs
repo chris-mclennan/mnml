@@ -145,13 +145,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             // followed by ⚠ conflicts. Collapses the staged/unstaged
             // distinction into "what's the net change" — matches gitsigns.
             if g.added > 0 {
-                txt.push_str(&format!("  \u{F0419}{}", g.added)); //  added
+                txt.push_str(&format!("  \u{F0419} {}", g.added)); //   added
             }
             if g.changed > 0 {
-                txt.push_str(&format!("  \u{F06D5}{}", g.changed)); //  changed
+                txt.push_str(&format!("  \u{F06D5} {}", g.changed)); //   changed
             }
             if g.removed > 0 {
-                txt.push_str(&format!("  \u{F0374}{}", g.removed)); //  removed
+                txt.push_str(&format!("  \u{F0374} {}", g.removed)); //   removed
             }
             if g.conflicts > 0 {
                 txt.push_str(&format!("  ⚠{}", g.conflicts));

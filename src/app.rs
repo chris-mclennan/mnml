@@ -775,6 +775,11 @@ struct SavedSession {
     /// Persist the `view.toggle_hidden` choice. `None` ⇒ use the launch default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tree_show_hidden: Option<bool>,
+    /// Per-extra-workspace state (parallel to `App::extra_workspaces` by
+    /// index). Restored by name match — a workspace renamed between
+    /// sessions silently drops its persisted state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    extra_workspaces: Vec<SavedExtraWorkspace>,
     /// Most-recently-opened files, newest first (capped on save).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     recent_files: Vec<String>,
@@ -894,6 +899,22 @@ struct SavedGlobalMark {
     path: String,
     row: usize,
     col: usize,
+}
+
+/// Per-extra-workspace state in session.json. Keyed by `name` (matched on
+/// restore against `App::extra_workspaces[i].name`). Unmatched entries
+/// are silently dropped — if you rename a workspace in config, its
+/// previous state doesn't carry over.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct SavedExtraWorkspace {
+    name: String,
+    #[serde(default)]
+    expanded: bool,
+    /// Tree expanded directories (absolute path strings).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    expanded_dirs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    show_hidden: Option<bool>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -3080,13 +3101,29 @@ impl App {
     /// last file.
     pub fn open_recent_files_picker(&mut self) {
         use crate::picker::PickerItem;
-        let root = self.workspace.clone();
+        // Multi-root: build a list of candidate workspace roots (primary +
+        // each extra) so a file from any of them gets the right relative
+        // label rather than its full absolute path.
+        let primary = self.workspace.clone();
+        let extra_roots: Vec<std::path::PathBuf> = self
+            .extra_workspaces
+            .iter()
+            .map(|w| w.root.clone())
+            .collect();
         let items: Vec<PickerItem> = self
             .recent_files
             .iter()
             .filter(|p| p.exists())
             .map(|p| {
-                let rel = p.strip_prefix(&root).unwrap_or(p).to_path_buf();
+                // Pick the workspace this file belongs to (longest matching
+                // prefix), then build the relative label. Files outside any
+                // configured workspace use their absolute path.
+                let rel = std::iter::once(&primary)
+                    .chain(extra_roots.iter())
+                    .filter_map(|root| p.strip_prefix(root).ok())
+                    .next()
+                    .unwrap_or(p.as_path())
+                    .to_path_buf();
                 let label = rel.to_string_lossy().to_string();
                 let dir = rel
                     .parent()
@@ -3854,6 +3891,16 @@ impl App {
                     self.switch_active_repo(idx);
                 }
             }
+            PickerKind::Workspaces => {
+                if let Ok(idx) = item.id.parse::<usize>() {
+                    self.switch_workspace(idx);
+                }
+            }
+            PickerKind::RemoveWorkspace => {
+                if let Ok(idx) = item.id.parse::<usize>() {
+                    self.remove_workspace_runtime(idx);
+                }
+            }
             #[cfg(feature = "private")]
             PickerKind::the private integrationEnv => {
                 self.run_private_tests_with_overrides(Some(item.id), None);
@@ -3991,6 +4038,169 @@ impl App {
             })
             .collect();
         self.open_picker(Picker::new(PickerKind::Repos, "Switch repo", items));
+    }
+
+    /// Picker over the primary + every configured extra workspace. Accept ⇒
+    /// `switch_workspace(idx)` — for the primary that just refocuses the
+    /// rail; for an extra it expands that section + collapses others. No-op
+    /// when no extras are configured.
+    pub fn open_workspace_picker(&mut self) {
+        use crate::picker::PickerItem;
+        if self.extra_workspaces.is_empty() {
+            self.toast("no extra workspaces — add `[[workspaces]]` to config.toml");
+            return;
+        }
+        let primary_name = self
+            .workspace
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("workspace")
+            .to_string();
+        let mut items: Vec<PickerItem> = Vec::with_capacity(self.extra_workspaces.len() + 1);
+        items.push(PickerItem::new(
+            "0".to_string(),
+            format!("● {primary_name}"),
+            self.workspace.to_string_lossy().into_owned(),
+        ));
+        for (i, w) in self.extra_workspaces.iter().enumerate() {
+            let marker = if w.expanded { "● " } else { "  " };
+            items.push(PickerItem::new(
+                (i + 1).to_string(),
+                format!("{marker}{}", w.name),
+                w.root.to_string_lossy().into_owned(),
+            ));
+        }
+        self.open_picker(Picker::new(
+            PickerKind::Workspaces,
+            "Switch workspace",
+            items,
+        ));
+    }
+
+    /// Runtime add: append a new extra workspace at `path` with a name
+    /// derived from the path's basename (or the user-supplied name). Builds
+    /// the tree + appends repos to the unified `repos` list. The new entry
+    /// shows up as a new collapsible section in the rail; not persisted to
+    /// config.toml — the user has to add the `[[workspaces]]` entry there
+    /// for it to survive a relaunch (caller toasts the hint).
+    pub fn add_workspace_runtime(&mut self, path: PathBuf, name: Option<String>) {
+        let root = match path.canonicalize() {
+            Ok(p) => p,
+            Err(e) => {
+                self.toast(format!("can't open workspace: {e}"));
+                return;
+            }
+        };
+        if root == self.workspace || self.extra_workspaces.iter().any(|w| w.root == root) {
+            self.toast("workspace already open");
+            return;
+        }
+        let resolved_name = name.unwrap_or_else(|| {
+            root.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| root.to_string_lossy().into_owned())
+        });
+        let mut tree = Tree::open(&root);
+        let mut found = crate::git::repos::discover_repos(&root);
+        if found.len() > 1
+            && let Some(first) = found.first()
+        {
+            tree.expand_only([first.path.clone()]);
+        }
+        self.extra_workspaces.push(ExtraWorkspace {
+            name: resolved_name.clone(),
+            root,
+            tree,
+            expanded: true,
+        });
+        self.repos.append(&mut found);
+        self.toast(format!(
+            "workspace added: {resolved_name} (also add to `[[workspaces]]` in config.toml to persist)"
+        ));
+    }
+
+    /// Picker over removable (extra) workspaces. Accept ⇒
+    /// [`Self::remove_workspace_runtime`].
+    pub fn open_remove_workspace_picker(&mut self) {
+        use crate::picker::PickerItem;
+        if self.extra_workspaces.is_empty() {
+            self.toast("no extra workspaces to remove");
+            return;
+        }
+        let items: Vec<PickerItem> = self
+            .extra_workspaces
+            .iter()
+            .enumerate()
+            .map(|(i, w)| {
+                PickerItem::new(
+                    (i + 1).to_string(),
+                    w.name.clone(),
+                    w.root.to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+        self.open_picker(Picker::new(
+            PickerKind::RemoveWorkspace,
+            "Remove workspace",
+            items,
+        ));
+    }
+
+    /// Runtime remove: drop the extra workspace at index `idx` (1-based,
+    /// matching the workspace-switcher picker convention where 0 is the
+    /// primary). Removes its repos from `App.repos`. Primary workspace
+    /// can't be removed.
+    pub fn remove_workspace_runtime(&mut self, idx: usize) {
+        if idx == 0 {
+            self.toast("can't remove the primary (launched) workspace");
+            return;
+        }
+        let ws_idx = idx - 1;
+        if ws_idx >= self.extra_workspaces.len() {
+            return;
+        }
+        let removed = self.extra_workspaces.remove(ws_idx);
+        // Strip repos that lived under this workspace's root.
+        let was_active = self
+            .repos
+            .get(self.active_repo)
+            .map(|r| r.path.starts_with(&removed.root))
+            .unwrap_or(false);
+        self.repos.retain(|r| !r.path.starts_with(&removed.root));
+        if was_active {
+            self.active_repo = 0;
+            if let Some(p) = self.repos.first().map(|r| r.path.clone()) {
+                self.git.retarget(&p);
+            }
+        } else if self.active_repo >= self.repos.len() {
+            self.active_repo = self.repos.len().saturating_sub(1);
+        }
+        self.toast(format!("workspace removed: {}", removed.name));
+    }
+
+    /// Picker accept handler for [`PickerKind::Workspaces`]. Expands the
+    /// chosen workspace's tree section (collapses other extras so the rail
+    /// reads as "this is the one I'm working in"). Primary workspace just
+    /// gets focused.
+    pub fn switch_workspace(&mut self, idx: usize) {
+        // 0 = primary, 1+ = extras (offset by -1 into `extra_workspaces`).
+        self.focus_tree();
+        self.rail_section = RailSection::Workspace;
+        if idx == 0 {
+            self.tree_root_expanded = true;
+            for w in &mut self.extra_workspaces {
+                w.expanded = false;
+            }
+            return;
+        }
+        let ws_idx = idx - 1;
+        if ws_idx >= self.extra_workspaces.len() {
+            return;
+        }
+        self.tree_root_expanded = false;
+        for (i, w) in self.extra_workspaces.iter_mut().enumerate() {
+            w.expanded = i == ws_idx;
+        }
     }
 
     // ─── as-you-type LSP completion popup ───────────────────────────
@@ -11151,6 +11361,23 @@ impl App {
     pub fn prompt_accept(&mut self) {
         let Some(p) = self.prompt.take() else { return };
         match p.kind {
+            crate::prompt::PromptKind::AddWorkspace => {
+                let input = p.input.trim();
+                if input.is_empty() {
+                    return;
+                }
+                // Tilde-expand `~/...`.
+                let path = if let Some(rest) = input.strip_prefix("~/") {
+                    if let Some(home) = std::env::var_os("HOME") {
+                        PathBuf::from(home).join(rest)
+                    } else {
+                        PathBuf::from(input)
+                    }
+                } else {
+                    PathBuf::from(input)
+                };
+                self.add_workspace_runtime(path, None);
+            }
             crate::prompt::PromptKind::GitCommit => {
                 let msg = p.input.trim();
                 if msg.is_empty() {
@@ -11691,7 +11918,15 @@ impl App {
         if q.is_empty() {
             return;
         }
-        let (hits, used) = grep_workspace(&self.workspace, &q);
+        // Multi-root: run grep in the primary workspace + each extra,
+        // concat the hits. `used` reflects the tool of the primary run
+        // (consistent — extras presumably have the same toolchain
+        // available since they're sibling user dirs).
+        let (mut hits, used) = grep_workspace(&self.workspace, &q);
+        for ws in &self.extra_workspaces {
+            let (mut extra_hits, _) = grep_workspace(&ws.root, &q);
+            hits.append(&mut extra_hits);
+        }
         if hits.is_empty() {
             self.toast(format!("{used}: no matches for {q:?}"));
             return;
@@ -20212,6 +20447,21 @@ impl App {
                     .collect(),
             ),
             tree_show_hidden: Some(self.tree.show_hidden),
+            extra_workspaces: self
+                .extra_workspaces
+                .iter()
+                .map(|w| SavedExtraWorkspace {
+                    name: w.name.clone(),
+                    expanded: w.expanded,
+                    expanded_dirs: w
+                        .tree
+                        .expanded_dirs()
+                        .into_iter()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .collect(),
+                    show_hidden: Some(w.tree.show_hidden),
+                })
+                .collect(),
             recent_files: self
                 .recent_files
                 .iter()
@@ -20439,6 +20689,21 @@ impl App {
         {
             self.tree.show_hidden = v;
             self.tree.refresh();
+        }
+        // Restore extra-workspace state (matched by name — renames lose
+        // their previous state silently).
+        for s in saved.extra_workspaces {
+            if let Some(w) = self.extra_workspaces.iter_mut().find(|w| w.name == s.name) {
+                w.expanded = s.expanded;
+                if let Some(v) = s.show_hidden
+                    && w.tree.show_hidden != v
+                {
+                    w.tree.show_hidden = v;
+                    w.tree.refresh();
+                }
+                w.tree
+                    .set_expanded_dirs(s.expanded_dirs.into_iter().map(PathBuf::from));
+            }
         }
         if !saved.recent_files.is_empty() {
             // Honor the saved order (most-recent first), capping at the runtime

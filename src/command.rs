@@ -163,10 +163,16 @@ fn builtin_commands() -> Vec<Command> {
             group: "view",
             keys: &[],
             run: |app| {
-                app.tree.show_hidden = !app.tree.show_hidden;
+                // Flip the primary tree's show_hidden, then propagate the same
+                // state to every extra-workspace tree so they stay in sync.
+                let target = !app.tree.show_hidden;
+                app.tree.show_hidden = target;
                 app.tree.refresh();
-                let on = app.tree.show_hidden;
-                app.toast(if on { "hidden: on" } else { "hidden: off" }.to_string());
+                for w in &mut app.extra_workspaces {
+                    w.tree.show_hidden = target;
+                    w.tree.refresh();
+                }
+                app.toast(if target { "hidden: on" } else { "hidden: off" }.to_string());
             },
         },
         Command {
@@ -1435,6 +1441,33 @@ fn builtin_commands() -> Vec<Command> {
             group: "git",
             keys: &[],
             run: |app| app.rediscover_repos(),
+        },
+        Command {
+            id: "view.switch_workspace",
+            title: "Switch workspace (primary ↔ extras)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_workspace_picker(),
+        },
+        Command {
+            id: "view.add_workspace",
+            title: "Add a workspace (runtime — not persisted)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let prompt = crate::prompt::Prompt::new(
+                    crate::prompt::PromptKind::AddWorkspace,
+                    "Workspace path (~/ supported)",
+                );
+                app.prompt = Some(prompt);
+            },
+        },
+        Command {
+            id: "view.remove_workspace",
+            title: "Remove an extra workspace (runtime)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_remove_workspace_picker(),
         },
         Command {
             id: "git.blame_toggle",

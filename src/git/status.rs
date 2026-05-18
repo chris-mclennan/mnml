@@ -98,8 +98,10 @@ impl GitStatus {
 }
 
 fn probe(workspace: &Path) -> Snapshot {
-    let mut snap = Snapshot::default();
-    snap.provider_icon = super::browse::provider_icon_for(workspace);
+    let mut snap = Snapshot {
+        provider_icon: super::browse::provider_icon_for(workspace),
+        ..Default::default()
+    };
 
     // Branch (gracefully degrade on detached HEAD / not a repo).
     if let Ok(out) = Command::new("git")

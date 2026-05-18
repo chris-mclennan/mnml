@@ -77,6 +77,14 @@ pub enum PickerKind {
     /// `id` = the index (as a string) into `App::repos`. Accept ⇒
     /// switch the active repo. Populated by `git.switch_repo`.
     Repos,
+    /// `id` = workspace index (`"0"` = primary, `"1"..` = each extra in
+    /// `App::extra_workspaces`). Accept ⇒ expand that workspace's tree
+    /// section + focus the rail on it. Populated by `view.switch_workspace`.
+    Workspaces,
+    /// `id` = workspace index (1-based; can't remove the primary). Accept ⇒
+    /// drop the extra workspace at that index. Populated by
+    /// `view.remove_workspace`.
+    RemoveWorkspace,
     /// `id` = an env name (`"dev"` / `"staging"` / `"prod"`). Accept ⇒
     /// run playwright tests against that env (private-feature only).
     /// Populated by `private.run_tests_pick_env`.
