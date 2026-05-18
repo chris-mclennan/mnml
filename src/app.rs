@@ -4079,6 +4079,22 @@ impl App {
             PickerKind::DapException => {
                 self.dap_toggle_exception_filter(&item.id);
             }
+            PickerKind::CallHierarchyItems => {
+                // id = "<idx>\t<in|out>" — pull the picked item out of
+                // the stash + fire the chosen-direction follow-up.
+                let mut parts = item.id.splitn(2, '\t');
+                let idx: usize = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                let dir = parts.next().unwrap_or("in");
+                if let Some(picked) = self.pending_call_hierarchy_items.get(idx).cloned() {
+                    match dir {
+                        "out" => self.lsp.call_hierarchy_outgoing(&picked),
+                        _ => self.lsp.call_hierarchy_incoming(&picked),
+                    }
+                    // Replace the stash with just the picked item so a
+                    // future opposite-direction re-fire skips prepare.
+                    self.pending_call_hierarchy_items = vec![picked];
+                }
+            }
         }
     }
 
@@ -7309,6 +7325,37 @@ impl App {
         let tid = self.dap_thread.unwrap_or(1);
         if let Err(e) = mgr.client.pause(tid) {
             self.toast(format!("dap pause: {e}"));
+        }
+    }
+    /// Step backward one statement. Adapter must support reverse-
+    /// debugging (rr / lldb-rr / a few record-replay shapes); on
+    /// unsupported adapters the request returns `success: false`
+    /// which flows through the generic `DapEvent::Failed` toast.
+    pub fn dap_step_back(&mut self) {
+        let Some(mgr) = self.dap.as_mut() else {
+            return;
+        };
+        let Some(tid) = self.dap_thread else {
+            self.toast("dap: not stopped");
+            return;
+        };
+        if let Err(e) = mgr.client.step_back(tid) {
+            self.toast(format!("dap step_back: {e}"));
+        }
+    }
+    /// Reverse-continue: resume execution backward to the previous
+    /// breakpoint (or the start of recorded history). Same adapter
+    /// support caveat as [`Self::dap_step_back`].
+    pub fn dap_reverse_continue(&mut self) {
+        let Some(mgr) = self.dap.as_mut() else {
+            return;
+        };
+        let Some(tid) = self.dap_thread else {
+            self.toast("dap: not stopped");
+            return;
+        };
+        if let Err(e) = mgr.client.reverse_continue(tid) {
+            self.toast(format!("dap reverse_continue: {e}"));
         }
     }
     /// `dap.add_watch` — open a prompt for a new watch expression. Any
@@ -13466,9 +13513,10 @@ impl App {
         ));
     }
 
-    /// Handle `LspEvent::CallHierarchyPrepared` — take the first item and
-    /// fire the follow-up `{incoming,outgoing}Calls` request. Multi-item
-    /// disambiguation (when the cursor straddles overloads) is a follow-up.
+    /// Handle `LspEvent::CallHierarchyPrepared` — fire the follow-up
+    /// `{incoming,outgoing}Calls`. Single item: dispatch directly.
+    /// Multi-item (overloaded fn / cursor straddles symbols): open a
+    /// `CallHierarchyItems` picker so the user can disambiguate.
     fn apply_call_hierarchy_prepared(
         &mut self,
         direction: crate::lsp::CallHierarchyDirection,
@@ -13478,18 +13526,52 @@ impl App {
             self.toast("call hierarchy: nothing under cursor");
             return;
         }
-        let item = items.into_iter().next().unwrap();
-        match direction {
-            crate::lsp::CallHierarchyDirection::Incoming => {
-                self.lsp.call_hierarchy_incoming(&item);
+        if items.len() == 1 {
+            let item = items.into_iter().next().unwrap();
+            match direction {
+                crate::lsp::CallHierarchyDirection::Incoming => {
+                    self.lsp.call_hierarchy_incoming(&item);
+                }
+                crate::lsp::CallHierarchyDirection::Outgoing => {
+                    self.lsp.call_hierarchy_outgoing(&item);
+                }
             }
-            crate::lsp::CallHierarchyDirection::Outgoing => {
-                self.lsp.call_hierarchy_outgoing(&item);
-            }
+            self.pending_call_hierarchy_items = vec![item];
+            return;
         }
-        // Stash the chosen item so a future "re-fire with opposite
-        // direction" can avoid a fresh prepare. Not used yet but cheap.
-        self.pending_call_hierarchy_items = vec![item];
+        // Multi-item — stash for the picker to look up by index on accept.
+        let dir_tag = match direction {
+            crate::lsp::CallHierarchyDirection::Incoming => "in",
+            crate::lsp::CallHierarchyDirection::Outgoing => "out",
+        };
+        let picker_items: Vec<crate::picker::PickerItem> = items
+            .iter()
+            .enumerate()
+            .map(|(i, it)| {
+                let rel = it
+                    .path
+                    .strip_prefix(&self.workspace)
+                    .unwrap_or(it.path.as_path())
+                    .to_string_lossy()
+                    .to_string();
+                let detail = format!("{}:{}", rel, it.line + 1);
+                crate::picker::PickerItem {
+                    id: format!("{i}\t{dir_tag}"),
+                    label: it.name.clone(),
+                    detail,
+                }
+            })
+            .collect();
+        self.pending_call_hierarchy_items = items;
+        let title = match direction {
+            crate::lsp::CallHierarchyDirection::Incoming => "Incoming calls — pick symbol",
+            crate::lsp::CallHierarchyDirection::Outgoing => "Outgoing calls — pick symbol",
+        };
+        self.picker = Some(crate::picker::Picker::new(
+            crate::picker::PickerKind::CallHierarchyItems,
+            title,
+            picker_items,
+        ));
     }
 
     /// Handle `LspEvent::CallHierarchyCalls` — open the call sites as a

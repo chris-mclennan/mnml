@@ -83,6 +83,38 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Polish wave 2 — 5 bounded items (2026-05-18 cont.):** (1) **Reverse-
+debugging DAP commands** — `DapClient::step_back` + `reverse_continue`
+hitting the `stepBack` / `reverseContinue` DAP requests; palette
+commands `dap.step_back` / `dap.reverse_continue`. Only meaningful
+on adapters that support record-replay (rr / lldb-rr); unsupported
+adapters return `success: false` which flows through the existing
+generic `DapEvent::Failed` toast. (2) **Multi-item call-hierarchy
+picker** — `prepareCallHierarchy` may return multiple items when the
+cursor straddles overloaded fns. New `PickerKind::CallHierarchyItems`;
+the picker shows each candidate as `<name>  <rel>:<line>` and accept
+fires the chosen-direction follow-up against the picked item. Single-
+item case still auto-dispatches (no UI change for the common path).
+(3) **Smarter fold tracking on multi-edit batches** — `apply_edit_ops`
+used to wholesale-clear `Buffer.folds` on any change. Now it snapshots
+`at_line` per-op (the start-byte's line for `ReplaceRange` ops; the
+cursor's line otherwise) + the line-count delta, and calls
+`shift_folds_after` per-op so folds survive LSP-rename / find-replace
+runs that don't cross fold boundaries. Two new unit tests cover the
+line-preserving and line-shifting cases. (4) **Request-pane Body tab**
+inserts a literal `\t` character (typing indented JSON / XML is the
+common use). Other fields keep the form-cycle gesture; Shift+Tab
+everywhere still cycles back. Stale Tab-cycle help text + doc comment
+updated to mention Headers (the cycle is URL → Method → Headers → Body
+→ URL, not the old 3-field form). (5) **Snippet session Shift+Tab fix**
+— the session handler matched `KeyCode::Tab` without inspecting
+modifiers, so on modern terminals that synthesize `Tab+Shift` (vs the
+legacy `BackTab` code) `Shift+Tab` was firing forward-step instead of
+backward. Added the `Shift+Tab → snippet_prev_placeholder` arm
+explicitly. New e2e (`snippet_backtab_visited.test`) covers the
+visited-stop Backtab-to-end-of-typed-content path that was silently
+broken on most terminals. 87 e2e total.
+
 **DAP setVariable + REPL filter + cookies/storage value-only copy (2026-05-18 cont.):**
 three more bounded items. (1) **`s` in the variables panel** opens a
 prompt seeded with the row's current value; accept fires `setVariable`

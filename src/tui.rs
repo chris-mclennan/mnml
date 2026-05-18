@@ -313,6 +313,12 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // targets the right spot).
     if app.snippet_session.is_some() {
         match key.code {
+            // Shift+Tab (some terminals only synthesize BackTab; kitty etc.
+            // send Tab+Shift) → previous placeholder.
+            KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                app.snippet_prev_placeholder();
+                return;
+            }
             KeyCode::Tab => {
                 app.snippet_next_placeholder();
                 return;
@@ -586,6 +592,13 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         if rp.view == ViewMode::Edit {
             match key.code {
                 KeyCode::Tab if shift => rp.focus_prev_field(),
+                // Tab inside Body inserts a literal `\t` (multi-line code-y
+                // field — typing indented JSON / XML is common). Other
+                // fields keep the form-cycle gesture so the user can walk
+                // URL → Method → Headers → Body → URL.
+                KeyCode::Tab if rp.focus == crate::request_pane::EditField::Body => {
+                    rp.type_char('\t');
+                }
                 KeyCode::Tab => rp.focus_next_field(),
                 KeyCode::BackTab => rp.focus_prev_field(),
                 KeyCode::Esc => app.focus_tree(),

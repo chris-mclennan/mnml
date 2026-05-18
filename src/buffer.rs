@@ -788,8 +788,21 @@ impl Buffer {
                 },
                 _ => None,
             };
+            // Snapshot per-op for fold-shift math: at_line = where the edit
+            // starts (the start-byte's line for ReplaceRange; the cursor's
+            // line for everything else, since most ops are cursor-relative).
+            let at_line = match &op {
+                E::ReplaceRange { start, .. } => self.editor.line_at_byte(*start),
+                _ => self.editor.row_col().0,
+            };
+            let lines_before = self.editor.line_count();
             let out = self.editor.apply(op, viewport_rows, clipboard);
             if out.buffer_changed {
+                let lines_after = self.editor.line_count();
+                let delta = lines_after as i64 - lines_before as i64;
+                if delta != 0 {
+                    self.shift_folds_after(at_line, delta);
+                }
                 if out.text_edits.is_empty() {
                     self.parse_tree = None;
                     self.pending_tree_edits.clear();
@@ -807,7 +820,7 @@ impl Buffer {
             self.highlights_dirty = true;
             self.refresh_find_matches();
             self.last_edited = Some(Instant::now());
-            self.folds.clear();
+            // Folds shifted per-op above; no need to wholesale-clear here.
             self.note_edit_position();
         }
         changed
@@ -1259,7 +1272,9 @@ mod tests {
     }
 
     #[test]
-    fn edits_clear_folds() {
+    fn batch_edit_preserves_folds_when_no_line_change() {
+        // apply_edit_ops used to wholesale-clear folds on any change.
+        // Now it shifts per-op so single-line edits leave folds intact.
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("a.rs");
         fs::write(&p, "0\n1\n2\n").unwrap();
@@ -1267,7 +1282,32 @@ mod tests {
         b.folds.insert(0, 2);
         let mut clip = crate::clipboard::Clipboard::new();
         b.apply_edit_ops(vec![crate::edit_op::EditOp::InsertChar('x')], &mut clip, 0);
-        assert!(b.folds.is_empty());
+        // Line count unchanged ⇒ fold preserved as-is.
+        assert_eq!(b.folds.get(&0).copied(), Some(2));
+    }
+
+    #[test]
+    fn batch_edit_shifts_folds_when_line_count_changes() {
+        // A ReplaceRange that adds a newline must shift any below-fold.
+        // Buffer state: 8 logical lines (0..7), fold lines [5..=6].
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.rs");
+        fs::write(&p, "0\n1\n2\n3\n4\n5\n6\n").unwrap();
+        let mut b = Buffer::open(&p, &Config::default()).unwrap();
+        b.folds.insert(5, 6);
+        let mut clip = crate::clipboard::Clipboard::new();
+        // Splice a newline at the start of line 1 (byte 2 = after "0\n").
+        b.apply_edit_ops(
+            vec![crate::edit_op::EditOp::ReplaceRange {
+                start: 2,
+                end: 2,
+                text: "\n".to_string(),
+            }],
+            &mut clip,
+            0,
+        );
+        // Fold at (5,6) shifts to (6,7) — below the inserted line.
+        assert_eq!(b.folds.get(&6).copied(), Some(7));
     }
 
     #[test]

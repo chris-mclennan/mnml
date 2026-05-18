@@ -43,10 +43,18 @@ use std::collections::BTreeMap;
 /// the right amount. Stops at indices < `current` are not touched (they sit
 /// earlier in the file and aren't disturbed by edits at the cursor).
 ///
-/// Limitation: Shift-Tab to a previously-visited stop puts the cursor at
-/// that stop's original position, *not* at the end of whatever the user
-/// typed there. Re-typing or backspacing is the user's recovery; tracking
-/// per-stop ranges would let us land at the end instead and is a follow-up.
+/// Backtab to a previously-visited stop now restores the cursor to its
+/// recorded *exit* position (`stop_cursors[idx]`) — i.e. the end of
+/// whatever the user typed there — rather than dropping back at
+/// `stops[idx]`. The exit position shifts along with `stops` when later
+/// edits move it.
+///
+/// Limitation that remains: edits made *outside* the active stop (the user
+/// arrows away mid-session, then types) still get attributed to the
+/// active stop, so later stops shift by the wrong amount. Fixing this
+/// would require hooking into per-buffer change events to detect *where*
+/// each insertion happened — out of scope for the snippet machinery
+/// (which only polls text-length at each Tab transition).
 #[derive(Debug, Clone)]
 pub struct SnippetSession {
     /// Pane the session belongs to. If the active pane drifts away from this

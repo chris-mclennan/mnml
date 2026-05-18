@@ -122,6 +122,12 @@ pub enum PickerKind {
     /// `DapManager.enabled_exception_filters` and re-fire
     /// `setExceptionBreakpoints`. Populated by `dap.exceptions`.
     DapException,
+    /// `id` = `<idx>\t<direction>` where idx indexes into
+    /// `App.pending_call_hierarchy_items` and direction is `"in"` or
+    /// `"out"`. Opened when `prepareCallHierarchy` returns more than
+    /// one item (overloaded fn / multi-symbol cursor); accept fires
+    /// the chosen direction's follow-up against the picked item.
+    CallHierarchyItems,
 }
 
 #[derive(Debug, Clone)]

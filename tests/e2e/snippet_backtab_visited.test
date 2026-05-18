@@ -1,0 +1,29 @@
+# Snippet Backtab to a visited stop — should land the cursor at the END
+# of the user's typed content there (the recorded exit cursor), not at
+# the original placeholder position. Then typing extends what was typed
+# rather than overwriting from the start.
+
+snippet rs forr "for $1 in $2 {\n    $0\n}"
+
+write code.rs ""
+open code.rs
+
+# Trigger expansion + type into the first two stops.
+type forr
+command snippet.expand
+type i
+key tab
+type items
+
+# Sanity: before Backtab the line is "for i in items {".
+expect screen contains "for i in items {"
+
+# At this point cursor sits at end of "items" (the $2 stop's typed end).
+# Backtab returns to $1 — must land at the END of "i", not at the start.
+key shift+tab
+
+# Type something — it must append to "i", giving "i_var" not "_vari".
+type _var
+
+# Verify the appended content shows up in the right place.
+expect screen contains "for i_var in items {"

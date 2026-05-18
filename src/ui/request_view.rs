@@ -2,9 +2,11 @@
 //!
 //! * **Response (default)** — read-only summary of the last send: status,
 //!   headers, pretty body, `@assert` results, `@capture`s. `r` re-fires.
-//! * **Edit** — Postman-style form: URL, method, body editable in place. Tab
-//!   toggles modes; in Edit, Shift-Tab / Tab cycle the focused field; typing /
-//!   backspace / arrows / Home / End edit; Space on Method cycles HTTP verbs;
+//! * **Edit** — Postman-style form: URL, method, headers, body editable in
+//!   place. Tab toggles modes; in Edit, Shift-Tab / Tab cycle the focused
+//!   field (URL → Method → Headers → Body → URL); Tab inside Body inserts a
+//!   literal `\t` (for typing indented JSON / XML); typing / backspace /
+//!   arrows / Home / End edit; Space on Method cycles HTTP verbs;
 //!   `r` re-fires with the edited values.
 //!
 //! Long lines clip (no wrap yet).
@@ -70,7 +72,7 @@ pub fn draw(
         tab("Edit", active_edit),
         tab("Response", !active_edit),
         Span::styled(
-            "       (Tab toggles · r send · y copy curl · esc tree)",
+            "       (Tab toggles view · S-Tab cycles field · r send · y copy curl · esc tree)",
             dim,
         ),
     ]));

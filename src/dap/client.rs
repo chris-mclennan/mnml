@@ -208,6 +208,21 @@ impl DapClient {
         self.send_request("pause", json!({ "threadId": thread_id }))
     }
 
+    /// `stepBack` — step backward one statement. Only meaningful on
+    /// adapters that support reverse-debugging (rr / lldb-rr / a few
+    /// record-replay shapes). Adapters without support return
+    /// `success: false` which flows through the generic `Failed` toast.
+    pub fn step_back(&mut self, thread_id: i64) -> Result<(), String> {
+        self.send_request("stepBack", json!({ "threadId": thread_id }))
+    }
+
+    /// `reverseContinue` — resume execution backward to the previous
+    /// breakpoint (or the start of recorded history). Same adapter-
+    /// support caveat as `step_back`.
+    pub fn reverse_continue(&mut self, thread_id: i64) -> Result<(), String> {
+        self.send_request("reverseContinue", json!({ "threadId": thread_id }))
+    }
+
     /// `stackTrace` — get the current call stack for a thread. Reply
     /// lands as `DapEvent::StackTrace`.
     pub fn stack_trace(&mut self, thread_id: i64) -> Result<(), String> {

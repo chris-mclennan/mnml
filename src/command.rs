@@ -1837,6 +1837,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.dap_pause(),
         },
         Command {
+            id: "dap.step_back",
+            title: "DAP: step backward (reverse — requires record-replay adapter)",
+            group: "dap",
+            keys: &[],
+            run: |app| app.dap_step_back(),
+        },
+        Command {
+            id: "dap.reverse_continue",
+            title: "DAP: reverse-continue to previous breakpoint",
+            group: "dap",
+            keys: &[],
+            run: |app| app.dap_reverse_continue(),
+        },
+        Command {
             id: "dap.terminate",
             title: "DAP: terminate session",
             group: "dap",
