@@ -89,7 +89,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let nerd = !app.config.ui.ascii_icons;
     // Right cluster (NvChad-style): ` + ` ` TABS ` per-tabpage chips
-    // ` ◯ ` ` × `. Pre-compute its total width so the per-buffer tab strip
+    // ` ●━ ` ` × `. Pre-compute its total width so the per-buffer tab strip
     // knows where to stop.
     let n_tabs = app.layouts.len();
     let mut right_w: u16 = 3 + 6; // ` + ` + ` TABS `
@@ -104,7 +104,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             2 + dig + dirty + 2
         };
     }
-    right_w += 3 + 3; // ` ◯ ` + ` × `
+    right_w += 4 + 3; // ` ●━ ` + ` × `
     let tabs_max_x = area.x + area.width.saturating_sub(right_w);
 
     // Disambiguated labels — when two open editors share a filename, prepend
@@ -478,21 +478,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    // Theme toggle — `` (nf-fa-toggle_on, U+F205). Same glyph NvChad uses
-    // in their tabufline (verified against their `toggle_theme_icon` source).
-    // Render with a bg highlight so the 3-cell slot reads as a button chip
-    // matching the visual language of the TABS + close × siblings.
+    // Theme toggle — 2-cell composed pill (`●━`): filled circle + heavy
+    // horizontal line, both on a `bg2` chip background. Reads as "iOS-style
+    // toggle with handle on the left" without depending on the
+    // single-cell-wide nerd-font FA glyph that renders too narrow in Mono
+    // variants. Total slot is 4 cells: ` ●━ `.
     spans.push(Span::styled(
-        " \u{F205} ",
+        " \u{25CF}\u{2501} ",
         Style::default().fg(t.fg).bg(t.bg2),
     ));
     app.rects.bufferline_theme_toggle = Some(ratatui::layout::Rect {
         x: cluster_x,
         y: area.y,
-        width: 3,
+        width: 4,
         height: 1,
     });
-    cluster_x += 3;
+    cluster_x += 4;
 
     // `×` close-active-pane (matches `Ctrl+W` muscle memory).
     spans.push(Span::styled(
