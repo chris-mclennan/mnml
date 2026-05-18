@@ -208,6 +208,21 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // blank top line, so the mouse maths line up.)
     if let Some(ta) = tree_area {
         tree_view::draw(frame, app, ta);
+        // Visible drag handle — paint the rail's rightmost column with a
+        // thin vertical line in `comment` grey. Without this the resize
+        // handle (already wired via `app.rects.tree_edge`) is invisible.
+        if let Some(edge) = app.rects.tree_edge {
+            let t = theme::cur();
+            let glyph = if app.config.ui.ascii_icons { "|" } else { "│" };
+            let line = std::iter::repeat_n(glyph, edge.height as usize)
+                .collect::<Vec<_>>()
+                .join("\n");
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(line)
+                    .style(Style::default().fg(t.comment).bg(t.bg_darker)),
+                edge,
+            );
+        }
     } else {
         app.rects.tree = None;
         app.rects.tree_toggle = None;
