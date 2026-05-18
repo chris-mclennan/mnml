@@ -1355,6 +1355,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_theme_picker(),
         },
         Command {
+            id: "theme.toggle",
+            title: "Theme: toggle (light ↔ dark)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_theme(),
+        },
+        Command {
             id: "markdown.preview",
             title: "Markdown: open rendered preview (split)",
             group: "view",

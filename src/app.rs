@@ -3501,6 +3501,27 @@ impl App {
         }
     }
 
+    /// NvChad-style binary theme toggle. Swaps between `[ui] theme` ↔
+    /// `[ui] theme_toggle` (the two configured names). Driven by the
+    /// bufferline's slider chip. When `theme_toggle` is unset, toasts a
+    /// hint so the user knows how to enable it.
+    pub fn toggle_theme(&mut self) {
+        let Some(alt) = self.config.ui.theme_toggle.clone() else {
+            self.toast(
+                "set `[ui] theme_toggle = \"<other>\"` in config.toml to enable the dark/light toggle"
+                    .to_string(),
+            );
+            return;
+        };
+        let current = crate::ui::theme::cur().name.to_string();
+        let primary = self.config.ui.theme.clone();
+        // If we're on the primary → flip to alt; otherwise (on the alt or any
+        // third theme) → flip to primary. That way the chord is a reliable
+        // "swap to your other theme" regardless of how we got here.
+        let target = if current == primary { alt } else { primary };
+        self.set_theme(&target);
+    }
+
     /// Like [`Self::set_theme`] but no toast — used at session restore so a
     /// "theme: onedark" doesn't pop on every launch.
     fn set_theme_silent(&mut self, name: &str) -> Option<String> {

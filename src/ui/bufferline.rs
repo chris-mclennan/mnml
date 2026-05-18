@@ -473,15 +473,38 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    // Theme toggle — 2-cell composed pill: `●` handle in bright fg + `━`
-    // rail in `comment` grey (darker than the handle but still visible
-    // against the chip bg). Reads as an iOS-style toggle with the handle on
-    // the left. Total slot is 4 cells: ` ●━ `.
-    spans.push(Span::styled(" \u{25CF}", Style::default().fg(t.fg).bg(t.bg2)));
-    spans.push(Span::styled(
-        "\u{2501} ",
-        Style::default().fg(t.comment).bg(t.bg2),
-    ));
+    // Theme toggle — 2-cell composed pill: `●` handle (bright fg) + `━`
+    // rail (dim comment grey). When a `[ui] theme_toggle` pair is
+    // configured, the handle side flips based on which theme is active —
+    // handle-LEFT (`●━`) when on the primary theme, handle-RIGHT (`━●`)
+    // when on the alternate. Total slot is 4 cells: ` <pill> `.
+    let on_alt = app
+        .config
+        .ui
+        .theme_toggle
+        .as_deref()
+        .is_some_and(|alt| theme::cur().name.eq_ignore_ascii_case(alt));
+    spans.push(Span::styled(" ", Style::default().bg(t.bg2)));
+    if on_alt {
+        spans.push(Span::styled(
+            "\u{2501}",
+            Style::default().fg(t.comment).bg(t.bg2),
+        ));
+        spans.push(Span::styled(
+            "\u{25CF}",
+            Style::default().fg(t.fg).bg(t.bg2),
+        ));
+    } else {
+        spans.push(Span::styled(
+            "\u{25CF}",
+            Style::default().fg(t.fg).bg(t.bg2),
+        ));
+        spans.push(Span::styled(
+            "\u{2501}",
+            Style::default().fg(t.comment).bg(t.bg2),
+        ));
+    }
+    spans.push(Span::styled(" ", Style::default().bg(t.bg2)));
     app.rects.bufferline_theme_toggle = Some(ratatui::layout::Rect {
         x: cluster_x,
         y: area.y,

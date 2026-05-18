@@ -492,6 +492,11 @@ pub struct SessionConfig {
 #[derive(Debug, Clone)]
 pub struct UiConfig {
     pub theme: String,
+    /// Optional alternate theme name. When set, the bufferline's theme-toggle
+    /// slider swaps between `theme` ↔ `theme_toggle` (NvChad convention —
+    /// users configure a light+dark pair, the button is a 1-press flip).
+    /// When `None`, slider click falls back to opening the full theme picker.
+    pub theme_toggle: Option<String>,
     pub ascii_icons: bool,
     pub tree_width: u16,
     /// Hybrid relative line numbers — the cursor line shows its absolute number,
@@ -603,6 +608,7 @@ impl Default for Config {
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),
+                theme_toggle: None,
                 ascii_icons: false,
                 tree_width: 30,
                 relative_line_numbers: false,
@@ -840,6 +846,7 @@ struct RawEditor {
 #[derive(Debug, Default, Deserialize)]
 struct RawUi {
     theme: Option<String>,
+    theme_toggle: Option<String>,
     ascii_icons: Option<bool>,
     tree_width: Option<u16>,
     relative_line_numbers: Option<bool>,
@@ -945,6 +952,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.theme {
             self.ui.theme = v;
+        }
+        if let Some(v) = raw.ui.theme_toggle {
+            self.ui.theme_toggle = Some(v);
         }
         if let Some(v) = raw.ui.ascii_icons {
             self.ui.ascii_icons = v;

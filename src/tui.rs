@@ -3379,7 +3379,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             if let Some(r) = app.rects.bufferline_theme_toggle
                 && contains(r, x, y)
             {
-                app.open_theme_picker();
+                // NvChad convention: the slider is a binary toggle between
+                // `[ui] theme` ↔ `[ui] theme_toggle`. Falls back to opening
+                // the picker when `theme_toggle` is unconfigured.
+                if app.config.ui.theme_toggle.is_some() {
+                    app.toggle_theme();
+                } else {
+                    app.open_theme_picker();
+                }
                 return;
             }
             if let Some(r) = app.rects.bufferline_window_close
