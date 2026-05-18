@@ -217,7 +217,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         {
             let t = theme::cur();
             let glyph = if app.config.ui.ascii_icons { "|" } else { "┃" };
-            let grip_h: u16 = 3;
+            let grip_h: u16 = 2;
             let grip_y = edge.y + edge.height.saturating_sub(grip_h) / 2;
             let grip_rect = Rect {
                 x: edge.x,
