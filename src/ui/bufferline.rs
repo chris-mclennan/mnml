@@ -478,9 +478,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    // `◯` theme toggle (opens the theme picker).
+    // `` (nf-fa-toggle_off) — slider-style theme toggle (opens the theme picker).
     spans.push(Span::styled(
-        " \u{25CB} ",
+        " \u{F204} ",
         Style::default().fg(t.fg).bg(t.bg_darker),
     ));
     app.rects.bufferline_theme_toggle = Some(ratatui::layout::Rect {
