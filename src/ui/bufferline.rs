@@ -460,10 +460,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ));
         cluster_x += label_w;
         if active {
-            // Close glyph + trailing space (2 cells). Color matches the
-            // chip's text so it visually belongs to the chip.
+            // Close glyph + trailing space (2 cells). `nf-md-close-circle`
+            // (\u{F0159}) — circled X variant. Renders larger / more
+            // visually grounded than the bare `nf-md-close` (\u{F0156})
+            // and matches the reference look (`⊗` on the active chip).
             spans.push(Span::styled(
-                "\u{F0156} ",
+                "\u{F0159} ",
                 Style::default().fg(chip_fg).bg(chip_bg),
             ));
             app.rects.bufferline_tab_page_close.push((
