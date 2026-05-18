@@ -249,7 +249,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Cheatsheet(_) => (if nerd { "\u{f128}" } else { "?" }, theme::cur().yellow),
             Pane::Debug(_) => (if nerd { "\u{f188}" } else { "🐛" }, theme::cur().red),
         };
-        let badge = if pane.is_dirty() { "●" } else { "×" };
+        // Dirty: filled circle. Clean: `nf-md-close` (\u{F0156}) — same
+        // Material-Design glyph NvChad uses for buffer close, renders
+        // substantially larger than the ASCII `×` (which JetBrainsMono
+        // Nerd Font draws as a tiny multiplication sign).
+        let badge = if pane.is_dirty() { "●" } else { "\u{F0156}" };
         let diag = &diag_chips[i];
         // ` <icon> <name>[ <diag>] <badge> `
         let label = if diag.is_empty() {
