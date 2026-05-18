@@ -478,12 +478,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    // Theme toggle — render as a chip with a `bg2` background so the whole
-    // 3-cell slot reads as a "button" with a dot inside (mimics the iOS-style
-    // slider look that the FA / MDI toggle glyphs can't deliver in a single
-    // monospace cell).
+    // Theme toggle — `` (nf-fa-toggle_on, U+F205). Same glyph NvChad uses
+    // in their tabufline (verified against their `toggle_theme_icon` source).
+    // Render with a bg highlight so the 3-cell slot reads as a button chip
+    // matching the visual language of the TABS + close × siblings.
     spans.push(Span::styled(
-        " \u{25CF} ",
+        " \u{F205} ",
         Style::default().fg(t.fg).bg(t.bg2),
     ));
     app.rects.bufferline_theme_toggle = Some(ratatui::layout::Rect {
