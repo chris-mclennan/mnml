@@ -83,6 +83,28 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Multi-root workspaces (phase 2a, 2026-05-17):** new `[[workspaces]]` config
+table — `name = "private"`, `path = "~/Projects/private-claude-workspace"` per
+entry (path supports `~/`-expansion). Each configured workspace renders as an
+additional collapsible `> name` section in the rail below the launched
+workspace's own section; its file tree mounts inside that section. Phase 1's
+multi-repo decoration applies to each extra workspace's depth-0 dirs too, so a
+`[[workspaces]]` pointing at a parent dir containing several sibling repos
+opens as a clean list of repo headers under a collapsible workspace header.
+Extra sections start collapsed by default and capped at `EXTRA_TREE_MAX_ROWS =
+12` body rows when expanded so a deep tree can't crowd out siblings + the
+shared GIT section. Repo discovery unions across all workspaces (flat `App.repos`),
+so the active repo can be in any workspace — `git.switch_repo` picker + tree
+clicks both navigate the union; the GIT rail / status pane / branches / PRs all
+keep working unchanged. `Ctrl+P` (file picker) walks every workspace's tree
+(primary first, then extras). Click on an extra workspace's `> name` header
+toggles its expansion; click on a file/dir inside dispatches the standard
+open/toggle, plus active-repo switch when clicking a depth-0 repo dir.
+Currently scoped to phase 2a: grep / recents / session-restore for extras' tree
+state are workspace-primary only and would land in phase 2b alongside a
+workspace-switcher picker and a `view.add_workspace` / `view.remove_workspace`
+runtime command set.
+
 **Multi-repo tree decoration (phase 1, 2026-05-17):** when the workspace
 contains more than one git repo, the depth-0 repo dirs in the file tree now
 render as distinct "repo headers" rather than regular folders. Each gets the

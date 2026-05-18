@@ -75,6 +75,24 @@ pub struct Config {
     pub github: GithubConfig,
     pub gitlab: GitlabConfig,
     pub azdevops: AzDevOpsConfig,
+    /// `[[workspaces]]` — additional workspaces shown as sibling sections in
+    /// the file-tree rail (alongside the launched workspace at the top).
+    /// Each entry is a `(name, path)` pair; `~` is expanded.
+    pub workspaces: Vec<WorkspaceConfig>,
+}
+
+/// One additional workspace surfaced alongside the launched one. Lets the
+/// user keep a curated set of related repo groups visible together (e.g.
+/// "private" + "mnml-family" in one mnml window). Each workspace gets its own
+/// `Tree` rooted at `path`, its own discovered repos, and renders as a
+/// collapsible section in the rail.
+#[derive(Debug, Clone)]
+pub struct WorkspaceConfig {
+    /// Display name. Defaults to the path's basename when the config didn't
+    /// supply one.
+    pub name: String,
+    /// Absolute path on disk. `~` is expanded at config-load time.
+    pub path: PathBuf,
 }
 
 /// `[bitbucket]` — Bitbucket Cloud REST API integration. Powers the
@@ -628,6 +646,7 @@ impl Default for Config {
             github: GithubConfig::default(),
             gitlab: GitlabConfig::default(),
             azdevops: AzDevOpsConfig::default(),
+            workspaces: Vec::new(),
         }
     }
 }
@@ -676,6 +695,14 @@ struct RawConfig {
     gitlab: RawGitlab,
     #[serde(default)]
     azdevops: RawAzDevOps,
+    #[serde(default)]
+    workspaces: Vec<RawWorkspace>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawWorkspace {
+    name: Option<String>,
+    path: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1125,7 +1152,34 @@ impl Config {
                 branches: r.branches,
             });
         }
+        // `[[workspaces]]` — additional sibling workspaces. Append (rather
+        // than replace) so a workspace-local file can extend the homedir
+        // set. Tilde-expanded so users can write `~/Projects/foo`. Missing
+        // dirs are tolerated at config-load time (App::new logs + skips
+        // the unloadable ones).
+        for w in raw.workspaces {
+            let expanded = expand_tilde(&w.path);
+            let name = w.name.unwrap_or_else(|| {
+                expanded
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| w.path.clone())
+            });
+            self.workspaces.push(WorkspaceConfig {
+                name,
+                path: expanded,
+            });
+        }
     }
+}
+
+fn expand_tilde(s: &str) -> PathBuf {
+    if let Some(rest) = s.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(rest);
+    }
+    PathBuf::from(s)
 }
 
 /// Public counterpart of [`home_config_path`] — exposed so `file.open_settings`
@@ -1153,6 +1207,52 @@ fn home_config_path() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn workspaces_config_parses_and_appends() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&cfg_path).unwrap();
+        writeln!(
+            f,
+            r#"
+[[workspaces]]
+name = "private"
+path = "/tmp/private-claude-workspace"
+
+[[workspaces]]
+path = "/tmp/mnml-stuff"
+"#
+        )
+        .unwrap();
+
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&cfg_path);
+        assert_eq!(cfg.workspaces.len(), 2);
+        assert_eq!(cfg.workspaces[0].name, "private");
+        assert_eq!(
+            cfg.workspaces[0].path,
+            std::path::PathBuf::from("/tmp/private-claude-workspace")
+        );
+        // Missing `name` defaults to the path's basename.
+        assert_eq!(cfg.workspaces[1].name, "mnml-stuff");
+
+        // A second config file appends (rather than replaces).
+        let cfg_path2 = dir.path().join("local.toml");
+        let mut f2 = std::fs::File::create(&cfg_path2).unwrap();
+        writeln!(
+            f2,
+            r#"
+[[workspaces]]
+name  = "extra"
+path  = "/tmp/extra"
+"#
+        )
+        .unwrap();
+        cfg.apply_file_pub(&cfg_path2);
+        assert_eq!(cfg.workspaces.len(), 3);
+        assert_eq!(cfg.workspaces[2].name, "extra");
+    }
 
     #[test]
     fn playwright_docdb_config_parses() {

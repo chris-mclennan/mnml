@@ -1363,6 +1363,14 @@ pub struct PaneRects {
     /// The `> GIT` section header row in the rail (when the rail's visible).
     /// Click → `App::toggle_git_section_expanded`.
     pub git_section_toggle: Option<Rect>,
+    /// `(rect, ws_idx, scroll)` per extra-workspace section's body — the rect
+    /// is the file-list area, ws_idx is the index into `App.extra_workspaces`,
+    /// scroll is the tree's scroll offset at render time so a click can be
+    /// translated to the right row.
+    pub extra_workspace_bodies: Vec<(Rect, usize, usize)>,
+    /// `(rect, ws_idx)` per extra-workspace section's header row. Click →
+    /// toggle that section's expansion.
+    pub extra_workspace_toggles: Vec<(Rect, usize)>,
     /// `(rect, hit)` per visible row in the GIT section. Click → focus + run
     /// the row's default action; right-click → context menu.
     pub git_rail_rows: Vec<(Rect, crate::git::rail::GitRailHit)>,
@@ -1594,6 +1602,19 @@ pub struct BlockInsertState {
     pub append: bool,
 }
 
+/// One additional workspace surfaced as a sibling section in the rail
+/// alongside the primary launched workspace. Each carries its own
+/// gitignore-aware [`Tree`] plus the expand/collapse state for the section
+/// header. Repos discovered under `root` get unioned into [`App::repos`].
+pub struct ExtraWorkspace {
+    pub name: String,
+    pub root: PathBuf,
+    pub tree: Tree,
+    /// Section expand state — collapsed by default so a fresh window of N
+    /// extra workspaces doesn't show every repo's contents at once.
+    pub expanded: bool,
+}
+
 pub struct App {
     pub workspace: PathBuf,
     pub config: Config,
@@ -1615,6 +1636,15 @@ pub struct App {
     pub active: Option<PaneId>,
     pub focus: Focus,
     pub tree: Tree,
+    /// Additional workspace trees rendered as sibling sections below the
+    /// primary `> WORKSPACE-NAME` section in the rail. Each entry comes from
+    /// a `[[workspaces]]` config entry. The primary workspace itself isn't
+    /// in this list — it's [`Self::workspace`] + [`Self::tree`]. Repos
+    /// discovered under any extra workspace land in the shared
+    /// [`Self::repos`] list (flat across all workspaces) so the existing
+    /// active-repo machinery (git rail, switcher, status pane, etc.) works
+    /// unchanged.
+    pub extra_workspaces: Vec<ExtraWorkspace>,
     pub tree_visible: bool,
     /// Current rail width (cells). Initialized from `[ui] tree_width` and
     /// then mutable via mouse-drag on the rail's right edge. Persisted in
@@ -2230,7 +2260,7 @@ impl App {
         // Discover repos in the workspace. The rail's `refresh` should run
         // against the active repo (which is `workspace` itself in the
         // single-repo case, but may be a sub-dir in the multi-repo case).
-        let repos = crate::git::repos::discover_repos(&workspace);
+        let mut repos = crate::git::repos::discover_repos(&workspace);
         let active_repo = 0usize;
         // Multi-repo workspace: collapse every depth-0 dir except the active
         // repo's, so the tree opens with the repos as a clean list of
@@ -2241,6 +2271,48 @@ impl App {
             && let Some(active) = repos.get(active_repo)
         {
             tree.expand_only([active.path.clone()]);
+        }
+        // `[[workspaces]]` — additional roots shown as sibling sections in
+        // the rail. Each gets its own gitignore-aware tree + its own repo
+        // discovery (results appended to the flat `repos` list above, so
+        // the active-repo machinery is unchanged). Missing / unreadable
+        // paths log a warning and skip so a stale config entry doesn't
+        // brick launch.
+        let mut extra_workspaces: Vec<ExtraWorkspace> = Vec::new();
+        for w in &config.workspaces {
+            let root = match w.path.canonicalize() {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!(
+                        "mnml: skipping workspace {} ({}): {e}",
+                        w.name,
+                        w.path.display()
+                    );
+                    continue;
+                }
+            };
+            // Don't duplicate the primary workspace (config points at the
+            // same dir mnml was launched on).
+            if root == workspace {
+                continue;
+            }
+            let mut t = Tree::open(&root);
+            let mut found = crate::git::repos::discover_repos(&root);
+            // Same multi-repo collapse rule as the primary workspace — when
+            // an extra root contains multiple sibling repos, only the first
+            // (alphabetical) stays expanded by default.
+            if found.len() > 1
+                && let Some(first) = found.first()
+            {
+                t.expand_only([first.path.clone()]);
+            }
+            extra_workspaces.push(ExtraWorkspace {
+                name: w.name.clone(),
+                root,
+                tree: t,
+                expanded: false,
+            });
+            repos.append(&mut found);
         }
         let rail_root: &std::path::Path = repos
             .get(active_repo)
@@ -2310,6 +2382,7 @@ impl App {
             // expanded by default. The last session's choice overrides this
             // in `try_restore_session`.
             tree_root_expanded: true,
+            extra_workspaces,
             git_rail,
             repos,
             active_repo,
@@ -2969,10 +3042,21 @@ impl App {
                 items.push(make_item(p));
             }
         }
-        // Then the rest of the workspace, skipping anything already in.
+        // Then the rest of the primary workspace, skipping anything already in.
         for p in self.tree.all_files() {
             if seen.insert(p.clone()) {
                 items.push(make_item(&p));
+            }
+        }
+        // Multi-root: extra workspaces' files too, after the primary's. They
+        // keep their natural tree order but appear below the launched
+        // workspace so the picker doesn't shuffle the user's mental model
+        // of "this is the workspace I opened".
+        for ws in &self.extra_workspaces {
+            for p in ws.tree.all_files() {
+                if seen.insert(p.clone()) {
+                    items.push(make_item(&p));
+                }
             }
         }
         self.open_picker(Picker::new(PickerKind::Files, "Open file", items));
@@ -3758,6 +3842,48 @@ impl App {
         self.git_rail.refresh(&root);
         self.refresh_rail_pulls();
         self.toast(format!("repos: {} → {}", before, self.repos.len()));
+    }
+
+    /// Toggle an extra-workspace section's expansion (the `> name` header click).
+    pub fn toggle_extra_workspace(&mut self, ws_idx: usize) {
+        if let Some(ws) = self.extra_workspaces.get_mut(ws_idx) {
+            ws.expanded = !ws.expanded;
+        }
+    }
+
+    /// Handle a click on a row inside an extra-workspace's body. Updates that
+    /// tree's cursor, then opens the file or toggles the dir under it. Repo-
+    /// dir clicks also switch the active repo (sibling of the primary-tree
+    /// behavior in `tui::dispatch_mouse`).
+    pub fn click_extra_workspace_row(&mut self, ws_idx: usize, row_idx: usize) {
+        let Some(ws) = self.extra_workspaces.get_mut(ws_idx) else {
+            return;
+        };
+        let rows = ws.tree.visible_rows();
+        if row_idx >= rows.len() {
+            return;
+        }
+        ws.tree.set_cursor(row_idx);
+        let row = rows[row_idx].clone();
+        if row.is_dir {
+            // Multi-repo: clicking a depth-0 repo dir activates that repo so
+            // the git rail follows. Same gesture as the primary tree.
+            if row.depth == 0 && self.repos.len() > 1 {
+                let repo_hit = self.repos.iter().position(|r| r.path == row.path);
+                if let Some(idx) = repo_hit
+                    && idx != self.active_repo
+                {
+                    self.switch_active_repo(idx);
+                }
+            }
+            // Refetch the tree (may have been mutated by switch_active_repo)
+            // and toggle. We only need the path's dir state to decide.
+            if let Some(ws) = self.extra_workspaces.get_mut(ws_idx) {
+                ws.tree.toggle_current();
+            }
+        } else {
+            self.open_path(&row.path);
+        }
     }
 
     /// Switch which repo the git rail (branches, worktrees, pulls) is

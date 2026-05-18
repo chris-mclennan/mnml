@@ -3403,6 +3403,27 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.toggle_git_section_expanded();
                 return;
             }
+            // Extra-workspace section header → toggle expansion.
+            if let Some(&(_, ws_idx)) = app
+                .rects
+                .extra_workspace_toggles
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+            {
+                app.toggle_extra_workspace(ws_idx);
+                return;
+            }
+            // Extra-workspace row click → focus / select / open in that tree.
+            if let Some(&(tr, ws_idx, scroll)) = app
+                .rects
+                .extra_workspace_bodies
+                .iter()
+                .find(|(r, _, _)| contains(*r, x, y))
+            {
+                let row_idx = (y - tr.y) as usize + scroll;
+                app.click_extra_workspace_row(ws_idx, row_idx);
+                return;
+            }
             // Tree? (no header now — row 0 of the rail is the first entry)
             if let Some(tr) = app.rects.tree
                 && contains(tr, x, y)

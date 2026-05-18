@@ -30,6 +30,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.tree_toggle = None;
     app.rects.git_section_toggle = None;
     app.rects.git_rail_rows.clear();
+    app.rects.extra_workspace_bodies.clear();
+    app.rects.extra_workspace_toggles.clear();
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -77,6 +79,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut next_y = area.y + 2;
     if app.tree_root_expanded && area.height >= 3 {
         next_y = draw_workspace_files(frame, app, area, next_y, nerd);
+    }
+
+    // ── extra workspace sections (from `[[workspaces]]` config). Each gets
+    //    a blank separator + collapsible header; expanded sections show a
+    //    bounded file-list slot below the header.
+    for ws_idx in 0..app.extra_workspaces.len() {
+        if next_y + 1 >= area.y + area.height {
+            return;
+        }
+        next_y = draw_extra_workspace_section(frame, app, area, next_y, ws_idx, nerd);
     }
 
     // ── GIT section: blank separator + header. Skip if it'd run off the
@@ -366,6 +378,192 @@ fn draw_workspace_files(
     let drew = lines.len() as u16;
     frame.render_widget(Paragraph::new(lines), inner);
     start_y + drew
+}
+
+/// Draw one extra-workspace section starting at `start_y`. Renders a 1-row
+/// blank separator + a collapsible `> name` header; if the section is
+/// expanded, renders a bounded file-list slot beneath it (capped at
+/// `EXTRA_TREE_MAX_ROWS` so a deep tree can't crowd out siblings + the GIT
+/// section). Returns the row past the last drawn.
+const EXTRA_TREE_MAX_ROWS: usize = 12;
+
+fn draw_extra_workspace_section(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    start_y: u16,
+    ws_idx: usize,
+    nerd: bool,
+) -> u16 {
+    let rail_bg = theme::cur().bg_darker;
+    let width = area.width as usize;
+    let area_end = area.y + area.height;
+    if start_y + 1 >= area_end {
+        return start_y;
+    }
+    let header_y = start_y + 1; // blank separator row above
+    if header_y >= area_end {
+        return start_y;
+    }
+    let (name, expanded) = {
+        let ws = &app.extra_workspaces[ws_idx];
+        (ws.name.clone(), ws.expanded)
+    };
+    let chev = section_chev(expanded, nerd);
+    let label = format!("{chev} {name}");
+    let pad = width.saturating_sub(label.chars().count());
+    let header_rect = Rect {
+        x: area.x,
+        y: header_y,
+        width: area.width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                label,
+                Style::default()
+                    .fg(theme::cur().fg)
+                    .bg(rail_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)),
+        ])),
+        header_rect,
+    );
+    app.rects
+        .extra_workspace_toggles
+        .push((header_rect, ws_idx));
+
+    if !expanded {
+        return header_y + 1;
+    }
+    let body_y = header_y + 1;
+    if body_y >= area_end {
+        return header_y + 1;
+    }
+    let avail = (area_end - body_y) as usize;
+    // Reserve a bit for the GIT section that follows (4 rows = blank + header
+    // + at least 2 body rows) when applicable. Cap at EXTRA_TREE_MAX_ROWS so
+    // a 200-line tree can't swallow the rail.
+    let h = avail.saturating_sub(4).min(EXTRA_TREE_MAX_ROWS);
+    if h == 0 {
+        return body_y;
+    }
+    let body_rect = Rect {
+        x: area.x,
+        y: body_y,
+        width: area.width,
+        height: h as u16,
+    };
+    app.rects.extra_workspace_bodies.push((
+        body_rect,
+        ws_idx,
+        app.extra_workspaces[ws_idx].tree.scroll,
+    ));
+
+    // Clamp the tree's scroll so the cursor stays in view. We're not the
+    // focused tree (filter mode is a primary-only feature for now), so we
+    // just paint top-down with the saved scroll.
+    let rows = app.extra_workspaces[ws_idx].tree.visible_rows();
+    let scroll = app.extra_workspaces[ws_idx].tree.scroll;
+    let max_scroll = rows.len().saturating_sub(h.min(rows.len()));
+    let scroll = scroll.min(max_scroll);
+    app.extra_workspaces[ws_idx].tree.scroll = scroll;
+
+    let multi_repo = app.repos.len() > 1;
+    let active_repo_path = app.repos.get(app.active_repo).map(|r| r.path.clone());
+
+    let mut lines: Vec<Line> = Vec::with_capacity(h);
+    const ROOT_INDENT: &str = "  ";
+    for row in rows.iter().skip(scroll).take(h) {
+        let is_repo_row = multi_repo
+            && row.is_dir
+            && row.depth == 0
+            && app.repos.iter().any(|r| r.path == row.path);
+        let is_active_repo = is_repo_row && active_repo_path.as_ref() == Some(&row.path);
+        let (glyph, icon_color) = if is_repo_row {
+            if nerd {
+                if row.is_expanded {
+                    icons::REPO_OPEN
+                } else {
+                    icons::REPO_CLOSED
+                }
+            } else if row.is_expanded {
+                icons::REPO_OPEN_ASCII
+            } else {
+                icons::REPO_CLOSED_ASCII
+            }
+        } else {
+            icons::for_path(&row.path, row.is_dir, row.is_expanded, nerd)
+        };
+        let indent = format!("{ROOT_INDENT}{}", "  ".repeat(row.depth));
+        let prefix = if nerd {
+            let chev = if row.is_dir {
+                if row.is_expanded {
+                    CHEVRON_OPEN
+                } else {
+                    CHEVRON_CLOSED
+                }
+            } else {
+                " "
+            };
+            format!("{indent}{chev} {glyph} ")
+        } else {
+            format!("{indent}{glyph} ")
+        };
+        let name_color = if is_repo_row {
+            theme::cur().yellow
+        } else if row.is_dir {
+            theme::cur().blue
+        } else {
+            theme::cur().fg
+        };
+        let mut name_style = Style::default().fg(name_color).bg(rail_bg);
+        if row.is_dir {
+            name_style = name_style.add_modifier(Modifier::BOLD);
+        }
+        if is_repo_row && !is_active_repo {
+            name_style = name_style.add_modifier(Modifier::DIM);
+        }
+        let prefix_color = if is_repo_row {
+            theme::cur().yellow
+        } else if row.is_dir {
+            theme::cur().blue
+        } else {
+            icon_color
+        };
+        let (repo_marker, repo_marker_color) = if is_repo_row {
+            if is_active_repo {
+                ("● ", theme::cur().green)
+            } else {
+                ("○ ", theme::cur().comment)
+            }
+        } else {
+            ("", theme::cur().fg)
+        };
+        let used = prefix.chars().count() + repo_marker.chars().count() + row.name.chars().count();
+        let pad_n = width.saturating_sub(used);
+        let mut spans = vec![Span::styled(
+            prefix,
+            Style::default().fg(prefix_color).bg(rail_bg),
+        )];
+        if !repo_marker.is_empty() {
+            spans.push(Span::styled(
+                repo_marker,
+                Style::default().fg(repo_marker_color).bg(rail_bg),
+            ));
+        }
+        spans.push(Span::styled(row.name.clone(), name_style));
+        spans.push(Span::styled(
+            " ".repeat(pad_n),
+            Style::default().bg(rail_bg),
+        ));
+        lines.push(Line::from(spans));
+    }
+    let drew = lines.len() as u16;
+    frame.render_widget(Paragraph::new(lines), body_rect);
+    body_y + drew
 }
 
 /// Draw the GIT section: a "branches" sub-label, the branch rows, a
