@@ -460,16 +460,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ));
         cluster_x += label_w;
         if active {
-            // Close glyph + trailing space (2 cells). `nf-md-close-thick`
-            // (\u{F0683}) — purpose-built thick X. Bold modifier kept as
-            // belt-and-suspenders; fonts that respect it get an extra
-            // weight bump.
+            // Close glyph + trailing space (2 cells). `nf-md-close`
+            // (\u{F0156}) — the standard Material Design close X, same
+            // glyph NvChad uses.
             spans.push(Span::styled(
-                "\u{F0683} ",
-                Style::default()
-                    .fg(chip_fg)
-                    .bg(chip_bg)
-                    .add_modifier(Modifier::BOLD),
+                "\u{F0156} ",
+                Style::default().fg(chip_fg).bg(chip_bg),
             ));
             app.rects.bufferline_tab_page_close.push((
                 ratatui::layout::Rect {
