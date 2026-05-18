@@ -394,10 +394,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut cluster_x = tabs_max_x;
 
     // New-tab button. `nf-md-plus` (\u{F0415}) — thicker than ASCII `+`,
-    // same glyph NvChad uses for `TabNewBtn`.
+    // same glyph NvChad uses for `TabNewBtn`. Colors match NvChad's
+    // `TbTabNewBtn = { fg = white, bg = one_bg2 }` — dark chip, light glyph.
     spans.push(Span::styled(
         " \u{F0415} ",
-        Style::default().fg(t.bg_darker).bg(t.purple),
+        Style::default().fg(t.fg).bg(t.bg2),
     ));
     app.rects.bufferline_new_tab_button = Some(ratatui::layout::Rect {
         x: cluster_x,
