@@ -94,15 +94,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let n_tabs = app.layouts.len();
     let mut right_w: u16 = 3 + 6; // ` + ` + ` TABS `
     for i in 0..n_tabs {
-        // Active = 2 + digits (` N `); inactive adds 2 more (`⊗ ` close).
-        // Dirty tab gets a leading `●` glyph → +1 cell.
+        // Both active and inactive: ` <n> ` (3 cells base) + `⊗ ` close
+        // (2 cells). Dirty tab gets a leading `●` → +1 cell.
         let dig = (i + 1).to_string().chars().count() as u16;
         let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
-        right_w += if i == app.active_layout {
-            2 + dig + dirty
-        } else {
-            2 + dig + dirty + 2
-        };
+        right_w += 2 + dig + dirty + 2;
     }
     right_w += 4 + 3; // ` ●━ ` + ` × `
     let tabs_max_x = area.x + area.width.saturating_sub(right_w);
@@ -406,18 +402,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     });
     cluster_x += 3;
 
-    // `TABS` label (decorative).
+    // `TABS` label (decorative). Light grey chip with dark bold text —
+    // matches NvChad's tabufline.
     spans.push(Span::styled(
         " TABS ",
         Style::default()
             .fg(t.bg_darker)
-            .bg(t.blue)
+            .bg(t.bg3)
             .add_modifier(Modifier::BOLD),
     ));
     cluster_x += 6;
 
-    // Per-tabpage chips: ` <n> ` (active, yellow) or ` <n>⊗ ` (non-active).
-    // Dirty tabs get a leading `●`.
+    // Per-tabpage chips: ` <n>󰅖 ` for every tab. Active = light-blue bg with
+    // dark text (matches NvChad's selected-tab look); inactive = dim bg2 with
+    // comment-grey text. The close glyph is `nf-md-close` (\u{F0156}, the
+    // same Material-Design glyph NvChad uses) — renders thicker than the
+    // Unicode `⊗`. Dirty tabs get a leading `●`.
     for i in 0..app.layouts.len() {
         let active = i == app.active_layout;
         let dirty = app.tab_has_dirty_buffer(i);
@@ -427,55 +427,42 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             format!(" {} ", i + 1)
         };
         let label_w = label.chars().count() as u16;
-        if active {
-            spans.push(Span::styled(
-                label,
-                Style::default()
-                    .fg(t.bg_darker)
-                    .bg(t.yellow)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            app.rects.bufferline_tab_page_chips.push((
-                ratatui::layout::Rect {
-                    x: cluster_x,
-                    y: area.y,
-                    width: label_w,
-                    height: 1,
-                },
-                i,
-            ));
-            cluster_x += label_w;
+        let (chip_fg, chip_bg) = if active {
+            (t.bg_darker, t.blue)
         } else {
-            // Non-active: ` <n> ` then `⊗ ` close (one-cell glyph + trailing
-            // space) — the chip and close button get separate rects.
-            spans.push(Span::styled(label, Style::default().fg(t.fg).bg(t.bg2)));
-            app.rects.bufferline_tab_page_chips.push((
-                ratatui::layout::Rect {
-                    x: cluster_x,
-                    y: area.y,
-                    width: label_w,
-                    height: 1,
-                },
-                i,
-            ));
-            cluster_x += label_w;
-            spans.push(Span::styled(
-                "\u{2297} ",
-                Style::default().fg(t.comment).bg(t.bg2),
-            ));
-            app.rects.bufferline_tab_page_close.push((
-                ratatui::layout::Rect {
-                    x: cluster_x,
-                    y: area.y,
-                    width: 1,
-                    height: 1,
-                },
-                i,
-            ));
-            cluster_x += 1;
-            // Trailing space cell still belongs to bg2 — keep it inert.
-            cluster_x += 1;
+            (t.comment, t.bg2)
+        };
+        let mut chip_style = Style::default().fg(chip_fg).bg(chip_bg);
+        if active {
+            chip_style = chip_style.add_modifier(Modifier::BOLD);
         }
+        spans.push(Span::styled(label, chip_style));
+        app.rects.bufferline_tab_page_chips.push((
+            ratatui::layout::Rect {
+                x: cluster_x,
+                y: area.y,
+                width: label_w,
+                height: 1,
+            },
+            i,
+        ));
+        cluster_x += label_w;
+        // Close glyph + trailing space (2 cells). Close glyph color matches
+        // the chip's text color so it visually belongs to the chip.
+        spans.push(Span::styled(
+            "\u{F0156} ",
+            Style::default().fg(chip_fg).bg(chip_bg),
+        ));
+        app.rects.bufferline_tab_page_close.push((
+            ratatui::layout::Rect {
+                x: cluster_x,
+                y: area.y,
+                width: 1,
+                height: 1,
+            },
+            i,
+        ));
+        cluster_x += 2;
     }
 
     // Theme toggle — 2-cell composed pill (`●━`): filled circle + heavy
@@ -495,9 +482,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     });
     cluster_x += 4;
 
-    // `×` close-active-pane (matches `Ctrl+W` muscle memory).
+    // Close-active-pane (matches `Ctrl+W` muscle memory). `nf-md-close`
+    // (\u{F0156}) — thicker than Unicode `×`, matches the per-tab close.
     spans.push(Span::styled(
-        " \u{00D7} ",
+        " \u{F0156} ",
         Style::default()
             .fg(t.bg_darker)
             .bg(t.red)
