@@ -83,6 +83,28 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Git GUI phase 4 — sync triad + cherry-pick / revert (2026-05-18 cont.):**
+the five most-asked-for daily git ops that weren't wired. New module
+`crate::git::sync` (shells out to `git`, returns `Result<summary,
+error>` in the established style): `fetch_all` runs `git fetch --all
+--prune`; `pull_ff_only` runs `git pull --ff-only` (refuses on
+divergent histories instead of producing surprise merge commits);
+`push` runs `git push` (no `--force` — force-push intentionally not
+exposed; users who need it drop to a pty); `push_set_upstream` is the
+first-push fallback for branches without a tracked upstream. New
+`commit::cherry_pick` + `commit::revert` operate on the selected
+`Pane::GitGraph` commit. Five new palette commands: `git.fetch` /
+`git.pull` / `git.push` / `git.cherry_pick` / `git.revert`. `git.pull`
+refuses when unsaved buffers are open (pull rewrites tracked files;
+in-mnml edits would silently conflict). `git.push` auto-detects the
+"no upstream" error from a bare `git push` and falls back to
+`--set-upstream origin <current>` for the first push of a fresh
+branch. Conflict cases on cherry-pick / revert / pull surface git's
+own message in the toast — the user resolves + continues from a pty.
+Two new unit tests cover sync.rs (no-remote fetch is a no-op success;
+first-push with set-upstream against a bare repo works). 644 lean /
+678 private lib tests (+2 new).
+
 **Wave 3 polish — PR badge + outline depth + stale-doc cleanup (2026-05-18 cont.):**
 two real features + several stale-doc / stale-TODO cleanups.
 (1) **Statusline PR badge** — when the current branch has an open PR/MR

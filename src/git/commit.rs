@@ -40,6 +40,20 @@ pub fn show_head(workspace: &Path) -> Result<String, String> {
     }
 }
 
+/// `git cherry-pick <hash>` — apply the commit on top of HEAD. Conflicts
+/// land in the error path with git's own message (the user resolves +
+/// runs `git cherry-pick --continue` from a pty).
+pub fn cherry_pick(workspace: &Path, hash: &str) -> Result<String, String> {
+    run_commit(workspace, &["cherry-pick", hash])
+}
+
+/// `git revert --no-edit <hash>` — create a new commit that undoes
+/// `hash`. `--no-edit` reuses the default `Revert "..."` message without
+/// opening an editor. Conflicts land in the error path.
+pub fn revert(workspace: &Path, hash: &str) -> Result<String, String> {
+    run_commit(workspace, &["revert", "--no-edit", hash])
+}
+
 /// `git log -1 --pretty=%B HEAD` — the existing HEAD message (subject + body).
 /// Empty / error ⇒ empty string. Used to seed the recompose prompt's "current
 /// message" context for the AI.

@@ -12415,6 +12415,134 @@ impl App {
         }
     }
 
+    /// `git.fetch` — `git fetch --all --prune`. Refreshes every tracked
+    /// remote's refs + drops gone-upstream tracking marks. Always safe
+    /// (read-only). Refreshes the status snapshot so the statusline's
+    /// ahead/behind counts update right away.
+    pub fn run_git_fetch(&mut self) {
+        match crate::git::sync::fetch_all(self.active_repo_path()) {
+            Ok(summary) => {
+                self.after_git_change();
+                self.toast(format!("fetched: {summary}"));
+            }
+            Err(e) => self.toast(format!("git fetch: {e}")),
+        }
+    }
+
+    /// `git.pull` — `git pull --ff-only`. Refuses on divergent histories
+    /// so the user falls back to manual merge instead of getting a
+    /// surprise merge commit. Refuses with a warning when unsaved
+    /// buffers exist (pull rewrites tracked files; in-mnml edits would
+    /// silently conflict).
+    pub fn run_git_pull(&mut self) {
+        let dirty_open = self
+            .panes
+            .iter()
+            .any(|p| matches!(p, Pane::Editor(b) if b.dirty));
+        if dirty_open {
+            self.toast("git pull: refuse — unsaved edits in open buffers");
+            return;
+        }
+        match crate::git::sync::pull_ff_only(self.active_repo_path()) {
+            Ok(summary) => {
+                self.after_git_change();
+                self.tree.refresh();
+                // Mtime check on the next tick auto-reloads any open buffer
+                // whose underlying file changed — no manual reload needed.
+                self.toast(format!("pulled: {summary}"));
+            }
+            Err(e) => self.toast(format!("git pull: {e}")),
+        }
+    }
+
+    /// `git.push` — `git push`. Falls back to `--set-upstream origin
+    /// <current>` when the current branch has no tracked upstream (the
+    /// common "first push of a new branch" case). No `--force`.
+    pub fn run_git_push(&mut self) {
+        let repo = self.active_repo_path().to_path_buf();
+        match crate::git::sync::push(&repo) {
+            Ok(summary) => {
+                self.after_git_change();
+                self.toast(format!("pushed: {summary}"));
+                return;
+            }
+            Err(e) if e.contains("has no upstream branch") || e.contains("--set-upstream") => {
+                // Fall through to the first-push path below.
+            }
+            Err(e) => {
+                self.toast(format!("git push: {e}"));
+                return;
+            }
+        }
+        let Some(branch) = self.git_rail.current_branch.clone() else {
+            self.toast("git push: no current branch");
+            return;
+        };
+        if branch.is_empty() {
+            self.toast("git push: no current branch");
+            return;
+        }
+        match crate::git::sync::push_set_upstream(&repo, &branch) {
+            Ok(summary) => {
+                self.after_git_change();
+                self.toast(format!("pushed (first time): {summary}"));
+            }
+            Err(e) => self.toast(format!("git push --set-upstream: {e}")),
+        }
+    }
+
+    /// `git.cherry_pick` — apply the selected `Pane::GitGraph` commit on
+    /// top of HEAD. Conflicts land in the toast with git's message
+    /// (`git cherry-pick --continue` from a pty when ready).
+    pub fn run_git_cherry_pick(&mut self) {
+        let Some(hash) = self.selected_graph_commit_hash() else {
+            self.toast("git cherry-pick: no commit selected");
+            return;
+        };
+        match crate::git::commit::cherry_pick(self.active_repo_path(), &hash) {
+            Ok(summary) => {
+                self.after_git_change();
+                self.tree.refresh();
+                self.toast(format!(
+                    "cherry-picked {}: {summary}",
+                    &hash[..8.min(hash.len())]
+                ));
+            }
+            Err(e) => self.toast(format!("git cherry-pick: {e}")),
+        }
+    }
+
+    /// `git.revert` — create a new commit that undoes the selected
+    /// `Pane::GitGraph` commit. Uses `--no-edit` (default `Revert "..."`
+    /// message); conflicts land in the toast.
+    pub fn run_git_revert(&mut self) {
+        let Some(hash) = self.selected_graph_commit_hash() else {
+            self.toast("git revert: no commit selected");
+            return;
+        };
+        match crate::git::commit::revert(self.active_repo_path(), &hash) {
+            Ok(summary) => {
+                self.after_git_change();
+                self.tree.refresh();
+                self.toast(format!(
+                    "reverted {}: {summary}",
+                    &hash[..8.min(hash.len())]
+                ));
+            }
+            Err(e) => self.toast(format!("git revert: {e}")),
+        }
+    }
+
+    /// The selected commit's hash from the active `Pane::GitGraph`, if any.
+    fn selected_graph_commit_hash(&self) -> Option<String> {
+        self.active
+            .and_then(|i| self.panes.get(i))
+            .and_then(|p| match p {
+                Pane::GitGraph(g) => g.selected_commit().map(|c| c.hash.clone()),
+                _ => None,
+            })
+    }
+
     // ─── commit ─────────────────────────────────────────────────────
     /// Open the commit-message prompt. Commits whatever is staged when accepted;
     /// if nothing's staged, `git commit` says so.
