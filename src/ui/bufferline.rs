@@ -407,13 +407,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     });
     cluster_x += 3;
 
-    // `TABS` label (decorative). Light grey chip with dark bold text —
-    // matches NvChad's tabufline (which uses the theme's `light_grey`).
+    // `TABS` label (decorative). Light chip with dark bold text — uses
+    // `lightbg` (NvChad's `light_bg`, designed for tab-chip surfaces).
     spans.push(Span::styled(
         " TABS ",
         Style::default()
             .fg(t.bg_darker)
-            .bg(t.comment)
+            .bg(t.lightbg)
             .add_modifier(Modifier::BOLD),
     ));
     cluster_x += 6;
