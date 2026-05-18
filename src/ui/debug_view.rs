@@ -138,11 +138,11 @@ fn draw_variables(frame: &mut Frame, app: &App, p: &DebugPane, area: Rect) {
     let watch_count = app.dap_watches.len();
     let title = if watch_count > 0 {
         format!(
-            " Variables  ({watch_count} watch{})  (Tab · Enter expands · y yank · w +watch)",
+            " Variables  ({watch_count} watch{})  (Tab · Enter expands · y yank · w +watch · s set)",
             if watch_count == 1 { "" } else { "es" }
         )
     } else {
-        " Variables  (Tab to focus · Enter expands · y yank · w +watch)".to_string()
+        " Variables  (Tab to focus · Enter expands · y yank · w +watch · s set)".to_string()
     };
     lines.push(Line::from(Span::styled(
         title,

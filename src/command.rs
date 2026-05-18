@@ -1858,6 +1858,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_dap_add_watch_prompt(),
         },
         Command {
+            id: "dap.set_variable",
+            title: "DAP: set the value of the selected variable",
+            group: "dap",
+            keys: &[],
+            run: |app| app.debug_pane_set_var(),
+        },
+        Command {
             id: "dap.remove_watch",
             title: "DAP: remove a watch expression (→ picker)",
             group: "dap",

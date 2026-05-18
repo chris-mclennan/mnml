@@ -2229,6 +2229,12 @@ pub struct App {
     /// waiting for the user to type a condition. The accept handler
     /// consumes it via `std::mem::take`; Esc-cancel just clears it.
     pub dap_pending_bp_condition: Option<(u32, std::path::PathBuf)>,
+    /// Stashed `(parent_ref, name)` from `dap.set_variable` waiting
+    /// for the user to type a new value. Accept fires
+    /// `client.set_variable`; the reply lands as
+    /// [`crate::dap::DapEvent::SetVariableDone`] which patches
+    /// `mgr.variables[parent_ref]` in place.
+    pub dap_pending_set_variable: Option<(i64, String)>,
     /// Receiver for the (single) CDP browser session's worker — events stream in,
     // The per-pane CDP receiver lives on `BrowserPane.event_rx` now —
     // `drain_cdp_events` walks every browser pane each tick.
@@ -2605,6 +2611,7 @@ impl App {
             dap_watches: Vec::new(),
             dap_watch_results: std::collections::HashMap::new(),
             dap_pending_bp_condition: None,
+            dap_pending_set_variable: None,
             #[cfg(feature = "private")]
             log_tail_chan: None,
             #[cfg(feature = "private")]
@@ -7616,14 +7623,21 @@ impl App {
         let Some(Pane::DapRepl(repl)) = self.panes.get_mut(id) else {
             return;
         };
-        let n = repl.history.len();
-        if n == 0 {
+        // Move within the *visible* (post-filter) view so a held filter
+        // doesn't let the selection land on a hidden row.
+        let visible = repl.visible_history_indices();
+        let vn = visible.len();
+        if vn == 0 {
             return;
         }
-        let cur = repl.selected.unwrap_or(n);
-        let new = (cur as isize + delta).clamp(0, n as isize - 1) as usize;
+        let cur_in_visible = repl
+            .selected
+            .and_then(|sel| visible.iter().position(|&i| i == sel))
+            .unwrap_or(vn); // past-end ⇒ delta=-1 lands on last row (vim cmdline UX)
+        let new_in_visible = (cur_in_visible as isize + delta).clamp(0, vn as isize - 1) as usize;
+        let new = visible[new_in_visible];
         repl.selected = Some(new);
-        repl.scroll = new.min(n.saturating_sub(1));
+        repl.scroll = new;
     }
 
     /// `o` (open) in the REPL pane — expand the selected row if it's
@@ -8043,6 +8057,38 @@ impl App {
                     if let Some(mgr) = self.dap.as_mut() {
                         mgr.variables.insert(variables_ref, variables);
                     }
+                }
+                crate::dap::DapEvent::SetVariableDone {
+                    parent_ref,
+                    name,
+                    value,
+                    ty,
+                    variables_ref,
+                } => {
+                    // Patch the cached child in place so the variables
+                    // panel reflects the new value without waiting for
+                    // a fresh `variables` request. The adapter may have
+                    // rewritten the formatted value (e.g. trimming quotes
+                    // off a string literal) — trust the reply.
+                    if let Some(mgr) = self.dap.as_mut()
+                        && let Some(children) = mgr.variables.get_mut(&parent_ref)
+                        && let Some(child) = children.iter_mut().find(|v| v.name == name)
+                    {
+                        child.value = value.clone();
+                        if ty.is_some() {
+                            child.ty = ty;
+                        }
+                        if variables_ref != 0 {
+                            child.variables_reference = variables_ref;
+                        }
+                    }
+                    let short: String = value.chars().take(40).collect();
+                    let ellipsis = if value.chars().count() > 40 {
+                        "…"
+                    } else {
+                        ""
+                    };
+                    self.toast(format!("set {name} = {short}{ellipsis}"));
                 }
                 crate::dap::DapEvent::Evaluate {
                     expression,
@@ -10656,6 +10702,24 @@ impl App {
         }
     }
 
+    /// `c` in the storage panel — copy just the selected entry's value
+    /// (no `key=` prefix). Common when the value is a JWT / token / ID
+    /// the user wants to drop directly into code or a curl call.
+    pub fn copy_storage_value_only(&mut self) {
+        let value = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Browser(b)) => b.selected_storage().map(|s| s.value.clone()),
+            _ => None,
+        };
+        match value {
+            Some(v) if !v.is_empty() => {
+                self.clipboard.set(v, false);
+                self.toast("copied storage value");
+            }
+            Some(_) => self.toast("storage value is empty"),
+            None => self.toast("no storage entry selected"),
+        }
+    }
+
     /// `K` in a browser pane (or `browser.cookies`) — fetch
     /// `Network.getCookies` if we haven't yet, and toggle into the
     /// cookies panel. (`R` in the panel re-fetches; `y` copies the
@@ -10786,6 +10850,24 @@ impl App {
                 self.toast("copied cookie");
             }
             _ => self.toast("no cookie selected"),
+        }
+    }
+
+    /// `c` in the cookies panel — copy just the selected cookie's value
+    /// (no `name=` prefix). Common when the value is a session token / JWT
+    /// the user wants to paste directly into code or another tool.
+    pub fn copy_cookie_value_only(&mut self) {
+        let value = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Browser(b)) => b.selected_cookie().map(|c| c.value.clone()),
+            _ => None,
+        };
+        match value {
+            Some(v) if !v.is_empty() => {
+                self.clipboard.set(v, false);
+                self.toast("copied cookie value");
+            }
+            Some(_) => self.toast("cookie value is empty"),
+            None => self.toast("no cookie selected"),
         }
     }
 
@@ -12408,6 +12490,19 @@ impl App {
                     return;
                 };
                 self.set_breakpoint_hit_condition(&path, line0, hit);
+            }
+            crate::prompt::PromptKind::DapSetVariable => {
+                let new_value = p.input.clone();
+                let Some((parent_ref, name)) = self.dap_pending_set_variable.take() else {
+                    return;
+                };
+                let Some(mgr) = self.dap.as_mut() else {
+                    self.toast("dap: no session");
+                    return;
+                };
+                if let Err(e) = mgr.client.set_variable(parent_ref, &name, &new_value) {
+                    self.toast(format!("dap setVariable: {e}"));
+                }
             }
             crate::prompt::PromptKind::AiAsk => {
                 let q = p.input.trim();
@@ -17076,6 +17171,56 @@ impl App {
             let _ = mgr.client.evaluate(&name, Some(fid), "watch");
         }
         self.toast(format!("watch: + {name}"));
+    }
+
+    /// `s` in the debug pane's variables section — open a prompt
+    /// seeded with the row's current value; accept ⇒ `setVariable`
+    /// against `(parent_ref, name, new_value)`. Refuses on scope rows
+    /// and unset rows. The reply lands as
+    /// [`crate::dap::DapEvent::SetVariableDone`] and patches the
+    /// cached child in place.
+    pub fn debug_pane_set_var(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::Debug(p)) = self.panes.get(id) else {
+            return;
+        };
+        let sel = p.vars_selected;
+        let rows = self
+            .dap
+            .as_ref()
+            .map(|m| m.variable_rows())
+            .unwrap_or_default();
+        let Some(row) = rows.get(sel).cloned() else {
+            return;
+        };
+        if row.is_scope {
+            self.toast("can't set a scope row");
+            return;
+        }
+        if row.parent_ref == 0 {
+            // Shouldn't happen for non-scope rows (variable_rows always
+            // sets parent_ref for vars), but be defensive — without a
+            // parent_ref the adapter can't route the request.
+            self.toast("can't set this variable (no parent ref)");
+            return;
+        }
+        // Strip ` : type` suffix if present — keep just the bare name.
+        let name = row
+            .label
+            .split(" : ")
+            .next()
+            .unwrap_or(&row.label)
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            return;
+        }
+        self.dap_pending_set_variable = Some((row.parent_ref, name.clone()));
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::DapSetVariable,
+            format!("Set {name} ="),
+            row.value.clone(),
+        ));
     }
 
     /// Toggle expansion of the highlighted variable row. If it's

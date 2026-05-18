@@ -144,6 +144,32 @@ pub struct DapReplPane {
     /// no selection (the user hasn't moved focus off the input).
     /// Set when the user moves the selection with PgUp / Shift+Up.
     pub selected: Option<usize>,
+    /// `/` filter — narrows history to entries whose expression
+    /// fuzzy-matches the query. Mirrors the cookies / storage / net /
+    /// DOM panel filter UX. While `filter_mode == true`, printable
+    /// keys feed `filter` instead of `input`; Enter exits filter mode
+    /// keeping the narrow; Esc clears + exits.
+    pub filter: String,
+    pub filter_mode: bool,
+}
+
+impl DapReplPane {
+    /// History indices (into `self.history`) that match the current
+    /// `filter` via fuzzy match against `entry.expression`. Empty filter
+    /// returns every index. Used by both the renderer and the selection
+    /// movement code so `selected` always indexes the filtered view.
+    pub fn visible_history_indices(&self) -> Vec<usize> {
+        if self.filter.is_empty() {
+            return (0..self.history.len()).collect();
+        }
+        let q = &self.filter;
+        self.history
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| crate::fuzzy::fuzzy_match(q, &e.expression).is_some())
+            .map(|(i, _)| i)
+            .collect()
+    }
 }
 
 /// One row in the REPL history. `err` is set when the adapter

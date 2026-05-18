@@ -1,0 +1,43 @@
+# DAP REPL filter — `/` while the input is empty enters filter mode;
+# Backspace + Enter cycle work; Esc clears. Verifies the filter
+# narrows the visible history without a live adapter (the entries land
+# as "no DAP session" but still match against `expression`).
+
+write code.rs "fn main() {}\n"
+open code.rs
+
+command dap.repl
+
+# Seed three history entries.
+type "alpha"
+key enter
+type "bravo"
+key enter
+type "charlie"
+key enter
+
+# Without a filter, all three appear.
+expect screen contains "alpha"
+expect screen contains "bravo"
+expect screen contains "charlie"
+
+# `/` while input is empty enters filter mode.
+key /
+type "alp"
+# Filter mode shows the typed query.
+expect screen contains "filter: alp"
+# Narrowed list — only the alpha entry should match.
+expect screen contains "alpha"
+expect screen lacks "bravo"
+expect screen lacks "charlie"
+
+# Enter exits filter mode but keeps the narrow.
+key enter
+expect screen contains "alpha"
+expect screen lacks "bravo"
+
+# Esc clears the filter — all three visible again.
+key escape
+expect screen contains "alpha"
+expect screen contains "bravo"
+expect screen contains "charlie"

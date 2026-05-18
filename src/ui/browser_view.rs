@@ -111,13 +111,13 @@ pub fn draw(
             )
         } else if !b.cookies_filter.is_empty() {
             format!(
-                "  cookies ({}/{}) · / filter · y copy · e edit · a add · d delete · esc clear",
+                "  cookies ({}/{}) · / filter · y pair · c value · e edit · a add · d delete · esc clear",
                 b.visible_cookies_indices().len(),
                 b.cookies.len()
             )
         } else {
             format!(
-                "  cookies ({}) · / filter · y copy · e edit · a add · d delete · R re-fetch · esc back",
+                "  cookies ({}) · / filter · y pair · c value · e edit · a add · d delete · R re-fetch · esc back",
                 b.cookies.len()
             )
         }
@@ -129,13 +129,13 @@ pub fn draw(
             )
         } else if !b.storage_filter.is_empty() {
             format!(
-                "  storage ({}/{}) · / filter · y copy · e edit · a add · d delete · esc clear",
+                "  storage ({}/{}) · / filter · y pair · c value · e edit · a add · d delete · esc clear",
                 b.visible_storage_indices().len(),
                 b.storage.len()
             )
         } else {
             format!(
-                "  storage ({}) · / filter · y copy · e edit · a add · d delete · R re-fetch · esc back",
+                "  storage ({}) · / filter · y pair · c value · e edit · a add · d delete · R re-fetch · esc back",
                 b.storage.len()
             )
         }

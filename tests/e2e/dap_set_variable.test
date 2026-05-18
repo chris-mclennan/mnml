@@ -1,0 +1,20 @@
+# DAP setVariable — `dap.set_variable` opens a prompt seeded with the
+# selected variable's value. Without a live adapter there are no
+# variables to set, so the command toasts the no-session / no-row
+# state. Verifies the chord + prompt plumbing without a real adapter.
+
+write code.rs "fn main() {}\n"
+open code.rs
+
+# With no debug session open, `dap.set_variable` is a no-op (no Pane::Debug
+# means the early-return path fires). Just confirms the command exists.
+command dap.set_variable
+expect screen lacks "Set "
+
+# Open the debug pane (no live session) — the variables panel will be
+# empty so the chord still no-ops.
+command dap.show
+expect pane "Debug"
+
+command dap.set_variable
+expect screen lacks "Set "

@@ -1051,6 +1051,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('K') => app.browser_open_cookies(),
             KeyCode::Char('y') if cookies_focus => app.copy_cookie_name_value(),
+            KeyCode::Char('c') if cookies_focus => app.copy_cookie_value_only(),
             KeyCode::Char('d') if cookies_focus => app.delete_selected_cookie(),
             KeyCode::Char('e') if cookies_focus => app.edit_selected_cookie(),
             KeyCode::Char('a') if cookies_focus => app.add_cookie_prompt(),
@@ -1067,6 +1068,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('L') => app.browser_open_storage(),
             KeyCode::Char('y') if storage_focus => app.copy_storage_key_value(),
+            KeyCode::Char('c') if storage_focus => app.copy_storage_value_only(),
             KeyCode::Char('e') if storage_focus => app.edit_selected_storage(),
             KeyCode::Char('a') if storage_focus => app.add_storage_prompt(),
             KeyCode::Char('d') if storage_focus => app.delete_selected_storage(),
@@ -1375,6 +1377,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('w') if section == crate::pane::DebugSection::Variables => {
                 app.debug_pane_watch_var();
             }
+            KeyCode::Char('s') if section == crate::pane::DebugSection::Variables => {
+                app.debug_pane_set_var();
+            }
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }
@@ -1385,6 +1390,45 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // chars / Left / Right / Backspace / Delete / Home / End / Ctrl+U/W
     // all edit the input line.
     if matches!(app.panes.get(i), Some(Pane::DapRepl(_))) {
+        // While `filter_mode == true`, all keys feed the filter buffer
+        // (mirrors cookies / storage / net / DOM filter UX). Bail early
+        // so the regular input-editing arms don't double-handle.
+        let in_filter_mode = matches!(
+            app.panes.get(i),
+            Some(Pane::DapRepl(p)) if p.filter_mode
+        );
+        if in_filter_mode {
+            match key.code {
+                KeyCode::Backspace => {
+                    if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {
+                        p.filter.pop();
+                        p.selected = None;
+                    }
+                }
+                KeyCode::Enter => {
+                    // Exit filter mode but keep the narrow.
+                    if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {
+                        p.filter_mode = false;
+                    }
+                }
+                KeyCode::Esc => {
+                    // Clear filter + exit mode.
+                    if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {
+                        p.filter.clear();
+                        p.filter_mode = false;
+                        p.selected = None;
+                    }
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {
+                        p.filter.push(c);
+                        p.selected = None;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         match key.code {
             KeyCode::Enter => app.dap_repl_submit(),
             // Shift+Up/Down move row selection (for `o` expand).
@@ -1398,14 +1442,19 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Up => app.dap_repl_history_walk(-1),
             KeyCode::Down => app.dap_repl_history_walk(1),
             KeyCode::Esc => {
-                // First Esc clears the row selection (if any); second
-                // Esc → tree. Mirrors the panel-then-tree gesture
-                // elsewhere in the codebase.
-                let had_sel = matches!(
-                    app.panes.get(i),
-                    Some(Pane::DapRepl(p)) if p.selected.is_some()
-                );
-                if had_sel {
+                // Esc cascade: first clears a held filter, then clears
+                // row selection, then bails to tree. Mirrors the panel-
+                // then-tree gesture elsewhere in the codebase.
+                let (had_filter, had_sel) = match app.panes.get(i) {
+                    Some(Pane::DapRepl(p)) => (!p.filter.is_empty(), p.selected.is_some()),
+                    _ => (false, false),
+                };
+                if had_filter {
+                    if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {
+                        p.filter.clear();
+                        p.selected = None;
+                    }
+                } else if had_sel {
                     if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {
                         p.selected = None;
                     }
@@ -1503,6 +1552,20 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 ) =>
             {
                 app.dap_repl_toggle_expand();
+            }
+            // `/` enters filter mode when (a) the input is empty so no
+            // expression is in flight, or (b) a row is selected (user
+            // has moved focus off the input). Otherwise it's a literal
+            // char — `/` shows up in paths / division expressions.
+            KeyCode::Char('/')
+                if matches!(
+                    app.panes.get(i),
+                    Some(Pane::DapRepl(p)) if p.input.is_empty() || p.selected.is_some()
+                ) =>
+            {
+                if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {
+                    p.filter_mode = true;
+                }
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if let Some(Pane::DapRepl(p)) = app.panes.get_mut(i) {

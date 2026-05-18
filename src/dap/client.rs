@@ -246,6 +246,31 @@ impl DapClient {
         self.send_request("threads", json!({}))
     }
 
+    /// `setVariable` — replace `name`'s value inside the composite
+    /// referenced by `parent_ref` (a scope's or struct's
+    /// `variablesReference`). The reply lands as
+    /// `DapEvent::SetVariableDone` with the adapter's formatted
+    /// post-set value (which may differ from `value` — e.g. the
+    /// adapter strips quotes from a typed string literal). Errors
+    /// (invalid value, immutable field) flow through the generic
+    /// `DapEvent::Failed` path.
+    ///
+    /// `aux` carries `parent_ref` and `aux_str` carries `name` so
+    /// the reader can route the reply with full context — the
+    /// response body doesn't include either field on its own.
+    pub fn set_variable(&mut self, parent_ref: i64, name: &str, value: &str) -> Result<(), String> {
+        self.send_request_full(
+            "setVariable",
+            json!({
+                "variablesReference": parent_ref,
+                "name": name,
+                "value": value,
+            }),
+            Some(parent_ref),
+            Some(name.to_string()),
+        )
+    }
+
     /// `evaluate` — evaluate `expression` in the context of `frame_id`
     /// (or globally when `frame_id` is `None`). `context` is one of
     /// "watch" / "repl" / "hover" — the adapter may format the result
@@ -557,6 +582,32 @@ fn dispatch_message(v: &Value, tx: &Sender<DapEvent>, pending: &Pending, _adapte
                         let parsed: Vec<ThreadInfo> =
                             ts.iter().filter_map(parse_thread_info).collect();
                         let _ = tx.send(DapEvent::Threads(parsed));
+                    }
+                }
+                "setVariable" => {
+                    if let (Some(parent_ref), Some(name), Some(body)) =
+                        (req.aux, req.aux_str, v.get("body"))
+                    {
+                        let value = body
+                            .get("value")
+                            .and_then(|r| r.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let ty = body
+                            .get("type")
+                            .and_then(|t| t.as_str())
+                            .map(|s| s.to_string());
+                        let variables_ref = body
+                            .get("variablesReference")
+                            .and_then(|r| r.as_i64())
+                            .unwrap_or(0);
+                        let _ = tx.send(DapEvent::SetVariableDone {
+                            parent_ref,
+                            name,
+                            value,
+                            ty,
+                            variables_ref,
+                        });
                     }
                 }
                 "evaluate" => {

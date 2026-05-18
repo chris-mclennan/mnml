@@ -92,6 +92,13 @@ pub enum PromptKind {
     /// `"% 10"` every 10th hit). Independent of `DapBreakpointCondition`
     /// — a line can have both.
     DapBreakpointHitCount,
+    /// Accept ⇒ fire `setVariable` against the parent_ref + name stashed
+    /// on `App.pending_set_variable`. The adapter's reply lands as
+    /// `DapEvent::SetVariableDone` and the variables panel updates in
+    /// place. Failure (immutable / invalid value) routes through the
+    /// generic `DapEvent::Failed` toast path. Seeded with the current
+    /// value so the user can edit in place.
+    DapSetVariable,
 }
 
 #[derive(Debug)]

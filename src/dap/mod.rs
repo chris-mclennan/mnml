@@ -181,6 +181,21 @@ pub enum DapEvent {
     /// App caches this on `DapManager.threads` and the multi-thread
     /// picker reads it on user demand.
     Threads(Vec<ThreadInfo>),
+    /// Adapter accepted a `setVariable` request. `parent_ref` is the
+    /// `variablesReference` the request targeted (i.e. the scope or
+    /// composite that owns the variable); `name` echoes the original
+    /// name. `value` / `ty` / `variables_ref` come from the response
+    /// body (the adapter may rewrite the formatted value, e.g.
+    /// trimming quotes). The App patches the cached child in place +
+    /// toasts confirmation. Errors land on [`Self::Failed`] via the
+    /// generic non-success path.
+    SetVariableDone {
+        parent_ref: i64,
+        name: String,
+        value: String,
+        ty: Option<String>,
+        variables_ref: i64,
+    },
     /// Result of the `initialize` request — the adapter's
     /// `exceptionBreakpointFilters`. Used by `dap.exceptions` to
     /// build a picker over which exception kinds should stop the
@@ -329,6 +344,12 @@ pub struct VarRow {
     pub expanded: bool,
     /// True ⇔ this row can be expanded (scope with vars OR composite var).
     pub expandable: bool,
+    /// The `variablesReference` of the immediate parent — needed for
+    /// `setVariable` (which targets the parent's ref + a name). For
+    /// top-level scope rows this is 0 (scopes have no parent); for
+    /// vars directly under a scope this is the scope's ref; for nested
+    /// children this is the enclosing composite's ref.
+    pub parent_ref: i64,
 }
 
 impl DapManager {
@@ -355,17 +376,18 @@ impl DapManager {
                 var_ref: r,
                 expanded,
                 expandable,
+                parent_ref: 0,
             });
             if expanded && let Some(vars) = self.variables.get(&r) {
                 for v in vars {
-                    self.walk_var(v, 1, &mut out);
+                    self.walk_var(v, 1, r, &mut out);
                 }
             }
         }
         out
     }
 
-    fn walk_var(&self, v: &Variable, depth: usize, out: &mut Vec<VarRow>) {
+    fn walk_var(&self, v: &Variable, depth: usize, parent_ref: i64, out: &mut Vec<VarRow>) {
         let expandable = v.variables_reference > 0;
         let expanded = expandable && self.expanded_vars.contains(&v.variables_reference);
         let label = match &v.ty {
@@ -380,10 +402,11 @@ impl DapManager {
             var_ref: v.variables_reference,
             expanded,
             expandable,
+            parent_ref,
         });
         if expanded && let Some(children) = self.variables.get(&v.variables_reference) {
             for child in children {
-                self.walk_var(child, depth + 1, out);
+                self.walk_var(child, depth + 1, v.variables_reference, out);
             }
         }
     }
@@ -477,16 +500,17 @@ mod tests {
                         var_ref: r,
                         expanded,
                         expandable,
+                        parent_ref: 0,
                     });
                     if expanded && let Some(vars) = self.variables.get(&r) {
                         for v in vars {
-                            self.walk(v, 1, &mut out);
+                            self.walk(v, 1, r, &mut out);
                         }
                     }
                 }
                 out
             }
-            fn walk(&self, v: &Variable, depth: usize, out: &mut Vec<VarRow>) {
+            fn walk(&self, v: &Variable, depth: usize, parent_ref: i64, out: &mut Vec<VarRow>) {
                 let expandable = v.variables_reference > 0;
                 let expanded = expandable && self.expanded_vars.contains(&v.variables_reference);
                 out.push(VarRow {
@@ -497,10 +521,11 @@ mod tests {
                     var_ref: v.variables_reference,
                     expanded,
                     expandable,
+                    parent_ref,
                 });
                 if expanded && let Some(children) = self.variables.get(&v.variables_reference) {
                     for child in children {
-                        self.walk(child, depth + 1, out);
+                        self.walk(child, depth + 1, v.variables_reference, out);
                     }
                 }
             }
@@ -545,14 +570,18 @@ mod tests {
         assert_eq!(rows.len(), 4);
         assert!(rows[0].is_scope);
         assert_eq!(rows[0].label, "Locals");
+        assert_eq!(rows[0].parent_ref, 0); // scope has no parent
         assert_eq!(rows[1].depth, 1);
         assert_eq!(rows[1].label, "list");
         assert!(rows[1].expanded);
+        assert_eq!(rows[1].parent_ref, 1); // child of Locals
         assert_eq!(rows[2].depth, 2);
         assert_eq!(rows[2].label, "[0]");
+        assert_eq!(rows[2].parent_ref, 2); // child of `list` composite
         assert_eq!(rows[3].depth, 1);
         assert_eq!(rows[3].label, "count");
         assert!(!rows[3].expandable);
+        assert_eq!(rows[3].parent_ref, 1); // sibling of `list` under Locals
     }
 
     #[test]

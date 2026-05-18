@@ -83,6 +83,40 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**DAP setVariable + REPL filter + cookies/storage value-only copy (2026-05-18 cont.):**
+three more bounded items. (1) **`s` in the variables panel** opens a
+prompt seeded with the row's current value; accept fires `setVariable`
+against `(parent_ref, name, new_value)`. Required adding `parent_ref:
+i64` to `VarRow` (populated in `variable_rows()` + `walk_var()` —
+0 for scope rows, scope's ref for top-level vars, parent var's ref for
+nested children) so the request has full routing context (DAP's
+`setVariable` targets the parent's ref + a name, not the child's own
+ref). New `DapClient::set_variable(parent_ref, name, value)` request
+using `send_request_full` with `aux = parent_ref` + `aux_str = name`;
+new `DapEvent::SetVariableDone { parent_ref, name, value, ty,
+variables_ref }` reply event; new `setVariable` arm in the reader's
+response match table. App's `apply_dap_event` patches the cached
+child in place (`mgr.variables[parent_ref].iter_mut().find(name)`)
++ toasts confirmation. Errors flow through the existing generic
+`DapEvent::Failed` toast path. New palette command `dap.set_variable`.
+(2) **`/` in the DAP REPL pane** enters filter mode — mirrors the
+cookies / storage / net / DOM filter UX. Filter triggers only when
+the input is empty (so `/` stays a literal in division / path
+expressions) OR a row is selected. `DapReplPane` gained
+`filter: String` + `filter_mode: bool` and a `visible_history_indices()`
+helper that fuzzy-matches via `crate::fuzzy::fuzzy_match` against
+`entry.expression`. Renderer shows the narrowed view + a filter
+chip on the header; `dap_repl_select_move` walks the visible (post-
+filter) indices so the cursor never lands on a hidden row. Esc
+cascade: clears filter, then clears row selection, then bails to
+tree. (3) **`c` in the cookies + storage panels** copies just the
+value (no `name=` / `key=` prefix). Common when the value is a
+session token / JWT the user wants to drop directly into code. `y`
+keeps the existing `name=value` pair behavior. Help text on both
+panels updated to differentiate (`y pair · c value`). Two new e2e
+tests (`dap_set_variable.test`, `dap_repl_filter.test`); 86 e2e
+total. VarRow test extended to assert `parent_ref` values.
+
 **the private integration phase 8 — DocDB ↔ CodeBuild correlation (2026-05-18 cont.):**
 the CodeBuilds pane now surfaces an inline test-execution chip on each
 row (`· ✓N ✗M ≈K ⊘L` aggregated across every TE record that matches

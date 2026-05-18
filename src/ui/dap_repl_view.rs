@@ -27,21 +27,52 @@ pub fn draw(frame: &mut Frame, app: &App, pane_id: PaneId, area: Rect, focused: 
         Constraint::Length(1),
     ])
     .split(area);
-    draw_header(frame, chunks[0]);
+    draw_header(frame, p, chunks[0]);
     draw_history(frame, app, p, chunks[1]);
     draw_input(frame, p, chunks[2], focused);
     let _ = t;
 }
 
-fn draw_header(frame: &mut Frame, area: Rect) {
+fn draw_header(frame: &mut Frame, p: &DapReplPane, area: Rect) {
     let t = theme::cur();
-    let line = Line::from(vec![
-        Span::styled(" DAP REPL ", Style::default().fg(t.bg_dark).bg(t.cyan)),
-        Span::styled(
-            "  Enter: eval · ↑↓: history · Sh-↑↓: select row · o: expand · Esc: tree",
-            Style::default().fg(t.comment).bg(t.bg_dark),
-        ),
-    ]);
+    let line = if p.filter_mode {
+        Line::from(vec![
+            Span::styled(" DAP REPL ", Style::default().fg(t.bg_dark).bg(t.cyan)),
+            Span::styled(
+                format!(
+                    "  filter: {}_ · Backspace · Enter applies · Esc clears",
+                    p.filter
+                ),
+                Style::default().fg(t.yellow).bg(t.bg_dark),
+            ),
+        ])
+    } else if !p.filter.is_empty() {
+        let visible = p.visible_history_indices().len();
+        Line::from(vec![
+            Span::styled(" DAP REPL ", Style::default().fg(t.bg_dark).bg(t.cyan)),
+            Span::styled(
+                format!(
+                    "  ({}/{} match \"{}\")  ",
+                    visible,
+                    p.history.len(),
+                    p.filter
+                ),
+                Style::default().fg(t.yellow).bg(t.bg_dark),
+            ),
+            Span::styled(
+                "Enter: eval · ↑↓: history · /: refilter · Esc clears filter",
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            ),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled(" DAP REPL ", Style::default().fg(t.bg_dark).bg(t.cyan)),
+            Span::styled(
+                "  Enter: eval · ↑↓: history · Sh-↑↓: select row · o: expand · /: filter · Esc: tree",
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            ),
+        ])
+    };
     frame.render_widget(
         Paragraph::new(line).style(Style::default().bg(t.bg_dark)),
         area,
@@ -52,33 +83,32 @@ fn draw_history(frame: &mut Frame, app: &App, p: &DapReplPane, area: Rect) {
     let t = theme::cur();
     let body_h = area.height as usize;
     let total = p.history.len();
-    // Start near the bottom (newest entries) unless the user has
-    // scrolled up by selecting a row. Different from previous version
-    // because expanded rows take more than 2 lines — render greedy +
-    // truncate at body_h.
-    let start = if p.scroll == usize::MAX {
-        // Pinned to tail — but we render until we run out of room,
-        // then walk back from the end.
-        total
-    } else {
-        p.scroll.min(total.saturating_sub(1))
-    };
+    // When a filter is held, walk only the matched entries. `visible`
+    // is the index-into-history list; everything below indexes through
+    // it so scroll math + selection work in the narrowed view.
+    let visible: Vec<usize> = p.visible_history_indices();
+    let visible_count = visible.len();
     let mut lines: Vec<Line> = Vec::new();
     if total == 0 {
         lines.push(Line::from(Span::styled(
             "  (no evaluations yet — type an expression below)",
             Style::default().fg(t.comment).bg(t.bg_dark),
         )));
+    } else if visible_count == 0 {
+        lines.push(Line::from(Span::styled(
+            format!("  (no matches for \"{}\")", p.filter),
+            Style::default().fg(t.comment).bg(t.bg_dark),
+        )));
     } else {
-        // Walk forward from `start` collecting rows. For tail-pinned
-        // mode, find the right starting index that fits.
-        let render_from = if p.scroll == usize::MAX {
-            // Estimate: each entry is 2 lines plus expanded children.
-            // Just take the last `body_h` rows worth, walking backward.
+        // Pick the starting offset (into `visible`) for the render walk.
+        // Tail-pinned ⇒ walk back from the end until we run out of budget;
+        // explicit scroll ⇒ snap to the closest visible position so a
+        // partial filter doesn't blank the pane.
+        let render_from_in_visible = if p.scroll == usize::MAX {
             let mut budget = body_h;
-            let mut idx = total;
+            let mut idx = visible_count;
             while idx > 0 {
-                let e = &p.history[idx - 1];
+                let e = &p.history[visible[idx - 1]];
                 let rows = entry_render_rows(app, e);
                 if budget < rows {
                     break;
@@ -88,12 +118,16 @@ fn draw_history(frame: &mut Frame, app: &App, p: &DapReplPane, area: Rect) {
             }
             idx
         } else {
-            start
+            visible
+                .iter()
+                .position(|&i| i >= p.scroll)
+                .unwrap_or(visible_count.saturating_sub(1))
         };
-        for (i, entry) in p.history.iter().enumerate().skip(render_from) {
+        for &i in visible.iter().skip(render_from_in_visible) {
             if lines.len() >= body_h {
                 break;
             }
+            let entry = &p.history[i];
             let selected = p.selected == Some(i);
             let chip_bg = if selected { t.bg2 } else { t.bg_dark };
             // `> expr` row — yellow prefix, fg text. Selected row gets
