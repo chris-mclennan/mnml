@@ -23,6 +23,41 @@ use crate::ui::{icons, theme};
 const PL_RIGHT: &str = "\u{e0b0}"; //
 const PL_LEFT: &str = "\u{e0b2}"; //
 
+/// Local-timezone offset from UTC in seconds. Cached on first call —
+/// resolved via `$TZ_OFFSET_HOURS` (testing / containers), then by
+/// shelling out to `date +%z` (parses `±HHMM`), with UTC as the
+/// fallback when both fail. Stable per-process: a launch through a DST
+/// boundary won't catch the shift, but mnml restarts are common
+/// enough that this is a non-issue in practice.
+fn local_tz_offset_secs() -> i64 {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<i64> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        if let Ok(s) = std::env::var("TZ_OFFSET_HOURS")
+            && let Ok(h) = s.parse::<i32>()
+        {
+            return h as i64 * 3600;
+        }
+        let Ok(out) = std::process::Command::new("date").arg("+%z").output() else {
+            return 0;
+        };
+        let s = String::from_utf8_lossy(&out.stdout);
+        let s = s.trim();
+        // Expect `±HHMM`
+        if s.len() != 5 {
+            return 0;
+        }
+        let sign: i64 = if s.starts_with('-') { -1 } else { 1 };
+        let Ok(hh) = s[1..3].parse::<i64>() else {
+            return 0;
+        };
+        let Ok(mm) = s[3..5].parse::<i64>() else {
+            return 0;
+        };
+        sign * (hh * 3600 + mm * 60)
+    })
+}
+
 struct Seg {
     text: String,
     fg: Color,
@@ -261,25 +296,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
     // Optional clock chip (HH:MM, local time). On by default — costs
-    // ~0 (a single SystemTime call per render). `[ui] clock = false` to
-    // turn off.
+    // ~0 (a single SystemTime call per render + one cached offset lookup).
+    // `[ui] clock = false` to turn off. `TZ_OFFSET_HOURS` env var still
+    // overrides the system offset for testing / containers.
     if app.config.ui.clock {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let hh = ((now / 3600) % 24) as u8;
-        let mm = ((now / 60) % 60) as u8;
-        // Naive UTC ⇒ local-offset shift via `localtime_r` would be
-        // ideal but we don't have that without libc. Apply a simple
-        // env-based offset: TZ_OFFSET_HOURS, default 0 (UTC).
-        let off = std::env::var("TZ_OFFSET_HOURS")
-            .ok()
-            .and_then(|s| s.parse::<i32>().ok())
-            .unwrap_or(0);
-        let local_hh = ((hh as i32 + off).rem_euclid(24)) as u8;
+        let off_secs = local_tz_offset_secs();
+        let local = (now as i64 + off_secs).rem_euclid(86400) as u64;
+        let hh = (local / 3600) % 24;
+        let mm = (local / 60) % 60;
         right.push(Seg::new(
-            format!(" {local_hh:02}:{mm:02} "),
+            format!(" {hh:02}:{mm:02} "),
             theme::cur().comment,
             theme::cur().bg2,
         ));
