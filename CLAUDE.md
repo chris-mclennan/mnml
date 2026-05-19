@@ -83,6 +83,44 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Wave 3 polish — image follow-ups + AI per-call config (2026-05-18 cont.):**
+finishing the rough edges on yesterday's MVPs. (1) **JPEG / GIF /
+WebP / BMP support** — added the `image = "0.25"` crate (default
+features off; explicit `png`/`jpeg`/`gif`/`webp`/`bmp`). New
+`ImageData.png_bytes: Option<Arc<Vec<u8>>>` cache + `pixel_size`
+slot. `ImageData::ensure_png_bytes()` is lazy: PNG sources return
+`Arc::new(self.bytes.clone())` and parse the IHDR chunk for size
+(cheap, 24 bytes); other formats decode via `image::load_from_memory`
+and re-encode as PNG once. Kitty + iTerm2 both accept the cached
+PNG payload, so the second `terminal.draw()` flushes the already-
+transcoded bytes (no per-frame decode). 50 MB hard cap survives.
+(2) **iTerm2 inline-image protocol emission** — new
+`crate::image::iterm2::encode_placement` wraps the PNG bytes in an
+OSC 1337 escape (`\x1b]1337;File=inline=1;width=Nc;height=Nr;
+preserveAspectRatio=1:<base64>\x07`). `tui.rs::emit_image_placements`
+now dispatches to either Kitty or iTerm2 based on the detected
+protocol. iTerm2 is the standard macOS dev terminal, so this opens
+image previews to a big audience without needing Kitty / WezTerm.
+No chunking — iTerm2 reads the OSC string in one go, unlike
+Kitty's 4 KB chunk cap. (3) **AI per-call config** — `[ai] model =
+"claude-sonnet-4-6"` lets users override the API backend's default
+model (was hardcoded `claude-opus-4-7`). `[ai] system_prompt = "..."`
+prepends a system prompt to every API-backend request (the `system`
+field on `/v1/messages`). Both read at job-spawn time so changing
+the config and re-firing picks up the new values without restart.
+CLI backend ignores both (the `claude` binary picks its own
+defaults). New `App::ai_model()` + `ai_system_prompt()` accessors.
+Refactored `api_client::stream_to_channel` signature: now takes
+`Option<&str>` for both model and system; old signature lost the
+`model` param (it was already there but only as `Option`). The
+Kitty `encode_placement` signature also changed: takes `&[u8]` of
+PNG bytes directly (the format dispatch moved upstream into
+`ensure_png_bytes`), so callers don't need to branch on
+`ImageFormat::Png`. 663 lean / 697 private lib tests (+1 across
+image + ai_api — the kitty refactor dropped one "refuses non-PNG"
+test that no longer applies, iterm2 added two). 87 e2e, 7 ipc —
+all green.
+
 **Image rendering + AI SDK direct-HTTP backend (2026-05-18 cont.):**
 two of the three big "deferred" tracks landing as foundation cuts.
 (1) **Image rendering (Kitty graphics, PNG-only MVP)** — new

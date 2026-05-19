@@ -65,6 +65,10 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 tungstenite = { version = "0.29.0", default-features = false, features = ["handshake"] }
 # Decode `Page.captureScreenshot`'s base64 PNG payload (already in the tree via reqwest).
 base64 = "0.22"
+# Image decoding for the `Pane::Image` viewer (JPEG / GIF / WebP / BMP → PNG
+# transcoding so Kitty/iTerm2 can accept any of them). Default features
+# disabled to keep build size down; we pick exactly the formats we want.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 tree-sitter-scala = "0.26.0"
 tree-sitter-elixir = "0.3.5"
 tree-sitter-haskell = "0.23.1"

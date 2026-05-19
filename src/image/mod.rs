@@ -10,6 +10,7 @@
 //! escapes inside spans, so image draws have to happen after the regular
 //! frame reconciliation.
 
+pub mod iterm2;
 pub mod kitty;
 pub mod pane;
 
@@ -68,11 +69,80 @@ pub fn detect_protocol() -> ImageProtocol {
 
 /// One file's worth of cached image data — the raw bytes plus a detected
 /// format. Kept compact since PNG/JPEG files are typically a few hundred KB.
+///
+/// `png_bytes` is a cache of the PNG-transcoded payload for non-PNG sources.
+/// Set lazily on first use via [`ImageData::ensure_png_bytes`]; transmission
+/// pulls from this slot so the heavy decode only happens once per file.
 #[derive(Debug, Clone)]
 pub struct ImageData {
     pub path: PathBuf,
     pub bytes: Vec<u8>,
     pub format: ImageFormat,
+    /// PNG-encoded payload for transmission. For PNG sources this points at
+    /// `bytes` (zero-copy through `Arc`). For other formats it's lazily
+    /// populated by decoding `bytes` then re-encoding as PNG.
+    pub png_bytes: Option<std::sync::Arc<Vec<u8>>>,
+    /// `(width, height)` in pixels — set once a decode has happened.
+    /// `None` until first access.
+    pub pixel_size: Option<(u32, u32)>,
+}
+
+impl ImageData {
+    /// Return the PNG-encoded payload, decoding + re-encoding the source if
+    /// necessary. PNG sources zero-copy through `Arc<Vec<u8>>`. Returns
+    /// `Err` when the source can't be decoded (corrupt / unsupported).
+    pub fn ensure_png_bytes(&mut self) -> Result<std::sync::Arc<Vec<u8>>, String> {
+        if let Some(arc) = self.png_bytes.as_ref() {
+            return Ok(arc.clone());
+        }
+        let arc = if matches!(self.format, ImageFormat::Png) {
+            // PNG → reuse the bytes verbatim. Also fill pixel_size while
+            // we're here (cheap — just parse the IHDR chunk).
+            if self.pixel_size.is_none() {
+                self.pixel_size = parse_png_size(&self.bytes);
+            }
+            std::sync::Arc::new(self.bytes.clone())
+        } else {
+            let img = image::load_from_memory(&self.bytes)
+                .map_err(|e| format!("decode {}: {e}", format_label(self.format)))?;
+            self.pixel_size = Some((img.width(), img.height()));
+            let mut out: Vec<u8> = Vec::with_capacity(self.bytes.len());
+            img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+                .map_err(|e| format!("encode PNG: {e}"))?;
+            std::sync::Arc::new(out)
+        };
+        self.png_bytes = Some(arc.clone());
+        Ok(arc)
+    }
+}
+
+fn format_label(f: ImageFormat) -> &'static str {
+    match f {
+        ImageFormat::Png => "PNG",
+        ImageFormat::Jpeg => "JPEG",
+        ImageFormat::Gif => "GIF",
+        ImageFormat::Webp => "WebP",
+        ImageFormat::Bmp => "BMP",
+        ImageFormat::Other => "image",
+    }
+}
+
+/// Parse a PNG file's IHDR chunk for `(width, height)`. Returns None on a
+/// non-PNG or truncated file. Cheap — reads only the first 24 bytes.
+fn parse_png_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    // PNG magic (8 bytes) + IHDR length (4) + "IHDR" (4) + width (4) + height (4)
+    if bytes.len() < 24 {
+        return None;
+    }
+    if &bytes[0..8] != b"\x89PNG\r\n\x1a\n" {
+        return None;
+    }
+    if &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    let w = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    let h = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+    Some((w, h))
 }
 
 /// Image formats recognized by the loader. Detection is by file extension
@@ -122,6 +192,8 @@ pub fn load(path: &Path) -> Result<ImageData, String> {
         path: path.to_path_buf(),
         bytes,
         format: ImageFormat::from_path(path),
+        png_bytes: None,
+        pixel_size: None,
     })
 }
 

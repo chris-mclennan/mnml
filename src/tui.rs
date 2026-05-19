@@ -182,9 +182,13 @@ fn emit_image_placements(app: &mut App) {
         let _ = out.write_all(crate::image::kitty::clear_all().as_bytes());
     }
     for req in pending {
-        let Some(Pane::Image(p)) = app.panes.get(req.pane_id) else {
-            continue;
+        // Pull the (possibly transcoded) PNG bytes out, then release the
+        // borrow so we can write to stdout below.
+        let payload: Option<std::sync::Arc<Vec<u8>>> = match app.panes.get_mut(req.pane_id) {
+            Some(Pane::Image(p)) => p.data.ensure_png_bytes().ok(),
+            _ => None,
         };
+        let Some(payload) = payload else { continue };
         // Move cursor to the area's top-left (1-based row;col).
         let _ = write!(
             out,
@@ -195,15 +199,20 @@ fn emit_image_placements(app: &mut App) {
         match protocol {
             ImageProtocol::Kitty => {
                 if let Ok(esc) =
-                    crate::image::kitty::encode_placement(&p.data, req.area.width, req.area.height)
+                    crate::image::kitty::encode_placement(&payload, req.area.width, req.area.height)
                 {
                     let _ = out.write_all(esc.as_bytes());
                 }
             }
-            ImageProtocol::Iterm2 | ImageProtocol::None => {
-                // iTerm2 protocol not yet wired — falls through to the
-                // metadata-only banner the renderer already drew.
+            ImageProtocol::Iterm2 => {
+                let esc = crate::image::iterm2::encode_placement(
+                    &payload,
+                    req.area.width,
+                    req.area.height,
+                );
+                let _ = out.write_all(esc.as_bytes());
             }
+            ImageProtocol::None => {}
         }
     }
     let _ = out.flush();

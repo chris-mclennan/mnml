@@ -9113,15 +9113,48 @@ impl App {
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_cancel = cancel.clone();
         let backend = self.ai_backend();
+        let model = self.ai_model();
+        let system = self.ai_system_prompt();
         std::thread::spawn(move || match backend {
             crate::ai::AiBackend::Api => {
-                crate::ai::api_client::stream_to_channel(&prompt, None, &worker_cancel, tx, job_id);
+                crate::ai::api_client::stream_to_channel(
+                    &prompt,
+                    model.as_deref(),
+                    system.as_deref(),
+                    &worker_cancel,
+                    tx,
+                    job_id,
+                );
             }
             crate::ai::AiBackend::Cli => {
                 crate::ai::stream_to_channel(&prompt, &sid, &worker_cancel, tx, job_id);
             }
         });
         (job_id, session_id, cancel)
+    }
+
+    /// Optional `[ai] model = "..."` from the config — overrides the API
+    /// backend's default model when set. CLI backend ignores this (the
+    /// `claude` binary picks its own default).
+    pub fn ai_model(&self) -> Option<String> {
+        self.config
+            .ai
+            .get("model")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string)
+    }
+
+    /// Optional `[ai] system_prompt = "..."` from the config — prepended
+    /// to every API-backend request as the `system` field. CLI backend
+    /// ignores this (it has its own conversation system prompt).
+    pub fn ai_system_prompt(&self) -> Option<String> {
+        self.config
+            .ai
+            .get("system_prompt")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string)
     }
 
     /// Read the user's `[ai] backend = "cli" | "api"` setting. Default

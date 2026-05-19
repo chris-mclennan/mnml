@@ -42,9 +42,11 @@ const DEFAULT_MAX_TOKENS: u32 = 4096;
 /// SSE lines so the user's `x` in the AI pane bails out promptly.
 ///
 /// `model` overrides the default; pass `None` for `DEFAULT_MODEL`.
+/// `system` is an optional system prompt prepended to the request.
 pub fn stream_to_channel(
     prompt: &str,
     model: Option<&str>,
+    system: Option<&str>,
     cancel: &AtomicBool,
     sink: std::sync::mpsc::Sender<(u64, AiMsg)>,
     job_id: u64,
@@ -59,13 +61,22 @@ pub fn stream_to_channel(
         ));
         return;
     };
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "model": model.unwrap_or(DEFAULT_MODEL),
         "max_tokens": DEFAULT_MAX_TOKENS,
         "stream": true,
         "messages": [{ "role": "user", "content": prompt }],
-    })
-    .to_string();
+    });
+    if let Some(sys) = system
+        && !sys.trim().is_empty()
+        && let Some(obj) = body.as_object_mut()
+    {
+        obj.insert(
+            "system".to_string(),
+            serde_json::Value::String(sys.to_string()),
+        );
+    }
+    let body = body.to_string();
     let client = match reqwest::blocking::Client::builder()
         // No timeout on streaming; the request itself reads SSE lines.
         .build()
