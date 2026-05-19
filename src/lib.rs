@@ -70,3 +70,29 @@ pub mod tree;
 pub mod tui;
 pub mod ui;
 pub mod whichkey;
+
+/// One clickable action inside the `Pane::GitGraph` WIP detail panel.
+/// Click on a "Stage All" button ⇒ `StageAll`; click on a file row's
+/// `[+]` ⇒ `StageFile(path)`. The corresponding rect lives on
+/// `app.rects.wip_buttons` — the renderer pushes one entry per
+/// painted button; `tui::dispatch_mouse` matches the click + fires
+/// the action via `App::run_wip_action`.
+#[derive(Debug, Clone)]
+pub enum WipAction {
+    /// `git add -A` (or equivalent) — stage every change at once.
+    StageAll,
+    /// `git reset` — unstage every staged file.
+    UnstageAll,
+    /// `git add <path>` — stage one file.
+    StageFile(std::path::PathBuf),
+    /// `git restore --staged <path>` — unstage one file.
+    UnstageFile(std::path::PathBuf),
+    /// Open the modal commit-message prompt (same as the `c` chord on
+    /// the WIP row). Click the `Commit` button in the WIP detail's
+    /// commit section.
+    OpenCommitPrompt,
+    /// Trigger AI commit-message generation (same as the `C` chord on
+    /// the WIP row). Click the `AI Message` button in the WIP detail's
+    /// commit section.
+    RequestAiCommitMessage,
+}

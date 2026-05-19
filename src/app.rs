@@ -1550,6 +1550,11 @@ pub struct PaneRects {
     /// `lens_index` is the index into `Buffer.code_lenses`. Cleared +
     /// rebuilt per editor render.
     pub code_lens_chips: Vec<(Rect, PaneId, usize)>,
+    /// `(button_rect, pane_id, action)` per clickable button inside the
+    /// GitGraph pane's WIP detail panel — "Stage All", "Unstage All",
+    /// or per-file `[+]` / `[−]` stage/unstage. Cleared + rebuilt per
+    /// render. See [`crate::WipAction`] for the action shape.
+    pub wip_buttons: Vec<(Rect, PaneId, crate::WipAction)>,
     /// Rect of the bufferline's `‹` overflow chevron when painted (more tabs
     /// scrolled off the left edge); `None` when there's nothing past it.
     /// Clicking scrolls the bufferline left by one.
@@ -12780,6 +12785,69 @@ impl App {
         match crate::git::tag::push_all(self.active_repo_path()) {
             Ok(summary) => self.toast(format!("push tags: {summary}")),
             Err(e) => self.toast(format!("git push --tags: {e}")),
+        }
+    }
+
+    /// Run a [`WipAction`] from the GitGraph pane's WIP detail panel. The
+    /// existing `git_stage_*` helpers are gated to the GitStatus pane;
+    /// this is the gate-free entry point so a button click in the graph
+    /// pane stages without forcing the user to switch panes first.
+    /// Refreshes the open GitGraph pane after the operation so the WIP
+    /// row's file list reflects the change.
+    pub fn run_wip_action(&mut self, action: crate::WipAction) {
+        // Two of the variants open prompts / fire AI jobs — handle
+        // them up front since they don't return a Result<String, String>
+        // shape.
+        match &action {
+            crate::WipAction::OpenCommitPrompt => {
+                self.open_commit_prompt();
+                return;
+            }
+            crate::WipAction::RequestAiCommitMessage => {
+                self.request_ai_commit_message();
+                return;
+            }
+            _ => {}
+        }
+        let repo = self.active_repo_path().to_path_buf();
+        let result: Result<String, String> = match &action {
+            crate::WipAction::StageAll => crate::git::stage::stage_all(&repo)
+                .map(|_| "staged all changes".to_string())
+                .map_err(|e| format!("git add -A: {e}")),
+            crate::WipAction::UnstageAll => crate::git::stage::unstage_all(&repo)
+                .map(|_| "unstaged everything".to_string())
+                .map_err(|e| format!("git restore --staged: {e}")),
+            crate::WipAction::StageFile(path) => {
+                let rel = path
+                    .strip_prefix(&self.workspace)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string();
+                crate::git::stage::stage(&repo, &rel)
+                    .map(|_| format!("staged {rel}"))
+                    .map_err(|e| format!("git add: {e}"))
+            }
+            crate::WipAction::UnstageFile(path) => {
+                let rel = path
+                    .strip_prefix(&self.workspace)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string();
+                crate::git::stage::unstage(&repo, &rel)
+                    .map(|_| format!("unstaged {rel}"))
+                    .map_err(|e| format!("git restore --staged: {e}"))
+            }
+            crate::WipAction::OpenCommitPrompt | crate::WipAction::RequestAiCommitMessage => {
+                unreachable!()
+            }
+        };
+        match result {
+            Ok(msg) => {
+                self.after_git_change();
+                self.refresh_active_git_graph();
+                self.toast(msg);
+            }
+            Err(e) => self.toast(e),
         }
     }
 

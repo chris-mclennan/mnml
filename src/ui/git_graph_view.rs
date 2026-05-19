@@ -353,7 +353,16 @@ pub fn draw(
     // ── right-side detail panel ────────────────────────────────────
     if let Some(da) = detail_area {
         if g.is_wip_selected() {
-            draw_wip_detail(frame, da, &t, &wip_snapshot, &g.workspace);
+            let workspace = g.workspace.clone();
+            draw_wip_detail(
+                frame,
+                da,
+                &t,
+                &wip_snapshot,
+                &workspace,
+                pane_id,
+                &mut app.rects.wip_buttons,
+            );
         } else if let (Some(c), Some(detail)) = (g.selected_commit(), g.detail.as_ref()) {
             draw_detail(frame, da, &t, c, detail, now);
         }
@@ -566,12 +575,20 @@ fn format_wip_summary(snap: &crate::git::status::Snapshot) -> String {
 /// Right-side detail panel content for the WIP virtual row: branch
 /// banner, change summary, unstaged + staged file lists, and the key
 /// hints the user needs to act (commit / AI message / open status pane).
+///
+/// Pushes clickable button rects onto `buttons_out`: "Stage All" /
+/// "Unstage All" on the section headers, and per-file `[+]` / `[−]`
+/// on each row. The renderer paints them as right-aligned labels;
+/// `tui::dispatch_mouse` matches a click against the rect + fires the
+/// matching [`crate::WipAction`].
 fn draw_wip_detail(
     frame: &mut Frame,
     area: Rect,
     t: &Theme,
     snap: &crate::git::status::Snapshot,
     workspace: &std::path::Path,
+    pane_id: PaneId,
+    buttons_out: &mut Vec<(Rect, PaneId, crate::WipAction)>,
 ) {
     frame.render_widget(Paragraph::new("").style(Style::default().bg(t.bg)), area);
     let w = area.width as usize;
@@ -596,9 +613,20 @@ fn draw_wip_detail(
     ]));
     lines.push(Line::from(Span::styled("", Style::default().bg(t.bg))));
 
-    // Partition the file map into unstaged + staged.
-    let mut unstaged: Vec<(String, &'static str, ratatui::style::Color)> = Vec::new();
-    let mut staged: Vec<(String, &'static str, ratatui::style::Color)> = Vec::new();
+    // Partition the file map into unstaged + staged. Carry the absolute
+    // path so button clicks can target the right file.
+    let mut unstaged: Vec<(
+        std::path::PathBuf,
+        String,
+        &'static str,
+        ratatui::style::Color,
+    )> = Vec::new();
+    let mut staged: Vec<(
+        std::path::PathBuf,
+        String,
+        &'static str,
+        ratatui::style::Color,
+    )> = Vec::new();
     for (path, state) in &snap.files {
         let rel = path
             .strip_prefix(workspace)
@@ -607,21 +635,26 @@ fn draw_wip_detail(
             .to_string();
         match state {
             crate::git::status::FileState::Modified => {
-                unstaged.push((rel, "M", t.yellow));
+                unstaged.push((path.clone(), rel, "M", t.yellow));
             }
             crate::git::status::FileState::Untracked => {
-                unstaged.push((rel, "?", t.comment));
+                unstaged.push((path.clone(), rel, "?", t.comment));
             }
             crate::git::status::FileState::Conflicted => {
-                unstaged.push((rel, "!", t.red));
+                unstaged.push((path.clone(), rel, "!", t.red));
             }
             crate::git::status::FileState::Staged => {
-                staged.push((rel, "A", t.green));
+                staged.push((path.clone(), rel, "A", t.green));
             }
         }
     }
-    unstaged.sort_by(|a, b| a.0.cmp(&b.0));
-    staged.sort_by(|a, b| a.0.cmp(&b.0));
+    unstaged.sort_by(|a, b| a.1.cmp(&b.1));
+    staged.sort_by(|a, b| a.1.cmp(&b.1));
+
+    // Map line index → button rect + action. We compute screen y from
+    // area.y + line_idx after rendering, so just track (line_idx, x_start,
+    // x_end, action) here.
+    let mut pending_buttons: Vec<(usize, u16, u16, crate::WipAction)> = Vec::new();
 
     // Unstaged section
     let unstaged_label = if unstaged.is_empty() {
@@ -629,46 +662,228 @@ fn draw_wip_detail(
     } else {
         format!("Unstaged Files ({})", unstaged.len())
     };
-    lines.push(Line::from(Span::styled(
-        format!("  ▾ {unstaged_label}"),
+    let stage_all_label = " Stage All ";
+    let stage_all_chars = stage_all_label.chars().count();
+    let label_text = format!("  ▾ {unstaged_label}");
+    let label_chars = label_text.chars().count();
+    let padding = w.saturating_sub(label_chars + stage_all_chars).max(1);
+    let mut header_spans: Vec<Span> = vec![
+        Span::styled(
+            label_text,
+            Style::default()
+                .fg(t.fg)
+                .bg(t.bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ".repeat(padding), Style::default().bg(t.bg)),
+    ];
+    let stage_all_active = !unstaged.is_empty();
+    let stage_all_style = if stage_all_active {
         Style::default()
-            .fg(t.fg)
-            .bg(t.bg)
-            .add_modifier(Modifier::BOLD),
-    )));
-    for (path, letter, color) in &unstaged {
-        lines.push(Line::from(vec![
+            .fg(t.bg_dark)
+            .bg(t.green)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(t.comment).bg(t.bg)
+    };
+    header_spans.push(Span::styled(stage_all_label.to_string(), stage_all_style));
+    let line_idx_unstaged_header = lines.len();
+    if stage_all_active {
+        let btn_x_start = (label_chars + padding) as u16;
+        let btn_x_end = btn_x_start + stage_all_chars as u16;
+        pending_buttons.push((
+            line_idx_unstaged_header,
+            btn_x_start,
+            btn_x_end,
+            crate::WipAction::StageAll,
+        ));
+    }
+    lines.push(Line::from(header_spans));
+
+    // Per-file rows with a `[+]` stage button right-aligned.
+    let plus_label = " [+] ";
+    let plus_chars = plus_label.chars().count();
+    for (abs_path, rel, letter, color) in &unstaged {
+        let prefix = format!("    {letter} ");
+        let prefix_chars = prefix.chars().count();
+        // Truncate file path to leave room for the button.
+        let path_avail = w.saturating_sub(prefix_chars + plus_chars + 1).max(8);
+        let path_display = pad_or_truncate(rel, path_avail);
+        let row_spans: Vec<Span> = vec![
+            Span::styled(prefix, Style::default().fg(*color).bg(t.bg)),
+            Span::styled(path_display, Style::default().fg(t.fg).bg(t.bg)),
+            Span::styled(" ", Style::default().bg(t.bg)),
             Span::styled(
-                format!("    {letter} "),
-                Style::default().fg(*color).bg(t.bg),
+                plus_label.to_string(),
+                Style::default()
+                    .fg(t.bg_dark)
+                    .bg(t.green)
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(path.clone(), Style::default().fg(t.fg).bg(t.bg)),
-        ]));
+        ];
+        let btn_x_start = (prefix_chars + path_avail + 1) as u16;
+        let btn_x_end = btn_x_start + plus_chars as u16;
+        pending_buttons.push((
+            lines.len(),
+            btn_x_start,
+            btn_x_end,
+            crate::WipAction::StageFile(abs_path.clone()),
+        ));
+        lines.push(Line::from(row_spans));
     }
     lines.push(Line::from(Span::styled("", Style::default().bg(t.bg))));
 
-    // Staged section
+    // Staged section header with "Unstage All" right-aligned.
     let staged_label = if staged.is_empty() {
         "Staged Files (0)".to_string()
     } else {
         format!("Staged Files ({})", staged.len())
     };
+    let unstage_all_label = " Unstage All ";
+    let unstage_all_chars = unstage_all_label.chars().count();
+    let staged_label_text = format!("  ▾ {staged_label}");
+    let staged_label_chars = staged_label_text.chars().count();
+    let staged_padding = w
+        .saturating_sub(staged_label_chars + unstage_all_chars)
+        .max(1);
+    let mut staged_header_spans: Vec<Span> = vec![
+        Span::styled(
+            staged_label_text,
+            Style::default()
+                .fg(t.fg)
+                .bg(t.bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ".repeat(staged_padding), Style::default().bg(t.bg)),
+    ];
+    let unstage_all_active = !staged.is_empty();
+    let unstage_all_style = if unstage_all_active {
+        Style::default()
+            .fg(t.bg_dark)
+            .bg(t.orange)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(t.comment).bg(t.bg)
+    };
+    staged_header_spans.push(Span::styled(
+        unstage_all_label.to_string(),
+        unstage_all_style,
+    ));
+    let line_idx_staged_header = lines.len();
+    if unstage_all_active {
+        let btn_x_start = (staged_label_chars + staged_padding) as u16;
+        let btn_x_end = btn_x_start + unstage_all_chars as u16;
+        pending_buttons.push((
+            line_idx_staged_header,
+            btn_x_start,
+            btn_x_end,
+            crate::WipAction::UnstageAll,
+        ));
+    }
+    lines.push(Line::from(staged_header_spans));
+
+    // Per-staged-file rows with `[−]` unstage button.
+    let minus_label = " [−] ";
+    let minus_chars = minus_label.chars().count();
+    for (abs_path, rel, letter, color) in &staged {
+        let prefix = format!("    {letter} ");
+        let prefix_chars = prefix.chars().count();
+        let path_avail = w.saturating_sub(prefix_chars + minus_chars + 1).max(8);
+        let path_display = pad_or_truncate(rel, path_avail);
+        let row_spans: Vec<Span> = vec![
+            Span::styled(prefix, Style::default().fg(*color).bg(t.bg)),
+            Span::styled(path_display, Style::default().fg(t.fg).bg(t.bg)),
+            Span::styled(" ", Style::default().bg(t.bg)),
+            Span::styled(
+                minus_label.to_string(),
+                Style::default()
+                    .fg(t.bg_dark)
+                    .bg(t.orange)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ];
+        let btn_x_start = (prefix_chars + path_avail + 1) as u16;
+        let btn_x_end = btn_x_start + minus_chars as u16;
+        pending_buttons.push((
+            lines.len(),
+            btn_x_start,
+            btn_x_end,
+            crate::WipAction::UnstageFile(abs_path.clone()),
+        ));
+        lines.push(Line::from(row_spans));
+    }
+    lines.push(Line::from(Span::styled("", Style::default().bg(t.bg))));
+
+    // ── Commit section ──────────────────────────────────────────────
+    // Section header (matches the chevron styling above).
     lines.push(Line::from(Span::styled(
-        format!("  ▾ {staged_label}"),
+        "  ▾ Commit".to_string(),
         Style::default()
             .fg(t.fg)
             .bg(t.bg)
             .add_modifier(Modifier::BOLD),
     )));
-    for (path, letter, color) in &staged {
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("    {letter} "),
-                Style::default().fg(*color).bg(t.bg),
-            ),
-            Span::styled(path.clone(), Style::default().fg(t.fg).bg(t.bg)),
-        ]));
-    }
+    // Status line — "N staged" or "stage some changes first".
+    let staged_count = snap.staged;
+    let commit_status = if staged_count == 0 {
+        "    (nothing staged — use the buttons above to stage files)".to_string()
+    } else {
+        format!("    {staged_count} file(s) staged — ready to commit")
+    };
+    lines.push(Line::from(Span::styled(
+        commit_status,
+        Style::default().fg(t.comment).bg(t.bg),
+    )));
+    lines.push(Line::from(Span::styled("", Style::default().bg(t.bg))));
+    // Two clickable buttons: [ Commit ] and [ AI Message ]. Disabled
+    // styling when nothing is staged (still clickable — it'll toast a
+    // helpful "nothing staged" hint, sibling to the existing flow).
+    let commit_btn = " Commit ";
+    let commit_btn_chars = commit_btn.chars().count();
+    let ai_btn = " AI Message ";
+    let ai_btn_chars = ai_btn.chars().count();
+    let gap = "  ";
+    let leading = "    "; // 4-space indent matching the file rows
+    let commit_btn_style = if staged_count > 0 {
+        Style::default()
+            .fg(t.bg_dark)
+            .bg(t.green)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(t.comment).bg(t.bg2)
+    };
+    let ai_btn_style = if staged_count > 0 {
+        Style::default()
+            .fg(t.bg_dark)
+            .bg(t.blue)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(t.comment).bg(t.bg2)
+    };
+    let commit_btn_line_idx = lines.len();
+    let leading_chars = leading.chars().count();
+    let commit_x_start = leading_chars as u16;
+    let commit_x_end = commit_x_start + commit_btn_chars as u16;
+    let ai_x_start = commit_x_end + gap.chars().count() as u16;
+    let ai_x_end = ai_x_start + ai_btn_chars as u16;
+    pending_buttons.push((
+        commit_btn_line_idx,
+        commit_x_start,
+        commit_x_end,
+        crate::WipAction::OpenCommitPrompt,
+    ));
+    pending_buttons.push((
+        commit_btn_line_idx,
+        ai_x_start,
+        ai_x_end,
+        crate::WipAction::RequestAiCommitMessage,
+    ));
+    lines.push(Line::from(vec![
+        Span::styled(leading.to_string(), Style::default().bg(t.bg)),
+        Span::styled(commit_btn.to_string(), commit_btn_style),
+        Span::styled(gap.to_string(), Style::default().bg(t.bg)),
+        Span::styled(ai_btn.to_string(), ai_btn_style),
+    ]));
     lines.push(Line::from(Span::styled("", Style::default().bg(t.bg))));
 
     // Hint footer — key reminders for the WIP row.
@@ -678,6 +893,30 @@ fn draw_wip_detail(
     )));
 
     frame.render_widget(Paragraph::new(lines).style(Style::default().bg(t.bg)), area);
+
+    // Push button rects with absolute screen coords. Rows that scroll
+    // off the pane (line_idx >= area.height) are dropped silently.
+    for (line_idx, x_start, x_end, action) in pending_buttons {
+        if (line_idx as u16) >= area.height {
+            continue;
+        }
+        let y = area.y + line_idx as u16;
+        let x = area.x + x_start;
+        let width = x_end.saturating_sub(x_start);
+        if x + width > area.x + area.width {
+            continue;
+        }
+        buttons_out.push((
+            Rect {
+                x,
+                y,
+                width,
+                height: 1,
+            },
+            pane_id,
+            action,
+        ));
+    }
 }
 
 /// Draw the column-header row (faint labels) and, when a hash filter is

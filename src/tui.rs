@@ -3789,6 +3789,22 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.trigger_code_lens(pid, lens_idx);
                 return;
             }
+            // Click on a WIP-detail button → fire its action (stage/unstage
+            // file or all, open commit prompt, request AI commit message).
+            // High priority so the button "owns" the click instead of the
+            // pane-focus handler eating it.
+            if let Some((_, pid, action)) = app
+                .rects
+                .wip_buttons
+                .iter()
+                .find(|(r, _, _)| contains(*r, x, y))
+                .cloned()
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                app.run_wip_action(action);
+                return;
+            }
             // Click on a request-pane tab chip → switch view (Edit ⇄ Response).
             if let Some(&(_, pid, view)) = app
                 .rects
@@ -4637,10 +4653,13 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
         return;
     }
     if matches!(app.panes.get(pane_id), Some(Pane::GitGraph(_))) {
-        if let Some(Pane::GitGraph(g)) = app.panes.get_mut(pane_id)
-            && flat_idx < g.commits.len()
-        {
-            g.selected = flat_idx;
+        if let Some(Pane::GitGraph(g)) = app.panes.get_mut(pane_id) {
+            // `flat_idx` is the *virtual* row index (0 = WIP if present,
+            // then commits). `jump_to` clamps to total_rows AND calls
+            // `reload_detail` so the right-side panel actually populates
+            // — directly assigning `selected` skipped the reload, leaving
+            // the detail empty after a click.
+            g.jump_to(flat_idx);
         }
         if is_double_click {
             app.open_selected_commit_diff();

@@ -83,6 +83,51 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**GitGraph WIP detail: interactive stage/unstage/commit buttons + click-detail fix (2026-05-18 cont.):**
+the WIP detail panel went from read-only to fully interactive. New
+`crate::WipAction` enum carries six variants — `StageAll`,
+`UnstageAll`, `StageFile(PathBuf)`, `UnstageFile(PathBuf)`,
+`OpenCommitPrompt`, `RequestAiCommitMessage`. The renderer emits one
+clickable button rect per action onto a new `app.rects.wip_buttons:
+Vec<(Rect, PaneId, WipAction)>` registry, drawn as colored chips
+(green for stage / orange for unstage / blue for AI). Layout:
+- "Unstaged Files (N)" header has a green `Stage All` button right-aligned.
+- Each unstaged-file row gets a `[+]` green button at the right edge.
+- "Staged Files (N)" header has an orange `Unstage All` button.
+- Each staged-file row gets an orange `[−]` button.
+- New "Commit" section below: 4-space-indented `Commit` (green) +
+  `AI Message` (blue) buttons. Disabled (bg2 + comment) when
+  nothing's staged, with a hint line above.
+
+`tui::dispatch_mouse` matches the click against `app.rects.wip_buttons`
+before falling through to the editor-pane click handler — buttons
+"own" the click. The new `App::run_wip_action(action)` dispatches to
+the right `crate::git::stage::*` helper (gate-free, unlike the
+existing `git_stage_all_active` which required `Pane::GitStatus`
+to be active), then refreshes the GitGraph pane so the WIP file
+list reflects the change immediately. After-action toast confirms
+("staged foo.rs", "unstaged everything", etc.); errors surface as
+`git add: <stderr>` toasts.
+
+The keyboard chord shortcuts (`c` / `C` / `Enter`) on the WIP row
+still work as before — they bypass the button rects and call the
+App methods directly. Mouse-driven and keyboard-driven flows
+share the same underlying helpers.
+
+**Click-detail-reload bug fix** — `handle_scm_row_click` for
+`Pane::GitGraph` was setting `g.selected = flat_idx` directly,
+which skipped `reload_detail()` and left the right-side detail
+panel empty for commit selections (WIP rows still worked because
+their detail comes from `wip_snapshot` not `g.detail`). Symptom:
+only the WIP row populated the right side — clicking any real
+commit showed an empty right panel. Also the old bounds check
+(`flat_idx < g.commits.len()`) used the wrong total since
+`flat_idx` is now a virtual index that includes the WIP row.
+Fix: route through `g.jump_to(flat_idx)` which clamps to
+`total_rows()` AND calls `reload_detail`.
+
+676 lean / 710 private lib tests, 87 e2e, 7 ipc — all green.
+
 **GitGraph: WIP row + right-side detail + auto-sized columns (2026-05-18 cont.):**
 substantive rework of `Pane::GitGraph` to feel more like a popular Git GUI's
 commit-graph view. Headline changes: (1) **WIP virtual row at the
