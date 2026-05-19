@@ -83,6 +83,283 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**GitStatus right-click context menu + sticky Hunk chips (2026-05-19):**
+two follow-ups on yesterday's diff/git bundle. (1) **GitStatus
+right-click menu** — right-click a file row in `Pane::GitStatus`
+opens a per-file menu: `Stage` / `Unstage` (whichever applies given
+the row's current side), `Discard changes…` (destructive — confirmed
+via a `PromptKind::GitDiscardFile` prompt that requires typing the
+filename), `Stash file` (`git stash push -u -- <rel>`), `Ignore
+<name>` + `Ignore *.<ext>` (appends to `.gitignore`, creating the
+file when missing; idempotent — duplicate lines skipped), `Edit
+file` (open in the active leaf), `Reveal in Finder`, `Copy path`,
+and `Delete file…` (filename confirmation via the existing
+`PromptKind::DeleteConfirm`). Backed by three new helpers in
+`crate::git::stage`: `discard_file` (`git restore -- <rel>` with
+`git checkout HEAD -- <rel>` fallback for old git), `stash_file`,
+`append_gitignore`. Six new `MenuAction` variants — `GitStageFile`,
+`GitUnstageFile`, `GitDiscardFile`, `GitIgnoreFile`,
+`GitIgnoreExtension`, `GitStashFile` — wired through
+`App::run_menu_action`. (2) **Sticky chip row on Hunk view too** —
+the per-hunk Stage/Discard sticky row at the top of body (already
+on Inline + Split from bundle 4) now also paints on Hunk view so
+all three modes are visually consistent. The inline per-hunk header
+chips still render below — the sticky row gives a fixed-position
+target that doesn't scroll with the body. 678 lib tests + e2e
+green.
+
+**Diff/git/scrollbar polish bundle 4: Discard confirm + Inline/Split chips + filter highlights + list-pane scrollbars (2026-05-19):**
+four items in one sweep. (1) **Discard hunk confirm prompt** —
+clicking the red `[Discard]` chip no longer fires immediately; it
+opens a `PromptKind::DiffDiscardHunk` prompt that requires the user
+to type the literal `discard` to confirm. New `App.pending_discard_hunk:
+Option<(PaneId, usize)>` carries the target across the prompt
+accept. (2) **Per-hunk chips in Inline + Split** — added a sticky
+top-of-body chip row (`Hunk N/M  src/foo.rs  …  [Stage] [Discard]`)
+that acts on `d.cursor`'s hunk. Hunk view keeps its inline per-
+hunk chips. Factored the chip layout into shared helpers
+(`chip_actions_for_scope`, `chips_total_width`, `push_chip_spans`,
+`active_hunk_chips_row`). (3) **Filter highlighting** — `/`-filter
+matches now tint the matching substring with a yellow bg over the
+body row's existing fg in Inline + Hunk views. New
+`highlight_filter_spans(text, filter, base_style, match_bg)`
+splits a single body span into prefix / match / suffix spans
+case-insensitively. Skipped in Split (would conflict with the
+intraline char highlighting). (4) **List-pane scrollbars** —
+Diagnostics, Outline, Grep, Quickfix, GitStatus, Tests, Flaky,
+CmdlineHistory all now reserve a 1-cell right-edge scrollbar
+(`bg2` track + solid `comment` thumb) painted via the new shared
+`crate::ui::scrollbar::paint_simple_scrollbar` helper, registered
+on `app.rects.scrollbars` with per-pane `ScrollbarKind` variants so
+the existing drag dispatcher can update each pane's `scroll`
+field. Selection follows scroll (snapped) so the per-frame
+keep-selected-on-screen math doesn't fight the bar back. 678 lib
+tests + e2e green.
+
+**Split scrollbar and change-density indicators (2026-05-19):**
+the combined-column scrollbar (track + thumb + change markers all in
+one 1-cell strip) was confusing — the thumb either hid the change
+colors or overlaid them with a stippled glyph that read as muddy.
+Now both the editor pane and all three diff views reserve TWO right-
+edge columns: an inner thin change-density indicator (one `▏` glyph
+per cell, fg=green/blue/red/yellow based on the git-sign or
+RowKind aggregate over that file-row range, bg=bg_dark) plus an
+outer 1-cell scrollbar (track in `bg2`, thumb in `comment`). The
+two reads as distinct strips at a glance: the thin colored ticks
+mark *where* changes are, the scrollbar shows *where you are* in
+the file. Reserved-cells threshold bumped from 16 → 17 (diff)
+and 32 → 33 (split) and from `gutter_w + 2` → `gutter_w + 3`
+(editor) to account for the extra column. `draw_diff_scrollbar`
+no longer takes `row_kinds` — change markers moved to a new
+`draw_change_strip` helper. 678 lib tests + e2e green.
+
+**Diff polish bundle: hunk chips, intraline-split, `/`-filter, file-walk, right-click menu (2026-05-19):**
+five Diff/Git GUI items shipped together. (1) **Per-hunk
+`[Stage]` / `[Unstage]` / `[Discard]` chips** in Hunk view — clickable
+green/orange/red chips right-aligned on each hunk header row. New
+`crate::DiffHunkAction` enum + `app.rects.diff_hunk_buttons` registry
++ `App::apply_hunk_action(pid, hunk_index, action)` dispatcher.
+Scope-aware: `Unstaged` / `AllVsHead` show `[Stage] [Discard]`;
+`Staged` / `StagedFile` show `[Unstage]`; commit / buffer-vs-disk
+show nothing (read-only). New `crate::git::diff::discard_hunk`
+shells `git apply --reverse` (no `--cached`) against the working
+tree. (2) **Intraline char highlighting in Split view** — paired
+Removed/Added rows now compute `intraline_diff` and split the body
+text into prefix (dim) / middle (bold tint) / suffix (dim) on
+*both* sides; matches the existing Inline view's per-line
+behavior. New `push_intraline_spans` helper. (3) **Diff `/`-filter**
+— `/` opens filter mode in any diff view (standalone or embedded);
+type / Backspace / Enter / Esc as expected. A yellow banner row at
+the top of the body shows `/ <query>_` (in mode) or `filter: <query>`
+(after Enter). `n`/`N` walk between hunks containing the filter
+(case-insensitive substring match) — new `next_filter_match(d,
+forward)` helper wraps. (4) **`]f` / `[f` next-/prev-file in
+embedded diff** — `App::diff_jump_file` now handles the
+`DiffScope::CommitFile { hash, rel_path }` shape by walking the
+selected commit's `detail.files` and reopening the embedded diff
+against the next/prev file; falls through to the standalone
+behavior for `Pane::Diff`. The chord is also wired in the
+embedded-diff key handler. (5) **Right-click context menu** —
+right-click on any diff body row opens a per-hunk menu. For
+`CommitFile` it offers "Open file at this revision" (new
+`App::open_file_at_revision` shells `git show <hash>:<rel>` into a
+scratch buffer) + "Copy commit hash"; for `Unstaged` / `AllVsHead`
+it offers "Stage hunk" / "Discard hunk"; for `Staged` /
+`StagedFile` it offers "Unstage hunk". New
+`MenuAction::DiffOpenAtRevision { hash, rel }` and
+`DiffHunkAction { pane_id, hunk_index, action }` variants. 678 lib
+tests + e2e green.
+
+**Diff `[ × ]` close chip + embedded-diff click suppression (2026-05-19):**
+two follow-ups on the embedded-diff UX. (1) **`[ × ]` close chip
+on the diff toolbar** (red, right-edge aligned) — clicking closes
+the diff: clears `g.embedded_diff` for an embedded-in-GitGraph
+diff, or closes the standalone `Pane::Diff`. Esc still works; this
+is the discoverable alternative. New `DiffToolbarAction::Close`
+variant + a special-case branch in the toolbar click dispatcher
+(needs to run before the view-mode handling because the pane may
+no longer exist after the close). (2) **Embedded-diff click
+suppression** — when an embedded diff is overpainting the commit
+list, clicks on the diff body were also landing on the commit-row
+rects registered earlier in the same frame, swapping the right
+detail panel to whatever commit the click happened to land on top
+of. Fix: skip registering commit-row click rects in
+`app.rects.list_rows` when `g.embedded_diff.is_some()`. The right
+detail panel now stays pinned to the originally-selected commit
+until the user closes the diff. 678 lib tests + e2e green.
+
+**Translucent thumb + GitGraph commit-list scrollbar (2026-05-19):**
+two scrollbar polish items. (1) **Translucent thumb over change
+markers** — when a scrollbar thumb cell sits on top of a green / red
+/ yellow change marker it used to paint solid grey, fully hiding the
+change color. Now those cells render a `▓` glyph with
+`fg = comment` + `bg = change-color`, so the thumb stays visible
+(75% comment) but the underlying change color shows through (25%).
+Plain-track thumb cells still get solid `comment` for max contrast.
+Applied to both the diff scrollbar (Hunk / Inline / Split — all
+flavors, standalone Pane::Diff + embedded GitGraph) and the editor
+pane scrollbar's git-sign markers. (2) **GitGraph commit-list
+scrollbar** — when no embedded diff is showing, the commit-list
+body now renders a 1-cell scrollbar on its right edge (track in
+`bg2`, solid `comment` thumb). New `ScrollbarKind::GitGraphCommits`
++ `App::set_pane_scroll` arm that updates `g.scroll` AND snaps
+`g.selected = new_scroll` so the per-frame keep-selected-on-screen
+math doesn't immediately fight the scrollbar back to the old
+position. Reuses the same drag dispatcher already wired for the
+diff scrollbars. 678 lib tests + e2e green.
+
+**Embedded diff: clear cell contents under the overlay (2026-05-19):**
+the commit-list rows inside `Pane::GitGraph` were bleeding through
+to the right of every embedded-diff body row (e.g. `"...config /"`
+was getting `"fix"` appended where the commit-list's trailing
+"fix accidental stray 'z' in build.rs" subject column had been
+painted). Root cause: `Paragraph::new("")` calls `buf.set_style`
+on the area but doesn't overwrite the underlying cell content — it
+just retints the chars that were already there. The embedded-diff
+body rows are shorter than the full pane width, so anywhere the
+diff content didn't reach, the commit-list chars from earlier this
+frame remained visible (just retinted). Fix: render
+`ratatui::widgets::Clear` over `list_area` before the bg-style
+fill — `Clear` resets every cell to a space with default style,
+then the styled paragraph + the diff body paint over the clean
+slate. 678 lib tests + e2e green.
+
+**Diff body styling: graphical-Git-GUI-style subtle row tints (2026-05-19):**
+the three diff views were painting the entire body text of added /
+removed lines in saturated green / red — visually loud and at odds
+with a popular Git GUI's quieter convention of a subtle row-bg tint with
+normal-colored code text. New `blend_over(fg, bg, alpha, fallback)`
+helper mixes the theme's `green` / `red` over `bg_dark` at ~18%
+opacity to derive `added_row_bg(t)` and `removed_row_bg(t)`. All
+three renderers (Hunk / Inline / Split) now use those tints as the
+per-row bg for changed lines; the body fg stays `t.fg` so the code
+reads naturally. Only the left `▏` chip + the `+` / `-` sign cell
+carry the saturated green / red — those are the "this row is added
+/ removed" indicators. For indexed-color (non-RGB) themes the
+helper falls back to a hardcoded muted dark-green / dark-red so the
+distinction is visible regardless of theme. 678 lib tests + e2e
+green.
+
+**Draggable + click-to-jump scrollbars + SHA padding bump (2026-05-19):**
+the scrollbars on editor + diff panes (Hunk / Inline / Split — both
+standalone `Pane::Diff` and the embedded diff inside `Pane::GitGraph`)
+are now full pointer targets, not just visual indicators. Click
+anywhere in a scrollbar (including on a green / red change marker) to
+jump the viewport so the click row is centered; click + drag to
+continuously scroll. New `crate::app::ScrollbarHit { area, pane_id,
+total, viewport, kind: ScrollbarKind }` + `app.rects.scrollbars:
+Vec<ScrollbarHit>` registry, populated by each renderer at the same
+time the scrollbar is painted. `App.dragging_scrollbar:
+Option<ScrollbarHit>` carries the drag across mouse-move events;
+`begin_scrollbar_drag` / `drag_scrollbar_to` / `end_scrollbar_drag` +
+`apply_scrollbar_to` / `set_pane_scroll` do the work. The
+`begin_scrollbar_drag` short-circuit sits at the very top of the
+`Down(Left)` arm in `tui::dispatch_mouse` so a click on a scrollbar
+no longer falls through to the editor's place-cursor handler or the
+GitGraph row-select handler (which was the "clicking near the
+scrollbar changes the selected commit row" surprise). Three new diff
+renderer args (`scrollbars`, `sb_kind`, `pane_id`) thread the
+registry + kind tag from caller down — the kind tells the dispatcher
+which scroll field to write (`Pane::Editor.buffer.scroll` /
+`Pane::Diff.scroll` / `Pane::GitGraph.embedded_diff.scroll`).
+**SHA column padding** bumped from 1 → 2 chars so it doesn't sit
+flush against the new scrollbar.
+
+**Diff scrollbar / change-minimap on all three views + split gutter alignment fix (2026-05-19):**
+unified scrollbar / change-minimap on the right edge of every diff
+view (Hunk / Inline / Split). New `draw_diff_scrollbar(frame, area,
+t, row_kinds, scroll, viewport_h)` helper paints: `bg2` track,
+green / red / yellow change markers from a per-row `RowKind` tag,
+`comment`-colored thumb sized by `viewport_h / total_rows`. All three
+renderers now build a parallel `Vec<RowKind>` alongside `rows` so the
+minimap reflects the actual content layout. Split view's pre-existing
+`draw_change_minimap` was replaced with the shared call (same shape,
+adds the thumb on top). Editor pane's scrollbar got the same upgrade
+— track switched from `bg_dark` to `bg2` (was nearly invisible),
+thumb from `bg3` to `comment` (now actually visible), plus git-sign
+change markers tinted across the bar so it doubles as a per-file
+minimap. **Split gutter shift fix** — empty-filler rows on the left
+side of split view were rendering 1 cell narrower than numbered rows
+(the `gutter_text` Some-branch produced `width + 1` chars but the
+None-branch produced `width`). Now both arms emit `width + 1` so the
+body stays vertically aligned across numbered + empty rows. 678 lib
+tests + 1 e2e suite — green.
+
+**Diff view modes: Hunk gets line numbers, Inline shows full file, Split gets minimap (2026-05-19):**
+the three diff views had drifted to nearly identical output — both
+Hunk and Inline were rendering `d.hunks` (the focused-context
+hunks), so the "Inline" toggle didn't visibly change anything.
+Reworked to match a popular Git GUI's three-mode UX. **Hunk** keeps the
+focused-region semantics (just the changed lines + 3-row context per
+hunk, expanded by default with chevron-fold collapse) but gained a
+`<old> <new>` line-number gutter (5-char column with one trailing
+space). **Inline** now uses `d.full_hunks` (lazily fetched via
+`fetch_diff_full` — the `-U99999` form that returns the whole file's
+before/after) and renders one continuous single-column view with
+green for additions, red for removals, plain fg for context, plus
+the same line-number gutter; no per-hunk header rows (the file is
+one continuous document). Falls back to the focused hunks if the
+full-context fetch returned empty (binary files, parse failure).
+**Split** keeps the side-by-side whole-file layout but gained a
+1-cell change-density minimap on the right edge — each cell
+aggregates a `rows.len() / area.height` chunk of file rows and
+paints green / red / yellow / bg2 depending on what changes fall in
+that range. A subtle `bg3` band overlays the unchanged cells inside
+the current viewport so the user can see where they are in the
+file at a glance. Minimap is skipped when the pane is narrower than
+32 columns. Both Inline + Split lazy-fetch `full_hunks` on first
+render (was Split-only); the embedded-diff path inside GitGraph
+matches the same fetch shape. Shared helpers `hunk_start_lines`,
+`pair_line_nos`, `compute_gutter_width`, `gutter_text_pair`,
+`compute_intraline_partners`, `intraline_range_for` factor the
+line-number math + intraline-diff pairing across renderers.
+**SHA column padding** dropped from 2 to 1 char to match the
+1-char gap on every other column. 678 lib tests + 1 e2e suite —
+green.
+
+**Embedded diff key/wheel/toolbar routing + repo cycling (2026-05-19):**
+finishing the embedded-diff plumbing inside `Pane::GitGraph`. Click a
+file in the WIP or commit-detail panel and the diff opens *in-place*
+on the left (replacing the commit list) while the right detail panel
+stays visible. Now the keyboard / mousewheel / toolbar all follow:
+diff chords (j/k/n/p/u/d/v/w/Up/Down/PgUp/PgDn/Home/End) route to
+`embedded_diff` when present (intercept sits between the WIP textarea-
+focus check and the hash-filter check); Esc closes the embedded diff
+first (a second Esc bails to tree); wheel over the GitGraph pane
+scrolls the embedded diff instead of moving the commit-list selection;
+the existing `diff_toolbar_buttons` click handler picks `Pane::Diff`
+*or* `Pane::GitGraph.embedded_diff` so the Hunk/Inline/Split/Wrap
+chips work in both contexts. App-level `diff_view_mode_pref` /
+`diff_wrap_pref` capture `v` / `w` chord-driven changes from the
+embedded path too so the next open inherits them. **Multi-repo
+cycling** — new `App::cycle_active_repo(forward)` + `git.next_repo`
+(`Alt+]`) / `git.prev_repo` (`Alt+[`) commands wrap through
+`self.repos`. Mousewheel over the `> GIT` section header in
+multi-repo workspaces cycles the active repo too (Up = previous, Down
+= next; matches bufferline/tab-strip wheel convention). Both gestures
+are no-ops in single-repo workspaces (wheel falls through to the next
+rect handler). 678 lib tests + 1 e2e suite — green.
+
 **GitGraph WIP detail: interactive stage/unstage/commit buttons + click-detail fix (2026-05-18 cont.):**
 the WIP detail panel went from read-only to fully interactive. New
 `crate::WipAction` enum carries six variants — `StageAll`,
