@@ -582,6 +582,16 @@ pub struct UiConfig {
     /// inside paragraphs. Bump for note files with screenshots; reduce
     /// for terse docs with many small thumbnails.
     pub md_image_rows: u16,
+    /// Override the auto-sized branch/tag column width in `Pane::GitGraph`.
+    /// `None` ⇒ size to fit visible refs (clamped 10..=35). `Some(0)`
+    /// disables the column entirely.
+    pub git_graph_branch_col: Option<usize>,
+    /// Override the auto-sized author column width. `None` ⇒ size to fit
+    /// visible authors (clamped 8..=22). `Some(0)` disables it.
+    pub git_graph_author_col: Option<usize>,
+    /// Override the right-side detail panel width. `None` ⇒ 40% of pane
+    /// width (clamped 30..=70). The list area gets `pane_width - detail`.
+    pub git_graph_detail_col: Option<usize>,
 }
 
 impl Default for Config {
@@ -629,6 +639,9 @@ impl Default for Config {
                 render_markdown: false,
                 sticky_context: false,
                 md_image_rows: 12,
+                git_graph_branch_col: None,
+                git_graph_author_col: None,
+                git_graph_detail_col: None,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -867,6 +880,9 @@ struct RawUi {
     render_markdown: Option<bool>,
     sticky_context: Option<bool>,
     md_image_rows: Option<u16>,
+    git_graph_branch_col: Option<usize>,
+    git_graph_author_col: Option<usize>,
+    git_graph_detail_col: Option<usize>,
 }
 
 impl Config {
@@ -1018,6 +1034,15 @@ impl Config {
         }
         if let Some(v) = raw.ui.md_image_rows {
             self.ui.md_image_rows = v.clamp(2, 100);
+        }
+        if raw.ui.git_graph_branch_col.is_some() {
+            self.ui.git_graph_branch_col = raw.ui.git_graph_branch_col;
+        }
+        if raw.ui.git_graph_author_col.is_some() {
+            self.ui.git_graph_author_col = raw.ui.git_graph_author_col;
+        }
+        if raw.ui.git_graph_detail_col.is_some() {
+            self.ui.git_graph_detail_col = raw.ui.git_graph_detail_col;
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;

@@ -3010,7 +3010,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
                         g.hash_filter.pop();
                         if let Some(idx) = g.find_by_hash_prefix(&g.hash_filter) {
-                            g.jump_to(idx);
+                            g.jump_to_commit(idx);
                         }
                     }
                 }
@@ -3019,7 +3019,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
                         g.hash_filter.push(ch.to_ascii_lowercase());
                         if let Some(idx) = g.find_by_hash_prefix(&g.hash_filter) {
-                            g.jump_to(idx);
+                            g.jump_to_commit(idx);
                         } else {
                             no_match = Some(g.hash_filter.clone());
                         }
@@ -3068,6 +3068,22 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     g.hash_filter_mode = true;
                     g.hash_filter.clear();
                 }
+            }
+            // WIP-row chords: when the WIP virtual row at the top of the
+            // list is selected, c/C/Enter trigger staging-ish flows that
+            // operate on the working tree rather than a real commit.
+            KeyCode::Char('c') if matches!(app.panes.get(i), Some(Pane::GitGraph(g)) if g.is_wip_selected()) =>
+            {
+                app.open_commit_prompt();
+            }
+            KeyCode::Char('C') if matches!(app.panes.get(i), Some(Pane::GitGraph(g)) if g.is_wip_selected()) =>
+            {
+                app.request_ai_commit_message();
+            }
+            KeyCode::Enter if matches!(app.panes.get(i), Some(Pane::GitGraph(g)) if g.is_wip_selected()) =>
+            {
+                // WIP row → open the full staging pane next to the graph.
+                app.open_git_status();
             }
             KeyCode::Enter => app.open_selected_commit_diff(),
             KeyCode::Char('r') => app.refresh_active_git_graph(),

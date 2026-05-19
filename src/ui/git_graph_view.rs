@@ -51,11 +51,18 @@ pub fn draw(
     );
     app.rects.editor_panes.push((area, pane_id));
 
+    // Snapshot WIP data + config knobs before the `g` borrow.
+    let wip_snapshot = app.git.snapshot().clone();
+    let branch_col_override = app.config.ui.git_graph_branch_col;
+    let author_col_override = app.config.ui.git_graph_author_col;
+    // Right-side detail panel width — config override beats the default 40%.
+    let detail_w_cfg = app.config.ui.git_graph_detail_col;
+
     let Some(Pane::GitGraph(g)) = app.panes.get_mut(pane_id) else {
         return None;
     };
 
-    if g.commits.is_empty() {
+    if g.total_rows() == 0 {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "  (no commits — not a git repo, or empty history)",
@@ -65,34 +72,53 @@ pub fn draw(
         );
         return None;
     }
-    g.selected = g.selected.min(g.commits.len() - 1);
+    g.selected = g.selected.min(g.total_rows() - 1);
 
-    // Split: a detail panel along the bottom when there's room.
-    let detail_h: u16 = if area.height >= 12 {
-        (area.height / 3).clamp(5, 14)
+    // ── horizontal split: list on left, detail on right ──────────────
+    // Detail panel takes ~40% of the width (clamped), graphical-Git-GUI-style.
+    // Falls back to no detail panel when the pane is very narrow.
+    let detail_w: u16 = if area.width >= 80 {
+        if let Some(w) = detail_w_cfg {
+            (w as u16).clamp(20, area.width.saturating_sub(40))
+        } else {
+            (area.width * 2 / 5).clamp(30, 70)
+        }
     } else {
         0
     };
-    let (list_area, detail_area) = if detail_h > 0 {
+    let (list_area, detail_area) = if detail_w > 0 {
         (
-            Rect::new(area.x, area.y, area.width, area.height - detail_h),
+            Rect::new(area.x, area.y, area.width - detail_w - 1, area.height),
             Some(Rect::new(
-                area.x,
-                area.y + area.height - detail_h,
-                area.width,
-                detail_h,
+                area.x + area.width - detail_w,
+                area.y,
+                detail_w,
+                area.height,
             )),
         )
     } else {
         (area, None)
     };
+    // Vertical divider between list + detail
+    if detail_w > 0 {
+        let divider_x = area.x + area.width - detail_w - 1;
+        for row in 0..area.height {
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "│",
+                    Style::default().fg(t.grey).bg(t.bg_dark),
+                ))),
+                Rect::new(divider_x, area.y + row, 1, 1),
+            );
+        }
+    }
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
 
-    // ── reserve a header row for column labels + the (optional) hash filter chip
+    // ── reserve a header row above the body ──────────────────────────
     let header_area = Rect::new(list_area.x, list_area.y, list_area.width, 1);
     let body_area = Rect::new(
         list_area.x,
@@ -101,39 +127,149 @@ pub fn draw(
         list_area.height.saturating_sub(1),
     );
 
-    // ── commit list ────────────────────────────────────────────────
+    // ── scrolling math (operates on the virtual list = WIP + commits) ─
     let h = body_area.height as usize;
     if g.selected < g.scroll {
         g.scroll = g.selected;
     } else if g.selected >= g.scroll + h {
         g.scroll = g.selected + 1 - h;
     }
-    let max_scroll = g.commits.len().saturating_sub(h.min(g.commits.len()));
+    let total = g.total_rows();
+    let max_scroll = total.saturating_sub(h.min(total));
     g.scroll = g.scroll.min(max_scroll);
 
-    // Pre-compute the max graph-cell count across the visible window so the
-    // graph column has a stable width and the right-aligned columns line up.
-    let graph_w = g
-        .commits
+    // Walk the visible window collecting (virtual_idx, commit_idx_or_None).
+    // virtual_idx 0 with has_wip → WIP row; otherwise → commits[virtual_idx - has_wip].
+    let has_wip_offset = usize::from(g.has_wip);
+    let mut visible: Vec<(usize, Option<usize>)> = Vec::with_capacity(h);
+    for v_idx in g.scroll..g.scroll + h.min(total - g.scroll) {
+        let commit_idx = if g.has_wip && v_idx == 0 {
+            None
+        } else {
+            Some(v_idx - has_wip_offset)
+        };
+        visible.push((v_idx, commit_idx));
+    }
+
+    // Pre-compute graph + auto-sized column widths from the *commits* in
+    // the visible window.
+    let graph_w = visible
         .iter()
-        .enumerate()
-        .skip(g.scroll)
-        .take(h)
-        .map(|(_, c)| c.graph.len())
+        .filter_map(|(_, c_idx)| c_idx.and_then(|i| g.commits.get(i)))
+        .map(|c| c.graph.len())
         .max()
         .unwrap_or(0)
         .min(24);
-    let cols = compute_column_widths(body_area.width as usize, graph_w);
+    let auto_branch_w = visible
+        .iter()
+        .filter_map(|(_, c_idx)| c_idx.and_then(|i| g.commits.get(i)))
+        .map(|c| chip_width_for_refs(&c.refs))
+        .max()
+        .unwrap_or(0);
+    let auto_author_w = visible
+        .iter()
+        .filter_map(|(_, c_idx)| c_idx.and_then(|i| g.commits.get(i)))
+        .map(|c| c.author.chars().count())
+        .max()
+        .unwrap_or(0);
+    let cols = compute_column_widths(
+        body_area.width as usize,
+        graph_w,
+        ColAutoSize {
+            branch_chars: auto_branch_w,
+            author_chars: auto_author_w,
+            branch_override: branch_col_override,
+            author_override: author_col_override,
+        },
+    );
 
     // Column header
     draw_header(frame, header_area, &t, &cols, graph_w, &g.hash_filter);
 
     let mut rows: Vec<Line> = Vec::with_capacity(h);
     let mut row_recordings: Vec<(u16, usize)> = Vec::with_capacity(h);
-    for (i, c) in g.commits.iter().enumerate().skip(g.scroll).take(h) {
-        row_recordings.push(((i - g.scroll) as u16, i));
-        let selected = i == g.selected;
+    let wip_lane_clr = t.yellow;
+    for (v_idx, c_idx) in &visible {
+        row_recordings.push(((v_idx - g.scroll) as u16, *v_idx));
+        let selected = *v_idx == g.selected;
         let row_bg = if selected { t.bg2 } else { t.bg_dark };
+
+        // WIP virtual row: yellow lane bar + "WIP" chip + dirty count + branch.
+        if c_idx.is_none() {
+            let mut spans: Vec<Span> = Vec::new();
+            spans.push(Span::styled(
+                "▌",
+                Style::default().fg(wip_lane_clr).bg(row_bg),
+            ));
+            spans.push(Span::styled(
+                if selected { "▶ " } else { "  " },
+                Style::default().fg(t.yellow).bg(row_bg),
+            ));
+            // Branch column: show "WIP @ <branch>" as the chip, padded.
+            if cols.branch > 0 {
+                let label = format!("WIP @ {}", wip_snapshot.branch.as_deref().unwrap_or("…"));
+                spans.push(Span::styled(
+                    pad_or_truncate(&label, cols.branch),
+                    Style::default()
+                        .fg(wip_lane_clr)
+                        .bg(row_bg)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+            // Graph column: blank.
+            spans.push(Span::styled(
+                " ".repeat(graph_w + 2),
+                Style::default().bg(row_bg),
+            ));
+            // Subject column: change summary.
+            let fixed_used = 1
+                + 2
+                + cols.branch
+                + graph_w
+                + 2
+                + cols.author
+                + (if cols.author > 0 { 2 } else { 0 })
+                + cols.age
+                + (if cols.age > 0 { 2 } else { 0 })
+                + cols.sha
+                + (if cols.sha > 0 { 2 } else { 0 });
+            let subject_w = (body_area.width as usize).saturating_sub(fixed_used);
+            let summary = format_wip_summary(&wip_snapshot);
+            let subject = pad_or_truncate(&summary, subject_w);
+            spans.push(Span::styled(
+                subject,
+                Style::default()
+                    .fg(wip_lane_clr)
+                    .bg(row_bg)
+                    .add_modifier(Modifier::ITALIC),
+            ));
+            // Author / Age / SHA: keep blank to preserve column alignment.
+            if cols.author > 0 {
+                spans.push(Span::styled(
+                    " ".repeat(cols.author + 2),
+                    Style::default().bg(row_bg),
+                ));
+            }
+            if cols.age > 0 {
+                spans.push(Span::styled(
+                    " ".repeat(cols.age + 2),
+                    Style::default().bg(row_bg),
+                ));
+            }
+            if cols.sha > 0 {
+                spans.push(Span::styled(
+                    " ".repeat(cols.sha + 2),
+                    Style::default().bg(row_bg),
+                ));
+            }
+            rows.push(Line::from(spans));
+            continue;
+        }
+
+        let commit_idx = c_idx.unwrap();
+        let Some(c) = g.commits.get(commit_idx) else {
+            continue;
+        };
         let lane_clr = lane_color(&t, (c.lane % LANE_COLORS) as u8);
         let mut spans: Vec<Span> = Vec::new();
         // 1) Lane-color swimlane indicator (1 cell)
@@ -198,7 +334,7 @@ pub fn draw(
         Paragraph::new(rows).style(Style::default().bg(t.bg_dark)),
         body_area,
     );
-    for (visible_y, idx) in row_recordings {
+    for (visible_y, v_idx) in row_recordings {
         let screen_y = body_area.y.saturating_add(visible_y);
         if screen_y < body_area.y.saturating_add(body_area.height) {
             app.rects.list_rows.push((
@@ -209,19 +345,29 @@ pub fn draw(
                     height: 1,
                 },
                 pane_id,
-                idx,
+                v_idx,
             ));
         }
     }
 
-    // ── detail panel ───────────────────────────────────────────────
-    if let (Some(da), Some(c), Some(detail)) =
-        (detail_area, g.commits.get(g.selected), g.detail.as_ref())
-    {
-        draw_detail(frame, da, &t, c, detail, now);
+    // ── right-side detail panel ────────────────────────────────────
+    if let Some(da) = detail_area {
+        if g.is_wip_selected() {
+            draw_wip_detail(frame, da, &t, &wip_snapshot, &g.workspace);
+        } else if let (Some(c), Some(detail)) = (g.selected_commit(), g.detail.as_ref()) {
+            draw_detail(frame, da, &t, c, detail, now);
+        }
     }
 
     None
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ColAutoSize {
+    branch_chars: usize,
+    author_chars: usize,
+    branch_override: Option<usize>,
+    author_override: Option<usize>,
 }
 
 fn draw_detail(
@@ -324,7 +470,12 @@ fn lane_color(t: &Theme, idx: u8) -> Color {
 /// Pick column widths from the available pane width. Author/age/sha get
 /// shrunk first when space is tight; the branch chips column collapses
 /// last (it carries the most identifying info per row after the subject).
-fn compute_column_widths(total: usize, graph_w: usize) -> ColWidths {
+///
+/// `auto` carries the longest content widths from the visible window so
+/// columns auto-size to fit (clamped to sensible min/max). Per-column
+/// config overrides win over auto-size when set — `Some(0)` disables a
+/// column entirely.
+fn compute_column_widths(total: usize, graph_w: usize, auto: ColAutoSize) -> ColWidths {
     // Reserved space we always want: swimlane (1) + arrow (2) + graph
     // + graph→subject gap (2) + minimum subject (20).
     let min_fixed = 1 + 2 + graph_w + 2 + 20;
@@ -345,18 +496,188 @@ fn compute_column_widths(total: usize, graph_w: usize) -> ColWidths {
         w.age = 6;
         remaining -= 6 + 2;
     }
-    if remaining >= 14 + 2 {
-        w.author = 14;
-        remaining -= 14 + 2;
-    } else if remaining >= 10 + 2 {
-        // Half-width author for medium-narrow panes.
-        w.author = 10;
-        remaining -= 10 + 2;
+    // Author: explicit override beats auto-size; clamp auto-size to [8, 22].
+    let author_target = match auto.author_override {
+        Some(n) => n,
+        None => auto.author_chars.clamp(8, 22),
+    };
+    if author_target > 0 && remaining >= author_target + 2 {
+        w.author = author_target;
+        remaining -= author_target + 2;
     }
-    if remaining >= 18 {
-        w.branch = remaining.min(28);
+    // Branch: explicit override beats auto-size; clamp auto-size to [10, 35].
+    let branch_target = match auto.branch_override {
+        Some(n) => n,
+        None => {
+            if auto.branch_chars == 0 {
+                0
+            } else {
+                auto.branch_chars.clamp(10, 35)
+            }
+        }
+    };
+    if branch_target > 0 && remaining >= branch_target {
+        w.branch = branch_target.min(remaining);
     }
     w
+}
+
+/// Sum of chip widths for a row's refs, matching the renderer's
+/// "join with spaces" layout. Used by the auto-sizer.
+fn chip_width_for_refs(refs: &[crate::git::log::RefLabel]) -> usize {
+    let mut sum = 0usize;
+    for (i, r) in refs.iter().enumerate() {
+        let label_chars = match r.kind {
+            RefKind::Tag => r.name.chars().count() + 1, // ⊙ prefix
+            _ => r.name.chars().count(),
+        };
+        sum += label_chars;
+        if i + 1 < refs.len() {
+            sum += 1; // space separator
+        }
+    }
+    sum
+}
+
+/// One-line summary of the WIP state: `5 changes · 2 staged · on main ↑1 ↓0`
+fn format_wip_summary(snap: &crate::git::status::Snapshot) -> String {
+    let total = snap.modified + snap.staged + snap.untracked + snap.conflicts;
+    let mut parts: Vec<String> = Vec::new();
+    if total == 0 {
+        parts.push("working tree clean".to_string());
+    } else {
+        parts.push(format!("{total} change(s)"));
+        if snap.staged > 0 {
+            parts.push(format!("{} staged", snap.staged));
+        }
+        if snap.untracked > 0 {
+            parts.push(format!("{} new", snap.untracked));
+        }
+        if snap.conflicts > 0 {
+            parts.push(format!("⚠ {} conflict(s)", snap.conflicts));
+        }
+    }
+    if snap.ahead > 0 || snap.behind > 0 {
+        parts.push(format!("↑{} ↓{}", snap.ahead, snap.behind));
+    }
+    parts.join(" · ")
+}
+
+/// Right-side detail panel content for the WIP virtual row: branch
+/// banner, change summary, unstaged + staged file lists, and the key
+/// hints the user needs to act (commit / AI message / open status pane).
+fn draw_wip_detail(
+    frame: &mut Frame,
+    area: Rect,
+    t: &Theme,
+    snap: &crate::git::status::Snapshot,
+    workspace: &std::path::Path,
+) {
+    frame.render_widget(Paragraph::new("").style(Style::default().bg(t.bg)), area);
+    let w = area.width as usize;
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Header
+    let head = format!(
+        " WIP @ {} · {}",
+        snap.branch.as_deref().unwrap_or("(detached)"),
+        format_wip_summary(snap),
+    );
+    let head = head.chars().take(w.saturating_sub(1)).collect::<String>();
+    lines.push(Line::from(vec![
+        Span::styled("─", Style::default().fg(t.line).bg(t.bg)),
+        Span::styled(
+            head,
+            Style::default()
+                .fg(t.yellow)
+                .bg(t.bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(Span::styled("", Style::default().bg(t.bg))));
+
+    // Partition the file map into unstaged + staged.
+    let mut unstaged: Vec<(String, &'static str, ratatui::style::Color)> = Vec::new();
+    let mut staged: Vec<(String, &'static str, ratatui::style::Color)> = Vec::new();
+    for (path, state) in &snap.files {
+        let rel = path
+            .strip_prefix(workspace)
+            .unwrap_or(path)
+            .display()
+            .to_string();
+        match state {
+            crate::git::status::FileState::Modified => {
+                unstaged.push((rel, "M", t.yellow));
+            }
+            crate::git::status::FileState::Untracked => {
+                unstaged.push((rel, "?", t.comment));
+            }
+            crate::git::status::FileState::Conflicted => {
+                unstaged.push((rel, "!", t.red));
+            }
+            crate::git::status::FileState::Staged => {
+                staged.push((rel, "A", t.green));
+            }
+        }
+    }
+    unstaged.sort_by(|a, b| a.0.cmp(&b.0));
+    staged.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Unstaged section
+    let unstaged_label = if unstaged.is_empty() {
+        "Unstaged Files (0)".to_string()
+    } else {
+        format!("Unstaged Files ({})", unstaged.len())
+    };
+    lines.push(Line::from(Span::styled(
+        format!("  ▾ {unstaged_label}"),
+        Style::default()
+            .fg(t.fg)
+            .bg(t.bg)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for (path, letter, color) in &unstaged {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("    {letter} "),
+                Style::default().fg(*color).bg(t.bg),
+            ),
+            Span::styled(path.clone(), Style::default().fg(t.fg).bg(t.bg)),
+        ]));
+    }
+    lines.push(Line::from(Span::styled("", Style::default().bg(t.bg))));
+
+    // Staged section
+    let staged_label = if staged.is_empty() {
+        "Staged Files (0)".to_string()
+    } else {
+        format!("Staged Files ({})", staged.len())
+    };
+    lines.push(Line::from(Span::styled(
+        format!("  ▾ {staged_label}"),
+        Style::default()
+            .fg(t.fg)
+            .bg(t.bg)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for (path, letter, color) in &staged {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("    {letter} "),
+                Style::default().fg(*color).bg(t.bg),
+            ),
+            Span::styled(path.clone(), Style::default().fg(t.fg).bg(t.bg)),
+        ]));
+    }
+    lines.push(Line::from(Span::styled("", Style::default().bg(t.bg))));
+
+    // Hint footer — key reminders for the WIP row.
+    lines.push(Line::from(Span::styled(
+        "  c commit · C AI message · Enter status pane",
+        Style::default().fg(t.comment).bg(t.bg),
+    )));
+
+    frame.render_widget(Paragraph::new(lines).style(Style::default().bg(t.bg)), area);
 }
 
 /// Draw the column-header row (faint labels) and, when a hash filter is
@@ -645,7 +966,16 @@ mod tests {
 
     #[test]
     fn compute_column_widths_wide_pane_includes_everything() {
-        let c = compute_column_widths(200, 10);
+        let c = compute_column_widths(
+            200,
+            10,
+            ColAutoSize {
+                branch_chars: 30,
+                author_chars: 18,
+                branch_override: None,
+                author_override: None,
+            },
+        );
         assert!(c.sha >= 9);
         assert!(c.age >= 6);
         assert!(c.author >= 10);
@@ -655,14 +985,65 @@ mod tests {
     #[test]
     fn compute_column_widths_narrow_collapses_right_to_left() {
         // Just barely enough room for the swimlane+arrow+graph+subject+sha.
-        let c = compute_column_widths(45, 6);
+        let c = compute_column_widths(
+            45,
+            6,
+            ColAutoSize {
+                branch_chars: 30,
+                author_chars: 18,
+                branch_override: None,
+                author_override: None,
+            },
+        );
         assert!(c.sha > 0, "sha should be the last to collapse");
     }
 
     #[test]
     fn compute_column_widths_very_narrow_keeps_subject_only() {
-        let c = compute_column_widths(28, 4);
+        let c = compute_column_widths(
+            28,
+            4,
+            ColAutoSize {
+                branch_chars: 30,
+                author_chars: 18,
+                branch_override: None,
+                author_override: None,
+            },
+        );
         assert_eq!(c.branch, 0);
         assert_eq!(c.author, 0);
+    }
+
+    #[test]
+    fn compute_column_widths_auto_sizes_to_content() {
+        // Short author/branch names → narrower columns.
+        let c = compute_column_widths(
+            200,
+            10,
+            ColAutoSize {
+                branch_chars: 5,
+                author_chars: 4,
+                branch_override: None,
+                author_override: None,
+            },
+        );
+        assert_eq!(c.author, 8, "author auto-size clamps to 8 min");
+        assert_eq!(c.branch, 10, "branch auto-size clamps to 10 min");
+    }
+
+    #[test]
+    fn compute_column_widths_respects_explicit_overrides() {
+        let c = compute_column_widths(
+            200,
+            10,
+            ColAutoSize {
+                branch_chars: 30,
+                author_chars: 30,
+                branch_override: Some(0), // disabled
+                author_override: Some(12),
+            },
+        );
+        assert_eq!(c.branch, 0);
+        assert_eq!(c.author, 12);
     }
 }

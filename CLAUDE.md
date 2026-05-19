@@ -83,6 +83,44 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**GitGraph: WIP row + right-side detail + auto-sized columns (2026-05-18 cont.):**
+substantive rework of `Pane::GitGraph` to feel more like a popular Git GUI's
+commit-graph view. Headline changes: (1) **WIP virtual row at the
+top** of the list. When the working tree is dirty (`git status
+--porcelain` reports anything), the renderer inserts a row above
+commits[0] with a yellow swimlane bar, "WIP @ <branch>" chip, and
+change summary (e.g. `5 change(s) · 2 staged · 1 new`). The
+`GitGraphPane.selected` field is now a *virtual* index — `0 = WIP`,
+`1..=commits.len() = commits[i-1]` when `has_wip` is true. New
+helpers `total_rows()` / `is_wip_selected()` / `commit_index()` /
+`jump_to_commit()` translate between virtual rows and the underlying
+commit list. (2) **Right-side detail panel** instead of bottom.
+a popular Git GUI's convention; takes ~40% of pane width (clamped 30..=70),
+falls back to no detail panel for narrow panes (< 80 cols).
+Vertical divider between list + detail. (3) **WIP detail view** —
+when the WIP row is selected, the right panel shows a yellow banner
+(`WIP @ <branch> · <summary>`) over collapsible Unstaged Files / Staged
+Files lists, each row prefixed by a colored status letter (M/A/?/!).
+Closes with a hint row: `c commit · C AI message · Enter status pane`.
+Commit detail (when a real commit row is selected) still shows
+message + parents + changed files, just on the right instead of
+bottom. (4) **WIP-row chords**: `c` opens the commit prompt,
+`C` triggers AI commit message, `Enter` opens the full
+`Pane::GitStatus` for interactive staging. (5) **Auto-sized
+columns** — `compute_column_widths` now takes a `ColAutoSize` carrier
+with `branch_chars` / `author_chars` from the visible window. Branch
+column auto-sizes to fit refs (clamped 10..=35); author column to
+fit names (clamped 8..=22). (6) **Config overrides** for users who
+want explicit control: `[ui] git_graph_branch_col = N` (None ⇒
+auto-size, Some(0) ⇒ disable column entirely), `git_graph_author_col`,
+`git_graph_detail_col`. Pairs naturally with the existing visual
+swimlane bar so a user can dial in their preferred layout. The
+existing per-row mouse click + the hash-filter (`/`) flow both work
+unchanged — find_by_hash_prefix still returns commit-list indices,
+callers route through `jump_to_commit` so the WIP-offset is applied.
+676 lean / 710 private lib tests (+2 new for auto-sizing & overrides),
+87 e2e, 7 ipc — all green.
+
 **Small polish — AI max_tokens + md image_rows config + Git ex aliases (2026-05-18 cont.):**
 configurables + small ex aliases for what just landed. (1) **`[ai]
 max_tokens = N`** overrides the API backend's `DEFAULT_MAX_TOKENS`
