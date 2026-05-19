@@ -83,6 +83,24 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Small polish — AI max_tokens + md image_rows config + Git ex aliases (2026-05-18 cont.):**
+configurables + small ex aliases for what just landed. (1) **`[ai]
+max_tokens = N`** overrides the API backend's `DEFAULT_MAX_TOKENS`
+(4096) output cap. Clamped to 16..=200_000. CLI backend ignores
+(the `claude` binary picks its own). Wired through
+`App::ai_max_tokens` ⇒ `api_client::stream_to_channel`'s new
+`max_tokens: Option<u32>` parameter. (2) **`[ui] md_image_rows = N`**
+overrides `DEFAULT_IMAGE_ROWS` (12) — how tall inline image embeds
+are in markdown preview. Clamped to 2..=100 on load. `parse_image_directives`
++ `render_markdown_with_image_placeholders` now take the row count
+as a parameter; `md_preview::draw` reads it from
+`app.config.ui.md_image_rows`. Useful for note files with many
+small thumbnails (drop to 6) or screenshots (bump to 20). (3)
+**Git ex aliases** — `:Stashes` / `:StashList` (apply picker),
+`:StashDrop`, `:Reflog`. Vim users reach for the colon-line first.
+674 lean / 708 private lib tests (+1 new `parse_image_directives_respects_custom_rows`),
+87 e2e, 7 ipc — green.
+
 **Markdown preview: inline image embedding (2026-05-18 cont.):**
 ties the wave-2 image plumbing to a daily-use feature. New
 `parse_image_directives(src) → Vec<ImageDirective{line_idx, rows,

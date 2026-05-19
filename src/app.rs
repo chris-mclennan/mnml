@@ -9138,12 +9138,14 @@ impl App {
         let backend = self.ai_backend();
         let model = self.ai_model();
         let system = self.ai_system_prompt();
+        let max_tokens = self.ai_max_tokens();
         std::thread::spawn(move || match backend {
             crate::ai::AiBackend::Api => {
                 crate::ai::api_client::stream_to_channel(
                     &prompt,
                     model.as_deref(),
                     system.as_deref(),
+                    max_tokens,
                     &worker_cancel,
                     tx,
                     job_id,
@@ -9154,6 +9156,16 @@ impl App {
             }
         });
         (job_id, session_id, cancel)
+    }
+
+    /// Optional `[ai] max_tokens = N` from the config — overrides the API
+    /// backend's default output cap (4096). CLI backend ignores this.
+    pub fn ai_max_tokens(&self) -> Option<u32> {
+        self.config
+            .ai
+            .get("max_tokens")
+            .and_then(|v| v.as_integer())
+            .and_then(|n| u32::try_from(n).ok())
     }
 
     /// Optional `[ai] model = "..."` from the config — overrides the API
@@ -20366,6 +20378,20 @@ impl App {
             }
             "PushTags" | "pushtags" => {
                 self.run_git_push_tags();
+            }
+            // `:Stashes` / `:StashList` — open the stash list (pick to
+            // apply, vim canon). `:StashDrop` opens the drop variant.
+            "Stashes" | "StashList" | "stashlist" => {
+                self.open_git_stash_list();
+            }
+            "StashDrop" | "stashdrop" => {
+                self.open_git_stash_drop();
+            }
+            // `:Reflog` — open the reflog picker. Accept ⇒ open the
+            // commit's diff. The dim detail column shows HEAD@{N} so
+            // the user can copy it for a manual reset from a pty.
+            "Reflog" | "reflog" => {
+                self.open_git_reflog();
             }
             // `:execute "<str>"` / `:exe "<str>"` — strip outer quotes,
             // unescape `\\` and `\"`, run the result as a fresh ex cmd.

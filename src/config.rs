@@ -577,6 +577,11 @@ pub struct UiConfig {
     /// noisy for short ones. `:set [no]stickycontext` / `:set stickycontext!` /
     /// `view.toggle_sticky_context`.
     pub sticky_context: bool,
+    /// Number of rows reserved for inline image embeds in markdown
+    /// preview (`![alt](path)`). Default 12 — picked to be unobtrusive
+    /// inside paragraphs. Bump for note files with screenshots; reduce
+    /// for terse docs with many small thumbnails.
+    pub md_image_rows: u16,
 }
 
 impl Default for Config {
@@ -623,6 +628,7 @@ impl Default for Config {
                 highlight_todo_keywords: false,
                 render_markdown: false,
                 sticky_context: false,
+                md_image_rows: 12,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -860,6 +866,7 @@ struct RawUi {
     highlight_todo_keywords: Option<bool>,
     render_markdown: Option<bool>,
     sticky_context: Option<bool>,
+    md_image_rows: Option<u16>,
 }
 
 impl Config {
@@ -1008,6 +1015,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.sticky_context {
             self.ui.sticky_context = v;
+        }
+        if let Some(v) = raw.ui.md_image_rows {
+            self.ui.md_image_rows = v.clamp(2, 100);
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;

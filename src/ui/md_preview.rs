@@ -30,6 +30,7 @@ pub fn draw(
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
 
     let protocol = app.image_protocol;
+    let image_rows = app.config.ui.md_image_rows;
     let Some(Pane::MdPreview(p)) = app.panes.get_mut(pane_id) else {
         return None;
     };
@@ -45,9 +46,9 @@ pub fn draw(
     // place to land. Plain-text terminal (no image protocol) still gets
     // the placeholder rows + dim caption — keeps line-count math
     // identical between the two paths so scroll position is stable.
-    let directives = parse_image_directives(&p.source);
+    let directives = parse_image_directives(&p.source, image_rows);
     let lines = wrap_lines(
-        render_markdown_with_image_placeholders(&p.source),
+        render_markdown_with_image_placeholders(&p.source, image_rows),
         text_area.width as usize,
     );
     let h = area.height as usize;
@@ -266,18 +267,17 @@ pub struct ImageDirective {
     pub alt: String,
 }
 
-/// Default height in cells for an embedded image. Many screenshots are
-/// taller than this; the image scales to fit. Picked to be unobtrusive
-/// inside paragraphs.
+/// Default height in cells for an embedded image. Configurable via
+/// `[ui] md_image_rows`. Picked to be unobtrusive inside paragraphs.
 pub const DEFAULT_IMAGE_ROWS: u16 = 12;
 
 /// Walk the markdown source and pick out every standalone-line
 /// `![alt](path)` image. Returns directives keyed by the rendered
 /// `Vec<Line>` index — the caller is responsible for slicing visible
-/// rows + staging paint requests. The expectation is that the renderer
-/// emits `DEFAULT_IMAGE_ROWS` blank lines for each directive so the
-/// image overlay has room to paint.
-pub fn parse_image_directives(src: &str) -> Vec<ImageDirective> {
+/// rows + staging paint requests. Pair with [`render_markdown_with_image_placeholders`]
+/// (called with the same `rows` value) so the renderer reserves the
+/// matching number of blank lines.
+pub fn parse_image_directives(src: &str, rows: u16) -> Vec<ImageDirective> {
     let mut out: Vec<ImageDirective> = Vec::new();
     let mut rendered_idx: usize = 0;
     let mut in_code = false;
@@ -305,12 +305,12 @@ pub fn parse_image_directives(src: &str) -> Vec<ImageDirective> {
         if let Some(img) = parse_image_line(trimmed) {
             out.push(ImageDirective {
                 line_idx: rendered_idx,
-                rows: DEFAULT_IMAGE_ROWS,
+                rows,
                 path: img.0,
                 alt: img.1,
             });
-            // Renderer will emit `DEFAULT_IMAGE_ROWS` blanks for this.
-            rendered_idx += DEFAULT_IMAGE_ROWS as usize;
+            // Renderer will emit `rows` blanks for this.
+            rendered_idx += rows as usize;
         } else {
             rendered_idx += 1;
         }
@@ -337,22 +337,25 @@ fn parse_image_line(line: &str) -> Option<(String, String)> {
 }
 
 /// Render markdown `src` to styled lines (block-level styling + inline spans).
-/// When `with_image_placeholders` is true, standalone `![alt](path)` lines emit
-/// `DEFAULT_IMAGE_ROWS` blank lines + a dim alt-text caption (so the caller
-/// can paint the image overlay on top). When false, image lines render as
-/// normal text (the AI-pane renderer doesn't want the placeholders).
+/// Standalone image lines render as normal markdown text (the inline parser
+/// handles the link syntax). For an image-placeholder-reserving variant pair
+/// with [`render_markdown_with_image_placeholders`] + [`parse_image_directives`].
 pub fn render_markdown(src: &str) -> Vec<Line<'static>> {
-    render_markdown_with_options(src, false)
+    render_markdown_with_options(src, false, 0)
 }
 
-/// Same as [`render_markdown`] but reserves blank rows for inline image
-/// embeds. Pair with [`parse_image_directives`] to know which rendered
-/// row each image lives at.
-pub fn render_markdown_with_image_placeholders(src: &str) -> Vec<Line<'static>> {
-    render_markdown_with_options(src, true)
+/// Same as [`render_markdown`] but reserves `rows` blank lines for each
+/// inline image embed. Pair with [`parse_image_directives`] called
+/// with the same `rows` so the directive indices line up.
+pub fn render_markdown_with_image_placeholders(src: &str, rows: u16) -> Vec<Line<'static>> {
+    render_markdown_with_options(src, true, rows)
 }
 
-fn render_markdown_with_options(src: &str, with_image_placeholders: bool) -> Vec<Line<'static>> {
+fn render_markdown_with_options(
+    src: &str,
+    with_image_placeholders: bool,
+    image_rows: u16,
+) -> Vec<Line<'static>> {
     let t = theme::cur();
     let body = Style::default().fg(t.fg).bg(t.bg_dark);
     let blank = || Line::from(Span::styled(String::new(), body));
@@ -370,7 +373,10 @@ fn render_markdown_with_options(src: &str, with_image_placeholders: bool) -> Vec
         // rows so the caller can paint the image overlay on top. First
         // row is a dim caption (alt text); the rest are blank with the
         // body background color so the overlay has a clean canvas.
-        if with_image_placeholders && let Some((_path, alt)) = parse_image_line(trimmed) {
+        if with_image_placeholders
+            && image_rows > 0
+            && let Some((_path, alt)) = parse_image_line(trimmed)
+        {
             let caption = if alt.is_empty() {
                 "  [image]".to_string()
             } else {
@@ -380,7 +386,7 @@ fn render_markdown_with_options(src: &str, with_image_placeholders: bool) -> Vec
                 caption,
                 body.fg(t.comment).add_modifier(Modifier::ITALIC),
             )));
-            for _ in 1..DEFAULT_IMAGE_ROWS {
+            for _ in 1..image_rows {
                 out.push(Line::from(Span::styled(" ".repeat(0), body)));
             }
             continue;
@@ -673,25 +679,32 @@ mod tests {
     #[test]
     fn parse_image_directives_finds_standalone_images() {
         let md = "# Title\n\nsome text\n\n![diagram](img/a.png)\n\nmore text\n\n![second](b.jpg)";
-        let dirs = parse_image_directives(md);
+        let dirs = parse_image_directives(md, DEFAULT_IMAGE_ROWS);
         assert_eq!(dirs.len(), 2);
         assert_eq!(dirs[0].path, "img/a.png");
         assert_eq!(dirs[0].alt, "diagram");
+        assert_eq!(dirs[0].rows, DEFAULT_IMAGE_ROWS);
         assert_eq!(dirs[1].path, "b.jpg");
         assert_eq!(dirs[1].alt, "second");
     }
 
     #[test]
+    fn parse_image_directives_respects_custom_rows() {
+        let md = "![a](x.png)";
+        let dirs = parse_image_directives(md, 6);
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].rows, 6);
+    }
+
+    #[test]
     fn parse_image_directives_skips_inline_image_refs() {
-        // Image embedded in a paragraph isn't a directive — falls through
-        // to the inline-link renderer.
         let md = "see ![alt](foo.png) inline";
-        assert!(parse_image_directives(md).is_empty());
+        assert!(parse_image_directives(md, DEFAULT_IMAGE_ROWS).is_empty());
     }
 
     #[test]
     fn parse_image_directives_skips_images_in_code_fences() {
         let md = "```\n![not](real.png)\n```\n";
-        assert!(parse_image_directives(md).is_empty());
+        assert!(parse_image_directives(md, DEFAULT_IMAGE_ROWS).is_empty());
     }
 }

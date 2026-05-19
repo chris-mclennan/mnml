@@ -43,10 +43,13 @@ const DEFAULT_MAX_TOKENS: u32 = 4096;
 ///
 /// `model` overrides the default; pass `None` for `DEFAULT_MODEL`.
 /// `system` is an optional system prompt prepended to the request.
+/// `max_tokens` overrides `DEFAULT_MAX_TOKENS` when set (clamped to a
+/// sane 16..=200000 range).
 pub fn stream_to_channel(
     prompt: &str,
     model: Option<&str>,
     system: Option<&str>,
+    max_tokens: Option<u32>,
     cancel: &AtomicBool,
     sink: std::sync::mpsc::Sender<(u64, AiMsg)>,
     job_id: u64,
@@ -61,9 +64,12 @@ pub fn stream_to_channel(
         ));
         return;
     };
+    let mt = max_tokens
+        .map(|n| n.clamp(16, 200_000))
+        .unwrap_or(DEFAULT_MAX_TOKENS);
     let mut body = serde_json::json!({
         "model": model.unwrap_or(DEFAULT_MODEL),
-        "max_tokens": DEFAULT_MAX_TOKENS,
+        "max_tokens": mt,
         "stream": true,
         "messages": [{ "role": "user", "content": prompt }],
     });
