@@ -4215,6 +4215,41 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         }
         return;
     }
+    // Wheel over an extra workspace's tree body (the file list under
+    // `> name`) → scroll that extra's tree cursor.
+    if let Some(&(_, ws_idx, _)) = app
+        .rects
+        .extra_workspace_bodies
+        .iter()
+        .find(|(r, _, _)| contains(*r, x, y))
+    {
+        if let Some(ws) = app.extra_workspaces.get_mut(ws_idx) {
+            for _ in 0..delta.unsigned_abs() {
+                if delta < 0 {
+                    ws.tree.move_up();
+                } else {
+                    ws.tree.move_down();
+                }
+            }
+        }
+        return;
+    }
+    // Wheel over any row in the GIT section → scroll the git rail cursor.
+    if app
+        .rects
+        .git_rail_rows
+        .iter()
+        .any(|(r, _)| contains(*r, x, y))
+    {
+        for _ in 0..delta.unsigned_abs() {
+            if delta < 0 {
+                app.git_rail_move_up();
+            } else {
+                app.git_rail_move_down();
+            }
+        }
+        return;
+    }
     // Wheel over the bufferline → scroll the tab strip by one per tick.
     if let Some(br) = app.rects.bufferline
         && contains(br, x, y)
