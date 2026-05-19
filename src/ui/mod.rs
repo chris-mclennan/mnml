@@ -50,6 +50,7 @@ pub mod gitlab_pipelines_view;
 pub mod grep_view;
 pub mod hover;
 pub mod icons;
+pub mod image_view;
 #[cfg(feature = "private")]
 pub mod log_tail_view;
 pub mod md_inline_overlay;
@@ -421,6 +422,7 @@ fn render_layout(
                 Some(crate::pane::Pane::Cheatsheet(_)) => 29,
                 Some(crate::pane::Pane::Debug(_)) => 30,
                 Some(crate::pane::Pane::DapRepl(_)) => 31,
+                Some(crate::pane::Pane::Image(_)) => 32,
                 _ => 0,
             };
             match kind {
@@ -480,6 +482,7 @@ fn render_layout(
                     dap_repl_view::draw(frame, app, *id, area, focused);
                     None
                 }
+                32 => image_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

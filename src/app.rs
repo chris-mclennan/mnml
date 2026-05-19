@@ -176,6 +176,16 @@ fn is_markdown_path(path: &Path) -> bool {
     )
 }
 
+fn is_image_extension(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp")
+    )
+}
+
 /// Walk `text` and return every `(row, col_chars, len_chars)` for a whole-word
 /// occurrence of `word`. Char columns (not byte) so the renderer's per-cell
 /// painter can align without re-decoding UTF-8. Caps at 5000 hits — a hard
@@ -1988,6 +1998,20 @@ pub struct App {
     /// The persistent `GIT` section in the rail — local branches + worktrees,
     /// refreshed on every git-changing action via [`Self::after_git_change`].
     pub git_rail: crate::git::rail::GitRail,
+    /// Terminal image-protocol support, detected once at startup. Drives
+    /// whether `Pane::Image` paints actual pixels via Kitty / iTerm2
+    /// escapes (post-`terminal.draw()`) or shows a metadata-only fallback.
+    pub image_protocol: crate::image::ImageProtocol,
+    /// Pending image paints captured during this frame's render. `tui.rs`
+    /// drains this *after* `terminal.draw()` and emits the protocol-
+    /// specific escape so the image lands on top of ratatui's reserved
+    /// cells. Cleared each frame; never persisted.
+    pub image_paint_requests: Vec<crate::image::PaintRequest>,
+    /// True when the previous frame had any image paint requests. Used by
+    /// the post-draw emitter to know when to emit a `clear-all-placements`
+    /// escape — needed when the user closes / hides an image pane so the
+    /// stale image doesn't linger over the next frame's content.
+    pub had_image_pane: bool,
     /// Repos discovered inside the workspace. One entry per `.git/` found.
     /// `[]` when the workspace contains no repo. Always-1-entry for the
     /// single-repo case (workspace IS a repo). Multi-repo workspaces get
@@ -2548,6 +2572,9 @@ impl App {
             tree_root_expanded: true,
             extra_workspaces,
             git_rail,
+            image_protocol: crate::image::detect_protocol(),
+            image_paint_requests: Vec::new(),
+            had_image_pane: false,
             repos,
             active_repo,
             git_section_expanded: true,
@@ -5237,6 +5264,12 @@ impl App {
     /// focused leaf was showing stays open as a background tab.
     pub fn open_path(&mut self, path: &Path) {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        // Image files get their own viewer pane instead of being loaded as
+        // a text buffer (the binary contents would render as gibberish).
+        if is_image_extension(&path) {
+            self.open_image_pane(&path);
+            return;
+        }
         // Push the *current* position onto the back-stack before navigating
         // (browser-style). Skip when the active editor is already on this
         // exact file — that'd just be churn. Clears the forward stack so
@@ -5422,6 +5455,50 @@ impl App {
         self.recent_files.insert(0, path.to_path_buf());
         if self.recent_files.len() > RECENT_FILES_MAX {
             self.recent_files.truncate(RECENT_FILES_MAX);
+        }
+    }
+
+    /// Open `path` as a `Pane::Image` (next to the focused leaf). Already-
+    /// open images are focused instead of duplicated. Refuses with a toast
+    /// when the file is too large (50 MB cap) or unreadable.
+    pub fn open_image_pane(&mut self, path: &Path) {
+        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        if let Some(i) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Image(img) if img.path() == &path))
+        {
+            self.reveal_pane(i);
+            return;
+        }
+        match crate::image::ImagePane::open(&path) {
+            Ok(pane) => {
+                self.note_recent_file(&path);
+                self.panes.push(Pane::Image(pane));
+                let new_id = self.panes.len() - 1;
+                self.reveal_pane(new_id);
+            }
+            Err(e) => self.toast(format!("image: {e}")),
+        }
+    }
+
+    /// Reload the active image pane's bytes from disk (file may have been
+    /// overwritten externally). Toast on failure; the pane stays put.
+    pub fn reload_active_image(&mut self) {
+        let Some(i) = self.active else { return };
+        if let Some(Pane::Image(p)) = self.panes.get_mut(i) {
+            match p.reload() {
+                Ok(()) => self.toast("image reloaded"),
+                Err(e) => self.toast(format!("image reload: {e}")),
+            }
+        }
+    }
+
+    /// Toggle the image pane's header strip (file metadata + protocol info).
+    pub fn toggle_active_image_header(&mut self) {
+        let Some(i) = self.active else { return };
+        if let Some(Pane::Image(p)) = self.panes.get_mut(i) {
+            p.show_header = !p.show_header;
         }
     }
 
@@ -8741,6 +8818,7 @@ impl App {
             | Some(Pane::Cheatsheet(_))
             | Some(Pane::Debug(_))
             | Some(Pane::DapRepl(_))
+            | Some(Pane::Image(_))
             | None => None,
             #[cfg(feature = "private")]
             Some(Pane::TestExecutions(_)) => None,
@@ -9034,10 +9112,46 @@ impl App {
         let sid = session_id.clone();
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_cancel = cancel.clone();
-        std::thread::spawn(move || {
-            crate::ai::stream_to_channel(&prompt, &sid, &worker_cancel, tx, job_id);
+        let backend = self.ai_backend();
+        std::thread::spawn(move || match backend {
+            crate::ai::AiBackend::Api => {
+                crate::ai::api_client::stream_to_channel(&prompt, None, &worker_cancel, tx, job_id);
+            }
+            crate::ai::AiBackend::Cli => {
+                crate::ai::stream_to_channel(&prompt, &sid, &worker_cancel, tx, job_id);
+            }
         });
         (job_id, session_id, cancel)
+    }
+
+    /// Read the user's `[ai] backend = "cli" | "api"` setting. Default
+    /// `Cli` (no surprises for users without an API key set).
+    pub fn ai_backend(&self) -> crate::ai::AiBackend {
+        let s = self
+            .config
+            .ai
+            .get("backend")
+            .and_then(|v| v.as_str())
+            .unwrap_or("cli");
+        crate::ai::AiBackend::parse(s)
+    }
+
+    /// Flip `[ai] backend` at runtime (`cli` ↔ `api`). Affects every
+    /// AI job spawned after the toggle. Doesn't persist to the config
+    /// file — restart re-reads from disk.
+    pub fn toggle_ai_backend(&mut self) {
+        let next = match self.ai_backend() {
+            crate::ai::AiBackend::Cli => "api",
+            crate::ai::AiBackend::Api => "cli",
+        };
+        // The raw `Value` may be Table or empty; we need a Table to set keys.
+        if !self.config.ai.is_table() {
+            self.config.ai = toml::Value::Table(toml::value::Table::new());
+        }
+        if let Some(t) = self.config.ai.as_table_mut() {
+            t.insert("backend".to_string(), toml::Value::String(next.to_string()));
+        }
+        self.toast(format!("ai.backend: {next}"));
     }
 
     /// Open a `Pane::Ai` showing `title` and the answer to `prompt`, and kick off
@@ -16096,7 +16210,8 @@ impl App {
             | Pane::AzDevOpsPullRequests(_)
             | Pane::Cheatsheet(_)
             | Pane::Debug(_)
-            | Pane::DapRepl(_) => (None, None),
+            | Pane::DapRepl(_)
+            | Pane::Image(_) => (None, None),
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (None, None),
             #[cfg(feature = "private")]
@@ -16215,6 +16330,7 @@ impl App {
             Pane::Cheatsheet(_) => Some(("Cheatsheet".to_string(), false)),
             Pane::Debug(_) => Some(("Debug".to_string(), false)),
             Pane::DapRepl(_) => Some(("DAP REPL".to_string(), false)),
+            Pane::Image(p) => Some((p.tab_title(), false)),
         }
     }
 

@@ -250,6 +250,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Debug(_) => (if nerd { "\u{f188}" } else { "🐛" }, theme::cur().red),
             // nf-md-console (terminal arrow) — REPL prompt vibe.
             Pane::DapRepl(_) => (if nerd { "\u{F018D}" } else { ">" }, theme::cur().cyan),
+            // nf-md-image
+            Pane::Image(_) => (if nerd { "\u{F021F}" } else { "▤" }, theme::cur().purple),
         };
         // Dirty: filled circle. Clean: `nf-md-close` (\u{F0156}) — same
         // Material-Design glyph NvChad uses for buffer close, renders

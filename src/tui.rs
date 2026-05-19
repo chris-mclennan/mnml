@@ -116,6 +116,7 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
             term.clear()?;
         }
         term.draw(|f| ui::draw(f, app))?;
+        emit_image_placements(app);
         if let Some(ipc) = ipc.as_mut() {
             ipc::dump_screen_status(ipc, term.current_buffer_mut(), app);
             ipc::drain_commands(ipc, app);
@@ -155,6 +156,58 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
         });
     }
     Ok(())
+}
+
+/// Drain `app.image_paint_requests` and emit the protocol-specific image
+/// escapes directly to stdout. Called after `terminal.draw()` so the
+/// images paint *on top of* the placeholder cells ratatui reserved.
+///
+/// Also handles clearing stale placements: when image panes disappear
+/// (closed / scrolled out), we emit a `clear-all` so the previous
+/// frame's images don't linger.
+fn emit_image_placements(app: &mut App) {
+    use crate::image::ImageProtocol;
+    use std::io::Write;
+    let protocol = app.image_protocol;
+    if matches!(protocol, ImageProtocol::None) {
+        app.image_paint_requests.clear();
+        app.had_image_pane = false;
+        return;
+    }
+    let pending = std::mem::take(&mut app.image_paint_requests);
+    let any_now = !pending.is_empty();
+    let needs_clear = any_now || app.had_image_pane;
+    let mut out = io::stdout();
+    if needs_clear && matches!(protocol, ImageProtocol::Kitty) {
+        let _ = out.write_all(crate::image::kitty::clear_all().as_bytes());
+    }
+    for req in pending {
+        let Some(Pane::Image(p)) = app.panes.get(req.pane_id) else {
+            continue;
+        };
+        // Move cursor to the area's top-left (1-based row;col).
+        let _ = write!(
+            out,
+            "\x1b[{};{}H",
+            req.area.y.saturating_add(1),
+            req.area.x.saturating_add(1)
+        );
+        match protocol {
+            ImageProtocol::Kitty => {
+                if let Ok(esc) =
+                    crate::image::kitty::encode_placement(&p.data, req.area.width, req.area.height)
+                {
+                    let _ = out.write_all(esc.as_bytes());
+                }
+            }
+            ImageProtocol::Iterm2 | ImageProtocol::None => {
+                // iTerm2 protocol not yet wired — falls through to the
+                // metadata-only banner the renderer already drew.
+            }
+        }
+    }
+    let _ = out.flush();
+    app.had_image_pane = any_now;
 }
 
 // ─── key dispatch (shared with headless/IPC) ────────────────────────
@@ -1246,6 +1299,18 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     app.focus_tree();
                 }
             }
+            _ => {}
+        }
+        return;
+    }
+    // The image-viewer pane: `i` toggle the metadata header, `r` reload
+    // from disk, Esc → tree. There's nothing to scroll — the image either
+    // fits or gets scaled to the body area by the terminal.
+    if matches!(app.panes.get(i), Some(Pane::Image(_))) {
+        match key.code {
+            KeyCode::Char('i') => app.toggle_active_image_header(),
+            KeyCode::Char('r') => app.reload_active_image(),
+            KeyCode::Esc => app.focus_tree(),
             _ => {}
         }
         return;
@@ -4346,6 +4411,10 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     };
                     p.scroll = new;
                 }
+            }
+            Some(Pane::Image(_)) => {
+                // Nothing to scroll — the image pane is "what you see is
+                // what you get". Future v2 could pan a too-large image.
             }
             None => {}
         }

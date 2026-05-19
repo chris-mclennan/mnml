@@ -83,6 +83,67 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Image rendering + AI SDK direct-HTTP backend (2026-05-18 cont.):**
+two of the three big "deferred" tracks landing as foundation cuts.
+(1) **Image rendering (Kitty graphics, PNG-only MVP)** — new
+`crate::image` module + `Pane::Image` variant + `ui::image_view`
+renderer + post-`terminal.draw()` escape emission in `tui.rs`.
+`crate::image::detect_protocol()` checks `$KITTY_WINDOW_ID` /
+`$TERM` / `$TERM_PROGRAM` and returns
+`ImageProtocol::{Kitty, Iterm2, None}`; mnml stores the result on
+`App.image_protocol` at startup. The renderer reserves the pane
+area + stages a `PaintRequest` (when a protocol is supported); after
+`terminal.draw()`, `tui.rs::emit_image_placements` moves the cursor to
+the area's top-left via `\x1b[<row>;<col>H` and writes the Kitty
+escape directly to stdout. `crate::image::kitty::encode_placement`
+handles chunked base64 (4000 chars/chunk, m=0/1 continuation), pinned
+to `f=100` (PNG pass-through). Other formats (JPEG/GIF/WebP/BMP)
+render the metadata-only fallback — supporting them would need an
+image-decode crate to convert to RGBA. The metadata-only banner shows
+the file path, byte size, and a hint ("preview requires Kitty or
+iTerm2 inline-image protocol; supported terminals: Kitty / WezTerm /
+Ghostty / iTerm2 / recent Konsole") so users without a graphics-
+capable terminal know what they're missing. iTerm2 protocol detection
+works; emission is not yet wired (falls through to the fallback).
+Auto-routing: `open_path` checks `is_image_extension` (png / jpg /
+jpeg / gif / webp / bmp) and routes to `open_image_pane` instead of
+the Buffer path so the file-tree's Enter / Ctrl+P open / right-click
+all just work. Pane keys: `i` toggles the metadata header, `r`
+reloads from disk, Esc → tree. 50 MB hard cap on file size so a
+stray click on a multi-GB raw file doesn't OOM. Per-frame `clear_all`
+escape ensures stale images don't linger when panes close. tmnl
+(mnml's usual host terminal) doesn't implement Kitty yet, so the
+fallback shows in that case — but the plumbing is structurally in
+place so the moment tmnl adds Kitty support this lights up.
+(2) **AI SDK — direct HTTP to api.anthropic.com** — new
+`crate::ai::api_client::stream_to_channel` posts to `/v1/messages`
+with `stream: true`, reads SSE events, forwards `text_delta`s as
+`AiMsg::Delta`s through the same channel the existing `claude -p`
+backend uses, then a final `AiMsg::Done`. Reqwest blocking (same
+dep mnml's HTTP track already uses; no new SDK dependency). Reads
+`$ANTHROPIC_API_KEY`; missing key ⇒ `AiMsg::Failed` with a hint.
+New `AiBackend::{Cli, Api}` enum + `[ai] backend = "cli" | "api"`
+config (default `cli` so users without an API key see no change).
+`App.ai_backend()` reads the config; `spawn_ai_job` dispatches to
+the right backend. New `ai.toggle_backend` palette command for
+runtime flipping (doesn't persist — restart re-reads from disk).
+Every `ask_ai` consumer (explain / fix / refactor / write_tests /
+ask / commit-message generation) routes through `spawn_ai_job` so
+all flows pick up the toggle automatically. Tool use is NOT wired
+in the MVP — for agent flows (file reads, shell, refactor across
+files) the user keeps the CLI backend. Direct-API shines for short
+asks: commit messages, "explain this", quick refactors. The legacy
+explicitly-deferred note in `mnml-deferred-nvchad-tracks.md` is
+now satisfied for the "short asks" use case; `Codex commit` still
+shells out (`codex exec` has no public direct-HTTP equivalent).
+Model is hardcoded to `claude-opus-4-7`; per-call override via
+`stream_to_channel(prompt, Some("claude-sonnet-4-6"), ...)` is
+wired but not yet plumbed through `spawn_ai_job`. 3 new unit tests
+cover the SSE delta parser (text-only / tool-use filtered out /
+malformed JSON resilience).
+662 lean / 696 private lib tests (+7 new across image + ai_api),
+87 e2e, 7 ipc — all green.
+
 **Git GUI — graphical-Git-GUI-style graph pane + hash-jump + tags (2026-05-18 cont.):**
 three Git tracks landed together. (1) **`Pane::GitGraph` visual
 refresh** — restructured the per-commit row from one flowing line

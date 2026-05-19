@@ -47,6 +47,7 @@ pub mod headless;
 pub mod highlight;
 pub mod hover;
 pub mod http;
+pub mod image;
 pub mod input;
 pub mod ipc;
 pub mod layout;

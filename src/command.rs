@@ -1573,6 +1573,35 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_git_revert(),
         },
         Command {
+            id: "ai.toggle_backend",
+            title: "AI: toggle backend (cli ↔ api / direct HTTP)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.toggle_ai_backend(),
+        },
+        Command {
+            id: "view.image_open",
+            title: "View: open image file (PNG/JPG/GIF/WebP/BMP)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                // Best-effort: if the active editor's path is an image, open
+                // that. Otherwise prompt with a file picker. Empty-tree case
+                // ⇒ toast hint.
+                let active_path = app
+                    .active
+                    .and_then(|i| app.panes.get(i))
+                    .and_then(|p| p.as_editor().and_then(|b| b.path.clone()));
+                if let Some(p) = active_path {
+                    app.open_image_pane(&p);
+                } else {
+                    app.toast(
+                        "view.image_open: open the file from the tree (Enter) or pick from Ctrl+P",
+                    );
+                }
+            },
+        },
+        Command {
             id: "git.tag",
             title: "Git: create tag (annotated; on HEAD or selected graph commit)",
             group: "git",

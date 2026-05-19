@@ -17,6 +17,7 @@ use crate::git::stage::GitStatusPane;
 use crate::github::{GithubActionsPane, GithubPullRequestsPane};
 use crate::gitlab::{GitlabMergeRequestsPane, GitlabPipelinesPane};
 use crate::grep_pane::GrepPane;
+use crate::image::ImagePane;
 use crate::lsp::diagnostics_pane::DiagnosticsPane;
 use crate::lsp::outline_pane::OutlinePane;
 use crate::playwright::TestsPane;
@@ -122,6 +123,11 @@ pub enum Pane {
     /// `context: "repl"` so adapters with REPL-specific shorthands
     /// (debugpy's `pp`, gdb's `info`) work as expected.
     DapRepl(DapReplPane),
+    /// An image-file viewer (PNG/JPG/GIF/etc.). On terminals supporting
+    /// the Kitty graphics or iTerm2 inline-image protocol, the image
+    /// is painted over the pane's body via a post-ratatui escape
+    /// emission. Otherwise the body shows a metadata-only placeholder.
+    Image(ImagePane),
 }
 
 /// State for [`Pane::DapRepl`]. `input` is the single-line entry;
@@ -386,6 +392,7 @@ impl Pane {
             Pane::Cheatsheet(_) => "Cheatsheet".to_string(),
             Pane::Debug(_) => "Debug".to_string(),
             Pane::DapRepl(_) => "DAP REPL".to_string(),
+            Pane::Image(p) => p.tab_title(),
         }
     }
 
@@ -420,7 +427,8 @@ impl Pane {
             | Pane::AzDevOpsPullRequests(_)
             | Pane::Cheatsheet(_)
             | Pane::Debug(_)
-            | Pane::DapRepl(_) => false,
+            | Pane::DapRepl(_)
+            | Pane::Image(_) => false,
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => false,
             #[cfg(feature = "private")]

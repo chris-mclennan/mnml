@@ -30,7 +30,28 @@
 //! arrive — [`AiState::Streaming`]), then a final [`AiMsg::Done`] with the clean
 //! trimmed answer (or [`AiMsg::Failed`]).
 
+pub mod api_client;
 pub mod transcript;
+
+/// Which backend an AI job hits. `Cli` shells out to `claude -p` (the
+/// historical default — uses the user's auth, supports tool use).
+/// `Api` posts directly to `https://api.anthropic.com/v1/messages` with
+/// SSE streaming (cheaper / faster for short asks; no tool use yet;
+/// requires `$ANTHROPIC_API_KEY`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiBackend {
+    Cli,
+    Api,
+}
+
+impl AiBackend {
+    pub fn parse(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "api" | "http" | "direct" => AiBackend::Api,
+            _ => AiBackend::Cli,
+        }
+    }
+}
 
 use std::path::PathBuf;
 use std::process::Command;
