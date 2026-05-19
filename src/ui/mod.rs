@@ -70,6 +70,7 @@ pub mod test_executions_view;
 pub mod tests_view;
 pub mod theme;
 pub mod toast_stack;
+pub mod tooltip;
 pub mod trace_view;
 pub mod tree_view;
 pub mod welcome;
@@ -366,6 +367,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if app.completion.is_some() {
         completion::draw(frame, app, area, cursor_pos);
+    }
+    // Hover tooltip — sits above everything else (chip popups can't conflict
+    // with picker/prompt/etc. because the hover_chip is only set when the
+    // mouse moves freely outside any modal).
+    if app.hover_chip.is_some() {
+        tooltip::draw(frame, app, area);
     }
 
     // ── terminal cursor ──

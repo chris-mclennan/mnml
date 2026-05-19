@@ -148,6 +148,21 @@ pub enum DiffToolbarAction {
     Close,
 }
 
+/// Which clickable chip the mouse is currently hovering over. Drives the
+/// 500ms-delayed tooltip overlay shown next to the chip — see
+/// `App.hover_chip` + `ui::tooltip` + `HOVER_TOOLTIP_DELAY_MS`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoverChip {
+    /// Statusline mode chip (EDIT / VIEW / TREE / INSERT / NORMAL / …).
+    StatuslineMode,
+    /// Statusline git-branch chip ( main +N …).
+    StatuslineBranch,
+    /// Statusline workspace / active-repo chip ( name).
+    StatuslineWorkspace,
+    /// Statusline clock chip (HH:MM or HH:MMZ).
+    StatuslineClock,
+}
+
 /// One clickable per-hunk action chip in the Hunk view's header
 /// row. The corresponding rect lives on
 /// `app.rects.diff_hunk_buttons`.

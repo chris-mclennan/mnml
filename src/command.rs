@@ -1406,6 +1406,36 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_input_style(),
         },
         Command {
+            id: "clock.local",
+            title: "Clock: show local time",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.clock_show_utc = false;
+                app.toast("clock: local");
+            },
+        },
+        Command {
+            id: "clock.utc",
+            title: "Clock: show UTC",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.clock_show_utc = true;
+                app.toast("clock: UTC");
+            },
+        },
+        Command {
+            id: "clock.hide",
+            title: "Clock: hide statusline clock chip",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.clock = false;
+                app.toast("clock: hidden (`:set clock` to restore)");
+            },
+        },
+        Command {
             id: "theme.pick",
             title: "Pick theme…",
             group: "view",

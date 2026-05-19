@@ -20,6 +20,9 @@ use crate::tree::Tree;
 
 const TOAST_TTL: Duration = Duration::from_secs(4);
 const TOAST_STACK_MAX: usize = 5;
+/// How long the mouse must rest on a clickable chip before its tooltip
+/// appears. 500ms matches VS Code / browser hover-tooltip convention.
+pub const HOVER_TOOLTIP_DELAY_MS: u64 = 500;
 const DAP_LOG_MAX: usize = 500;
 
 /// Cap on `App::recent_files`. Tuned to "deep enough to remember a few tasks
@@ -886,6 +889,10 @@ struct SavedSession {
     /// source of truth for fresh workspaces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     wrap: Option<bool>,
+    /// Statusline clock chip in UTC mode when we quit. `None` (missing
+    /// field) ⇒ default to local time on launch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    clock_show_utc: Option<bool>,
     /// Last `[m] device emulation` preset picked this session (index into
     /// `crate::browser_pane::DEVICE_PRESETS`). Applied to every fresh
     /// `browser.open` so the user doesn't have to re-pick after a relaunch.
@@ -2196,8 +2203,12 @@ pub struct App {
     /// checks + clears this flag at the top of each iteration.
     pub redraw_requested: bool,
     /// Statusline clock chip flips to UTC when true. Toggled by clicking
-    /// the chip; in-memory only (not persisted across launches).
+    /// the chip; persisted across launches via `SavedSession.clock_show_utc`.
     pub clock_show_utc: bool,
+    /// Currently-hovered clickable chip + when it first became hovered.
+    /// After `HOVER_TOOLTIP_DELAY_MS` of stable hover, the tooltip renders
+    /// next to the chip. Cleared on click / typing / mouse-leave.
+    pub hover_chip: Option<(crate::HoverChip, std::time::Instant)>,
     /// True after a quit was refused because of unsaved changes — a second
     /// `request_quit` then goes through. Cleared by saving.
     pub quit_armed: bool,
@@ -2756,6 +2767,7 @@ impl App {
             restart_requested: false,
             redraw_requested: false,
             clock_show_utc: false,
+            hover_chip: None,
             quit_armed: false,
             rects: PaneRects::default(),
             flash_state: None,
@@ -2985,6 +2997,127 @@ impl App {
             ));
         }
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
+    /// Right-click on the statusline branch chip — exposes the common
+    /// per-branch git ops (checkout / new / fetch / pull / push / stash /
+    /// graph / status) as a flat menu so they don't all need keyboard
+    /// chords or the palette.
+    pub fn open_statusline_branch_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = self
+            .git
+            .snapshot()
+            .branch
+            .clone()
+            .unwrap_or_else(|| "git".into());
+        let items = vec![
+            MenuItem::new("Commit graph", MenuAction::Command("git.graph")),
+            MenuItem::new("Status pane", MenuAction::Command("git.status_pane")),
+            MenuItem::new("Checkout branch…", MenuAction::Command("git.checkout")),
+            MenuItem::new("New branch…", MenuAction::Command("git.new_branch")),
+            MenuItem::new("Fetch", MenuAction::Command("git.fetch")),
+            MenuItem::new("Pull", MenuAction::Command("git.pull")),
+            MenuItem::new("Push", MenuAction::Command("git.push")),
+            MenuItem::new("Stash…", MenuAction::Command("git.stash")),
+            MenuItem::new("Stash pop", MenuAction::Command("git.stash_pop")),
+            MenuItem::new("Commit…", MenuAction::Command("git.commit")),
+            MenuItem::new("AI commit message", MenuAction::Command("git.ai_commit")),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
+    /// Right-click on the statusline workspace / repo chip — exposes
+    /// repo + worktree switching so they don't need keyboard chords.
+    pub fn open_statusline_workspace_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = self
+            .repos
+            .get(self.active_repo)
+            .map(|r| r.name.clone())
+            .or_else(|| {
+                self.workspace
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "workspace".into());
+        let mut items = vec![];
+        if self.repos.len() > 1 {
+            items.push(MenuItem::new(
+                "Switch repo…",
+                MenuAction::Command("git.switch_repo"),
+            ));
+            items.push(MenuItem::new(
+                "Next repo",
+                MenuAction::Command("git.next_repo"),
+            ));
+            items.push(MenuItem::new(
+                "Previous repo",
+                MenuAction::Command("git.prev_repo"),
+            ));
+        }
+        items.push(MenuItem::new(
+            "Worktrees…",
+            MenuAction::Command("git.worktrees"),
+        ));
+        items.push(MenuItem::new(
+            "Switch workspace…",
+            MenuAction::Command("view.switch_workspace"),
+        ));
+        items.push(MenuItem::new(
+            "Add workspace…",
+            MenuAction::Command("view.add_workspace"),
+        ));
+        items.push(MenuItem::new(
+            "Refresh repos",
+            MenuAction::Command("git.refresh_repos"),
+        ));
+        items.push(MenuItem::new(
+            "Reveal in Finder",
+            MenuAction::RevealInFinder(self.active_repo_path().to_path_buf()),
+        ));
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
+    /// Right-click on the statusline mode chip — exposes the input-style
+    /// switcher.
+    pub fn open_statusline_mode_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Use vim", MenuAction::Command("editor.use_vim")),
+            MenuItem::new(
+                "Use standard",
+                MenuAction::Command("editor.use_standard"),
+            ),
+            MenuItem::new(
+                "Toggle keymap",
+                MenuAction::Command("editor.toggle_keymap"),
+            ),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some("Input style".into()), anchor, items));
+    }
+
+    /// Right-click on the statusline clock chip — exposes the local ↔ UTC
+    /// toggle as a discoverable menu (vs left-click which just flips).
+    pub fn open_statusline_clock_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let local_label = if self.clock_show_utc {
+            "Show local time"
+        } else {
+            "Show local time (current)"
+        };
+        let utc_label = if self.clock_show_utc {
+            "Show UTC (current)"
+        } else {
+            "Show UTC"
+        };
+        let items = vec![
+            MenuItem::new(local_label, MenuAction::Command("clock.local")),
+            MenuItem::new(utc_label, MenuAction::Command("clock.utc")),
+            MenuItem::new("Hide clock", MenuAction::Command("clock.hide")),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some("Clock".into()), anchor, items));
     }
 
     /// Right-click on a row inside a diff body (standalone or
@@ -23652,6 +23785,7 @@ impl App {
             last_browser_device: self.last_browser_device,
             theme: Some(crate::ui::theme::cur().name.to_string()),
             wrap: Some(self.config.ui.wrap),
+            clock_show_utc: Some(self.clock_show_utc),
             macros: self
                 .macro_buffer
                 .iter()
@@ -23938,6 +24072,9 @@ impl App {
         }
         if let Some(w) = saved.wrap {
             self.config.ui.wrap = w;
+        }
+        if let Some(v) = saved.clock_show_utc {
+            self.clock_show_utc = v;
         }
         // Drop indices that no longer point into the (potentially
         // shorter) preset table — older sessions could have saved an

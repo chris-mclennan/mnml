@@ -54,6 +54,11 @@ fn setup_terminal(title: &str) -> io::Result<Terminal<CrosstermBackend<Stdout>>>
         out,
         EnterAlternateScreen,
         EnableMouseCapture,
+        // Enable all-motion mouse events (?1003h) so hover-without-button
+        // generates `MouseEventKind::Moved`. crossterm's `EnableMouseCapture`
+        // only turns on button + drag tracking by default. Needed for the
+        // statusline chip tooltips.
+        ratatui::crossterm::style::Print("\x1b[?1003h"),
         SetCursorStyle::SteadyBar,
         // OSC 0/2 — sets the terminal window/tab title. Most terminals
         // (Apple Terminal, iTerm2, tmnl, Kitty, WezTerm, …) read this
@@ -86,6 +91,9 @@ fn restore_terminal(term: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result
     execute!(
         term.backend_mut(),
         LeaveAlternateScreen,
+        // Pair with the ?1003h we set in setup_terminal so the host terminal
+        // returns to standard tracking.
+        ratatui::crossterm::style::Print("\x1b[?1003l"),
         DisableMouseCapture,
         SetCursorStyle::DefaultUserShape
     )?;
@@ -217,6 +225,9 @@ fn emit_image_placements(app: &mut App) {
 // ─── key dispatch (shared with headless/IPC) ────────────────────────
 
 pub fn dispatch_key(app: &mut App, key: KeyEvent) {
+    // Any keystroke cancels a pending hover tooltip — the user moved on to
+    // typing, the chip-help is no longer relevant.
+    app.hover_chip = None;
     // Macro recording — capture every keystroke that flows through here.
     // Replaying explicitly skips this so it doesn't re-record into a new
     // macro mid-replay.
@@ -3808,8 +3819,50 @@ fn click_to_file_pos(
     }
 }
 
+/// Which clickable statusline chip (if any) sits under the given mouse coords.
+/// Used by the hover-tooltip system; right-click + left-click handlers do their
+/// own per-chip rect checks since they need to act, not just identify.
+fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChip> {
+    if let Some(r) = app.rects.statusline_mode_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineMode);
+    }
+    if let Some(r) = app.rects.statusline_branch_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineBranch);
+    }
+    if let Some(r) = app.rects.statusline_workspace_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineWorkspace);
+    }
+    if let Some(r) = app.rects.statusline_clock_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineClock);
+    }
+    None
+}
+
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
+
+    // Hover-tooltip tracking — `MouseEventKind::Moved` (no button) updates
+    // which clickable chip the mouse is over; the overlay renders after a
+    // 500ms stable hover. Compute the chip at (x, y) and stash on `App`.
+    // A move OFF every chip clears the hover; click + key events also clear
+    // it (handled elsewhere).
+    if matches!(m.kind, MouseEventKind::Moved) {
+        let now = std::time::Instant::now();
+        let new_chip = hover_chip_at(app, x, y);
+        let prev_chip = app.hover_chip.map(|(c, _)| c);
+        if new_chip != prev_chip {
+            app.hover_chip = new_chip.map(|c| (c, now));
+        }
+        return;
+    }
 
     // A click anywhere dismisses the hover / signature popups (the click
     // still lands). Completion popup clicks are handled specially: a click
@@ -3817,6 +3870,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     if matches!(m.kind, MouseEventKind::Down(_)) {
         app.hover = None;
         app.signature = None;
+        app.hover_chip = None;
         if app.completion.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = m.kind {
                 let hit = app
@@ -3978,6 +4032,32 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
 
     match m.kind {
         MouseEventKind::Down(MouseButton::Right) => {
+            // Right-click on a statusline chip — context menus for the four
+            // clickable chips (branch / workspace / mode / clock).
+            if let Some(r) = app.rects.statusline_branch_chip
+                && contains(r, x, y)
+            {
+                app.open_statusline_branch_context_menu((x, y));
+                return;
+            }
+            if let Some(r) = app.rects.statusline_workspace_chip
+                && contains(r, x, y)
+            {
+                app.open_statusline_workspace_context_menu((x, y));
+                return;
+            }
+            if let Some(r) = app.rects.statusline_mode_chip
+                && contains(r, x, y)
+            {
+                app.open_statusline_mode_context_menu((x, y));
+                return;
+            }
+            if let Some(r) = app.rects.statusline_clock_chip
+                && contains(r, x, y)
+            {
+                app.open_statusline_clock_context_menu((x, y));
+                return;
+            }
             // Right-click → a context menu on the bufferline tab / tree row under it.
             if let Some(&(_, id)) = app
                 .rects
