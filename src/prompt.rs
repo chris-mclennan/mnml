@@ -114,6 +114,15 @@ pub enum PromptKind {
     /// cancels. The same input is used as both tag name AND annotation
     /// message — for finer control the user can drop to a pty.
     GitTag,
+    /// Accept ⇒ set the GitGraph pane's date-range filter from the typed
+    /// spec. Empty ⇒ clear. Accepts `--since=<s>`, `--until=<u>`, or
+    /// `<s>..<u>` shorthand; any git-recognized date works
+    /// (`1 week ago`, `2026-01-01`, …).
+    GitGraphDateFilter,
+    /// Accept ⇒ set `LogFilter.author` to the typed pattern. Empty ⇒ clear.
+    GitGraphAuthorFilter,
+    /// Accept ⇒ set `LogFilter.grep` to the typed pattern. Empty ⇒ clear.
+    GitGraphGrepFilter,
 }
 
 #[derive(Debug)]

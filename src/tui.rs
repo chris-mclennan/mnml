@@ -3363,6 +3363,15 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             // Branch filter — `b` opens picker, `B` clears.
             KeyCode::Char('b') => app.open_git_graph_branch_filter_picker(),
             KeyCode::Char('B') => app.apply_git_graph_branch_filter(None),
+            // Date / author / subject filters. `D` for date avoids the
+            // lowercase `d` page-down chord already taken above.
+            KeyCode::Char('D') => app.open_git_graph_date_filter_prompt(),
+            KeyCode::Char('a') => app.open_git_graph_author_filter_prompt(),
+            KeyCode::Char('s') => app.open_git_graph_grep_filter_prompt(),
+            // Capital `F` clears every filter at once.
+            KeyCode::Char('F') => {
+                let _ = crate::command::run("git.graph_filter_reset_all", app);
+            }
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }
@@ -3855,6 +3864,38 @@ fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChip> {
     {
         return Some(crate::HoverChip::RailHeaderChip(action));
     }
+    if let Some(&(_, pid)) = app
+        .rects
+        .bufferline_tabs
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::BufferlineTab(pid));
+    }
+    if let Some(&(_, _, action)) = app
+        .rects
+        .diff_toolbar_buttons
+        .iter()
+        .find(|(r, _, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::DiffToolbar(action));
+    }
+    if app
+        .rects
+        .fold_chips
+        .iter()
+        .any(|(r, _, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::FoldChip);
+    }
+    if app
+        .rects
+        .code_lens_chips
+        .iter()
+        .any(|(r, _, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::CodeLensChip);
+    }
     None
 }
 
@@ -4079,6 +4120,23 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 && contains(r, x, y)
             {
                 app.open_statusline_clock_context_menu((x, y));
+                return;
+            }
+            // Right-click on an editor gutter → per-line menu (toggle BP /
+            // goto def / refs / blame / browse line). Translate the click
+            // y into a file row using the pane's current scroll.
+            if let Some(&(gr, pid)) = app
+                .rects
+                .editor_gutters
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+            {
+                let row_in_pane = (y - gr.y) as usize;
+                let line = match app.panes.get(pid) {
+                    Some(Pane::Editor(b)) => b.scroll + row_in_pane,
+                    _ => row_in_pane,
+                };
+                app.open_editor_gutter_context_menu(pid, line as u32, (x, y));
                 return;
             }
             // Right-click → a context menu on the bufferline tab / tree row under it.

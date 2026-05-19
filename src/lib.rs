@@ -183,6 +183,16 @@ pub enum HoverChip {
     StatuslineClock,
     /// A `> GIT` rail-header chip (one per action enum).
     RailHeaderChip(GitRailHeaderAction),
+    /// A bufferline tab (carries the pane id). Tooltip shows the full path
+    /// + dirty state — `display_name()` is workspace-relative + truncated.
+    BufferlineTab(crate::layout::PaneId),
+    /// A diff toolbar chip (Hunk / Inline / Split / Wrap / Close).
+    DiffToolbar(DiffToolbarAction),
+    /// A fold-collapsed chip (`⋯ N hidden`) — tooltip explains click to expand.
+    FoldChip,
+    /// A code-lens chip (`⚡ <title>`) — tooltip shows the full title in case
+    /// the rendered chip got truncated.
+    CodeLensChip,
 }
 
 /// One clickable per-hunk action chip in the Hunk view's header

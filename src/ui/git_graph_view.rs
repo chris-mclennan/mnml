@@ -246,7 +246,29 @@ pub fn draw(
         },
     );
 
-    // Column header
+    // Column header — build a chip label from every active LogFilter
+    // field so users can see the narrowing scope at a glance.
+    let mut chips: Vec<String> = Vec::new();
+    if let Some(b) = &g.filter.branch {
+        chips.push(format!("⎇ {b}"));
+    }
+    if let Some(a) = &g.filter.author {
+        chips.push(format!("@{a}"));
+    }
+    if let Some(grep) = &g.filter.grep {
+        chips.push(format!("~{grep}"));
+    }
+    match (&g.filter.since, &g.filter.until) {
+        (Some(s), Some(u)) => chips.push(format!("{s}..{u}")),
+        (Some(s), None) => chips.push(format!("since {s}")),
+        (None, Some(u)) => chips.push(format!("until {u}")),
+        _ => {}
+    }
+    let filter_label = if chips.is_empty() {
+        None
+    } else {
+        Some(format!("{} · F clears", chips.join(" · ")))
+    };
     draw_header(
         frame,
         header_area,
@@ -254,7 +276,7 @@ pub fn draw(
         &cols,
         graph_w,
         &g.hash_filter,
-        g.filter.branch.as_deref(),
+        filter_label.as_deref(),
     );
 
     let mut rows: Vec<Line> = Vec::with_capacity(h);
@@ -1631,7 +1653,9 @@ fn draw_header(
     cols: &ColWidths,
     graph_w: usize,
     hash_filter: &str,
-    branch_filter: Option<&str>,
+    // Combined filter chip label (`⎇ feat · @alice · since 1 week ago …`)
+    // — `None` means no active filter, so the column shows "COMMIT MESSAGE".
+    filter_label: Option<&str>,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -1690,11 +1714,11 @@ fn draw_header(
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         )
-    } else if let Some(b) = branch_filter {
-        // Branch-scoped view — chip the active branch + a `B clears` hint.
-        let chip = format!("⎇ {b} · B clears");
+    } else if let Some(chip) = filter_label {
+        // Active filter (branch / author / grep / since-until) — chip
+        // the combined label in yellow so the narrowed scope is obvious.
         (
-            pad_or_truncate(&chip, subject_w),
+            pad_or_truncate(chip, subject_w),
             Style::default()
                 .fg(t.bg_darker)
                 .bg(t.yellow)

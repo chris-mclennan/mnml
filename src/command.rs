@@ -1703,10 +1703,51 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "git.graph_filter_clear",
-            title: "Graph: clear filter (show all)",
+            title: "Graph: clear branch filter (show all)",
             group: "git",
             keys: &[],
             run: |app| app.apply_git_graph_branch_filter(None),
+        },
+        Command {
+            id: "git.graph_filter_date",
+            title: "Graph: filter by date range…",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_git_graph_date_filter_prompt(),
+        },
+        Command {
+            id: "git.graph_filter_author",
+            title: "Graph: filter by author…",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_git_graph_author_filter_prompt(),
+        },
+        Command {
+            id: "git.graph_filter_subject",
+            title: "Graph: filter by subject (grep)…",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_git_graph_grep_filter_prompt(),
+        },
+        Command {
+            id: "git.graph_filter_reset_all",
+            title: "Graph: clear ALL filters (branch / date / author / subject)",
+            group: "git",
+            keys: &[],
+            run: |app| {
+                if let Some(crate::pane::Pane::GitGraph(g)) = app
+                    .active
+                    .and_then(|i| app.panes.get_mut(i))
+                {
+                    g.filter = crate::git::log::LogFilter::default();
+                    g.selected = 0;
+                    g.scroll = 0;
+                    g.refresh();
+                    app.toast("graph filter: cleared all");
+                } else {
+                    app.toast("no active GitGraph pane");
+                }
+            },
         },
         Command {
             id: "git.file_history",

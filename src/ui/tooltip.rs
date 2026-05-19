@@ -124,5 +124,68 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             };
             Some((rect, label.into(), None))
         }
+        HoverChip::BufferlineTab(pid) => {
+            let rect = app
+                .rects
+                .bufferline_tabs
+                .iter()
+                .find(|(_, p)| *p == pid)
+                .map(|(r, _)| *r)?;
+            // For editor panes, prefer the workspace-relative path so the
+            // tooltip is the full file location. Fall back to the pane's
+            // generic title for non-editor panes (Git status / Browser / …).
+            use crate::pane::Pane;
+            let label = match app.panes.get(pid) {
+                Some(Pane::Editor(b)) => match &b.path {
+                    Some(p) => {
+                        let rel = p
+                            .strip_prefix(&app.workspace)
+                            .unwrap_or(p)
+                            .to_string_lossy()
+                            .into_owned();
+                        if b.dirty {
+                            format!("{rel}  ●")
+                        } else {
+                            rel
+                        }
+                    }
+                    None => b.display_name().to_string(),
+                },
+                Some(p) => p.title(),
+                None => "tab".into(),
+            };
+            Some((
+                rect,
+                label,
+                Some("click: focus · middle: close · right: menu".into()),
+            ))
+        }
+        HoverChip::DiffToolbar(action) => {
+            let rect = app
+                .rects
+                .diff_toolbar_buttons
+                .iter()
+                .find(|(_, _, a)| *a == action)
+                .map(|(r, _, _)| *r)?;
+            let label = match action {
+                crate::DiffToolbarAction::ViewInline => "view: inline (whole file)",
+                crate::DiffToolbarAction::ViewHunk => "view: hunks (focused)",
+                crate::DiffToolbarAction::ViewSplit => "view: split (side-by-side)",
+                crate::DiffToolbarAction::ToggleWrap => "toggle word wrap",
+                crate::DiffToolbarAction::Close => "close diff",
+            };
+            Some((rect, label.into(), None))
+        }
+        HoverChip::FoldChip => {
+            // Tooltip anchors above the first fold chip the cursor is over.
+            // Mouse is over a fold chip so at least one is hovered — find
+            // the first rect that matches.
+            let rect = app.rects.fold_chips.first().map(|(r, _, _)| *r)?;
+            Some((rect, "click: unfold this block".into(), None))
+        }
+        HoverChip::CodeLensChip => {
+            let rect = app.rects.code_lens_chips.first().map(|(r, _, _)| *r)?;
+            Some((rect, "click: run code lens".into(), None))
+        }
     }
 }

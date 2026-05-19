@@ -118,6 +118,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.statusline = None;
         app.rects.body = Some(area);
         app.rects.editor_panes.clear();
+        app.rects.editor_gutters.clear();
         app.rects.fold_chips.clear();
         app.rects.code_lens_chips.clear();
         app.rects.wip_buttons.clear();

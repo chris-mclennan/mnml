@@ -1137,6 +1137,17 @@ pub fn draw_pane(
         }
     }
 
+    if gutter_w > 0 && area.height > 0 {
+        app.rects.editor_gutters.push((
+            Rect {
+                x: area.x,
+                y: area.y,
+                width: gutter_w,
+                height: area.height,
+            },
+            pane_id,
+        ));
+    }
     app.rects.editor_panes.push((
         Rect {
             x: text_x,

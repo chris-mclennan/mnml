@@ -1639,6 +1639,11 @@ pub struct PaneRects {
     /// (gutter excluded). Click → focus that leaf + place the cursor; also the
     /// geometry `Ctrl+W`-style focus navigation uses.
     pub editor_panes: Vec<(Rect, PaneId)>,
+    /// `(gutter_rect, pane_id)` per visible editor leaf — the line-number /
+    /// sign-column strip on the left of each editor. Right-click here opens
+    /// a per-line context menu (toggle breakpoint, goto def, blame at line, …);
+    /// left-click is currently a no-op (the text area handles place-cursor).
+    pub editor_gutters: Vec<(Rect, PaneId)>,
     /// `(chip_rect, pane_id, fold_start_line)` per rendered `⋯ N hidden`
     /// chip — click on one to unfold that block. Cleared + rebuilt per
     /// editor render.
@@ -3045,6 +3050,59 @@ impl App {
             }
             Err(e) => self.toast(format!("git add -A: {e}")),
         }
+    }
+
+    /// Right-click on an editor gutter row — exposes the most common line-
+    /// scoped operations as a discoverable menu. Mouse coords identify
+    /// `(pane_id, line)`; the menu items run against that target.
+    pub fn open_editor_gutter_context_menu(
+        &mut self,
+        pane_id: PaneId,
+        line: u32,
+        anchor: (u16, u16),
+    ) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        // Place the cursor + focus the pane so the existing line-scoped
+        // commands (which read the cursor position) act on the right line.
+        let prior_active = self.active;
+        self.active = Some(pane_id);
+        self.focus_pane();
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(pane_id) {
+            b.editor.place_cursor(line as usize, 0);
+        }
+        let title = self
+            .panes
+            .get(pane_id)
+            .and_then(|p| match p {
+                Pane::Editor(b) => Some(b.display_name().to_string()),
+                _ => None,
+            })
+            .map(|name| format!("{name} : line {}", line + 1))
+            .unwrap_or_else(|| format!("line {}", line + 1));
+        let items = vec![
+            MenuItem::new(
+                "Toggle breakpoint",
+                MenuAction::Command("dap.toggle_breakpoint"),
+            ),
+            MenuItem::new(
+                "Conditional breakpoint…",
+                MenuAction::Command("dap.toggle_breakpoint_conditional"),
+            ),
+            MenuItem::new(
+                "Go to definition",
+                MenuAction::Command("lsp.goto_definition"),
+            ),
+            MenuItem::new("Find references", MenuAction::Command("lsp.references")),
+            MenuItem::new("Hover info", MenuAction::Command("lsp.hover")),
+            MenuItem::new("Peek change", MenuAction::Command("git.peek_change")),
+            MenuItem::new("Toggle blame", MenuAction::Command("git.blame_toggle")),
+            MenuItem::new(
+                "Open at remote (browse line)",
+                MenuAction::Command("git.browse"),
+            ),
+        ];
+        let _ = prior_active; // Capture happened above for future hooks.
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
     /// Right-click on the statusline branch chip — exposes the common
@@ -4828,6 +4886,165 @@ impl App {
         g.scroll = 0;
         g.refresh();
         self.toast(format!("graph filter: branch={label}"));
+    }
+
+    /// Apply a date-range filter to the active GitGraph pane. Accepts the
+    /// `<since>..<until>` shorthand (either side may be empty),
+    /// `--since=<s>` / `--until=<u>` flag form, or a bare expression
+    /// treated as `since`. Empty input clears both endpoints. Git's date
+    /// parsing accepts any of `1 week ago` / `2026-01-01` / `last Monday`.
+    pub fn apply_git_graph_date_filter(&mut self, raw: &str) {
+        let Some(cur) = self.active else {
+            self.toast("no active GitGraph pane");
+            return;
+        };
+        let Some(Pane::GitGraph(g)) = self.panes.get_mut(cur) else {
+            self.toast("no active GitGraph pane");
+            return;
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            g.filter.since = None;
+            g.filter.until = None;
+            g.selected = 0;
+            g.scroll = 0;
+            g.refresh();
+            self.toast("graph filter: cleared date range");
+            return;
+        }
+        // Parse three accepted shapes.
+        let (since, until) = if let Some(rest) = trimmed.strip_prefix("--since=") {
+            (Some(rest.trim().to_string()), None)
+        } else if let Some(rest) = trimmed.strip_prefix("--until=") {
+            (None, Some(rest.trim().to_string()))
+        } else if let Some((a, b)) = trimmed.split_once("..") {
+            let a = a.trim();
+            let b = b.trim();
+            (
+                (!a.is_empty()).then(|| a.to_string()),
+                (!b.is_empty()).then(|| b.to_string()),
+            )
+        } else {
+            (Some(trimmed.to_string()), None)
+        };
+        g.filter.since = since.clone();
+        g.filter.until = until.clone();
+        g.selected = 0;
+        g.scroll = 0;
+        g.refresh();
+        let label = match (since, until) {
+            (Some(s), Some(u)) => format!("since={s} until={u}"),
+            (Some(s), None) => format!("since={s}"),
+            (None, Some(u)) => format!("until={u}"),
+            (None, None) => "all".into(),
+        };
+        self.toast(format!("graph filter: {label}"));
+    }
+
+    /// Apply an author filter. Empty input clears.
+    pub fn apply_git_graph_author_filter(&mut self, raw: &str) {
+        let Some(cur) = self.active else {
+            self.toast("no active GitGraph pane");
+            return;
+        };
+        let Some(Pane::GitGraph(g)) = self.panes.get_mut(cur) else {
+            self.toast("no active GitGraph pane");
+            return;
+        };
+        let val = raw.trim();
+        g.filter.author = (!val.is_empty()).then(|| val.to_string());
+        g.selected = 0;
+        g.scroll = 0;
+        g.refresh();
+        self.toast(if val.is_empty() {
+            "graph filter: author cleared".to_string()
+        } else {
+            format!("graph filter: author={val}")
+        });
+    }
+
+    /// Apply a subject (message) grep filter. Empty input clears.
+    pub fn apply_git_graph_grep_filter(&mut self, raw: &str) {
+        let Some(cur) = self.active else {
+            self.toast("no active GitGraph pane");
+            return;
+        };
+        let Some(Pane::GitGraph(g)) = self.panes.get_mut(cur) else {
+            self.toast("no active GitGraph pane");
+            return;
+        };
+        let val = raw.trim();
+        g.filter.grep = (!val.is_empty()).then(|| val.to_string());
+        g.selected = 0;
+        g.scroll = 0;
+        g.refresh();
+        self.toast(if val.is_empty() {
+            "graph filter: subject cleared".to_string()
+        } else {
+            format!("graph filter: subject~{val}")
+        });
+    }
+
+    /// Open a prompt to set the GitGraph date-range filter.
+    pub fn open_git_graph_date_filter_prompt(&mut self) {
+        if !matches!(self.active_pane(), Some(Pane::GitGraph(_))) {
+            self.toast("open the commit graph first (git.graph)");
+            return;
+        }
+        let seed = if let Some(Pane::GitGraph(g)) = self.active_pane() {
+            match (&g.filter.since, &g.filter.until) {
+                (Some(s), Some(u)) => format!("{s}..{u}"),
+                (Some(s), None) => s.clone(),
+                (None, Some(u)) => format!("..{u}"),
+                (None, None) => String::new(),
+            }
+        } else {
+            String::new()
+        };
+        let prompt = crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::GitGraphDateFilter,
+            "Date range (since[..until], empty clears)",
+            seed,
+        );
+        self.prompt = Some(prompt);
+    }
+
+    /// Open a prompt to set the GitGraph author filter.
+    pub fn open_git_graph_author_filter_prompt(&mut self) {
+        if !matches!(self.active_pane(), Some(Pane::GitGraph(_))) {
+            self.toast("open the commit graph first (git.graph)");
+            return;
+        }
+        let seed = if let Some(Pane::GitGraph(g)) = self.active_pane() {
+            g.filter.author.clone().unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let prompt = crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::GitGraphAuthorFilter,
+            "Author (regex; empty clears)",
+            seed,
+        );
+        self.prompt = Some(prompt);
+    }
+
+    /// Open a prompt to set the GitGraph subject-grep filter.
+    pub fn open_git_graph_grep_filter_prompt(&mut self) {
+        if !matches!(self.active_pane(), Some(Pane::GitGraph(_))) {
+            self.toast("open the commit graph first (git.graph)");
+            return;
+        }
+        let seed = if let Some(Pane::GitGraph(g)) = self.active_pane() {
+            g.filter.grep.clone().unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let prompt = crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::GitGraphGrepFilter,
+            "Subject contains (empty clears)",
+            seed,
+        );
+        self.prompt = Some(prompt);
     }
 
     /// Open the branch-picker variant that, on accept, narrows the active
@@ -14312,6 +14529,18 @@ impl App {
             crate::prompt::PromptKind::GitDiscardFile => {
                 let typed = p.input.clone();
                 self.accept_discard_file(&typed);
+            }
+            crate::prompt::PromptKind::GitGraphDateFilter => {
+                let typed = p.input.clone();
+                self.apply_git_graph_date_filter(&typed);
+            }
+            crate::prompt::PromptKind::GitGraphAuthorFilter => {
+                let typed = p.input.clone();
+                self.apply_git_graph_author_filter(&typed);
+            }
+            crate::prompt::PromptKind::GitGraphGrepFilter => {
+                let typed = p.input.clone();
+                self.apply_git_graph_grep_filter(&typed);
             }
         }
     }

@@ -72,6 +72,11 @@ pub struct LogFilter {
     pub branch: Option<String>,
     pub since: Option<String>,
     pub until: Option<String>,
+    /// `--author=<pattern>` — fixed-string or regex; git treats it as
+    /// a regex but a plain name still matches (`John` finds "John Doe").
+    pub author: Option<String>,
+    /// `--grep=<pattern>` against commit messages.
+    pub grep: Option<String>,
 }
 
 /// Load up to `limit` commits honoring `filter`. The lane layout
@@ -96,6 +101,13 @@ pub fn load_filtered(workspace: &Path, limit: usize, filter: &LogFilter) -> Vec<
     }
     if let Some(u) = &filter.until {
         args.push(format!("--until={u}"));
+    }
+    if let Some(a) = &filter.author {
+        args.push(format!("--author={a}"));
+    }
+    if let Some(g) = &filter.grep {
+        args.push(format!("--grep={g}"));
+        args.push("--regexp-ignore-case".into());
     }
     let out = match Command::new("git")
         .args(&args)
