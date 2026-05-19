@@ -141,10 +141,17 @@ pub fn draw(
                     body_area,
                 );
                 // Stage a paint request for tui.rs to act on after draw.
-                app.image_paint_requests.push(crate::image::PaintRequest {
-                    pane_id,
-                    area: body_area,
-                });
+                // Compute the PNG bytes first (decoding non-PNG sources
+                // on first access) so the emitter can stay agnostic.
+                if let Some(Pane::Image(p)) = app.panes.get_mut(pane_id)
+                    && let Ok(png_bytes) = p.data.ensure_png_bytes()
+                {
+                    app.image_paint_requests.push(crate::image::PaintRequest {
+                        pane_id,
+                        area: body_area,
+                        png_bytes,
+                    });
+                }
             }
         }
     }

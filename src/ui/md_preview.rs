@@ -29,6 +29,7 @@ pub fn draw(
     let bg = theme::cur().bg_dark;
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
 
+    let protocol = app.image_protocol;
     let Some(Pane::MdPreview(p)) = app.panes.get_mut(pane_id) else {
         return None;
     };
@@ -39,13 +40,22 @@ pub fn draw(
         width: area.width.saturating_sub(1),
         height: area.height,
     };
-    let lines = wrap_lines(render_markdown(&p.source), text_area.width as usize);
+    // Image-aware render path: when the terminal can paint images, reserve
+    // rows for `![alt](path)` references so the post-draw overlay has a
+    // place to land. Plain-text terminal (no image protocol) still gets
+    // the placeholder rows + dim caption — keeps line-count math
+    // identical between the two paths so scroll position is stable.
+    let directives = parse_image_directives(&p.source);
+    let lines = wrap_lines(
+        render_markdown_with_image_placeholders(&p.source),
+        text_area.width as usize,
+    );
     let h = area.height as usize;
     let max_scroll = lines.len().saturating_sub(h.min(lines.len()));
     p.scroll = p.scroll.min(max_scroll);
     let scroll = p.scroll;
 
-    let view: Vec<Line> = lines.into_iter().skip(scroll).take(h).collect();
+    let view: Vec<Line> = lines.iter().skip(scroll).take(h).cloned().collect();
     frame.render_widget(
         Paragraph::new(view).style(Style::default().bg(bg)),
         text_area,
@@ -53,6 +63,86 @@ pub fn draw(
 
     // Record the pane's rect so a click focuses it / the wheel scrolls it.
     app.rects.editor_panes.push((text_area, pane_id));
+
+    // Stage image paint requests for any directive whose row range
+    // intersects the viewport. Skip when the terminal has no image
+    // protocol — the dim alt-text caption already covers that case.
+    let mut requests: Vec<crate::image::PaintRequest> = Vec::new();
+    if !matches!(protocol, crate::image::ImageProtocol::None) {
+        let base_dir = p
+            .path
+            .parent()
+            .map(|d| d.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let mut needed_paths: std::collections::HashSet<std::path::PathBuf> =
+            std::collections::HashSet::new();
+        for d in &directives {
+            // Resolve `d.path` relative to the .md file's directory.
+            let raw = std::path::Path::new(&d.path);
+            let resolved = if raw.is_absolute() {
+                raw.to_path_buf()
+            } else {
+                base_dir.join(raw)
+            };
+            let resolved = resolved.canonicalize().unwrap_or(resolved);
+            needed_paths.insert(resolved.clone());
+            // Lazy-load + cache.
+            if !p.image_cache.contains_key(&resolved)
+                && let Ok(data) = crate::image::load(&resolved)
+            {
+                p.image_cache.insert(resolved.clone(), data);
+            }
+            // Is this directive's row range inside the visible window?
+            let start = d.line_idx;
+            let end = d.line_idx + d.rows as usize;
+            let v_start = scroll;
+            let v_end = scroll + h;
+            if end <= v_start || start >= v_end {
+                continue;
+            }
+            // Clip to the viewport.
+            let visible_start = start.max(v_start);
+            let visible_end = end.min(v_end);
+            let visible_rows = (visible_end - visible_start) as u16;
+            if visible_rows == 0 {
+                continue;
+            }
+            // The first placeholder row holds the caption; offset the
+            // image start by 1 so the caption stays visible.
+            let row_offset_in_doc = visible_start - start;
+            let caption_offset: u16 = if row_offset_in_doc == 0 { 1 } else { 0 };
+            let image_rows = visible_rows.saturating_sub(caption_offset);
+            if image_rows == 0 {
+                continue;
+            }
+            let image_y = text_area
+                .y
+                .saturating_add((visible_start - scroll) as u16)
+                .saturating_add(caption_offset);
+            let image_area = ratatui::layout::Rect {
+                x: text_area.x.saturating_add(2),
+                y: image_y,
+                width: text_area.width.saturating_sub(4),
+                height: image_rows,
+            };
+            // Compute the PNG bytes (decoding non-PNG on first access).
+            // The cache holds the ImageData; ensure_png_bytes is &mut.
+            if let Some(data) = p.image_cache.get_mut(&resolved)
+                && let Ok(png_bytes) = data.ensure_png_bytes()
+            {
+                requests.push(crate::image::PaintRequest {
+                    pane_id,
+                    area: image_area,
+                    png_bytes,
+                });
+            }
+        }
+        // Drop stale cache entries.
+        p.image_cache.retain(|k, _| needed_paths.contains(k));
+    }
+    // Re-borrow `app` to push the staged requests now that `p` is dropped.
+    app.image_paint_requests.extend(requests);
+
     None // no caret in a preview
 }
 
@@ -155,8 +245,114 @@ fn styled_line(prefix: Option<Span<'static>>, text: &str, base: Style) -> Line<'
     Line::from(spans)
 }
 
+/// One inline-image reference parsed out of a markdown source. Lives on a
+/// single source line (the renderer expects standalone `![alt](path)` rows;
+/// images embedded mid-paragraph fall through to the link parser and render
+/// as normal text).
+#[derive(Debug, Clone)]
+pub struct ImageDirective {
+    /// Index into `render_markdown`'s returned `Vec<Line>` where this
+    /// image's placeholder rows start.
+    pub line_idx: usize,
+    /// How many rows the image occupies (the renderer pads with that many
+    /// blank lines so caller can paint the image overlay on top).
+    pub rows: u16,
+    /// Image-source path as written in the markdown — relative to the
+    /// `.md` file's directory. The caller resolves it to an absolute
+    /// path against `MdPreview.path`'s parent before loading.
+    pub path: String,
+    /// `![alt](path)` — alt text, shown as the placeholder caption when
+    /// the terminal has no image protocol or the file can't be loaded.
+    pub alt: String,
+}
+
+/// Default height in cells for an embedded image. Many screenshots are
+/// taller than this; the image scales to fit. Picked to be unobtrusive
+/// inside paragraphs.
+pub const DEFAULT_IMAGE_ROWS: u16 = 12;
+
+/// Walk the markdown source and pick out every standalone-line
+/// `![alt](path)` image. Returns directives keyed by the rendered
+/// `Vec<Line>` index — the caller is responsible for slicing visible
+/// rows + staging paint requests. The expectation is that the renderer
+/// emits `DEFAULT_IMAGE_ROWS` blank lines for each directive so the
+/// image overlay has room to paint.
+pub fn parse_image_directives(src: &str) -> Vec<ImageDirective> {
+    let mut out: Vec<ImageDirective> = Vec::new();
+    let mut rendered_idx: usize = 0;
+    let mut in_code = false;
+    let mut prev_was_content = false;
+    for raw in src.lines() {
+        let trimmed = raw.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_code = !in_code;
+            continue; // fence lines aren't rendered
+        }
+        if in_code {
+            rendered_idx += 1;
+            prev_was_content = true;
+            continue;
+        }
+        // Headings emit a blank line before them when prev was content —
+        // mirror the same logic so rendered_idx tracks correctly.
+        let is_heading = trimmed.starts_with('#');
+        if is_heading && prev_was_content {
+            rendered_idx += 1;
+        }
+        // Detect a standalone `![alt](path)` line. Tolerate trailing
+        // whitespace / surrounding punctuation? No — keep strict so we
+        // don't mis-fire on inline references.
+        if let Some(img) = parse_image_line(trimmed) {
+            out.push(ImageDirective {
+                line_idx: rendered_idx,
+                rows: DEFAULT_IMAGE_ROWS,
+                path: img.0,
+                alt: img.1,
+            });
+            // Renderer will emit `DEFAULT_IMAGE_ROWS` blanks for this.
+            rendered_idx += DEFAULT_IMAGE_ROWS as usize;
+        } else {
+            rendered_idx += 1;
+        }
+        prev_was_content = !trimmed.is_empty();
+    }
+    out
+}
+
+/// Parse a single line for the standalone `![alt](path)` shape.
+/// Returns `(path, alt)`. The opening `![` must be at the start of the
+/// trimmed line and the `)` must be the last char (no trailing text).
+fn parse_image_line(line: &str) -> Option<(String, String)> {
+    let line = line.trim_end();
+    if !line.starts_with("![") || !line.ends_with(')') {
+        return None;
+    }
+    let alt_close = line.find("](")?;
+    let alt = &line[2..alt_close];
+    let path = &line[alt_close + 2..line.len() - 1];
+    if path.is_empty() {
+        return None;
+    }
+    Some((path.to_string(), alt.to_string()))
+}
+
 /// Render markdown `src` to styled lines (block-level styling + inline spans).
+/// When `with_image_placeholders` is true, standalone `![alt](path)` lines emit
+/// `DEFAULT_IMAGE_ROWS` blank lines + a dim alt-text caption (so the caller
+/// can paint the image overlay on top). When false, image lines render as
+/// normal text (the AI-pane renderer doesn't want the placeholders).
 pub fn render_markdown(src: &str) -> Vec<Line<'static>> {
+    render_markdown_with_options(src, false)
+}
+
+/// Same as [`render_markdown`] but reserves blank rows for inline image
+/// embeds. Pair with [`parse_image_directives`] to know which rendered
+/// row each image lives at.
+pub fn render_markdown_with_image_placeholders(src: &str) -> Vec<Line<'static>> {
+    render_markdown_with_options(src, true)
+}
+
+fn render_markdown_with_options(src: &str, with_image_placeholders: bool) -> Vec<Line<'static>> {
     let t = theme::cur();
     let body = Style::default().fg(t.fg).bg(t.bg_dark);
     let blank = || Line::from(Span::styled(String::new(), body));
@@ -168,6 +364,25 @@ pub fn render_markdown(src: &str) -> Vec<Line<'static>> {
         // fenced code blocks (the fence line itself isn't rendered)
         if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
             in_code = !in_code;
+            continue;
+        }
+        // Standalone image line: emit `DEFAULT_IMAGE_ROWS` placeholder
+        // rows so the caller can paint the image overlay on top. First
+        // row is a dim caption (alt text); the rest are blank with the
+        // body background color so the overlay has a clean canvas.
+        if with_image_placeholders && let Some((_path, alt)) = parse_image_line(trimmed) {
+            let caption = if alt.is_empty() {
+                "  [image]".to_string()
+            } else {
+                format!("  [image: {alt}]")
+            };
+            out.push(Line::from(Span::styled(
+                caption,
+                body.fg(t.comment).add_modifier(Modifier::ITALIC),
+            )));
+            for _ in 1..DEFAULT_IMAGE_ROWS {
+                out.push(Line::from(Span::styled(" ".repeat(0), body)));
+            }
             continue;
         }
         if in_code {
@@ -430,5 +645,53 @@ mod tests {
         let md = "# Title\n\nsome **text**\n\n- one\n- two\n\n```\ncode\n```\n> a quote\n---\n";
         let lines = render_markdown(md);
         assert!(lines.len() >= 6, "got {} lines", lines.len());
+    }
+
+    #[test]
+    fn parse_image_line_picks_path_and_alt() {
+        assert_eq!(
+            parse_image_line("![diagram](img/foo.png)"),
+            Some(("img/foo.png".to_string(), "diagram".to_string()))
+        );
+        assert_eq!(
+            parse_image_line("![](a.png)"),
+            Some(("a.png".to_string(), String::new()))
+        );
+    }
+
+    #[test]
+    fn parse_image_line_refuses_non_image_lines() {
+        // Not an image — a link with `![text]` adjacent to something else.
+        assert!(parse_image_line("text ![alt](foo.png)").is_none());
+        assert!(parse_image_line("![alt](foo.png) extra").is_none());
+        assert!(parse_image_line("![alt without close").is_none());
+        assert!(parse_image_line("plain line").is_none());
+        // Empty path is refused.
+        assert!(parse_image_line("![alt]()").is_none());
+    }
+
+    #[test]
+    fn parse_image_directives_finds_standalone_images() {
+        let md = "# Title\n\nsome text\n\n![diagram](img/a.png)\n\nmore text\n\n![second](b.jpg)";
+        let dirs = parse_image_directives(md);
+        assert_eq!(dirs.len(), 2);
+        assert_eq!(dirs[0].path, "img/a.png");
+        assert_eq!(dirs[0].alt, "diagram");
+        assert_eq!(dirs[1].path, "b.jpg");
+        assert_eq!(dirs[1].alt, "second");
+    }
+
+    #[test]
+    fn parse_image_directives_skips_inline_image_refs() {
+        // Image embedded in a paragraph isn't a directive — falls through
+        // to the inline-link renderer.
+        let md = "see ![alt](foo.png) inline";
+        assert!(parse_image_directives(md).is_empty());
+    }
+
+    #[test]
+    fn parse_image_directives_skips_images_in_code_fences() {
+        let md = "```\n![not](real.png)\n```\n";
+        assert!(parse_image_directives(md).is_empty());
     }
 }

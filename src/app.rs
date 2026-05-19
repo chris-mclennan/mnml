@@ -8960,6 +8960,7 @@ impl App {
             path,
             source,
             scroll: 0,
+            image_cache: std::collections::HashMap::new(),
         });
         let prior_active = self.active;
         let anchor = near.or(prior_active);

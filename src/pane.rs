@@ -265,6 +265,10 @@ pub struct MdPreview {
     pub path: PathBuf,
     pub source: String,
     pub scroll: usize,
+    /// Cache of loaded images for inline embedding. Keyed by the absolute
+    /// resolved path. Cleared when the source's image set changes
+    /// (entries no longer referenced are dropped).
+    pub image_cache: std::collections::HashMap<PathBuf, crate::image::ImageData>,
 }
 
 impl MdPreview {

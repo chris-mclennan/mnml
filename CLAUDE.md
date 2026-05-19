@@ -83,6 +83,37 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Markdown preview: inline image embedding (2026-05-18 cont.):**
+ties the wave-2 image plumbing to a daily-use feature. New
+`parse_image_directives(src) → Vec<ImageDirective{line_idx, rows,
+path, alt}>` walks the markdown source for standalone `![alt](path)`
+lines and records (rendered-row-index, source-path, alt-text) for
+each. `render_markdown_with_image_placeholders` extends the existing
+renderer with a `with_image_placeholders` flag — when on,
+standalone-image lines emit `DEFAULT_IMAGE_ROWS = 12` placeholder
+rows (first row a dim italic `[image: alt]` caption; rest blank) so
+the post-`terminal.draw()` overlay has room to land. Path resolution
+is relative to the `.md` file's parent dir (handles workspace-
+relative paths like `img/foo.png`); absolute paths pass through.
+New `MdPreview.image_cache: HashMap<PathBuf, ImageData>` caches the
+loaded + decoded PNG bytes (via `ensure_png_bytes`) across frames so
+typing / scrolling doesn't re-decode. Stale entries auto-evict when
+the source's image set shrinks. **`PaintRequest` was refactored** to
+carry `png_bytes: Arc<Vec<u8>>` directly instead of pointing at a
+pane — the emitter in `tui.rs::emit_image_placements` no longer
+needs to know which pane variant owns the image (was Pane::Image
+only; would need a special case for MdPreview otherwise). The
+renderer is now responsible for staging ready-to-emit bytes; the
+emitter just writes them. Terminal without an image protocol still
+sees the placeholder + caption (intentional — keeps line-count math
+identical so scroll position is stable between the two paths).
+Inline-image references (mid-paragraph `![alt](url)`) fall through
+to the existing link renderer — only *standalone-line* images get
+the placeholder treatment. 5 new tests cover the parser:
+standalone detection, inline rejection, code-fence skipping, alt-
+text + path extraction, missing/empty path rejection.
+673 lean / 707 private lib tests (+5 new), 87 e2e, 7 ipc — green.
+
 **Wave 4 polish — git stash list + reflog pickers (2026-05-18 cont.):**
 two long-asked-for Git pickers landed together. (1) **Stash list** —
 new `crate::git::stash::list` runs `git stash list --pretty=%gd%x09%gs`

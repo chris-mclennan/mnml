@@ -17,11 +17,20 @@ pub mod pane;
 pub use pane::ImagePane;
 
 /// One pending image paint, captured by the renderer and consumed by
-/// `tui.rs` after `terminal.draw()` to emit the protocol escape.
+/// `tui.rs` after `terminal.draw()` to emit the protocol escape. The
+/// renderer is responsible for ensuring the PNG bytes are ready
+/// (i.e. calling [`ImageData::ensure_png_bytes`] for non-PNG sources);
+/// the emitter just writes them out.
 #[derive(Debug, Clone)]
 pub struct PaintRequest {
+    /// Pane that owns the image — for logging / debugging. The emitter
+    /// doesn't look this up; it just writes the bytes.
     pub pane_id: crate::layout::PaneId,
     pub area: ratatui::layout::Rect,
+    /// Encoded PNG payload (`Arc` so the same image across multiple
+    /// frames doesn't reallocate; `MdPreview` and `ImagePane` both
+    /// hold their own `Arc` and share it cheaply per frame).
+    pub png_bytes: std::sync::Arc<Vec<u8>>,
 }
 
 use std::path::{Path, PathBuf};
