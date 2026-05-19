@@ -83,6 +83,36 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Wave 4 polish — git stash list + reflog pickers (2026-05-18 cont.):**
+two long-asked-for Git pickers landed together. (1) **Stash list** —
+new `crate::git::stash::list` runs `git stash list --pretty=%gd%x09%gs`
++ `parse_stash_message` splits "WIP on <branch>: <hash> <subject>"
+(auto form) / "On <branch>: <message>" (user-message form) into
+`StashEntry{ stash_ref, branch, subject }`. New
+`crate::git::stash::{apply, drop_stash}` operate on `stash@{N}`
+selectors. Two new picker kinds: `PickerKind::StashesApply` (accept
+⇒ `git stash apply <ref>` — keeps the stash, vim canon) and
+`StashesDrop` (accept ⇒ `git stash drop <ref>`). Commands
+`git.stash_list` (apply) and `git.stash_drop`. Pairs with the
+existing `git.stash` (push) + `git.stash_pop` (pop most-recent
+unconditionally) so the full stash lifecycle is now navigable
+without ever leaving mnml.
+(2) **Reflog viewer** — new `crate::git::reflog::list(workspace,
+limit)` runs `git reflog -n<limit> --pretty=format:%H%x09%h%x09%gd
+%x09%gr%x09%gs` into `Vec<ReflogEntry{ selector, short_hash,
+full_hash, op, subject, relative_time }>`. The renderer splits `%gs`
+on the first `": "` to separate operation (`commit` / `commit
+(amend)` / `checkout: moving from X to Y` / `rebase: aborting`)
+from the subject. New `PickerKind::Reflog`; accept ⇒ open the
+chosen commit as a diff pane (reuses `open_commit_diff`). The
+`HEAD@{N}` selector renders in the dim detail column so the user
+can copy it for a manual `git reset --hard HEAD@{N}` from a pty
+if they want to actually rewind to that state. Useful for "I
+just rebased and lost a commit, find HEAD before the rebase"
+recovery flows. Capped at 200 entries (clamped 1..1000).
+668 lean / 702 private lib tests (+5 new across stash + reflog),
+87 e2e, 7 ipc — all green.
+
 **Wave 3 polish — image follow-ups + AI per-call config (2026-05-18 cont.):**
 finishing the rough edges on yesterday's MVPs. (1) **JPEG / GIF /
 WebP / BMP support** — added the `image = "0.25"` crate (default

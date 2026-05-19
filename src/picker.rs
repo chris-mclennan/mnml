@@ -131,6 +131,15 @@ pub enum PickerKind {
     /// `id` = the tag name. Accept ⇒ `git tag -d <name>`. Populated by
     /// `git.tag_delete`.
     GitTags,
+    /// `id` = a stash ref (`stash@{N}`). Accept ⇒ `git stash apply <id>`.
+    /// Populated by `git.stash_list`.
+    StashesApply,
+    /// `id` = a stash ref (`stash@{N}`). Accept ⇒ `git stash drop <id>`.
+    /// Populated by `git.stash_drop`.
+    StashesDrop,
+    /// `id` = a full commit hash. Accept ⇒ open the commit's diff
+    /// (`DiffScope::Commit`). Populated by `git.reflog`.
+    Reflog,
 }
 
 #[derive(Debug, Clone)]

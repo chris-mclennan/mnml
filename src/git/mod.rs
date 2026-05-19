@@ -12,6 +12,7 @@ pub mod diff;
 pub mod graph;
 pub mod log;
 pub mod rail;
+pub mod reflog;
 pub mod repos;
 pub mod stage;
 pub mod stash;

@@ -4133,6 +4133,28 @@ impl App {
                     Err(e) => self.toast(format!("git tag -d: {e}")),
                 }
             }
+            PickerKind::StashesApply => {
+                let stash_ref = item.id;
+                match crate::git::stash::apply(self.active_repo_path(), &stash_ref) {
+                    Ok(summary) => {
+                        self.after_git_change();
+                        self.tree.refresh();
+                        self.toast(summary);
+                    }
+                    Err(e) => self.toast(format!("git stash apply: {e}")),
+                }
+            }
+            PickerKind::StashesDrop => {
+                let stash_ref = item.id;
+                match crate::git::stash::drop_stash(self.active_repo_path(), &stash_ref) {
+                    Ok(summary) => self.toast(summary),
+                    Err(e) => self.toast(format!("git stash drop: {e}")),
+                }
+            }
+            PickerKind::Reflog => {
+                // `id` is the full hash — open it as a commit-diff pane.
+                self.open_commit_diff(&item.id);
+            }
         }
     }
 
@@ -12746,6 +12768,97 @@ impl App {
             Ok(summary) => self.toast(format!("push tags: {summary}")),
             Err(e) => self.toast(format!("git push --tags: {e}")),
         }
+    }
+
+    /// `git.stash_list` — fuzzy picker over `git stash list`. Accept ⇒
+    /// `git stash apply <ref>` (keeps the stash; sibling `git.stash_drop`
+    /// drops without applying).
+    pub fn open_git_stash_list(&mut self) {
+        let stashes = crate::git::stash::list(self.active_repo_path());
+        if stashes.is_empty() {
+            self.toast("git stash: empty");
+            return;
+        }
+        let items: Vec<crate::picker::PickerItem> = stashes
+            .iter()
+            .map(|s| {
+                let label = format!("{}  {}", s.stash_ref, s.subject);
+                let detail = if s.branch.is_empty() {
+                    "apply".to_string()
+                } else {
+                    format!("on {}", s.branch)
+                };
+                crate::picker::PickerItem::new(&s.stash_ref, label, detail)
+            })
+            .collect();
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::StashesApply,
+            format!("Apply stash ({})", stashes.len()),
+            items,
+        ));
+    }
+
+    /// `git.stash_drop` — picker over stashes, accept = drop. Sibling of
+    /// `git.stash_list`. No "are you sure" prompt — stashes are listed
+    /// before drop, so the user can re-create one by hand if they hit
+    /// the wrong row (git records `git stash drop` in the reflog).
+    pub fn open_git_stash_drop(&mut self) {
+        let stashes = crate::git::stash::list(self.active_repo_path());
+        if stashes.is_empty() {
+            self.toast("git stash: empty");
+            return;
+        }
+        let items: Vec<crate::picker::PickerItem> = stashes
+            .iter()
+            .map(|s| {
+                let label = format!("{}  {}", s.stash_ref, s.subject);
+                let detail = if s.branch.is_empty() {
+                    "drop".to_string()
+                } else {
+                    format!("drop · {}", s.branch)
+                };
+                crate::picker::PickerItem::new(&s.stash_ref, label, detail)
+            })
+            .collect();
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::StashesDrop,
+            format!("Drop stash ({})", stashes.len()),
+            items,
+        ));
+    }
+
+    /// `git.reflog` — fuzzy picker over recent reflog entries. Accept ⇒
+    /// open that entry's commit as a diff pane. The selector
+    /// (`HEAD@{N}`) is shown as the dim detail so the user can copy it
+    /// for a manual `git reset --hard HEAD@{N}` from a pty.
+    pub fn open_git_reflog(&mut self) {
+        let entries = crate::git::reflog::list(self.active_repo_path(), 200);
+        if entries.is_empty() {
+            self.toast("git reflog: empty");
+            return;
+        }
+        let items: Vec<crate::picker::PickerItem> = entries
+            .iter()
+            .map(|e| {
+                let label = format!(
+                    "{}  {}: {}",
+                    e.short_hash,
+                    e.op,
+                    if e.subject.is_empty() {
+                        "(no subject)"
+                    } else {
+                        &e.subject
+                    }
+                );
+                let detail = format!("{} · {}", e.selector, e.relative_time);
+                crate::picker::PickerItem::new(&e.full_hash, label, detail)
+            })
+            .collect();
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::Reflog,
+            format!("Reflog ({} entries)", entries.len()),
+            items,
+        ));
     }
 
     // ─── commit ─────────────────────────────────────────────────────

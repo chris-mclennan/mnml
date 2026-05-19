@@ -1623,6 +1623,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_git_push_tags(),
         },
         Command {
+            id: "git.stash_list",
+            title: "Git: stash list (pick to apply — keeps the stash)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_git_stash_list(),
+        },
+        Command {
+            id: "git.stash_drop",
+            title: "Git: stash drop (pick a stash to delete)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_git_stash_drop(),
+        },
+        Command {
+            id: "git.reflog",
+            title: "Git: reflog (HEAD history; pick to open commit diff)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_git_reflog(),
+        },
+        Command {
             id: "git.graph",
             title: "Git: commit graph (DAG browser)",
             group: "git",
