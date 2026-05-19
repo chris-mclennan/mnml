@@ -83,6 +83,29 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Bufferline git-graph button + GitGraph live WIP refresh (2026-05-19):**
+two daily-usability wins. (1) **Bufferline `` button** — a new
+nf-md-source-branch glyph chip in the bufferline right cluster (yellow on
+`bg2`, left edge of the cluster so it sits adjacent to the per-buffer tab
+strip) that fires `git.graph` on click. Sibling to the existing `+`
+new-tab / `TABS` label / tab chips / theme toggle / window-close cluster
+— reuses the same `app.rects.bufferline_git_graph` registry pattern. Mouse-
+only target for users who don't want to learn `<leader>g l`. ASCII
+fallback `⎇`. `right_w` bumped from 9 → 12 to reserve the extra 3 cells
+so the per-buffer tab-strip scroll math doesn't overlap. (2) **GitGraph
+WIP refreshes on tab activation + on every editor save** — the WIP
+virtual row (working-tree changes summary at the top of the commit list)
+was previously frozen at whatever state it was in when `after_git_change`
+last fired; coming back to a GitGraph tab after editing a file in another
+split showed stale WIP info until the user closed + reopened the pane.
+Two new hooks: `App::reveal_pane` calls `g.refresh()` when revealing a
+`Pane::GitGraph` (catches "I switched tabs, made changes elsewhere, came
+back"); `App::save_active_now` calls `refresh_git_graph_panes()` (catches
+"I'm watching the graph in one split while saving in another"). Both
+re-shell `git status --porcelain` for the WIP detection + re-fetch the
+commit list, so the WIP row appears immediately. 678 lib tests + e2e
+green.
+
 **GitStatus right-click context menu + sticky Hunk chips (2026-05-19):**
 two follow-ups on yesterday's diff/git bundle. (1) **GitStatus
 right-click menu** — right-click a file row in `Pane::GitStatus`

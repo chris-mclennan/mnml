@@ -4314,9 +4314,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.reveal_pane(id);
                 return;
             }
-            // Bufferline right cluster — `+` new tab, per-tabpage chip / close,
-            // theme toggle, window close. Order matters (the `⊗` rect sits
-            // adjacent to its chip; check close before chip).
+            // Bufferline right cluster — git-graph button, `+` new tab,
+            // per-tabpage chip / close, theme toggle, window close. Order
+            // matters (the `⊗` rect sits adjacent to its chip; check close
+            // before chip).
+            if let Some(r) = app.rects.bufferline_git_graph
+                && contains(r, x, y)
+            {
+                let _ = crate::command::run("git.graph", app);
+                return;
+            }
             if let Some(r) = app.rects.bufferline_new_tab_button
                 && contains(r, x, y)
             {

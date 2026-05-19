@@ -84,15 +84,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.bufferline_tab_page_close.clear();
     app.rects.bufferline_theme_toggle = None;
     app.rects.bufferline_window_close = None;
+    app.rects.bufferline_git_graph = None;
     if area.width == 0 {
         return;
     }
     let nerd = !app.config.ui.ascii_icons;
-    // Right cluster (NvChad-style): ` + ` ` TABS ` per-tabpage chips
-    // ` ●━ ` ` × `. Pre-compute its total width so the per-buffer tab strip
-    // knows where to stop.
+    // Right cluster (NvChad-style): ` ` (git graph) ` + ` ` TABS ` per-tabpage
+    // chips ` ●━ ` ` × `. Pre-compute its total width so the per-buffer tab
+    // strip knows where to stop.
     let n_tabs = app.layouts.len();
-    let mut right_w: u16 = 3 + 6; // ` + ` + ` TABS `
+    let mut right_w: u16 = 3 + 3 + 6; // ` ` + ` + ` + ` TABS `
     for i in 0..n_tabs {
         // Active = ` <n>󰅖 ` (3 cells label + 2 cells close glyph).
         // Inactive = ` <n> ` (3 cells label only). Dirty tab gets a
@@ -398,6 +399,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // bufferline scroll math reserved exactly `right_w` cells.
     let t = theme::cur();
     let mut cluster_x = tabs_max_x;
+
+    // Git-graph button — `nf-md-source-branch` (\u{F062C}) when nerd fonts
+    // are on, fallback `⎇` otherwise. Sits left of the new-tab `+` so
+    // it's adjacent to the per-buffer tab strip. Click → `git.graph`.
+    // Yellow on `bg2` to read as "git" (matches the rail's branch chip).
+    let graph_glyph = if nerd { "\u{F062C}" } else { "⎇" };
+    spans.push(Span::styled(
+        format!(" {graph_glyph} "),
+        Style::default().fg(t.yellow).bg(t.bg2),
+    ));
+    app.rects.bufferline_git_graph = Some(ratatui::layout::Rect {
+        x: cluster_x,
+        y: area.y,
+        width: 3,
+        height: 1,
+    });
+    cluster_x += 3;
 
     // New-tab button. `nf-md-plus` (\u{F0415}) — thicker than ASCII `+`,
     // same glyph NvChad uses for `TabNewBtn`. Colors match NvChad's

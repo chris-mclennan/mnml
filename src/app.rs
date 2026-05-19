@@ -1607,6 +1607,10 @@ pub struct PaneRects {
     pub bufferline_tab_page_close: Vec<(Rect, usize)>,
     pub bufferline_theme_toggle: Option<Rect>,
     pub bufferline_window_close: Option<Rect>,
+    /// Bufferline git-graph button (`` source-branch glyph) — clickable
+    /// shortcut to `git.graph`. Sits at the left edge of the right cluster
+    /// so it stays adjacent to the buffer tab strip.
+    pub bufferline_git_graph: Option<Rect>,
     /// `(rect, pane_id)` for each tab's close badge (the trailing `×`/`●` → close).
     pub bufferline_tab_close: Vec<(Rect, PaneId)>,
     /// The whole central split-tree area.
@@ -5199,6 +5203,15 @@ impl App {
         }
         self.focus = Focus::Pane;
         self.retarget_outline_to_active();
+        // If the revealed pane is a GitGraph, refresh it — its WIP virtual
+        // row + commit list otherwise stay frozen at the last `after_git_change`
+        // call. Picks up working-tree changes that happened externally (or in
+        // another split) while the graph wasn't focused.
+        if matches!(self.panes.get(id), Some(Pane::GitGraph(_))) {
+            if let Some(Pane::GitGraph(g)) = self.panes.get_mut(id) {
+                g.refresh();
+            }
+        }
         // MRU bookkeeping — push the now-active pane to the front (de-dupe
         // against any prior entry for the same id). Capped indirectly:
         // [`force_close_pane`] removes entries when a pane is closed.
@@ -18225,6 +18238,10 @@ impl App {
                         }
                         self.toast(format!("saved {name}"));
                         self.git.refresh();
+                        // Any open GitGraph pane's WIP virtual row reflects
+                        // working-tree state — refresh after the save so a
+                        // side-by-side graph+editor split updates live.
+                        self.refresh_git_graph_panes();
                         self.disarm_quit();
                         p
                     }

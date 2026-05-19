@@ -73,3 +73,4 @@ Switch theme at runtime with the `theme.pick` command (palette / `<leader>tt`) o
 ## License
 
 MIT — see [LICENSE](LICENSE). Contributors: [CONTRIBUTORS.md](CONTRIBUTORS.md).
+abcdefg
