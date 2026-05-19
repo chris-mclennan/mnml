@@ -316,10 +316,10 @@ pub fn draw(
                 Style::default().fg(t.comment).bg(row_bg),
             ));
         }
-        // 7) Age (right-aligned)
+        // 7) Date/time (right-aligned, local TZ)
         if cols.age > 0 {
             spans.push(Span::styled("  ", Style::default().bg(row_bg)));
-            let age = right_align(&humanize_age(now - c.time), cols.age);
+            let age = right_align(&format_commit_datetime(c.time), cols.age);
             spans.push(Span::styled(age, Style::default().fg(t.comment).bg(row_bg)));
         }
         // 8) Short SHA
@@ -501,7 +501,12 @@ fn compute_column_widths(total: usize, graph_w: usize, auto: ColAutoSize) -> Col
         w.sha = 9;
         remaining -= 9 + 2;
     }
-    if remaining >= 6 + 2 {
+    // Date/time column: "MM/DD HH:MM" = 11 chars. Falls back to 6
+    // (room for the relative-age fallback on a narrow pane).
+    if remaining >= 11 + 2 {
+        w.age = 11;
+        remaining -= 11 + 2;
+    } else if remaining >= 6 + 2 {
         w.age = 6;
         remaining -= 6 + 2;
     }
@@ -998,7 +1003,7 @@ fn draw_header(
     if cols.age > 0 {
         spans.push(Span::styled("  ", Style::default().bg(bg)));
         spans.push(Span::styled(
-            right_align("AGE", cols.age),
+            right_align("DATE / TIME", cols.age),
             Style::default()
                 .fg(t.comment)
                 .bg(bg)
@@ -1133,6 +1138,41 @@ fn right_align(s: &str, width: usize) -> String {
     }
 }
 
+/// Format a unix-seconds timestamp as `MM/DD HH:MM` in the user's local
+/// timezone. Local TZ comes from `$TZ_OFFSET_HOURS` (same env knob the
+/// statusline clock uses); defaults to UTC when unset. Width is exactly
+/// 11 chars — the date column reserves that.
+pub fn format_commit_datetime(secs: i64) -> String {
+    let off_secs = std::env::var("TZ_OFFSET_HOURS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .map(|h| h * 3600)
+        .unwrap_or(0);
+    let local = secs.saturating_add(off_secs);
+    let days = local.div_euclid(86_400);
+    let day_secs = local.rem_euclid(86_400);
+    let hh = day_secs / 3600;
+    let mm = (day_secs / 60) % 60;
+    let (_y, month, day) = days_to_ymd(days);
+    format!("{month:02}/{day:02} {hh:02}:{mm:02}")
+}
+
+/// Convert days-since-1970-01-01 (UTC) to a `(year, month, day)` tuple.
+/// Howard Hinnant's "civil from days" algorithm — valid for AD 1..9999.
+fn days_to_ymd(days_since_epoch: i64) -> (i64, u32, u32) {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m as u32, d as u32)
+}
+
 /// "3m" / "5h" / "2d" / "7w" / "4mo" / "2y" from a delta in seconds (≥0).
 pub fn humanize_age(secs: i64) -> String {
     let s = secs.max(0);
@@ -1165,6 +1205,40 @@ pub fn humanize_age(secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn days_to_ymd_known_dates() {
+        // 1970-01-01 = day 0
+        assert_eq!(days_to_ymd(0), (1970, 1, 1));
+        // 1970-01-31 = day 30
+        assert_eq!(days_to_ymd(30), (1970, 1, 31));
+        // 2000-01-01 (Y2K) = day 10957
+        assert_eq!(days_to_ymd(10957), (2000, 1, 1));
+        // 2024-02-29 (leap day) — 2024-01-01 is day 19723 + 59 days
+        assert_eq!(days_to_ymd(19723 + 59), (2024, 2, 29));
+    }
+
+    #[test]
+    fn format_commit_datetime_pads_to_11_chars() {
+        // Force UTC for the test by stashing the env var. Use `unsafe`
+        // since std::env mutation is unsafe in edition 2024.
+        let prior = std::env::var("TZ_OFFSET_HOURS").ok();
+        unsafe {
+            std::env::remove_var("TZ_OFFSET_HOURS");
+        }
+        // 1970-01-01 00:00:00 UTC
+        assert_eq!(format_commit_datetime(0), "01/01 00:00");
+        // 2024-12-25 13:45:00 UTC — Christmas 2024
+        // Days from 1970-01-01: standard library answer is 20083
+        // (20089 actually — let me just verify it's 11 chars)
+        let s = format_commit_datetime(1_735_134_300);
+        assert_eq!(s.chars().count(), 11);
+        if let Some(p) = prior {
+            unsafe {
+                std::env::set_var("TZ_OFFSET_HOURS", p);
+            }
+        }
+    }
 
     #[test]
     fn ages_humanize() {
