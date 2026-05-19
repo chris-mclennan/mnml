@@ -1573,6 +1573,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_git_revert(),
         },
         Command {
+            id: "git.tag",
+            title: "Git: create tag (annotated; on HEAD or selected graph commit)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_git_tag_prompt(),
+        },
+        Command {
+            id: "git.tag_delete",
+            title: "Git: delete tag (picker)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_git_tag_delete_picker(),
+        },
+        Command {
+            id: "git.push_tags",
+            title: "Git: push --tags (publish all local tags to origin)",
+            group: "git",
+            keys: &[],
+            run: |app| app.run_git_push_tags(),
+        },
+        Command {
             id: "git.graph",
             title: "Git: commit graph (DAG browser)",
             group: "git",

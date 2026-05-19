@@ -128,6 +128,9 @@ pub enum PickerKind {
     /// one item (overloaded fn / multi-symbol cursor); accept fires
     /// the chosen direction's follow-up against the picked item.
     CallHierarchyItems,
+    /// `id` = the tag name. Accept ⇒ `git tag -d <name>`. Populated by
+    /// `git.tag_delete`.
+    GitTags,
 }
 
 #[derive(Debug, Clone)]

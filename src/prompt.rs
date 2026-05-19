@@ -99,6 +99,11 @@ pub enum PromptKind {
     /// generic `DapEvent::Failed` toast path. Seeded with the current
     /// value so the user can edit in place.
     DapSetVariable,
+    /// Accept ⇒ `git tag -a <input> -m <input>` against either the selected
+    /// `Pane::GitGraph` commit (when one is focused) or HEAD. Empty input
+    /// cancels. The same input is used as both tag name AND annotation
+    /// message — for finer control the user can drop to a pty.
+    GitTag,
 }
 
 #[derive(Debug)]

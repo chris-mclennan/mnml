@@ -17,5 +17,6 @@ pub mod stage;
 pub mod stash;
 pub mod status;
 pub mod sync;
+pub mod tag;
 
 pub use status::GitStatus;

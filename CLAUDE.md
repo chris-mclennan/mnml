@@ -83,6 +83,44 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Git GUI — graphical-Git-GUI-style graph pane + hash-jump + tags (2026-05-18 cont.):**
+three Git tracks landed together. (1) **`Pane::GitGraph` visual
+refresh** — restructured the per-commit row from one flowing line
+(`▶ <graph> <hash> [chips] <subject> · <age> · <author>`) into a
+columnar layout closer to a popular Git GUI: `▌ ▶ BRANCH/TAG  <graph>
+COMMIT MESSAGE                       AUTHOR    AGE    SHA`. Each row
+now starts with a 1-cell `▌` swimlane indicator in the commit's lane
+color (the "this row belongs to <color> branch" visual cue without
+needing alpha-blend bg tints). The branch/tag chip column is fixed-
+width (up to 28 chars, ellipsis-truncated with a `+N` overflow chip);
+the right side gets fixed-width `AUTHOR` (14) · `AGE` (6) · `SHA` (9)
+columns that right-align so every column lines up vertically across
+visible rows. New `compute_column_widths(total, graph_w) → ColWidths`
+shrinks right-to-left when the pane is narrow (sha → age → author →
+branch). A new column-header row above the body shows faint
+`BRANCH/TAG · GRAPH · COMMIT MESSAGE · AUTHOR · AGE · SHA` labels.
+(2) **Hash-typing to pick a commit** — `/` in the graph pane enters
+`hash_filter_mode`; printable hex chars accumulate on
+`GitGraphPane.hash_filter` and the renderer flips the COMMIT MESSAGE
+header label to `/abc_` (yellow, bold) so you see what's being typed.
+Each keystroke fires `find_by_hash_prefix` (case-insensitive prefix
+match against full hashes) and `jump_to`s the result. Backspace
+walks back; Enter accepts (keeps the selection, drops filter mode);
+Esc clears + exits. Toast on no-match so you know you've drifted off.
+(3) **Tag commands** — new `crate::git::tag` module: `create_annotated`
+(`git tag -a <name> -m <msg> [<commit>]`), `create_lightweight`
+(`git tag <name> [<commit>]`), `delete_local` (`git tag -d <name>`),
+`delete_remote` (`git push origin :refs/tags/<name>`), `push_all`
+(`git push --tags`), `list` (`git tag --list --sort=-creatordate`).
+Three palette commands: `git.tag` (prompt for name; targets the
+selected graph commit or HEAD), `git.tag_delete` (picker over local
+tags), `git.push_tags`. Ex aliases `:tag [<name>]` / `:tags` (list
+toast) / `:PushTags`. Tag-on-selected-graph-commit works because the
+prompt's accept reads `selected_graph_commit_hash()` at accept time.
+New `PromptKind::GitTag`, `PickerKind::GitTags`. 655 lean / 689
+private lib tests (+3 unit in `git/tag.rs`, +6 helpers in
+`git_graph_view.rs`, +1 in `git/graph.rs` for the hash lookup).
+
 **Git GUI phase 4 — sync triad + cherry-pick / revert (2026-05-18 cont.):**
 the five most-asked-for daily git ops that weren't wired. New module
 `crate::git::sync` (shells out to `git`, returns `Result<summary,

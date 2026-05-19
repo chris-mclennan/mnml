@@ -2916,8 +2916,53 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         return;
     }
     // The git-graph pane: ↑↓ select a commit, Enter → open that commit's diff,
-    // `r` refresh (re-run `git log`), `y` copy the commit hash, Esc → tree.
+    // `r` refresh (re-run `git log`), `y` copy the commit hash, `/` enter
+    // hash-filter mode (type a partial hash prefix to jump), Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::GitGraph(_))) {
+        // Hash-filter mode wins — consume keystrokes until Enter / Esc.
+        let in_filter_mode = matches!(
+            app.panes.get(i),
+            Some(Pane::GitGraph(g)) if g.hash_filter_mode
+        );
+        if in_filter_mode {
+            match key.code {
+                KeyCode::Esc => {
+                    if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
+                        g.hash_filter.clear();
+                        g.hash_filter_mode = false;
+                    }
+                }
+                KeyCode::Enter => {
+                    if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
+                        g.hash_filter_mode = false;
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
+                        g.hash_filter.pop();
+                        if let Some(idx) = g.find_by_hash_prefix(&g.hash_filter) {
+                            g.jump_to(idx);
+                        }
+                    }
+                }
+                KeyCode::Char(ch) if ch.is_ascii_hexdigit() => {
+                    let mut no_match: Option<String> = None;
+                    if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
+                        g.hash_filter.push(ch.to_ascii_lowercase());
+                        if let Some(idx) = g.find_by_hash_prefix(&g.hash_filter) {
+                            g.jump_to(idx);
+                        } else {
+                            no_match = Some(g.hash_filter.clone());
+                        }
+                    }
+                    if let Some(s) = no_match {
+                        app.toast(format!("no commit ~ {s}"));
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
@@ -2947,6 +2992,12 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::End | KeyCode::Char('G') => {
                 if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
                     g.move_selection(isize::MAX / 2);
+                }
+            }
+            KeyCode::Char('/') => {
+                if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
+                    g.hash_filter_mode = true;
+                    g.hash_filter.clear();
                 }
             }
             KeyCode::Enter => app.open_selected_commit_diff(),

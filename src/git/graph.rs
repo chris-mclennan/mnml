@@ -26,6 +26,13 @@ pub struct GitGraphPane {
     /// Top visible commit row (the renderer keeps `selected` on screen).
     pub scroll: usize,
     pub detail: Option<CommitDetail>,
+    /// `/` filter — accumulating hash prefix to fuzzy-jump to a commit.
+    /// Empty when inactive. The renderer shows a chip in the header row when
+    /// non-empty; `tui.rs` routes printable keys / Backspace / Enter / Esc.
+    pub hash_filter: String,
+    /// True while the filter is actively accepting keystrokes (the `/` chord
+    /// was pressed and we haven't pressed Enter/Esc yet).
+    pub hash_filter_mode: bool,
 }
 
 /// How many commits to load (across all refs). Plenty for browsing; bump later
@@ -41,9 +48,37 @@ impl GitGraphPane {
             selected: 0,
             scroll: 0,
             detail: None,
+            hash_filter: String::new(),
+            hash_filter_mode: false,
         };
         p.reload_detail();
         p
+    }
+
+    /// Find the first commit whose short hash (or full hash, ASCII case-
+    /// insensitive) begins with `prefix`. Empty prefix ⇒ None.
+    pub fn find_by_hash_prefix(&self, prefix: &str) -> Option<usize> {
+        if prefix.is_empty() {
+            return None;
+        }
+        let needle = prefix.to_ascii_lowercase();
+        self.commits
+            .iter()
+            .position(|c| c.hash.to_ascii_lowercase().starts_with(&needle))
+    }
+
+    /// Set the selection (clamped) + reload detail. Returns true on change.
+    pub fn jump_to(&mut self, idx: usize) -> bool {
+        if self.commits.is_empty() {
+            return false;
+        }
+        let clamped = idx.min(self.commits.len() - 1);
+        if clamped == self.selected {
+            return false;
+        }
+        self.selected = clamped;
+        self.reload_detail();
+        true
     }
 
     pub fn tab_title(&self) -> String {

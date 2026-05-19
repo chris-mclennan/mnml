@@ -4095,6 +4095,17 @@ impl App {
                     self.pending_call_hierarchy_items = vec![picked];
                 }
             }
+            PickerKind::GitTags => {
+                let name = item.id;
+                match crate::git::tag::delete_local(self.active_repo_path(), &name) {
+                    Ok(summary) => {
+                        self.after_git_change();
+                        self.refresh_active_git_graph();
+                        self.toast(summary);
+                    }
+                    Err(e) => self.toast(format!("git tag -d: {e}")),
+                }
+            }
         }
     }
 
@@ -12543,6 +12554,53 @@ impl App {
             })
     }
 
+    // ─── tags ───────────────────────────────────────────────────────
+    /// `git.tag` — open a single-line prompt for the tag name. The same input
+    /// is used as both name and annotation message; for finer control the
+    /// user can drop to a pty. Targets the selected `Pane::GitGraph` commit
+    /// if the graph is focused, otherwise HEAD.
+    pub fn open_git_tag_prompt(&mut self) {
+        let title = match self.selected_graph_commit_hash() {
+            Some(h) => format!("Tag name (on {})", &h[..h.len().min(9)]),
+            None => "Tag name (on HEAD)".to_string(),
+        };
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::GitTag,
+            title,
+        ));
+    }
+
+    /// `git.tag_delete` — open a picker over every local tag (newest-creation
+    /// first). Accept ⇒ `git tag -d <name>`. No confirmation step — tags are
+    /// cheap to re-create.
+    pub fn open_git_tag_delete_picker(&mut self) {
+        let tags = crate::git::tag::list(self.active_repo_path());
+        if tags.is_empty() {
+            self.toast("git tag: no local tags");
+            return;
+        }
+        let items: Vec<crate::picker::PickerItem> = tags
+            .iter()
+            .map(|name| crate::picker::PickerItem::new(name, name, "delete"))
+            .collect();
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::GitTags,
+            format!("Delete tag ({} local)", tags.len()),
+            items,
+        ));
+    }
+
+    /// `git.push_tags` — `git push --tags`. Publishes every local tag to
+    /// `origin`. Tags that already exist on the remote with a different
+    /// target ref will refuse; users who really need to overwrite drop to
+    /// a pty.
+    pub fn run_git_push_tags(&mut self) {
+        match crate::git::tag::push_all(self.active_repo_path()) {
+            Ok(summary) => self.toast(format!("push tags: {summary}")),
+            Err(e) => self.toast(format!("git push --tags: {e}")),
+        }
+    }
+
     // ─── commit ─────────────────────────────────────────────────────
     /// Open the commit-message prompt. Commits whatever is staged when accepted;
     /// if nothing's staged, `git commit` says so.
@@ -12631,6 +12689,27 @@ impl App {
                 let msg = p.input.trim();
                 let msg_opt = if msg.is_empty() { None } else { Some(msg) };
                 self.run_git_stash_push(msg_opt);
+            }
+            crate::prompt::PromptKind::GitTag => {
+                let name = p.input.trim().to_string();
+                if name.is_empty() {
+                    self.toast("tag cancelled (empty name)");
+                    return;
+                }
+                let target = self.selected_graph_commit_hash();
+                match crate::git::tag::create_annotated(
+                    self.active_repo_path(),
+                    &name,
+                    &name,
+                    target.as_deref(),
+                ) {
+                    Ok(summary) => {
+                        self.after_git_change();
+                        self.refresh_active_git_graph();
+                        self.toast(summary);
+                    }
+                    Err(e) => self.toast(format!("git tag: {e}")),
+                }
             }
             crate::prompt::PromptKind::DapAddWatch => {
                 let expr = p.input.trim().to_string();
@@ -19978,6 +20057,52 @@ impl App {
             // command). Vim users reach for `:diff` reflexively.
             "diff" | "diffs" | "diffsplit" => {
                 crate::command::run("git.diff_file", self);
+            }
+            // `:tag <name>` — annotated tag on HEAD (or the selected graph
+            // commit). Bare `:tag` opens the prompt. `:tags` lists local
+            // tags. `:Tag` is a friendlier alias.
+            "tag" | "Tag" => {
+                let name = rest.trim();
+                if name.is_empty() {
+                    self.open_git_tag_prompt();
+                } else {
+                    let target = self.selected_graph_commit_hash();
+                    match crate::git::tag::create_annotated(
+                        self.active_repo_path(),
+                        name,
+                        name,
+                        target.as_deref(),
+                    ) {
+                        Ok(summary) => {
+                            self.after_git_change();
+                            self.refresh_active_git_graph();
+                            self.toast(summary);
+                        }
+                        Err(e) => self.toast(format!("git tag: {e}")),
+                    }
+                }
+            }
+            "tags" | "Tags" => {
+                let tags = crate::git::tag::list(self.active_repo_path());
+                if tags.is_empty() {
+                    self.toast(":tags — none");
+                } else {
+                    let preview = tags
+                        .iter()
+                        .take(10)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                    let more = if tags.len() > 10 {
+                        format!(" (+{} more)", tags.len() - 10)
+                    } else {
+                        String::new()
+                    };
+                    self.toast(format!(":tags ({}) {}{}", tags.len(), preview, more));
+                }
+            }
+            "PushTags" | "pushtags" => {
+                self.run_git_push_tags();
             }
             // `:execute "<str>"` / `:exe "<str>"` — strip outer quotes,
             // unescape `\\` and `\"`, run the result as a fresh ex cmd.
