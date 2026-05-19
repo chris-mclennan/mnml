@@ -4314,16 +4314,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.reveal_pane(id);
                 return;
             }
-            // Bufferline right cluster — git-graph button, `+` new tab,
-            // per-tabpage chip / close, theme toggle, window close. Order
-            // matters (the `⊗` rect sits adjacent to its chip; check close
-            // before chip).
-            if let Some(r) = app.rects.bufferline_git_graph
-                && contains(r, x, y)
-            {
-                let _ = crate::command::run("git.graph", app);
-                return;
-            }
+            // Bufferline right cluster — `+` new tab, per-tabpage chip / close,
+            // theme toggle, window close. Order matters (the `⊗` rect sits
+            // adjacent to its chip; check close before chip).
             if let Some(r) = app.rects.bufferline_new_tab_button
                 && contains(r, x, y)
             {
@@ -4368,6 +4361,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 && contains(r, x, y)
             {
                 app.close_active_pane();
+                return;
+            }
+            // Statusline branch chip → open the commit graph. Always-visible
+            // click target for git.graph (vs the keyboard-only `<leader>g l`).
+            if let Some(r) = app.rects.statusline_branch_chip
+                && contains(r, x, y)
+            {
+                let _ = crate::command::run("git.graph", app);
                 return;
             }
             // The `> WORKSPACE-NAME` section header — clicking it toggles the

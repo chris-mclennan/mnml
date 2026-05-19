@@ -117,6 +117,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         EditingMode::Insert | EditingMode::Replace | EditingMode::Visual | EditingMode::Normal
     );
     let mut left: Vec<Seg> = Vec::new();
+    // Index of the git-branch chip in `left` once pushed — used after
+    // render_left to register a clickable rect that fires `git.graph`.
+    let mut branch_seg_idx: Option<usize> = None;
+    app.rects.statusline_branch_chip = None;
     if nerd && is_vim_mode {
         // Split the vim chip so the diamond-V glyph gets its own orange tint
         // (NvChad-style vim accent), then the label uses the mode's normal
@@ -170,6 +174,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 txt.push_str(&format!("  ⚠{}", g.conflicts));
             }
             txt.push(' ');
+            branch_seg_idx = Some(left.len());
             left.push(Seg::new(txt, theme::cur().green, theme::cur().bg2));
         }
     }
@@ -398,8 +403,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // a future settings/about pane will own the long-form display.)
 
     // ── render: left segments + spacer + right segments, with `` / `` transitions ──
-    let (mut spans, used) = render_left(&left, arrows, theme::cur().statusline);
+    let (mut spans, used, left_rects) = render_left(&left, arrows, theme::cur().statusline);
     let (right_spans, right_used) = render_right(&right, arrows, theme::cur().statusline);
+
+    // Register the git-branch chip's click rect for `git.graph` routing.
+    // `left_rects[i] = (start_col_within_left_lane, width_in_cols)` — translate
+    // to a screen-relative `Rect` by adding `area.x`.
+    if let Some(idx) = branch_seg_idx
+        && let Some(&(start, w)) = left_rects.get(idx)
+        && w > 0
+        && (start + w) as u16 <= area.width
+    {
+        app.rects.statusline_branch_chip = Some(Rect {
+            x: area.x + start as u16,
+            y: area.y,
+            width: w as u16,
+            height: 1,
+        });
+    }
 
     // middle: chord-pending hint, centered in the leftover space. The vim `:`
     // cmdline and live toast now own the cmdline-bar row below the statusline,
@@ -449,12 +470,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
 /// Left-anchored segments; a `` after each (its fg = this bg, bg = next bg),
 /// skipped between two same-bg neighbors so a multi-span segment looks unified.
-fn render_left(segs: &[Seg], arrows: bool, tail_bg: Color) -> (Vec<Span<'static>>, usize) {
+/// Also returns the (start_col, width) of each seg's TEXT (excluding the trailing
+/// powerline arrow) so callers can register click rects.
+fn render_left(
+    segs: &[Seg],
+    arrows: bool,
+    tail_bg: Color,
+) -> (Vec<Span<'static>>, usize, Vec<(usize, usize)>) {
     let mut out = Vec::new();
     let mut used = 0;
+    let mut seg_rects: Vec<(usize, usize)> = Vec::with_capacity(segs.len());
     for (i, s) in segs.iter().enumerate() {
+        let start = used;
         out.push(Span::styled(s.text.clone(), s.style()));
         used += s.cols();
+        seg_rects.push((start, s.cols()));
         let next_bg = segs.get(i + 1).map(|n| n.bg).unwrap_or(tail_bg);
         if arrows && next_bg != s.bg {
             out.push(Span::styled(
@@ -464,7 +494,7 @@ fn render_left(segs: &[Seg], arrows: bool, tail_bg: Color) -> (Vec<Span<'static>
             used += 1;
         }
     }
-    (out, used)
+    (out, used, seg_rects)
 }
 
 /// Right-anchored segments; a `` before each (its fg = this bg, bg = prev bg),

@@ -1607,10 +1607,10 @@ pub struct PaneRects {
     pub bufferline_tab_page_close: Vec<(Rect, usize)>,
     pub bufferline_theme_toggle: Option<Rect>,
     pub bufferline_window_close: Option<Rect>,
-    /// Bufferline git-graph button (`` source-branch glyph) — clickable
-    /// shortcut to `git.graph`. Sits at the left edge of the right cluster
-    /// so it stays adjacent to the buffer tab strip.
-    pub bufferline_git_graph: Option<Rect>,
+    /// Statusline git-branch chip — clickable shortcut to `git.graph`.
+    /// Registered by `ui::statusline::draw` per render; absent when the
+    /// branch isn't shown (no repo / non-git workspace).
+    pub statusline_branch_chip: Option<Rect>,
     /// `(rect, pane_id)` for each tab's close badge (the trailing `×`/`●` → close).
     pub bufferline_tab_close: Vec<(Rect, PaneId)>,
     /// The whole central split-tree area.
@@ -5207,10 +5207,8 @@ impl App {
         // row + commit list otherwise stay frozen at the last `after_git_change`
         // call. Picks up working-tree changes that happened externally (or in
         // another split) while the graph wasn't focused.
-        if matches!(self.panes.get(id), Some(Pane::GitGraph(_))) {
-            if let Some(Pane::GitGraph(g)) = self.panes.get_mut(id) {
-                g.refresh();
-            }
+        if let Some(Pane::GitGraph(g)) = self.panes.get_mut(id) {
+            g.refresh();
         }
         // MRU bookkeeping — push the now-active pane to the front (de-dupe
         // against any prior entry for the same id). Capped indirectly:

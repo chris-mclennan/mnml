@@ -83,16 +83,18 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
-**Bufferline git-graph button + GitGraph live WIP refresh (2026-05-19):**
-two daily-usability wins. (1) **Bufferline `` button** — a new
-nf-md-source-branch glyph chip in the bufferline right cluster (yellow on
-`bg2`, left edge of the cluster so it sits adjacent to the per-buffer tab
-strip) that fires `git.graph` on click. Sibling to the existing `+`
-new-tab / `TABS` label / tab chips / theme toggle / window-close cluster
-— reuses the same `app.rects.bufferline_git_graph` registry pattern. Mouse-
-only target for users who don't want to learn `<leader>g l`. ASCII
-fallback `⎇`. `right_w` bumped from 9 → 12 to reserve the extra 3 cells
-so the per-buffer tab-strip scroll math doesn't overlap. (2) **GitGraph
+**Clickable statusline branch chip + GitGraph live WIP refresh (2026-05-19):**
+two daily-usability wins. (1) **Clickable branch chip** — the existing
+green statusline git-branch chip ( <branch> +/●/- ⇡/⇣ …) is now a
+click target that fires `git.graph`. Picks up "I want the commit
+history" without learning `<leader>g l`. Implementation reused the
+existing left-lane Seg layout: `render_left` now also returns each
+seg's `(start_col, width)` so the caller can register an
+`app.rects.statusline_branch_chip` rect after assembly; the chip's
+seg index is captured at push time. The earlier-considered bufferline
+`` button was reverted in favor of this — the branch chip was always
+visible already, so adding a separate icon would have duplicated the
+conceptual link without freeing the user from finding it. (2) **GitGraph
 WIP refreshes on tab activation + on every editor save** — the WIP
 virtual row (working-tree changes summary at the top of the commit list)
 was previously frozen at whatever state it was in when `after_git_change`
