@@ -125,30 +125,96 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let chev_str = format!(" {chev} ");
     let label_str = format!("GIT{multi_repo_chip}");
     let header_used = chev_str.chars().count() + label_str.chars().count();
-    let header_pad = width.saturating_sub(header_used);
+    // Right-aligned cluster of one-click git op chips. Each is 3 cells
+    // (`' <glyph> '`). Drop chips from the right until the cluster fits
+    // in the remaining width with at least one space of separation.
+    // Order matches the GitGraph toolbar so the visual language is
+    // consistent.
+    let t = theme::cur();
+    type ChipSpec = (&'static str, &'static str, crate::GitRailHeaderAction, ratatui::style::Color);
+    let chips_full: [ChipSpec; 6] = [
+        ("\u{F0450}", "↺", crate::GitRailHeaderAction::Fetch, t.cyan),
+        ("\u{F0162}", "↓", crate::GitRailHeaderAction::Pull, t.green),
+        ("\u{F0166}", "↑", crate::GitRailHeaderAction::Push, t.blue),
+        (
+            "\u{F0419}",
+            "+",
+            crate::GitRailHeaderAction::StageAll,
+            t.green,
+        ),
+        (
+            "\u{F012C}",
+            "✓",
+            crate::GitRailHeaderAction::Commit,
+            t.green,
+        ),
+        (
+            "\u{F062C}",
+            "⎇",
+            crate::GitRailHeaderAction::Graph,
+            t.yellow,
+        ),
+    ];
+    // Decide how many chips fit: each is 3 cells; keep at least one space
+    // of padding between label and cluster.
+    let chip_w = 3usize;
+    let min_separation = 1usize;
+    let chip_count = {
+        let mut n = chips_full.len();
+        while n > 0 && header_used + min_separation + n * chip_w > width {
+            n -= 1;
+        }
+        n
+    };
+    let chips_used = chip_count * chip_w;
+    let pad_between = width.saturating_sub(header_used + chips_used);
+
+    app.rects.rail_git_header_buttons.clear();
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(3 + chip_count);
+    spans.push(Span::styled(
+        chev_str,
+        Style::default().fg(t.comment).bg(rail_bg),
+    ));
+    spans.push(Span::styled(
+        label_str,
+        Style::default()
+            .fg(t.fg)
+            .bg(rail_bg)
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::styled(
+        " ".repeat(pad_between),
+        Style::default().bg(rail_bg),
+    ));
+    // Translate chip-cluster cells into screen-relative rects as we paint.
+    let cluster_start_x =
+        area.x + (header_used + pad_between) as u16;
+    for (i, (glyph_nerd, glyph_ascii, action, fg)) in
+        chips_full.iter().take(chip_count).enumerate()
+    {
+        let glyph = if nerd { *glyph_nerd } else { *glyph_ascii };
+        spans.push(Span::styled(
+            format!(" {glyph} "),
+            Style::default().fg(*fg).bg(rail_bg),
+        ));
+        let chip_x = cluster_start_x + (i * chip_w) as u16;
+        app.rects.rail_git_header_buttons.push((
+            Rect {
+                x: chip_x,
+                y: git_header_y,
+                width: chip_w as u16,
+                height: 1,
+            },
+            *action,
+        ));
+    }
     let git_header_rect = Rect {
         x: area.x,
         y: git_header_y,
         width: area.width,
         height: 1,
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                chev_str,
-                Style::default().fg(theme::cur().comment).bg(rail_bg),
-            ),
-            Span::styled(
-                label_str,
-                Style::default()
-                    .fg(theme::cur().fg)
-                    .bg(rail_bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ".repeat(header_pad), Style::default().bg(rail_bg)),
-        ])),
-        git_header_rect,
-    );
+    frame.render_widget(Paragraph::new(Line::from(spans)), git_header_rect);
     app.rects.git_section_toggle = Some(git_header_rect);
 
     if !app.git_section_expanded {

@@ -148,6 +148,26 @@ pub enum DiffToolbarAction {
     Close,
 }
 
+/// Clickable chips painted on the right side of the `> GIT` rail header
+/// row — one-click access to common git ops without expanding the section
+/// or memorizing keyboard chords. Rects are registered on
+/// `app.rects.rail_git_header_buttons`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitRailHeaderAction {
+    /// Fetch from origin.
+    Fetch,
+    /// `git pull --ff-only`.
+    Pull,
+    /// `git push` (refuses without an upstream + falls back to set-upstream).
+    Push,
+    /// Stage every change (`git add -A` against the active repo).
+    StageAll,
+    /// Open the commit prompt (existing `git.commit`).
+    Commit,
+    /// Open the commit graph (existing `git.graph`).
+    Graph,
+}
+
 /// Which clickable chip the mouse is currently hovering over. Drives the
 /// 500ms-delayed tooltip overlay shown next to the chip — see
 /// `App.hover_chip` + `ui::tooltip` + `HOVER_TOOLTIP_DELAY_MS`.
@@ -161,6 +181,8 @@ pub enum HoverChip {
     StatuslineWorkspace,
     /// Statusline clock chip (HH:MM or HH:MMZ).
     StatuslineClock,
+    /// A `> GIT` rail-header chip (one per action enum).
+    RailHeaderChip(GitRailHeaderAction),
 }
 
 /// One clickable per-hunk action chip in the Hunk view's header

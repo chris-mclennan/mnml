@@ -107,5 +107,22 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             "click: local ⇄ UTC".into(),
             Some("right-click: clock menu".into()),
         )),
+        HoverChip::RailHeaderChip(action) => {
+            let rect = app
+                .rects
+                .rail_git_header_buttons
+                .iter()
+                .find(|(_, a)| *a == action)
+                .map(|(r, _)| *r)?;
+            let label = match action {
+                crate::GitRailHeaderAction::Fetch => "fetch",
+                crate::GitRailHeaderAction::Pull => "pull",
+                crate::GitRailHeaderAction::Push => "push",
+                crate::GitRailHeaderAction::StageAll => "stage all changes",
+                crate::GitRailHeaderAction::Commit => "commit…",
+                crate::GitRailHeaderAction::Graph => "open commit graph",
+            };
+            Some((rect, label.into(), None))
+        }
     }
 }

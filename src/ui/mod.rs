@@ -79,7 +79,7 @@ pub mod yank_flash_overlay;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout as RLayout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Paragraph};
 
@@ -518,7 +518,10 @@ fn render_layout(
         } => {
             let (a, divider, b) = split_rects(area, *dir, *ratio);
             if divider.width > 0 && divider.height > 0 {
-                draw_divider(frame, divider, *dir);
+                let divider_idx = app.rects.split_dividers.len();
+                let is_hover =
+                    app.hover_divider_idx == Some(divider_idx) || app.dragging.is_some();
+                draw_divider(frame, divider, *dir, is_hover);
                 app.rects.split_dividers.push(crate::layout::DividerHit {
                     rect: divider,
                     dir: *dir,
@@ -537,10 +540,24 @@ fn render_layout(
     }
 }
 
-fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir) {
+fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir, hover: bool) {
     let t = theme::cur();
-    let line_style = Style::default().fg(t.line).bg(t.bg_dark);
-    let grip_style = Style::default().fg(t.comment).bg(t.bg_dark);
+    // Hover/drag state: paint the divider in yellow so the user knows it's
+    // grabbable. Idle state stays subtle (`t.line` / `t.comment`).
+    let (line_fg, grip_fg) = if hover {
+        (t.yellow, t.yellow)
+    } else {
+        (t.line, t.comment)
+    };
+    let line_style = Style::default().fg(line_fg).bg(t.bg_dark);
+    let grip_style = Style::default()
+        .fg(grip_fg)
+        .bg(t.bg_dark)
+        .add_modifier(if hover {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        });
     match dir {
         SplitDir::Horizontal => {
             // Vertical divider — paint `│` everywhere, then a centered

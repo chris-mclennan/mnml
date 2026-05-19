@@ -1628,6 +1628,9 @@ pub struct PaneRects {
     pub statusline_workspace_chip: Option<Rect>,
     /// Statusline clock chip — clickable shortcut to toggle local ↔ UTC.
     pub statusline_clock_chip: Option<Rect>,
+    /// Chips on the `> GIT` rail header (Fetch / Pull / Push / Commit /
+    /// Stage all / Graph) — one-click access to common ops.
+    pub rail_git_header_buttons: Vec<(Rect, crate::GitRailHeaderAction)>,
     /// `(rect, pane_id)` for each tab's close badge (the trailing `×`/`●` → close).
     pub bufferline_tab_close: Vec<(Rect, PaneId)>,
     /// The whole central split-tree area.
@@ -2209,6 +2212,10 @@ pub struct App {
     /// After `HOVER_TOOLTIP_DELAY_MS` of stable hover, the tooltip renders
     /// next to the chip. Cleared on click / typing / mouse-leave.
     pub hover_chip: Option<(crate::HoverChip, std::time::Instant)>,
+    /// Index into `rects.split_dividers` of the divider the mouse is currently
+    /// hovering. Drives the per-divider yellow tint that advertises drag-
+    /// resizability. Cleared on click + on hover-leave.
+    pub hover_divider_idx: Option<usize>,
     /// True after a quit was refused because of unsaved changes — a second
     /// `request_quit` then goes through. Cleared by saving.
     pub quit_armed: bool,
@@ -2768,6 +2775,7 @@ impl App {
             redraw_requested: false,
             clock_show_utc: false,
             hover_chip: None,
+            hover_divider_idx: None,
             quit_armed: false,
             rects: PaneRects::default(),
             flash_state: None,
@@ -2997,6 +3005,46 @@ impl App {
             ));
         }
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
+    /// Dispatch a click on one of the `> GIT` rail header chips (Fetch /
+    /// Pull / Push / Stage all / Commit / Graph). Routes to palette
+    /// commands for most; `StageAll` calls `git_stage_all_rail` directly
+    /// since the existing `git_stage_all_active` requires a `Pane::GitStatus`
+    /// focus we don't want to force.
+    pub fn run_git_rail_header_action(&mut self, action: crate::GitRailHeaderAction) {
+        use crate::GitRailHeaderAction::*;
+        match action {
+            Fetch => {
+                let _ = crate::command::run("git.fetch", self);
+            }
+            Pull => {
+                let _ = crate::command::run("git.pull", self);
+            }
+            Push => {
+                let _ = crate::command::run("git.push", self);
+            }
+            StageAll => self.git_stage_all_rail(),
+            Commit => {
+                let _ = crate::command::run("git.commit", self);
+            }
+            Graph => {
+                let _ = crate::command::run("git.graph", self);
+            }
+        }
+    }
+
+    /// Stage every change in the active repo without requiring `Pane::GitStatus`
+    /// to be focused. Sibling to `git_stage_all_active` (which IS gated on the
+    /// status pane); this one is the rail-header / programmatic entry point.
+    pub fn git_stage_all_rail(&mut self) {
+        match crate::git::stage::stage_all(self.active_repo_path()) {
+            Ok(()) => {
+                self.toast("staged all changes");
+                self.after_git_change();
+            }
+            Err(e) => self.toast(format!("git add -A: {e}")),
+        }
     }
 
     /// Right-click on the statusline branch chip — exposes the common

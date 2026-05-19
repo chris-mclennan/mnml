@@ -225,9 +225,10 @@ fn emit_image_placements(app: &mut App) {
 // ─── key dispatch (shared with headless/IPC) ────────────────────────
 
 pub fn dispatch_key(app: &mut App, key: KeyEvent) {
-    // Any keystroke cancels a pending hover tooltip — the user moved on to
-    // typing, the chip-help is no longer relevant.
+    // Any keystroke cancels a pending hover tooltip / divider highlight —
+    // the user moved on to typing, the hover-cue is no longer relevant.
     app.hover_chip = None;
+    app.hover_divider_idx = None;
     // Macro recording — capture every keystroke that flows through here.
     // Replaying explicitly skips this so it doesn't re-record into a new
     // macro mid-replay.
@@ -3843,6 +3844,14 @@ fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChip> {
     {
         return Some(crate::HoverChip::StatuslineClock);
     }
+    if let Some(&(_, action)) = app
+        .rects
+        .rail_git_header_buttons
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::RailHeaderChip(action));
+    }
     None
 }
 
@@ -3860,6 +3869,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         let prev_chip = app.hover_chip.map(|(c, _)| c);
         if new_chip != prev_chip {
             app.hover_chip = new_chip.map(|c| (c, now));
+        }
+        // Track divider hover for the yellow drag-cue. Updated in lockstep
+        // with chip hover; both are cleared on click / typing.
+        let new_div = app.rects.split_dividers.iter().position(|d| {
+            x >= d.rect.x
+                && x < d.rect.x + d.rect.width
+                && y >= d.rect.y
+                && y < d.rect.y + d.rect.height
+        });
+        if new_div != app.hover_divider_idx {
+            app.hover_divider_idx = new_div;
         }
         return;
     }
@@ -4484,6 +4504,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 && contains(tr, x, y)
             {
                 app.toggle_tree_root_expanded();
+                return;
+            }
+            // GIT header right-aligned chip cluster — Fetch / Pull / Push /
+            // Stage all / Commit / Graph. Check BEFORE the toggle so the
+            // chip wins over the section-collapse gesture.
+            if let Some(&(_, action)) = app
+                .rects
+                .rail_git_header_buttons
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+            {
+                app.run_git_rail_header_action(action);
                 return;
             }
             // The `> GIT` section header — same idea for the git rail.
