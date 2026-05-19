@@ -3805,6 +3805,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.run_wip_action(action);
                 return;
             }
+            // Click on a GitGraph top-toolbar button → fire its action.
+            // Pull / Push / Fetch / Branch / Commit / Stash / Pop /
+            // Reflog / Terminal. High priority so the button owns the
+            // click.
+            if let Some(&(_, pid, action)) = app
+                .rects
+                .git_toolbar_buttons
+                .iter()
+                .find(|(r, _, _)| contains(*r, x, y))
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                app.run_git_toolbar_action(action);
+                return;
+            }
             // Click on a request-pane tab chip → switch view (Edit ⇄ Response).
             if let Some(&(_, pid, view)) = app
                 .rects

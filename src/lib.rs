@@ -71,6 +71,33 @@ pub mod tui;
 pub mod ui;
 pub mod whichkey;
 
+/// One clickable button in the `Pane::GitGraph` top toolbar.
+/// The toolbar's `(rect, pane_id, action)` entries land on
+/// `app.rects.git_toolbar_buttons`; the mouse handler matches the
+/// rect + fires via `App::run_git_toolbar_action`.
+#[derive(Debug, Clone, Copy)]
+pub enum GitToolbarAction {
+    /// `git pull --ff-only`
+    Pull,
+    /// `git push` (auto `--set-upstream` on first push)
+    Push,
+    /// `git fetch --all --prune`
+    Fetch,
+    /// Open the branch picker (`git.checkout`)
+    BranchPicker,
+    /// Open the commit-message prompt (`git.commit`)
+    Commit,
+    /// Open the stash-push prompt (`git.stash`)
+    Stash,
+    /// `git stash pop` of the most-recent stash
+    StashPop,
+    /// Spawn a shell pty pane (`term.shell`)
+    Terminal,
+    /// Open the reflog picker — recovery surface for "I just rebased
+    /// and lost a commit" flows.
+    Reflog,
+}
+
 /// One clickable action inside the `Pane::GitGraph` WIP detail panel.
 /// Click on a "Stage All" button ⇒ `StageAll`; click on a file row's
 /// `[+]` ⇒ `StageFile(path)`. The corresponding rect lives on

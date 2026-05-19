@@ -74,41 +74,74 @@ pub fn draw(
     }
     g.selected = g.selected.min(g.total_rows() - 1);
 
+    // ── top toolbar (Pull / Push / Branch / Stash / Pop / Terminal …) ─
+    // Spans the full pane width; uses 2 rows (label on top, icon below).
+    // Hidden when the pane is too narrow / short for the toolbar to be
+    // useful.
+    let toolbar_h: u16 = if area.width >= 40 && area.height >= 8 {
+        2
+    } else {
+        0
+    };
+    let nerd_icons = !app.config.ui.ascii_icons;
+    if toolbar_h > 0 {
+        let toolbar_area = Rect::new(area.x, area.y, area.width, toolbar_h);
+        draw_git_toolbar(
+            frame,
+            toolbar_area,
+            &t,
+            pane_id,
+            nerd_icons,
+            &mut app.rects.git_toolbar_buttons,
+        );
+    }
+    let body_area_full = Rect::new(
+        area.x,
+        area.y + toolbar_h,
+        area.width,
+        area.height.saturating_sub(toolbar_h),
+    );
+
     // ── horizontal split: list on left, detail on right ──────────────
     // Detail panel takes ~40% of the width (clamped), graphical-Git-GUI-style.
     // Falls back to no detail panel when the pane is very narrow.
-    let detail_w: u16 = if area.width >= 80 {
+    let detail_w: u16 = if body_area_full.width >= 80 {
         if let Some(w) = detail_w_cfg {
-            (w as u16).clamp(20, area.width.saturating_sub(40))
+            (w as u16).clamp(20, body_area_full.width.saturating_sub(40))
         } else {
-            (area.width * 2 / 5).clamp(30, 70)
+            (body_area_full.width * 2 / 5).clamp(30, 70)
         }
     } else {
         0
     };
     let (list_area, detail_area) = if detail_w > 0 {
         (
-            Rect::new(area.x, area.y, area.width - detail_w - 1, area.height),
+            Rect::new(
+                body_area_full.x,
+                body_area_full.y,
+                body_area_full.width - detail_w - 1,
+                body_area_full.height,
+            ),
             Some(Rect::new(
-                area.x + area.width - detail_w,
-                area.y,
+                body_area_full.x + body_area_full.width - detail_w,
+                body_area_full.y,
                 detail_w,
-                area.height,
+                body_area_full.height,
             )),
         )
     } else {
-        (area, None)
+        (body_area_full, None)
     };
     // Vertical divider between list + detail
     if detail_w > 0 {
-        let divider_x = area.x + area.width - detail_w - 1;
-        for row in 0..area.height {
+        let divider_x = body_area_full.x + body_area_full.width - detail_w - 1;
+        for row in 0..body_area_full.height {
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
                     "│",
                     Style::default().fg(t.grey).bg(t.bg_dark),
                 ))),
-                Rect::new(divider_x, area.y + row, 1, 1),
+                Rect::new(divider_x, body_area_full.y + row, 1, 1),
             );
         }
     }
@@ -1136,6 +1169,176 @@ fn right_align(s: &str, width: usize) -> String {
         let out: String = s.chars().skip(skip).collect();
         format!("…{out}")
     }
+}
+
+/// Draw the GitGraph top toolbar — a 2-row strip of clickable git
+/// action buttons (Pull / Push / Fetch / Branch / Commit / Stash /
+/// Pop / Terminal / Reflog). Top row: text label. Bottom row: icon
+/// (Nerd Font glyph when available; ASCII fallback otherwise).
+///
+/// Pushes button rects onto `buttons_out` so `tui::dispatch_mouse`
+/// can route clicks via [`crate::App::run_git_toolbar_action`].
+fn draw_git_toolbar(
+    frame: &mut Frame,
+    area: Rect,
+    t: &Theme,
+    pane_id: PaneId,
+    nerd: bool,
+    buttons_out: &mut Vec<(Rect, PaneId, crate::GitToolbarAction)>,
+) {
+    if area.width < 30 || area.height < 2 {
+        return;
+    }
+    let bg = t.bg_darker;
+    let widget_area = Rect::new(area.x, area.y, area.width, area.height);
+    frame.render_widget(
+        Paragraph::new("").style(Style::default().bg(bg)),
+        widget_area,
+    );
+    // Bottom horizontal rule beneath the toolbar — separates from the
+    // table header.
+    let rule = "─".repeat(area.width as usize);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            rule,
+            Style::default().fg(t.grey).bg(bg),
+        ))),
+        Rect::new(area.x, area.y + area.height - 1, area.width, 1),
+    );
+
+    // Button definitions: (label, nerd icon, ascii icon, action, color).
+    // Order is Pull/Push first (most common ops), then Fetch, then
+    // Branch/Commit/Stash/Pop, then Reflog and Terminal at the end.
+    let buttons: [(
+        &str,
+        &str,
+        &str,
+        crate::GitToolbarAction,
+        ratatui::style::Color,
+    ); 9] = [
+        (
+            "Pull",
+            "\u{F0162}",
+            "↓",
+            crate::GitToolbarAction::Pull,
+            t.green,
+        ),
+        (
+            "Push",
+            "\u{F0166}",
+            "↑",
+            crate::GitToolbarAction::Push,
+            t.blue,
+        ),
+        (
+            "Fetch",
+            "\u{F0450}",
+            "↺",
+            crate::GitToolbarAction::Fetch,
+            t.cyan,
+        ),
+        (
+            "Branch",
+            "\u{F062C}",
+            "⎇",
+            crate::GitToolbarAction::BranchPicker,
+            t.yellow,
+        ),
+        (
+            "Commit",
+            "\u{F012C}",
+            "✓",
+            crate::GitToolbarAction::Commit,
+            t.green,
+        ),
+        (
+            "Stash",
+            "\u{F01DA}",
+            "↧",
+            crate::GitToolbarAction::Stash,
+            t.purple,
+        ),
+        (
+            "Pop",
+            "\u{F01DB}",
+            "↥",
+            crate::GitToolbarAction::StashPop,
+            t.purple,
+        ),
+        (
+            "Reflog",
+            "\u{F02DA}",
+            "↺",
+            crate::GitToolbarAction::Reflog,
+            t.orange,
+        ),
+        (
+            "Term",
+            "\u{F018D}",
+            ">_",
+            crate::GitToolbarAction::Terminal,
+            t.comment,
+        ),
+    ];
+
+    // Each button is 9 cells wide (8 content + 1 divider). Drop buttons
+    // from the right when the pane is too narrow to fit them all.
+    let cell_w: u16 = 9;
+    let max_buttons = (area.width / cell_w) as usize;
+    let n = buttons.len().min(max_buttons);
+    let mut label_spans: Vec<Span> = Vec::new();
+    let mut icon_spans: Vec<Span> = Vec::new();
+    let mut x = area.x;
+    for (i, (label, nerd_icon, ascii_icon, action, color)) in buttons.iter().take(n).enumerate() {
+        let icon = if nerd { *nerd_icon } else { *ascii_icon };
+        let label_pad = center_pad(label, 8);
+        let icon_pad = center_pad(icon, 8);
+        label_spans.push(Span::styled(
+            label_pad,
+            Style::default()
+                .fg(t.fg)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        icon_spans.push(Span::styled(
+            icon_pad,
+            Style::default()
+                .fg(*color)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        // Divider after every button except the last on the row.
+        if i + 1 < n {
+            label_spans.push(Span::styled("│", Style::default().fg(t.grey).bg(bg)));
+            icon_spans.push(Span::styled("│", Style::default().fg(t.grey).bg(bg)));
+        }
+        // Push button rect (8-cell-wide hit area, 2 rows tall — excludes
+        // the rule row at the bottom).
+        buttons_out.push((Rect::new(x, area.y, 8, 1), pane_id, *action));
+        buttons_out.push((Rect::new(x, area.y + 1, 8, 1), pane_id, *action));
+        x += cell_w;
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(label_spans)).style(Style::default().bg(bg)),
+        Rect::new(area.x, area.y, area.width, 1),
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(icon_spans)).style(Style::default().bg(bg)),
+        Rect::new(area.x, area.y + 1, area.width, 1),
+    );
+}
+
+/// Center `s` inside a `width`-char column. Truncates to fit (no
+/// ellipsis — the button labels are short fixed words).
+fn center_pad(s: &str, width: usize) -> String {
+    let n = s.chars().count();
+    if n >= width {
+        return s.chars().take(width).collect();
+    }
+    let total = width - n;
+    let left = total / 2;
+    let right = total - left;
+    format!("{}{}{}", " ".repeat(left), s, " ".repeat(right))
 }
 
 /// Format a unix-seconds timestamp as `MM/DD HH:MM` in the user's local

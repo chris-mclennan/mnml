@@ -1555,6 +1555,11 @@ pub struct PaneRects {
     /// or per-file `[+]` / `[−]` stage/unstage. Cleared + rebuilt per
     /// render. See [`crate::WipAction`] for the action shape.
     pub wip_buttons: Vec<(Rect, PaneId, crate::WipAction)>,
+    /// `(button_rect, pane_id, action)` per clickable button in the
+    /// GitGraph pane's top toolbar (Pull / Push / Fetch / Branch /
+    /// Commit / Stash / Pop / Terminal / Reflog). Cleared + rebuilt
+    /// per render. See [`crate::GitToolbarAction`].
+    pub git_toolbar_buttons: Vec<(Rect, PaneId, crate::GitToolbarAction)>,
     /// Rect of the bufferline's `‹` overflow chevron when painted (more tabs
     /// scrolled off the left edge); `None` when there's nothing past it.
     /// Clicking scrolls the bufferline left by one.
@@ -12794,6 +12799,25 @@ impl App {
     /// pane stages without forcing the user to switch panes first.
     /// Refreshes the open GitGraph pane after the operation so the WIP
     /// row's file list reflects the change.
+    /// Dispatch a button click from the GitGraph pane's top toolbar.
+    /// Each variant maps to an existing palette command — keeps the
+    /// mouse-driven and palette-driven flows in lockstep.
+    pub fn run_git_toolbar_action(&mut self, action: crate::GitToolbarAction) {
+        match action {
+            crate::GitToolbarAction::Pull => self.run_git_pull(),
+            crate::GitToolbarAction::Push => self.run_git_push(),
+            crate::GitToolbarAction::Fetch => self.run_git_fetch(),
+            crate::GitToolbarAction::BranchPicker => self.open_branch_picker(),
+            crate::GitToolbarAction::Commit => self.open_commit_prompt(),
+            crate::GitToolbarAction::Stash => self.open_stash_prompt(),
+            crate::GitToolbarAction::StashPop => self.run_git_stash_pop(),
+            crate::GitToolbarAction::Terminal => {
+                crate::command::run("term.shell", self);
+            }
+            crate::GitToolbarAction::Reflog => self.open_git_reflog(),
+        }
+    }
+
     pub fn run_wip_action(&mut self, action: crate::WipAction) {
         // Two of the variants open prompts / fire AI jobs — handle
         // them up front since they don't return a Result<String, String>

@@ -119,6 +119,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.fold_chips.clear();
         app.rects.code_lens_chips.clear();
         app.rects.wip_buttons.clear();
+        app.rects.git_toolbar_buttons.clear();
         app.rects.request_tabs.clear();
         app.rects.request_fields.clear();
         app.rects.completion_rows.clear();
@@ -271,6 +272,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.fold_chips.clear();
     app.rects.code_lens_chips.clear();
     app.rects.wip_buttons.clear();
+    app.rects.git_toolbar_buttons.clear();
     app.rects.request_tabs.clear();
     app.rects.request_fields.clear();
     app.rects.list_rows.clear();
