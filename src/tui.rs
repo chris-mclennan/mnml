@@ -241,6 +241,9 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     if key.code == KeyCode::Esc {
         app.toast = None;
         app.toast_stack.clear();
+        // F1 discovery overlay closes on Esc too — same dismiss gesture as
+        // tooltips/toasts.
+        app.show_discovery_overlay = false;
     }
     // Flash intercept: when label overlay is up, Esc cancels; a printable
     // char matching a label commits the jump; an unmatched key cancels

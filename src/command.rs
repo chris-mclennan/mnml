@@ -132,6 +132,15 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_tree_visibility(),
         },
         Command {
+            id: "view.discovery",
+            title: "Click discovery overlay (F1 toggles)",
+            group: "view",
+            keys: &["f1"],
+            run: |app| {
+                app.show_discovery_overlay = !app.show_discovery_overlay;
+            },
+        },
+        Command {
             id: "view.focus_tree",
             title: "Focus the file tree (without toggling)",
             group: "view",

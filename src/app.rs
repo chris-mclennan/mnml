@@ -2221,6 +2221,10 @@ pub struct App {
     /// hovering. Drives the per-divider yellow tint that advertises drag-
     /// resizability. Cleared on click + on hover-leave.
     pub hover_divider_idx: Option<usize>,
+    /// `F1` discovery overlay — a centered floating panel listing every
+    /// clickable region category with live rect counts. Press F1 again or
+    /// Esc to close. In-memory only.
+    pub show_discovery_overlay: bool,
     /// True after a quit was refused because of unsaved changes — a second
     /// `request_quit` then goes through. Cleared by saving.
     pub quit_armed: bool,
@@ -2781,6 +2785,7 @@ impl App {
             clock_show_utc: false,
             hover_chip: None,
             hover_divider_idx: None,
+            show_discovery_overlay: false,
             quit_armed: false,
             rects: PaneRects::default(),
             flash_state: None,

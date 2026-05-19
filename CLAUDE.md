@@ -83,6 +83,39 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Discoverability wave II — GitGraph filter set + tooltip + right-click extension + gutter menu + request-pane focus bar + F1 overlay (2026-05-19):**
+five small/medium items extending the prior chip work. (1) **GitGraph
+filters complete.** `LogFilter` gained `author` (`--author=`) +
+`grep` (`--grep=` with `--regexp-ignore-case`). Chord set on the
+graph pane: `b` branch picker / `B` clears · `D` date range
+(since[..until] or `--since=`/`--until=` flags) · `a` author ·
+`s` subject grep · `F` clears every filter. Palette commands
+`git.graph_filter_{date,author,subject,reset_all}`. Header chip
+combines every active filter into one yellow label
+(`⎇ feat · @alice · ~regex · since 1 week ago · F clears`).
+(2) **Tooltip + hover system extended** to four more chip
+families: bufferline tabs (full workspace-relative path + dirty
+marker), diff toolbar (each Inline/Hunk/Split/Wrap/Close chip
+describes its effect), fold chips (`⋯ N hidden`), code-lens chips
+(`⚡ <title>`). Same ~500ms hover delay. (3) **Gutter right-click
+menu.** Right-click any line-number cell opens a per-line menu:
+Toggle breakpoint / Conditional / Goto definition / Find
+references / Hover / Peek change / Toggle blame / Open at remote.
+The click first focuses the pane + places the cursor on the right
+line so each command sees the target. New
+`app.rects.editor_gutters` registry +
+`App::open_editor_gutter_context_menu`. (4) **Request-pane field
+focus bar.** Edit mode now paints a yellow `▌` left-edge bar on
+the focused field (Method/URL/Headers/Body) instead of the
+previous subtle `▸`. Unfocused fields get a dim `▏` so the column
+is still anchored visually. (5) **F1 discovery overlay.** Press
+F1 to toggle a centered floating panel listing every clickable
+region category with live rect counts; green count chip = at
+least one is on screen right now. Esc closes (alongside the
+toast/tooltip dismiss gesture). New `ui::discovery` module +
+`App.show_discovery_overlay` + `view.discovery` palette command.
+678 lib tests + clippy clean.
+
 **Discoverability wave: rail buttons + draggable dividers + GitGraph branch filter + chip tooltips + chip right-click menus + persisted clock (2026-05-19):**
 five-item polish pass aimed at closing the click-discoverability
 loop. (1) **Right-click menus on every statusline chip.** Branch

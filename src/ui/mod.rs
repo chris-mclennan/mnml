@@ -69,6 +69,7 @@ pub mod statusline;
 pub mod test_executions_view;
 pub mod tests_view;
 pub mod theme;
+pub mod discovery;
 pub mod toast_stack;
 pub mod tooltip;
 pub mod trace_view;
@@ -375,6 +376,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.hover_chip.is_some() {
         tooltip::draw(frame, app, area);
     }
+    // F1 discovery overlay — sits on top of everything else.
+    discovery::draw(frame, app, area);
 
     // ── terminal cursor ──
     // An overlay's text caret (picker query, prompt input) wins when it's open;

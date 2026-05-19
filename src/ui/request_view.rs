@@ -208,13 +208,31 @@ fn draw_edit(
         }
         st
     };
-    let prefix = |is_focus: bool| if is_focus { "▸ " } else { "  " };
+    // Left-edge focus bar — bold yellow `▌` when focused (matches the diff
+    // swimlane style); subtle `bg2` block when not, so the column is
+    // still visually present and easy to anchor on.
+    let bar_span = |is_focus: bool| {
+        if is_focus {
+            Span::styled(
+                "▌ ".to_string(),
+                Style::default()
+                    .fg(t.yellow)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled(
+                "▏ ".to_string(),
+                Style::default().fg(t.bg3).bg(t.bg_dark),
+            )
+        }
+    };
 
     // Method
     let m_focus = rp.focus == EditField::Method;
     let method_y = rows.len() as u16;
     rows.push(Line::from(vec![
-        Span::styled(prefix(m_focus).to_string(), label_style(m_focus)),
+        bar_span(m_focus),
         Span::styled("Method  ", label_style(m_focus)),
         Span::styled(
             rp.request.method.clone(),
@@ -230,10 +248,12 @@ fn draw_edit(
     // URL (field — caret rendered when focused)
     let u_focus = rp.focus == EditField::Url;
     let url_text = rp.request.url.clone();
-    let label_url = format!("{}URL     ", prefix(u_focus));
-    let label_len = label_url.chars().count() as u16;
+    let label_url = "URL     ".to_string();
+    // 2-cell bar prefix + label text length = total prefix-before-input.
+    let label_len = 2u16 + label_url.chars().count() as u16;
     let url_y = rows.len() as u16;
     rows.push(Line::from(vec![
+        bar_span(u_focus),
         Span::styled(label_url, label_style(u_focus)),
         Span::styled(url_text.clone(), Style::default().fg(t.blue).bg(t.bg_dark)),
     ]));
@@ -248,10 +268,10 @@ fn draw_edit(
     // Headers (editable as `Key: Value` text; one line per entry)
     let h_focus = rp.focus == EditField::Headers;
     let headers_label_y = rows.len() as u16;
-    rows.push(Line::from(vec![Span::styled(
-        format!("{}Headers", prefix(h_focus)),
-        label_style(h_focus),
-    )]));
+    rows.push(Line::from(vec![
+        bar_span(h_focus),
+        Span::styled("Headers".to_string(), label_style(h_focus)),
+    ]));
     register_field(fields, headers_label_y, EditField::Headers);
     let hb = &rp.headers_buffer;
     if hb.is_empty() {
@@ -316,10 +336,10 @@ fn draw_edit(
     // Body
     let b_focus = rp.focus == EditField::Body;
     let body_label_y = rows.len() as u16;
-    rows.push(Line::from(vec![Span::styled(
-        format!("{}Body", prefix(b_focus)),
-        label_style(b_focus),
-    )]));
+    rows.push(Line::from(vec![
+        bar_span(b_focus),
+        Span::styled("Body".to_string(), label_style(b_focus)),
+    ]));
     register_field(fields, body_label_y, EditField::Body);
     let body = rp.request.body.as_deref().unwrap_or("");
     if body.is_empty() {
