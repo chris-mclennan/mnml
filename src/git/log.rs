@@ -293,6 +293,25 @@ pub fn full_message(workspace: &Path, hash: &str) -> String {
         .unwrap_or_default()
 }
 
+/// `git show <hash>:<rel_path>` — the file's contents at that commit.
+/// Returns `None` when git can't find the path at that revision (e.g.
+/// the file was added in this commit but the user picked the wrong
+/// short hash, or the path is a rename target that doesn't exist
+/// under the same name at the parent commit). Lossy UTF-8 — non-UTF-8
+/// bytes get the standard replacement character.
+pub fn file_at_commit(workspace: &Path, hash: &str, rel_path: &str) -> Option<String> {
+    let spec = format!("{hash}:{rel_path}");
+    let out = Command::new("git")
+        .args(["show", &spec])
+        .current_dir(workspace)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 /// Compact commit entry for the per-file history picker — just enough
 /// to render a fuzzy-pickable row and open the commit's diff.
 #[derive(Debug, Clone)]

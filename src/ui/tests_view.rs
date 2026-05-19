@@ -31,6 +31,11 @@ pub fn draw(
         Paragraph::new("").style(Style::default().bg(t.bg_dark)),
         area,
     );
+    let want_sb = area.width >= 8;
+    let sb_w = if want_sb { 1 } else { 0 };
+    let body_area = Rect::new(area.x, area.y, area.width - sb_w, area.height);
+    let sb_area = Rect::new(area.x + area.width - sb_w, area.y, sb_w, area.height);
+    let area = body_area;
     // Take a peek at the test history first — we'll need it (mutable borrow of
     // `tp` below blocks reading other fields of `app`).
     let history = app.test_history.clone();
@@ -262,11 +267,23 @@ pub fn draw(
         }
     }
 
-    let view: Vec<Line> = rows.into_iter().skip(tp.scroll).take(h).collect();
+    let total_rows = rows.len();
+    let scroll = tp.scroll;
+    let view: Vec<Line> = rows.into_iter().skip(scroll).take(h).collect();
     frame.render_widget(
         Paragraph::new(view).style(Style::default().bg(t.bg_dark)),
         area,
     );
     app.rects.editor_panes.push((area, pane_id));
+    if sb_w > 0 {
+        crate::ui::scrollbar::paint_simple_scrollbar(frame, sb_area, &t, total_rows, h, scroll);
+        app.rects.scrollbars.push(crate::app::ScrollbarHit {
+            area: sb_area,
+            pane_id,
+            total: total_rows,
+            viewport: h,
+            kind: crate::app::ScrollbarKind::Tests,
+        });
+    }
     None
 }

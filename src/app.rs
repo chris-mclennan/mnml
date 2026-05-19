@@ -984,6 +984,22 @@ struct SavedSession {
     /// empty. Persisted so pins survive relaunch.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     harpoon: Vec<Option<String>>,
+    /// Last drag-adjusted width (cells) of the GitGraph commit-list ↔
+    /// detail-panel divider. `None` ⇒ no runtime override (config /
+    /// auto-size applies).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    git_graph_detail_col: Option<u16>,
+    /// Remembered diff view-mode + wrap toggle, applied to every new
+    /// `Pane::Diff`. Persists the user's `[Inline] / [Hunk] /
+    /// [Split] / [Wrap]` toolbar choice across mnml restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    diff_view_mode: Option<crate::pane::DiffViewMode>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    diff_wrap: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -1487,6 +1503,59 @@ pub enum RailSection {
     Git,
 }
 
+/// Which underlying scroll value a `ScrollbarHit` controls. The dispatcher
+/// (in `tui.rs`) routes a drag-to-scrollbar event into the right pane field
+/// based on this tag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollbarKind {
+    /// `Pane::Editor` buffer's `scroll` field. `total` = line count;
+    /// `viewport` = visible text rows.
+    Editor,
+    /// `Pane::Diff` view's `scroll` field. `total` = total flat rows
+    /// across all rendered hunks; `viewport` = body rows shown.
+    Diff,
+    /// `Pane::GitGraph(g)` with `g.embedded_diff` set — drags adjust
+    /// `g.embedded_diff.scroll`.
+    EmbeddedDiff,
+    /// `Pane::GitGraph(g)` commit list (no embedded diff). Drags
+    /// adjust `g.scroll` AND snap `g.selected` to the new scroll
+    /// position so the per-frame keep-selected-on-screen math doesn't
+    /// immediately snap the scroll back.
+    GitGraphCommits,
+    /// `Pane::Tests(p)` → `p.scroll`.
+    Tests,
+    /// `Pane::Flaky(p)` → `p.scroll`.
+    Flaky,
+    /// `Pane::Diagnostics(p)` → `p.scroll`.
+    Diagnostics,
+    /// `Pane::Outline(p)` → `p.scroll`.
+    Outline,
+    /// `Pane::Grep(p)` → `p.scroll`.
+    Grep,
+    /// `Pane::Quickfix(p)` → `p.scroll`.
+    Quickfix,
+    /// `Pane::GitStatus(p)` → `p.scroll`.
+    GitStatus,
+    /// `Pane::CmdlineHistory(p)` → `p.scroll`.
+    CmdlineHistory,
+}
+
+/// A click-targetable scrollbar region rendered this frame. Used both
+/// for jump-to-position clicks (click anywhere in the bar → scroll
+/// proportionally) and for drag-to-scroll gestures.
+#[derive(Debug, Clone, Copy)]
+pub struct ScrollbarHit {
+    /// Screen rect of the painted scrollbar (1 col wide, body-height tall).
+    pub area: Rect,
+    pub pane_id: PaneId,
+    /// Total number of content rows in the underlying document. Maps
+    /// click_y → file row.
+    pub total: usize,
+    /// Visible content rows (i.e. body height).
+    pub viewport: usize,
+    pub kind: ScrollbarKind,
+}
+
 /// Screen regions captured during render, consumed for mouse routing on the next event.
 #[derive(Debug, Default, Clone)]
 pub struct PaneRects {
@@ -1500,6 +1569,11 @@ pub struct PaneRects {
     /// The 1-cell-wide draggable "right edge" of the rail. Click+drag adjusts
     /// `App::tree_width` so the rail resizes live.
     pub tree_edge: Option<Rect>,
+    /// `(divider_rect, pane_id)` per visible GitGraph commit-list ↔
+    /// detail-panel divider. Click-and-drag adjusts the detail-panel
+    /// width via `App.git_graph_detail_col_override`. Cleared +
+    /// rebuilt per render.
+    pub git_graph_detail_dividers: Vec<(Rect, PaneId)>,
     /// The `> GIT` section header row in the rail (when the rail's visible).
     /// Click → `App::toggle_git_section_expanded`.
     pub git_section_toggle: Option<Rect>,
@@ -1555,11 +1629,41 @@ pub struct PaneRects {
     /// or per-file `[+]` / `[−]` stage/unstage. Cleared + rebuilt per
     /// render. See [`crate::WipAction`] for the action shape.
     pub wip_buttons: Vec<(Rect, PaneId, crate::WipAction)>,
+    /// `(row_rect, pane_id, abs_path, staged)` per clickable file
+    /// row in the GitGraph WIP detail panel (excluding the `[+]` /
+    /// `[−]` button rects which already live in `wip_buttons`).
+    /// Click ⇒ opens the file's diff (`Pane::Diff`) so the user can
+    /// switch between Hunk / Inline / Split views.
+    pub wip_file_rows: Vec<(Rect, PaneId, std::path::PathBuf, bool)>,
+    /// Click rect for the WIP commit-message textarea in the GitGraph
+    /// WIP detail panel. Clicking inside focuses the textarea; the
+    /// keyboard handler intercepts subsequent printable / arrow /
+    /// Backspace / Enter keys while focused. `None` ⇒ textarea isn't
+    /// being drawn (panel too small, or the selected row isn't WIP).
+    pub wip_commit_textarea: Option<(Rect, PaneId)>,
     /// `(button_rect, pane_id, action)` per clickable button in the
     /// GitGraph pane's top toolbar (Pull / Push / Fetch / Branch /
     /// Commit / Stash / Pop / Terminal / Reflog). Cleared + rebuilt
     /// per render. See [`crate::GitToolbarAction`].
     pub git_toolbar_buttons: Vec<(Rect, PaneId, crate::GitToolbarAction)>,
+    /// `(row_rect, pane_id, file_idx)` per clickable changed-file
+    /// row in the GitGraph commit-detail panel. `file_idx` indexes
+    /// into `detail.files`. Click ⇒ opens that file's diff.
+    pub commit_file_rows: Vec<(Rect, PaneId, usize)>,
+    /// `(button_rect, pane_id, action)` per clickable button in a
+    /// `Pane::Diff` top toolbar — `[Inline] [Hunk] [Split] [Wrap]`.
+    pub diff_toolbar_buttons: Vec<(Rect, PaneId, crate::DiffToolbarAction)>,
+    /// `(chip_rect, pane_id, hunk_index, action)` per per-hunk
+    /// chip in the Hunk view's header row (`[Stage]` / `[Unstage]`
+    /// / `[Discard]`). Cleared + rebuilt per render.
+    pub diff_hunk_buttons: Vec<(Rect, PaneId, usize, crate::DiffHunkAction)>,
+    /// `ScrollbarHit` per painted scrollbar (editor body, diff body,
+    /// embedded-diff body inside a GitGraph). Click + drag in the
+    /// scrollbar rect jumps the underlying scroll position. Click on
+    /// a colored change marker jumps to that row in the file.
+    /// Cleared + rebuilt per render so the rect always matches the
+    /// current layout.
+    pub scrollbars: Vec<ScrollbarHit>,
     /// Rect of the bufferline's `‹` overflow chevron when painted (more tabs
     /// scrolled off the left edge); `None` when there's nothing past it.
     /// Clicking scrolls the bufferline left by one.
@@ -1811,6 +1915,27 @@ pub struct App {
     /// True while the user is mid-drag on the rail's right-edge handle.
     /// Cleared on mouse-up; clamps `tree_width` to a sane range during drag.
     pub dragging_tree_edge: bool,
+    /// `Some(hit)` while the user is mid-drag on a scrollbar (editor /
+    /// diff / embedded-diff). Each drag tick maps the current `y` →
+    /// new scroll position via `apply_scrollbar_drag`. Cleared on
+    /// mouse-up.
+    pub dragging_scrollbar: Option<ScrollbarHit>,
+    /// Runtime override for the GitGraph commit-detail panel width
+    /// (in cells). `None` ⇒ use `[ui] git_graph_detail_col` from the
+    /// config or auto-size to 40% of the body. Updated by drag on the
+    /// vertical divider between commit list + detail; persisted in
+    /// session.json.
+    pub git_graph_detail_col_override: Option<u16>,
+    /// Active GitGraph-detail-divider drag — `(pane_id, pane_left_x,
+    /// pane_right_x)` captured at drag start so we can clamp the
+    /// resulting width per the pane the user grabbed.
+    pub dragging_git_graph_detail: Option<(crate::layout::PaneId, u16, u16)>,
+    /// Remembered diff view-mode + wrap toggle for every new
+    /// `Pane::Diff`. The user picks once via the toolbar; the choice
+    /// applies to every subsequent diff open (any file, any commit).
+    /// Persisted in session.json across mnml restarts.
+    pub diff_view_mode_pref: crate::pane::DiffViewMode,
+    pub diff_wrap_pref: bool,
     /// Bufferline horizontal scroll — index of the leftmost rendered tab. Auto
     /// adjusts on every render to keep the active tab visible (the user never
     /// has to scroll it manually). Reset when the pane count drops past it.
@@ -2198,6 +2323,14 @@ pub struct App {
     /// `(path, basename)` of a worktree awaiting the same kind of confirm
     /// prompt (→ `git worktree remove`).
     pending_worktree_remove: Option<(PathBuf, String)>,
+    /// `(pane_id, hunk_index)` of a diff hunk awaiting a
+    /// "type 'discard' to confirm" prompt. Set when the user clicks
+    /// the Discard chip; cleared on accept or cancel.
+    pending_discard_hunk: Option<(PaneId, usize)>,
+    /// Workspace-relative path of a file awaiting a "type the
+    /// filename to confirm" discard prompt — opened by the
+    /// GitStatus right-click menu's "Discard changes" entry.
+    pending_discard_file: Option<PathBuf>,
     /// The file-system action waiting on its name prompt — captured when the
     /// `NewFile` / `NewFolder` / `Rename` context-menu items open the prompt.
     pending_fs_action: Option<FsAction>,
@@ -2412,6 +2545,11 @@ pub struct App {
     /// HEAD's message). The reply lands as a [`PromptKind::GitCommitAmend`]
     /// prompt that calls `git commit --amend -m` on accept.
     pending_amend_msg_job: Option<u64>,
+    /// When set, an in-flight AI commit-message job's result fills
+    /// the inline textarea on `pane_id` (a `Pane::GitGraph` with its
+    /// WIP detail visible) instead of opening the modal commit
+    /// prompt. `(job_id, pane_id)` — cleared on completion.
+    pending_wip_commit_msg_pane: Option<(u64, crate::layout::PaneId)>,
     next_job_id: u64,
     /// Commands registered at runtime by IPC plugins (`register-command`). They
     /// show up in the palette/which-key + keymap; invoking one queues its id in
@@ -2535,6 +2673,11 @@ impl App {
             tree_visible: true,
             tree_width,
             dragging_tree_edge: false,
+            dragging_scrollbar: None,
+            git_graph_detail_col_override: None,
+            dragging_git_graph_detail: None,
+            diff_view_mode_pref: crate::pane::DiffViewMode::Inline,
+            diff_wrap_pref: false,
             bufferline_first_visible: 0,
             zen_mode: false,
             bufferline_visible: true,
@@ -2634,6 +2777,8 @@ impl App {
             pending_branch_source: None,
             pending_delete_branch: None,
             pending_worktree_remove: None,
+            pending_discard_hunk: None,
+            pending_discard_file: None,
             pending_fs_action: None,
             completion: None,
             http_chan: None,
@@ -2705,6 +2850,7 @@ impl App {
             github_connected: false,
             pending_commit_msg_job: None,
             pending_amend_msg_job: None,
+            pending_wip_commit_msg_pane: None,
             next_job_id: 1,
             dynamic_commands: Vec::new(),
             pending_plugin_invocations: Vec::new(),
@@ -2823,6 +2969,208 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
+    /// Right-click on a row inside a diff body (standalone or
+    /// embedded) — build a context menu with hunk-aware actions:
+    /// for commit diffs we add "Open file at this revision" /
+    /// "Copy commit hash"; for unstaged/staged diffs we add the
+    /// Stage / Unstage / Discard chip equivalents. `hunk_index`
+    /// refers to the underlying `hunks` vec of whichever DiffView
+    /// the row belongs to.
+    /// Right-click on a row in the GitStatus pane → per-file
+    /// context menu with stage / discard / ignore / stash / reveal /
+    /// copy-path / open / delete entries. `idx` is the flat index
+    /// (unstaged-first, then staged).
+    pub fn open_git_status_context_menu(
+        &mut self,
+        pane_id: PaneId,
+        idx: usize,
+        anchor: (u16, u16),
+    ) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let Some(Pane::GitStatus(g)) = self.panes.get(pane_id) else {
+            return;
+        };
+        let u = g.unstaged.len();
+        let (entry, is_staged) = if idx < u {
+            (&g.unstaged[idx], false)
+        } else if let Some(e) = g.staged.get(idx - u) {
+            (e, true)
+        } else {
+            return;
+        };
+        let rel = entry.rel.clone();
+        let abs = self.active_repo_path().join(&rel);
+        let basename = std::path::Path::new(&rel)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| rel.clone());
+        let ext = std::path::Path::new(&rel)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_string());
+        let mut items: Vec<MenuItem> = Vec::new();
+        if is_staged {
+            items.push(MenuItem::new(
+                "Unstage",
+                MenuAction::GitUnstageFile(std::path::PathBuf::from(rel.clone())),
+            ));
+        } else {
+            items.push(MenuItem::new(
+                "Stage",
+                MenuAction::GitStageFile(std::path::PathBuf::from(rel.clone())),
+            ));
+            items.push(MenuItem::new(
+                "Discard changes…",
+                MenuAction::GitDiscardFile(std::path::PathBuf::from(rel.clone())),
+            ));
+        }
+        items.push(MenuItem::new(
+            "Stash this file",
+            MenuAction::GitStashFile(std::path::PathBuf::from(rel.clone())),
+        ));
+        items.push(MenuItem::new(
+            format!("Ignore {basename}"),
+            MenuAction::GitIgnoreFile(std::path::PathBuf::from(rel.clone())),
+        ));
+        if let Some(ext) = ext {
+            items.push(MenuItem::new(
+                format!("Ignore all *.{ext}"),
+                MenuAction::GitIgnoreExtension(ext),
+            ));
+        }
+        items.push(MenuItem::new(
+            "Edit file",
+            MenuAction::OpenPath(abs.clone()),
+        ));
+        items.push(MenuItem::new(
+            "Reveal in Finder",
+            MenuAction::RevealInFinder(abs.clone()),
+        ));
+        items.push(MenuItem::new("Copy path", MenuAction::CopyPath(rel)));
+        items.push(MenuItem::new("Delete file…", MenuAction::Delete(abs)));
+        self.context_menu = Some(ContextMenu::new(Some(basename), anchor, items));
+    }
+
+    /// Open the "type the filename to confirm" prompt for the
+    /// "Discard changes" menu entry. Stashes `rel` in
+    /// `pending_discard_file`; the prompt accept calls
+    /// `accept_discard_file`.
+    pub fn open_discard_file_prompt(&mut self, rel: std::path::PathBuf) {
+        let basename = rel
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| rel.to_string_lossy().into_owned());
+        self.pending_discard_file = Some(rel);
+        let title = format!("Discard changes to {basename} — type filename to confirm");
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::GitDiscardFile,
+            title,
+        ));
+    }
+
+    /// Accept handler for [`PromptKind::GitDiscardFile`]. Requires the
+    /// typed text to equal the file's basename; on match, runs
+    /// `git restore -- <rel>`.
+    pub fn accept_discard_file(&mut self, typed: &str) {
+        let Some(rel) = self.pending_discard_file.take() else {
+            return;
+        };
+        let basename = rel
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if typed.trim() != basename {
+            self.toast("discard cancelled");
+            return;
+        }
+        let rel_str = rel.to_string_lossy().into_owned();
+        match crate::git::stage::discard_file(self.active_repo_path(), &rel_str) {
+            Ok(()) => {
+                self.toast(format!("discarded {basename}"));
+                self.after_git_change();
+            }
+            Err(e) => self.toast(format!("git restore: {e}")),
+        }
+    }
+
+    pub fn open_diff_context_menu(
+        &mut self,
+        pane_id: PaneId,
+        hunk_index: usize,
+        anchor: (u16, u16),
+    ) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let scope = match self.panes.get(pane_id) {
+            Some(Pane::Diff(d)) => Some(d.scope.clone()),
+            Some(Pane::GitGraph(g)) => g.embedded_diff.as_ref().map(|d| d.scope.clone()),
+            _ => None,
+        };
+        let Some(scope) = scope else {
+            return;
+        };
+        let mut items: Vec<MenuItem> = Vec::new();
+        match scope {
+            crate::pane::DiffScope::CommitFile { hash, rel_path } => {
+                items.push(MenuItem::new(
+                    "Open file at this revision",
+                    MenuAction::DiffOpenAtRevision {
+                        hash: hash.clone(),
+                        rel: rel_path,
+                    },
+                ));
+                items.push(MenuItem::new(
+                    format!(
+                        "Copy commit hash ({})",
+                        hash.chars().take(7).collect::<String>()
+                    ),
+                    MenuAction::CopyText(hash),
+                ));
+            }
+            crate::pane::DiffScope::Commit(hash) => {
+                items.push(MenuItem::new(
+                    format!(
+                        "Copy commit hash ({})",
+                        hash.chars().take(7).collect::<String>()
+                    ),
+                    MenuAction::CopyText(hash),
+                ));
+            }
+            crate::pane::DiffScope::Unstaged(_) | crate::pane::DiffScope::AllVsHead => {
+                items.push(MenuItem::new(
+                    "Stage hunk",
+                    MenuAction::DiffHunkAction {
+                        pane_id,
+                        hunk_index,
+                        action: crate::DiffHunkAction::Stage,
+                    },
+                ));
+                items.push(MenuItem::new(
+                    "Discard hunk",
+                    MenuAction::DiffHunkAction {
+                        pane_id,
+                        hunk_index,
+                        action: crate::DiffHunkAction::Discard,
+                    },
+                ));
+            }
+            crate::pane::DiffScope::Staged | crate::pane::DiffScope::StagedFile(_) => {
+                items.push(MenuItem::new(
+                    "Unstage hunk",
+                    MenuAction::DiffHunkAction {
+                        pane_id,
+                        hunk_index,
+                        action: crate::DiffHunkAction::Unstage,
+                    },
+                ));
+            }
+            crate::pane::DiffScope::BufferVsDisk(_) => {}
+        }
+        if items.is_empty() {
+            return;
+        }
+        self.context_menu = Some(ContextMenu::new(None, anchor, items));
+    }
+
     pub fn context_menu_cancel(&mut self) {
         self.context_menu = None;
     }
@@ -2892,7 +3240,94 @@ impl App {
                 self.clipboard.set(text.clone(), false);
                 self.toast("copied URL");
             }
+            DiffOpenAtRevision { hash, rel } => self.open_file_at_revision(&hash, &rel),
+            DiffHunkAction {
+                pane_id,
+                hunk_index,
+                action,
+            } => self.apply_hunk_action(pane_id, hunk_index, action),
+            GitStageFile(rel) => {
+                let rel_s = rel.to_string_lossy().into_owned();
+                match crate::git::stage::stage(self.active_repo_path(), &rel_s) {
+                    Ok(()) => {
+                        self.toast(format!("staged {rel_s}"));
+                        self.after_git_change();
+                    }
+                    Err(e) => self.toast(format!("git add: {e}")),
+                }
+            }
+            GitUnstageFile(rel) => {
+                let rel_s = rel.to_string_lossy().into_owned();
+                match crate::git::stage::unstage(self.active_repo_path(), &rel_s) {
+                    Ok(()) => {
+                        self.toast(format!("unstaged {rel_s}"));
+                        self.after_git_change();
+                    }
+                    Err(e) => self.toast(format!("git restore --staged: {e}")),
+                }
+            }
+            GitDiscardFile(rel) => self.open_discard_file_prompt(rel),
+            GitStashFile(rel) => {
+                let rel_s = rel.to_string_lossy().into_owned();
+                match crate::git::stage::stash_file(self.active_repo_path(), &rel_s) {
+                    Ok(()) => {
+                        self.toast(format!("stashed {rel_s}"));
+                        self.after_git_change();
+                    }
+                    Err(e) => self.toast(format!("git stash: {e}")),
+                }
+            }
+            GitIgnoreFile(rel) => {
+                let rel_s = rel.to_string_lossy().into_owned();
+                match crate::git::stage::append_gitignore(self.active_repo_path(), &rel_s) {
+                    Ok(()) => {
+                        self.toast(format!("ignored {rel_s}"));
+                        self.after_git_change();
+                    }
+                    Err(e) => self.toast(format!("ignore: {e}")),
+                }
+            }
+            GitIgnoreExtension(ext) => {
+                let pat = format!("*.{ext}");
+                match crate::git::stage::append_gitignore(self.active_repo_path(), &pat) {
+                    Ok(()) => {
+                        self.toast(format!("ignored {pat}"));
+                        self.after_git_change();
+                    }
+                    Err(e) => self.toast(format!("ignore: {e}")),
+                }
+            }
         }
+    }
+
+    /// `git show <hash>:<rel>` into a scratch buffer titled
+    /// `<rel> @ <short>`. Useful from the diff context menu when
+    /// the user wants to read the file's full contents at the
+    /// chosen revision (rather than just the changed lines).
+    pub fn open_file_at_revision(&mut self, hash: &str, rel: &std::path::Path) {
+        use std::process::Command;
+        let spec = format!("{}:{}", hash, rel.to_string_lossy());
+        let out = Command::new("git")
+            .args(["show", &spec])
+            .current_dir(self.active_repo_path())
+            .output();
+        let text = match out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+            Ok(o) => {
+                self.toast(format!(
+                    "git show: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ));
+                return;
+            }
+            Err(e) => {
+                self.toast(format!("git show: {e}"));
+                return;
+            }
+        };
+        let short = hash.chars().take(7).collect::<String>();
+        let title = format!("{} @ {}", rel.to_string_lossy(), short);
+        self.open_scratch_with_text(title, text);
     }
 
     /// Open the "New file…" prompt — captures `parent` so the accept handler
@@ -4254,6 +4689,23 @@ impl App {
             }
         }
         self.toast(format!("active repo → {name}"));
+    }
+
+    /// Walk forward / backward through `self.repos`, wrapping at the
+    /// ends. No-op when there's only one repo. Drives both the
+    /// `git.next_repo` / `git.prev_repo` palette commands and the
+    /// mouse-wheel handler on the GIT rail header.
+    pub fn cycle_active_repo(&mut self, forward: bool) {
+        let n = self.repos.len();
+        if n <= 1 {
+            return;
+        }
+        let next = if forward {
+            (self.active_repo + 1) % n
+        } else {
+            (self.active_repo + n - 1) % n
+        };
+        self.switch_active_repo(next);
     }
 
     /// Open a fuzzy picker over the repos discovered in the workspace.
@@ -9888,6 +10340,39 @@ impl App {
                         g.ai_msg_job = None;
                     }
                 }
+                // Inline-textarea path — fill the GitGraph pane's
+                // WIP commit textarea instead of opening the modal.
+                let wip_target = self
+                    .pending_wip_commit_msg_pane
+                    .take_if(|(jid, _)| *jid == job_id);
+                if let Some((_, pane_id)) = wip_target {
+                    match result {
+                        Ok(text) => {
+                            let clean = text
+                                .trim()
+                                .trim_start_matches("```")
+                                .trim_end_matches("```")
+                                .trim()
+                                .to_string();
+                            if let Some(Pane::GitGraph(g)) = self.panes.get_mut(pane_id) {
+                                g.wip_commit.ai_streaming = false;
+                                if clean.is_empty() {
+                                    toasts.push("AI returned an empty commit message".to_string());
+                                } else {
+                                    g.wip_commit.set_text(clean);
+                                    g.wip_commit.focused = true;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            if let Some(Pane::GitGraph(g)) = self.panes.get_mut(pane_id) {
+                                g.wip_commit.ai_streaming = false;
+                            }
+                            toasts.push(format!("AI commit message: {e}"));
+                        }
+                    }
+                    continue;
+                }
                 match result {
                     Ok(text) => {
                         let summary = text
@@ -12050,9 +12535,40 @@ impl App {
             }
             DiffScope::Unstaged(None) => crate::git::diff::diff_worktree(repo),
             DiffScope::Staged => crate::git::diff::diff_staged(repo),
+            DiffScope::StagedFile(p) => {
+                crate::git::diff::diff_staged_file(repo, &self.rel_to_active_repo(p))
+            }
             DiffScope::Commit(h) => crate::git::diff::show_commit(repo, h),
+            DiffScope::CommitFile { hash, rel_path } => {
+                crate::git::diff::show_commit_file(repo, hash, &rel_path.to_string_lossy())
+            }
             DiffScope::BufferVsDisk(path) => self.diff_buffer_vs_disk(path),
             DiffScope::AllVsHead => crate::git::diff::diff_vs_head(repo),
+        }
+    }
+
+    /// Same as [`Self::fetch_diff`] but asks git for full-file
+    /// context (`-U99999`). Used by the split (side-by-side) diff
+    /// renderer so untouched lines surround the changes — the
+    /// "whole file" view.
+    pub fn fetch_diff_full(&self, scope: &crate::pane::DiffScope) -> Vec<crate::git::diff::Hunk> {
+        use crate::pane::DiffScope;
+        let repo = self.active_repo_path();
+        match scope {
+            DiffScope::Unstaged(Some(p)) => {
+                crate::git::diff::diff_file_full(repo, &self.rel_to_active_repo(p))
+            }
+            DiffScope::Unstaged(None) => crate::git::diff::diff_worktree_full(repo),
+            DiffScope::Staged => crate::git::diff::diff_staged_full(repo),
+            DiffScope::StagedFile(p) => {
+                crate::git::diff::diff_staged_file_full(repo, &self.rel_to_active_repo(p))
+            }
+            DiffScope::Commit(h) => crate::git::diff::show_commit_full(repo, h),
+            DiffScope::CommitFile { hash, rel_path } => {
+                crate::git::diff::show_commit_file_full(repo, hash, &rel_path.to_string_lossy())
+            }
+            DiffScope::BufferVsDisk(path) => self.diff_buffer_vs_disk(path),
+            DiffScope::AllVsHead => crate::git::diff::diff_vs_head_full(repo),
         }
     }
 
@@ -12112,7 +12628,9 @@ impl App {
                 crate::pane::DiffScope::Unstaged(p) => p.clone(),
                 crate::pane::DiffScope::Staged
                 | crate::pane::DiffScope::Commit(_)
+                | crate::pane::DiffScope::CommitFile { .. }
                 | crate::pane::DiffScope::AllVsHead => None,
+                crate::pane::DiffScope::StagedFile(p) => Some(p.clone()),
                 crate::pane::DiffScope::BufferVsDisk(p) => Some(p.clone()),
             },
             _ => None,
@@ -12130,7 +12648,7 @@ impl App {
         let new_id = self.split_leaf_with(
             cur,
             crate::layout::SplitDir::Horizontal,
-            Pane::Diff(crate::pane::DiffView::new(scope, hunks)),
+            Pane::Diff(self.make_diff_view(scope, hunks)),
         );
         self.active = Some(new_id);
         self.focus = Focus::Pane;
@@ -12328,7 +12846,7 @@ impl App {
         let new_id = self.split_leaf_with(
             cur,
             crate::layout::SplitDir::Horizontal,
-            Pane::Diff(crate::pane::DiffView::new(scope, hunks)),
+            Pane::Diff(self.make_diff_view(scope, hunks)),
         );
         self.active = Some(new_id);
         self.focus = Focus::Pane;
@@ -12356,7 +12874,7 @@ impl App {
         let new_id = self.split_leaf_with(
             cur,
             crate::layout::SplitDir::Horizontal,
-            Pane::Diff(crate::pane::DiffView::new(scope, hunks)),
+            Pane::Diff(self.make_diff_view(scope, hunks)),
         );
         self.active = Some(new_id);
         self.focus = Focus::Pane;
@@ -12410,6 +12928,129 @@ impl App {
         ));
     }
 
+    /// Open one file's contribution to a commit as a `Pane::Diff`
+    /// (`git show <hash> -- <rel_path>`). Used by the commit-detail
+    /// panel's "Diff view" button.
+    pub fn open_commit_file_diff(&mut self, hash: &str, rel_path: &std::path::Path) {
+        let scope = crate::pane::DiffScope::CommitFile {
+            hash: hash.to_string(),
+            rel_path: rel_path.to_path_buf(),
+        };
+        let hunks = self.fetch_diff(&scope);
+        if hunks.is_empty() {
+            self.toast(format!(
+                "{} — no diff for {}",
+                &hash.chars().take(9).collect::<String>(),
+                rel_path.display()
+            ));
+            return;
+        }
+        self.panes
+            .push(Pane::Diff(self.make_diff_view(scope, hunks)));
+        let id = self.panes.len() - 1;
+        self.reveal_pane(id);
+    }
+
+    /// Click handler for a changed-file row in the GitGraph
+    /// commit-detail panel. Opens the file's diff as an embedded
+    /// diff INSIDE the GitGraph pane (replacing the commit list)
+    /// so the right detail panel stays visible alongside.
+    pub fn click_commit_file_row(&mut self, pane_id: crate::layout::PaneId, file_idx: usize) {
+        let Some(Pane::GitGraph(g)) = self.panes.get(pane_id) else {
+            return;
+        };
+        let Some(detail) = g.detail.as_ref() else {
+            return;
+        };
+        let Some((_, rel)) = detail.files.get(file_idx) else {
+            return;
+        };
+        let hash = detail.hash.clone();
+        let rel_path = std::path::PathBuf::from(rel);
+        // Ensure the GitGraph is the active pane so the embedded-diff
+        // helper finds it (the click handler in tui.rs may have
+        // already done this, but be defensive).
+        self.active = Some(pane_id);
+        let scope = crate::pane::DiffScope::CommitFile {
+            hash: hash.clone(),
+            rel_path: rel_path.clone(),
+        };
+        let empty_label = format!(
+            "{} — no diff for {}",
+            hash.chars().take(9).collect::<String>(),
+            rel_path.display()
+        );
+        self.open_embedded_diff_in_active_graph(scope, empty_label);
+    }
+
+    /// Build a `DiffView` with the user's remembered view-mode +
+    /// wrap preference applied. Use this in place of
+    /// `DiffView::new(...)` everywhere a diff pane is created.
+    pub fn make_diff_view(
+        &self,
+        scope: crate::pane::DiffScope,
+        hunks: Vec<crate::git::diff::Hunk>,
+    ) -> crate::pane::DiffView {
+        let mut dv = crate::pane::DiffView::new(scope, hunks);
+        dv.view_mode = self.diff_view_mode_pref;
+        dv.wrap = self.diff_wrap_pref;
+        dv
+    }
+
+    /// Click handler for a WIP-detail file row. Opens an embedded
+    /// diff INSIDE the active GitGraph pane (replaces the commit list
+    /// area while it's open) so the right detail panel — the WIP
+    /// detail itself — keeps showing the staged/unstaged file lists.
+    /// Esc closes the embedded diff and the commit list returns.
+    pub fn click_wip_file_row(&mut self, abs_path: std::path::PathBuf, staged: bool) {
+        let scope = if staged {
+            crate::pane::DiffScope::StagedFile(abs_path.clone())
+        } else {
+            crate::pane::DiffScope::Unstaged(Some(abs_path.clone()))
+        };
+        let empty_label = format!(
+            "no diff for {} ({})",
+            abs_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            if staged { "staged" } else { "unstaged" }
+        );
+        self.open_embedded_diff_in_active_graph(scope, empty_label);
+    }
+
+    /// Open an embedded diff in the active GitGraph pane (replaces
+    /// the commit-list area). If the active pane isn't a GitGraph,
+    /// falls back to opening a regular `Pane::Diff` so the user
+    /// can still see the diff.
+    fn open_embedded_diff_in_active_graph(
+        &mut self,
+        scope: crate::pane::DiffScope,
+        empty_toast: String,
+    ) {
+        let hunks = self.fetch_diff(&scope);
+        if hunks.is_empty() {
+            self.toast(empty_toast);
+            return;
+        }
+        let active_is_graph = matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::GitGraph(_))
+        );
+        let dv = self.make_diff_view(scope, hunks);
+        if active_is_graph
+            && let Some(id) = self.active
+            && let Some(Pane::GitGraph(g)) = self.panes.get_mut(id)
+        {
+            g.embedded_diff = Some(dv);
+            return;
+        }
+        // Fallback: no GitGraph active → open as a regular Diff pane.
+        self.panes.push(Pane::Diff(dv));
+        let id = self.panes.len() - 1;
+        self.reveal_pane(id);
+    }
+
     /// Open a diff pane for `hash` (one commit). Helper for the file-history
     /// picker accept path.
     pub fn open_commit_diff(&mut self, hash: &str) {
@@ -12423,7 +13064,7 @@ impl App {
             return;
         }
         self.panes
-            .push(Pane::Diff(crate::pane::DiffView::new(scope, hunks)));
+            .push(Pane::Diff(self.make_diff_view(scope, hunks)));
         let id = self.panes.len() - 1;
         self.reveal_pane(id);
     }
@@ -12437,7 +13078,7 @@ impl App {
             return;
         }
         self.panes
-            .push(Pane::Diff(crate::pane::DiffView::new(scope, hunks)));
+            .push(Pane::Diff(self.make_diff_view(scope, hunks)));
         let id = self.panes.len() - 1;
         self.reveal_pane(id);
     }
@@ -12460,7 +13101,7 @@ impl App {
             files.len()
         };
         self.panes
-            .push(Pane::Diff(crate::pane::DiffView::new(scope, hunks)));
+            .push(Pane::Diff(self.make_diff_view(scope, hunks)));
         let id = self.panes.len() - 1;
         self.reveal_pane(id);
         self.toast(format!("diff: {file_count} file(s) vs HEAD"));
@@ -12469,8 +13110,47 @@ impl App {
     /// Diff-pane file jump: move the cursor hunk to the first hunk of the
     /// next file (`forward = true`) or the previous file's first hunk
     /// (`forward = false`). Wraps. No-op when only one file is in the diff.
+    ///
+    /// For the embedded diff inside `Pane::GitGraph` (which carries
+    /// a `DiffScope::CommitFile { hash, rel_path }` — only one file
+    /// per view), reopens the embedded diff against the *next* /
+    /// *prev* file in the selected commit's changed-files list.
+    /// Falls through to the standalone behavior otherwise.
     pub fn diff_jump_file(&mut self, forward: bool) {
         let Some(cur) = self.active else { return };
+        // Embedded-diff branch: walk the active commit's file list.
+        if let Some(Pane::GitGraph(g)) = self.panes.get(cur)
+            && let Some(d) = g.embedded_diff.as_ref()
+            && let crate::pane::DiffScope::CommitFile { hash, rel_path } = &d.scope
+        {
+            let hash = hash.clone();
+            let rel = rel_path.clone();
+            let Some(detail) = g.detail.as_ref() else {
+                return;
+            };
+            let files: Vec<std::path::PathBuf> = detail
+                .files
+                .iter()
+                .map(|(_, p)| std::path::PathBuf::from(p))
+                .collect();
+            if files.len() <= 1 {
+                return;
+            }
+            let cur_idx = files.iter().position(|p| *p == rel).unwrap_or(0);
+            let next = if forward {
+                (cur_idx + 1) % files.len()
+            } else {
+                (cur_idx + files.len() - 1) % files.len()
+            };
+            let next_path = files[next].clone();
+            // Re-open the embedded diff against the new file.
+            let scope = crate::pane::DiffScope::CommitFile {
+                hash,
+                rel_path: next_path,
+            };
+            self.open_embedded_diff_in_active_graph(scope, "no diff for file".to_string());
+            return;
+        }
         let Some(Pane::Diff(d)) = self.panes.get_mut(cur) else {
             return;
         };
@@ -12515,8 +13195,102 @@ impl App {
         if let Some(Pane::Diff(d)) = self.panes.get_mut(cur) {
             d.cursor = d.cursor.min(hunks.len().saturating_sub(1));
             d.hunks = hunks;
+            // Invalidate the full-file-context cache; the split view
+            // will re-fetch next render.
+            d.full_hunks = None;
         }
     }
+    /// Dispatch a per-hunk chip click on the diff pane `pid` (or the
+    /// embedded diff inside a `Pane::GitGraph(pid)`). The chip's
+    /// `hunk_index` indexes into the diff's `hunks` vec. Stage /
+    /// Unstage route through `git apply --cached [--reverse]`;
+    /// Discard route through `git apply --reverse` against the
+    /// working tree (no `--cached`).
+    pub fn apply_hunk_action(
+        &mut self,
+        pid: PaneId,
+        hunk_index: usize,
+        action: crate::DiffHunkAction,
+    ) {
+        let (hunk, scope) = match self.panes.get(pid) {
+            Some(Pane::Diff(d)) => (d.hunks.get(hunk_index).cloned(), Some(d.scope.clone())),
+            Some(Pane::GitGraph(g)) => g.embedded_diff.as_ref().map_or((None, None), |d| {
+                (d.hunks.get(hunk_index).cloned(), Some(d.scope.clone()))
+            }),
+            _ => (None, None),
+        };
+        let Some(hunk) = hunk else { return };
+        if matches!(scope, Some(crate::pane::DiffScope::Commit(_)))
+            || matches!(scope, Some(crate::pane::DiffScope::CommitFile { .. }))
+        {
+            self.toast("that's a committed change — nothing to stage / discard");
+            return;
+        }
+        // Discard is destructive — route through a "type 'discard' to
+        // confirm" prompt instead of firing immediately.
+        if matches!(action, crate::DiffHunkAction::Discard) {
+            self.pending_discard_hunk = Some((pid, hunk_index));
+            let title = format!(
+                "Discard hunk in {} — type 'discard' to confirm",
+                hunk.file_rel
+            );
+            self.prompt = Some(crate::prompt::Prompt::new(
+                crate::prompt::PromptKind::DiffDiscardHunk,
+                title,
+            ));
+            return;
+        }
+        let workspace = self.active_repo_path().to_path_buf();
+        let res = match action {
+            crate::DiffHunkAction::Stage => crate::git::diff::apply_hunk(&workspace, &hunk, false),
+            crate::DiffHunkAction::Unstage => crate::git::diff::apply_hunk(&workspace, &hunk, true),
+            crate::DiffHunkAction::Discard => unreachable!(),
+        };
+        match res {
+            Ok(()) => {
+                self.toast(match action {
+                    crate::DiffHunkAction::Stage => "staged hunk",
+                    crate::DiffHunkAction::Unstage => "unstaged hunk",
+                    crate::DiffHunkAction::Discard => "discarded hunk",
+                });
+                self.after_git_change();
+                self.refresh_active_diff();
+            }
+            Err(e) => self.toast(format!("git apply failed: {e}")),
+        }
+    }
+
+    /// Accept handler for the `DiffDiscardHunk` confirmation prompt.
+    /// Requires the typed text to equal the literal `discard`; on
+    /// match, reverse-applies the hunk against the working tree.
+    pub fn accept_discard_hunk(&mut self, typed: &str) {
+        let Some((pid, hi)) = self.pending_discard_hunk.take() else {
+            return;
+        };
+        if typed.trim() != "discard" {
+            self.toast("discard cancelled");
+            return;
+        }
+        let hunk = match self.panes.get(pid) {
+            Some(Pane::Diff(d)) => d.hunks.get(hi).cloned(),
+            Some(Pane::GitGraph(g)) => g
+                .embedded_diff
+                .as_ref()
+                .and_then(|d| d.hunks.get(hi).cloned()),
+            _ => None,
+        };
+        let Some(hunk) = hunk else { return };
+        let workspace = self.active_repo_path().to_path_buf();
+        match crate::git::diff::discard_hunk(&workspace, &hunk) {
+            Ok(()) => {
+                self.toast("discarded hunk");
+                self.after_git_change();
+                self.refresh_active_diff();
+            }
+            Err(e) => self.toast(format!("git apply failed: {e}")),
+        }
+    }
+
     /// Stage (`reverse == false`) / unstage the cursor hunk of the active diff pane.
     pub fn apply_cursor_hunk(&mut self, reverse: bool) {
         let Some(cur) = self.active else { return };
@@ -12821,16 +13595,24 @@ impl App {
     }
 
     pub fn run_wip_action(&mut self, action: crate::WipAction) {
-        // Two of the variants open prompts / fire AI jobs — handle
-        // them up front since they don't return a Result<String, String>
-        // shape.
+        // Three of the variants don't return Result<String, String> —
+        // handle them up front. `OpenCommitPrompt` now prefers the
+        // inline textarea on the active GitGraph pane (commits using
+        // whatever the user typed there) and falls back to the modal
+        // prompt for non-GitGraph contexts.
         match &action {
             crate::WipAction::OpenCommitPrompt => {
-                self.open_commit_prompt();
+                self.commit_from_active_wip_textarea_or_prompt();
                 return;
             }
             crate::WipAction::RequestAiCommitMessage => {
                 self.request_ai_commit_message();
+                return;
+            }
+            crate::WipAction::ClearCommitDraft => {
+                if let Some(Pane::GitGraph(g)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+                    g.wip_commit.clear();
+                }
                 return;
             }
             _ => {}
@@ -12863,9 +13645,9 @@ impl App {
                     .map(|_| format!("unstaged {rel}"))
                     .map_err(|e| format!("git restore --staged: {e}"))
             }
-            crate::WipAction::OpenCommitPrompt | crate::WipAction::RequestAiCommitMessage => {
-                unreachable!()
-            }
+            crate::WipAction::OpenCommitPrompt
+            | crate::WipAction::RequestAiCommitMessage
+            | crate::WipAction::ClearCommitDraft => unreachable!(),
         };
         match result {
             Ok(msg) => {
@@ -13242,6 +14024,14 @@ impl App {
             crate::prompt::PromptKind::LspWorkspaceSymbol => {
                 let q = p.input.clone();
                 self.run_workspace_symbol_query(&q);
+            }
+            crate::prompt::PromptKind::DiffDiscardHunk => {
+                let typed = p.input.clone();
+                self.accept_discard_hunk(&typed);
+            }
+            crate::prompt::PromptKind::GitDiscardFile => {
+                let typed = p.input.clone();
+                self.accept_discard_file(&typed);
             }
         }
     }
@@ -15654,23 +16444,31 @@ impl App {
     }
 
     // ─── git graph (graphical-Git-GUI-style commit DAG) ─────────────────────
-    /// Open the commit-DAG browser as a split to the right of the focused leaf.
+    /// Open the commit-DAG browser, taking over the full editor area
+    /// (the file-tree rail stays). Replaces the active tab's layout
+    /// with a single `Layout::Leaf` pointing at the graph pane —
+    /// other open panes survive as background buffers in the
+    /// bufferline. If a graph pane is already open in this tab, just
+    /// focus it instead of opening a duplicate.
     pub fn open_git_graph(&mut self) {
+        if let Some(id) = (0..self.panes.len()).find(|&i| {
+            matches!(self.panes.get(i), Some(Pane::GitGraph(_))) && self.layout().contains(i)
+        }) {
+            self.reveal_pane(id);
+            // Reveal can leave the leaf as a split member — force a
+            // single-leaf layout so the graph fills the editor area.
+            *self.layout_mut() = Layout::Leaf(id);
+            self.active = Some(id);
+            self.focus = Focus::Pane;
+            return;
+        }
         let pane = Pane::GitGraph(crate::git::graph::GitGraphPane::open(
             self.active_repo_path(),
         ));
-        match self.active {
-            Some(cur) => {
-                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
-                self.active = Some(new_id);
-            }
-            None => {
-                self.panes.push(pane);
-                let id = self.panes.len() - 1;
-                *self.layout_mut() = Layout::Leaf(id);
-                self.active = Some(id);
-            }
-        }
+        self.panes.push(pane);
+        let id = self.panes.len() - 1;
+        *self.layout_mut() = Layout::Leaf(id);
+        self.active = Some(id);
         self.focus = Focus::Pane;
     }
     /// Re-run `git log` for the active git-graph pane (after a commit / fetch).
@@ -15707,7 +16505,7 @@ impl App {
         let new_id = self.split_leaf_with(
             cur,
             crate::layout::SplitDir::Horizontal,
-            Pane::Diff(crate::pane::DiffView::new(scope, hunks)),
+            Pane::Diff(self.make_diff_view(scope, hunks)),
         );
         self.active = Some(new_id);
         self.focus = Focus::Pane;
@@ -16000,7 +16798,7 @@ impl App {
         let new_id = self.split_leaf_with(
             cur,
             crate::layout::SplitDir::Horizontal,
-            Pane::Diff(crate::pane::DiffView::new(scope, hunks)),
+            Pane::Diff(self.make_diff_view(scope, hunks)),
         );
         self.active = Some(new_id);
         self.focus = Focus::Pane;
@@ -16008,6 +16806,11 @@ impl App {
     /// `C` in the status pane — ask `claude -p` to write a commit message from the
     /// staged diff; when it lands, the commit prompt opens pre-seeded with the
     /// first line (`drain_ai_jobs` routes it via `pending_commit_msg_job`).
+    ///
+    /// When the active pane is a `Pane::GitGraph` with its WIP detail
+    /// visible, the result fills that pane's inline textarea instead
+    /// of opening the modal prompt. The textarea's `ai_streaming`
+    /// flag is set so the buttons row shows the "AI writing…" state.
     pub fn request_ai_commit_message(&mut self) {
         if self.git.snapshot().staged == 0 {
             self.toast("nothing staged — stage some changes first");
@@ -16033,10 +16836,112 @@ impl App {
         );
         let (job_id, _sid, _cancel) = self.spawn_ai_job(prompt);
         self.pending_commit_msg_job = Some(job_id);
+        // Route the result to a GitGraph WIP textarea when one is
+        // currently active — otherwise fall through to the existing
+        // modal prompt flow.
+        let active_id = self.active;
+        if let Some(id) = active_id
+            && let Some(Pane::GitGraph(g)) = self.panes.get_mut(id)
+            && g.is_wip_selected()
+        {
+            g.wip_commit.ai_streaming = true;
+            self.pending_wip_commit_msg_pane = Some((job_id, id));
+        }
         if let Some(Pane::GitStatus(g)) = self.active.and_then(|i| self.panes.get_mut(i)) {
             g.ai_msg_job = Some(job_id);
         }
         self.toast("asking Claude for a commit message…");
+    }
+
+    /// Click on the WIP detail's `Commit` button — commit using the
+    /// inline textarea's content. When the active pane isn't a
+    /// GitGraph with a populated textarea, falls through to opening
+    /// the modal commit prompt (the legacy flow).
+    pub fn commit_from_active_wip_textarea_or_prompt(&mut self) {
+        let active_id = self.active;
+        if let Some(id) = active_id
+            && let Some(Pane::GitGraph(g)) = self.panes.get_mut(id)
+            && g.is_wip_selected()
+        {
+            if g.wip_commit.ai_streaming {
+                self.toast("AI message still streaming — wait for it to finish");
+                return;
+            }
+            let msg = g.wip_commit.text.trim().to_string();
+            if msg.is_empty() {
+                // Nothing typed — fall back to modal prompt for
+                // muscle-memory users who expect `c` to open one.
+                self.open_commit_prompt();
+                return;
+            }
+            let repo = self.active_repo_path().to_path_buf();
+            match crate::git::commit::commit(&repo, &msg) {
+                Ok(summary) => {
+                    if let Some(Pane::GitGraph(g)) = self.panes.get_mut(id) {
+                        g.wip_commit.clear();
+                    }
+                    self.toast(summary);
+                    self.after_git_change();
+                    self.refresh_active_git_graph();
+                    self.refresh_active_diff();
+                }
+                Err(e) => self.toast(format!("git commit: {e}")),
+            }
+            return;
+        }
+        self.open_commit_prompt();
+    }
+
+    /// Focus the WIP commit textarea on the given GitGraph pane.
+    /// Called when the user clicks inside the textarea rect.
+    pub fn focus_wip_commit_textarea(&mut self, pane_id: crate::layout::PaneId) {
+        if let Some(Pane::GitGraph(g)) = self.panes.get_mut(pane_id) {
+            g.wip_commit.focused = true;
+        }
+    }
+
+    /// Blur the WIP commit textarea on the active GitGraph pane (if
+    /// any). Used by Esc + click-elsewhere paths.
+    pub fn blur_active_wip_commit_textarea(&mut self) {
+        if let Some(id) = self.active
+            && let Some(Pane::GitGraph(g)) = self.panes.get_mut(id)
+        {
+            g.wip_commit.focused = false;
+        }
+    }
+
+    /// Returns true when the active pane is a GitGraph whose WIP
+    /// commit textarea is focused. Lets `tui::dispatch_key` route
+    /// printable / Backspace / arrow / Enter keys to the textarea
+    /// before the GitGraph chord table sees them.
+    pub fn active_wip_commit_textarea_focused(&self) -> bool {
+        self.active
+            .and_then(|i| self.panes.get(i))
+            .and_then(|p| {
+                if let Pane::GitGraph(g) = p {
+                    Some(g)
+                } else {
+                    None
+                }
+            })
+            .map(|g| g.wip_commit.focused)
+            .unwrap_or(false)
+    }
+
+    /// Mutable handle to the active GitGraph pane's commit textarea
+    /// state. `None` when the active pane isn't a GitGraph.
+    pub fn active_wip_commit_textarea_mut(
+        &mut self,
+    ) -> Option<&mut crate::git::graph::WipCommitInput> {
+        self.active.and_then(move |i| {
+            self.panes.get_mut(i).and_then(|p| {
+                if let Pane::GitGraph(g) = p {
+                    Some(&mut g.wip_commit)
+                } else {
+                    None
+                }
+            })
+        })
     }
 
     /// `git.codex_commit` — same shape as `request_ai_commit_message` but
@@ -16403,6 +17308,182 @@ impl App {
     }
     pub fn end_tree_edge_drag(&mut self) {
         self.dragging_tree_edge = false;
+    }
+
+    /// If `(x, y)` lands on any rendered scrollbar, start a scrollbar
+    /// drag + jump-scroll to the click position. Returns true on hit.
+    /// Walks `rects.scrollbars` in reverse so a scrollbar painted over
+    /// an earlier one (rare — embedded-diff over the graph's body)
+    /// wins. Subsequent `Drag(Left)` events route to
+    /// [`Self::drag_scrollbar_to`]; mouse-up clears via
+    /// [`Self::end_scrollbar_drag`].
+    pub fn begin_scrollbar_drag(&mut self, x: u16, y: u16) -> bool {
+        for hit in self.rects.scrollbars.iter().rev().copied() {
+            let r = hit.area;
+            if x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height {
+                self.dragging_scrollbar = Some(hit);
+                self.apply_scrollbar_to(hit, y);
+                return true;
+            }
+        }
+        false
+    }
+    /// Continue a scrollbar drag — maps the current `y` (clamped to
+    /// the scrollbar's row range) to a proportional file row and
+    /// updates the underlying pane's scroll.
+    pub fn drag_scrollbar_to(&mut self, y: u16) -> bool {
+        let Some(hit) = self.dragging_scrollbar else {
+            return false;
+        };
+        self.apply_scrollbar_to(hit, y);
+        true
+    }
+    pub fn end_scrollbar_drag(&mut self) {
+        self.dragging_scrollbar = None;
+    }
+    /// Map `y` (a screen row) onto a new scroll value for the pane the
+    /// `hit` references, then assign it. Used by both the initial
+    /// click and the per-tick drag continuation.
+    fn apply_scrollbar_to(&mut self, hit: ScrollbarHit, y: u16) {
+        if hit.total <= hit.viewport || hit.area.height == 0 {
+            return;
+        }
+        let cells = hit.area.height as usize;
+        // Position the *top of the viewport* at the file row the user
+        // clicked on. Click halfway down the bar ⇒ viewport top at
+        // file middle. Centering the thumb-on-cursor is what gives
+        // graphical-Git-GUI-style "click anywhere to jump" feel.
+        let rel = y
+            .saturating_sub(hit.area.y)
+            .min(cells.saturating_sub(1) as u16) as usize;
+        let max_scroll = hit.total - hit.viewport;
+        // Anchor the *middle* of the visible range to the click row
+        // so big viewports don't snap to the very top when the click
+        // is near the bottom edge.
+        let half_vp_cells = (hit.viewport * cells / hit.total).max(1) / 2;
+        let anchor = rel.saturating_sub(half_vp_cells);
+        let max_anchor = cells.saturating_sub((hit.viewport * cells / hit.total).max(1));
+        let new_scroll = if max_anchor == 0 {
+            0
+        } else {
+            (anchor * max_scroll)
+                .div_ceil(max_anchor.max(1))
+                .min(max_scroll)
+        };
+        self.set_pane_scroll(hit.pane_id, hit.kind, new_scroll);
+    }
+    /// Dispatch a new scroll value into whichever pane field the kind
+    /// names. No-op when the pane is gone or the variant doesn't match
+    /// (the rect was painted last frame; the user could have closed
+    /// the pane in between).
+    pub fn set_pane_scroll(&mut self, pane_id: PaneId, kind: ScrollbarKind, scroll: usize) {
+        match (kind, self.panes.get_mut(pane_id)) {
+            (ScrollbarKind::Editor, Some(Pane::Editor(b))) => {
+                b.scroll = scroll;
+            }
+            (ScrollbarKind::Diff, Some(Pane::Diff(d))) => {
+                d.scroll = scroll;
+            }
+            (ScrollbarKind::EmbeddedDiff, Some(Pane::GitGraph(g))) => {
+                if let Some(d) = g.embedded_diff.as_mut() {
+                    d.scroll = scroll;
+                }
+            }
+            (ScrollbarKind::GitGraphCommits, Some(Pane::GitGraph(g))) => {
+                // Snap selection to the new scroll position so the
+                // per-frame keep-selected-on-screen math (in
+                // `git_graph_view::draw`) doesn't immediately fight
+                // the scrollbar back to the old position.
+                let total = g.total_rows();
+                if total > 0 {
+                    let new_scroll = scroll.min(total - 1);
+                    g.scroll = new_scroll;
+                    if g.selected != new_scroll {
+                        g.selected = new_scroll;
+                        g.reload_detail();
+                    }
+                }
+            }
+            // List panes — pull selection along with scroll for the
+            // same reason: the per-frame keep-selected-on-screen math
+            // in each renderer would otherwise snap scroll back.
+            (ScrollbarKind::Tests, Some(Pane::Tests(p))) => {
+                p.scroll = scroll;
+                p.selected = scroll;
+            }
+            (ScrollbarKind::Flaky, Some(Pane::Flaky(p))) => {
+                p.scroll = scroll;
+                p.selected = scroll;
+            }
+            (ScrollbarKind::Diagnostics, Some(Pane::Diagnostics(p))) => {
+                p.scroll = scroll;
+                p.selected = scroll;
+            }
+            (ScrollbarKind::Outline, Some(Pane::Outline(p))) => {
+                p.scroll = scroll;
+                p.selected = scroll;
+            }
+            (ScrollbarKind::Grep, Some(Pane::Grep(p)))
+            | (ScrollbarKind::Quickfix, Some(Pane::Quickfix(p))) => {
+                p.scroll = scroll;
+                p.selected = scroll;
+            }
+            (ScrollbarKind::GitStatus, Some(Pane::GitStatus(p))) => {
+                p.scroll = scroll;
+                p.selected = scroll;
+            }
+            (ScrollbarKind::CmdlineHistory, Some(Pane::CmdlineHistory(p))) => {
+                p.scroll = scroll;
+                p.selected = scroll;
+            }
+            _ => {}
+        }
+    }
+
+    /// If `(x, y)` is on a GitGraph detail-divider rect, start a
+    /// detail-width drag. Returns true if so.
+    pub fn begin_git_graph_detail_drag(&mut self, x: u16, y: u16) -> bool {
+        if let Some(&(r, pid)) = self
+            .rects
+            .git_graph_detail_dividers
+            .iter()
+            .find(|(r, _)| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+        {
+            // Capture the pane's left + right edge so we can clamp
+            // the resulting detail width across the live drag.
+            let (left, right) = self
+                .rects
+                .editor_panes
+                .iter()
+                .find(|(_, id)| *id == pid)
+                .map(|(rect, _)| (rect.x, rect.x + rect.width))
+                .unwrap_or((r.x.saturating_sub(20), r.x + 20));
+            self.dragging_git_graph_detail = Some((pid, left, right));
+            let _ = r; // suppress unused-binding if optimised away
+            return true;
+        }
+        false
+    }
+
+    /// Continue a GitGraph detail-divider drag: set the detail-width
+    /// to (pane_right - x), clamped to a usable range.
+    pub fn drag_git_graph_detail_to(&mut self, x: u16) {
+        let Some((_, left, right)) = self.dragging_git_graph_detail else {
+            return;
+        };
+        // Compute new detail width in cells. The divider sits at
+        // `pane_right - detail_w - 1`; solve for detail_w.
+        let x = x.clamp(left + 20, right.saturating_sub(2));
+        let new_detail_w = right.saturating_sub(x).saturating_sub(1).max(20);
+        // Clamp to a workable range — minimum 20, maximum is the
+        // pane width minus 40 (so the list always stays usable).
+        let max = (right - left).saturating_sub(40).max(20);
+        let clamped = new_detail_w.min(max);
+        self.git_graph_detail_col_override = Some(clamped);
+    }
+
+    pub fn end_git_graph_detail_drag(&mut self) {
+        self.dragging_git_graph_detail = None;
     }
 
     /// Close the buffer at `id`. If it's a dirty editor, this opens the
@@ -22652,6 +23733,13 @@ impl App {
                     .map(|s| s.as_ref().map(|p| p.to_string_lossy().into_owned()))
                     .collect()
             },
+            git_graph_detail_col: self.git_graph_detail_col_override,
+            diff_view_mode: if self.diff_view_mode_pref == crate::pane::DiffViewMode::Inline {
+                None
+            } else {
+                Some(self.diff_view_mode_pref)
+            },
+            diff_wrap: self.diff_wrap_pref,
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -22975,6 +24063,13 @@ impl App {
         for (i, slot) in saved.harpoon.into_iter().take(9).enumerate() {
             self.harpoon[i] = slot.map(PathBuf::from);
         }
+        // GitGraph detail-divider drag override.
+        self.git_graph_detail_col_override = saved.git_graph_detail_col;
+        // Remembered diff view-mode + wrap toggle.
+        if let Some(m) = saved.diff_view_mode {
+            self.diff_view_mode_pref = m;
+        }
+        self.diff_wrap_pref = saved.diff_wrap;
         // Per-file change list — restore for any buffer we just re-opened.
         // Cursor sits past the newest entry so the first `g;` lands on the
         // most recent edit (vim convention).

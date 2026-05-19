@@ -13,13 +13,18 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
 use crate::git::log::{Commit, LANE_COLORS, RefKind};
 use crate::layout::PaneId;
 use crate::pane::Pane;
 use crate::ui::theme::{self, Theme};
+
+/// Cells of empty space reserved at the right edge of each commit
+/// row after the SHA column — so the hash isn't flush against the
+/// detail-panel divider / pane edge.
+const SHA_RIGHT_PAD: usize = 2;
 
 /// Per-column widths for the commit list. Computed once per render from the
 /// pane width; right-side columns shrink first when space is tight.
@@ -55,8 +60,12 @@ pub fn draw(
     let wip_snapshot = app.git.snapshot().clone();
     let branch_col_override = app.config.ui.git_graph_branch_col;
     let author_col_override = app.config.ui.git_graph_author_col;
-    // Right-side detail panel width — config override beats the default 40%.
-    let detail_w_cfg = app.config.ui.git_graph_detail_col;
+    // Right-side detail panel width. Precedence: runtime drag override
+    // (drag the divider) → config override → auto-size to 40%.
+    let detail_w_cfg = app
+        .git_graph_detail_col_override
+        .map(|n| n as usize)
+        .or(app.config.ui.git_graph_detail_col);
 
     let Some(Pane::GitGraph(g)) = app.panes.get_mut(pane_id) else {
         return None;
@@ -75,11 +84,10 @@ pub fn draw(
     g.selected = g.selected.min(g.total_rows() - 1);
 
     // ── top toolbar (Pull / Push / Branch / Stash / Pop / Terminal …) ─
-    // Spans the full pane width; uses 2 rows (label on top, icon below).
-    // Hidden when the pane is too narrow / short for the toolbar to be
-    // useful.
-    let toolbar_h: u16 = if area.width >= 40 && area.height >= 8 {
-        2
+    // Spans the full pane width; single row with `<icon> <label>` per
+    // button. Hidden when the pane is too narrow / short.
+    let toolbar_h: u16 = if area.width >= 40 && area.height >= 6 {
+        1
     } else {
         0
     };
@@ -132,18 +140,38 @@ pub fn draw(
     } else {
         (body_area_full, None)
     };
-    // Vertical divider between list + detail
+    // Vertical divider between list + detail — clickable +
+    // drag-resizable. A 2-row centered grip glyph advertises the
+    // handle, mirroring the file-tree edge.
     if detail_w > 0 {
         let divider_x = body_area_full.x + body_area_full.width - detail_w - 1;
+        let grip_h: u16 = 2;
+        let grip_y = body_area_full.y + body_area_full.height.saturating_sub(grip_h) / 2;
+        let grip_glyph = if app.config.ui.ascii_icons {
+            "|"
+        } else {
+            "┃"
+        };
         for row in 0..body_area_full.height {
+            let abs_y = body_area_full.y + row;
+            let is_grip = abs_y >= grip_y && abs_y < grip_y + grip_h;
+            let (glyph, color) = if is_grip {
+                (grip_glyph, t.comment)
+            } else {
+                ("│", t.grey)
+            };
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    "│",
-                    Style::default().fg(t.grey).bg(t.bg_dark),
+                    glyph,
+                    Style::default().fg(color).bg(t.bg_dark),
                 ))),
-                Rect::new(divider_x, body_area_full.y + row, 1, 1),
+                Rect::new(divider_x, abs_y, 1, 1),
             );
         }
+        app.rects.git_graph_detail_dividers.push((
+            Rect::new(divider_x, body_area_full.y, 1, body_area_full.height),
+            pane_id,
+        ));
     }
 
     let now = SystemTime::now()
@@ -205,8 +233,10 @@ pub fn draw(
         .map(|c| c.author.chars().count())
         .max()
         .unwrap_or(0);
+    // Reserve 2 cells of right padding after the SHA column so the
+    // hash isn't flush against the detail-panel divider / pane edge.
     let cols = compute_column_widths(
-        body_area.width as usize,
+        (body_area.width as usize).saturating_sub(SHA_RIGHT_PAD),
         graph_w,
         ColAutoSize {
             branch_chars: auto_branch_w,
@@ -238,6 +268,10 @@ pub fn draw(
                 if selected { "▶ " } else { "  " },
                 Style::default().fg(t.yellow).bg(row_bg),
             ));
+            let sep_style = Style::default().fg(t.line).bg(row_bg);
+            let body_sep = |spans: &mut Vec<Span>| {
+                spans.push(Span::styled(" │ ", sep_style));
+            };
             // Branch column: show "WIP @ <branch>" as the chip, padded.
             if cols.branch > 0 {
                 let label = format!("WIP @ {}", wip_snapshot.branch.as_deref().unwrap_or("…"));
@@ -248,24 +282,27 @@ pub fn draw(
                         .bg(row_bg)
                         .add_modifier(Modifier::BOLD),
                 ));
+                body_sep(&mut spans);
+            } else {
+                spans.push(Span::styled("  ", Style::default().bg(row_bg)));
             }
             // Graph column: blank.
             spans.push(Span::styled(
-                " ".repeat(graph_w + 2),
+                " ".repeat(graph_w),
                 Style::default().bg(row_bg),
             ));
+            body_sep(&mut spans);
             // Subject column: change summary.
+            let branch_section = if cols.branch > 0 { cols.branch + 3 } else { 2 };
             let fixed_used = 1
                 + 2
-                + cols.branch
+                + branch_section
                 + graph_w
-                + 2
-                + cols.author
-                + (if cols.author > 0 { 2 } else { 0 })
-                + cols.age
-                + (if cols.age > 0 { 2 } else { 0 })
-                + cols.sha
-                + (if cols.sha > 0 { 2 } else { 0 });
+                + 3
+                + (if cols.author > 0 { cols.author + 3 } else { 0 })
+                + (if cols.age > 0 { cols.age + 3 } else { 0 })
+                + (if cols.sha > 0 { cols.sha + 3 } else { 0 })
+                + SHA_RIGHT_PAD;
             let subject_w = (body_area.width as usize).saturating_sub(fixed_used);
             let summary = format_wip_summary(&wip_snapshot);
             let subject = pad_or_truncate(&summary, subject_w);
@@ -278,20 +315,29 @@ pub fn draw(
             ));
             // Author / Age / SHA: keep blank to preserve column alignment.
             if cols.author > 0 {
+                body_sep(&mut spans);
                 spans.push(Span::styled(
-                    " ".repeat(cols.author + 2),
+                    " ".repeat(cols.author),
                     Style::default().bg(row_bg),
                 ));
             }
             if cols.age > 0 {
+                body_sep(&mut spans);
                 spans.push(Span::styled(
-                    " ".repeat(cols.age + 2),
+                    " ".repeat(cols.age),
                     Style::default().bg(row_bg),
                 ));
             }
             if cols.sha > 0 {
+                body_sep(&mut spans);
                 spans.push(Span::styled(
-                    " ".repeat(cols.sha + 2),
+                    " ".repeat(cols.sha),
+                    Style::default().bg(row_bg),
+                ));
+            }
+            if SHA_RIGHT_PAD > 0 {
+                spans.push(Span::styled(
+                    " ".repeat(SHA_RIGHT_PAD),
                     Style::default().bg(row_bg),
                 ));
             }
@@ -312,9 +358,18 @@ pub fn draw(
             if selected { "▶ " } else { "  " },
             Style::default().fg(t.yellow).bg(row_bg),
         ));
+        // 3-cell column separator " │ " in a muted line color — same
+        // spacing the header uses so columns line up vertically.
+        let sep_style = Style::default().fg(t.line).bg(row_bg);
+        let body_sep = |spans: &mut Vec<Span>| {
+            spans.push(Span::styled(" │ ", sep_style));
+        };
         // 3) Branch/tag chip column (fixed width, ellipsis-truncated)
         if cols.branch > 0 {
             render_branch_chips(&mut spans, &c.refs, cols.branch, row_bg, &t);
+            body_sep(&mut spans);
+        } else {
+            spans.push(Span::styled("  ", Style::default().bg(row_bg)));
         }
         // 4) Graph cells (padded to graph_w so right columns line up)
         for k in 0..graph_w {
@@ -327,22 +382,26 @@ pub fn draw(
                 spans.push(Span::styled(" ", Style::default().bg(row_bg)));
             }
         }
-        spans.push(Span::styled("  ", Style::default().bg(row_bg)));
-        // 5) Subject (flex — pad / truncate to fit the remaining width)
-        let fixed_used = 1            // swimlane
-            + 2                        // arrow
-            + cols.branch              // branch chips
-            + graph_w                  // graph
-            + 2                        // graph→subject gap
-            + cols.author + (if cols.author > 0 { 2 } else { 0 })
-            + cols.age + (if cols.age > 0 { 2 } else { 0 })
-            + cols.sha + (if cols.sha > 0 { 2 } else { 0 });
+        body_sep(&mut spans);
+        // 5) Subject (flex — pad / truncate to fit the remaining width).
+        // The SHA right-pad cells eat into available width so they
+        // actually render (Paragraph clips past `body_area.width`).
+        let branch_section = if cols.branch > 0 { cols.branch + 3 } else { 2 };
+        let fixed_used = 1
+            + 2
+            + branch_section
+            + graph_w
+            + 3
+            + (if cols.author > 0 { cols.author + 3 } else { 0 })
+            + (if cols.age > 0 { cols.age + 3 } else { 0 })
+            + (if cols.sha > 0 { cols.sha + 3 } else { 0 })
+            + SHA_RIGHT_PAD;
         let subject_w = (body_area.width as usize).saturating_sub(fixed_used);
         let subject = pad_or_truncate(&c.subject, subject_w);
         spans.push(Span::styled(subject, Style::default().fg(t.fg).bg(row_bg)));
         // 6) Author (right-aligned in its column)
         if cols.author > 0 {
-            spans.push(Span::styled("  ", Style::default().bg(row_bg)));
+            body_sep(&mut spans);
             let author = right_align(&c.author, cols.author);
             spans.push(Span::styled(
                 author,
@@ -351,15 +410,22 @@ pub fn draw(
         }
         // 7) Date/time (right-aligned, local TZ)
         if cols.age > 0 {
-            spans.push(Span::styled("  ", Style::default().bg(row_bg)));
+            body_sep(&mut spans);
             let age = right_align(&format_commit_datetime(c.time), cols.age);
             spans.push(Span::styled(age, Style::default().fg(t.comment).bg(row_bg)));
         }
         // 8) Short SHA
         if cols.sha > 0 {
-            spans.push(Span::styled("  ", Style::default().bg(row_bg)));
+            body_sep(&mut spans);
             let sha = right_align(&c.short, cols.sha);
             spans.push(Span::styled(sha, Style::default().fg(t.orange).bg(row_bg)));
+        }
+        // Right-edge padding so the SHA doesn't kiss the divider.
+        if SHA_RIGHT_PAD > 0 {
+            spans.push(Span::styled(
+                " ".repeat(SHA_RIGHT_PAD),
+                Style::default().bg(row_bg),
+            ));
         }
         rows.push(Line::from(spans));
     }
@@ -367,7 +433,18 @@ pub fn draw(
         Paragraph::new(rows).style(Style::default().bg(t.bg_dark)),
         body_area,
     );
+    // Skip registering commit-row click rects when an embedded diff
+    // is overlaying the list area — otherwise clicks inside the diff
+    // body fall through to the commit-row handler and change the
+    // selected commit (re-rendering the right detail panel with the
+    // newly-picked commit's files). The user expects the right panel
+    // to remain pinned to whatever commit was already selected while
+    // the embedded diff is open.
+    let suppress_commit_clicks = g.embedded_diff.is_some();
     for (visible_y, v_idx) in row_recordings {
+        if suppress_commit_clicks {
+            continue;
+        }
         let screen_y = body_area.y.saturating_add(visible_y);
         if screen_y < body_area.y.saturating_add(body_area.height) {
             app.rects.list_rows.push((
@@ -384,24 +461,195 @@ pub fn draw(
     }
 
     // ── right-side detail panel ────────────────────────────────────
+    let mut textarea_cursor: Option<(u16, u16)> = None;
     if let Some(da) = detail_area {
         if g.is_wip_selected() {
             let workspace = g.workspace.clone();
-            draw_wip_detail(
+            // Borrow the textarea state out separately so the `g` borrow
+            // doesn't extend across the renderer call.
+            let commit = g.wip_commit.clone();
+            textarea_cursor = draw_wip_detail(
                 frame,
                 da,
                 &t,
                 &wip_snapshot,
                 &workspace,
                 pane_id,
+                &commit,
                 &mut app.rects.wip_buttons,
+                &mut app.rects.wip_file_rows,
+                &mut app.rects.wip_commit_textarea,
             );
         } else if let (Some(c), Some(detail)) = (g.selected_commit(), g.detail.as_ref()) {
-            draw_detail(frame, da, &t, c, detail, now);
+            draw_detail(
+                frame,
+                da,
+                &t,
+                c,
+                detail,
+                now,
+                pane_id,
+                &mut app.rects.commit_file_rows,
+            );
         }
     }
 
-    None
+    // ── Commit-list scrollbar (right edge of the list body) ─────────
+    // Only paint when no embedded diff is showing (the embedded diff
+    // brings its own scrollbar). Plain grey track + thumb — no change
+    // markers on the commit list.
+    if g.embedded_diff.is_none() && body_area.width >= 8 && body_area.height > 0 {
+        let bar_x = body_area.x + body_area.width - 1;
+        let bar_area = Rect::new(bar_x, body_area.y, 1, body_area.height);
+        let cells = bar_area.height as usize;
+        let total = g.total_rows();
+        // Track.
+        for cy in 0..cells {
+            let cell = Rect::new(bar_area.x, bar_area.y + cy as u16, 1, 1);
+            frame.render_widget(Paragraph::new(" ").style(Style::default().bg(t.bg2)), cell);
+        }
+        // Thumb — same proportional placement as the diff scrollbar.
+        if total > cells && cells > 0 {
+            let thumb_h = ((cells * cells) / total).max(1);
+            let max_scroll = total - cells;
+            let max_thumb_top = cells.saturating_sub(thumb_h);
+            let thumb_top = (g.scroll * max_thumb_top)
+                .checked_div(max_scroll)
+                .unwrap_or(0);
+            for cy in thumb_top..(thumb_top + thumb_h).min(cells) {
+                let cell = Rect::new(bar_area.x, bar_area.y + cy as u16, 1, 1);
+                frame.render_widget(
+                    Paragraph::new(" ").style(Style::default().bg(t.comment)),
+                    cell,
+                );
+            }
+        }
+        app.rects.scrollbars.push(crate::app::ScrollbarHit {
+            area: bar_area,
+            pane_id,
+            total,
+            viewport: cells,
+            kind: crate::app::ScrollbarKind::GitGraphCommits,
+        });
+    }
+
+    // ── Embedded diff (overpaint list_area) ─────────────────────────
+    // When `g.embedded_diff` is Some, the commit-list area is
+    // replaced by the embedded diff for the file the user clicked
+    // in the right detail panel. The right detail panel above stays
+    // intact. Esc closes the embedded diff (handled in tui.rs).
+    let has_embedded =
+        matches!(app.panes.get(pane_id), Some(Pane::GitGraph(g)) if g.embedded_diff.is_some());
+    if has_embedded {
+        // Lazy-fetch full-file context for Inline + Split before
+        // borrowing (Inline now renders the whole file like Split).
+        let needs_full = matches!(
+            app.panes.get(pane_id),
+            Some(Pane::GitGraph(g)) if g.embedded_diff.as_ref().map(|d| {
+                matches!(
+                    d.view_mode,
+                    crate::pane::DiffViewMode::Split | crate::pane::DiffViewMode::Inline
+                ) && d.full_hunks.is_none()
+            }).unwrap_or(false)
+        );
+        if needs_full {
+            let scope = match app.panes.get(pane_id) {
+                Some(Pane::GitGraph(g)) => g.embedded_diff.as_ref().map(|d| d.scope.clone()),
+                _ => None,
+            };
+            if let Some(scope) = scope {
+                let full = app.fetch_diff_full(&scope);
+                if let Some(Pane::GitGraph(g)) = app.panes.get_mut(pane_id)
+                    && let Some(d) = g.embedded_diff.as_mut()
+                {
+                    d.full_hunks = Some(full);
+                }
+            }
+        }
+        // Wipe the commit-list cells first — the list rendered above
+        // left chars + author names behind, and a bare
+        // `Paragraph::new("")` only re-styles the cells, it doesn't
+        // overwrite their contents. Without this, the embedded-diff
+        // body lines (shorter than the full pane width) bleed through
+        // to commit-list trailing text on the right edge. `Clear`
+        // resets every cell in `list_area` to a space with default
+        // style; the styled bg fill that follows tints them bg_dark.
+        frame.render_widget(Clear, list_area);
+        frame.render_widget(
+            Paragraph::new("").style(Style::default().bg(t.bg_dark)),
+            list_area,
+        );
+        let diff_tb_h: u16 = if list_area.height >= 4 { 1 } else { 0 };
+        if diff_tb_h > 0
+            && let Some(Pane::GitGraph(g)) = app.panes.get(pane_id)
+            && let Some(d) = g.embedded_diff.as_ref()
+        {
+            let (view_mode, wrap_on) = (d.view_mode, d.wrap);
+            crate::ui::diff_view::draw_diff_toolbar(
+                frame,
+                Rect::new(list_area.x, list_area.y, list_area.width, diff_tb_h),
+                &t,
+                pane_id,
+                view_mode,
+                wrap_on,
+                &mut app.rects.diff_toolbar_buttons,
+            );
+        }
+        let diff_body = Rect::new(
+            list_area.x,
+            list_area.y + diff_tb_h,
+            list_area.width,
+            list_area.height.saturating_sub(diff_tb_h),
+        );
+        // Render the embedded diff body via the shared renderers.
+        // Scrollbar rects flow through `rects.scrollbars` tagged
+        // `EmbeddedDiff` so the drag dispatcher knows to update
+        // `g.embedded_diff.scroll`.
+        let rects = &mut app.rects;
+        if let Some(Pane::GitGraph(g)) = app.panes.get_mut(pane_id)
+            && let Some(d) = g.embedded_diff.as_mut()
+        {
+            d.cursor = d.cursor.min(d.hunks.len().saturating_sub(1));
+            let kind = crate::app::ScrollbarKind::EmbeddedDiff;
+            match d.view_mode {
+                crate::pane::DiffViewMode::Inline => crate::ui::diff_view::render_inline(
+                    frame,
+                    d,
+                    &t,
+                    diff_body,
+                    &mut rects.list_rows,
+                    &mut rects.scrollbars,
+                    &mut rects.diff_hunk_buttons,
+                    kind,
+                    pane_id,
+                ),
+                crate::pane::DiffViewMode::Hunk => crate::ui::diff_view::render_hunk(
+                    frame,
+                    d,
+                    &t,
+                    diff_body,
+                    &mut rects.list_rows,
+                    &mut rects.scrollbars,
+                    &mut rects.diff_hunk_buttons,
+                    kind,
+                    pane_id,
+                ),
+                crate::pane::DiffViewMode::Split => crate::ui::diff_view::render_split(
+                    frame,
+                    d,
+                    &t,
+                    diff_body,
+                    &mut rects.list_rows,
+                    &mut rects.scrollbars,
+                    &mut rects.diff_hunk_buttons,
+                    kind,
+                    pane_id,
+                ),
+            }
+        }
+    }
+
+    textarea_cursor
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -412,6 +660,7 @@ struct ColAutoSize {
     author_override: Option<usize>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_detail(
     frame: &mut Frame,
     area: Rect,
@@ -419,10 +668,13 @@ fn draw_detail(
     c: &Commit,
     detail: &crate::git::graph::CommitDetail,
     now: i64,
+    pane_id: PaneId,
+    file_rows_out: &mut Vec<(Rect, PaneId, usize)>,
 ) {
     frame.render_widget(Paragraph::new("").style(Style::default().bg(t.bg)), area);
     let w = area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
+    let mut pending_file_rows: Vec<(usize, usize, usize, usize)> = Vec::new();
 
     // header: ───── <hash> · <author> · <age> ─────
     let head = format!(
@@ -460,8 +712,7 @@ fn draw_detail(
     }
     lines.push(Line::from(Span::styled(" ", Style::default().bg(t.bg))));
 
-    // changed files
-    let avail = (area.height as usize).saturating_sub(lines.len() + 1);
+    // changed files header
     let total = detail.files.len();
     lines.push(Line::from(Span::styled(
         format!("  changed files ({total}):"),
@@ -470,8 +721,10 @@ fn draw_detail(
             .bg(t.bg)
             .add_modifier(Modifier::BOLD),
     )));
+
+    let avail = (area.height as usize).saturating_sub(lines.len() + 1);
     let shown = total.min(avail.saturating_sub(1));
-    for (status, path) in detail.files.iter().take(shown) {
+    for (idx, (status, path)) in detail.files.iter().take(shown).enumerate() {
         let letter = status.chars().next().unwrap_or('?');
         let color = match letter {
             'A' => t.green,
@@ -481,10 +734,18 @@ fn draw_detail(
             'C' => t.cyan,
             _ => t.comment,
         };
+        let prefix = format!("  {letter} ");
+        let prefix_chars = prefix.chars().count();
+        let row_chars = prefix_chars + path.chars().count();
         lines.push(Line::from(vec![
-            Span::styled(format!("  {letter} "), Style::default().fg(color).bg(t.bg)),
+            Span::styled(prefix, Style::default().fg(color).bg(t.bg)),
             Span::styled(path.clone(), Style::default().fg(t.fg).bg(t.bg)),
+            Span::styled(
+                " ".repeat(w.saturating_sub(row_chars)),
+                Style::default().bg(t.bg),
+            ),
         ]));
+        pending_file_rows.push((lines.len() - 1, 0, w, idx));
     }
     if shown < total {
         lines.push(Line::from(Span::styled(
@@ -494,6 +755,30 @@ fn draw_detail(
     }
 
     frame.render_widget(Paragraph::new(lines).style(Style::default().bg(t.bg)), area);
+
+    for (line_idx, x_start, x_end, file_idx) in pending_file_rows {
+        if (line_idx as u16) >= area.height {
+            continue;
+        }
+        let y = area.y + line_idx as u16;
+        let x = area.x + x_start as u16;
+        let width = x_end.saturating_sub(x_start) as u16;
+        let max_w = (area.x + area.width).saturating_sub(x);
+        let clamped_w = width.min(max_w);
+        if clamped_w == 0 {
+            continue;
+        }
+        file_rows_out.push((
+            Rect {
+                x,
+                y,
+                width: clamped_w,
+                height: 1,
+            },
+            pane_id,
+            file_idx,
+        ));
+    }
 }
 
 /// Map a lane-colour index (`0..LANE_COLORS`) to a palette colour. The arms cover
@@ -518,9 +803,9 @@ fn lane_color(t: &Theme, idx: u8) -> Color {
 /// config overrides win over auto-size when set — `Some(0)` disables a
 /// column entirely.
 fn compute_column_widths(total: usize, graph_w: usize, auto: ColAutoSize) -> ColWidths {
-    // Reserved space we always want: swimlane (1) + arrow (2) + graph
-    // + graph→subject gap (2) + minimum subject (20).
-    let min_fixed = 1 + 2 + graph_w + 2 + 20;
+    // Each column gap is `" │ "` = 3 cells (the visible separator).
+    // Reserved: swimlane(1) + arrow(2) + graph + sep(3) + min subject(20).
+    let min_fixed = 1 + 2 + graph_w + 3 + 20;
     let mut remaining = total.saturating_sub(min_fixed);
 
     let mut w = ColWidths {
@@ -529,30 +814,25 @@ fn compute_column_widths(total: usize, graph_w: usize, auto: ColAutoSize) -> Col
         age: 0,
         sha: 0,
     };
-    // Short hash first (smallest, highest-value-per-cell).
-    if remaining >= 9 + 2 {
+    if remaining >= 9 + 3 {
         w.sha = 9;
-        remaining -= 9 + 2;
+        remaining -= 9 + 3;
     }
-    // Date/time column: "MM/DD HH:MM" = 11 chars. Falls back to 6
-    // (room for the relative-age fallback on a narrow pane).
-    if remaining >= 11 + 2 {
+    if remaining >= 11 + 3 {
         w.age = 11;
-        remaining -= 11 + 2;
-    } else if remaining >= 6 + 2 {
+        remaining -= 11 + 3;
+    } else if remaining >= 6 + 3 {
         w.age = 6;
-        remaining -= 6 + 2;
+        remaining -= 6 + 3;
     }
-    // Author: explicit override beats auto-size; clamp auto-size to [8, 22].
     let author_target = match auto.author_override {
         Some(n) => n,
         None => auto.author_chars.clamp(8, 22),
     };
-    if author_target > 0 && remaining >= author_target + 2 {
+    if author_target > 0 && remaining >= author_target + 3 {
         w.author = author_target;
-        remaining -= author_target + 2;
+        remaining -= author_target + 3;
     }
-    // Branch: explicit override beats auto-size; clamp auto-size to [10, 35].
     let branch_target = match auto.branch_override {
         Some(n) => n,
         None => {
@@ -563,8 +843,10 @@ fn compute_column_widths(total: usize, graph_w: usize, auto: ColAutoSize) -> Col
             }
         }
     };
-    if branch_target > 0 && remaining >= branch_target {
-        w.branch = branch_target.min(remaining);
+    // Branch column also costs a trailing separator (3 cells), since
+    // header + body always render `" │ "` after the branch chips.
+    if branch_target > 0 && remaining >= branch_target + 3 {
+        w.branch = branch_target.min(remaining.saturating_sub(3));
     }
     w
 }
@@ -619,6 +901,7 @@ fn format_wip_summary(snap: &crate::git::status::Snapshot) -> String {
 /// on each row. The renderer paints them as right-aligned labels;
 /// `tui::dispatch_mouse` matches a click against the rect + fires the
 /// matching [`crate::WipAction`].
+#[allow(clippy::too_many_arguments)]
 fn draw_wip_detail(
     frame: &mut Frame,
     area: Rect,
@@ -626,10 +909,48 @@ fn draw_wip_detail(
     snap: &crate::git::status::Snapshot,
     workspace: &std::path::Path,
     pane_id: PaneId,
+    commit: &crate::git::graph::WipCommitInput,
     buttons_out: &mut Vec<(Rect, PaneId, crate::WipAction)>,
-) {
+    file_rows_out: &mut Vec<(Rect, PaneId, std::path::PathBuf, bool)>,
+    textarea_out: &mut Option<(Rect, PaneId)>,
+) -> Option<(u16, u16)> {
     frame.render_widget(Paragraph::new("").style(Style::default().bg(t.bg)), area);
-    let w = area.width as usize;
+    // Reserve a fixed-height bottom region for the commit section
+    // (header + textarea + buttons + footer hint). When the pane is
+    // too short for the full layout, the textarea shrinks first and
+    // then drops entirely.
+    let commit_h: u16 = {
+        // Target 10 rows; shrink when the pane is small. Below 8 rows
+        // total we fall back to a buttons-only strip (no textarea).
+        let h = area.height;
+        if h >= 14 {
+            10
+        } else if h >= 10 {
+            8
+        } else if h >= 6 {
+            4
+        } else {
+            0
+        }
+    };
+    let files_area = Rect::new(
+        area.x,
+        area.y,
+        area.width,
+        area.height.saturating_sub(commit_h),
+    );
+    let commit_area = if commit_h > 0 {
+        Rect::new(
+            area.x,
+            area.y + area.height.saturating_sub(commit_h),
+            area.width,
+            commit_h,
+        )
+    } else {
+        Rect::new(area.x, area.y + area.height, area.width, 0)
+    };
+
+    let w = files_area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
 
     // Header
@@ -693,6 +1014,10 @@ fn draw_wip_detail(
     // area.y + line_idx after rendering, so just track (line_idx, x_start,
     // x_end, action) here.
     let mut pending_buttons: Vec<(usize, u16, u16, crate::WipAction)> = Vec::new();
+    // Per-file row click rects: (line_idx, x_start, x_end, abs_path, staged).
+    // Resolved to absolute screen coords after the lines vector is laid
+    // out (so a row that scrolls off the visible files area drops its rect).
+    let mut pending_file_rows: Vec<(usize, u16, u16, std::path::PathBuf, bool)> = Vec::new();
 
     // Unstaged section
     let unstaged_label = if unstaged.is_empty() {
@@ -766,6 +1091,16 @@ fn draw_wip_detail(
             btn_x_start,
             btn_x_end,
             crate::WipAction::StageFile(abs_path.clone()),
+        ));
+        // Clickable row covering the prefix + filename — opens the
+        // file's diff. The `[+]` button at the right edge keeps its
+        // higher-priority click (registered above via pending_buttons).
+        pending_file_rows.push((
+            lines.len(),
+            0,
+            (prefix_chars + path_avail) as u16,
+            abs_path.clone(),
+            false,
         ));
         lines.push(Line::from(row_spans));
     }
@@ -848,100 +1183,49 @@ fn draw_wip_detail(
             btn_x_end,
             crate::WipAction::UnstageFile(abs_path.clone()),
         ));
+        pending_file_rows.push((
+            lines.len(),
+            0,
+            (prefix_chars + path_avail) as u16,
+            abs_path.clone(),
+            true,
+        ));
         lines.push(Line::from(row_spans));
     }
     lines.push(Line::from(Span::styled("", Style::default().bg(t.bg))));
 
-    // ── Commit section ──────────────────────────────────────────────
-    // Section header (matches the chevron styling above).
-    lines.push(Line::from(Span::styled(
-        "  ▾ Commit".to_string(),
-        Style::default()
-            .fg(t.fg)
-            .bg(t.bg)
-            .add_modifier(Modifier::BOLD),
-    )));
-    // Status line — "N staged" or "stage some changes first".
-    let staged_count = snap.staged;
-    let commit_status = if staged_count == 0 {
-        "    (nothing staged — use the buttons above to stage files)".to_string()
-    } else {
-        format!("    {staged_count} file(s) staged — ready to commit")
-    };
-    lines.push(Line::from(Span::styled(
-        commit_status,
-        Style::default().fg(t.comment).bg(t.bg),
-    )));
-    lines.push(Line::from(Span::styled("", Style::default().bg(t.bg))));
-    // Two clickable buttons: [ Commit ] and [ AI Message ]. Disabled
-    // styling when nothing is staged (still clickable — it'll toast a
-    // helpful "nothing staged" hint, sibling to the existing flow).
-    let commit_btn = " Commit ";
-    let commit_btn_chars = commit_btn.chars().count();
-    let ai_btn = " AI Message ";
-    let ai_btn_chars = ai_btn.chars().count();
-    let gap = "  ";
-    let leading = "    "; // 4-space indent matching the file rows
-    let commit_btn_style = if staged_count > 0 {
-        Style::default()
-            .fg(t.bg_dark)
-            .bg(t.green)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(t.comment).bg(t.bg2)
-    };
-    let ai_btn_style = if staged_count > 0 {
-        Style::default()
-            .fg(t.bg_dark)
-            .bg(t.blue)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(t.comment).bg(t.bg2)
-    };
-    let commit_btn_line_idx = lines.len();
-    let leading_chars = leading.chars().count();
-    let commit_x_start = leading_chars as u16;
-    let commit_x_end = commit_x_start + commit_btn_chars as u16;
-    let ai_x_start = commit_x_end + gap.chars().count() as u16;
-    let ai_x_end = ai_x_start + ai_btn_chars as u16;
-    pending_buttons.push((
-        commit_btn_line_idx,
-        commit_x_start,
-        commit_x_end,
-        crate::WipAction::OpenCommitPrompt,
-    ));
-    pending_buttons.push((
-        commit_btn_line_idx,
-        ai_x_start,
-        ai_x_end,
-        crate::WipAction::RequestAiCommitMessage,
-    ));
-    lines.push(Line::from(vec![
-        Span::styled(leading.to_string(), Style::default().bg(t.bg)),
-        Span::styled(commit_btn.to_string(), commit_btn_style),
-        Span::styled(gap.to_string(), Style::default().bg(t.bg)),
-        Span::styled(ai_btn.to_string(), ai_btn_style),
-    ]));
-    lines.push(Line::from(Span::styled("", Style::default().bg(t.bg))));
+    // Drop the previously-inline commit section — it now lives in
+    // its own sticky bottom region (rendered by `draw_commit_section`
+    // below). Truncate the file-list lines to the files-area height
+    // so the Paragraph doesn't bleed into the commit area.
+    let files_max = files_area.height as usize;
+    if lines.len() > files_max && files_max > 0 {
+        // Replace the last visible line with an "… N more" hint so
+        // the user knows the list overflowed.
+        let dropped = lines.len() - files_max + 1;
+        lines.truncate(files_max - 1);
+        lines.push(Line::from(Span::styled(
+            format!("  … and {dropped} more"),
+            Style::default().fg(t.comment).bg(t.bg),
+        )));
+    }
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(t.bg)),
+        files_area,
+    );
 
-    // Hint footer — key reminders for the WIP row.
-    lines.push(Line::from(Span::styled(
-        "  c commit · C AI message · Enter status pane",
-        Style::default().fg(t.comment).bg(t.bg),
-    )));
-
-    frame.render_widget(Paragraph::new(lines).style(Style::default().bg(t.bg)), area);
-
-    // Push button rects with absolute screen coords. Rows that scroll
-    // off the pane (line_idx >= area.height) are dropped silently.
+    // Push file-list button rects with absolute screen coords. Rows
+    // that scroll off the visible files area are dropped silently
+    // (they were truncated above; their button rects shouldn't be
+    // clickable).
     for (line_idx, x_start, x_end, action) in pending_buttons {
-        if (line_idx as u16) >= area.height {
+        if (line_idx as u16) >= files_area.height {
             continue;
         }
-        let y = area.y + line_idx as u16;
-        let x = area.x + x_start;
+        let y = files_area.y + line_idx as u16;
+        let x = files_area.x + x_start;
         let width = x_end.saturating_sub(x_start);
-        if x + width > area.x + area.width {
+        if x + width > files_area.x + files_area.width {
             continue;
         }
         buttons_out.push((
@@ -955,6 +1239,378 @@ fn draw_wip_detail(
             action,
         ));
     }
+    // Per-file row click rects (covers the prefix + filename, NOT the
+    // `[+]` / `[−]` buttons which keep their stage/unstage action).
+    for (line_idx, x_start, x_end, abs_path, staged) in pending_file_rows {
+        if (line_idx as u16) >= files_area.height {
+            continue;
+        }
+        let y = files_area.y + line_idx as u16;
+        let x = files_area.x + x_start;
+        let width = x_end.saturating_sub(x_start);
+        if x + width > files_area.x + files_area.width {
+            continue;
+        }
+        file_rows_out.push((
+            Rect {
+                x,
+                y,
+                width,
+                height: 1,
+            },
+            pane_id,
+            abs_path,
+            staged,
+        ));
+    }
+
+    // ── Sticky commit section at the bottom ─────────────────────────
+    if commit_h == 0 {
+        return None;
+    }
+    draw_commit_section(
+        frame,
+        commit_area,
+        t,
+        snap,
+        pane_id,
+        commit,
+        buttons_out,
+        textarea_out,
+    )
+}
+
+/// Draw the sticky commit section pinned to the bottom of the WIP
+/// detail panel: header row · textarea box · `[Commit] [AI Message]
+/// [Clear]` buttons · hint footer. Returns the cursor's absolute
+/// `(x, y)` on screen when the textarea is focused so the caller can
+/// place the terminal cursor.
+#[allow(clippy::too_many_arguments)]
+fn draw_commit_section(
+    frame: &mut Frame,
+    area: Rect,
+    t: &Theme,
+    snap: &crate::git::status::Snapshot,
+    pane_id: PaneId,
+    commit: &crate::git::graph::WipCommitInput,
+    buttons_out: &mut Vec<(Rect, PaneId, crate::WipAction)>,
+    textarea_out: &mut Option<(Rect, PaneId)>,
+) -> Option<(u16, u16)> {
+    // Background fill for the whole commit area so the textarea bg
+    // doesn't bleed into the files area.
+    frame.render_widget(Paragraph::new("").style(Style::default().bg(t.bg)), area);
+
+    // Layout split:
+    //   row 0:           header `▾ Commit · N file(s) staged`
+    //   rows 1..=N-3:    textarea (N-3 rows; min 1)
+    //   row N-2:         buttons
+    //   row N-1:         hint footer (only when height >= 5)
+    let staged_count = snap.staged;
+    let h = area.height;
+    let header_row = area.y;
+    let textarea_rows: u16 = h.saturating_sub(if h >= 5 { 3 } else { 2 }).max(1);
+    let textarea_y0 = header_row + 1;
+    let buttons_y = textarea_y0 + textarea_rows;
+    let hint_y = buttons_y + 1;
+
+    // ── Header row ──
+    let header_text = if staged_count == 0 {
+        "  ▾ Commit  · (nothing staged)".to_string()
+    } else {
+        format!("  ▾ Commit  · {staged_count} file(s) staged")
+    };
+    let header_truncated = pad_or_truncate(&header_text, area.width as usize);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            header_truncated,
+            Style::default()
+                .fg(t.fg)
+                .bg(t.bg)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .style(Style::default().bg(t.bg)),
+        Rect::new(area.x, header_row, area.width, 1),
+    );
+
+    // ── Textarea ──
+    // Box content inset: 2 cells left/right indent so the textarea
+    // visually nests under the header. Border drawn at the indent
+    // edges via theme grey.
+    let pad_x: u16 = 2;
+    let content_w = area.width.saturating_sub(pad_x * 2);
+    if content_w >= 4 && textarea_rows >= 1 {
+        let ta_rect = Rect::new(area.x + pad_x, textarea_y0, content_w, textarea_rows);
+        let cursor = draw_textarea(frame, ta_rect, t, commit);
+        *textarea_out = Some((ta_rect, pane_id));
+        // Buttons row
+        draw_commit_buttons(
+            frame,
+            Rect::new(area.x, buttons_y, area.width, 1),
+            t,
+            pane_id,
+            staged_count,
+            commit,
+            buttons_out,
+        );
+        // Hint footer (when room)
+        if h >= 5 {
+            let hint = if commit.focused {
+                "  Enter newline · Esc unfocus · Ctrl+Enter commit"
+            } else {
+                "  Click textarea to type · c commit · C AI message"
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    pad_or_truncate(hint, area.width as usize),
+                    Style::default().fg(t.comment).bg(t.bg),
+                )))
+                .style(Style::default().bg(t.bg)),
+                Rect::new(area.x, hint_y, area.width, 1),
+            );
+        }
+        return cursor;
+    }
+    // Pane too narrow for the textarea — fall back to buttons-only.
+    draw_commit_buttons(
+        frame,
+        Rect::new(area.x, area.y + 1, area.width, 1),
+        t,
+        pane_id,
+        staged_count,
+        commit,
+        buttons_out,
+    );
+    None
+}
+
+/// Draw the multi-line textarea content + caret. Returns the
+/// absolute screen `(x, y)` for the caret when `commit.focused` is
+/// true; otherwise `None`. Char-wraps overlong lines at the box
+/// width (no word boundaries — commit subjects rarely span lines).
+fn draw_textarea(
+    frame: &mut Frame,
+    area: Rect,
+    t: &Theme,
+    commit: &crate::git::graph::WipCommitInput,
+) -> Option<(u16, u16)> {
+    let bg = if commit.focused { t.bg_dark } else { t.bg2 };
+    // Fill background so empty rows still show the box.
+    frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
+
+    let content_w = area.width as usize;
+    if content_w == 0 || area.height == 0 {
+        return None;
+    }
+    // Compute visual rows by char-wrapping each logical line. Each
+    // entry is (start_byte, end_byte) into commit.text.
+    let rows = layout_textarea_rows(&commit.text, content_w);
+    // Find cursor row + column.
+    let (cur_row, cur_col) = locate_cursor(&rows, &commit.text, commit.cursor);
+
+    // Scroll: keep cursor on screen (caller-side state is stored on
+    // commit.scroll but we recompute here from the cursor — the
+    // commit struct is `&` so this is purely render-side).
+    let visible_h = area.height as usize;
+    let scroll = if cur_row >= visible_h {
+        cur_row + 1 - visible_h
+    } else {
+        0
+    };
+
+    // Render visible rows.
+    let mut out: Vec<Line> = Vec::new();
+    for vrow in 0..visible_h {
+        let actual = scroll + vrow;
+        let line: String = if let Some(&(s, e)) = rows.get(actual) {
+            commit.text[s..e].to_string()
+        } else {
+            String::new()
+        };
+        // Pad to width so the bg fills.
+        let padded = pad_or_truncate(&line, content_w);
+        out.push(Line::from(Span::styled(
+            padded,
+            Style::default().fg(t.fg).bg(bg),
+        )));
+    }
+
+    // Placeholder when empty + unfocused — render dim italic over the
+    // first row.
+    if commit.text.is_empty() && !commit.focused {
+        let placeholder = if commit.ai_streaming {
+            " (asking Claude for a commit message…) "
+        } else {
+            " click here · then type a commit message "
+        };
+        let row0 = pad_or_truncate(placeholder, content_w);
+        out[0] = Line::from(Span::styled(
+            row0,
+            Style::default()
+                .fg(t.comment)
+                .bg(bg)
+                .add_modifier(Modifier::ITALIC),
+        ));
+    }
+
+    frame.render_widget(Paragraph::new(out).style(Style::default().bg(bg)), area);
+
+    if commit.focused {
+        let visual_row = cur_row.saturating_sub(scroll);
+        if visual_row < visible_h && cur_col <= content_w {
+            let x = area.x + cur_col as u16;
+            let y = area.y + visual_row as u16;
+            return Some((x, y));
+        }
+    }
+    None
+}
+
+/// Char-wrap `text` at `width` cells per row, respecting `\n`
+/// boundaries. Each output entry is `(start_byte, end_byte)` —
+/// half-open, exclusive of the trailing newline when one bounded the
+/// row. Always returns at least one row (empty text ⇒ `[(0, 0)]`).
+fn layout_textarea_rows(text: &str, width: usize) -> Vec<(usize, usize)> {
+    if width == 0 {
+        return vec![(0, text.len())];
+    }
+    let mut rows: Vec<(usize, usize)> = Vec::new();
+    let mut row_start = 0usize;
+    let mut cols = 0usize;
+    for (idx, ch) in text.char_indices() {
+        if ch == '\n' {
+            rows.push((row_start, idx));
+            row_start = idx + 1;
+            cols = 0;
+            continue;
+        }
+        if cols >= width {
+            rows.push((row_start, idx));
+            row_start = idx;
+            cols = 0;
+        }
+        cols += 1;
+    }
+    rows.push((row_start, text.len()));
+    rows
+}
+
+/// Locate the cursor at byte offset `cursor` within the wrapped
+/// `rows` view of `text`. Returns `(row, col)` in cells.
+fn locate_cursor(rows: &[(usize, usize)], text: &str, cursor: usize) -> (usize, usize) {
+    // Find the last row whose start <= cursor.
+    let mut idx = 0;
+    for (i, &(s, e)) in rows.iter().enumerate() {
+        if cursor >= s && cursor <= e {
+            idx = i;
+            break;
+        }
+        idx = i;
+    }
+    let (s, _e) = rows.get(idx).copied().unwrap_or((0, 0));
+    let col = text[s..cursor.min(text.len())].chars().count();
+    (idx, col)
+}
+
+fn draw_commit_buttons(
+    frame: &mut Frame,
+    area: Rect,
+    t: &Theme,
+    pane_id: PaneId,
+    staged_count: usize,
+    commit: &crate::git::graph::WipCommitInput,
+    buttons_out: &mut Vec<(Rect, PaneId, crate::WipAction)>,
+) {
+    frame.render_widget(Paragraph::new("").style(Style::default().bg(t.bg)), area);
+    // Button labels.
+    let commit_btn = " Commit ";
+    let ai_btn = " AI Message ";
+    let clear_btn = " Clear ";
+    let gap = "  ";
+    let leading = "  ";
+
+    let commit_active = staged_count > 0 && !commit.is_blank() && !commit.ai_streaming;
+    let ai_active = staged_count > 0 && !commit.ai_streaming;
+    let clear_active = !commit.text.is_empty() && !commit.ai_streaming;
+
+    let style_active = |fg, bg, on: bool| {
+        if on {
+            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.comment).bg(t.bg2)
+        }
+    };
+    let commit_style = style_active(t.bg_dark, t.green, commit_active);
+    let ai_style = if commit.ai_streaming {
+        Style::default()
+            .fg(t.bg_dark)
+            .bg(t.yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        style_active(t.bg_dark, t.blue, ai_active)
+    };
+    let clear_style = style_active(t.bg_dark, t.red, clear_active);
+
+    // Layout the row's spans + collect button rects in screen coords.
+    let mut spans: Vec<Span> = Vec::new();
+    spans.push(Span::styled(leading.to_string(), Style::default().bg(t.bg)));
+    let mut x = area.x + leading.chars().count() as u16;
+
+    let commit_w = commit_btn.chars().count() as u16;
+    spans.push(Span::styled(commit_btn.to_string(), commit_style));
+    buttons_out.push((
+        Rect {
+            x,
+            y: area.y,
+            width: commit_w,
+            height: 1,
+        },
+        pane_id,
+        crate::WipAction::OpenCommitPrompt,
+    ));
+    x += commit_w;
+
+    spans.push(Span::styled(gap.to_string(), Style::default().bg(t.bg)));
+    x += gap.chars().count() as u16;
+
+    let ai_w = ai_btn.chars().count() as u16;
+    let ai_label = if commit.ai_streaming {
+        " AI writing… "
+    } else {
+        ai_btn
+    };
+    spans.push(Span::styled(ai_label.to_string(), ai_style));
+    buttons_out.push((
+        Rect {
+            x,
+            y: area.y,
+            width: ai_label.chars().count() as u16,
+            height: 1,
+        },
+        pane_id,
+        crate::WipAction::RequestAiCommitMessage,
+    ));
+    x += ai_w;
+
+    spans.push(Span::styled(gap.to_string(), Style::default().bg(t.bg)));
+    x += gap.chars().count() as u16;
+
+    let clear_w = clear_btn.chars().count() as u16;
+    spans.push(Span::styled(clear_btn.to_string(), clear_style));
+    buttons_out.push((
+        Rect {
+            x,
+            y: area.y,
+            width: clear_w,
+            height: 1,
+        },
+        pane_id,
+        crate::WipAction::ClearCommitDraft,
+    ));
+
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(t.bg)),
+        area,
+    );
 }
 
 /// Draw the column-header row (faint labels) and, when a hash filter is
@@ -974,6 +1630,12 @@ fn draw_header(
     let mut spans: Vec<Span> = Vec::new();
     // Lane bar + arrow gutter
     spans.push(Span::styled("   ", Style::default().bg(bg)));
+    // Visible `│` column separators replace the previous bare 2-space
+    // gaps between columns. Drag to resize is a follow-up — for now
+    // they're purely visual cues advertising column boundaries
+    // (mirrors a popular Git GUI).
+    let sep_style = Style::default().fg(t.grey).bg(bg);
+    let sep_span = || Span::styled(" │ ", sep_style);
     // Branch column header
     if cols.branch > 0 {
         spans.push(Span::styled(
@@ -983,6 +1645,9 @@ fn draw_header(
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ));
+        spans.push(sep_span());
+    } else {
+        spans.push(Span::styled("  ", Style::default().bg(bg)));
     }
     // Graph column header
     spans.push(Span::styled(
@@ -992,19 +1657,19 @@ fn draw_header(
             .bg(bg)
             .add_modifier(Modifier::BOLD),
     ));
-    spans.push(Span::styled("  ", Style::default().bg(bg)));
-    // Subject header (flex)
+    spans.push(sep_span());
+    // Subject header (flex). Reserve SHA right-pad too — otherwise
+    // the trailing space spans land past `area.width` and clip.
+    let branch_section = if cols.branch > 0 { cols.branch + 3 } else { 2 };
     let fixed_used = 1
         + 2
-        + cols.branch
+        + branch_section
         + graph_w
-        + 2
-        + cols.author
-        + (if cols.author > 0 { 2 } else { 0 })
-        + cols.age
-        + (if cols.age > 0 { 2 } else { 0 })
-        + cols.sha
-        + (if cols.sha > 0 { 2 } else { 0 });
+        + 3
+        + (if cols.author > 0 { cols.author + 3 } else { 0 })
+        + (if cols.age > 0 { cols.age + 3 } else { 0 })
+        + (if cols.sha > 0 { cols.sha + 3 } else { 0 })
+        + SHA_RIGHT_PAD;
     let subject_w = (area.width as usize).saturating_sub(fixed_used);
     let subject_label = if hash_filter.is_empty() {
         pad_or_truncate("COMMIT MESSAGE", subject_w)
@@ -1024,7 +1689,7 @@ fn draw_header(
     };
     spans.push(Span::styled(subject_label, label_style));
     if cols.author > 0 {
-        spans.push(Span::styled("  ", Style::default().bg(bg)));
+        spans.push(sep_span());
         spans.push(Span::styled(
             right_align("AUTHOR", cols.author),
             Style::default()
@@ -1034,7 +1699,7 @@ fn draw_header(
         ));
     }
     if cols.age > 0 {
-        spans.push(Span::styled("  ", Style::default().bg(bg)));
+        spans.push(sep_span());
         spans.push(Span::styled(
             right_align("DATE / TIME", cols.age),
             Style::default()
@@ -1044,13 +1709,19 @@ fn draw_header(
         ));
     }
     if cols.sha > 0 {
-        spans.push(Span::styled("  ", Style::default().bg(bg)));
+        spans.push(sep_span());
         spans.push(Span::styled(
             right_align("SHA", cols.sha),
             Style::default()
                 .fg(t.comment)
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
+        ));
+    }
+    if SHA_RIGHT_PAD > 0 {
+        spans.push(Span::styled(
+            " ".repeat(SHA_RIGHT_PAD),
+            Style::default().bg(bg),
         ));
     }
     frame.render_widget(
@@ -1171,14 +1842,15 @@ fn right_align(s: &str, width: usize) -> String {
     }
 }
 
-/// Draw the GitGraph top toolbar — a 2-row strip of clickable git
-/// action buttons (Pull / Push / Fetch / Branch / Commit / Stash /
-/// Pop / Terminal / Reflog). Top row: text label. Bottom row: icon
-/// (Nerd Font glyph when available; ASCII fallback otherwise).
+/// Draw the GitGraph top toolbar — a single-row strip of clickable
+/// git action buttons (Pull / Push / Fetch / Branch / Commit / Stash
+/// / Pop / Terminal / Reflog). Each button renders as ` <icon>
+/// <label> ` with the icon in the action's accent color and the
+/// label in the foreground. Dividers separate adjacent buttons.
 ///
 /// Pushes button rects onto `buttons_out` so `tui::dispatch_mouse`
 /// can route clicks via [`crate::App::run_git_toolbar_action`].
-fn draw_git_toolbar(
+pub fn draw_git_toolbar(
     frame: &mut Frame,
     area: Rect,
     t: &Theme,
@@ -1186,25 +1858,11 @@ fn draw_git_toolbar(
     nerd: bool,
     buttons_out: &mut Vec<(Rect, PaneId, crate::GitToolbarAction)>,
 ) {
-    if area.width < 30 || area.height < 2 {
+    if area.width < 20 || area.height < 1 {
         return;
     }
     let bg = t.bg_darker;
-    let widget_area = Rect::new(area.x, area.y, area.width, area.height);
-    frame.render_widget(
-        Paragraph::new("").style(Style::default().bg(bg)),
-        widget_area,
-    );
-    // Bottom horizontal rule beneath the toolbar — separates from the
-    // table header.
-    let rule = "─".repeat(area.width as usize);
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            rule,
-            Style::default().fg(t.grey).bg(bg),
-        ))),
-        Rect::new(area.x, area.y + area.height - 1, area.width, 1),
-    );
+    frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
 
     // Button definitions: (label, nerd icon, ascii icon, action, color).
     // Order is Pull/Push first (most common ops), then Fetch, then
@@ -1275,70 +1933,55 @@ fn draw_git_toolbar(
         (
             "Term",
             "\u{F018D}",
-            ">_",
+            ">",
             crate::GitToolbarAction::Terminal,
             t.comment,
         ),
     ];
 
-    // Each button is 9 cells wide (8 content + 1 divider). Drop buttons
-    // from the right when the pane is too narrow to fit them all.
-    let cell_w: u16 = 9;
-    let max_buttons = (area.width / cell_w) as usize;
-    let n = buttons.len().min(max_buttons);
-    let mut label_spans: Vec<Span> = Vec::new();
-    let mut icon_spans: Vec<Span> = Vec::new();
+    // Each button: ` <icon> <label_padded_to_6> ` = 1 + 1 + 1 + 6 + 1 = 10 chars content.
+    // Divider " │ " between buttons. Drop buttons from the right when the pane
+    // is too narrow to fit them all.
+    let btn_w: u16 = 10;
+    let div_w: u16 = 3;
+    // Solve for n: n*btn_w + (n-1)*div_w <= area.width
+    // → n <= (area.width + div_w) / (btn_w + div_w)
+    let max_buttons = ((area.width + div_w) / (btn_w + div_w)) as usize;
+    let n = buttons.len().min(max_buttons.max(1));
+    let mut spans: Vec<Span> = Vec::new();
     let mut x = area.x;
     for (i, (label, nerd_icon, ascii_icon, action, color)) in buttons.iter().take(n).enumerate() {
         let icon = if nerd { *nerd_icon } else { *ascii_icon };
-        let label_pad = center_pad(label, 8);
-        let icon_pad = center_pad(icon, 8);
-        label_spans.push(Span::styled(
-            label_pad,
-            Style::default()
-                .fg(t.fg)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        ));
-        icon_spans.push(Span::styled(
-            icon_pad,
+        // ` <icon> ` — icon column in the accent color.
+        spans.push(Span::styled(
+            format!(" {icon} "),
             Style::default()
                 .fg(*color)
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ));
-        // Divider after every button except the last on the row.
+        // `<label> ` left-padded to 7 chars (6 label + 1 trailing space) —
+        // bold foreground.
+        spans.push(Span::styled(
+            format!("{label:<6} "),
+            Style::default()
+                .fg(t.fg)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        // Button hit area covers the full 10-char content (icon + label).
+        buttons_out.push((Rect::new(x, area.y, btn_w, 1), pane_id, *action));
+        x += btn_w;
+        // Divider " │ " between buttons (omit after the last).
         if i + 1 < n {
-            label_spans.push(Span::styled("│", Style::default().fg(t.grey).bg(bg)));
-            icon_spans.push(Span::styled("│", Style::default().fg(t.grey).bg(bg)));
+            spans.push(Span::styled(" │ ", Style::default().fg(t.grey).bg(bg)));
+            x += div_w;
         }
-        // Push button rect (8-cell-wide hit area, 2 rows tall — excludes
-        // the rule row at the bottom).
-        buttons_out.push((Rect::new(x, area.y, 8, 1), pane_id, *action));
-        buttons_out.push((Rect::new(x, area.y + 1, 8, 1), pane_id, *action));
-        x += cell_w;
     }
     frame.render_widget(
-        Paragraph::new(Line::from(label_spans)).style(Style::default().bg(bg)),
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(bg)),
         Rect::new(area.x, area.y, area.width, 1),
     );
-    frame.render_widget(
-        Paragraph::new(Line::from(icon_spans)).style(Style::default().bg(bg)),
-        Rect::new(area.x, area.y + 1, area.width, 1),
-    );
-}
-
-/// Center `s` inside a `width`-char column. Truncates to fit (no
-/// ellipsis — the button labels are short fixed words).
-fn center_pad(s: &str, width: usize) -> String {
-    let n = s.chars().count();
-    if n >= width {
-        return s.chars().take(width).collect();
-    }
-    let total = width - n;
-    let left = total / 2;
-    let right = total - left;
-    format!("{}{}{}", " ".repeat(left), s, " ".repeat(right))
 }
 
 /// Format a unix-seconds timestamp as `MM/DD HH:MM` in the user's local

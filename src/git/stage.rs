@@ -107,6 +107,45 @@ pub fn unstage_all(workspace: &Path) -> Result<(), String> {
     run(workspace, &["restore", "--staged", "."]).or_else(|_| run(workspace, &["reset", "-q"]))
 }
 
+/// Discard a file's working-tree changes back to its HEAD version
+/// (`git checkout HEAD -- <rel>`, with the modern `restore` form as
+/// the primary). Destructive — callers should confirm.
+pub fn discard_file(workspace: &Path, rel: &str) -> Result<(), String> {
+    run(workspace, &["restore", "--", rel])
+        .or_else(|_| run(workspace, &["checkout", "HEAD", "--", rel]))
+}
+
+/// Stash just `rel`'s changes — `git stash push -u <rel>` (the `-u`
+/// covers untracked files; for tracked files git ignores it). Leaves
+/// the working tree clean for that file; pop with `git stash pop`.
+pub fn stash_file(workspace: &Path, rel: &str) -> Result<(), String> {
+    run(workspace, &["stash", "push", "-u", "--", rel])
+}
+
+/// Append a line to `<workspace>/.gitignore` (creating the file if
+/// missing). Idempotent — skips when the line already exists.
+pub fn append_gitignore(workspace: &Path, pattern: &str) -> Result<(), String> {
+    use std::io::Write;
+    let gi_path = workspace.join(".gitignore");
+    let existing = std::fs::read_to_string(&gi_path).unwrap_or_default();
+    if existing.lines().any(|l| l.trim() == pattern) {
+        return Ok(());
+    }
+    let needs_nl = !existing.is_empty() && !existing.ends_with('\n');
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&gi_path)
+        .map_err(|e| format!("open .gitignore: {e}"))?;
+    if needs_nl {
+        f.write_all(b"\n").map_err(|e| format!("write: {e}"))?;
+    }
+    f.write_all(pattern.as_bytes())
+        .map_err(|e| format!("write: {e}"))?;
+    f.write_all(b"\n").map_err(|e| format!("write: {e}"))?;
+    Ok(())
+}
+
 /// `git diff --cached` — the staged changes, for feeding an AI commit-message prompt.
 pub fn staged_diff(workspace: &Path) -> String {
     Command::new("git")

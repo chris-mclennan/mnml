@@ -33,6 +33,20 @@ pub fn draw(
     );
     app.rects.editor_panes.push((area, pane_id));
 
+    // Reserve scrollbar column. Distinguish Grep vs Quickfix BEFORE
+    // taking the mutable borrow on the pane (the dispatcher kind tag
+    // depends on the pane variant).
+    let want_sb = area.width >= 8;
+    let sb_w = if want_sb { 1 } else { 0 };
+    let body_area = Rect::new(area.x, area.y, area.width - sb_w, area.height);
+    let sb_area = Rect::new(area.x + area.width - sb_w, area.y, sb_w, area.height);
+    let sb_kind = match app.panes.get(pane_id) {
+        Some(Pane::Grep(_)) => crate::app::ScrollbarKind::Grep,
+        Some(Pane::Quickfix(_)) => crate::app::ScrollbarKind::Quickfix,
+        _ => crate::app::ScrollbarKind::Grep,
+    };
+    let area = body_area;
+
     let g = match app.panes.get_mut(pane_id) {
         Some(Pane::Grep(g)) | Some(Pane::Quickfix(g)) => g,
         _ => return None,
@@ -138,11 +152,23 @@ pub fn draw(
         }
     }
 
-    let view: Vec<Line> = lines.into_iter().skip(g.scroll).take(h).collect();
+    let total_lines = lines.len();
+    let scroll = g.scroll;
+    let view: Vec<Line> = lines.into_iter().skip(scroll).take(h).collect();
     frame.render_widget(
         Paragraph::new(view).style(Style::default().bg(t.bg_dark)),
         area,
     );
+    if sb_w > 0 {
+        crate::ui::scrollbar::paint_simple_scrollbar(frame, sb_area, &t, total_lines, h, scroll);
+        app.rects.scrollbars.push(crate::app::ScrollbarHit {
+            area: sb_area,
+            pane_id,
+            total: total_lines,
+            viewport: h,
+            kind: sb_kind,
+        });
+    }
     None
 }
 

@@ -120,6 +120,45 @@ pub enum WipAction {
     OpenCommitPrompt,
     /// Trigger AI commit-message generation (same as the `C` chord on
     /// the WIP row). Click the `AI Message` button in the WIP detail's
-    /// commit section.
+    /// commit section. When the WIP detail's inline textarea is
+    /// available, the result fills the textarea instead of opening
+    /// the modal `PromptKind::GitCommit` prompt.
     RequestAiCommitMessage,
+    /// Wipe the inline commit-message textarea in the WIP detail.
+    /// Click the `Clear` button next to `Commit` / `AI Message`.
+    ClearCommitDraft,
+}
+
+/// One clickable action on the `Pane::Diff` top toolbar. The
+/// corresponding rect lives on `app.rects.diff_toolbar_buttons`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffToolbarAction {
+    /// Switch the diff to inline (unified) rendering.
+    ViewInline,
+    /// Switch to per-hunk collapsed rendering.
+    ViewHunk,
+    /// Switch to Splitumn side-by-side rendering.
+    ViewSplit,
+    /// Toggle line-wrap.
+    ToggleWrap,
+    /// Close the diff view — clears the embedded diff when shown
+    /// inside a `Pane::GitGraph`, or closes the pane when standalone
+    /// `Pane::Diff`. Bound to the `[×]` chip on the toolbar so the
+    /// gesture is discoverable.
+    Close,
+}
+
+/// One clickable per-hunk action chip in the Hunk view's header
+/// row. The corresponding rect lives on
+/// `app.rects.diff_hunk_buttons`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffHunkAction {
+    /// Apply this hunk to the index (`git apply --cached`).
+    Stage,
+    /// Reverse-apply this hunk against the index (`git apply
+    /// --cached --reverse`).
+    Unstage,
+    /// Reverse-apply this hunk against the working tree —
+    /// destructive, prompts for confirmation in the dispatcher.
+    Discard,
 }

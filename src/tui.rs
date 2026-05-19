@@ -607,33 +607,108 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // A git diff pane: scroll, `n`/`p` move the cursor hunk, `s`/`u` stage/unstage,
-    // `r` refresh, Enter jump to the hunk in the source, Esc → tree.
+    // A git diff pane: `↑↓` and `n`/`p` jump between hunks (the user's
+    // primary navigation); `j`/`k` scroll one row at a time;
+    // `s`/`u` stage/unstage the cursor hunk; `r` refresh; Enter jumps
+    // to the hunk in the source; Esc → tree. View-mode + wrap toggle
+    // are surfaced via the top-of-pane toolbar buttons (click).
     if let Some(Pane::Diff(d)) = app.panes.get_mut(i) {
+        // Filter mode wins — `/` opens it; printable keys / Backspace
+        // append / pop; Enter exits (keeping the filter); Esc clears.
+        if d.filter_mode {
+            match key.code {
+                KeyCode::Esc => {
+                    d.filter.clear();
+                    d.filter_mode = false;
+                }
+                KeyCode::Enter => d.filter_mode = false,
+                KeyCode::Backspace => {
+                    d.filter.pop();
+                }
+                KeyCode::Char(ch)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    d.filter.push(ch);
+                }
+                _ => {}
+            }
+            return;
+        }
+        let in_split = d.view_mode == crate::pane::DiffViewMode::Split;
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => d.scroll = d.scroll.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => d.scroll += 1,
+            KeyCode::Char('/') => {
+                d.filter.clear();
+                d.filter_mode = true;
+                return;
+            }
+            // Up / Down — in Inline/Hunk mode they jump hunks
+            // (user's preferred change-navigation gesture); in Split
+            // mode they scroll by row since one "hunk" is a whole
+            // file and the user is reading line-by-line.
+            KeyCode::Up if in_split => d.scroll = d.scroll.saturating_sub(1),
+            KeyCode::Down if in_split => d.scroll += 1,
+            KeyCode::Up => d.cursor = d.cursor.saturating_sub(1),
+            KeyCode::Down => {
+                d.cursor = (d.cursor + 1).min(d.hunks.len().saturating_sub(1));
+            }
+            // j / k still scroll a single row (vim convention).
+            KeyCode::Char('k') => d.scroll = d.scroll.saturating_sub(1),
+            KeyCode::Char('j') => d.scroll += 1,
             KeyCode::PageUp => d.scroll = d.scroll.saturating_sub(viewport),
             KeyCode::PageDown => d.scroll += viewport,
             KeyCode::Char('n') | KeyCode::Char(']') => {
-                d.cursor = (d.cursor + 1).min(d.hunks.len().saturating_sub(1));
+                if !d.filter.is_empty() {
+                    if let Some(idx) = crate::ui::diff_view::next_filter_match(d, true) {
+                        d.cursor = idx;
+                    }
+                } else {
+                    d.cursor = (d.cursor + 1).min(d.hunks.len().saturating_sub(1));
+                }
             }
-            KeyCode::Char('p') | KeyCode::Char('[') => d.cursor = d.cursor.saturating_sub(1),
+            KeyCode::Char('p') | KeyCode::Char('[') => {
+                if !d.filter.is_empty() {
+                    if let Some(idx) = crate::ui::diff_view::next_filter_match(d, false) {
+                        d.cursor = idx;
+                    }
+                } else {
+                    d.cursor = d.cursor.saturating_sub(1);
+                }
+            }
             KeyCode::Home | KeyCode::Char('g') => {
                 d.scroll = 0;
                 d.cursor = 0;
             }
             KeyCode::End | KeyCode::Char('G') => d.scroll = usize::MAX,
+            // `w` toggles wrap (sibling chord to the `[Wrap]` toolbar
+            // button). Pref updated below after the borrow on `d`.
+            KeyCode::Char('w') => d.wrap = !d.wrap,
+            // `v` cycles view modes Hunk → Inline → Split → Hunk
+            // (matches the toolbar button order so muscle-memory
+            // lines up with the visual layout).
+            KeyCode::Char('v') => {
+                d.view_mode = match d.view_mode {
+                    crate::pane::DiffViewMode::Hunk => crate::pane::DiffViewMode::Inline,
+                    crate::pane::DiffViewMode::Inline => crate::pane::DiffViewMode::Split,
+                    crate::pane::DiffViewMode::Split => crate::pane::DiffViewMode::Hunk,
+                };
+            }
             KeyCode::Char('s') => app.apply_cursor_hunk(false),
             KeyCode::Char('u') => app.apply_cursor_hunk(true),
             KeyCode::Char('r') => app.refresh_active_diff(),
-            // f / F — jump to next / previous file in the diff (no-op
-            // for a single-file diff; wraps).
             KeyCode::Char('f') => app.diff_jump_file(true),
             KeyCode::Char('F') => app.diff_jump_file(false),
             KeyCode::Enter => app.jump_to_cursor_hunk(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
+        }
+        // Sync App-level prefs from the (possibly just-updated) pane
+        // state. `v` / `w` chords mutate `d` first; the next diff open
+        // should pick up that mode/wrap as the new default.
+        if let Some(Pane::Diff(d)) = app.panes.get(i) {
+            app.diff_view_mode_pref = d.view_mode;
+            app.diff_wrap_pref = d.wrap;
         }
         return;
     }
@@ -2988,6 +3063,191 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // `r` refresh (re-run `git log`), `y` copy the commit hash, `/` enter
     // hash-filter mode (type a partial hash prefix to jump), Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::GitGraph(_))) {
+        // Textarea focus wins — when the WIP commit textarea is
+        // focused, every printable / motion / Enter / Backspace key
+        // mutates the textarea instead of triggering the graph chord
+        // table. Esc unfocuses; Ctrl+Enter commits.
+        let textarea_focused = matches!(
+            app.panes.get(i),
+            Some(Pane::GitGraph(g)) if g.is_wip_selected() && g.wip_commit.focused
+        );
+        if textarea_focused {
+            use ratatui::crossterm::event::KeyModifiers;
+            // Ctrl+Enter (or Cmd+Enter where the terminal forwards it)
+            // commits with the current textarea content.
+            if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::CONTROL) {
+                app.commit_from_active_wip_textarea_or_prompt();
+                return;
+            }
+            match key.code {
+                KeyCode::Esc => app.blur_active_wip_commit_textarea(),
+                KeyCode::Enter => {
+                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
+                        ta.insert_char('\n');
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
+                        ta.backspace();
+                    }
+                }
+                KeyCode::Delete => {
+                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
+                        ta.delete_forward();
+                    }
+                }
+                KeyCode::Left => {
+                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
+                        ta.move_left();
+                    }
+                }
+                KeyCode::Right => {
+                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
+                        ta.move_right();
+                    }
+                }
+                KeyCode::Home => {
+                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
+                        ta.move_line_start();
+                    }
+                }
+                KeyCode::End => {
+                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
+                        ta.move_line_end();
+                    }
+                }
+                KeyCode::Char(ch)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
+                        ta.insert_char(ch);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Embedded diff wins — when the user clicked a file in the
+        // right-side detail panel, a `DiffView` lives inside the
+        // GitGraph and the commit-list area is replaced by it. Keys
+        // route to the embedded diff (same chords as `Pane::Diff`).
+        // Esc closes the embedded diff first; a second Esc bails to
+        // the tree via the normal graph-pane path.
+        let has_embedded =
+            matches!(app.panes.get(i), Some(Pane::GitGraph(g)) if g.embedded_diff.is_some());
+        if has_embedded {
+            // Filter mode (embedded) — mirror the standalone path.
+            let in_filter = matches!(
+                app.panes.get(i),
+                Some(Pane::GitGraph(g)) if g.embedded_diff.as_ref().map(|d| d.filter_mode).unwrap_or(false)
+            );
+            if in_filter {
+                if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i)
+                    && let Some(d) = g.embedded_diff.as_mut()
+                {
+                    match key.code {
+                        KeyCode::Esc => {
+                            d.filter.clear();
+                            d.filter_mode = false;
+                        }
+                        KeyCode::Enter => d.filter_mode = false,
+                        KeyCode::Backspace => {
+                            d.filter.pop();
+                        }
+                        KeyCode::Char(ch)
+                            if !key
+                                .modifiers
+                                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                        {
+                            d.filter.push(ch);
+                        }
+                        _ => {}
+                    }
+                }
+                return;
+            }
+            if key.code == KeyCode::Esc {
+                if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i) {
+                    g.embedded_diff = None;
+                }
+                return;
+            }
+            if matches!(key.code, KeyCode::Char('/')) {
+                if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i)
+                    && let Some(d) = g.embedded_diff.as_mut()
+                {
+                    d.filter.clear();
+                    d.filter_mode = true;
+                }
+                return;
+            }
+            // `f` / `F` walk between the commit's changed files
+            // without going back to the right detail panel. Routed
+            // through `App::diff_jump_file` which already knows how
+            // to re-open the embedded diff against a sibling file.
+            if matches!(key.code, KeyCode::Char('f')) {
+                app.diff_jump_file(true);
+                return;
+            }
+            if matches!(key.code, KeyCode::Char('F')) {
+                app.diff_jump_file(false);
+                return;
+            }
+            let mut new_mode_pref: Option<crate::pane::DiffViewMode> = None;
+            let mut new_wrap_pref: Option<bool> = None;
+            if let Some(Pane::GitGraph(g)) = app.panes.get_mut(i)
+                && let Some(d) = g.embedded_diff.as_mut()
+            {
+                let in_split = d.view_mode == crate::pane::DiffViewMode::Split;
+                match key.code {
+                    KeyCode::Up if in_split => d.scroll = d.scroll.saturating_sub(1),
+                    KeyCode::Down if in_split => d.scroll += 1,
+                    KeyCode::Up => d.cursor = d.cursor.saturating_sub(1),
+                    KeyCode::Down => {
+                        d.cursor = (d.cursor + 1).min(d.hunks.len().saturating_sub(1));
+                    }
+                    KeyCode::Char('k') => d.scroll = d.scroll.saturating_sub(1),
+                    KeyCode::Char('j') => d.scroll += 1,
+                    KeyCode::PageUp => d.scroll = d.scroll.saturating_sub(viewport),
+                    KeyCode::PageDown => d.scroll += viewport,
+                    KeyCode::Char('n') | KeyCode::Char(']') => {
+                        d.cursor = (d.cursor + 1).min(d.hunks.len().saturating_sub(1));
+                    }
+                    KeyCode::Char('p') | KeyCode::Char('[') => {
+                        d.cursor = d.cursor.saturating_sub(1)
+                    }
+                    KeyCode::Home => {
+                        d.scroll = 0;
+                        d.cursor = 0;
+                    }
+                    KeyCode::End => d.scroll = usize::MAX,
+                    KeyCode::Char('w') => {
+                        d.wrap = !d.wrap;
+                        new_wrap_pref = Some(d.wrap);
+                    }
+                    KeyCode::Char('v') => {
+                        d.view_mode = match d.view_mode {
+                            crate::pane::DiffViewMode::Hunk => crate::pane::DiffViewMode::Inline,
+                            crate::pane::DiffViewMode::Inline => crate::pane::DiffViewMode::Split,
+                            crate::pane::DiffViewMode::Split => crate::pane::DiffViewMode::Hunk,
+                        };
+                        new_mode_pref = Some(d.view_mode);
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(m) = new_mode_pref {
+                app.diff_view_mode_pref = m;
+            }
+            if let Some(w) = new_wrap_pref {
+                app.diff_wrap_pref = w;
+            }
+            return;
+        }
+
         // Hash-filter mode wins — consume keystrokes until Enter / Esc.
         let in_filter_mode = matches!(
             app.panes.get(i),
@@ -3749,12 +4009,55 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .find(|(r, _)| contains(*r, x, y))
             {
                 app.open_git_rail_context_menu(hit, (x, y));
+                return;
+            }
+            // Right-click on a diff body row (standalone or embedded
+            // diff) → per-hunk context menu (Open file at revision /
+            // Copy commit hash / Stage / Unstage / Discard).
+            // Right-click on a GitStatus file row → per-file menu
+            // (Stage / Discard / Ignore / Stash / Reveal / …).
+            if let Some(&(_, pid, idx)) = app
+                .rects
+                .list_rows
+                .iter()
+                .find(|(r, _, _)| contains(*r, x, y))
+            {
+                match app.panes.get(pid) {
+                    Some(Pane::Diff(_)) => {
+                        app.active = Some(pid);
+                        app.focus_pane();
+                        app.open_diff_context_menu(pid, idx, (x, y));
+                    }
+                    Some(Pane::GitGraph(g)) if g.embedded_diff.is_some() => {
+                        app.active = Some(pid);
+                        app.focus_pane();
+                        app.open_diff_context_menu(pid, idx, (x, y));
+                    }
+                    Some(Pane::GitStatus(_)) => {
+                        app.active = Some(pid);
+                        app.focus_pane();
+                        app.open_git_status_context_menu(pid, idx, (x, y));
+                    }
+                    _ => {}
+                }
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            // Grab a scrollbar (editor / diff / embedded-diff) before
+            // any pane-level handler — the bar sits inside the pane's
+            // own rect, so without this short-circuit a click on the
+            // bar would also land in the editor / row-select handlers
+            // below and shift the cursor / row selection.
+            if app.begin_scrollbar_drag(x, y) {
+                return;
+            }
             // Grab the rail's right-edge handle? (cheaper / more specific
             // than a split divider — try this first.)
             if app.begin_tree_edge_drag(x, y) {
+                return;
+            }
+            // Grab the GitGraph commit-list ↔ detail-panel divider?
+            if app.begin_git_graph_detail_drag(x, y) {
                 return;
             }
             // Grab a split divider? (do this first — it sits between two pane rects)
@@ -3802,7 +4105,37 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             {
                 app.active = Some(pid);
                 app.focus_pane();
+                // Clicking a button blurs the textarea so the user
+                // doesn't keep typing into a no-longer-visible field.
+                app.blur_active_wip_commit_textarea();
                 app.run_wip_action(action);
+                return;
+            }
+            // Click on a WIP-detail file row (not the button) →
+            // open that file's diff (`Pane::Diff`) so the user can
+            // browse Hunk / Inline / Split views.
+            if let Some((_, pid, abs_path, staged)) = app
+                .rects
+                .wip_file_rows
+                .iter()
+                .find(|(r, _, _, _)| contains(*r, x, y))
+                .cloned()
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                app.blur_active_wip_commit_textarea();
+                app.click_wip_file_row(abs_path, staged);
+                return;
+            }
+            // Click inside the WIP commit textarea rect → focus it.
+            // Wins over the pane-focus handler so the click both
+            // focuses the GitGraph pane AND focuses the textarea.
+            if let Some((r, pid)) = app.rects.wip_commit_textarea
+                && contains(r, x, y)
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                app.focus_wip_commit_textarea(pid);
                 return;
             }
             // Click on a GitGraph top-toolbar button → fire its action.
@@ -3818,6 +4151,102 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.active = Some(pid);
                 app.focus_pane();
                 app.run_git_toolbar_action(action);
+                return;
+            }
+            // Click on a per-hunk action chip ([Stage] / [Unstage]
+            // / [Discard]) in the Hunk view's header row → dispatch
+            // the action against that hunk. Runs before the
+            // toolbar / row click handlers so the chip "owns" the
+            // click.
+            if let Some(&(_, pid, hi, action)) = app
+                .rects
+                .diff_hunk_buttons
+                .iter()
+                .find(|(r, _, _, _)| contains(*r, x, y))
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                app.apply_hunk_action(pid, hi, action);
+                return;
+            }
+            // Click on a Diff pane toolbar button → switch view mode
+            // or toggle wrap. Also store the choice as the App-level
+            // preference so every subsequent diff opens in that mode.
+            // Works against both a standalone `Pane::Diff` and a
+            // `Pane::GitGraph` with an embedded diff (when the user
+            // clicked a file from a commit's right-side detail panel
+            // and the diff opened in-place on the left).
+            if let Some(&(_, pid, action)) = app
+                .rects
+                .diff_toolbar_buttons
+                .iter()
+                .find(|(r, _, _)| contains(*r, x, y))
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                // `Close` is special — clears embedded diff if any,
+                // else closes the standalone Pane::Diff. Returns
+                // before the view-mode handling block since the
+                // pane may no longer exist after closing.
+                if matches!(action, crate::DiffToolbarAction::Close) {
+                    match app.panes.get_mut(pid) {
+                        Some(Pane::GitGraph(g)) if g.embedded_diff.is_some() => {
+                            g.embedded_diff = None;
+                        }
+                        Some(Pane::Diff(_)) => {
+                            app.close_pane(pid);
+                        }
+                        _ => {}
+                    }
+                    return;
+                }
+                let mut new_wrap_pref: Option<bool> = None;
+                let mut new_mode_pref: Option<crate::pane::DiffViewMode> = None;
+                let dv: Option<&mut crate::pane::DiffView> = match app.panes.get_mut(pid) {
+                    Some(Pane::Diff(d)) => Some(d),
+                    Some(Pane::GitGraph(g)) => g.embedded_diff.as_mut(),
+                    _ => None,
+                };
+                if let Some(d) = dv {
+                    match action {
+                        crate::DiffToolbarAction::ViewInline => {
+                            d.view_mode = crate::pane::DiffViewMode::Inline;
+                            new_mode_pref = Some(d.view_mode);
+                        }
+                        crate::DiffToolbarAction::ViewHunk => {
+                            d.view_mode = crate::pane::DiffViewMode::Hunk;
+                            new_mode_pref = Some(d.view_mode);
+                        }
+                        crate::DiffToolbarAction::ViewSplit => {
+                            d.view_mode = crate::pane::DiffViewMode::Split;
+                            new_mode_pref = Some(d.view_mode);
+                        }
+                        crate::DiffToolbarAction::ToggleWrap => {
+                            d.wrap = !d.wrap;
+                            new_wrap_pref = Some(d.wrap);
+                        }
+                        crate::DiffToolbarAction::Close => unreachable!(),
+                    }
+                }
+                if let Some(m) = new_mode_pref {
+                    app.diff_view_mode_pref = m;
+                }
+                if let Some(w) = new_wrap_pref {
+                    app.diff_wrap_pref = w;
+                }
+                return;
+            }
+            // Click on a commit-detail changed-file row → open that
+            // file's diff for the selected commit.
+            if let Some(&(_, pid, file_idx)) = app
+                .rects
+                .commit_file_rows
+                .iter()
+                .find(|(r, _, _)| contains(*r, x, y))
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                app.click_commit_file_row(pid, file_idx);
                 return;
             }
             // Click on a request-pane tab chip → switch view (Edit ⇄ Response).
@@ -4041,6 +4470,10 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     _ => 1,
                 };
                 app.last_click = Some((now, x, y, count));
+                // Click on a list row blurs the WIP commit textarea
+                // (the user is moving focus to the commits / status
+                // list, not the editor box).
+                app.blur_active_wip_commit_textarea();
                 handle_scm_row_click(app, pid, flat_idx, count >= 2);
                 return;
             }
@@ -4152,7 +4585,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
-            if app.dragging_tree_edge {
+            if app.dragging_scrollbar.is_some() {
+                app.drag_scrollbar_to(y);
+            } else if app.dragging_tree_edge {
                 // Hand the full screen width to the clamp logic.
                 let screen_w = app
                     .rects
@@ -4161,6 +4596,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     .or_else(|| app.rects.statusline.map(|r| r.x + r.width))
                     .unwrap_or(120);
                 app.drag_tree_edge_to(x, screen_w);
+            } else if app.dragging_git_graph_detail.is_some() {
+                app.drag_git_graph_detail_to(x);
             } else if let Some((pid, ox, oy, armed)) = app.drag_select {
                 // Editor drag-select: drop the anchor at the click origin
                 // (first drag only), then extend the cursor to the current
@@ -4191,7 +4628,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
         }
         MouseEventKind::Up(MouseButton::Left) => {
+            app.end_scrollbar_drag();
             app.end_tree_edge_drag();
+            app.end_git_graph_detail_drag();
             app.end_divider_drag();
             app.drag_select = None;
             app.dragging_tab_page = None;
@@ -4232,6 +4671,17 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 }
             }
         }
+        return;
+    }
+    // Wheel over the GIT section header → cycle the active repo in
+    // multi-repo workspaces (no-op when there's only one repo, so the
+    // wheel falls through to the next rect). Up = previous, Down = next
+    // — matches the bufferline / tab-strip wheel convention.
+    if let Some(hr) = app.rects.git_section_toggle
+        && contains(hr, x, y)
+        && app.repos.len() > 1
+    {
+        app.cycle_active_repo(delta > 0);
         return;
     }
     // Wheel over any row in the GIT section → scroll the git rail cursor.
@@ -4326,11 +4776,23 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 };
             }
             Some(Pane::GitGraph(g)) => {
-                g.move_selection(if delta < 0 {
-                    -(delta.unsigned_abs() as isize)
+                // Wheel over the embedded diff (file picked from the
+                // right-side detail panel) scrolls the diff body
+                // instead of moving the commit-list selection.
+                if let Some(d) = g.embedded_diff.as_mut() {
+                    let n = delta.unsigned_abs() as usize;
+                    d.scroll = if delta < 0 {
+                        d.scroll.saturating_sub(n)
+                    } else {
+                        d.scroll + n
+                    };
                 } else {
-                    delta.unsigned_abs() as isize
-                });
+                    g.move_selection(if delta < 0 {
+                        -(delta.unsigned_abs() as isize)
+                    } else {
+                        delta.unsigned_abs() as isize
+                    });
+                }
             }
             Some(Pane::GitStatus(g)) => {
                 g.move_selection(if delta < 0 {
@@ -4684,6 +5146,16 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
             && flat_idx < d.hunks.len()
         {
             d.cursor = flat_idx;
+            // In Hunk mode, clicking a hunk row also toggles its
+            // collapse (expanded-by-default — click chevron to
+            // collapse one you don't need).
+            if d.view_mode == crate::pane::DiffViewMode::Hunk {
+                if d.hunk_collapsed.contains(&flat_idx) {
+                    d.hunk_collapsed.remove(&flat_idx);
+                } else {
+                    d.hunk_collapsed.insert(flat_idx);
+                }
+            }
         }
         if is_double_click {
             app.jump_to_cursor_hunk();

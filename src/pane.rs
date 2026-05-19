@@ -304,10 +304,20 @@ impl MdPreview {
 pub enum DiffScope {
     /// Unstaged changes — `git diff` for one file (`Some`) or the whole worktree.
     Unstaged(Option<PathBuf>),
-    /// Staged changes — `git diff --cached`.
+    /// Staged changes — `git diff --cached`. `None` ⇒ all staged
+    /// files; `Some(path)` ⇒ just that file.
     Staged,
+    /// Staged changes for one file — `git diff --cached -- <path>`.
+    /// Separate variant (rather than `Staged(Option<PathBuf>)`) so
+    /// existing match arms that ignore the bare `Staged` variant
+    /// don't silently pick up file-scoped diffs.
+    StagedFile(PathBuf),
     /// The diff a commit introduced — `git show <hash>` (read-only, no staging).
     Commit(String),
+    /// One file's contribution to a commit — `git show <hash> -- <rel>`
+    /// (read-only, no staging). Carries the workspace-relative path so
+    /// the title + the underlying command can use the same string.
+    CommitFile { hash: String, rel_path: PathBuf },
     /// Buffer text vs its on-disk version (vim `:DiffOrig` shape).
     /// Read-only — hunks can't be staged.
     BufferVsDisk(PathBuf),
@@ -317,6 +327,22 @@ pub enum DiffScope {
     AllVsHead,
 }
 
+/// How a `DiffView` lays out its hunks visually. Cycle through with
+/// the top-of-pane `[Inline] [Hunk] [Split]` buttons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum DiffViewMode {
+    /// Unified inline rendering — `+` / `-` / context lines in a
+    /// single column. The default (and the only mode pre-2026-05-18).
+    #[default]
+    Inline,
+    /// Per-hunk collapsed view — every hunk renders only its header,
+    /// surfacing structure across many hunks. Click a header to open
+    /// just that hunk inline.
+    Hunk,
+    /// Side-by-side rendering — old on the left, new on the right.
+    Split,
+}
+
 pub struct DiffView {
     pub scope: DiffScope,
     pub hunks: Vec<Hunk>,
@@ -324,6 +350,30 @@ pub struct DiffView {
     pub scroll: usize,
     /// The "current" hunk index (what `s`/`u` act on, what `n`/`p` move).
     pub cursor: usize,
+    /// Visual layout — `[Inline] [Hunk] [Split]` button selection.
+    pub view_mode: DiffViewMode,
+    /// True when long lines wrap to the pane width (`[Wrap]` button
+    /// toggled on). Default off — clips long lines (the legacy
+    /// behavior). Only meaningful for Inline + Hunk modes; Splitumn
+    /// mode already constrains per-side width.
+    pub wrap: bool,
+    /// In `Hunk` mode, the set of hunk indices the user has
+    /// collapsed. Hunks default to expanded — click a chevron to
+    /// collapse one you don't care about.
+    pub hunk_collapsed: std::collections::HashSet<usize>,
+    /// Full-file-context hunks used by Splitumn rendering — the
+    /// whole before/after of each file in one big "hunk" so the user
+    /// sees unchanged surroundings too. Lazily fetched on first
+    /// Split render; cleared on refresh.
+    pub full_hunks: Option<Vec<Hunk>>,
+    /// `/`-filter query — non-empty when the user is narrowing the
+    /// diff body. Tinted-yellow highlight on every match; navigated
+    /// via `n` / `N`. Cleared on Esc.
+    pub filter: String,
+    /// True while the filter input is accepting keystrokes (after
+    /// `/`, before Enter / Esc). The renderer shows a `/<query>_`
+    /// chip in the header when active.
+    pub filter_mode: bool,
 }
 
 impl DiffView {
@@ -333,6 +383,12 @@ impl DiffView {
             hunks,
             scroll: 0,
             cursor: 0,
+            view_mode: DiffViewMode::Inline,
+            wrap: false,
+            hunk_collapsed: std::collections::HashSet::new(),
+            full_hunks: None,
+            filter: String::new(),
+            filter_mode: false,
         }
     }
     pub fn title(&self) -> String {
@@ -345,7 +401,21 @@ impl DiffView {
             ),
             DiffScope::Unstaged(None) => "diff: worktree".to_string(),
             DiffScope::Staged => "diff: staged".to_string(),
+            DiffScope::StagedFile(p) => format!(
+                "staged: {}",
+                p.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            ),
             DiffScope::Commit(h) => format!("commit {}", h.chars().take(9).collect::<String>()),
+            DiffScope::CommitFile { hash, rel_path } => format!(
+                "{} @ {}",
+                rel_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| rel_path.display().to_string()),
+                hash.chars().take(9).collect::<String>()
+            ),
             DiffScope::BufferVsDisk(p) => format!(
                 "buffer vs disk: {}",
                 p.file_name()

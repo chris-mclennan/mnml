@@ -105,14 +105,21 @@ pub fn draw_pane(
     };
     let gutter_w = (num_w + 2) as u16;
     let text_x = area.x + gutter_w;
-    // Reserve the last column for the scrollbar when enabled (and the pane is
-    // wide enough to spare it). Rendered after the body paragraph.
-    let want_scrollbar = app.config.ui.scrollbar && area.width >= gutter_w + 2;
+    // Reserve three columns on the right edge when there's room: a
+    // 1-cell padding (so body text isn't flush against the strip), an
+    // inner thin change-density indicator (`▎` glyph per cell, in
+    // green/blue/red/yellow based on git signs), and an outer 1-cell
+    // scrollbar (track + thumb).
+    let want_scrollbar = app.config.ui.scrollbar && area.width >= gutter_w + 4;
     let scrollbar_w: u16 = if want_scrollbar { 1 } else { 0 };
+    let change_w: u16 = if want_scrollbar { 1 } else { 0 };
+    let pad_w: u16 = if want_scrollbar { 1 } else { 0 };
     let text_w = area
         .width
         .saturating_sub(gutter_w)
-        .saturating_sub(scrollbar_w);
+        .saturating_sub(scrollbar_w)
+        .saturating_sub(change_w)
+        .saturating_sub(pad_w);
     let tw = text_w as usize;
     let text_h = area.height as usize;
     let cur_row_initial = buf.editor.row_col().0;
@@ -1034,11 +1041,72 @@ pub fn draw_pane(
 
     if want_scrollbar && text_h > 0 {
         let bar_x = area.x + area.width - 1;
+        let change_x = bar_x - change_w;
         let t = theme::cur();
-        // Track first — paints every cell with the dim track color.
+        // Register the scrollbar rect for click + drag routing
+        // (jump-to-position + grab-and-scroll).
+        app.rects.scrollbars.push(crate::app::ScrollbarHit {
+            area: ratatui::layout::Rect {
+                x: bar_x,
+                y: area.y,
+                width: 1,
+                height: text_h as u16,
+            },
+            pane_id,
+            total: line_count,
+            viewport: text_h,
+            kind: crate::app::ScrollbarKind::Editor,
+        });
+        // ── Change-density strip (inner col, left of the scrollbar) ──
+        // One thin `▏` glyph per cell, fg = green / blue / red / yellow
+        // based on the git sign mix in that file-row range. Blank when
+        // no changes fall in the range.
+        if change_w > 0 {
+            for r in 0..text_h {
+                let color = signs.filter(|v| !v.is_empty()).and_then(|signs| {
+                    let lo = r * line_count / text_h;
+                    let hi = ((r + 1) * line_count / text_h).max(lo + 1).min(line_count);
+                    let mut has_added = false;
+                    let mut has_modified = false;
+                    let mut has_removed = false;
+                    for &(ln, k) in signs.iter() {
+                        if ln >= lo && ln < hi {
+                            match k {
+                                SignKind::Added => has_added = true,
+                                SignKind::Modified => has_modified = true,
+                                SignKind::Removed => has_removed = true,
+                            }
+                        }
+                    }
+                    match (has_added, has_modified, has_removed) {
+                        (false, false, false) => None,
+                        (true, false, false) => Some(t.green),
+                        (false, true, false) => Some(t.blue),
+                        (false, false, true) => Some(t.red),
+                        _ => Some(t.yellow),
+                    }
+                });
+                let (glyph, style) = if let Some(c) = color {
+                    ("▎", Style::default().fg(c).bg(t.bg_dark))
+                } else {
+                    (" ", Style::default().bg(t.bg_dark))
+                };
+                frame.render_widget(
+                    Paragraph::new(glyph).style(style),
+                    Rect {
+                        x: change_x,
+                        y: area.y + r as u16,
+                        width: 1,
+                        height: 1,
+                    },
+                );
+            }
+        }
+        // ── Scrollbar (outer col) ──
+        // Track: bg2 across the column.
         for r in 0..text_h {
             frame.render_widget(
-                Paragraph::new(" ").style(Style::default().bg(t.bg_dark)),
+                Paragraph::new(" ").style(Style::default().bg(t.bg2)),
                 Rect {
                     x: bar_x,
                     y: area.y + r as u16,
@@ -1047,8 +1115,7 @@ pub fn draw_pane(
                 },
             );
         }
-        // Thumb — height proportional to (visible / total), top proportional
-        // to (scroll / max_scroll). Both bounded so it's always visible.
+        // Thumb: solid `comment` bg over the visible-range rows.
         if line_count > text_h {
             let thumb_h = ((text_h * text_h) / line_count).max(1);
             let max_scroll = line_count - text_h;
@@ -1058,7 +1125,7 @@ pub fn draw_pane(
                 .unwrap_or(0);
             for r in thumb_top..(thumb_top + thumb_h).min(text_h) {
                 frame.render_widget(
-                    Paragraph::new(" ").style(Style::default().bg(t.bg3)),
+                    Paragraph::new(" ").style(Style::default().bg(t.comment)),
                     Rect {
                         x: bar_x,
                         y: area.y + r as u16,

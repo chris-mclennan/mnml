@@ -72,6 +72,16 @@ pub enum PromptKind {
     /// Accept ⇒ `git worktree remove <held path>` *iff* the typed text
     /// matches the worktree's basename exactly (confirmation guard).
     GitWorktreeRemove,
+    /// Accept ⇒ reverse-apply the hunk against the working tree
+    /// (`crate::git::diff::discard_hunk`) *iff* the typed text matches
+    /// the literal word `discard` exactly. Hunk identity is held in
+    /// `App.pending_discard_hunk = Some((pane_id, hunk_index))`.
+    DiffDiscardHunk,
+    /// Accept ⇒ `git restore -- <held rel>` *iff* the typed text
+    /// matches the file's basename. Opened by GitStatus's
+    /// right-click menu's "Discard changes" entry; path held in
+    /// `App.pending_discard_file`.
+    GitDiscardFile,
     /// Accept ⇒ `workspace/symbol` with the typed query; the reply lands as
     /// `LspEvent::WorkspaceSymbols` and opens a `Locations` picker.
     LspWorkspaceSymbol,

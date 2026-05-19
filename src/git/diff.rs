@@ -92,7 +92,7 @@ fn parse(diff: &str, workspace: &Path) -> LineSigns {
 }
 
 /// `"-A[,B] +C[,D] @@ …"` → `((A, B), (C, D))` (counts default to 1).
-fn parse_hunk_header(s: &str) -> Option<((usize, usize), (usize, usize))> {
+pub fn parse_hunk_header(s: &str) -> Option<((usize, usize), (usize, usize))> {
     let mut parts = s.split_whitespace();
     let minus = parts.next()?.strip_prefix('-')?;
     let plus = parts.next()?.strip_prefix('+')?;
@@ -220,10 +220,69 @@ pub fn diff_vs_head(workspace: &Path) -> Vec<Hunk> {
 pub fn diff_staged(workspace: &Path) -> Vec<Hunk> {
     run_diff(workspace, &["diff", "--no-color", "--cached"])
 }
+/// `git diff --cached -- <rel>` — staged changes for one file.
+pub fn diff_staged_file(workspace: &Path, rel: &str) -> Vec<Hunk> {
+    run_diff(workspace, &["diff", "--no-color", "--cached", "--", rel])
+}
+/// Full-context single-file staged diff (`-U99999`).
+pub fn diff_staged_file_full(workspace: &Path, rel: &str) -> Vec<Hunk> {
+    run_diff(
+        workspace,
+        &["diff", "--no-color", "--cached", "-U99999", "--", rel],
+    )
+}
 /// `git show <hash>` — the diff a commit introduced (read-only; the hunks here
 /// can't be staged — they're history).
 pub fn show_commit(workspace: &Path, hash: &str) -> Vec<Hunk> {
     run_diff(workspace, &["show", "--no-color", "--format=", hash])
+}
+
+/// `git show <hash> -- <rel_path>` — the diff for just one file inside a
+/// commit (read-only). Use to surface a single file's contribution to a
+/// commit without scrolling the full multi-file diff.
+pub fn show_commit_file(workspace: &Path, hash: &str, rel_path: &str) -> Vec<Hunk> {
+    run_diff(
+        workspace,
+        &["show", "--no-color", "--format=", hash, "--", rel_path],
+    )
+}
+
+/// Full-file-context variants — used by the Split side-by-side
+/// view, which needs every untouched line (not just 3 context
+/// rows) to show the whole before/after of the file. `-U99999`
+/// asks git for a context window large enough to cover any
+/// realistic file; git happily clamps to file length.
+pub fn diff_file_full(workspace: &Path, rel: &str) -> Vec<Hunk> {
+    run_diff(workspace, &["diff", "--no-color", "-U99999", "--", rel])
+}
+pub fn diff_worktree_full(workspace: &Path) -> Vec<Hunk> {
+    run_diff(workspace, &["diff", "--no-color", "-U99999"])
+}
+pub fn diff_vs_head_full(workspace: &Path) -> Vec<Hunk> {
+    run_diff(workspace, &["diff", "HEAD", "--no-color", "-U99999"])
+}
+pub fn diff_staged_full(workspace: &Path) -> Vec<Hunk> {
+    run_diff(workspace, &["diff", "--no-color", "--cached", "-U99999"])
+}
+pub fn show_commit_full(workspace: &Path, hash: &str) -> Vec<Hunk> {
+    run_diff(
+        workspace,
+        &["show", "--no-color", "--format=", "-U99999", hash],
+    )
+}
+pub fn show_commit_file_full(workspace: &Path, hash: &str, rel_path: &str) -> Vec<Hunk> {
+    run_diff(
+        workspace,
+        &[
+            "show",
+            "--no-color",
+            "--format=",
+            "-U99999",
+            hash,
+            "--",
+            rel_path,
+        ],
+    )
 }
 
 fn run_diff(workspace: &Path, args: &[&str]) -> Vec<Hunk> {
@@ -238,6 +297,36 @@ fn run_diff(workspace: &Path, args: &[&str]) -> Vec<Hunk> {
         return Vec::new();
     }
     parse_hunks(&String::from_utf8_lossy(&out.stdout), workspace)
+}
+
+/// Discard a single hunk's changes against the working tree —
+/// reverse-applies the hunk WITHOUT `--cached`, so the worktree file
+/// reverts. Destructive; callers should confirm before invoking.
+pub fn discard_hunk(workspace: &Path, hunk: &Hunk) -> Result<(), String> {
+    use std::io::Write;
+    let args = ["apply", "--unidiff-zero", "--reverse", "-"];
+    let mut child = Command::new("git")
+        .args(args)
+        .current_dir(workspace)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn git apply: {e}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or("no stdin")?
+        .write_all(hunk.patch().as_bytes())
+        .map_err(|e| format!("write patch: {e}"))?;
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("git apply: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
 }
 
 /// Stage (`reverse == false`) or unstage (`reverse == true`) a single hunk.

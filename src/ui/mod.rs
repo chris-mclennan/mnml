@@ -62,6 +62,7 @@ pub mod prompt;
 pub mod pty_view;
 pub mod rename_preview_overlay;
 pub mod request_view;
+pub mod scrollbar;
 pub mod signature;
 pub mod statusline;
 #[cfg(feature = "private")]
@@ -119,7 +120,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.fold_chips.clear();
         app.rects.code_lens_chips.clear();
         app.rects.wip_buttons.clear();
+        app.rects.wip_file_rows.clear();
+        app.rects.wip_commit_textarea = None;
         app.rects.git_toolbar_buttons.clear();
+        app.rects.commit_file_rows.clear();
+        app.rects.diff_toolbar_buttons.clear();
+        app.rects.diff_hunk_buttons.clear();
+        app.rects.scrollbars.clear();
+        app.rects.git_graph_detail_dividers.clear();
         app.rects.request_tabs.clear();
         app.rects.request_fields.clear();
         app.rects.completion_rows.clear();
@@ -272,7 +280,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.fold_chips.clear();
     app.rects.code_lens_chips.clear();
     app.rects.wip_buttons.clear();
+    app.rects.wip_file_rows.clear();
     app.rects.git_toolbar_buttons.clear();
+    app.rects.commit_file_rows.clear();
+    app.rects.diff_toolbar_buttons.clear();
+    app.rects.scrollbars.clear();
+    app.rects.git_graph_detail_dividers.clear();
     app.rects.request_tabs.clear();
     app.rects.request_fields.clear();
     app.rects.list_rows.clear();
@@ -518,22 +531,41 @@ fn render_layout(
 }
 
 fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir) {
-    let style = Style::default()
-        .fg(theme::cur().line)
-        .bg(theme::cur().bg_dark);
+    let t = theme::cur();
+    let line_style = Style::default().fg(t.line).bg(t.bg_dark);
+    let grip_style = Style::default().fg(t.comment).bg(t.bg_dark);
     match dir {
         SplitDir::Horizontal => {
+            // Vertical divider — paint `│` everywhere, then a centered
+            // 2-row `┃` grip cue advertising the drag handle.
+            let grip_h: u16 = 2;
+            let grip_y = rect.y + rect.height.saturating_sub(grip_h) / 2;
             for dy in 0..rect.height {
+                let abs_y = rect.y + dy;
+                let in_grip = abs_y >= grip_y && abs_y < grip_y + grip_h;
+                let (glyph, style) = if in_grip {
+                    ("┃", grip_style)
+                } else {
+                    ("│", line_style)
+                };
                 frame.render_widget(
-                    Paragraph::new(Span::styled("│", style)),
-                    Rect::new(rect.x, rect.y + dy, 1, 1),
+                    Paragraph::new(Span::styled(glyph, style)),
+                    Rect::new(rect.x, abs_y, 1, 1),
                 );
             }
         }
         SplitDir::Vertical => {
+            // Horizontal divider — paint `─` everywhere, then a
+            // centered 2-cell `━` grip cue.
+            let grip_w: u16 = 4;
+            let grip_x = rect.x + rect.width.saturating_sub(grip_w) / 2;
+            let line: String = "─".repeat(rect.width as usize);
+            frame.render_widget(Paragraph::new(Span::styled(line, line_style)), rect);
+            // Overpaint the grip cells.
+            let grip = "━".repeat(grip_w as usize);
             frame.render_widget(
-                Paragraph::new(Span::styled("─".repeat(rect.width as usize), style)),
-                rect,
+                Paragraph::new(Span::styled(grip, grip_style)),
+                Rect::new(grip_x, rect.y, grip_w, 1),
             );
         }
     }

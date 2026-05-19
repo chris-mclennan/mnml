@@ -55,6 +55,37 @@ pub enum MenuAction {
     /// Copy a literal string to the clipboard. Used by the git rail's
     /// `Pull` row context menu ("Copy URL").
     CopyText(String),
+    /// Diff pane / embedded diff: open `<rel_path>` at the file's
+    /// pre-commit revision (`git show <hash>:<rel>`) as a scratch
+    /// buffer. The user can read the file as it existed at that
+    /// commit.
+    DiffOpenAtRevision {
+        hash: String,
+        rel: PathBuf,
+    },
+    /// Diff pane / embedded diff: dispatch a per-hunk action against
+    /// `(pane_id, hunk_index)` — same as a chip click.
+    DiffHunkAction {
+        pane_id: PaneId,
+        hunk_index: usize,
+        action: crate::DiffHunkAction,
+    },
+    /// `git add -- <rel>` against the active repo.
+    GitStageFile(PathBuf),
+    /// `git restore --staged -- <rel>` (fall back to `reset HEAD --`).
+    GitUnstageFile(PathBuf),
+    /// `git restore -- <rel>` *iff* the user types the filename to
+    /// confirm. Destructive — discards working-tree changes back to
+    /// HEAD. Captured via the prompt at `pending_discard_file`.
+    GitDiscardFile(PathBuf),
+    /// Append `<rel>` to `.gitignore` (creating it if missing).
+    GitIgnoreFile(PathBuf),
+    /// Append `*.<ext>` to `.gitignore` — ignore all files of this
+    /// type. The action carries the extension *with* the leading dot
+    /// stripped (e.g. `"log"`).
+    GitIgnoreExtension(String),
+    /// `git stash push -u -- <rel>` — stash just this file's changes.
+    GitStashFile(PathBuf),
 }
 
 #[derive(Debug, Clone)]

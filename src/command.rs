@@ -1476,6 +1476,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_repo_picker(),
         },
         Command {
+            id: "git.next_repo",
+            title: "Git: cycle to next repo (multi-repo workspace)",
+            group: "git",
+            keys: &["alt+]"],
+            run: |app| app.cycle_active_repo(true),
+        },
+        Command {
+            id: "git.prev_repo",
+            title: "Git: cycle to previous repo (multi-repo workspace)",
+            group: "git",
+            keys: &["alt+["],
+            run: |app| app.cycle_active_repo(false),
+        },
+        Command {
             id: "git.refresh_repos",
             title: "Git: rediscover repos under workspace",
             group: "git",
