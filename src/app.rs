@@ -9074,9 +9074,11 @@ impl App {
     }
 
     pub fn open_shell(&mut self) {
-        self.open_pty(crate::pty_pane::BinaryProfile::shell(Some(
-            self.workspace.clone(),
-        )));
+        // Spawn in the *active* workspace — so when the user has tmnl
+        // section focused in a multi-workspace setup, term.shell opens
+        // in tmnl's directory, not the launch primary.
+        let cwd = self.active_workspace_path().to_path_buf();
+        self.open_pty(crate::pty_pane::BinaryProfile::shell(Some(cwd)));
     }
 
     /// `term.focus_or_open_shell` — VS Code's `Ctrl+`` shape: if there's
@@ -15012,8 +15014,10 @@ impl App {
         let buf_len = b.editor.text().len();
         let input = b.editor.text()[start..end].to_string();
         // Spawn the shell synchronously, write input to stdin, capture stdout.
+        // Use the active workspace as cwd so `:%!cmd` in the tmnl section
+        // resolves relative paths against tmnl, not the launch primary.
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        let workspace = self.workspace.clone();
+        let workspace = self.active_workspace_path().to_path_buf();
         let result = std::thread::scope(|s| {
             let handle = s.spawn(|| {
                 use std::io::Write;
@@ -15770,6 +15774,24 @@ impl App {
         self.extra_workspaces
             .iter()
             .position(|w| active.starts_with(&w.root))
+    }
+
+    /// The "active workspace" — the workspace whose section currently
+    /// owns the rail's focus. Routes through `focused_tree_workspace_idx`
+    /// for extras; falls back to the launch primary (`self.workspace`).
+    ///
+    /// Use this for context-sensitive operations that should follow the
+    /// user's current focus: `term.shell` cwd, `:!cmd` cwd, grep root,
+    /// `:cd` / `:pwd`. Don't use it for things that should stay anchored
+    /// to launch context — session.json location, `[[workspaces]]` config
+    /// loading, etc.
+    pub fn active_workspace_path(&self) -> &Path {
+        if let Some(idx) = self.focused_tree_workspace_idx()
+            && let Some(ws) = self.extra_workspaces.get(idx)
+        {
+            return &ws.root;
+        }
+        &self.workspace
     }
 
     #[doc(hidden)]
@@ -18934,11 +18956,12 @@ impl App {
                 rest.to_string()
             };
             self.last_shell_cmd = Some(actual_cmd.clone());
+            let cwd = self.active_workspace_path().to_path_buf();
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
             let out = std::process::Command::new(&shell)
                 .arg("-c")
                 .arg(&actual_cmd)
-                .current_dir(&self.workspace)
+                .current_dir(&cwd)
                 .output();
             match out {
                 Ok(out) => {
@@ -19319,8 +19342,8 @@ impl App {
                     self.open_shell();
                 } else {
                     // `:term <cmd>` — open a one-shot pty pane running the
-                    // given shell command in the workspace.
-                    let ws = self.workspace.clone();
+                    // given shell command in the active workspace.
+                    let ws = self.active_workspace_path().to_path_buf();
                     self.open_pty(crate::pty_pane::BinaryProfile::task(
                         "term",
                         rest.trim(),
@@ -19651,9 +19674,10 @@ impl App {
                     return;
                 }
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+                let cwd = self.active_workspace_path().to_path_buf();
                 let out = std::process::Command::new(&shell)
                     .args(["-c", cmd])
-                    .current_dir(&self.workspace)
+                    .current_dir(&cwd)
                     .output();
                 match out {
                     Ok(o) => {
@@ -21280,10 +21304,11 @@ impl App {
                     } else {
                         let shell =
                             std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+                        let cwd = self.active_workspace_path().to_path_buf();
                         let out = std::process::Command::new(&shell)
                             .arg("-c")
                             .arg(rest)
-                            .current_dir(&self.workspace)
+                            .current_dir(&cwd)
                             .output();
                         match out {
                             Ok(out) => {
