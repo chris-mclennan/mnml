@@ -57,20 +57,48 @@ pub struct Commit {
 }
 
 /// Load up to `limit` commits across all refs, with a lane layout computed.
+/// Convenience wrapper for the default no-filter path.
 pub fn load(workspace: &Path, limit: usize) -> Vec<Commit> {
+    load_filtered(workspace, limit, &LogFilter::default())
+}
+
+/// Filter knobs applied to the commit listing in `load_filtered`.
+/// `branch = None` ⇒ `git log --all` (every ref); `branch = Some("foo")`
+/// ⇒ `git log foo` (commits reachable from `foo`). `since` / `until` are
+/// passed through as `--since=…` / `--until=…` so any git-recognized
+/// date spec works ("1 week ago", "2026-01-01", `1736294400`, …).
+#[derive(Debug, Clone, Default)]
+pub struct LogFilter {
+    pub branch: Option<String>,
+    pub since: Option<String>,
+    pub until: Option<String>,
+}
+
+/// Load up to `limit` commits honoring `filter`. The lane layout
+/// recomputes against whatever commit subset comes back, so the graph
+/// stays connected for branch-scoped views.
+pub fn load_filtered(workspace: &Path, limit: usize, filter: &LogFilter) -> Vec<Commit> {
     let refs = load_refs(workspace);
     let head = head_hash(workspace);
 
     // `%x1f` (unit separator) between fields — safe inside commit subjects.
     let fmt = "%H%x1f%P%x1f%an%x1f%at%x1f%s";
+    let mut args: Vec<String> = vec!["log".into()];
+    match &filter.branch {
+        Some(b) if !b.is_empty() => args.push(b.clone()),
+        _ => args.push("--all".into()),
+    }
+    args.push("--date-order".into());
+    args.push(format!("-n{limit}"));
+    args.push(format!("--pretty=format:{fmt}"));
+    if let Some(s) = &filter.since {
+        args.push(format!("--since={s}"));
+    }
+    if let Some(u) = &filter.until {
+        args.push(format!("--until={u}"));
+    }
     let out = match Command::new("git")
-        .args([
-            "log",
-            "--all",
-            "--date-order",
-            &format!("-n{limit}"),
-            &format!("--pretty=format:{fmt}"),
-        ])
+        .args(&args)
         .current_dir(workspace)
         .output()
     {

@@ -83,6 +83,50 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Discoverability wave: rail buttons + draggable dividers + GitGraph branch filter + chip tooltips + chip right-click menus + persisted clock (2026-05-19):**
+five-item polish pass aimed at closing the click-discoverability
+loop. (1) **Right-click menus on every statusline chip.** Branch
+chip → checkout / new / fetch / pull / push / stash / commit / AI
+commit message / graph / status. Workspace chip → switch repo (when
+multi-repo) / next-prev repo / worktrees / switch + add workspace /
+refresh repos / reveal. Mode chip → use vim / use standard / toggle
+keymap. Clock chip → show local / show UTC / hide. Three new
+commands `clock.local` / `clock.utc` / `clock.hide` back the clock
+menu; the chip's view-state now persists across launches via
+`SavedSession.clock_show_utc`. (2) **Chip hover tooltips.** After
+~500ms of stable hover on any clickable chip (statusline four +
+GIT rail-header chips below), a small bordered popup describes the
+left-click action and notes "right-click: menu" when one exists.
+New `crate::HoverChip` enum + `App.hover_chip: Option<(HoverChip,
+Instant)>` + `ui::tooltip` renderer. Hover detection requires
+all-motion mouse tracking (`?1003h`), enabled directly after
+crossterm's `EnableMouseCapture` since that only enables button +
+drag. Hover clears on any keystroke + mouse-down. (3) **`> GIT`
+rail header buttons.** Six right-aligned 3-cell chips on the GIT
+header row: Fetch / Pull / Push / Stage all / Commit / Graph.
+Glyphs match the GitGraph toolbar. Chips drop from the right when
+the rail is too narrow. New `GitRailHeaderAction` enum +
+`app.rects.rail_git_header_buttons` registry +
+`App::run_git_rail_header_action`. Stage-all uses a new
+pane-gate-free `git_stage_all_rail` helper since the existing
+`git_stage_all_active` required `Pane::GitStatus` focus. (4)
+**Hover-yellow split dividers.** The drag-to-resize was already
+wired (`begin_divider_drag` / `drag_divider_to` /
+`end_divider_drag`) but had no visual cue. Now hovering any
+divider tints the `│`/`─` line + grip glyphs from `t.line`/
+`t.comment` to bold `t.yellow`, and the tint persists during an
+active drag. New `App.hover_divider_idx`. (5) **GitGraph branch
+filter.** `Pane::GitGraph` gained a `filter: LogFilter` slot
+(`branch` + optional `since`/`until` for future date-range work).
+`load_filtered` wraps `git log` so the branch arg replaces
+`--all` and date args pass through as `--since=`/`--until=`. New
+chord `b` opens a fuzzy picker over local + remote branches
+(with `--all` as the reset entry); `B` clears. New palette
+commands `git.graph_filter_branch` / `git.graph_filter_clear` +
+`PickerKind::GitGraphBranchFilter`. The header row's "COMMIT
+MESSAGE" label flips to a yellow `⎇ <branch> · B clears` chip
+when a branch filter is active. 678 lib tests + clippy clean.
+
 **Statusline click targets — mode / workspace / clock (2026-05-19):**
 three more statusline chips are now clickable, completing the set
 (branch already shipped). (1) **Mode chip** (`EDIT` / `VIEW` / `TREE` /

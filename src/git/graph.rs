@@ -51,6 +51,11 @@ pub struct GitGraphPane {
     /// then click the `Commit` button — or click `AI Message` to have
     /// `claude -p` fill it from `git diff --cached`.
     pub wip_commit: WipCommitInput,
+    /// Active commit-list filter — branch name + optional date range.
+    /// `default()` ⇒ `git log --all` (no narrowing). A non-empty branch
+    /// scopes to commits reachable from that branch; `since` / `until`
+    /// accept any spec git understands ("1 week ago", "2026-01-01", …).
+    pub filter: crate::git::log::LogFilter,
 }
 
 /// Multi-line text-area state for the WIP detail panel's commit
@@ -98,6 +103,7 @@ impl GitGraphPane {
             has_wip,
             embedded_diff: None,
             wip_commit: WipCommitInput::default(),
+            filter: crate::git::log::LogFilter::default(),
         };
         p.reload_detail();
         p
@@ -171,7 +177,7 @@ impl GitGraphPane {
 
     /// Re-run `git log` (after a commit, fetch, etc.), keeping the selection in range.
     pub fn refresh(&mut self) {
-        self.commits = log::load(&self.workspace, LIMIT);
+        self.commits = log::load_filtered(&self.workspace, LIMIT, &self.filter);
         self.has_wip = working_tree_has_changes(&self.workspace);
         let total = self.total_rows();
         if total == 0 {
@@ -190,7 +196,9 @@ impl GitGraphPane {
         self.workspace = workspace.to_path_buf();
         self.selected = 0;
         self.scroll = 0;
-        self.commits = log::load(&self.workspace, LIMIT);
+        // Repo switch invalidates the previous repo's branch filter.
+        self.filter = crate::git::log::LogFilter::default();
+        self.commits = log::load_filtered(&self.workspace, LIMIT, &self.filter);
         self.has_wip = working_tree_has_changes(&self.workspace);
         self.reload_detail();
     }

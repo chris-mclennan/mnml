@@ -1695,6 +1695,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_git_graph(),
         },
         Command {
+            id: "git.graph_filter_branch",
+            title: "Graph: filter by branch…",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_git_graph_branch_filter_picker(),
+        },
+        Command {
+            id: "git.graph_filter_clear",
+            title: "Graph: clear filter (show all)",
+            group: "git",
+            keys: &[],
+            run: |app| app.apply_git_graph_branch_filter(None),
+        },
+        Command {
             id: "git.file_history",
             title: "Git: file history (commits touching this file)",
             group: "git",

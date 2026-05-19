@@ -3360,6 +3360,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter => app.open_selected_commit_diff(),
             KeyCode::Char('r') => app.refresh_active_git_graph(),
             KeyCode::Char('y') => app.copy_selected_commit_hash(),
+            // Branch filter — `b` opens picker, `B` clears.
+            KeyCode::Char('b') => app.open_git_graph_branch_filter_picker(),
+            KeyCode::Char('B') => app.apply_git_graph_branch_filter(None),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }

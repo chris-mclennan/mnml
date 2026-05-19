@@ -4799,7 +4799,81 @@ impl App {
                 // `id` is the full hash — open it as a commit-diff pane.
                 self.open_commit_diff(&item.id);
             }
+            PickerKind::GitGraphBranchFilter => {
+                self.apply_git_graph_branch_filter(if item.id == "--all" {
+                    None
+                } else {
+                    Some(item.id.clone())
+                });
+            }
         }
+    }
+
+    /// Set / clear the active GitGraph pane's branch filter. `None` ⇒ all
+    /// commits (the default `--all` listing); `Some("foo")` ⇒ only commits
+    /// reachable from branch `foo`. No-op when no GitGraph pane is open.
+    /// Re-runs `git log` against the new filter + refreshes selection.
+    pub fn apply_git_graph_branch_filter(&mut self, branch: Option<String>) {
+        let Some(cur) = self.active else {
+            self.toast("no active GitGraph pane");
+            return;
+        };
+        let Some(Pane::GitGraph(g)) = self.panes.get_mut(cur) else {
+            self.toast("no active GitGraph pane");
+            return;
+        };
+        let label = branch.clone().unwrap_or_else(|| "all".into());
+        g.filter.branch = branch;
+        g.selected = 0;
+        g.scroll = 0;
+        g.refresh();
+        self.toast(format!("graph filter: branch={label}"));
+    }
+
+    /// Open the branch-picker variant that, on accept, narrows the active
+    /// GitGraph pane's commit listing to that branch (rather than the
+    /// standard `git checkout` action).
+    pub fn open_git_graph_branch_filter_picker(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        if !matches!(self.active_pane(), Some(Pane::GitGraph(_))) {
+            self.toast("open the commit graph first (git.graph)");
+            return;
+        }
+        let cur_filter = if let Some(Pane::GitGraph(g)) = self.active_pane() {
+            g.filter.branch.clone()
+        } else {
+            None
+        };
+        let mut items: Vec<PickerItem> = Vec::new();
+        // Always offer the reset row first so it's quick to clear.
+        let all_label = if cur_filter.is_none() {
+            "● --all (no filter)".to_string()
+        } else {
+            "  --all (no filter)".to_string()
+        };
+        items.push(PickerItem::new("--all", all_label, "every ref"));
+        let locals = crate::git::branch::local_branches(self.active_repo_path());
+        for b in &locals {
+            let marker = if cur_filter.as_deref() == Some(b.as_str()) {
+                "● "
+            } else {
+                "  "
+            };
+            items.push(PickerItem::new(b, format!("{marker}{b}"), "local"));
+        }
+        for b in crate::git::branch::remote_branches(self.active_repo_path()) {
+            let marker = if cur_filter.as_deref() == Some(b.as_str()) {
+                "● "
+            } else {
+                "  "
+            };
+            items.push(PickerItem::new(&b, format!("{marker}{b}"), "remote"));
+        }
+        self.open_picker(Picker::new(
+            PickerKind::GitGraphBranchFilter,
+            "Filter graph by branch",
+            items,
+        ));
     }
 
     /// Re-walk the workspace and rebuild `App.repos`. Useful when a repo was

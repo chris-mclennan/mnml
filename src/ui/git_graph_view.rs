@@ -247,7 +247,15 @@ pub fn draw(
     );
 
     // Column header
-    draw_header(frame, header_area, &t, &cols, graph_w, &g.hash_filter);
+    draw_header(
+        frame,
+        header_area,
+        &t,
+        &cols,
+        graph_w,
+        &g.hash_filter,
+        g.filter.branch.as_deref(),
+    );
 
     let mut rows: Vec<Line> = Vec::with_capacity(h);
     let mut row_recordings: Vec<(u16, usize)> = Vec::with_capacity(h);
@@ -1615,6 +1623,7 @@ fn draw_commit_buttons(
 
 /// Draw the column-header row (faint labels) and, when a hash filter is
 /// active, a chip showing the typed prefix.
+#[allow(clippy::too_many_arguments)]
 fn draw_header(
     frame: &mut Frame,
     area: Rect,
@@ -1622,6 +1631,7 @@ fn draw_header(
     cols: &ColWidths,
     graph_w: usize,
     hash_filter: &str,
+    branch_filter: Option<&str>,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -1671,21 +1681,33 @@ fn draw_header(
         + (if cols.sha > 0 { cols.sha + 3 } else { 0 })
         + SHA_RIGHT_PAD;
     let subject_w = (area.width as usize).saturating_sub(fixed_used);
-    let subject_label = if hash_filter.is_empty() {
-        pad_or_truncate("COMMIT MESSAGE", subject_w)
+    let (subject_label, label_style) = if !hash_filter.is_empty() {
+        // Hash-typing filter wins (active keyboard interaction).
+        (
+            pad_or_truncate(&format!("/{hash_filter}_"), subject_w),
+            Style::default()
+                .fg(t.yellow)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else if let Some(b) = branch_filter {
+        // Branch-scoped view — chip the active branch + a `B clears` hint.
+        let chip = format!("⎇ {b} · B clears");
+        (
+            pad_or_truncate(&chip, subject_w),
+            Style::default()
+                .fg(t.bg_darker)
+                .bg(t.yellow)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
-        pad_or_truncate(&format!("/{hash_filter}_"), subject_w)
-    };
-    let label_style = if hash_filter.is_empty() {
-        Style::default()
-            .fg(t.comment)
-            .bg(bg)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-            .fg(t.yellow)
-            .bg(bg)
-            .add_modifier(Modifier::BOLD)
+        (
+            pad_or_truncate("COMMIT MESSAGE", subject_w),
+            Style::default()
+                .fg(t.comment)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        )
     };
     spans.push(Span::styled(subject_label, label_style));
     if cols.author > 0 {

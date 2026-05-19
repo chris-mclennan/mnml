@@ -140,6 +140,10 @@ pub enum PickerKind {
     /// `id` = a full commit hash. Accept ⇒ open the commit's diff
     /// (`DiffScope::Commit`). Populated by `git.reflog`.
     Reflog,
+    /// `id` = a branch name (or `"--all"` for the reset entry). Accept ⇒
+    /// narrow the active `Pane::GitGraph`'s commit listing to commits
+    /// reachable from that branch. Populated by `git.graph_filter_branch`.
+    GitGraphBranchFilter,
 }
 
 #[derive(Debug, Clone)]
