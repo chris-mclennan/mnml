@@ -1611,6 +1611,16 @@ pub struct PaneRects {
     /// Registered by `ui::statusline::draw` per render; absent when the
     /// branch isn't shown (no repo / non-git workspace).
     pub statusline_branch_chip: Option<Rect>,
+    /// Statusline mode chip (`EDIT` / `VIEW` / `TREE` / `INSERT` / `NORMAL` /
+    /// `VISUAL` / `REPLACE`) — clickable shortcut to `editor.toggle_keymap`
+    /// (flip vim ↔ standard input style).
+    pub statusline_mode_chip: Option<Rect>,
+    /// Statusline workspace / active-repo chip on the right — clickable
+    /// shortcut to `App::open_repo_picker` (no-op picker toast in single-repo
+    /// workspaces).
+    pub statusline_workspace_chip: Option<Rect>,
+    /// Statusline clock chip — clickable shortcut to toggle local ↔ UTC.
+    pub statusline_clock_chip: Option<Rect>,
     /// `(rect, pane_id)` for each tab's close badge (the trailing `×`/`●` → close).
     pub bufferline_tab_close: Vec<(Rect, PaneId)>,
     /// The whole central split-tree area.
@@ -2185,6 +2195,9 @@ pub struct App {
     /// next paint so a scrambled terminal repaints cleanly. The crossterm loop
     /// checks + clears this flag at the top of each iteration.
     pub redraw_requested: bool,
+    /// Statusline clock chip flips to UTC when true. Toggled by clicking
+    /// the chip; in-memory only (not persisted across launches).
+    pub clock_show_utc: bool,
     /// True after a quit was refused because of unsaved changes — a second
     /// `request_quit` then goes through. Cleared by saving.
     pub quit_armed: bool,
@@ -2742,6 +2755,7 @@ impl App {
             should_quit: false,
             restart_requested: false,
             redraw_requested: false,
+            clock_show_utc: false,
             quit_armed: false,
             rects: PaneRects::default(),
             flash_state: None,

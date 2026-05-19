@@ -121,6 +121,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // render_left to register a clickable rect that fires `git.graph`.
     let mut branch_seg_idx: Option<usize> = None;
     app.rects.statusline_branch_chip = None;
+    app.rects.statusline_mode_chip = None;
+    // Mode chip is the first 1 (ASCII / non-vim) or 2 (vim + nerd) segs in
+    // `left`. Capture the seg span so we can register a click rect that
+    // spans both halves of the split-mode chip.
+    let mode_seg_start = left.len();
     if nerd && is_vim_mode {
         // Split the vim chip so the diamond-V glyph gets its own orange tint
         // (NvChad-style vim accent), then the label uses the mode's normal
@@ -136,6 +141,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         left.push(Seg::new(format!(" {mode_label} "), theme::cur().bg_darker, mode_bg).bold());
     }
+    let mode_seg_end = left.len(); // exclusive
     {
         let g = app.git.snapshot();
         if let Some(branch) = &g.branch {
@@ -275,6 +281,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // ── right ──
     let mut right: Vec<Seg> = Vec::new();
+    let mut clock_seg_idx: Option<usize> = None;
+    app.rects.statusline_workspace_chip = None;
+    app.rects.statusline_clock_chip = None;
     // LSP indicator — `LSP {N}` chip when there's at least one running
     // language server in the workspace. Tells the user at a glance that
     // LSP features are available; `:LspStatus` for the breakdown.
@@ -360,26 +369,46 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let off_secs = local_tz_offset_secs();
-        let local = (now as i64 + off_secs).rem_euclid(86400) as u64;
-        let hh = (local / 3600) % 24;
-        let mm = (local / 60) % 60;
-        right.push(Seg::new(
-            format!(" {hh:02}:{mm:02} "),
-            theme::cur().comment,
-            theme::cur().bg2,
-        ));
+        // UTC mode: zero offset + `Z` suffix (ISO convention) so the user
+        // can tell the difference at a glance from the local-time chip.
+        let off_secs = if app.clock_show_utc {
+            0
+        } else {
+            local_tz_offset_secs()
+        };
+        let resolved = (now as i64 + off_secs).rem_euclid(86400) as u64;
+        let hh = (resolved / 3600) % 24;
+        let mm = (resolved / 60) % 60;
+        let label = if app.clock_show_utc {
+            format!(" {hh:02}:{mm:02}Z ")
+        } else {
+            format!(" {hh:02}:{mm:02} ")
+        };
+        clock_seg_idx = Some(right.len());
+        right.push(Seg::new(label, theme::cur().comment, theme::cur().bg2));
     }
     // workspace / cwd block (the name that used to sit atop the file tree).
+    // Multi-repo: show the *active repo* name (with workspace as detail when
+    // the active repo isn't the workspace root) so clicking the chip to swap
+    // repos has visible feedback after.
     let ws_name = app
         .workspace
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("workspace");
+    let label_text = if app.repos.len() > 1 {
+        app.repos
+            .get(app.active_repo)
+            .map(|r| r.name.clone())
+            .unwrap_or_else(|| ws_name.to_string())
+    } else {
+        ws_name.to_string()
+    };
     let folder_glyph = if nerd { "\u{f07b}" } else { "" };
+    let workspace_seg_idx: Option<usize> = Some(right.len());
     right.push(
         Seg::new(
-            format!(" {folder_glyph} {ws_name} "),
+            format!(" {folder_glyph} {label_text} "),
             theme::cur().blue,
             theme::cur().bg3,
         )
@@ -404,7 +433,33 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // ── render: left segments + spacer + right segments, with `` / `` transitions ──
     let (mut spans, used, left_rects) = render_left(&left, arrows, theme::cur().statusline);
-    let (right_spans, right_used) = render_right(&right, arrows, theme::cur().statusline);
+    let (right_spans, right_used, right_rects) =
+        render_right(&right, arrows, theme::cur().statusline);
+    // Right-lane segs land at `area.x + area.width - right_used` (the lane's
+    // leftmost cell). Translate per-seg starts within the lane.
+    let right_lane_x = area.x + area.width.saturating_sub(right_used as u16);
+    if let Some(idx) = workspace_seg_idx
+        && let Some(&(start, w)) = right_rects.get(idx)
+        && w > 0
+    {
+        app.rects.statusline_workspace_chip = Some(Rect {
+            x: right_lane_x + start as u16,
+            y: area.y,
+            width: w as u16,
+            height: 1,
+        });
+    }
+    if let Some(idx) = clock_seg_idx
+        && let Some(&(start, w)) = right_rects.get(idx)
+        && w > 0
+    {
+        app.rects.statusline_clock_chip = Some(Rect {
+            x: right_lane_x + start as u16,
+            y: area.y,
+            width: w as u16,
+            height: 1,
+        });
+    }
 
     // Register the git-branch chip's click rect for `git.graph` routing.
     // `left_rects[i] = (start_col_within_left_lane, width_in_cols)` — translate
@@ -420,6 +475,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             width: w as u16,
             height: 1,
         });
+    }
+    // Register the mode chip — combined rect spanning the 1 or 2 segs that
+    // make it up (vim + nerd splits into glyph + label; otherwise single).
+    if mode_seg_end > mode_seg_start
+        && let Some(&(start, _)) = left_rects.get(mode_seg_start)
+    {
+        let last = mode_seg_end - 1;
+        if let Some(&(end_start, end_w)) = left_rects.get(last) {
+            let total_w = (end_start + end_w).saturating_sub(start);
+            if total_w > 0 && (start + total_w) as u16 <= area.width {
+                app.rects.statusline_mode_chip = Some(Rect {
+                    x: area.x + start as u16,
+                    y: area.y,
+                    width: total_w as u16,
+                    height: 1,
+                });
+            }
+        }
     }
 
     // middle: chord-pending hint, centered in the leftover space. The vim `:`
@@ -498,20 +571,28 @@ fn render_left(
 }
 
 /// Right-anchored segments; a `` before each (its fg = this bg, bg = prev bg),
-/// skipped between two same-bg neighbors.
-fn render_right(segs: &[Seg], arrows: bool, head_bg: Color) -> (Vec<Span<'static>>, usize) {
+/// skipped between two same-bg neighbors. Also returns each seg's
+/// `(start_col_within_right_lane, width)` so callers can register click rects.
+fn render_right(
+    segs: &[Seg],
+    arrows: bool,
+    head_bg: Color,
+) -> (Vec<Span<'static>>, usize, Vec<(usize, usize)>) {
     let mut out = Vec::new();
     let mut used = 0;
+    let mut seg_rects: Vec<(usize, usize)> = Vec::with_capacity(segs.len());
     for (i, s) in segs.iter().enumerate() {
         let prev_bg = if i == 0 { head_bg } else { segs[i - 1].bg };
         if arrows && prev_bg != s.bg {
             out.push(Span::styled(PL_LEFT, Style::default().fg(s.bg).bg(prev_bg)));
             used += 1;
         }
+        let start = used;
         out.push(Span::styled(s.text.clone(), s.style()));
         used += s.cols();
+        seg_rects.push((start, s.cols()));
     }
-    (out, used)
+    (out, used, seg_rects)
 }
 
 /// `(label, bg_color)` for the mode chip.

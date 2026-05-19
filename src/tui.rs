@@ -4371,6 +4371,33 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 let _ = crate::command::run("git.graph", app);
                 return;
             }
+            // Statusline mode chip → toggle input style (vim ↔ standard).
+            if let Some(r) = app.rects.statusline_mode_chip
+                && contains(r, x, y)
+            {
+                let _ = crate::command::run("editor.toggle_keymap", app);
+                return;
+            }
+            // Statusline workspace / active-repo chip → open the repo picker
+            // (single-repo workspace toasts "only one repo").
+            if let Some(r) = app.rects.statusline_workspace_chip
+                && contains(r, x, y)
+            {
+                app.open_repo_picker();
+                return;
+            }
+            // Statusline clock chip → flip between local and UTC.
+            if let Some(r) = app.rects.statusline_clock_chip
+                && contains(r, x, y)
+            {
+                app.clock_show_utc = !app.clock_show_utc;
+                app.toast(if app.clock_show_utc {
+                    "clock: UTC"
+                } else {
+                    "clock: local"
+                });
+                return;
+            }
             // The `> WORKSPACE-NAME` section header — clicking it toggles the
             // workspace section's expand/collapse state (VS-Code Explorer-style).
             if let Some(tr) = app.rects.tree_toggle

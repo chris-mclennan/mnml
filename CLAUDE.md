@@ -83,6 +83,28 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Statusline click targets — mode / workspace / clock (2026-05-19):**
+three more statusline chips are now clickable, completing the set
+(branch already shipped). (1) **Mode chip** (`EDIT` / `VIEW` / `TREE` /
+`INSERT` / `NORMAL` / `VISUAL` / `REPLACE`) on the left → fires
+`editor.toggle_keymap` so a click flips between vim ↔ standard input
+style. The chip's rect covers both halves of the vim-mode split-chip
+(the diamond-V glyph + the label) by spanning the captured `(start,
+end)` seg range. (2) **Workspace / active-repo chip** on the right →
+opens `App::open_repo_picker`. Single-repo workspaces toast "only one
+repo in this workspace"; multi-repo ones get the fuzzy picker the
+existing `git.switch_repo` command already uses. The chip label now
+shows the *active repo* name (not just the workspace folder) when
+there are multiple repos so the user has visible feedback after
+switching. (3) **Clock chip** → toggles between local time and UTC.
+`App.clock_show_utc: bool` (default false — local; in-memory only).
+UTC mode shows `HH:MMZ` (ISO convention) so the user can tell at a
+glance which timezone is rendered; toast confirms each flip.
+Implementation: `render_right` was refactored to also return per-seg
+`(start_col, width)` (mirror of the earlier `render_left` change) so
+the caller can register screen-relative click rects after the right
+lane's anchor point is computed. 678 lib tests + clippy clean.
+
 **Clickable statusline branch chip + GitGraph live WIP refresh (2026-05-19):**
 two daily-usability wins. (1) **Clickable branch chip** — the existing
 green statusline git-branch chip ( <branch> +/●/- ⇡/⇣ …) is now a
