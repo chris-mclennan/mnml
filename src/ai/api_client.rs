@@ -44,8 +44,8 @@ const COMPLETION_MODEL: &str = "claude-haiku-4-5";
 /// prompt, a small `max_tokens`, the fast model, and a hard request
 /// timeout so a slow response doesn't leave a stale job hanging.
 pub fn complete_code(prefix: &str, suffix: &str, language: &str) -> Result<String, String> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| "$ANTHROPIC_API_KEY not set".to_string())?;
+    let api_key =
+        std::env::var("ANTHROPIC_API_KEY").map_err(|_| "$ANTHROPIC_API_KEY not set".to_string())?;
     let system = "You are an inline code-completion engine inside a text editor. \
         You receive the code BEFORE the cursor and the code AFTER the cursor. \
         Output ONLY the exact text that should be inserted at the cursor position \

@@ -82,9 +82,7 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
         lines.push(Line::from(vec![
             Span::styled(
                 key_padded,
-                Style::default()
-                    .fg(t.yellow)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(t.yellow).add_modifier(Modifier::BOLD),
             ),
             Span::styled(v.to_string(), Style::default().fg(t.comment)),
         ]));
@@ -92,7 +90,9 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         " Tip: hover any clickable chip ~500ms for a tooltip. ".to_string(),
-        Style::default().fg(t.comment).add_modifier(Modifier::ITALIC),
+        Style::default()
+            .fg(t.comment)
+            .add_modifier(Modifier::ITALIC),
     )));
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }

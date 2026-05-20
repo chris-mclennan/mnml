@@ -133,8 +133,7 @@ pub fn draw_pane(
         .map(|l| l.chars().count())
         .max()
         .unwrap_or(0);
-    let want_hscroll =
-        !app.config.ui.wrap && tw > 0 && max_line_w > tw && area.height >= 3;
+    let want_hscroll = !app.config.ui.wrap && tw > 0 && max_line_w > tw && area.height >= 3;
     let hscroll_h: u16 = if want_hscroll { 1 } else { 0 };
     let text_h = area.height.saturating_sub(hscroll_h) as usize;
     let cur_row_initial = buf.editor.row_col().0;

@@ -39,14 +39,8 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
         ),
         ("editor buffers", format!("{editor_count}")),
         ("total panes", format!("{}", app.panes.len())),
-        (
-            "input style",
-            app.config.editor.input_style.clone(),
-        ),
-        (
-            "recent files",
-            format!("{}", app.recent_files.len()),
-        ),
+        ("input style", app.config.editor.input_style.clone()),
+        ("recent files", format!("{}", app.recent_files.len())),
     ];
 
     let title = " About mnml — Esc / click outside to dismiss ";
@@ -90,22 +84,19 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     for (k, v) in rows {
         let key_padded = format!(" {k:<w$}  ", w = key_w);
         lines.push(Line::from(vec![
-            Span::styled(
-                key_padded,
-                Style::default().fg(t.comment),
-            ),
+            Span::styled(key_padded, Style::default().fg(t.comment)),
             Span::styled(
                 v,
-                Style::default()
-                    .fg(t.yellow)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(t.yellow).add_modifier(Modifier::BOLD),
             ),
         ]));
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         " :welcome reopens the new-user overlay · F1 shows clickable rects ".to_string(),
-        Style::default().fg(t.comment).add_modifier(Modifier::ITALIC),
+        Style::default()
+            .fg(t.comment)
+            .add_modifier(Modifier::ITALIC),
     )));
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }

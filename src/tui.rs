@@ -4035,24 +4035,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     }
 
     // Welcome overlay — any left-click dismisses + persists the marker.
-    if app.show_welcome
-        && matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
-    {
+    if app.show_welcome && matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
         app.dismiss_welcome();
         return;
     }
     // About overlay — any left-click dismisses (no marker; pure in-memory).
-    if app.show_about
-        && matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
-    {
+    if app.show_about && matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
         app.show_about = false;
         return;
     }
     // Settings overlay — click on a row toggles the flag; click outside
     // dismisses.
-    if app.show_settings
-        && matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
-    {
+    if app.show_settings && matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
         if let Some(&(_, flag)) = app
             .rects
             .settings_rows
@@ -4068,9 +4062,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // Discovery overlay — intercept clicks on its rows so the user can
     // flash the matching on-screen rects. A click outside the panel
     // closes the overlay (so it can't trap the user).
-    if app.show_discovery_overlay
-        && matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
-    {
+    if app.show_discovery_overlay && matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
         if let Some(&(_, cat)) = app
             .rects
             .discovery_rows
@@ -4338,14 +4330,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // Right-click on a pty pane (terminal / Claude / Codex) →
             // dock-position menu (left / right / top / bottom / maximize /
             // zen). Pty panes register their rect in `editor_panes`.
-            if let Some(&(_, pid)) = app
-                .rects
-                .editor_panes
-                .iter()
-                .find(|(r, pid)| {
-                    contains(*r, x, y) && matches!(app.panes.get(*pid), Some(Pane::Pty(_)))
-                })
-            {
+            if let Some(&(_, pid)) = app.rects.editor_panes.iter().find(|(r, pid)| {
+                contains(*r, x, y) && matches!(app.panes.get(*pid), Some(Pane::Pty(_)))
+            }) {
                 app.open_pty_dock_context_menu(pid, (x, y));
                 return;
             }
@@ -4711,17 +4698,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .iter()
                 .find(|(r, _)| contains(*r, x, y))
             {
-                let profile =
-                    crate::pty_pane::BinaryProfile::claude_code(app.workspace.clone());
+                let profile = crate::pty_pane::BinaryProfile::claude_code(app.workspace.clone());
                 app.add_pty_tab(owner, profile);
                 return;
             }
-            if let Some(&(_, pid)) = app
-                .rects
-                .pty_tabs
-                .iter()
-                .find(|(r, _)| contains(*r, x, y))
-            {
+            if let Some(&(_, pid)) = app.rects.pty_tabs.iter().find(|(r, _)| contains(*r, x, y)) {
                 app.reveal_pane(pid);
                 return;
             }

@@ -44,10 +44,7 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     } else {
         (anchor.y + 1).min(screen.height.saturating_sub(h))
     };
-    let x = anchor
-        .x
-        .min(screen.width.saturating_sub(w))
-        .max(screen.x);
+    let x = anchor.x.min(screen.width.saturating_sub(w)).max(screen.x);
     let area = Rect {
         x,
         y: y.max(screen.y),
@@ -220,11 +217,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                             .unwrap_or(p)
                             .to_string_lossy()
                             .into_owned();
-                        if b.dirty {
-                            format!("{rel}  ●")
-                        } else {
-                            rel
-                        }
+                        if b.dirty { format!("{rel}  ●") } else { rel }
                     }
                     None => b.display_name().to_string(),
                 },

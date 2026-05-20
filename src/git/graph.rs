@@ -148,9 +148,13 @@ impl GitGraphPane {
             return;
         };
         match col {
-            SortColumn::Date => self
-                .commits
-                .sort_by(|a, b| if asc { a.time.cmp(&b.time) } else { b.time.cmp(&a.time) }),
+            SortColumn::Date => self.commits.sort_by(|a, b| {
+                if asc {
+                    a.time.cmp(&b.time)
+                } else {
+                    b.time.cmp(&a.time)
+                }
+            }),
             SortColumn::Author => self.commits.sort_by(|a, b| {
                 if asc {
                     a.author.cmp(&b.author)

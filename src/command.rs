@@ -168,8 +168,7 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| {
                 let top = app.config.ui.picker_position.eq_ignore_ascii_case("top");
-                app.config.ui.picker_position =
-                    if top { "center" } else { "top" }.to_string();
+                app.config.ui.picker_position = if top { "center" } else { "top" }.to_string();
                 app.toast(format!(
                     "picker position: {}",
                     app.config.ui.picker_position
@@ -1808,9 +1807,8 @@ fn builtin_commands() -> Vec<Command> {
             group: "git",
             keys: &[],
             run: |app| {
-                if let Some(crate::pane::Pane::GitGraph(g)) = app
-                    .active
-                    .and_then(|i| app.panes.get_mut(i))
+                if let Some(crate::pane::Pane::GitGraph(g)) =
+                    app.active.and_then(|i| app.panes.get_mut(i))
                 {
                     g.filter = crate::git::log::LogFilter::default();
                     g.selected = 0;

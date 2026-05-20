@@ -19,6 +19,7 @@
 //! editor per `Layout::Leaf`, 1-cell dividers between splits. Overlays (picker /
 //! palette / which-key / popups) draw on top.
 
+pub mod about_overlay;
 pub mod ai_view;
 pub mod azdevops_builds_view;
 pub mod azdevops_pull_requests_view;
@@ -38,9 +39,12 @@ pub mod dap_repl_view;
 pub mod debug_view;
 pub mod diagnostics_view;
 pub mod diff_view;
+pub mod discovery;
 pub mod editor_view;
+pub mod fim_progress_overlay;
 pub mod flaky_view;
 pub mod flash_overlay;
+pub mod ghost_overlay;
 pub mod git_graph_view;
 pub mod git_status_view;
 pub mod github_actions_view;
@@ -62,25 +66,21 @@ pub mod prompt;
 pub mod pty_view;
 pub mod rename_preview_overlay;
 pub mod request_view;
+pub mod scratch_term_view;
 pub mod scrollbar;
+pub mod settings_overlay;
 pub mod signature;
 pub mod statusline;
 #[cfg(feature = "private")]
 pub mod test_executions_view;
 pub mod tests_view;
 pub mod theme;
-pub mod about_overlay;
-pub mod discovery;
-pub mod fim_progress_overlay;
-pub mod ghost_overlay;
-pub mod scratch_term_view;
-pub mod settings_overlay;
 pub mod toast_stack;
 pub mod tooltip;
 pub mod trace_view;
-pub mod welcome_overlay;
 pub mod tree_view;
 pub mod welcome;
+pub mod welcome_overlay;
 pub mod whichkey;
 pub mod yank_flash_overlay;
 
@@ -576,8 +576,7 @@ fn render_layout(
             let (a, divider, b) = split_rects(area, *dir, *ratio);
             if divider.width > 0 && divider.height > 0 {
                 let divider_idx = app.rects.split_dividers.len();
-                let is_hover =
-                    app.hover_divider_idx == Some(divider_idx) || app.dragging.is_some();
+                let is_hover = app.hover_divider_idx == Some(divider_idx) || app.dragging.is_some();
                 draw_divider(frame, divider, *dir, is_hover);
                 app.rects.split_dividers.push(crate::layout::DividerHit {
                     rect: divider,

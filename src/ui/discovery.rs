@@ -241,9 +241,7 @@ pub fn draw_flash(frame: &mut Frame, app: &App, _screen: Rect) {
         StatuslineWorkspace => targets.extend(app.rects.statusline_workspace_chip),
         StatuslineClock => targets.extend(app.rects.statusline_clock_chip),
         BufferlineTabs => targets.extend(app.rects.bufferline_tabs.iter().map(|(r, _)| *r)),
-        RailGitHeader => {
-            targets.extend(app.rects.rail_git_header_buttons.iter().map(|(r, _)| *r))
-        }
+        RailGitHeader => targets.extend(app.rects.rail_git_header_buttons.iter().map(|(r, _)| *r)),
         EditorGutter => targets.extend(app.rects.editor_gutters.iter().map(|(r, _)| *r)),
         DiffToolbar => targets.extend(app.rects.diff_toolbar_buttons.iter().map(|(r, _, _)| *r)),
         FoldChips => targets.extend(app.rects.fold_chips.iter().map(|(r, _, _)| *r)),
@@ -259,10 +257,7 @@ pub fn draw_flash(frame: &mut Frame, app: &App, _screen: Rect) {
         // visual hunting.
         frame.render_widget(Clear, r);
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                " ".repeat(r.width as usize),
-                highlight,
-            )),
+            Paragraph::new(Span::styled(" ".repeat(r.width as usize), highlight)),
             r,
         );
     }

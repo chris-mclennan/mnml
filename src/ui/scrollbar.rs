@@ -84,8 +84,7 @@ pub fn paint_horizontal_scrollbar(
             .checked_div(max_scroll)
             .unwrap_or(0);
         frame.render_widget(
-            Paragraph::new("━".repeat(thumb_w))
-                .style(Style::default().fg(t.comment).bg(t.bg_dark)),
+            Paragraph::new("━".repeat(thumb_w)).style(Style::default().fg(t.comment).bg(t.bg_dark)),
             Rect::new(
                 area.x + thumb_left as u16,
                 area.y,

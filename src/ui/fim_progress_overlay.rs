@@ -26,9 +26,7 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     let w = 52u16.min(screen.width);
     let h = 4u16.min(screen.height);
     let x = screen.x + (screen.width.saturating_sub(w)) / 2;
-    let y = screen
-        .y
-        .saturating_add(screen.height.saturating_sub(h + 2));
+    let y = screen.y.saturating_add(screen.height.saturating_sub(h + 2));
     let area = Rect {
         x,
         y,
@@ -80,14 +78,12 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     // Line 2: the bar — filled `█` portion + `░` remainder.
     let bar_w = inner.width as usize;
     let filled = match p.total {
-        Some(total) if total > 0 => {
-            ((p.received as u128 * bar_w as u128) / total as u128) as usize
-        }
+        Some(total) if total > 0 => ((p.received as u128 * bar_w as u128) / total as u128) as usize,
         // Unknown length — show a near-full indeterminate-ish bar.
         _ => bar_w.saturating_sub(1),
     };
-    let bar: String = "█".repeat(filled.min(bar_w))
-        + &"░".repeat(bar_w.saturating_sub(filled.min(bar_w)));
+    let bar: String =
+        "█".repeat(filled.min(bar_w)) + &"░".repeat(bar_w.saturating_sub(filled.min(bar_w)));
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             bar,

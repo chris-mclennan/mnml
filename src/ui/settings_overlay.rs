@@ -20,91 +20,47 @@ type SettingRow = (&'static str, &'static str, fn(&App) -> bool);
 
 fn settings_rows() -> Vec<SettingRow> {
     vec![
-        (
-            "wrap",
-            "Word wrap",
-            |a| a.config.ui.wrap,
-        ),
-        (
-            "scrollbar",
-            "Editor scrollbar",
-            |a| a.config.ui.scrollbar,
-        ),
-        (
-            "rendermarkdown",
-            "Inline-render markdown",
-            |a| a.config.ui.render_markdown,
-        ),
-        (
-            "stickycontext",
-            "Sticky scope context",
-            |a| a.config.ui.sticky_context,
-        ),
-        (
-            "relativenumber",
-            "Relative line numbers",
-            |a| a.config.ui.relative_line_numbers,
-        ),
-        (
-            "number",
-            "Show line numbers",
-            |a| a.config.ui.line_numbers,
-        ),
-        (
-            "cursorline",
-            "Highlight cursor line",
-            |a| a.config.ui.cursor_line,
-        ),
-        (
-            "hlword",
-            "Highlight word under cursor",
-            |a| a.config.ui.highlight_word_under_cursor,
-        ),
-        (
-            "trailing",
-            "Highlight trailing whitespace",
-            |a| a.config.ui.highlight_trailing_ws,
-        ),
-        (
-            "rainbow",
-            "Rainbow brackets",
-            |a| a.config.ui.bracket_rainbow,
-        ),
-        (
-            "syntax",
-            "Tree-sitter syntax",
-            |a| a.config.ui.syntax,
-        ),
-        (
-            "todohl",
-            "Highlight TODO/FIXME/HACK",
-            |a| a.config.ui.highlight_todo_keywords,
-        ),
-        (
-            "clock",
-            "Statusline clock",
-            |a| a.config.ui.clock,
-        ),
-        (
-            "bufferline",
-            "Show bufferline tab strip",
-            |a| a.bufferline_visible,
-        ),
-        (
-            "autoindent",
-            "Auto-indent on Enter",
-            |a| a.config.editor.auto_indent,
-        ),
-        (
-            "trim",
-            "Trim trailing whitespace on save",
-            |a| a.config.editor.trim_trailing_ws_on_save,
-        ),
-        (
-            "eol",
-            "Ensure trailing newline on save",
-            |a| a.config.editor.ensure_trailing_newline,
-        ),
+        ("wrap", "Word wrap", |a| a.config.ui.wrap),
+        ("scrollbar", "Editor scrollbar", |a| a.config.ui.scrollbar),
+        ("rendermarkdown", "Inline-render markdown", |a| {
+            a.config.ui.render_markdown
+        }),
+        ("stickycontext", "Sticky scope context", |a| {
+            a.config.ui.sticky_context
+        }),
+        ("relativenumber", "Relative line numbers", |a| {
+            a.config.ui.relative_line_numbers
+        }),
+        ("number", "Show line numbers", |a| a.config.ui.line_numbers),
+        ("cursorline", "Highlight cursor line", |a| {
+            a.config.ui.cursor_line
+        }),
+        ("hlword", "Highlight word under cursor", |a| {
+            a.config.ui.highlight_word_under_cursor
+        }),
+        ("trailing", "Highlight trailing whitespace", |a| {
+            a.config.ui.highlight_trailing_ws
+        }),
+        ("rainbow", "Rainbow brackets", |a| {
+            a.config.ui.bracket_rainbow
+        }),
+        ("syntax", "Tree-sitter syntax", |a| a.config.ui.syntax),
+        ("todohl", "Highlight TODO/FIXME/HACK", |a| {
+            a.config.ui.highlight_todo_keywords
+        }),
+        ("clock", "Statusline clock", |a| a.config.ui.clock),
+        ("bufferline", "Show bufferline tab strip", |a| {
+            a.bufferline_visible
+        }),
+        ("autoindent", "Auto-indent on Enter", |a| {
+            a.config.editor.auto_indent
+        }),
+        ("trim", "Trim trailing whitespace on save", |a| {
+            a.config.editor.trim_trailing_ws_on_save
+        }),
+        ("eol", "Ensure trailing newline on save", |a| {
+            a.config.editor.ensure_trailing_newline
+        }),
     ]
 }
 
@@ -183,7 +139,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         };
         lines.push(Line::from(vec![
             Span::styled(" ", Style::default().bg(t.bg2)),
-            Span::styled(chip, Style::default().fg(chip_fg).bg(t.bg2).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                chip,
+                Style::default()
+                    .fg(chip_fg)
+                    .bg(t.bg2)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("  ", Style::default().bg(t.bg2)),
             Span::styled(label.to_string(), label_style),
         ]));

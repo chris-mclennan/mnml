@@ -221,10 +221,7 @@ fn draw_edit(
                     .add_modifier(Modifier::BOLD),
             )
         } else {
-            Span::styled(
-                "▏ ".to_string(),
-                Style::default().fg(t.bg3).bg(t.bg_dark),
-            )
+            Span::styled("▏ ".to_string(), Style::default().fg(t.bg3).bg(t.bg_dark))
         }
     };
 

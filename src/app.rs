@@ -241,10 +241,7 @@ fn fim_worker_loop(
                     let _ = reply.send((u64::MAX, Ok("local model ready".to_string())));
                 }
                 Err(e) => {
-                    let _ = reply.send((
-                        u64::MAX,
-                        Err(format!("local model load failed: {e}")),
-                    ));
+                    let _ = reply.send((u64::MAX, Err(format!("local model load failed: {e}"))));
                     load_error = Some(e.clone());
                     let _ = reply.send((id, Err(e)));
                     continue;
@@ -269,11 +266,7 @@ fn is_markdown_path(path: &Path) -> bool {
 /// entry in `exts` (lowercase, no leading dot). Skips dot-dirs +
 /// `node_modules` / `target` to keep big repos snappy. Used by
 /// `App::run_markdown_link_check`.
-fn walk_workspace_for_extensions(
-    dir: &Path,
-    exts: &[&str],
-    out: &mut Vec<std::path::PathBuf>,
-) {
+fn walk_workspace_for_extensions(dir: &Path, exts: &[&str], out: &mut Vec<std::path::PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -383,8 +376,16 @@ fn extract_md_links(line: &str) -> Vec<(usize, String)> {
 /// `file://`, `ftp://`, etc. as a URL — skipped by the link checker.
 fn is_url_like(target: &str) -> bool {
     const SCHEMES: &[&str] = &[
-        "http://", "https://", "mailto:", "ftp://", "ftps://", "file://", "ssh://", "git://",
-        "data:", "javascript:",
+        "http://",
+        "https://",
+        "mailto:",
+        "ftp://",
+        "ftps://",
+        "file://",
+        "ssh://",
+        "git://",
+        "data:",
+        "javascript:",
     ];
     SCHEMES.iter().any(|s| target.starts_with(s))
 }
@@ -2780,8 +2781,7 @@ pub struct App {
     /// Live model-download progress, shared with the FIM worker thread.
     /// `Some` while the one-time ~1 GB download runs; `ui::
     /// fim_progress_overlay` paints a bar from it. `None` otherwise.
-    pub fim_progress:
-        std::sync::Arc<std::sync::Mutex<Option<fim_engine::DownloadProgress>>>,
+    pub fim_progress: std::sync::Arc<std::sync::Mutex<Option<fim_engine::DownloadProgress>>>,
     /// Monotonic id for ghost-text requests.
     next_suggest_id: u64,
     /// When the active editor was last edited — the ghost-text debounce
@@ -3569,10 +3569,7 @@ impl App {
         };
         let dest = target_dir.join(src_name);
         if dest.exists() {
-            self.toast(format!(
-                "destination already exists: {}",
-                dest.display()
-            ));
+            self.toast(format!("destination already exists: {}", dest.display()));
             return;
         }
         let dest_rel = dest
@@ -3704,10 +3701,7 @@ impl App {
                 "Switch workspace…",
                 MenuAction::Command("view.switch_workspace"),
             ),
-            MenuItem::new(
-                "Add workspace…",
-                MenuAction::Command("view.add_workspace"),
-            ),
+            MenuItem::new("Add workspace…", MenuAction::Command("view.add_workspace")),
             MenuItem::new(
                 "Reveal in Finder",
                 MenuAction::RevealInFinder(self.workspace.clone()),
@@ -3719,11 +3713,7 @@ impl App {
 
     /// Right-click on an extra-workspace section header — toggle, switch to,
     /// or remove that extra workspace.
-    pub fn open_extra_workspace_header_context_menu(
-        &mut self,
-        ws_idx: usize,
-        anchor: (u16, u16),
-    ) {
+    pub fn open_extra_workspace_header_context_menu(&mut self, ws_idx: usize, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let title = self
             .extra_workspaces
@@ -3750,7 +3740,10 @@ impl App {
                 MenuAction::RevealInFinder(p),
             ));
         }
-        items.push(MenuItem::new("Refresh tree", MenuAction::Command("tree.refresh")));
+        items.push(MenuItem::new(
+            "Refresh tree",
+            MenuAction::Command("tree.refresh"),
+        ));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
@@ -3761,18 +3754,12 @@ impl App {
         let title = "AI".to_string();
         let items = vec![
             MenuItem::new("Re-ask (fresh session)", MenuAction::Command("ai.reask")),
-            MenuItem::new(
-                "Cancel running job",
-                MenuAction::Command("ai.cancel"),
-            ),
+            MenuItem::new("Cancel running job", MenuAction::Command("ai.cancel")),
             MenuItem::new(
                 "Promote to interactive (claude --resume)",
                 MenuAction::Command("ai.promote"),
             ),
-            MenuItem::new(
-                "Apply suggested change",
-                MenuAction::Command("ai.apply"),
-            ),
+            MenuItem::new("Apply suggested change", MenuAction::Command("ai.apply")),
             MenuItem::new(
                 "View session transcript",
                 MenuAction::Command("ai.session_view"),
@@ -3788,13 +3775,12 @@ impl App {
         let items = vec![
             MenuItem::new("Send", MenuAction::Command("rqst.send")),
             MenuItem::new("Copy as curl", MenuAction::Command("rqst.copy_curl")),
-            MenuItem::new("Switch to Response", MenuAction::Command("rqst.toggle_view")),
+            MenuItem::new(
+                "Switch to Response",
+                MenuAction::Command("rqst.toggle_view"),
+            ),
         ];
-        self.context_menu = Some(ContextMenu::new(
-            Some("Request".into()),
-            anchor,
-            items,
-        ));
+        self.context_menu = Some(ContextMenu::new(Some("Request".into()), anchor, items));
     }
 
     /// Right-click on an editor gutter row — exposes the most common line-
@@ -3869,10 +3855,7 @@ impl App {
             MenuItem::new("Dock right", MenuAction::Command("view.move_split_right")),
             MenuItem::new("Dock top", MenuAction::Command("view.move_split_up")),
             MenuItem::new("Dock bottom", MenuAction::Command("view.move_split_down")),
-            MenuItem::new(
-                "Maximize width",
-                MenuAction::Command("view.maximize_width"),
-            ),
+            MenuItem::new("Maximize width", MenuAction::Command("view.maximize_width")),
             MenuItem::new(
                 "Maximize height",
                 MenuAction::Command("view.maximize_height"),
@@ -3974,14 +3957,8 @@ impl App {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let items = vec![
             MenuItem::new("Use vim", MenuAction::Command("editor.use_vim")),
-            MenuItem::new(
-                "Use standard",
-                MenuAction::Command("editor.use_standard"),
-            ),
-            MenuItem::new(
-                "Toggle keymap",
-                MenuAction::Command("editor.toggle_keymap"),
-            ),
+            MenuItem::new("Use standard", MenuAction::Command("editor.use_standard")),
+            MenuItem::new("Toggle keymap", MenuAction::Command("editor.toggle_keymap")),
         ];
         self.context_menu = Some(ContextMenu::new(Some("Input style".into()), anchor, items));
     }
@@ -8373,10 +8350,7 @@ impl App {
                         .split_once('?')
                         .map(|(a, _)| a)
                         .unwrap_or_else(|| {
-                            target
-                                .split_once('#')
-                                .map(|(a, _)| a)
-                                .unwrap_or(&target)
+                            target.split_once('#').map(|(a, _)| a).unwrap_or(&target)
                         });
                     if target_no_frag.is_empty() {
                         continue; // pure-anchor link
@@ -11176,15 +11150,18 @@ impl App {
         // The "current file" is the most-recent editor in the MRU list
         // (the Claude pane itself sits at the front; skip to the first
         // editor with a path).
-        let rel = self.pane_mru.iter().find_map(|&id| match self.panes.get(id) {
-            Some(Pane::Editor(b)) => b.path.as_ref().map(|p| {
-                p.strip_prefix(&self.workspace)
-                    .unwrap_or(p)
-                    .to_string_lossy()
-                    .into_owned()
-            }),
-            _ => None,
-        });
+        let rel = self
+            .pane_mru
+            .iter()
+            .find_map(|&id| match self.panes.get(id) {
+                Some(Pane::Editor(b)) => b.path.as_ref().map(|p| {
+                    p.strip_prefix(&self.workspace)
+                        .unwrap_or(p)
+                        .to_string_lossy()
+                        .into_owned()
+                }),
+                _ => None,
+            });
         let Some(rel) = rel else {
             self.toast("no recent file to inject");
             return;
@@ -11645,7 +11622,10 @@ impl App {
             ),
             PickerItem::new(
                 "local",
-                format!("{}Local model (embedded)", mark(crate::ai::SuggestBackend::Local)),
+                format!(
+                    "{}Local model (embedded)",
+                    mark(crate::ai::SuggestBackend::Local)
+                ),
                 "private · free · offline · one-time ~1GB download",
             ),
             PickerItem::new(
@@ -11668,7 +11648,10 @@ impl App {
                 if self.config.ai.is_table()
                     && let Some(t) = self.config.ai.as_table_mut()
                 {
-                    t.insert("inline_suggestions".to_string(), toml::Value::Boolean(false));
+                    t.insert(
+                        "inline_suggestions".to_string(),
+                        toml::Value::Boolean(false),
+                    );
                 }
                 self.clear_ghost_suggestion();
                 self.toast("AI ghost-text: off");
@@ -19271,9 +19254,7 @@ impl App {
         };
         match result {
             Ok(name) => {
-                if is_local
-                    && let Some(from) = &from
-                {
+                if is_local && let Some(from) = &from {
                     self.note_checkout_for_undo(from, &name);
                 }
                 self.after_checkout(&name);
@@ -25894,8 +25875,7 @@ impl App {
                 let mut m = self.saved_pty_session_names.clone();
                 for p in &self.panes {
                     if let Pane::Pty(s) = p
-                        && let (Some(sid), Some(name)) =
-                            (&s.profile.session_id, &s.display_name)
+                        && let (Some(sid), Some(name)) = (&s.profile.session_id, &s.display_name)
                     {
                         m.insert(sid.clone(), name.clone());
                     }

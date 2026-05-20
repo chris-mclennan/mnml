@@ -131,7 +131,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Order matches the GitGraph toolbar so the visual language is
     // consistent.
     let t = theme::cur();
-    type ChipSpec = (&'static str, &'static str, crate::GitRailHeaderAction, ratatui::style::Color);
+    type ChipSpec = (
+        &'static str,
+        &'static str,
+        crate::GitRailHeaderAction,
+        ratatui::style::Color,
+    );
     let chips_full: [ChipSpec; 6] = [
         ("\u{F0450}", "↺", crate::GitRailHeaderAction::Fetch, t.cyan),
         ("\u{F0162}", "↓", crate::GitRailHeaderAction::Pull, t.green),
@@ -187,10 +192,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         Style::default().bg(rail_bg),
     ));
     // Translate chip-cluster cells into screen-relative rects as we paint.
-    let cluster_start_x =
-        area.x + (header_used + pad_between) as u16;
-    for (i, (glyph_nerd, glyph_ascii, action, fg)) in
-        chips_full.iter().take(chip_count).enumerate()
+    let cluster_start_x = area.x + (header_used + pad_between) as u16;
+    for (i, (glyph_nerd, glyph_ascii, action, fg)) in chips_full.iter().take(chip_count).enumerate()
     {
         let glyph = if nerd { *glyph_nerd } else { *glyph_ascii };
         spans.push(Span::styled(
