@@ -83,6 +83,30 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Generic indent text object + AI suggestion polish (2026-05-20):**
+four bounded items. (1) **Generic indent text object** —
+`ii` / `ai` (vim-indent-object). `ii` selects the contiguous
+run of lines whose indent is ≥ the cursor line's (blank lines
+inside don't break it, trimmed off the edges); `ai` extends up
+to the nearest less-indented header line. Language-agnostic —
+the proper tool for YAML + any indented file. New
+`EditOp::Select{Inner,Around}IndentBlock` +
+`Editor::indent_block_bounds`; `i` in the vim text-object
+dispatch routes to it (`dii` / `cai` / `>ii` …). (2) **AI
+in-flight status chip** — a `✦ AI` chip on the statusline
+right side while a ghost-text request is out (the round-trip
+is ~0.5–1.5s) so the editor isn't silently idle. New
+`App::ai_suggestion_in_flight`. (3) **`[ai] suggest_model`** —
+the ghost-text completion model (was hardcoded
+`claude-haiku-4-5`) is now overridable; distinct from `[ai]
+model` (the chat/explain default, already plumbed through
+`spawn_ai_job`). `complete_code` gained a model param. (4)
+**Accept-rate stats** — `ai.suggestion_stats` toasts how many
+inline suggestions were accepted vs shown this session (a read
+on whether the backend is pulling its weight); partial accepts
+chain on one suggestion so only the first counts it.
+689 lib tests + e2e + clippy green.
+
 **Ghost-text polish + indent text objects + private phase-9 diff (2026-05-20):**
 five bounded items. (1) **Partial ghost-text accept** —
 `Ctrl+Right` accepts the next word of an AI ghost suggestion,
