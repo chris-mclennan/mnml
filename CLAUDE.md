@@ -83,6 +83,21 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**tmnl headless assertions + E2E mouse sweep (2026-05-20):**
+test-coverage push across both repos. (1) **tmnl `--headless`
+gained `expect` assertions** — was a manual dump tool; now
+`expect contains <text>` / `expect lacks <text>` settle, render
+the grid, check the substring; a failure prints `FAIL:`, dumps
+the rendered grid, and the process exits non-zero — so a piped
+command script doubles as a pass/fail test (the shape mnml's
+`.test` runner uses). (2) **mnml mouse-coverage sweep** — three
+more `.test` files on top of the harness's new mouse steps:
+`mouse_bufferline` (tab click switches buffers),
+`mouse_editor_cursor` (body click places the cursor — checked
+via the statusline Ln chip), `mouse_wheel_scroll` (wheel
+scrolls the body). Six mouse `.test` files total now. 97 e2e +
+704 lib + clippy green in mnml; 19 tests green in tmnl.
+
 **ratatui 0.30 + vt100 0.16 + E2E mouse harness (2026-05-20):**
 two dependency bumps + a test-harness gap closed. (1)
 **ratatui 0.29 → 0.30** — zero code changes (the facade
