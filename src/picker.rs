@@ -144,6 +144,10 @@ pub enum PickerKind {
     /// narrow the active `Pane::GitGraph`'s commit listing to commits
     /// reachable from that branch. Populated by `git.graph_filter_branch`.
     GitGraphBranchFilter,
+    /// `id` = `"claude-api"` / `"local"` / `"off"`. Accept ⇒ set the
+    /// inline-suggestion backend (`[ai] suggest_backend`). Opened the
+    /// first time the user enables ghost-text.
+    SuggestBackend,
 }
 
 #[derive(Debug, Clone)]

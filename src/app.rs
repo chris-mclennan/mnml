@@ -5577,6 +5577,10 @@ impl App {
                     Some(item.id.clone())
                 });
             }
+            PickerKind::SuggestBackend => {
+                let id = item.id.clone();
+                self.accept_suggest_backend(&id);
+            }
         }
     }
 
@@ -11450,9 +11454,16 @@ impl App {
     }
 
     /// Flip `[ai] inline_suggestions` at runtime. Doesn't persist —
-    /// restart re-reads the config file.
+    /// restart re-reads the config file. Turning it ON for the first
+    /// time (no backend chosen yet) opens the setup picker instead.
     pub fn toggle_inline_suggestions(&mut self) {
         let next = !self.ai_inline_suggestions();
+        if next && self.ai_suggest_backend() == crate::ai::SuggestBackend::Unset {
+            // First enable — let the user pick a backend. The picker's
+            // accept turns the feature on once a choice is made.
+            self.open_suggest_backend_picker();
+            return;
+        }
         if !self.config.ai.is_table() {
             self.config.ai = toml::Value::Table(toml::value::Table::new());
         }
@@ -11460,12 +11471,108 @@ impl App {
             t.insert("inline_suggestions".to_string(), toml::Value::Boolean(next));
         }
         if next {
-            self.toast("AI ghost-text: on (needs $ANTHROPIC_API_KEY)");
+            self.toast("AI ghost-text: on");
         } else {
             self.clear_ghost_suggestion();
             self.pending_suggest = None;
             self.suggest_dirty_at = None;
             self.toast("AI ghost-text: off");
+        }
+    }
+
+    /// `ai.setup_suggestions` — open the inline-suggestion backend
+    /// picker. Reachable any time, so the user can switch backends
+    /// later (the answer to "pick + change later").
+    pub fn open_suggest_backend_picker(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let cur = self.ai_suggest_backend();
+        let mark = |b: crate::ai::SuggestBackend| {
+            if cur == b { "● " } else { "  " }
+        };
+        let items = vec![
+            PickerItem::new(
+                "claude-api",
+                format!("{}Claude API", mark(crate::ai::SuggestBackend::ClaudeApi)),
+                "needs $ANTHROPIC_API_KEY · ~1s · works now",
+            ),
+            PickerItem::new(
+                "local",
+                format!("{}Local model (embedded)", mark(crate::ai::SuggestBackend::Local)),
+                "private · free · fast · one-time ~2GB download (in progress)",
+            ),
+            PickerItem::new(
+                "off",
+                "  Turn off inline suggestions".to_string(),
+                "disable AI ghost-text",
+            ),
+        ];
+        self.open_picker(Picker::new(
+            PickerKind::SuggestBackend,
+            "AI inline suggestions — pick a backend",
+            items,
+        ));
+    }
+
+    /// Picker-accept for `PickerKind::SuggestBackend`.
+    pub fn accept_suggest_backend(&mut self, id: &str) {
+        match id {
+            "off" => {
+                if self.config.ai.is_table()
+                    && let Some(t) = self.config.ai.as_table_mut()
+                {
+                    t.insert("inline_suggestions".to_string(), toml::Value::Boolean(false));
+                }
+                self.clear_ghost_suggestion();
+                self.toast("AI ghost-text: off");
+            }
+            other => {
+                let backend = crate::ai::SuggestBackend::parse(other);
+                self.set_ai_suggest_backend(backend);
+                if !self.config.ai.is_table() {
+                    self.config.ai = toml::Value::Table(toml::value::Table::new());
+                }
+                if let Some(t) = self.config.ai.as_table_mut() {
+                    t.insert("inline_suggestions".to_string(), toml::Value::Boolean(true));
+                }
+                match backend {
+                    crate::ai::SuggestBackend::ClaudeApi => {
+                        self.toast("AI ghost-text: on · Claude API");
+                    }
+                    crate::ai::SuggestBackend::Local => {
+                        self.toast(
+                            "AI ghost-text: on · local model not built yet — using Claude API",
+                        );
+                    }
+                    crate::ai::SuggestBackend::Unset => {}
+                }
+            }
+        }
+    }
+
+    /// `[ai] suggest_backend` — which engine powers inline ghost-text.
+    /// `Unset` until the user picks via the setup picker.
+    pub fn ai_suggest_backend(&self) -> crate::ai::SuggestBackend {
+        let s = self
+            .config
+            .ai
+            .get("suggest_backend")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unset");
+        crate::ai::SuggestBackend::parse(s)
+    }
+
+    /// Persist the inline-suggestion backend choice into the runtime
+    /// config (`[ai] suggest_backend`). Not written to disk — restart
+    /// re-reads the config file; the user pins it there for permanence.
+    pub fn set_ai_suggest_backend(&mut self, backend: crate::ai::SuggestBackend) {
+        if !self.config.ai.is_table() {
+            self.config.ai = toml::Value::Table(toml::value::Table::new());
+        }
+        if let Some(t) = self.config.ai.as_table_mut() {
+            t.insert(
+                "suggest_backend".to_string(),
+                toml::Value::String(backend.as_str().to_string()),
+            );
         }
     }
 

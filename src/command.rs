@@ -1676,6 +1676,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_inline_suggestions(),
         },
         Command {
+            id: "ai.setup_suggestions",
+            title: "AI: pick inline-suggestion backend (Claude API / local)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_suggest_backend_picker(),
+        },
+        Command {
             id: "view.image_open",
             title: "View: open image file (PNG/JPG/GIF/WebP/BMP)",
             group: "view",

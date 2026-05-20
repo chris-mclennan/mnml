@@ -53,6 +53,35 @@ impl AiBackend {
     }
 }
 
+/// Which engine produces inline ghost-text completions. `Unset` means
+/// the user hasn't picked yet — enabling inline suggestions opens the
+/// setup picker. `ClaudeApi` uses `api_client::complete_code`. `Local`
+/// is the candle-embedded model (a managed ~2 GB download); until that
+/// track lands it transparently falls back to `ClaudeApi`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuggestBackend {
+    Unset,
+    ClaudeApi,
+    Local,
+}
+
+impl SuggestBackend {
+    pub fn parse(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "claude-api" | "claude" | "api" => SuggestBackend::ClaudeApi,
+            "local" | "candle" => SuggestBackend::Local,
+            _ => SuggestBackend::Unset,
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SuggestBackend::Unset => "unset",
+            SuggestBackend::ClaudeApi => "claude-api",
+            SuggestBackend::Local => "local",
+        }
+    }
+}
+
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;

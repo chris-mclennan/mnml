@@ -83,6 +83,24 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**AI suggestion backend picker (2026-05-19):**
+the "seamless for end users" framing for inline suggestions. New
+`SuggestBackend { Unset, ClaudeApi, Local }` enum + `[ai]
+suggest_backend` config. Enabling inline suggestions for the
+first time (backend `Unset`) opens a setup picker
+(`PickerKind::SuggestBackend`, also reachable any time via
+`ai.setup_suggestions` — "pick + change later"): **Claude API**
+(works now, needs `$ANTHROPIC_API_KEY`, ~1s) / **Local model
+(embedded)** (private · free · fast · one-time ~2 GB download —
+flagged in-progress) / **Off**. The Local pick is honoured in
+config but currently falls back to Claude API with a clear toast
+until the candle track lands. `accept_suggest_backend` writes the
+choice + flips `inline_suggestions` on. **Next track:
+candle-embedded local FIM** — pure-Rust in-process inference, a
+managed GGUF qwen2.5-coder download/cache, the FIM sampling loop.
+That's the multi-session piece; when it lands the Local backend
+activates with no UX change. 678 lib tests + clippy clean.
+
 **Horizontal scrollbar for editor panes (2026-05-19):**
 when `[ui] wrap` is off and a line is wider than the text viewport,
 the editor pane now reserves its bottom row for a horizontal
