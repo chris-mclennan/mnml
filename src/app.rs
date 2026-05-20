@@ -2424,6 +2424,11 @@ pub struct App {
     /// Pending tree move — set when the user releases a drag on a different
     /// directory; the prompt accept reads from here and runs the rename.
     pub pending_tree_move: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    /// Commit hashes undone via the GitGraph toolbar's Undo button —
+    /// `git_redo_commit` pops the top to re-point HEAD. In-memory only;
+    /// a real git op outside the undo/redo flow leaves stale entries
+    /// that simply fail harmlessly on redo.
+    pub git_redo_stack: Vec<String>,
     /// Currently-hovered clickable chip + when it first became hovered.
     /// After `HOVER_TOOLTIP_DELAY_MS` of stable hover, the tooltip renders
     /// next to the chip. Cleared on click / typing / mouse-leave.
@@ -3023,6 +3028,7 @@ impl App {
             scratch_term: None,
             tree_drag: None,
             pending_tree_move: None,
+            git_redo_stack: Vec::new(),
             quit_armed: false,
             rects: PaneRects::default(),
             flash_state: None,
@@ -15069,6 +15075,56 @@ impl App {
                 crate::command::run("term.shell", self);
             }
             crate::GitToolbarAction::Reflog => self.open_git_reflog(),
+            crate::GitToolbarAction::Undo => self.git_undo_last_commit(),
+            crate::GitToolbarAction::Redo => self.git_redo_commit(),
+        }
+    }
+
+    /// `git.undo` / GitGraph toolbar Undo — uncommit HEAD via
+    /// `git reset --soft HEAD~1`. Non-destructive: `--soft` only moves
+    /// the branch ref, leaving every change staged in the working tree.
+    /// The undone commit's hash is pushed onto `git_redo_stack` so
+    /// `git_redo_commit` can re-point HEAD back to it.
+    pub fn git_undo_last_commit(&mut self) {
+        let repo = self.active_repo_path().to_path_buf();
+        // Capture the current HEAD so Redo can restore it.
+        let head = match crate::git::commit::rev_parse(&repo, "HEAD") {
+            Some(h) => h,
+            None => {
+                self.toast("undo: no HEAD (empty repo?)");
+                return;
+            }
+        };
+        // Refuse when HEAD has no parent — nothing to uncommit.
+        if crate::git::commit::rev_parse(&repo, "HEAD~1").is_none() {
+            self.toast("undo: HEAD has no parent commit");
+            return;
+        }
+        match crate::git::commit::reset_soft(&repo, "HEAD~1") {
+            Ok(()) => {
+                self.git_redo_stack.push(head);
+                self.toast("undid last commit (changes kept staged)");
+                self.after_git_change();
+            }
+            Err(e) => self.toast(format!("undo: {e}")),
+        }
+    }
+
+    /// GitGraph toolbar Redo — re-point HEAD to the most recently
+    /// undone commit (`git reset --soft <hash>`). No-op + toast when
+    /// the redo stack is empty.
+    pub fn git_redo_commit(&mut self) {
+        let Some(hash) = self.git_redo_stack.pop() else {
+            self.toast("redo: nothing to redo");
+            return;
+        };
+        let repo = self.active_repo_path().to_path_buf();
+        match crate::git::commit::reset_soft(&repo, &hash) {
+            Ok(()) => {
+                self.toast(format!("redid commit {}", &hash[..hash.len().min(9)]));
+                self.after_git_change();
+            }
+            Err(e) => self.toast(format!("redo: {e}")),
         }
     }
 

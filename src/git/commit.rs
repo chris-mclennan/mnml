@@ -68,6 +68,44 @@ pub fn head_message(workspace: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// `git rev-parse <rev>` — resolve a revspec (`HEAD`, `HEAD~1`, a
+/// hash, …) to a full commit hash. `None` when the revspec doesn't
+/// resolve (empty repo, `HEAD~1` on a root commit, not a repo).
+pub fn rev_parse(workspace: &Path, rev: &str) -> Option<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", rev])
+        .current_dir(workspace)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let h = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!h.is_empty()).then_some(h)
+}
+
+/// `git reset --soft <rev>` — move the current branch ref to `<rev>`
+/// without touching the index or working tree. The vehicle for
+/// undo/redo of a commit: every change the commit introduced stays
+/// staged, ready to re-commit. Non-destructive.
+pub fn reset_soft(workspace: &Path, rev: &str) -> Result<(), String> {
+    let out = Command::new("git")
+        .args(["reset", "--soft", rev])
+        .current_dir(workspace)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("git reset failed")
+            .to_string())
+    }
+}
+
 fn run_commit(workspace: &Path, args: &[&str]) -> Result<String, String> {
     let out = Command::new("git")
         .args(args)

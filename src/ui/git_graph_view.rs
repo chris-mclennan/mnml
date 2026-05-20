@@ -1973,15 +1973,30 @@ pub fn draw_git_toolbar(
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
 
     // Button definitions: (label, nerd icon, ascii icon, action, color).
-    // Order is Pull/Push first (most common ops), then Fetch, then
-    // Branch/Commit/Stash/Pop, then Reflog and Terminal at the end.
+    // Order: Undo/Redo first (a popular Git GUI puts them at the left edge of
+    // the toolbar), then Pull/Push, Fetch, Branch/Commit/Stash/Pop,
+    // Reflog, Terminal.
     let buttons: [(
         &str,
         &str,
         &str,
         crate::GitToolbarAction,
         ratatui::style::Color,
-    ); 9] = [
+    ); 11] = [
+        (
+            "Undo",
+            "\u{F054C}",
+            "↶",
+            crate::GitToolbarAction::Undo,
+            t.comment,
+        ),
+        (
+            "Redo",
+            "\u{F044E}",
+            "↷",
+            crate::GitToolbarAction::Redo,
+            t.comment,
+        ),
         (
             "Pull",
             "\u{F0162}",

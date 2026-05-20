@@ -1740,6 +1740,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_git_reflog(),
         },
         Command {
+            id: "git.undo",
+            title: "Git: undo last commit (reset --soft HEAD~1)",
+            group: "git",
+            keys: &[],
+            run: |app| app.git_undo_last_commit(),
+        },
+        Command {
+            id: "git.redo",
+            title: "Git: redo the last undone commit",
+            group: "git",
+            keys: &[],
+            run: |app| app.git_redo_commit(),
+        },
+        Command {
             id: "git.graph",
             title: "Git: commit graph (DAG browser)",
             group: "git",

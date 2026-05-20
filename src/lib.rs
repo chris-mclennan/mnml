@@ -96,6 +96,13 @@ pub enum GitToolbarAction {
     /// Open the reflog picker — recovery surface for "I just rebased
     /// and lost a commit" flows.
     Reflog,
+    /// Undo the last commit — `git reset --soft HEAD~1` (keeps the
+    /// changes staged; never touches the working tree). The undone
+    /// commit's hash is captured so `Redo` can re-point HEAD back.
+    Undo,
+    /// Re-apply the most recently undone commit — `git reset --soft`
+    /// to the captured hash. No-op when the undo stack is empty.
+    Redo,
 }
 
 /// One clickable action inside the `Pane::GitGraph` WIP detail panel.

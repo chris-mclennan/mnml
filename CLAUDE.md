@@ -83,6 +83,29 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**GitGraph undo/redo toolbar + tmnl hover-event forwarding (2026-05-19):**
+two items. (1) **Undo / Redo toolbar buttons** — the `Pane::GitGraph`
+toolbar gained Undo + Redo chips at the LEFT edge (a popular Git GUI's
+placement, left of Pull). Undo = `git reset --soft HEAD~1` —
+non-destructive: only moves the branch ref, every change the commit
+introduced stays staged. The undone commit's hash is pushed onto
+`App.git_redo_stack`; Redo pops it and `reset --soft`s HEAD back.
+New `git::commit::{rev_parse, reset_soft}` helpers + `git.undo` /
+`git.redo` palette commands + `GitToolbarAction::{Undo, Redo}`.
+Scoped to commit undo (the 90% "oops I just committed" case) —
+generic per-operation undo like a popular Git GUI's full stack is a
+follow-up. (2) **tmnl forwards bare mouse-move events** — the hover
+tooltips weren't firing because tmnl's `CursorMoved` handler only
+forwarded a mouse event to the embedded Native client when a button
+was held (as a Drag). Bare hover was dropped, so mnml never saw
+`MouseEventKind::Moved`. tmnl now sends `MouseKind::Moved` on
+button-free motion over a Native tab's grid. mnml's blit layer
+already translated `Moved` → `MouseEventKind::Moved`; the blit loop
+redraws continuously so the 500ms-delayed tooltip surfaces. Also
+fixed: the pty tab-strip `+` now adds a session as a *tab* of the
+current leaf (`set_leaf_pane`) rather than opening another split.
+678 lib tests + clippy clean.
+
 **Multi-session pty panes — tab strip + `:rename` (2026-05-19):**
 the pty panes (Claude / Codex / shell) gained a VS-Code-terminal-
 style tab strip so multiple sessions live side by side. (1) **Tab
