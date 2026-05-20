@@ -349,10 +349,20 @@ pub fn agent_to_channel(
                     return;
                 }
             };
-        for b in &blocks {
-            if let TurnBlock::Text(t) = b {
-                full_text.push_str(t);
+        // Accumulate this turn's text, separated from the previous
+        // turn's so the final answer doesn't run two turns together.
+        let turn_text: String = blocks
+            .iter()
+            .filter_map(|b| match b {
+                TurnBlock::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        if !turn_text.is_empty() {
+            if !full_text.is_empty() && !full_text.ends_with('\n') {
+                full_text.push_str("\n\n");
             }
+            full_text.push_str(&turn_text);
         }
         // Record the assistant turn so the next request has context.
         let mut content = Vec::new();
