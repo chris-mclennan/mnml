@@ -3,7 +3,8 @@
 //! struct / module definitions and emits them as `DocumentSymbol`s the
 //! existing outline pane already knows how to render.
 //!
-//! Languages covered: `rs` `py` `js` `jsx` `ts` `tsx` `go` `rb` `c` `cpp`.
+//! Languages covered: `rs` `py` `js` `jsx` `ts` `tsx` `go` `rb` `c` `cpp`
+//! `coffee` `yaml`.
 //! Anything else returns an empty list (callers can fall through to the
 //! markdown extractor or just show "(no symbols)").
 //!
@@ -79,6 +80,8 @@ fn patterns_for(ext: &str) -> &'static [(Regex, &'static str)] {
         "rb" => ruby_patterns(),
         "c" | "h" => c_patterns(),
         "cpp" | "cc" | "hpp" | "cxx" => cpp_patterns(),
+        "coffee" => coffee_patterns(),
+        "yaml" | "yml" => yaml_patterns(),
         _ => &[],
     }
 }
@@ -249,6 +252,30 @@ fn cpp_patterns() -> &'static [(Regex, &'static str)] {
     )
 }
 
+fn coffee_patterns() -> &'static [(Regex, &'static str)] {
+    // CoffeeScript — indent-scoped. Functions are `name = (args) ->` or
+    // `name: (args) ->` (object-property form); classes are `class Name`.
+    patterns!(
+        COFFEE,
+        [
+            (r"^\s*class\s+([A-Za-z_$][\w$.]*)", "class"),
+            (
+                r"^\s*([A-Za-z_$][\w$]*)\s*[:=]\s*(?:\([^)]*\)\s*)?[-=]>",
+                "fn"
+            ),
+        ]
+    )
+}
+
+fn yaml_patterns() -> &'static [(Regex, &'static str)] {
+    // YAML has no functions/classes — the meaningful structural unit is
+    // a mapping/sequence-heading key (`key:` with the value on indented
+    // lines below). Emitting those as `namespace` lets the indent-scope
+    // text objects (`ic` / `ac`) select a config block. Leaf `key: val`
+    // lines have content after the colon and are intentionally skipped.
+    patterns!(YAML, [(r"^\s*([\w.-]+):\s*$", "namespace")])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,5 +412,43 @@ class Foo:
         assert_eq!(s[1].depth, 1);
         assert_eq!(s[2].name, "amethod");
         assert_eq!(s[2].depth, 1);
+    }
+
+    #[test]
+    fn coffeescript_extracts_class_and_functions() {
+        let src = "\
+class Animal
+  speak: ->
+    'noise'
+
+greet = (name) ->
+  console.log name
+
+anon = ->
+  42
+";
+        let s = extract_symbols(src, "coffee");
+        let names: Vec<&str> = s.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, vec!["Animal", "speak", "greet", "anon"]);
+        let kinds: Vec<&'static str> = s.iter().map(|x| x.kind).collect();
+        assert_eq!(kinds, vec!["class", "fn", "fn", "fn"]);
+    }
+
+    #[test]
+    fn yaml_extracts_block_heading_keys_only() {
+        let src = "\
+server:
+  host: localhost
+  port: 8080
+database:
+  name: app
+debug: true
+";
+        let s = extract_symbols(src, "yaml");
+        // Only `server:` and `database:` head a block; leaf `key: value`
+        // lines (host / port / name / debug) are skipped.
+        let names: Vec<&str> = s.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, vec!["server", "database"]);
+        assert!(s.iter().all(|x| x.kind == "namespace"));
     }
 }

@@ -2439,7 +2439,7 @@ impl Editor {
                 let inner = matches!(op, SelectInnerFunction);
                 if let Some(ext) = self.language_ext.as_deref() {
                     let kinds: &[&str] = &["fn"];
-                    let range = if matches!(ext, "py" | "rb") {
+                    let range = if matches!(ext, "py" | "rb" | "coffee" | "yaml" | "yml") {
                         self.enclosing_indent_scope(ext, kinds, inner)
                     } else {
                         self.enclosing_function_range(ext, kinds, inner)
@@ -2464,7 +2464,7 @@ impl Editor {
                         "namespace",
                         "impl",
                     ];
-                    let range = if matches!(ext, "py" | "rb") {
+                    let range = if matches!(ext, "py" | "rb" | "coffee" | "yaml" | "yml") {
                         self.enclosing_indent_scope(ext, kinds, inner)
                     } else {
                         self.enclosing_function_range(ext, kinds, inner)
@@ -4336,10 +4336,12 @@ impl Editor {
     /// - `inner=false`: cursor includes the whole header line through
     ///   one past the closing `}`.
     ///
-    /// Indent-scoped languages (Python, Ruby) aren't supported here
-    /// (returns None) — for the MVP we only handle braced bodies.
+    /// Indent-scoped languages (Python, Ruby, CoffeeScript, YAML)
+    /// aren't supported here (returns None) — for the MVP we only
+    /// handle braced bodies.
     /// Indent-scoped enclosing-scope range — for languages without
-    /// brace-bounded bodies (Python, Ruby). The body is the run of
+    /// brace-bounded bodies (Python, Ruby, CoffeeScript, YAML). The
+    /// body is the run of
     /// lines whose indent strictly exceeds the header's; the scope
     /// closes at the first non-blank line whose indent ≤ the header's.
     /// For Ruby, the closing `end` line is included in `around` mode
@@ -5150,6 +5152,54 @@ mod tests {
         assert!(body.contains("def a(self)"));
         assert!(body.contains("def b(self)"));
         assert!(!body.contains("class Foo"));
+    }
+
+    #[test]
+    fn around_function_coffeescript_indent_scoped() {
+        let src = "greet = (name) ->\n  console.log name\n  return\n\nx = 0\n";
+        let (mut e, mut c) = ed(src);
+        e.language_ext = Some("coffee".into());
+        e.cursor = src.find("console.log").unwrap();
+        e.apply(SelectAroundFunction, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        let around = &e.text()[sel.0..sel.1];
+        assert!(
+            around.starts_with("greet = (name) ->"),
+            "around: {around:?}"
+        );
+        assert!(around.contains("console.log name"));
+        assert!(!around.contains("x = 0"));
+    }
+
+    #[test]
+    fn inner_class_coffeescript_indent_scoped() {
+        let src = "class Animal\n  speak: ->\n    'noise'\n  move: ->\n    'walk'\n";
+        let (mut e, mut c) = ed(src);
+        e.language_ext = Some("coffee".into());
+        e.cursor = src.find("speak").unwrap();
+        e.apply(SelectInnerClass, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        let body = &e.text()[sel.0..sel.1];
+        assert!(body.contains("speak: ->"));
+        assert!(body.contains("move: ->"));
+        assert!(!body.contains("class Animal"));
+    }
+
+    #[test]
+    fn inner_class_yaml_block_indent_scoped() {
+        // YAML block-heading keys are emitted as `namespace` symbols, so
+        // `ic` selects the nested block under the cursor's key.
+        let src = "server:\n  host: localhost\n  port: 8080\ndatabase:\n  name: app\n";
+        let (mut e, mut c) = ed(src);
+        e.language_ext = Some("yaml".into());
+        e.cursor = src.find("host: localhost").unwrap();
+        e.apply(SelectInnerClass, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        let body = &e.text()[sel.0..sel.1];
+        assert!(body.contains("host: localhost"), "body: {body:?}");
+        assert!(body.contains("port: 8080"));
+        assert!(!body.contains("server:"));
+        assert!(!body.contains("database:"));
     }
 
     #[test]
