@@ -2412,9 +2412,6 @@ pub struct App {
     /// Pending tree move — set when the user releases a drag on a different
     /// directory; the prompt accept reads from here and runs the rename.
     pub pending_tree_move: Option<(std::path::PathBuf, std::path::PathBuf)>,
-    /// Pane id staged for a confirmed "close last buffer" close — see
-    /// `PromptKind::CloseLastPaneConfirm`.
-    pub pending_close_last_pane: Option<PaneId>,
     /// Currently-hovered clickable chip + when it first became hovered.
     /// After `HOVER_TOOLTIP_DELAY_MS` of stable hover, the tooltip renders
     /// next to the chip. Cleared on click / typing / mouse-leave.
@@ -3014,7 +3011,6 @@ impl App {
             scratch_term: None,
             tree_drag: None,
             pending_tree_move: None,
-            pending_close_last_pane: None,
             quit_armed: false,
             rects: PaneRects::default(),
             flash_state: None,
@@ -15259,8 +15255,8 @@ impl App {
             crate::prompt::PromptKind::TreeMoveConfirm => {
                 self.accept_tree_move();
             }
-            crate::prompt::PromptKind::CloseLastPaneConfirm => {
-                self.accept_close_last_pane();
+            crate::prompt::PromptKind::QuitConfirm => {
+                self.accept_quit();
             }
         }
     }
@@ -18849,41 +18845,8 @@ impl App {
 
     pub fn close_active_pane(&mut self) {
         if let Some(i) = self.active {
-            // Confirm before closing the LAST editor pane — falling onto
-            // the welcome screen (or, with a misconfigured terminal,
-            // through to the shell) on an accidental Ctrl+W / Cmd+W
-            // would be surprising. Only fires when the close would
-            // actually empty the layout; multi-pane layouts close
-            // normally.
-            let is_editor =
-                matches!(self.panes.get(i), Some(Pane::Editor(_)));
-            let editor_count = self
-                .panes
-                .iter()
-                .filter(|p| matches!(p, Pane::Editor(_)))
-                .count();
-            if is_editor && editor_count <= 1 {
-                self.pending_close_last_pane = Some(i);
-                let prompt = crate::prompt::Prompt::seeded(
-                    crate::prompt::PromptKind::CloseLastPaneConfirm,
-                    "Close last buffer? (Enter to confirm, Esc to cancel)",
-                    String::new(),
-                );
-                self.prompt = Some(prompt);
-                return;
-            }
             self.close_pane(i);
         }
-    }
-
-    /// Accept handler for [`PromptKind::CloseLastPaneConfirm`]. Esc on
-    /// the prompt cancels via the standard prompt machinery (no work
-    /// needed); accept proceeds with the close.
-    pub fn accept_close_last_pane(&mut self) {
-        let Some(id) = self.pending_close_last_pane.take() else {
-            return;
-        };
-        self.close_pane(id);
     }
     pub fn force_close_active_pane(&mut self) {
         if let Some(i) = self.active {
@@ -24534,13 +24497,37 @@ impl App {
 
     // ─── misc ───────────────────────────────────────────────────────
     pub fn request_quit(&mut self) {
-        let dirty = self.panes.iter().any(|p| p.is_dirty());
-        if dirty && !self.quit_armed {
-            self.quit_armed = true;
-            self.toast("unsaved changes — press quit again, or save first");
+        // A `Ctrl+Q` fat-finger shouldn't kill the session — open a
+        // confirm prompt. Esc cancels via the standard prompt machinery;
+        // Enter runs `accept_quit` which sets `should_quit` directly
+        // (skipping this method, so the prompt loop doesn't recur).
+        let dirty_names: Vec<String> = self
+            .panes
+            .iter()
+            .filter_map(|p| match p {
+                Pane::Editor(b) if b.dirty => Some(b.display_name().to_string()),
+                _ => None,
+            })
+            .collect();
+        let title = if dirty_names.is_empty() {
+            "Quit mnml? (Enter to confirm, Esc to cancel)".to_string()
         } else {
-            self.should_quit = true;
-        }
+            format!(
+                "Quit mnml? UNSAVED: {} (Enter discards, Esc cancels)",
+                dirty_names.join(", ")
+            )
+        };
+        let prompt = crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::QuitConfirm,
+            title,
+            String::new(),
+        );
+        self.prompt = Some(prompt);
+    }
+
+    /// Accept handler for [`PromptKind::QuitConfirm`].
+    pub fn accept_quit(&mut self) {
+        self.should_quit = true;
     }
     fn disarm_quit(&mut self) {
         self.quit_armed = false;
@@ -27974,9 +27961,7 @@ mod tests {
     fn close_clears_when_empty() {
         let (d, mut app) = app_with_files();
         app.open_path(&d.path().join("a.txt"));
-        // `close_active_pane` confirms before closing the last buffer;
-        // tests want the unconditional path, so use `force_close_active_pane`.
-        app.force_close_active_pane();
+        app.close_active_pane();
         assert!(app.panes.is_empty());
         assert!(app.active.is_none());
         assert_eq!(app.focus, Focus::Tree);
@@ -28444,8 +28429,7 @@ mod tests {
             b.editor.place_cursor(0, 3);
         }
         // Close → file_cursors records position; the buffer goes away.
-        // `force_close` bypasses the last-buffer confirm prompt.
-        app.force_close_active_pane();
+        app.close_active_pane();
         assert!(app.file_cursors.contains_key(&a));
         // Re-open → the cursor lands back at (0, 3) instead of (0, 0).
         app.open_path(&a);
