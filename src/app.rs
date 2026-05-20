@@ -10822,11 +10822,11 @@ impl App {
         self.prompt = Some(prompt);
     }
 
-    /// Build the file reference the `ai.chat` wrapper hands to Claude —
-    /// `File <rel> (lines N-M)` (or just `File <rel>` with no selection).
-    /// A *reference*, not a paste: Claude reads fresh file state itself
-    /// via its Read tool instead of working off a stale snapshot.
-    /// `None` when there's no active editor with a path.
+    /// Build the file reference the `ai.chat` wrapper hands to Claude.
+    /// Mirrors claude-chat.nvim's `context.format_*` exactly:
+    /// `File: <rel> (lines N-M)` / `File: <rel> (line N)` / `File: <rel>`.
+    /// A *reference*, not a paste — Claude reads fresh file state itself
+    /// via its Read tool. `None` when there's no active editor with a path.
     fn ai_chat_context(&self) -> Option<String> {
         let b = self.active_editor()?;
         let path = b.path.as_ref()?;
@@ -10844,32 +10844,47 @@ impl App {
             if r2 > r1 && c2 == 0 {
                 r2 -= 1;
             }
-            Some(format!("File {rel} (lines {}-{})", r1 + 1, r2 + 1))
+            if r1 == r2 {
+                Some(format!("File: {rel} (line {})", r1 + 1))
+            } else {
+                Some(format!("File: {rel} (lines {}-{})", r1 + 1, r2 + 1))
+            }
         } else {
-            Some(format!("File {rel}"))
+            Some(format!("File: {rel}"))
         }
     }
 
-    /// Accept handler for `PromptKind::AiChat`. Combines the typed prompt
-    /// with the selection context (if any) and either spawns a fresh
-    /// Claude pane seeded with it, or — when a Claude pane is already
-    /// open — types the message into its pty (bracketed paste so embedded
-    /// newlines don't submit early, then a final Enter).
+    /// Accept handler for `PromptKind::AiChat`. Composes the message in
+    /// claude-chat.nvim's exact reference style:
+    /// * query + selection ⇒ `File: <rel> (lines N-M).  Query: <prompt>`
+    /// * query, no selection ⇒ `File: <rel>.  Query: <prompt>`
+    /// * selection, no query ⇒ `File: <rel> (lines N-M). ` (bare ref)
+    /// * neither ⇒ empty (plain Claude pane)
+    ///
+    /// Then: no Claude pane ⇒ spawn one seeded with the message; Claude
+    /// pane already open + the user typed a query ⇒ bracketed-paste it
+    /// into the live pty; Claude pane open + empty query ⇒ just focus it
+    /// (claude-chat.nvim re-focuses an active session rather than
+    /// re-seeding — we extend that with "but DO send if you asked
+    /// something").
     pub fn dispatch_ai_chat(&mut self, typed: &str) {
         let typed = typed.trim();
         let context = self.ai_chat_context();
-        // Compose the message in claude-chat.nvim's reference style:
-        // `File <rel> (lines N-M).  Query: <prompt>`. The file reference
-        // lets Claude pull fresh state itself; the query is the ask.
         let message = match (&context, typed.is_empty()) {
+            // `format_prompt` joins `"File: x. "` + `"Query: q"` with a
+            // space → the doubled space after the period is intentional.
             (Some(ctx), false) => format!("{ctx}.  Query: {typed}"),
-            (Some(ctx), true) => format!("{ctx}.  Take a look."),
+            // `format_selection_prompt` — bare reference, no query part.
+            (Some(ctx), true) => format!("{ctx}. "),
             (None, false) => typed.to_string(),
             (None, true) => String::new(),
         };
         if let Some(id) = self.find_claude_pty() {
-            // Claude is already running — paste into its live pty.
-            if !message.is_empty()
+            // Claude is already running. Only re-send when the user
+            // actually typed a query — a bare focus / selection-only
+            // gesture just reveals the pane (claude-chat.nvim's "active
+            // session → focus" behavior).
+            if !typed.is_empty()
                 && let Some(Pane::Pty(s)) = self.panes.get_mut(id)
             {
                 // Bracketed paste: `ESC[200~ … ESC[201~` keeps multi-line
