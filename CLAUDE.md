@@ -83,6 +83,22 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Horizontal scrollbar for editor panes (2026-05-19):**
+when `[ui] wrap` is off and a line is wider than the text viewport,
+the editor pane now reserves its bottom row for a horizontal
+scrollbar (`━` thumb on a `─` `bg2` track). `max_line_w` is a
+capped (8000-line) whole-buffer scan — stable as you scroll.
+Draggable + click-to-jump: the existing `ScrollbarHit` machinery
+gained a horizontal axis — `ScrollbarKind::EditorHScroll` +
+`ScrollbarKind::is_horizontal()`; `apply_scrollbar_to` /
+`drag_scrollbar_to` / `begin_scrollbar_drag` now take both `x`
+and `y` and map the right axis per kind. `set_pane_scroll`'s
+`EditorHScroll` arm writes `Buffer.h_scroll`. New
+`scrollbar::paint_horizontal_scrollbar`. No struct change to
+`ScrollbarHit` (the 13 existing call sites are untouched —
+orientation is encoded in the kind). 678 lib tests + e2e + clippy
+clean.
+
 **AI ghost-text inline suggestions (Cursor-style) (2026-05-19):**
 opt-in AI inline completion. `[ai] inline_suggestions = true`
 (default off — costs API tokens; `ai.toggle_inline_suggestions`

@@ -54,3 +54,44 @@ pub fn paint_simple_scrollbar(
         }
     }
 }
+
+/// Paint a 1-row HORIZONTAL scrollbar over `area` (a single row). `total`
+/// is the widest content column, `viewport` the visible column count,
+/// `scroll` the left-column offset (`Buffer.h_scroll`). The thumb spans
+/// the visible fraction; track in `bg2`, thumb in `comment`.
+pub fn paint_horizontal_scrollbar(
+    frame: &mut Frame,
+    area: Rect,
+    t: &Theme,
+    total: usize,
+    viewport: usize,
+    scroll: usize,
+) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let cells = area.width as usize;
+    // Track.
+    frame.render_widget(
+        Paragraph::new("─".repeat(cells)).style(Style::default().fg(t.bg2).bg(t.bg_dark)),
+        area,
+    );
+    if total > viewport && viewport > 0 {
+        let thumb_w = ((cells * viewport) / total).max(1);
+        let max_scroll = total - viewport;
+        let max_thumb_left = cells.saturating_sub(thumb_w);
+        let thumb_left = (scroll.min(max_scroll) * max_thumb_left)
+            .checked_div(max_scroll)
+            .unwrap_or(0);
+        frame.render_widget(
+            Paragraph::new("━".repeat(thumb_w))
+                .style(Style::default().fg(t.comment).bg(t.bg_dark)),
+            Rect::new(
+                area.x + thumb_left as u16,
+                area.y,
+                thumb_w.min(cells) as u16,
+                1,
+            ),
+        );
+    }
+}

@@ -5136,7 +5136,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             if app.dragging_scrollbar.is_some() {
-                app.drag_scrollbar_to(y);
+                app.drag_scrollbar_to(x, y);
             } else if app.dragging_tree_edge {
                 // Hand the full screen width to the clamp logic.
                 let screen_w = app

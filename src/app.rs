@@ -1706,6 +1706,18 @@ pub enum ScrollbarKind {
     GitStatus,
     /// `Pane::CmdlineHistory(p)` → `p.scroll`.
     CmdlineHistory,
+    /// `Pane::Editor` buffer's `h_scroll` field — the one HORIZONTAL
+    /// scrollbar kind. `total` = widest line (chars); `viewport` =
+    /// visible text columns. Drag/click maps the X axis, not Y.
+    EditorHScroll,
+}
+
+impl ScrollbarKind {
+    /// True for the horizontal scrollbar kinds — the drag/click
+    /// dispatcher maps the X axis instead of Y for these.
+    pub fn is_horizontal(self) -> bool {
+        matches!(self, ScrollbarKind::EditorHScroll)
+    }
 }
 
 /// A click-targetable scrollbar region rendered this frame. Used both
@@ -19240,20 +19252,20 @@ impl App {
             let r = hit.area;
             if x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height {
                 self.dragging_scrollbar = Some(hit);
-                self.apply_scrollbar_to(hit, y);
+                self.apply_scrollbar_to(hit, x, y);
                 return true;
             }
         }
         false
     }
-    /// Continue a scrollbar drag — maps the current `y` (clamped to
-    /// the scrollbar's row range) to a proportional file row and
-    /// updates the underlying pane's scroll.
-    pub fn drag_scrollbar_to(&mut self, y: u16) -> bool {
+    /// Continue a scrollbar drag — maps the current pointer position
+    /// (X for horizontal bars, Y for vertical) to a proportional
+    /// scroll offset and updates the underlying pane.
+    pub fn drag_scrollbar_to(&mut self, x: u16, y: u16) -> bool {
         let Some(hit) = self.dragging_scrollbar else {
             return false;
         };
-        self.apply_scrollbar_to(hit, y);
+        self.apply_scrollbar_to(hit, x, y);
         true
     }
     pub fn end_scrollbar_drag(&mut self) {
@@ -19262,17 +19274,26 @@ impl App {
     /// Map `y` (a screen row) onto a new scroll value for the pane the
     /// `hit` references, then assign it. Used by both the initial
     /// click and the per-tick drag continuation.
-    fn apply_scrollbar_to(&mut self, hit: ScrollbarHit, y: u16) {
-        if hit.total <= hit.viewport || hit.area.height == 0 {
+    fn apply_scrollbar_to(&mut self, hit: ScrollbarHit, x: u16, y: u16) {
+        let horizontal = hit.kind.is_horizontal();
+        let span_cells = if horizontal {
+            hit.area.width
+        } else {
+            hit.area.height
+        };
+        if hit.total <= hit.viewport || span_cells == 0 {
             return;
         }
-        let cells = hit.area.height as usize;
-        // Position the *top of the viewport* at the file row the user
-        // clicked on. Click halfway down the bar ⇒ viewport top at
-        // file middle. Centering the thumb-on-cursor is what gives
-        // graphical-Git-GUI-style "click anywhere to jump" feel.
-        let rel = y
-            .saturating_sub(hit.area.y)
+        let cells = span_cells as usize;
+        // Position the viewport so the clicked cell maps proportionally
+        // into the document. Horizontal bars track X, vertical track Y.
+        let (pos, origin) = if horizontal {
+            (x, hit.area.x)
+        } else {
+            (y, hit.area.y)
+        };
+        let rel = pos
+            .saturating_sub(origin)
             .min(cells.saturating_sub(1) as u16) as usize;
         let max_scroll = hit.total - hit.viewport;
         // Anchor the *middle* of the visible range to the click row
@@ -19298,6 +19319,9 @@ impl App {
         match (kind, self.panes.get_mut(pane_id)) {
             (ScrollbarKind::Editor, Some(Pane::Editor(b))) => {
                 b.scroll = scroll;
+            }
+            (ScrollbarKind::EditorHScroll, Some(Pane::Editor(b))) => {
+                b.h_scroll = scroll;
             }
             (ScrollbarKind::Diff, Some(Pane::Diff(d))) => {
                 d.scroll = scroll;

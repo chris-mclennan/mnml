@@ -121,7 +121,22 @@ pub fn draw_pane(
         .saturating_sub(change_w)
         .saturating_sub(pad_w);
     let tw = text_w as usize;
-    let text_h = area.height as usize;
+    // Horizontal scrollbar — shown when wrap is OFF and some line is
+    // wider than the text viewport. Reserves the bottom body row.
+    // `max_line_w` is a capped whole-buffer scan (stable as you
+    // scroll, cheap for typical files).
+    let max_line_w: usize = buf
+        .editor
+        .text()
+        .lines()
+        .take(8000)
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0);
+    let want_hscroll =
+        !app.config.ui.wrap && tw > 0 && max_line_w > tw && area.height >= 3;
+    let hscroll_h: u16 = if want_hscroll { 1 } else { 0 };
+    let text_h = area.height.saturating_sub(hscroll_h) as usize;
     let cur_row_initial = buf.editor.row_col().0;
     // If the cursor landed in a fold's body (e.g. a fold was just toggled
     // while the cursor was mid-block), snap it onto the fold's start line.
@@ -1038,6 +1053,35 @@ pub fn draw_pane(
         }
     }
     frame.render_widget(Paragraph::new(lines), area);
+
+    // Horizontal scrollbar — bottom row, spanning the text area (not the
+    // gutter / vertical-scrollbar columns). Draggable via the same
+    // ScrollbarHit machinery, tagged `EditorHScroll` so the dispatcher
+    // maps the X axis.
+    if want_hscroll && text_w > 0 {
+        let t = theme::cur();
+        let hbar = ratatui::layout::Rect {
+            x: text_x,
+            y: area.y + area.height - 1,
+            width: text_w,
+            height: 1,
+        };
+        crate::ui::scrollbar::paint_horizontal_scrollbar(
+            frame,
+            hbar,
+            &t,
+            max_line_w,
+            tw,
+            buf.h_scroll,
+        );
+        app.rects.scrollbars.push(crate::app::ScrollbarHit {
+            area: hbar,
+            pane_id,
+            total: max_line_w,
+            viewport: tw,
+            kind: crate::app::ScrollbarKind::EditorHScroll,
+        });
+    }
 
     if want_scrollbar && text_h > 0 {
         let bar_x = area.x + area.width - 1;
