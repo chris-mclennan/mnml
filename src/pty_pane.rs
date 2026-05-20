@@ -143,6 +143,9 @@ impl BinaryProfile {
 /// One live pty + child + vt100 grid. Drop to kill the child + join the reader.
 pub struct PtySession {
     pub profile: BinaryProfile,
+    /// User-set session name (`:rename`). Shown in the pty-pane tab strip
+    /// + the bufferline tab in place of `profile.label` when present.
+    pub display_name: Option<String>,
     /// Shared with the reader thread (it writes, the renderer reads).
     pub parser: Arc<Mutex<vt100::Parser>>,
     writer: Box<dyn Write + Send>,
@@ -228,6 +231,7 @@ impl PtySession {
 
         Ok(PtySession {
             profile,
+            display_name: None,
             parser,
             writer,
             master: pair.master,
@@ -293,11 +297,20 @@ impl PtySession {
     }
 
     pub fn title(&self) -> String {
+        let base = self.tab_label();
         if self.is_exited() {
-            format!("{} ✗", self.profile.label)
+            format!("{base} ✗")
         } else {
-            self.profile.label.clone()
+            base
         }
+    }
+
+    /// The session's tab/title label — the user-set `display_name`
+    /// (`:rename`) when present, otherwise the binary profile's label.
+    pub fn tab_label(&self) -> String {
+        self.display_name
+            .clone()
+            .unwrap_or_else(|| self.profile.label.clone())
     }
 }
 

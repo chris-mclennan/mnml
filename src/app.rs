@@ -1779,6 +1779,11 @@ pub struct PaneRects {
     pub rail_git_header_buttons: Vec<(Rect, crate::GitRailHeaderAction)>,
     /// Scratch-terminal strip rect when visible — click to focus / blur.
     pub scratch_term_strip: Option<Rect>,
+    /// Pty-pane tab strip — `(rect, pty_pane_id)` per session tab. Click
+    /// switches the leaf to that session. Repopulated per pty render.
+    pub pty_tabs: Vec<(Rect, PaneId)>,
+    /// `+` button on the pty tab strip — click spawns a new Claude pane.
+    pub pty_tab_new: Option<Rect>,
     /// One rect per row in the F1 click-discovery overlay — click a row
     /// to flash the matching on-screen rects. Cleared + repopulated by
     /// `ui::discovery::draw` when the overlay is visible.
@@ -10787,6 +10792,41 @@ impl App {
         }
     }
 
+    /// `:rename` / `term.rename` — open a prompt to name the active pty
+    /// session (Claude / Codex / shell). The name shows in the pty-pane
+    /// tab strip + the bufferline tab. Seeded with the current name.
+    pub fn open_rename_session_prompt(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("no active pane");
+            return;
+        };
+        let seed = match self.panes.get(cur) {
+            Some(Pane::Pty(s)) => s.display_name.clone().unwrap_or_default(),
+            _ => {
+                self.toast("rename works on terminal / Claude / Codex panes");
+                return;
+            }
+        };
+        let prompt = crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::PtySessionName,
+            "Rename session (empty = reset to default)",
+            seed,
+        );
+        self.prompt = Some(prompt);
+    }
+
+    /// Accept handler for `PromptKind::PtySessionName`. Empty input
+    /// clears the name (reverts to the binary profile's label).
+    pub fn rename_active_pty(&mut self, name: &str) {
+        let Some(cur) = self.active else { return };
+        let name = name.trim();
+        if let Some(Pane::Pty(s)) = self.panes.get_mut(cur) {
+            s.display_name = (!name.is_empty()).then(|| name.to_string());
+            let label = s.tab_label();
+            self.toast(format!("session: {label}"));
+        }
+    }
+
     pub fn open_shell(&mut self) {
         // Spawn in the *active* workspace — so when the user has tmnl
         // section focused in a multi-workspace setup, term.shell opens
@@ -10932,6 +10972,16 @@ impl App {
             crate::layout::SplitDir::Horizontal,
         );
     }
+    /// Always spawn a *new* Claude pane (no toggle / reuse) — the pty
+    /// tab strip's `+` button + `ai.claude_code_new`. Multiple Claude
+    /// sessions live side by side, switchable via the tab strip.
+    pub fn open_claude_code_new(&mut self) {
+        self.open_pty_dir(
+            crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone()),
+            crate::layout::SplitDir::Horizontal,
+        );
+    }
+
     pub fn open_codex(&mut self) {
         if let Some(id) = self.find_codex_pty() {
             self.reveal_pane(id);
@@ -15460,6 +15510,10 @@ impl App {
             crate::prompt::PromptKind::AiChat => {
                 let typed = p.input.clone();
                 self.dispatch_ai_chat(&typed);
+            }
+            crate::prompt::PromptKind::PtySessionName => {
+                let typed = p.input.clone();
+                self.rename_active_pty(&typed);
             }
         }
     }
@@ -21910,6 +21964,9 @@ impl App {
             "about" | "About" => self.toggle_about(),
             "settings" | "Settings" => self.toggle_settings(),
             "ClaudeChat" | "Claude" | "claudechat" => self.open_ai_chat_prompt(),
+            // `:rename` (lowercase) renames the pty session — `:Rename`
+            // (capital) is the LSP-rename alias handled below.
+            "rename" => self.open_rename_session_prompt(),
             // `:reg` / `:registers` — toast clipboard contents (we have a
             // single anonymous register for now). Newlines render as `↵`,
             // truncated to keep the toast short.

@@ -4677,6 +4677,23 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.reveal_pane(id);
                 return;
             }
+            // Pty-pane tab strip — click a session tab to switch this
+            // leaf to it; click `+` to spawn a new Claude.
+            if let Some(r) = app.rects.pty_tab_new
+                && contains(r, x, y)
+            {
+                app.open_claude_code_new();
+                return;
+            }
+            if let Some(&(_, pid)) = app
+                .rects
+                .pty_tabs
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+            {
+                app.reveal_pane(pid);
+                return;
+            }
             // Bufferline right cluster — Claude / Codex launch chips,
             // `+` new tab, per-tabpage chip / close, theme toggle,
             // window close. Order matters (the `⊗` rect sits adjacent

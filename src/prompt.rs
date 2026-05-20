@@ -136,6 +136,10 @@ pub enum PromptKind {
     /// fresh interactive Claude pane or types into an already-open one.
     /// Empty input + no selection ⇒ just open/focus a plain Claude pane.
     AiChat,
+    /// Accept ⇒ set the active pty pane's `display_name` to the typed
+    /// text (`:rename` / `term.rename`). Empty input clears the name
+    /// back to the profile default.
+    PtySessionName,
 }
 
 #[derive(Debug)]

@@ -83,6 +83,25 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Multi-session pty panes — tab strip + `:rename` (2026-05-19):**
+the pty panes (Claude / Codex / shell) gained a VS-Code-terminal-
+style tab strip so multiple sessions live side by side. (1) **Tab
+strip** — `ui::pty_view` reserves the top row of every pty pane
+for a 1-row strip listing every open `Pane::Pty`, the leaf's own
+session highlighted (Claude-orange), ending with a `+` chip.
+Click a tab → `reveal_pane` that session; click `+` →
+`open_claude_code_new` (always spawns a fresh Claude, no
+toggle/reuse). New `app.rects.pty_tabs` / `pty_tab_new` registries
++ `ai.claude_code_new` palette command. The strip appends to the
+registries (cleared once per frame) so several visible pty panes
+can each carry one. (2) **Session names** — `PtySession.display_name`
++ `:rename` ex command / `term.rename` palette command (the
+`/rename` equivalent) open a prompt; the name shows in the tab
+strip AND the bufferline tab (`PtySession::title` → `tab_label`,
+display_name-or-profile-label). Empty input clears back to the
+default. `:rename` lowercase is the session rename; `:Rename`
+capital stays the LSP-rename alias.
+
 **Top-anchored picker option + Claude sparkle icon (2026-05-19):**
 two small polish items. (1) **`[ui] picker_position`** — `"center"`
 (default, historic behavior — floats a third of the way down) or

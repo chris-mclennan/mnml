@@ -2346,6 +2346,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_shell(),
         },
         Command {
+            id: "term.rename",
+            title: "Terminal: rename this session (shown in the tab)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_rename_session_prompt(),
+        },
+        Command {
             id: "term.scratch_toggle",
             title: "Terminal: quick scratch strip at the bottom (Ctrl+`)",
             group: "ai",
@@ -2401,6 +2408,13 @@ fn builtin_commands() -> Vec<Command> {
             group: "ai",
             keys: &[],
             run: |app| app.open_ai_chat_prompt(),
+        },
+        Command {
+            id: "ai.claude_code_new",
+            title: "AI: open a NEW Claude Code session (multi-session)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_claude_code_new(),
         },
         Command {
             id: "ai.codex",
