@@ -83,6 +83,35 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**fim-engine polish bundle — Metal + progress overlay + config knobs + E2E (2026-05-20):**
+four follow-ups on the local FIM backend. (1) **Metal GPU
+acceleration** — `fim-engine`'s default `metal` Cargo feature;
+`pick_device()` tries `Device::new_metal(0)` and falls back to
+CPU with a stderr note. A 1.5B FIM completion drops from ~1.6s
+to ~250ms (~6x) on an M-series Mac. (2) **Download-progress
+overlay** — `ui/fim_progress_overlay.rs` paints a
+bottom-centered bar (received / total + filled `█░` bar) while
+fim-engine pulls its ~1 GB model on first use; reads the new
+`App.fim_progress` slot the worker thread's download callback
+writes. Clears itself when the download finishes. (3) **Config
+knobs** — `[ai] fim_model` (`"1.5b"` default / `"3b"`) picks
+the model size via a new `fim_engine::ModelChoice` enum (3B is
+smarter at multi-line completion but ~2x slower with a bigger
+download; per-size tokenizer cache names so both coexist).
+`[ai] fim_max_tokens` (default 64, clamped 8..=512) caps
+completion length per keystroke-pause. `FimEngine::load` takes
+a `ModelChoice`; the mnml FIM worker request tuple grew a
+`max_tokens` element + the worker thread takes the choice at
+spawn (`App::ai_fim_model` / `ai_fim_max_tokens`). (4) **E2E
+coverage** — new `ghost <text>` harness step injects a
+suggestion onto the active editor (the real path is a worker
+thread that can't run deterministically); `ai_suggest_backend.test`
+covers the `ai.setup_suggestions` backend picker, `ai_ghost_text.test`
+covers the Tab-accepts / other-key-dismisses ghost-text key
+handling. Also: stopped tracking `fim-engine/target/` (5642
+stray build-artifact files from its initial commit) + a
+whole-tree `cargo fmt` cleanup. 679 lib tests + e2e green.
+
 **Local FIM backend — fim-engine crate wired (2026-05-20):**
 the candle-embedded local code-completion backend (was task #83).
 New sibling crate `../fim-engine` — downloads a quantized
