@@ -1,0 +1,18 @@
+# ai.setup_suggestions opens the inline-suggestion backend picker so the
+# user can choose Claude API vs the embedded local model (and change it
+# later). Esc dismisses without changing anything.
+write a.txt hello
+open a.txt
+
+# Open the backend picker — both backends + the off row are listed.
+command ai.setup_suggestions
+expect screen contains "pick a backend"
+expect screen contains "Claude API"
+expect screen contains "Local model"
+expect screen contains "Turn off inline suggestions"
+
+# Esc dismisses — picker gone, editor untouched.
+key esc
+expect screen lacks "pick a backend"
+expect pane "a.txt"
+expect screen contains "hello"

@@ -15,6 +15,7 @@
 //! wait  <ms>                     # sleep + tick (for async/pty steps)
 //! snippet <scope> <trig> <expansion>  # seed a [snippets.<scope>] entry on app.config
 //! shell <cmd>                    # run `<cmd>` via $SHELL -c in workspace (non-zero exit fails)
+//! ghost <text>                   # inject an AI ghost-text suggestion on the active editor
 //! expect screen contains <text>  # the rendered virtual screen contains the substring
 //! expect screen lacks <text>     # …does not
 //! expect dirty <true|false>      # the active editor's dirty flag
@@ -61,6 +62,11 @@ enum Step {
     /// message. Useful for fixture setup that mnml itself can't do —
     /// `git init`, creating non-text files, etc.
     Shell(String),
+    /// Inject an AI ghost-text suggestion onto the active editor — the
+    /// real suggestion path is a worker thread (API / local model) that
+    /// can't run deterministically in a test, so this seeds the state
+    /// directly to exercise the accept/dismiss key handling.
+    Ghost(String),
 }
 
 #[derive(Debug, Clone)]
@@ -180,6 +186,13 @@ fn parse(text: &str) -> Result<Vec<Line>, String> {
                     return Err(format!("line {ln}: `shell` needs a command"));
                 }
                 Stmt::Step(Step::Shell(cmd.to_string()))
+            }
+            "ghost" => {
+                let text = unescape(rest);
+                if text.is_empty() {
+                    return Err(format!("line {ln}: `ghost` needs suggestion text"));
+                }
+                Stmt::Step(Step::Ghost(text))
             }
             "expect" => parse_expect(ln, rest)?,
             other => return Err(format!("line {ln}: unknown statement `{other}`")),
@@ -441,6 +454,13 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
             }
             Ok(())
         }
+        Step::Ghost(text) => match app.active.and_then(|i| app.panes.get_mut(i)) {
+            Some(crate::pane::Pane::Editor(b)) => {
+                b.editor.ghost_suggestion = Some(text.clone());
+                Ok(())
+            }
+            _ => Err("ghost: no active editor pane".to_string()),
+        },
     }
 }
 
@@ -600,6 +620,16 @@ expect dirty false
     #[test]
     fn rejects_empty_shell_command() {
         assert!(parse("shell   \n").is_err());
+    }
+
+    #[test]
+    fn parses_ghost_step() {
+        let stmts = parse("ghost \"a + b\"\n").unwrap();
+        match &stmts[0].1 {
+            Stmt::Step(Step::Ghost(text)) => assert_eq!(text, "a + b"),
+            other => panic!("expected Ghost, got {other:?}"),
+        }
+        assert!(parse("ghost   \n").is_err());
     }
 
     #[test]

@@ -1,0 +1,30 @@
+# AI ghost-text (Cursor-style inline suggestion) accept + dismiss flow.
+# The real suggestion comes from a worker thread (Claude API / local
+# model) which can't run deterministically in a test, so the `ghost`
+# step injects the suggestion state directly — what's under test here is
+# the key handling: bare Tab accepts, any other key dismisses.
+write a.txt hello
+open a.txt
+
+# Inject a suggestion — the ghost overlay paints it at the cursor.
+ghost GHOSTX
+expect screen contains "GHOSTX"
+
+# Bare Tab accepts it — the text lands in the buffer (cursor is at
+# byte 0, so it goes in front of "hello") and the buffer is now dirty.
+key tab
+expect screen contains "GHOSTX"
+expect dirty true
+
+# Save, then confirm the accepted text actually hit disk.
+key ctrl+s
+expect dirty false
+expect file a.txt contains "GHOSTXhello"
+
+# Dismiss flow — inject a fresh suggestion, then press a non-Tab key.
+# The ghost is cleared and never enters the buffer.
+ghost DISMISSZ
+expect screen contains "DISMISSZ"
+key right
+expect screen lacks "DISMISSZ"
+expect dirty false
