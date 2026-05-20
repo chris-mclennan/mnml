@@ -204,6 +204,46 @@ fn clean_suggestion(raw: &str) -> String {
     s.chars().take(600).collect()
 }
 
+/// The local-FIM worker thread body. Owns the `FimEngine`, loads it
+/// lazily on the first request, then serves completions. Load status
+/// is reported back as a `u64::MAX`-id reply so `drain_suggestions`
+/// can toast it.
+fn fim_worker_loop(
+    rx: std::sync::mpsc::Receiver<(u64, String, String)>,
+    reply: std::sync::mpsc::Sender<SuggestReply>,
+) {
+    let mut engine: Option<fim_engine::FimEngine> = None;
+    let mut load_error: Option<String> = None;
+    while let Ok((id, prefix, suffix)) = rx.recv() {
+        if let Some(err) = &load_error {
+            let _ = reply.send((id, Err(err.clone())));
+            continue;
+        }
+        if engine.is_none() {
+            let cache = fim_engine::default_cache_dir();
+            match fim_engine::FimEngine::load(&cache, &|_p| {}) {
+                Ok(e) => {
+                    engine = Some(e);
+                    let _ = reply.send((u64::MAX, Ok("local model ready".to_string())));
+                }
+                Err(e) => {
+                    let _ = reply.send((
+                        u64::MAX,
+                        Err(format!("local model load failed: {e}")),
+                    ));
+                    load_error = Some(e.clone());
+                    let _ = reply.send((id, Err(e)));
+                    continue;
+                }
+            }
+        }
+        if let Some(e) = engine.as_mut() {
+            let result = e.complete(&prefix, &suffix, 64);
+            let _ = reply.send((id, result));
+        }
+    }
+}
+
 fn is_markdown_path(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),
@@ -2715,6 +2755,11 @@ pub struct App {
     /// A reply is only applied if `pane_id` is still active and the cursor
     /// hasn't moved (stale completions are dropped).
     pending_suggest: Option<(u64, PaneId, usize)>,
+    /// Request channel to the local-FIM worker thread (`suggest_backend
+    /// = "local"`). `Some` once the worker is spawned. The worker owns
+    /// the `FimEngine`, loads it lazily on the first request (a one-time
+    /// ~1 GB download), and replies through `suggest_chan`.
+    fim_tx: Option<std::sync::mpsc::Sender<(u64, String, String)>>,
     /// Monotonic id for ghost-text requests.
     next_suggest_id: u64,
     /// When the active editor was last edited — the ghost-text debounce
@@ -3169,6 +3214,7 @@ impl App {
             pending_suggest: None,
             next_suggest_id: 0,
             suggest_dirty_at: None,
+            fim_tx: None,
             tests_chan: None,
             linter_chan: None,
             dap: None,
@@ -6297,18 +6343,56 @@ impl App {
         let id = self.next_suggest_id;
         self.next_suggest_id += 1;
         self.pending_suggest = Some((id, pane_id, cursor));
-        let tx = self
+        match self.ai_suggest_backend() {
+            crate::ai::SuggestBackend::Local => {
+                // Local FIM — hand the request to the engine worker
+                // (it owns the model + replies through `suggest_chan`).
+                let fim_tx = self.ensure_fim_worker();
+                let _ = fim_tx.send((id, prefix, suffix));
+            }
+            // ClaudeApi (and Unset — shouldn't reach here since the
+            // setup picker gates first-enable, but be safe).
+            _ => {
+                let tx = self
+                    .suggest_chan
+                    .get_or_insert_with(std::sync::mpsc::channel)
+                    .0
+                    .clone();
+                std::thread::Builder::new()
+                    .name("mnml-suggest".into())
+                    .spawn(move || {
+                        let result =
+                            crate::ai::api_client::complete_code(&prefix, &suffix, &language);
+                        let _ = tx.send((id, result));
+                    })
+                    .ok();
+            }
+        }
+    }
+
+    /// Spawn (once) the local-FIM worker thread + return its request
+    /// sender. The worker owns the `FimEngine`, loads it lazily on the
+    /// first request (a one-time ~1 GB download), and replies through
+    /// `suggest_chan` — load status arrives as the `u64::MAX` sentinel.
+    fn ensure_fim_worker(&mut self) -> std::sync::mpsc::Sender<(u64, String, String)> {
+        if let Some(tx) = &self.fim_tx {
+            return tx.clone();
+        }
+        let (tx, rx) = std::sync::mpsc::channel::<(u64, String, String)>();
+        let reply = self
             .suggest_chan
             .get_or_insert_with(std::sync::mpsc::channel)
             .0
             .clone();
         std::thread::Builder::new()
-            .name("mnml-suggest".into())
-            .spawn(move || {
-                let result = crate::ai::api_client::complete_code(&prefix, &suffix, &language);
-                let _ = tx.send((id, result));
-            })
+            .name("mnml-fim".into())
+            .spawn(move || fim_worker_loop(rx, reply))
             .ok();
+        self.fim_tx = Some(tx.clone());
+        self.toast(
+            "fim-engine: loading local model (first run downloads ~1 GB, one-time)…",
+        );
+        tx
     }
 
     /// `tick` hook — apply a ghost-text reply if it's still relevant
@@ -6319,6 +6403,16 @@ impl App {
             None => return,
         };
         for (id, result) in replies {
+            // `u64::MAX` — a local-FIM load-status message, not a
+            // completion. Toast it so the user sees download / ready /
+            // failure state.
+            if id == u64::MAX {
+                match result {
+                    Ok(msg) => self.toast(format!("fim-engine: {msg}")),
+                    Err(msg) => self.toast(format!("fim-engine: {msg}")),
+                }
+                continue;
+            }
             let Some((pending_id, pane_id, cursor)) = self.pending_suggest else {
                 continue;
             };
@@ -11498,7 +11592,7 @@ impl App {
             PickerItem::new(
                 "local",
                 format!("{}Local model (embedded)", mark(crate::ai::SuggestBackend::Local)),
-                "private · free · fast · one-time ~2GB download (in progress)",
+                "private · free · offline · one-time ~1GB download",
             ),
             PickerItem::new(
                 "off",
@@ -11540,7 +11634,7 @@ impl App {
                     }
                     crate::ai::SuggestBackend::Local => {
                         self.toast(
-                            "AI ghost-text: on · local model not built yet — using Claude API",
+                            "AI ghost-text: on · local model (downloads ~1 GB on first use)",
                         );
                     }
                     crate::ai::SuggestBackend::Unset => {}

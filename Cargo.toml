@@ -18,6 +18,10 @@ path = "src/main.rs"
 ratatui = { version = "0.29", features = ["crossterm"] }
 # Wire format for the `--blit` BlitBackend — shared with the tmnl renderer.
 tmnl-protocol = { path = "../tmnl-protocol" }
+# Embedded local FIM code completion (candle + quantized qwen2.5-coder).
+# Powers `[ai] suggest_backend = "local"`. Its own crate so candle stays
+# out of mnml's incremental rebuilds. Shared with tmnl.
+fim-engine = { path = "../fim-engine" }
 # File enumeration honoring .gitignore.
 ignore = "0.4"
 # Temp workspaces for the `.test` E2E runner (and unit tests).

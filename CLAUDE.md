@@ -83,6 +83,24 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Local FIM backend — fim-engine crate wired (2026-05-20):**
+the candle-embedded local code-completion backend (was task #83).
+New sibling crate `../fim-engine` — downloads a quantized
+qwen2.5-coder-1.5b-instruct GGUF (~1 GB) on first use to a shared
+cache (`~/.cache/fim-engine`, so mnml + tmnl share the one
+download), runs inference in-process via `candle` (no daemon, no
+API key, offline after the download). `FimEngine::{load, complete}`
++ `default_cache_dir`. Its own crate so candle stays out of mnml's
+incremental rebuilds. mnml side: `SuggestBackend::Local` now spawns
+a `fim_worker_loop` thread that owns the engine, loads it lazily on
+the first request, and replies through the same `suggest_chan` the
+API path uses; load status surfaces via a `u64::MAX`-id sentinel
+that toasts. Verified end-to-end (smoke example): completion in
+~1.6 s on CPU. Metal acceleration is a perf follow-up. The
+candle quantized inference matched candle 0.9.2's API on the first
+build; `trim_at_suffix` cuts the FIM model's "rejoin"
+over-generation (4 unit tests). 678 lib tests + clippy clean.
+
 **AI suggestion backend picker (2026-05-19):**
 the "seamless for end users" framing for inline suggestions. New
 `SuggestBackend { Unset, ClaudeApi, Local }` enum + `[ai]
