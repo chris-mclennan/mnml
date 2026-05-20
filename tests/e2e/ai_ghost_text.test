@@ -28,3 +28,27 @@ expect screen contains "DISMISSZ"
 key right
 expect screen lacks "DISMISSZ"
 expect dirty false
+
+# Partial accept — Ctrl+Right takes one word at a time, the remainder
+# stays as a ghost. A fresh buffer keeps the cursor at byte 0.
+write b.txt seed
+open b.txt
+ghost "ALPHA BETA"
+expect screen contains "ALPHA BETA"
+key ctrl+right
+expect dirty true
+key ctrl+right
+key ctrl+s
+expect file b.txt contains "ALPHA BETAseed"
+
+# Partial accept — Ctrl+Down takes the next line (through the newline);
+# the line below stays as a ghost until Tab finishes it.
+write c.txt tail
+open c.txt
+ghost "LINE1\nLINE2"
+expect screen contains "LINE1"
+key ctrl+down
+expect dirty true
+key tab
+key ctrl+s
+expect file c.txt contains "LINE1\nLINE2tail"

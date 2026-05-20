@@ -230,10 +230,20 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     app.hover_chip = None;
     app.hover_divider_idx = None;
     // AI ghost-text: while a suggestion is showing, bare `Tab` accepts
-    // it; any other key dismisses it (and then does its normal thing).
+    // all of it, `Ctrl+Right` accepts the next word, `Ctrl+Down` the
+    // next line (both leave the remainder as a ghost); any other key
+    // dismisses it (and then does its normal thing).
     if app.has_ghost_suggestion() {
         if key.code == KeyCode::Tab && key.modifiers.is_empty() {
             app.accept_ghost_suggestion();
+            return;
+        }
+        if key.code == KeyCode::Right && key.modifiers == KeyModifiers::CONTROL {
+            app.accept_ghost_word();
+            return;
+        }
+        if key.code == KeyCode::Down && key.modifiers == KeyModifiers::CONTROL {
+            app.accept_ghost_line();
             return;
         }
         app.clear_ghost_suggestion();

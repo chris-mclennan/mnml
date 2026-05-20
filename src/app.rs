@@ -204,49 +204,80 @@ fn clean_suggestion(raw: &str) -> String {
     s.chars().take(600).collect()
 }
 
-/// The local-FIM worker thread body. Owns the `FimEngine`, loads it
-/// lazily on the first request, then serves completions. Load status
-/// is reported back as a `u64::MAX`-id reply so `drain_suggestions`
-/// can toast it.
+/// Byte index after the first "word" of a ghost suggestion — leading
+/// whitespace (incl. newlines) plus the first non-whitespace run. Used
+/// by `Ctrl+Right` accept-word. Returns `s.len()` when `s` is all
+/// whitespace, `0` when empty.
+fn ghost_word_boundary(s: &str) -> usize {
+    let mut idx = 0;
+    let mut chars = s.char_indices().peekable();
+    while let Some(&(i, c)) = chars.peek() {
+        if c.is_whitespace() {
+            idx = i + c.len_utf8();
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    while let Some(&(i, c)) = chars.peek() {
+        if c.is_whitespace() {
+            break;
+        }
+        idx = i + c.len_utf8();
+        chars.next();
+    }
+    idx
+}
+
+/// Byte index after the first line of a ghost suggestion — through and
+/// including the first newline (the whole string when single-line).
+/// Used by `Ctrl+Down` accept-line.
+fn ghost_line_boundary(s: &str) -> usize {
+    match s.find('\n') {
+        Some(i) => i + 1,
+        None => s.len(),
+    }
+}
+
+/// The local-FIM worker thread body. Owns the `FimEngine` — loads it
+/// **eagerly on spawn** (so picking the Local backend starts the
+/// one-time ~1 GB download immediately rather than on the first
+/// keystroke-pause), then serves completions. Load status is reported
+/// back as a `u64::MAX`-id reply so `drain_suggestions` can toast it.
 fn fim_worker_loop(
     rx: std::sync::mpsc::Receiver<FimRequest>,
     reply: std::sync::mpsc::Sender<SuggestReply>,
     progress: std::sync::Arc<std::sync::Mutex<Option<fim_engine::DownloadProgress>>>,
     model: fim_engine::ModelChoice,
 ) {
-    let mut engine: Option<fim_engine::FimEngine> = None;
-    let mut load_error: Option<String> = None;
+    // Load before the recv loop — the worker is spawned the moment the
+    // user picks (or warms up) the Local backend, so this is the eager
+    // warm-up. The progress callback writes the slot the overlay reads.
+    let cache = fim_engine::default_cache_dir();
+    let prog = std::sync::Arc::clone(&progress);
+    let load = fim_engine::FimEngine::load(&cache, model, &move |p| {
+        if let Ok(mut g) = prog.lock() {
+            *g = Some(p);
+        }
+    });
+    // Download done (one way or another) — clear the bar.
+    if let Ok(mut g) = progress.lock() {
+        *g = None;
+    }
+    let (mut engine, load_error) = match load {
+        Ok(e) => {
+            let _ = reply.send((u64::MAX, Ok("local model ready".to_string())));
+            (Some(e), None)
+        }
+        Err(e) => {
+            let _ = reply.send((u64::MAX, Err(format!("local model load failed: {e}"))));
+            (None, Some(e))
+        }
+    };
     while let Ok((id, prefix, suffix, max_tokens)) = rx.recv() {
         if let Some(err) = &load_error {
             let _ = reply.send((id, Err(err.clone())));
             continue;
-        }
-        if engine.is_none() {
-            let cache = fim_engine::default_cache_dir();
-            // The download-progress callback writes into the shared
-            // slot the overlay reads each frame.
-            let prog = std::sync::Arc::clone(&progress);
-            let load = fim_engine::FimEngine::load(&cache, model, &move |p| {
-                if let Ok(mut g) = prog.lock() {
-                    *g = Some(p);
-                }
-            });
-            // Download done (one way or another) — clear the bar.
-            if let Ok(mut g) = progress.lock() {
-                *g = None;
-            }
-            match load {
-                Ok(e) => {
-                    engine = Some(e);
-                    let _ = reply.send((u64::MAX, Ok("local model ready".to_string())));
-                }
-                Err(e) => {
-                    let _ = reply.send((u64::MAX, Err(format!("local model load failed: {e}"))));
-                    load_error = Some(e.clone());
-                    let _ = reply.send((id, Err(e)));
-                    continue;
-                }
-            }
         }
         if let Some(e) = engine.as_mut() {
             let result = e.complete(&prefix, &suffix, max_tokens);
@@ -2787,6 +2818,10 @@ pub struct App {
     /// When the active editor was last edited — the ghost-text debounce
     /// anchor. A request fires once this is `SUGGEST_DEBOUNCE_MS` old.
     suggest_dirty_at: Option<Instant>,
+    /// The `(prefix, suffix)` context of the last ghost-text request
+    /// fired — dedup so a cursor jiggle / type-then-undo back to the
+    /// same state doesn't re-spend an API call or inference cycle.
+    last_suggest_context: Option<(String, String)>,
     /// Channel for background `npx playwright test` runs → the matching `Pane::Tests`.
     tests_chan: Option<(
         std::sync::mpsc::Sender<TestsJobDone>,
@@ -3236,6 +3271,7 @@ impl App {
             pending_suggest: None,
             next_suggest_id: 0,
             suggest_dirty_at: None,
+            last_suggest_context: None,
             fim_tx: None,
             fim_progress: std::sync::Arc::new(std::sync::Mutex::new(None)),
             tests_chan: None,
@@ -6340,6 +6376,13 @@ impl App {
         let suffix = text[cursor..suf_end].to_string();
         let language = b.language_ext.clone().unwrap_or_default();
         self.suggest_dirty_at = None;
+        // Dedup — if the context is byte-identical to the last request
+        // fired, don't re-spend an API call / inference cycle (cursor
+        // jiggle, type-then-undo back to the same state, etc.).
+        if self.last_suggest_context.as_ref() == Some(&(prefix.clone(), suffix.clone())) {
+            return;
+        }
+        self.last_suggest_context = Some((prefix.clone(), suffix.clone()));
         let id = self.next_suggest_id;
         self.next_suggest_id += 1;
         self.pending_suggest = Some((id, pane_id, cursor));
@@ -6468,30 +6511,56 @@ impl App {
         }
     }
 
-    /// `Tab` accept of the active editor's ghost suggestion. Inserts the
-    /// suggestion text at the cursor. Returns true if a suggestion was
+    /// `Tab` accept of the active editor's ghost suggestion — inserts the
+    /// whole suggestion at the cursor. Returns true if a suggestion was
     /// accepted (so the caller skips the normal Tab handling).
     pub fn accept_ghost_suggestion(&mut self) -> bool {
+        self.accept_ghost_with(str::len)
+    }
+
+    /// Accept just the next word of the ghost suggestion (`Ctrl+Right` —
+    /// Copilot convention). The rest stays as a ghost so the user can
+    /// keep accepting word-by-word.
+    pub fn accept_ghost_word(&mut self) -> bool {
+        self.accept_ghost_with(ghost_word_boundary)
+    }
+
+    /// Accept the next line of the ghost suggestion (`Ctrl+Down`) —
+    /// through the first newline; the whole thing when single-line.
+    pub fn accept_ghost_line(&mut self) -> bool {
+        self.accept_ghost_with(ghost_line_boundary)
+    }
+
+    /// Shared partial/full ghost-accept. `boundary(suggestion)` returns
+    /// the byte count to accept now; the remainder (if any) stays as the
+    /// ghost suggestion so accepts can chain.
+    fn accept_ghost_with<F: Fn(&str) -> usize>(&mut self, boundary: F) -> bool {
         let Some(pane_id) = self.active else {
             return false;
         };
-        let suggestion = match self.panes.get_mut(pane_id) {
-            Some(Pane::Editor(b)) => b.editor.ghost_suggestion.take(),
+        let full = match self.panes.get(pane_id) {
+            Some(Pane::Editor(b)) => b.editor.ghost_suggestion.clone(),
             _ => None,
         };
-        let Some(text) = suggestion else {
+        let Some(full) = full.filter(|s| !s.is_empty()) else {
             return false;
         };
+        let take = boundary(&full).min(full.len());
+        if take == 0 {
+            return false;
+        }
+        let accepted = full[..take].to_string();
+        let remaining = full[take..].to_string();
         if let Some(Pane::Editor(b)) = self.panes.get_mut(pane_id) {
             let at = b.editor.cursor();
-            let end = at + text.len();
+            let end = at + accepted.len();
             let clip = &mut self.clipboard;
             b.apply_edit_ops(
                 vec![
                     crate::edit_op::EditOp::ReplaceRange {
                         start: at,
                         end: at,
-                        text,
+                        text: accepted,
                     },
                     // Land the cursor past the accepted completion so the
                     // user keeps typing from there.
@@ -6500,6 +6569,7 @@ impl App {
                 clip,
                 0,
             );
+            b.editor.ghost_suggestion = (!remaining.is_empty()).then_some(remaining);
         }
         true
     }
@@ -11601,6 +11671,7 @@ impl App {
             self.clear_ghost_suggestion();
             self.pending_suggest = None;
             self.suggest_dirty_at = None;
+            self.last_suggest_context = None;
             self.toast("AI ghost-text: off");
         }
     }
@@ -11670,9 +11741,12 @@ impl App {
                         self.toast("AI ghost-text: on · Claude API");
                     }
                     crate::ai::SuggestBackend::Local => {
-                        self.toast(
-                            "AI ghost-text: on · local model (downloads ~1 GB on first use)",
-                        );
+                        self.toast("AI ghost-text: on · local model");
+                        // Warm up now — spawn the worker so the one-time
+                        // download/load starts immediately (the worker
+                        // loads eagerly on spawn) rather than stalling
+                        // the user's first keystroke-pause.
+                        self.ensure_fim_worker();
                     }
                     crate::ai::SuggestBackend::Unset => {}
                 }
@@ -28720,6 +28794,28 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::fs;
+
+    #[test]
+    fn ghost_word_boundary_takes_leading_ws_plus_one_word() {
+        // Leading whitespace + first non-ws run.
+        assert_eq!(ghost_word_boundary(" + b\n}"), 2); // " +"
+        assert_eq!(ghost_word_boundary("foo bar"), 3); // "foo"
+        // Crosses a newline when the suggestion starts with one.
+        assert_eq!(ghost_word_boundary("\n    foo bar"), 8); // "\n    foo"
+        // All whitespace ⇒ take everything.
+        assert_eq!(ghost_word_boundary("   "), 3);
+        // Empty ⇒ 0 (caller treats as "nothing to accept").
+        assert_eq!(ghost_word_boundary(""), 0);
+    }
+
+    #[test]
+    fn ghost_line_boundary_takes_through_first_newline() {
+        // Through and including the first newline.
+        assert_eq!(ghost_line_boundary("a + b\n}\n"), 6);
+        // Single-line ⇒ the whole string.
+        assert_eq!(ghost_line_boundary("a + b"), 5);
+        assert_eq!(ghost_line_boundary(""), 0);
+    }
 
     #[test]
     fn note_browser_url_dedupes_and_caps() {
