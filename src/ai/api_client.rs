@@ -204,6 +204,8 @@ pub fn stream_to_channel(
     let mut reader = BufReader::new(response);
     let mut accumulated = String::new();
     let mut current_event: Option<String> = None;
+    let mut input_tokens: u64 = 0;
+    let mut output_tokens: u64 = 0;
     loop {
         if cancel.load(Ordering::Relaxed) {
             let _ = sink.send((job_id, AiMsg::Failed("cancelled".to_string())));
@@ -237,6 +239,27 @@ pub fn stream_to_channel(
                         let _ = sink.send((job_id, AiMsg::Delta(delta_text)));
                     }
                 }
+                "message_start" => {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(json)
+                        && let Some(n) = v
+                            .get("message")
+                            .and_then(|m| m.get("usage"))
+                            .and_then(|u| u.get("input_tokens"))
+                            .and_then(|t| t.as_u64())
+                    {
+                        input_tokens = n;
+                    }
+                }
+                "message_delta" => {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(json)
+                        && let Some(n) = v
+                            .get("usage")
+                            .and_then(|u| u.get("output_tokens"))
+                            .and_then(|t| t.as_u64())
+                    {
+                        output_tokens = n;
+                    }
+                }
                 "message_stop" => break,
                 "error" => {
                     let snippet = json.chars().take(400).collect::<String>();
@@ -246,6 +269,15 @@ pub fn stream_to_channel(
                 _ => {}
             }
         }
+    }
+    if input_tokens > 0 || output_tokens > 0 {
+        let _ = sink.send((
+            job_id,
+            AiMsg::Usage {
+                input_tokens,
+                output_tokens,
+            },
+        ));
     }
     let _ = sink.send((job_id, AiMsg::Done(accumulated.trim().to_string())));
 }
@@ -326,6 +358,10 @@ pub fn agent_to_channel(
     let mut messages: Vec<serde_json::Value> =
         vec![serde_json::json!({ "role": "user", "content": prompt })];
     let mut full_text = String::new();
+    // Token usage summed across every turn — each turn is billed for
+    // the full context it sends, so summing per-turn is the true total.
+    let mut total_in: u64 = 0;
+    let mut total_out: u64 = 0;
 
     for iter in 0..AGENT_MAX_ITERS {
         if cancel.load(Ordering::Relaxed) {
@@ -341,7 +377,7 @@ pub fn agent_to_channel(
             "messages": messages,
         })
         .to_string();
-        let (blocks, stop_reason) =
+        let (blocks, stop_reason, (turn_in, turn_out)) =
             match run_agent_turn(&client, &api_key, body, cancel, &sink, job_id) {
                 Ok(v) => v,
                 Err(e) => {
@@ -349,6 +385,8 @@ pub fn agent_to_channel(
                     return;
                 }
             };
+        total_in += turn_in;
+        total_out += turn_out;
         // Accumulate this turn's text, separated from the previous
         // turn's so the final answer doesn't run two turns together.
         let turn_text: String = blocks
@@ -430,12 +468,22 @@ pub fn agent_to_channel(
             full_text.push_str("\n\n[stopped: tool-iteration cap reached]");
         }
     }
+    if total_in > 0 || total_out > 0 {
+        let _ = sink.send((
+            job_id,
+            AiMsg::Usage {
+                input_tokens: total_in,
+                output_tokens: total_out,
+            },
+        ));
+    }
     let _ = sink.send((job_id, AiMsg::Done(full_text.trim().to_string())));
 }
 
 /// Run one streaming agent turn — POST + read the SSE stream, forwarding
 /// text deltas to `sink` and collecting the turn's content blocks +
 /// `stop_reason`.
+#[allow(clippy::type_complexity)]
 fn run_agent_turn(
     client: &reqwest::blocking::Client,
     api_key: &str,
@@ -443,7 +491,7 @@ fn run_agent_turn(
     cancel: &AtomicBool,
     sink: &std::sync::mpsc::Sender<(u64, AiMsg)>,
     job_id: u64,
-) -> Result<(Vec<TurnBlock>, Option<String>), String> {
+) -> Result<(Vec<TurnBlock>, Option<String>, (u64, u64)), String> {
     let response = client
         .post(ENDPOINT)
         .header("x-api-key", api_key)
@@ -466,6 +514,8 @@ fn run_agent_turn(
     let mut blocks: Vec<TurnBlock> = Vec::new();
     let mut stop_reason: Option<String> = None;
     let mut current_event: Option<String> = None;
+    let mut input_tokens: u64 = 0;
+    let mut output_tokens: u64 = 0;
     loop {
         if cancel.load(Ordering::Relaxed) {
             return Err("cancelled".to_string());
@@ -553,14 +603,36 @@ fn run_agent_turn(
                     }
                 }
             }
-            "message_delta" => {
+            "message_start" => {
+                // The `message_start` event carries the input-token count.
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(json)
-                    && let Some(sr) = v
+                    && let Some(n) = v
+                        .get("message")
+                        .and_then(|m| m.get("usage"))
+                        .and_then(|u| u.get("input_tokens"))
+                        .and_then(|t| t.as_u64())
+                {
+                    input_tokens = n;
+                }
+            }
+            "message_delta" => {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
+                    if let Some(sr) = v
                         .get("delta")
                         .and_then(|d| d.get("stop_reason"))
                         .and_then(|s| s.as_str())
-                {
-                    stop_reason = Some(sr.to_string());
+                    {
+                        stop_reason = Some(sr.to_string());
+                    }
+                    // `message_delta.usage.output_tokens` is cumulative —
+                    // the last one seen is the turn's output total.
+                    if let Some(n) = v
+                        .get("usage")
+                        .and_then(|u| u.get("output_tokens"))
+                        .and_then(|t| t.as_u64())
+                    {
+                        output_tokens = n;
+                    }
                 }
             }
             "message_stop" => break,
@@ -571,7 +643,7 @@ fn run_agent_turn(
             _ => {}
         }
     }
-    Ok((blocks, stop_reason))
+    Ok((blocks, stop_reason, (input_tokens, output_tokens)))
 }
 
 /// The agent's tool definitions — all read-only, workspace-scoped.

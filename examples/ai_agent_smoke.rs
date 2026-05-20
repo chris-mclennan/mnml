@@ -47,8 +47,14 @@ fn main() {
     for (_, msg) in rx.iter() {
         match msg {
             AiMsg::Delta(d) => print!("{d}"),
+            AiMsg::Usage {
+                input_tokens,
+                output_tokens,
+            } => {
+                println!("\n\n=== USAGE === {input_tokens} in / {output_tokens} out");
+            }
             AiMsg::Done(text) => {
-                println!("\n\n=== DONE ===\n{text}");
+                println!("\n=== DONE ===\n{text}");
                 done = true;
             }
             AiMsg::Failed(e) => {

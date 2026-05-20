@@ -239,6 +239,39 @@ fn ghost_line_boundary(s: &str) -> usize {
     }
 }
 
+/// Rough per-million-token price `(input, output)` in USD for the known
+/// Claude tiers — approximate published rates. `None` for an
+/// unrecognized model (then only token counts are shown, no estimate).
+fn ai_price_per_mtok(model: Option<&str>) -> Option<(f64, f64)> {
+    let m = model.unwrap_or("claude-opus-4-7").to_ascii_lowercase();
+    if m.contains("haiku") {
+        Some((1.0, 5.0))
+    } else if m.contains("sonnet") {
+        Some((3.0, 15.0))
+    } else if m.contains("opus") {
+        Some((15.0, 75.0))
+    } else {
+        None
+    }
+}
+
+/// Estimate the USD cost of a request from its model + token counts.
+fn estimate_ai_cost(model: Option<&str>, input: u64, output: u64) -> Option<f64> {
+    let (pin, pout) = ai_price_per_mtok(model)?;
+    Some((input as f64 * pin + output as f64 * pout) / 1_000_000.0)
+}
+
+/// Compact token count — `840`, `2.1k`, `1.2M`.
+fn fmt_tokens(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
 /// The local-FIM worker thread body. Owns the `FimEngine` — loads it
 /// **eagerly on spawn** (so picking the Local backend starts the
 /// one-time ~1 GB download immediately rather than on the first
@@ -3027,6 +3060,10 @@ pub struct App {
     /// prompt. `(job_id, pane_id)` — cleared on completion.
     pending_wip_commit_msg_pane: Option<(u64, crate::layout::PaneId)>,
     next_job_id: u64,
+    /// Session token tally for the direct-API AI backend — summed from
+    /// every job's `AiMsg::Usage`. Drives `ai.token_usage`.
+    ai_tokens_in: u64,
+    ai_tokens_out: u64,
     /// Commands registered at runtime by IPC plugins (`register-command`). They
     /// show up in the palette/which-key + keymap; invoking one queues its id in
     /// `pending_plugin_invocations` for the IPC layer to log as an event.
@@ -3352,6 +3389,8 @@ impl App {
             pending_amend_msg_job: None,
             pending_wip_commit_msg_pane: None,
             next_job_id: 1,
+            ai_tokens_in: 0,
+            ai_tokens_out: 0,
             dynamic_commands: Vec::new(),
             pending_plugin_invocations: Vec::new(),
             lsp,
@@ -11712,6 +11751,44 @@ impl App {
             .unwrap_or(true)
     }
 
+    /// `ai.show_config` — toast the live AI backend + model + tool
+    /// state. A reliable "what am I running" readout (asking the model
+    /// itself doesn't work — LLMs don't know their own version).
+    pub fn ai_show_config(&mut self) {
+        match self.ai_backend() {
+            crate::ai::AiBackend::Cli => {
+                self.toast("AI: backend=cli (claude binary · your subscription)");
+            }
+            crate::ai::AiBackend::Api => {
+                let model = self
+                    .ai_model()
+                    .unwrap_or_else(|| "claude-opus-4-7 (default)".to_string());
+                let tools = if self.ai_api_tools() { "on" } else { "off" };
+                self.toast(format!("AI: backend=api · model={model} · tools={tools}"));
+            }
+        }
+    }
+
+    /// `ai.token_usage` — toast the session's direct-API token tally
+    /// (summed across every job) + a rough cost estimate.
+    pub fn ai_token_usage(&mut self) {
+        if self.ai_tokens_in == 0 && self.ai_tokens_out == 0 {
+            self.toast("AI usage: no direct-API calls this session");
+            return;
+        }
+        let model = self.ai_model();
+        let base = format!(
+            "AI usage this session: {} in · {} out",
+            fmt_tokens(self.ai_tokens_in),
+            fmt_tokens(self.ai_tokens_out)
+        );
+        let msg = match estimate_ai_cost(model.as_deref(), self.ai_tokens_in, self.ai_tokens_out) {
+            Some(c) => format!("{base} (~${c:.2})"),
+            None => base,
+        };
+        self.toast(msg);
+    }
+
     /// Optional `[ai] system_prompt = "..."` from the config — prepended
     /// to every API-backend request as the `system` field. CLI backend
     /// ignores this (it has its own conversation system prompt).
@@ -12503,11 +12580,35 @@ impl App {
         let msgs: Vec<AiJobMsg> = rx.try_iter().collect();
         let mut toasts: Vec<String> = Vec::new();
         for (job_id, msg) in msgs {
+            // Token-usage report — accumulate the session tally + toast
+            // this call's cost. Independent of which job kind it was.
+            if let AiMsg::Usage {
+                input_tokens,
+                output_tokens,
+            } = msg
+            {
+                self.ai_tokens_in = self.ai_tokens_in.saturating_add(input_tokens);
+                self.ai_tokens_out = self.ai_tokens_out.saturating_add(output_tokens);
+                let model = self.ai_model();
+                let base = format!(
+                    "AI: {} in · {} out",
+                    fmt_tokens(input_tokens),
+                    fmt_tokens(output_tokens)
+                );
+                toasts.push(
+                    match estimate_ai_cost(model.as_deref(), input_tokens, output_tokens) {
+                        Some(c) => format!("{base} (~${c:.4})"),
+                        None => base,
+                    },
+                );
+                continue;
+            }
             // An "AI: rewrite HEAD's message" job? Route the final text to a
             // GitCommitAmend prompt (same shape as the GitCommit case below).
             if self.pending_amend_msg_job == Some(job_id) {
                 let result = match msg {
                     AiMsg::Delta(_) => continue,
+                    AiMsg::Usage { .. } => continue, // handled above
                     AiMsg::Done(text) => Ok(text),
                     AiMsg::Failed(e) => Err(e),
                 };
@@ -12541,6 +12642,7 @@ impl App {
             if self.pending_commit_msg_job == Some(job_id) {
                 let result = match msg {
                     AiMsg::Delta(_) => continue,
+                    AiMsg::Usage { .. } => continue, // handled above
                     AiMsg::Done(text) => Ok(text),
                     AiMsg::Failed(e) => Err(e),
                 };
@@ -12629,6 +12731,7 @@ impl App {
                     toasts.push(format!("AI: {e}"));
                     a.state = AiState::Failed(e);
                 }
+                AiMsg::Usage { .. } => {} // handled at the top of the loop
             }
         }
         for t in toasts {
@@ -28949,6 +29052,28 @@ mod tests {
         // Single-line ⇒ the whole string.
         assert_eq!(ghost_line_boundary("a + b"), 5);
         assert_eq!(ghost_line_boundary(""), 0);
+    }
+
+    #[test]
+    fn estimate_ai_cost_uses_per_model_rates() {
+        // Sonnet: $3/M in, $15/M out → 1M in + 1M out = $18.
+        let c = estimate_ai_cost(Some("claude-sonnet-4-6"), 1_000_000, 1_000_000).unwrap();
+        assert!((c - 18.0).abs() < 1e-9, "got {c}");
+        // Haiku is cheaper than Sonnet for the same tokens.
+        let haiku = estimate_ai_cost(Some("claude-haiku-4-5"), 100_000, 50_000).unwrap();
+        let sonnet = estimate_ai_cost(Some("claude-sonnet-4-6"), 100_000, 50_000).unwrap();
+        assert!(haiku < sonnet);
+        // None model ⇒ defaults to Opus pricing (recognized).
+        assert!(estimate_ai_cost(None, 1000, 1000).is_some());
+        // Unrecognized model ⇒ no estimate.
+        assert_eq!(estimate_ai_cost(Some("some-other-llm"), 1000, 1000), None);
+    }
+
+    #[test]
+    fn fmt_tokens_is_compact() {
+        assert_eq!(fmt_tokens(840), "840");
+        assert_eq!(fmt_tokens(2_100), "2.1k");
+        assert_eq!(fmt_tokens(1_200_000), "1.2M");
     }
 
     #[test]

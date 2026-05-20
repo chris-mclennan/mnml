@@ -329,6 +329,13 @@ pub enum AiMsg {
     Done(String),
     /// The run failed (or was cancelled) — the reason.
     Failed(String),
+    /// Token usage for the just-finished API request — sent just before
+    /// `Done` by the direct-API workers (the CLI backend doesn't report
+    /// it). Drives the session token/cost tally.
+    Usage {
+        input_tokens: u64,
+        output_tokens: u64,
+    },
 }
 
 /// Run `claude -p --session-id <session_id> <prompt>`, forwarding stdout chunks

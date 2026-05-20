@@ -1689,6 +1689,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.ai_suggestion_stats(),
         },
         Command {
+            id: "ai.show_config",
+            title: "AI: show current backend / model / tools",
+            group: "ai",
+            keys: &[],
+            run: |app| app.ai_show_config(),
+        },
+        Command {
+            id: "ai.token_usage",
+            title: "AI: session token usage + cost estimate",
+            group: "ai",
+            keys: &[],
+            run: |app| app.ai_token_usage(),
+        },
+        Command {
             id: "view.image_open",
             title: "View: open image file (PNG/JPG/GIF/WebP/BMP)",
             group: "view",
