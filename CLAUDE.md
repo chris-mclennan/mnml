@@ -83,6 +83,27 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**AI API tool use — agentic loop over direct HTTP (2026-05-20):**
+the direct-HTTP AI backend was text-in/text-out; agent flows
+needed the CLI backend. New `agent_to_channel` (`ai/api_client.rs`)
+gives the API backend an agentic loop: the model gets three
+**read-only**, workspace-scoped tools — `read_file`,
+`list_directory`, `grep` — and the client runs request → tool
+calls → request until a final answer. Text streams per turn as
+`AiMsg::Delta` (same UX); each tool call surfaces as a
+`[tool: …]` status line; the final `AiMsg::Done` carries the
+model's text across all turns. The SSE reader now assembles
+`tool_use` content blocks (`input_json_delta` accumulation)
+alongside text + reads `stop_reason` from `message_delta`.
+Read-only by design — no write_file / shell tool — so it's
+strictly safer than the CLI backend (`claude -p`, full
+permissions); tool paths are canonicalized + refused if they
+escape the workspace. 12-turn iteration cap + 48 KB per-tool
+output cap. `[ai] api_tools` config (default on) picks agent
+loop vs plain streaming; `spawn_ai_job` routes accordingly.
+`examples/ai_agent_smoke.rs` exercises the loop end-to-end
+against the real API. 694 lib tests + e2e + clippy green.
+
 **Generic indent text object + AI suggestion polish (2026-05-20):**
 four bounded items. (1) **Generic indent text object** —
 `ii` / `ai` (vim-indent-object). `ii` selects the contiguous
