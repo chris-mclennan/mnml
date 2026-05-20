@@ -6,16 +6,49 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-/// HuggingFace repo + file for the quantized weights. Qwen's official
-/// qwen2.5-coder-1.5b-instruct GGUF at Q4_K_M — ~1 GB. The instruct
-/// model retains FIM capability (the `<|fim_*|>` tokens are in-vocab);
-/// the plain-base GGUF repo is access-gated, hence the instruct one.
-const GGUF_REPO: &str = "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF";
-const GGUF_FILE: &str = "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf";
-/// The base repo carries the `tokenizer.json` candle needs — the vocab
-/// is identical between base + instruct.
-const TOKENIZER_REPO: &str = "Qwen/Qwen2.5-Coder-1.5B";
 const TOKENIZER_FILE: &str = "tokenizer.json";
+
+/// Which qwen2.5-coder size to run. 1.5B is the fast default; 3B is
+/// noticeably smarter at multi-line completion but ~2x slower + a
+/// bigger download. (Instruct GGUFs — the base GGUF repos are gated;
+/// instruct retains FIM capability.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelChoice {
+    Qwen1_5B,
+    Qwen3B,
+}
+
+impl ModelChoice {
+    /// Parse a config string (`"1.5b"` / `"3b"`); unknown ⇒ 1.5B.
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "3b" | "3" | "qwen3b" => ModelChoice::Qwen3B,
+            _ => ModelChoice::Qwen1_5B,
+        }
+    }
+    /// `(gguf_repo, gguf_file, tokenizer_repo)`.
+    fn sources(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            ModelChoice::Qwen1_5B => (
+                "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+                "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+                "Qwen/Qwen2.5-Coder-1.5B",
+            ),
+            ModelChoice::Qwen3B => (
+                "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",
+                "qwen2.5-coder-3b-instruct-q4_k_m.gguf",
+                "Qwen/Qwen2.5-Coder-3B",
+            ),
+        }
+    }
+    /// Per-size tokenizer cache name so 1.5B + 3B can coexist.
+    fn tokenizer_cache_name(self) -> &'static str {
+        match self {
+            ModelChoice::Qwen1_5B => "tokenizer-1.5b.json",
+            ModelChoice::Qwen3B => "tokenizer-3b.json",
+        }
+    }
+}
 
 /// Progress callback payload — emitted periodically during a download so
 /// the host can paint a progress bar.
@@ -36,33 +69,36 @@ pub struct ModelPaths {
     pub tokenizer: PathBuf,
 }
 
-/// Ensure both model files exist in `cache_dir`, downloading whichever
-/// are missing. `progress` is called periodically during a download.
-/// Blocking — run on a worker thread.
+/// Ensure both model files for `choice` exist in `cache_dir`,
+/// downloading whichever are missing. `progress` is called periodically
+/// during a download. Blocking — run on a worker thread.
 pub fn ensure_model(
     cache_dir: &Path,
+    choice: ModelChoice,
     progress: &(dyn Fn(DownloadProgress) + Sync),
 ) -> Result<ModelPaths, String> {
     fs::create_dir_all(cache_dir)
         .map_err(|e| format!("create {}: {e}", cache_dir.display()))?;
-    let gguf = cache_dir.join(GGUF_FILE);
-    let tokenizer = cache_dir.join(TOKENIZER_FILE);
+    let (gguf_repo, gguf_file, tok_repo) = choice.sources();
+    let gguf = cache_dir.join(gguf_file);
+    let tokenizer = cache_dir.join(choice.tokenizer_cache_name());
 
     if !tokenizer.exists() {
-        let url = hf_url(TOKENIZER_REPO, TOKENIZER_FILE);
+        let url = hf_url(tok_repo, TOKENIZER_FILE);
         download(&url, &tokenizer, "tokenizer", progress)?;
     }
     if !gguf.exists() {
-        let url = hf_url(GGUF_REPO, GGUF_FILE);
+        let url = hf_url(gguf_repo, gguf_file);
         download(&url, &gguf, "weights", progress)?;
     }
     Ok(ModelPaths { gguf, tokenizer })
 }
 
-/// True when both model files are already cached — lets the host show
-/// "ready" vs "download required" without starting a download.
-pub fn is_model_cached(cache_dir: &Path) -> bool {
-    cache_dir.join(GGUF_FILE).exists() && cache_dir.join(TOKENIZER_FILE).exists()
+/// True when both model files for `choice` are already cached.
+pub fn is_model_cached(cache_dir: &Path, choice: ModelChoice) -> bool {
+    let (_, gguf_file, _) = choice.sources();
+    cache_dir.join(gguf_file).exists()
+        && cache_dir.join(choice.tokenizer_cache_name()).exists()
 }
 
 fn hf_url(repo: &str, file: &str) -> String {

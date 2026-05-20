@@ -10,14 +10,15 @@ use std::time::Instant;
 
 fn main() {
     let cache = fim_engine::default_cache_dir();
+    let choice = fim_engine::ModelChoice::Qwen1_5B;
     eprintln!("cache dir: {}", cache.display());
     eprintln!(
         "model cached: {}",
-        fim_engine::is_model_cached(&cache)
+        fim_engine::is_model_cached(&cache, choice)
     );
 
     let t0 = Instant::now();
-    let mut engine = match fim_engine::FimEngine::load(&cache, &|p| {
+    let mut engine = match fim_engine::FimEngine::load(&cache, choice, &|p| {
         let pct = p
             .total
             .map(|t| format!("{}%", p.received * 100 / t.max(1)))

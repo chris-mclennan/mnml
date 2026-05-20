@@ -26,10 +26,11 @@ pub struct Model {
 }
 
 impl Model {
-    /// Load the quantized weights + tokenizer from disk. Blocking +
-    /// CPU-bound — call on a worker thread.
+    /// Load the quantized weights + tokenizer from disk. Blocking —
+    /// call on a worker thread. Picks the Apple Metal GPU when the
+    /// `metal` feature is on and a device is available, else CPU.
     pub fn load(gguf: &Path, tokenizer_path: &Path) -> Result<Self, String> {
-        let device = Device::Cpu;
+        let device = pick_device();
         let mut file =
             std::fs::File::open(gguf).map_err(|e| format!("open gguf: {e}"))?;
         let content = gguf_file::Content::read(&mut file)
@@ -203,6 +204,22 @@ mod tests {
         let suffix = "\n} else {\n    fallback()\n}";
         assert_eq!(trim_at_suffix(completion, suffix), "do_thing()");
     }
+}
+
+/// Choose the inference device — Metal GPU when the `metal` feature is
+/// compiled in and a device initializes, otherwise CPU. Metal init can
+/// fail (no GPU, headless CI); the CPU fallback keeps the engine usable.
+fn pick_device() -> Device {
+    #[cfg(feature = "metal")]
+    {
+        match Device::new_metal(0) {
+            Ok(d) => return d,
+            Err(e) => {
+                eprintln!("fim-engine: Metal unavailable ({e}) — using CPU");
+            }
+        }
+    }
+    Device::Cpu
 }
 
 /// argmax over the vocab dimension of a logits tensor. Accepts either

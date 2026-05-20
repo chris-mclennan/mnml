@@ -8,11 +8,11 @@
 //! Shared by mnml + tmnl. Typical use:
 //!
 //! ```no_run
-//! use fim_engine::FimEngine;
-//! use std::path::Path;
+//! use fim_engine::{FimEngine, ModelChoice};
 //!
 //! // Blocking — do this on a worker thread.
-//! let mut engine = FimEngine::load(Path::new("/Users/me/.mnml/models"), &|p| {
+//! let cache = fim_engine::default_cache_dir();
+//! let mut engine = FimEngine::load(&cache, ModelChoice::Qwen1_5B, &|p| {
 //!     eprintln!("{}: {}/{:?}", p.label, p.received, p.total);
 //! })?;
 //! let completion = engine.complete("fn add(a: i32, b: i32) -> i32 {\n    ", "\n}", 64)?;
@@ -25,7 +25,7 @@
 mod download;
 mod infer;
 
-pub use download::{DownloadProgress, ModelPaths, is_model_cached};
+pub use download::{DownloadProgress, ModelChoice, ModelPaths, is_model_cached};
 
 use std::path::{Path, PathBuf};
 
@@ -56,17 +56,19 @@ pub struct FimEngine {
 }
 
 impl FimEngine {
-    /// Download (if needed) + load the model. `cache_dir` is where the
-    /// GGUF weights + tokenizer are stored — e.g. `~/.mnml/models`.
-    /// `progress` is invoked periodically while files download.
+    /// Download (if needed) + load the `choice` model. `cache_dir` is
+    /// where the GGUF weights + tokenizer are cached (see
+    /// [`default_cache_dir`]). `progress` fires periodically while
+    /// files download.
     ///
     /// Blocking and slow on the first call (a ~1 GB download); fast
     /// afterwards (just the load). Run it on a worker thread.
     pub fn load(
         cache_dir: &Path,
+        choice: ModelChoice,
         progress: &(dyn Fn(DownloadProgress) + Sync),
     ) -> Result<Self, String> {
-        let paths = download::ensure_model(cache_dir, progress)?;
+        let paths = download::ensure_model(cache_dir, choice, progress)?;
         let model = infer::Model::load(&paths.gguf, &paths.tokenizer)?;
         Ok(FimEngine { model })
     }
