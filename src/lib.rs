@@ -195,6 +195,24 @@ pub enum HoverChip {
     CodeLensChip,
 }
 
+/// One row in the F1 click-discovery overlay. Each variant maps to a list
+/// of on-screen rects that the renderer flashes when the user clicks the
+/// row in the panel. See `ui::discovery` + `App::discovery_flash`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscoveryCategory {
+    StatuslineMode,
+    StatuslineBranch,
+    StatuslineWorkspace,
+    StatuslineClock,
+    BufferlineTabs,
+    RailGitHeader,
+    EditorGutter,
+    DiffToolbar,
+    FoldChips,
+    CodeLensChips,
+    SplitDividers,
+}
+
 /// One clickable per-hunk action chip in the Hunk view's header
 /// row. The corresponding rect lives on
 /// `app.rects.diff_hunk_buttons`.

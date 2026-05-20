@@ -244,6 +244,11 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         // F1 discovery overlay closes on Esc too — same dismiss gesture as
         // tooltips/toasts.
         app.show_discovery_overlay = false;
+        // Welcome overlay also dismisses on Esc (and persists the marker
+        // so it doesn't auto-reopen next launch).
+        if app.show_welcome {
+            app.dismiss_welcome();
+        }
     }
     // Flash intercept: when label overlay is up, Esc cancels; a printable
     // char matching a label commits the jump; an unmatched key cancels
@@ -3931,6 +3936,32 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
 
+    // Welcome overlay — any left-click dismisses + persists the marker.
+    if app.show_welcome
+        && matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+    {
+        app.dismiss_welcome();
+        return;
+    }
+    // Discovery overlay — intercept clicks on its rows so the user can
+    // flash the matching on-screen rects. A click outside the panel
+    // closes the overlay (so it can't trap the user).
+    if app.show_discovery_overlay
+        && matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+    {
+        if let Some(&(_, cat)) = app
+            .rects
+            .discovery_rows
+            .iter()
+            .find(|(r, _)| contains(*r, x, y))
+        {
+            app.discovery_flash = Some((cat, std::time::Instant::now()));
+            return;
+        }
+        // Click outside any row → dismiss the overlay.
+        app.show_discovery_overlay = false;
+        return;
+    }
     // A click anywhere dismisses the hover / signature popups (the click
     // still lands). Completion popup clicks are handled specially: a click
     // ON a row selects + accepts; a click anywhere else dismisses.
@@ -4123,6 +4154,50 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 && contains(r, x, y)
             {
                 app.open_statusline_clock_context_menu((x, y));
+                return;
+            }
+            // Right-click on the `> WORKSPACE` header → workspace menu.
+            if let Some(tr) = app.rects.tree_toggle
+                && contains(tr, x, y)
+            {
+                app.open_workspace_header_context_menu((x, y));
+                return;
+            }
+            // Right-click on an extra-workspace header → that workspace's menu.
+            if let Some(&(_, ws_idx)) = app
+                .rects
+                .extra_workspace_toggles
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+            {
+                app.open_extra_workspace_header_context_menu(ws_idx, (x, y));
+                return;
+            }
+            // Right-click on a Request pane URL/Method/Headers/Body row →
+            // copy-as-curl / send / toggle view.
+            if app
+                .rects
+                .request_fields
+                .iter()
+                .any(|(r, _, _)| contains(*r, x, y))
+            {
+                app.open_request_url_context_menu((x, y));
+                return;
+            }
+            // Right-click anywhere inside an AI pane → re-ask / cancel /
+            // promote menu. AI panes don't have list_rows so we test by
+            // matching the active pane variant + click location against
+            // the pane's bounding rect via the editor-pane registry (AI
+            // panes share that registry shape).
+            if let Some(cur) = app.active
+                && matches!(app.panes.get(cur), Some(Pane::Ai(_)))
+            {
+                // Quick "is the click inside the AI pane's body?" — the
+                // pane currently doesn't register its rect, so we just
+                // fire the menu whenever an AI pane is active and the
+                // click hasn't been caught by anything earlier (the
+                // statusline / bufferline / rail checks already returned).
+                app.open_ai_pane_context_menu((x, y));
                 return;
             }
             // Right-click on an editor gutter → per-line menu (toggle BP /
@@ -4580,6 +4655,22 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .find(|(r, _)| contains(*r, x, y))
             {
                 app.run_git_rail_header_action(action);
+                return;
+            }
+            // GitGraph column header click → cycle sort. Falls through to
+            // the row-click handler since the header row is OUTSIDE
+            // `app.rects.list_rows`.
+            if let Some(&(_, col)) = app
+                .rects
+                .git_graph_column_headers
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+            {
+                if let Some(cur) = app.active
+                    && let Some(crate::pane::Pane::GitGraph(g)) = app.panes.get_mut(cur)
+                {
+                    g.cycle_sort(col);
+                }
                 return;
             }
             // The `> GIT` section header — same idea for the git rail.

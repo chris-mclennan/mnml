@@ -83,6 +83,47 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Discoverability wave III — interactive F1 / sortable graph headers / right-click everywhere / first-launch welcome (2026-05-19):**
+five-item polish pass extending the prior waves.
+(1) **Interactive F1 overlay.** The Click Discovery panel now
+registers each row as a clickable rect. Click a category → matching
+on-screen rects flash yellow for ~2s (DISCOVERY_FLASH_MS) so the user
+can see exactly where each clickable lives. Active row is underlined
+in the panel while flashing. New `DiscoveryCategory` enum (11
+variants — one per chip family), `App.discovery_flash:
+Option<(category, Instant)>` carries the timer, `ui::discovery::
+draw_flash` paints the highlight after every other layer so it sits
+on top.
+(2) **Mouse parity audit.** Confirmed every list-row pane already
+dispatches `is_double_click` through `handle_scm_row_click` —
+Diagnostics, Outline, Flaky, Diff, GitGraph (incl. WIP row),
+CmdlineHistory, Tests, GitStatus, Grep/Quickfix, Browser (net + DOM
++ cookies + storage), all 8 SCM panes. Cheatsheet remains the only
+list pane without row clicks (refactor it'd take takes `&App` not
+`&mut App` — left as a follow-up).
+(3) **GitGraph sortable column headers.** Click `AUTHOR` / `DATE /
+TIME` / `SHA` chip → cycle that column's sort (none → desc → asc
+→ none). Active column underlined + yellow with `▲`/`▼` glyph; sort
+is in-memory only (re-applied after every refresh via
+`GitGraphPane::apply_sort`). New `SortColumn` enum +
+`App.rects.git_graph_column_headers` registry +
+`GitGraphPane::cycle_sort`.
+(4) **Right-click coverage pass.** Workspace header (toggle expand /
+switch workspace / add workspace / reveal / refresh), extra-workspace
+header (switch / remove / reveal / refresh), Request pane fields
+(send / copy as curl / toggle view), AI pane (re-ask / cancel /
+promote / apply / session view). New palette commands `ai.reask` /
+`ai.cancel` / `ai.promote` / `ai.apply` / `rqst.toggle_view` so each
+menu entry has a real dispatch target.
+(5) **First-launch welcome overlay.** Auto-opens on the first launch
+in a workspace (detected via missing `<ws>/.mnml/.welcomed` marker).
+Lists the handful of shortcuts a new user most needs (F1, Ctrl+P,
+Ctrl+Shift+P, Ctrl+B, Ctrl+T, leader g l / l h, right-click,
+`:welcome`). Esc / any click dismisses + writes the marker so it
+doesn't reappear automatically. Manual trigger via `view.welcome`
+palette command or `:welcome` / `:Welcome` ex alias.
+678 lib tests + clippy clean.
+
 **Discoverability wave II — GitGraph filter set + tooltip + right-click extension + gutter menu + request-pane focus bar + F1 overlay (2026-05-19):**
 five small/medium items extending the prior chip work. (1) **GitGraph
 filters complete.** `LogFilter` gained `author` (`--author=`) +

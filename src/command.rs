@@ -141,6 +141,13 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "view.welcome",
+            title: "Welcome overlay (shortcuts cheatsheet)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_welcome(),
+        },
+        Command {
             id: "view.focus_tree",
             title: "Focus the file tree (without toggling)",
             group: "view",
@@ -2257,6 +2264,24 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.copy_active_curl(),
         },
         Command {
+            id: "rqst.toggle_view",
+            title: "HTTP: toggle Request pane between Edit ⇄ Response",
+            group: "http",
+            keys: &[],
+            run: |app| {
+                use crate::pane::Pane;
+                use crate::request_pane::ViewMode;
+                if let Some(cur) = app.active
+                    && let Some(Pane::Request(rp)) = app.panes.get_mut(cur)
+                {
+                    rp.view = match rp.view {
+                        ViewMode::Edit => ViewMode::Response,
+                        ViewMode::Response => ViewMode::Edit,
+                    };
+                }
+            },
+        },
+        Command {
             id: "rqst.copy_response_body",
             title: "HTTP: copy the response body",
             group: "http",
@@ -2515,6 +2540,34 @@ fn builtin_commands() -> Vec<Command> {
             group: "ai",
             keys: &[],
             run: |app| app.ai_action("write_tests"),
+        },
+        Command {
+            id: "ai.reask",
+            title: "AI: re-ask (fresh session)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.resend_active_ai(),
+        },
+        Command {
+            id: "ai.cancel",
+            title: "AI: cancel running job",
+            group: "ai",
+            keys: &[],
+            run: |app| app.cancel_active_ai(),
+        },
+        Command {
+            id: "ai.promote",
+            title: "AI: promote to interactive (claude --resume)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.continue_active_ai(),
+        },
+        Command {
+            id: "ai.apply",
+            title: "AI: apply suggested change",
+            group: "ai",
+            keys: &[],
+            run: |app| app.apply_ai_suggestion(),
         },
         Command {
             id: "ai.session_view",

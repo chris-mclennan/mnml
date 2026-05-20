@@ -56,6 +56,23 @@ pub struct GitGraphPane {
     /// scopes to commits reachable from that branch; `since` / `until`
     /// accept any spec git understands ("1 week ago", "2026-01-01", …).
     pub filter: crate::git::log::LogFilter,
+    /// Active commit-list sort. `None` ⇒ git's native `--date-order`
+    /// (parent-relative); `Some(col, asc)` re-sorts the loaded commits
+    /// in-place by the chosen column. Click a column header to cycle.
+    pub sort: Option<(SortColumn, bool)>,
+}
+
+/// Which column the user wants the commit list sorted by — wired to
+/// header clicks in the GitGraph pane. `None` on `GitGraphPane.sort`
+/// keeps git's native parent-relative ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortColumn {
+    /// Commit author timestamp (default direction = descending = newest first).
+    Date,
+    /// Author name (alphabetical).
+    Author,
+    /// Short SHA (alphabetical).
+    Sha,
 }
 
 /// Multi-line text-area state for the WIP detail panel's commit
@@ -104,9 +121,51 @@ impl GitGraphPane {
             embedded_diff: None,
             wip_commit: WipCommitInput::default(),
             filter: crate::git::log::LogFilter::default(),
+            sort: None,
         };
         p.reload_detail();
         p
+    }
+
+    /// Cycle the sort state for `col`: `Some(col, asc)` ⇒ `Some(col,
+    /// !asc)` ⇒ `None` (back to git's native order). Re-sorts the
+    /// loaded commits in place — no extra `git log` invocation needed.
+    pub fn cycle_sort(&mut self, col: SortColumn) {
+        self.sort = match self.sort {
+            Some((c, true)) if c == col => Some((col, false)),
+            Some((c, false)) if c == col => None,
+            _ => Some((col, false)),
+        };
+        self.apply_sort();
+        self.selected = 0;
+        self.scroll = 0;
+    }
+
+    /// Apply the current sort to `self.commits` in place. No-op when
+    /// `sort` is `None`. Re-stable so equal keys preserve git order.
+    pub fn apply_sort(&mut self) {
+        let Some((col, asc)) = self.sort else {
+            return;
+        };
+        match col {
+            SortColumn::Date => self
+                .commits
+                .sort_by(|a, b| if asc { a.time.cmp(&b.time) } else { b.time.cmp(&a.time) }),
+            SortColumn::Author => self.commits.sort_by(|a, b| {
+                if asc {
+                    a.author.cmp(&b.author)
+                } else {
+                    b.author.cmp(&a.author)
+                }
+            }),
+            SortColumn::Sha => self.commits.sort_by(|a, b| {
+                if asc {
+                    a.short.cmp(&b.short)
+                } else {
+                    b.short.cmp(&a.short)
+                }
+            }),
+        }
     }
 
     /// Total virtual rows = commits + maybe a WIP row at the top.
@@ -178,6 +237,7 @@ impl GitGraphPane {
     /// Re-run `git log` (after a commit, fetch, etc.), keeping the selection in range.
     pub fn refresh(&mut self) {
         self.commits = log::load_filtered(&self.workspace, LIMIT, &self.filter);
+        self.apply_sort();
         self.has_wip = working_tree_has_changes(&self.workspace);
         let total = self.total_rows();
         if total == 0 {

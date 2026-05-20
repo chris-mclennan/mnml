@@ -194,6 +194,9 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     };
     // Re-open last session's buffers (no-op when [session] restore = false).
     app.try_restore_session();
+    // First-launch onboarding overlay. If the user has never dismissed it
+    // in this workspace (no `.mnml/.welcomed` marker), open it.
+    app.maybe_show_welcome_on_launch();
 
     let result = if let Some(socket) = &args.blit {
         mnml::blit::run(app, socket)

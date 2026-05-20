@@ -73,6 +73,7 @@ pub mod discovery;
 pub mod toast_stack;
 pub mod tooltip;
 pub mod trace_view;
+pub mod welcome_overlay;
 pub mod tree_view;
 pub mod welcome;
 pub mod whichkey;
@@ -131,6 +132,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.diff_hunk_buttons.clear();
         app.rects.scrollbars.clear();
         app.rects.git_graph_detail_dividers.clear();
+        app.rects.git_graph_column_headers.clear();
         app.rects.request_tabs.clear();
         app.rects.request_fields.clear();
         app.rects.completion_rows.clear();
@@ -378,6 +380,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     // F1 discovery overlay — sits on top of everything else.
     discovery::draw(frame, app, area);
+    // Welcome overlay — peer of discovery; auto-open on first launch.
+    welcome_overlay::draw(frame, app, area);
+    // …and the flash highlight paints last so it can sit on top of even
+    // the discovery panel (if the user picks a category whose rect lies
+    // beneath the panel, the highlight will still flash through).
+    discovery::draw_flash(frame, app, area);
 
     // ── terminal cursor ──
     // An overlay's text caret (picker query, prompt input) wins when it's open;

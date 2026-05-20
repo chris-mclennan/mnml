@@ -269,6 +269,8 @@ pub fn draw(
     } else {
         Some(format!("{} · F clears", chips.join(" · ")))
     };
+    let sort = g.sort;
+    let mut header_clickables: Vec<(Rect, crate::git::graph::SortColumn)> = Vec::new();
     draw_header(
         frame,
         header_area,
@@ -277,7 +279,10 @@ pub fn draw(
         graph_w,
         &g.hash_filter,
         filter_label.as_deref(),
+        sort,
+        &mut header_clickables,
     );
+    app.rects.git_graph_column_headers = header_clickables;
 
     let mut rows: Vec<Line> = Vec::with_capacity(h);
     let mut row_recordings: Vec<(u16, usize)> = Vec::with_capacity(h);
@@ -1656,7 +1661,29 @@ fn draw_header(
     // Combined filter chip label (`⎇ feat · @alice · since 1 week ago …`)
     // — `None` means no active filter, so the column shows "COMMIT MESSAGE".
     filter_label: Option<&str>,
+    sort: Option<(crate::git::graph::SortColumn, bool)>,
+    column_clickables: &mut Vec<(Rect, crate::git::graph::SortColumn)>,
 ) {
+    use crate::git::graph::SortColumn;
+    let sort_glyph = |c: SortColumn| -> &'static str {
+        match sort {
+            Some((sc, true)) if sc == c => " ▲",
+            Some((sc, false)) if sc == c => " ▼",
+            _ => "  ",
+        }
+    };
+    let header_style = |c: SortColumn| -> Style {
+        let mut st = Style::default().fg(t.comment).bg(t.bg_darker);
+        if matches!(sort, Some((sc, _)) if sc == c) {
+            st = st.fg(t.yellow).add_modifier(Modifier::BOLD);
+        } else {
+            st = st.add_modifier(Modifier::BOLD);
+        }
+        st
+    };
+    // Cumulative cell-x within the header lane — used to register the
+    // per-column clickable rects.
+    let mut cell_x: u16 = 0;
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -1664,6 +1691,7 @@ fn draw_header(
     let mut spans: Vec<Span> = Vec::new();
     // Lane bar + arrow gutter
     spans.push(Span::styled("   ", Style::default().bg(bg)));
+    cell_x += 3;
     // Visible `│` column separators replace the previous bare 2-space
     // gaps between columns. Drag to resize is a follow-up — for now
     // they're purely visual cues advertising column boundaries
@@ -1679,9 +1707,12 @@ fn draw_header(
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ));
+        cell_x += cols.branch as u16;
         spans.push(sep_span());
+        cell_x += 3;
     } else {
         spans.push(Span::styled("  ", Style::default().bg(bg)));
+        cell_x += 2;
     }
     // Graph column header
     spans.push(Span::styled(
@@ -1691,7 +1722,9 @@ fn draw_header(
             .bg(bg)
             .add_modifier(Modifier::BOLD),
     ));
+    cell_x += graph_w as u16;
     spans.push(sep_span());
+    cell_x += 3;
     // Subject header (flex). Reserve SHA right-pad too — otherwise
     // the trailing space spans land past `area.width` and clip.
     let branch_section = if cols.branch > 0 { cols.branch + 3 } else { 2 };
@@ -1734,36 +1767,65 @@ fn draw_header(
         )
     };
     spans.push(Span::styled(subject_label, label_style));
+    cell_x += subject_w as u16;
     if cols.author > 0 {
         spans.push(sep_span());
+        cell_x += 3;
+        let label = format!("AUTHOR{}", sort_glyph(SortColumn::Author));
         spans.push(Span::styled(
-            right_align("AUTHOR", cols.author),
-            Style::default()
-                .fg(t.comment)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
+            right_align(&label, cols.author),
+            header_style(SortColumn::Author),
         ));
+        column_clickables.push((
+            Rect {
+                x: area.x + cell_x,
+                y: area.y,
+                width: cols.author as u16,
+                height: 1,
+            },
+            SortColumn::Author,
+        ));
+        cell_x += cols.author as u16;
     }
     if cols.age > 0 {
         spans.push(sep_span());
+        cell_x += 3;
+        let label = format!("DATE / TIME{}", sort_glyph(SortColumn::Date));
         spans.push(Span::styled(
-            right_align("DATE / TIME", cols.age),
-            Style::default()
-                .fg(t.comment)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
+            right_align(&label, cols.age),
+            header_style(SortColumn::Date),
         ));
+        column_clickables.push((
+            Rect {
+                x: area.x + cell_x,
+                y: area.y,
+                width: cols.age as u16,
+                height: 1,
+            },
+            SortColumn::Date,
+        ));
+        cell_x += cols.age as u16;
     }
     if cols.sha > 0 {
         spans.push(sep_span());
+        cell_x += 3;
+        let label = format!("SHA{}", sort_glyph(SortColumn::Sha));
         spans.push(Span::styled(
-            right_align("SHA", cols.sha),
-            Style::default()
-                .fg(t.comment)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
+            right_align(&label, cols.sha),
+            header_style(SortColumn::Sha),
         ));
+        column_clickables.push((
+            Rect {
+                x: area.x + cell_x,
+                y: area.y,
+                width: cols.sha as u16,
+                height: 1,
+            },
+            SortColumn::Sha,
+        ));
+        cell_x += cols.sha as u16;
     }
+    let _ = cell_x;
     if SHA_RIGHT_PAD > 0 {
         spans.push(Span::styled(
             " ".repeat(SHA_RIGHT_PAD),

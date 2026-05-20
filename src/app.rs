@@ -23,6 +23,13 @@ const TOAST_STACK_MAX: usize = 5;
 /// How long the mouse must rest on a clickable chip before its tooltip
 /// appears. 500ms matches VS Code / browser hover-tooltip convention.
 pub const HOVER_TOOLTIP_DELAY_MS: u64 = 500;
+/// How long the F1 overlay's "flash these rects" highlight stays painted
+/// after the user clicks a row in the panel.
+pub const DISCOVERY_FLASH_MS: u64 = 2000;
+/// Per-workspace marker file written when the user dismisses the
+/// first-launch welcome overlay. Once present, mnml stops auto-opening
+/// the overlay on launch (`view.welcome` still opens it manually).
+const WELCOMED_MARKER_REL: &str = ".mnml/.welcomed";
 const DAP_LOG_MAX: usize = 500;
 
 /// Cap on `App::recent_files`. Tuned to "deep enough to remember a few tasks
@@ -1631,6 +1638,13 @@ pub struct PaneRects {
     /// Chips on the `> GIT` rail header (Fetch / Pull / Push / Commit /
     /// Stage all / Graph) — one-click access to common ops.
     pub rail_git_header_buttons: Vec<(Rect, crate::GitRailHeaderAction)>,
+    /// One rect per row in the F1 click-discovery overlay — click a row
+    /// to flash the matching on-screen rects. Cleared + repopulated by
+    /// `ui::discovery::draw` when the overlay is visible.
+    pub discovery_rows: Vec<(Rect, crate::DiscoveryCategory)>,
+    /// GitGraph column header rects (Author / Date / SHA) — click to
+    /// cycle that column's sort (asc / desc / none).
+    pub git_graph_column_headers: Vec<(Rect, crate::git::graph::SortColumn)>,
     /// `(rect, pane_id)` for each tab's close badge (the trailing `×`/`●` → close).
     pub bufferline_tab_close: Vec<(Rect, PaneId)>,
     /// The whole central split-tree area.
@@ -2225,6 +2239,16 @@ pub struct App {
     /// clickable region category with live rect counts. Press F1 again or
     /// Esc to close. In-memory only.
     pub show_discovery_overlay: bool,
+    /// While set, the renderer flashes the matching rects yellow for
+    /// `DISCOVERY_FLASH_MS`. Set when the user clicks a row in the F1
+    /// overlay; cleared automatically by `App::tick` once the flash
+    /// expires.
+    pub discovery_flash: Option<(crate::DiscoveryCategory, std::time::Instant)>,
+    /// Welcome overlay — opens automatically on the first launch in a
+    /// workspace (detected via missing `.mnml/.welcomed` marker). Esc /
+    /// any click / `view.welcome` toggles. Persists the dismiss across
+    /// launches.
+    pub show_welcome: bool,
     /// True after a quit was refused because of unsaved changes — a second
     /// `request_quit` then goes through. Cleared by saving.
     pub quit_armed: bool,
@@ -2786,6 +2810,8 @@ impl App {
             hover_chip: None,
             hover_divider_idx: None,
             show_discovery_overlay: false,
+            discovery_flash: None,
+            show_welcome: false,
             quit_armed: false,
             rects: PaneRects::default(),
             flash_state: None,
@@ -3055,6 +3081,157 @@ impl App {
             }
             Err(e) => self.toast(format!("git add -A: {e}")),
         }
+    }
+
+    /// Path to the per-workspace "I've seen the welcome overlay" marker.
+    fn welcomed_marker_path(&self) -> std::path::PathBuf {
+        self.workspace.join(WELCOMED_MARKER_REL)
+    }
+
+    /// Open the welcome overlay automatically on launch, unless the user
+    /// has previously dismissed it in this workspace. Called once from
+    /// `main()` after `try_restore_session`.
+    pub fn maybe_show_welcome_on_launch(&mut self) {
+        if !self.welcomed_marker_path().exists() {
+            self.show_welcome = true;
+        }
+    }
+
+    /// Toggle the welcome overlay manually (palette / `:welcome`). Showing
+    /// the overlay also writes the marker so it doesn't auto-reopen next
+    /// launch.
+    pub fn toggle_welcome(&mut self) {
+        self.show_welcome = !self.show_welcome;
+        if !self.show_welcome {
+            // Dismissed — record so the auto-open doesn't fire again.
+            self.write_welcomed_marker();
+        }
+    }
+
+    /// Dismiss the welcome overlay + persist that the user has seen it.
+    pub fn dismiss_welcome(&mut self) {
+        self.show_welcome = false;
+        self.write_welcomed_marker();
+    }
+
+    fn write_welcomed_marker(&self) {
+        let path = self.welcomed_marker_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, b"welcomed\n");
+    }
+
+    /// Right-click on the `> WORKSPACE` section header — exposes the
+    /// workspace-scoped ops as a menu.
+    pub fn open_workspace_header_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = self
+            .workspace
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "workspace".into());
+        let items = vec![
+            MenuItem::new(
+                "Toggle expand",
+                MenuAction::Command("view.toggle_tree_section"),
+            ),
+            MenuItem::new(
+                "Switch workspace…",
+                MenuAction::Command("view.switch_workspace"),
+            ),
+            MenuItem::new(
+                "Add workspace…",
+                MenuAction::Command("view.add_workspace"),
+            ),
+            MenuItem::new(
+                "Reveal in Finder",
+                MenuAction::RevealInFinder(self.workspace.clone()),
+            ),
+            MenuItem::new("Refresh tree", MenuAction::Command("tree.refresh")),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
+    /// Right-click on an extra-workspace section header — toggle, switch to,
+    /// or remove that extra workspace.
+    pub fn open_extra_workspace_header_context_menu(
+        &mut self,
+        ws_idx: usize,
+        anchor: (u16, u16),
+    ) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = self
+            .extra_workspaces
+            .get(ws_idx)
+            .map(|w| w.name.clone())
+            .unwrap_or_else(|| format!("workspace {ws_idx}"));
+        let path = self.extra_workspaces.get(ws_idx).map(|w| w.root.clone());
+        let mut items = vec![MenuItem::new("Toggle expand", MenuAction::Command(""))];
+        // Replace the Command("") placeholder with a no-op since we don't
+        // have a per-extra "toggle" command; the click action will toggle
+        // directly via the rect handler in tui.rs. Keep the row for menu
+        // parity. Switching workspaces still routes through the picker.
+        items[0] = MenuItem::new(
+            "Switch workspace…",
+            MenuAction::Command("view.switch_workspace"),
+        );
+        items.push(MenuItem::new(
+            "Remove this workspace",
+            MenuAction::Command("view.remove_workspace"),
+        ));
+        if let Some(p) = path {
+            items.push(MenuItem::new(
+                "Reveal in Finder",
+                MenuAction::RevealInFinder(p),
+            ));
+        }
+        items.push(MenuItem::new("Refresh tree", MenuAction::Command("tree.refresh")));
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
+    /// Right-click on an AI pane — exposes re-ask / cancel / promote
+    /// without remembering single-letter chords.
+    pub fn open_ai_pane_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = "AI".to_string();
+        let items = vec![
+            MenuItem::new("Re-ask (fresh session)", MenuAction::Command("ai.reask")),
+            MenuItem::new(
+                "Cancel running job",
+                MenuAction::Command("ai.cancel"),
+            ),
+            MenuItem::new(
+                "Promote to interactive (claude --resume)",
+                MenuAction::Command("ai.promote"),
+            ),
+            MenuItem::new(
+                "Apply suggested change",
+                MenuAction::Command("ai.apply"),
+            ),
+            MenuItem::new(
+                "View session transcript",
+                MenuAction::Command("ai.session_view"),
+            ),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
+    /// Right-click on the Request pane URL row — exposes copy-as-curl,
+    /// re-fire, switch to Response view.
+    pub fn open_request_url_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Send", MenuAction::Command("rqst.send")),
+            MenuItem::new("Copy as curl", MenuAction::Command("rqst.copy_curl")),
+            MenuItem::new("Switch to Response", MenuAction::Command("rqst.toggle_view")),
+        ];
+        self.context_menu = Some(ContextMenu::new(
+            Some("Request".into()),
+            anchor,
+            items,
+        ));
     }
 
     /// Right-click on an editor gutter row — exposes the most common line-
@@ -20956,6 +21133,9 @@ impl App {
                 let ver = env!("MNML_GIT_SHA");
                 self.toast(format!("mnml {ver}"));
             }
+            // `:welcome` — re-open the first-launch overlay. Useful as a
+            // discoverability gesture after the marker has been written.
+            "welcome" | "Welcome" => self.toggle_welcome(),
             // `:reg` / `:registers` — toast clipboard contents (we have a
             // single anonymous register for now). Newlines render as `↵`,
             // truncated to keep the toast short.
