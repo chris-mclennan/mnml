@@ -1473,6 +1473,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_md_preview(),
         },
         Command {
+            id: "markdown.link_check",
+            title: "Markdown: check all link targets (broken ones → Quickfix)",
+            group: "view",
+            keys: &[],
+            run: |app| app.run_markdown_link_check(),
+        },
+        Command {
             id: "git.diff_file",
             title: "Git: diff this file (split)",
             group: "git",
@@ -2219,6 +2226,13 @@ fn builtin_commands() -> Vec<Command> {
             group: "edit",
             keys: &["ctrl+j"],
             run: |app| app.snippet_expand_at_cursor(),
+        },
+        Command {
+            id: "snippet.pick_all",
+            title: "Snippets: list ALL (every scope)…",
+            group: "editor",
+            keys: &[],
+            run: |app| app.snippet_pick_all(),
         },
         Command {
             id: "snippet.pick",

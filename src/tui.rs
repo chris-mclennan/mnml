@@ -3026,6 +3026,24 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter => app.jump_to_selected_grep_hit(),
             KeyCode::Char('r') => app.rerun_active_grep(),
             KeyCode::Char('R') => app.open_grep_replace_prompt(),
+            // Per-hit toggle — Space marks the row enabled/disabled;
+            // `R` then replaces only enabled hits. `A` enables all,
+            // `D` disables all.
+            KeyCode::Char(' ') => {
+                if let Some(Pane::Grep(g)) = app.panes.get_mut(i) {
+                    g.toggle_selected();
+                }
+            }
+            KeyCode::Char('A') => {
+                if let Some(Pane::Grep(g)) = app.panes.get_mut(i) {
+                    g.enable_all();
+                }
+            }
+            KeyCode::Char('D') => {
+                if let Some(Pane::Grep(g)) = app.panes.get_mut(i) {
+                    g.disable_all();
+                }
+            }
             KeyCode::Char('y') => app.copy_selected_grep_hit(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}

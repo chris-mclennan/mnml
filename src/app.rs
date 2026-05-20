@@ -186,6 +186,130 @@ fn is_markdown_path(path: &Path) -> bool {
     )
 }
 
+/// Recursively walk `dir` collecting files whose extension matches any
+/// entry in `exts` (lowercase, no leading dot). Skips dot-dirs +
+/// `node_modules` / `target` to keep big repos snappy. Used by
+/// `App::run_markdown_link_check`.
+fn walk_workspace_for_extensions(
+    dir: &Path,
+    exts: &[&str],
+    out: &mut Vec<std::path::PathBuf>,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let path = e.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        let ft = e.file_type().ok();
+        if ft.is_some_and(|t| t.is_dir()) {
+            if matches!(name, "node_modules" | "target" | "dist" | "build") {
+                continue;
+            }
+            walk_workspace_for_extensions(&path, exts, out);
+        } else {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_ascii_lowercase());
+            if let Some(ext) = ext
+                && exts.contains(&ext.as_str())
+            {
+                out.push(path);
+            }
+        }
+    }
+}
+
+/// Extract `[label](target)` link targets from a single markdown line.
+/// Returns `(column_of_open_paren, target)` per match. Doesn't try to
+/// be a full markdown parser — just enough to find broken paths.
+fn extract_md_links(line: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let bytes = line.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'[' {
+            i += 1;
+            continue;
+        }
+        // Skip the label content — accept nested brackets one level
+        // deep, which covers most footnote-style cases.
+        let label_start = i + 1;
+        let mut j = label_start;
+        let mut depth = 1usize;
+        while j < bytes.len() && depth > 0 {
+            match bytes[j] {
+                b'[' => depth += 1,
+                b']' => depth -= 1,
+                _ => {}
+            }
+            if depth == 0 {
+                break;
+            }
+            j += 1;
+        }
+        if j >= bytes.len() || bytes[j] != b']' {
+            i += 1;
+            continue;
+        }
+        // Expect `(` immediately after `]`.
+        let paren_open = j + 1;
+        if paren_open >= bytes.len() || bytes[paren_open] != b'(' {
+            i = j + 1;
+            continue;
+        }
+        // Find matching `)`.
+        let mut k = paren_open + 1;
+        let mut paren_depth = 1usize;
+        while k < bytes.len() && paren_depth > 0 {
+            match bytes[k] {
+                b'(' => paren_depth += 1,
+                b')' => paren_depth -= 1,
+                _ => {}
+            }
+            if paren_depth == 0 {
+                break;
+            }
+            k += 1;
+        }
+        if k >= bytes.len() {
+            break;
+        }
+        // Target is the inside of the parens. Strip optional `"title"` /
+        // `'title'` suffix and surrounding whitespace.
+        let inside = &line[paren_open + 1..k];
+        let target = inside
+            .split([' ', '\t'])
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_matches('<')
+            .trim_matches('>')
+            .to_string();
+        if !target.is_empty() {
+            out.push((paren_open + 1, target));
+        }
+        i = k + 1;
+    }
+    out
+}
+
+/// Treat anything with a scheme like `http://`, `https://`, `mailto:`,
+/// `file://`, `ftp://`, etc. as a URL — skipped by the link checker.
+fn is_url_like(target: &str) -> bool {
+    const SCHEMES: &[&str] = &[
+        "http://", "https://", "mailto:", "ftp://", "ftps://", "file://", "ssh://", "git://",
+        "data:", "javascript:",
+    ];
+    SCHEMES.iter().any(|s| target.starts_with(s))
+}
+
 fn is_image_extension(path: &Path) -> bool {
     matches!(
         path.extension()
@@ -7719,6 +7843,153 @@ impl App {
     /// `snippet.pick` — open a fuzzy picker of every snippet available for the
     /// active buffer (extension + global). Accept inserts the expansion at the
     /// cursor without consuming a trigger word.
+    /// `:LinkCheck` / `markdown.link_check` — walk every `.md` / `.mdx` /
+    /// `.markdown` / `.mkd` file in the workspace and open broken
+    /// `[label](relative_path)` references as a Quickfix pane. URLs
+    /// (http/https/mailto/etc.) are skipped — only path-style links are
+    /// validated. Path resolution honors the source file's parent dir.
+    pub fn run_markdown_link_check(&mut self) {
+        let exts = ["md", "mdx", "markdown", "mkd"];
+        let mut md_files: Vec<std::path::PathBuf> = Vec::new();
+        walk_workspace_for_extensions(&self.workspace, &exts, &mut md_files);
+        if md_files.is_empty() {
+            self.toast("link check: no markdown files in workspace");
+            return;
+        }
+        let mut hits: Vec<crate::grep_pane::GrepHit> = Vec::new();
+        for md in &md_files {
+            let Ok(text) = std::fs::read_to_string(md) else {
+                continue;
+            };
+            let parent = md.parent().unwrap_or(std::path::Path::new(""));
+            for (line_idx, line) in text.lines().enumerate() {
+                for (col_idx, target) in extract_md_links(line) {
+                    if is_url_like(&target) {
+                        continue;
+                    }
+                    // Strip fragment / query so a `path#anchor` link checks
+                    // the file existence, not the anchor.
+                    let target_no_frag = target
+                        .split_once('#')
+                        .map(|(a, _)| a)
+                        .unwrap_or(&target)
+                        .split_once('?')
+                        .map(|(a, _)| a)
+                        .unwrap_or_else(|| {
+                            target
+                                .split_once('#')
+                                .map(|(a, _)| a)
+                                .unwrap_or(&target)
+                        });
+                    if target_no_frag.is_empty() {
+                        continue; // pure-anchor link
+                    }
+                    let candidate = parent.join(target_no_frag);
+                    if candidate.exists() {
+                        continue;
+                    }
+                    // Try workspace-root anchored too — common in absolute-
+                    // looking paths the user expects to root at the repo.
+                    if target_no_frag.starts_with('/') {
+                        let trimmed = target_no_frag.trim_start_matches('/');
+                        let alt = self.workspace.join(trimmed);
+                        if alt.exists() {
+                            continue;
+                        }
+                    }
+                    let rel = md
+                        .strip_prefix(&self.workspace)
+                        .unwrap_or(md)
+                        .to_string_lossy()
+                        .into_owned();
+                    hits.push(crate::grep_pane::GrepHit {
+                        path: md.clone(),
+                        rel,
+                        line: line_idx as u32,
+                        col: col_idx as u32,
+                        text: format!("broken link → {target}"),
+                    });
+                }
+            }
+        }
+        if hits.is_empty() {
+            self.toast(format!(
+                "link check: all good ({} file(s) scanned)",
+                md_files.len()
+            ));
+            return;
+        }
+        let title = format!(
+            "broken markdown links ({} across {} file(s))",
+            hits.len(),
+            md_files.len()
+        );
+        self.open_quickfix(&title, hits);
+    }
+
+    /// `snippet.pick_all` — list every snippet across every scope (not just
+    /// the active editor's filetype). Useful when looking for "what
+    /// snippets do I have configured?" without context-switching to the
+    /// config file.
+    pub fn snippet_pick_all(&mut self) {
+        use crate::picker::PickerItem;
+        // Walk the config's snippet table — `HashMap<scope, HashMap<trigger,
+        // text>>` — and flatten into one Vec<Snippet>.
+        let mut all: Vec<crate::snippets::Snippet> = Vec::new();
+        let mut scopes: Vec<&String> = self.config.snippets.keys().collect();
+        scopes.sort();
+        for scope in scopes {
+            let Some(table) = self.config.snippets.get(scope) else {
+                continue;
+            };
+            let mut triggers: Vec<&String> = table.keys().collect();
+            triggers.sort();
+            for trigger in triggers {
+                let Some(text) = table.get(trigger) else {
+                    continue;
+                };
+                all.push(crate::snippets::Snippet::parse(
+                    trigger.clone(),
+                    text,
+                    scope.clone(),
+                ));
+            }
+        }
+        if all.is_empty() {
+            self.toast("no snippets configured (see [snippets.*] in config.toml)");
+            return;
+        }
+        let items: Vec<PickerItem> = all
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let raw = s.text.replace("$0", "");
+                let mut preview: String = raw
+                    .lines()
+                    .map(str::trim_end)
+                    .filter(|l| !l.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ↵ ");
+                if preview.chars().count() > 60 {
+                    let truncated: String = preview.chars().take(60).collect();
+                    preview = format!("{truncated}…");
+                }
+                PickerItem::new(
+                    i.to_string(),
+                    format!("[{}] {}  →  {}", s.scope, s.trigger, preview),
+                    s.scope.clone(),
+                )
+            })
+            .collect();
+        let n = items.len();
+        self.pending_snippets = all;
+        self.open_picker(Picker::new(
+            PickerKind::Snippets,
+            format!("All snippets ({n})"),
+            items,
+        ));
+    }
+
     pub fn snippet_pick(&mut self) {
         let Some(b) = self.active_editor() else {
             self.toast("no active editor");
@@ -15466,18 +15737,35 @@ impl App {
     /// is re-run so the pane reflects the new state.
     pub fn run_grep_replace(&mut self, replacement: String) {
         // Snapshot the (query, unique-file-paths) from the active grep pane.
-        let (query, files) = match self.active.and_then(|i| self.panes.get(i)) {
+        // Per-hit toggle: hits whose index is in `g.disabled` are excluded —
+        // files with NO enabled hits are skipped entirely.
+        let (query, files, disabled_files) = match self.active.and_then(|i| self.panes.get(i)) {
             Some(Pane::Grep(g)) => {
+                use std::collections::HashSet;
                 let mut files: Vec<PathBuf> = Vec::new();
-                for h in &g.hits {
-                    if !files.iter().any(|p| p == &h.path) {
-                        files.push(h.path.clone());
+                let mut disabled_files: HashSet<PathBuf> = HashSet::new();
+                // Group hit-indices by file so we can see which files
+                // have at least one enabled hit.
+                let mut hits_by_file: std::collections::HashMap<PathBuf, Vec<usize>> =
+                    std::collections::HashMap::new();
+                for (i, h) in g.hits.iter().enumerate() {
+                    hits_by_file.entry(h.path.clone()).or_default().push(i);
+                }
+                for (path, idxs) in &hits_by_file {
+                    let any_enabled = idxs.iter().any(|i| !g.disabled.contains(i));
+                    if any_enabled {
+                        if !files.iter().any(|p| p == path) {
+                            files.push(path.clone());
+                        }
+                    } else {
+                        disabled_files.insert(path.clone());
                     }
                 }
-                (g.query.clone(), files)
+                (g.query.clone(), files, disabled_files)
             }
             _ => return,
         };
+        let _ = disabled_files; // (currently unused — kept for future per-line replace path)
         if query.is_empty() {
             return;
         }
@@ -21420,6 +21708,8 @@ impl App {
                 crate::command::run("picker.marks", self);
             }
             "Snippets" => self.snippet_pick(),
+            "SnippetsAll" => self.snippet_pick_all(),
+            "LinkCheck" | "linkcheck" => self.run_markdown_link_check(),
             // `:Trim` — one-shot remove trailing whitespace from every line
             // in the active buffer (single edit op; one Undo restores).
             "Trim" | "trimws" => {

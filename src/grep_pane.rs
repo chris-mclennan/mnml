@@ -27,6 +27,11 @@ pub struct GrepPane {
     pub hits: Vec<GrepHit>,
     pub selected: usize,
     pub scroll: usize,
+    /// Hit indices the user has toggled off — they're skipped when
+    /// `R` (replace) fires. Empty set ⇒ replace applies to every hit
+    /// (back-compat with the original behavior). Sibling to Space-to-
+    /// toggle in the pane key handler.
+    pub disabled: std::collections::HashSet<usize>,
 }
 
 impl GrepPane {
@@ -37,7 +42,46 @@ impl GrepPane {
             hits,
             selected: 0,
             scroll: 0,
+            disabled: std::collections::HashSet::new(),
         }
+    }
+
+    /// Flip the enabled/disabled state of the currently-selected hit.
+    /// Used by Space in the pane and by checkbox clicks.
+    pub fn toggle_selected(&mut self) {
+        if self.disabled.contains(&self.selected) {
+            self.disabled.remove(&self.selected);
+        } else {
+            self.disabled.insert(self.selected);
+        }
+    }
+
+    /// Toggle a specific hit by index (mouse click on the checkbox).
+    pub fn toggle_hit(&mut self, idx: usize) {
+        if idx >= self.hits.len() {
+            return;
+        }
+        if self.disabled.contains(&idx) {
+            self.disabled.remove(&idx);
+        } else {
+            self.disabled.insert(idx);
+        }
+    }
+
+    /// Re-enable every hit.
+    pub fn enable_all(&mut self) {
+        self.disabled.clear();
+    }
+
+    /// Disable every hit (so the user can re-enable just the ones they want).
+    pub fn disable_all(&mut self) {
+        self.disabled = (0..self.hits.len()).collect();
+    }
+
+    /// Number of hits the user has marked active (enabled). When `disabled`
+    /// is empty this equals `hits.len()`.
+    pub fn enabled_count(&self) -> usize {
+        self.hits.len().saturating_sub(self.disabled.len())
     }
 
     pub fn tab_title(&self) -> String {

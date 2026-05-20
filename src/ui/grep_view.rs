@@ -57,10 +57,16 @@ pub fn draw(
 
     // ── header ─────────────────────────────────────────────────────
     let n = g.hits.len();
+    let enabled = g.enabled_count();
+    let count_label = if enabled == n {
+        format!("{n} match{}", if n == 1 { "" } else { "es" })
+    } else {
+        format!("{enabled}/{n} enabled")
+    };
     lines.push(Line::from(vec![
         Span::styled("  ", Style::default().bg(t.bg_dark)),
         Span::styled(
-            format!("{n} match{}", if n == 1 { "" } else { "es" }),
+            count_label,
             Style::default()
                 .fg(t.fg)
                 .bg(t.bg_dark)
@@ -120,7 +126,8 @@ pub fn draw(
             selected_row = lines.len();
         }
         row_indices.push((lines.len(), idx));
-        lines.push(hit_line(&t, hit, sel));
+        let disabled = g.disabled.contains(&idx);
+        lines.push(hit_line(&t, hit, sel, disabled));
     }
 
     let h = area.height as usize;
@@ -205,19 +212,29 @@ fn file_header_line(t: &Theme, rel: &str, count: usize) -> Line<'static> {
     ])
 }
 
-fn hit_line(t: &Theme, h: &GrepHit, selected: bool) -> Line<'static> {
+fn hit_line(t: &Theme, h: &GrepHit, selected: bool, disabled: bool) -> Line<'static> {
     let bg = if selected { t.bg2 } else { t.bg_dark };
+    // Checkbox glyph — `[x]` (enabled) / `[ ]` (disabled). Lets the user
+    // opt rows out of the next `R` replace via Space.
+    let (chk, chk_fg) = if disabled {
+        ("[ ]", t.comment)
+    } else {
+        ("[x]", t.green)
+    };
+    let fg = if disabled { t.comment } else { t.fg };
     Line::from(vec![
         Span::styled(
-            if selected { "  ▶ " } else { "      " },
+            if selected { " ▶ " } else { "   " },
             Style::default().fg(t.yellow).bg(bg),
         ),
+        Span::styled(chk, Style::default().fg(chk_fg).bg(bg)),
+        Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
             format!("{}:{}", h.line + 1, h.col + 1),
             Style::default().fg(t.comment).bg(bg),
         ),
         Span::styled("  ", Style::default().bg(bg)),
-        Span::styled(h.text.clone(), Style::default().fg(t.fg).bg(bg)),
+        Span::styled(h.text.clone(), Style::default().fg(fg).bg(bg)),
     ])
 }
 

@@ -83,6 +83,41 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Discoverability + small features wave (2026-05-19):**
+seven items in one big sweep.
+(1) **More statusline action chips wired** — LSP/WRAP/AS/filesize/
+Ln-Col chips all clickable now, with hover tooltips describing each.
+LSP→`:LspStatus`, WRAP→toggle `[ui] wrap`, AS→autosave config toast,
+filesize→`:Stat`, Ln/Col→goto-line prompt.
+(2) **Cheatsheet pane click rows** — refactored `&App` → `&mut App`
+so the renderer can register row rects; double-click runs the
+selected command. `CheatsheetPane::visible_rows_len` exposes the
+count for click clamping.
+(3) **File-tree drag-and-drop** — mouse-down on a tree row arms a
+drag, mouse-up on a different directory row opens a confirmation
+prompt that calls `std::fs::rename`. Repoints open editors on the
+moved file; refreshes tree + git. Refuses dropping a dir into its
+own subtree.
+(4) **Quick scratch terminal** — `Ctrl+`` / `Ctrl+\` opens a fixed
+10-row pty strip at the bottom of the body. Persistent across pane
+switches; click to focus, Esc to blur, second toggle to close.
+Sibling to `term.shell` (full pane) for "I want to run one command
+without rearranging splits."
+(5) **Snippet manager (lite)** — `snippet.pick_all` / `:SnippetsAll`
+list every configured snippet across every scope, not just the
+active file's filetype. Same accept path inserts at the cursor.
+(6) **Markdown link checker** — `markdown.link_check` / `:LinkCheck`
+walks every `.md`/`.mdx`/`.markdown`/`.mkd` file in the workspace
+and opens broken `[label](path)` references in a Quickfix pane.
+URLs (http/https/mailto/etc.) are skipped — path-style links only.
+`.gitignored`-style dirs (`node_modules`/`target`/`dist`/`build`)
+and dot-dirs are pruned.
+(7) **Per-hit toggle in grep replace** — `Pane::Grep` rows now show
+an `[x]`/`[ ]` checkbox; Space toggles, `A` enables all, `D`
+disables all. `R` (replace) skips files whose hits are all
+disabled. Header swaps to `M/N enabled` when any are off.
+678 lib tests + clippy clean.
+
 **Discoverability wave III — interactive F1 / sortable graph headers / right-click everywhere / first-launch welcome (2026-05-19):**
 five-item polish pass extending the prior waves.
 (1) **Interactive F1 overlay.** The Click Discovery panel now
