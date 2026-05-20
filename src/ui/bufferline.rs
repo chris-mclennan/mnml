@@ -84,15 +84,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.bufferline_tab_page_close.clear();
     app.rects.bufferline_theme_toggle = None;
     app.rects.bufferline_window_close = None;
+    app.rects.bufferline_claude_button = None;
+    app.rects.bufferline_codex_button = None;
     if area.width == 0 {
         return;
     }
     let nerd = !app.config.ui.ascii_icons;
-    // Right cluster (NvChad-style): ` + ` ` TABS ` per-tabpage chips
-    // ` ●━ ` ` × `. Pre-compute its total width so the per-buffer tab strip
-    // knows where to stop.
+    // Right cluster: AI-launch chips on the LEFT edge of the cluster,
+    // then ` + ` ` TABS ` per-tabpage chips ` ●━ ` ` × `. Each AI chip
+    // is 4 cells (` <glyph> ` + label space). Pre-compute the total so
+    // the per-buffer tab strip's scroll math reserves enough width.
     let n_tabs = app.layouts.len();
-    let mut right_w: u16 = 3 + 6; // ` + ` + ` TABS `
+    let mut right_w: u16 = 4 + 4 + 3 + 6; // claude + codex + ` + ` + ` TABS `
     for i in 0..n_tabs {
         // Active = ` <n>󰅖 ` (3 cells label + 2 cells close glyph).
         // Inactive = ` <n> ` (3 cells label only). Dirty tab gets a
@@ -398,6 +401,43 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // bufferline scroll math reserved exactly `right_w` cells.
     let t = theme::cur();
     let mut cluster_x = tabs_max_x;
+
+    // Claude button — `nf-md-chat-question` (\u{F1739}) when nerd fonts
+    // are on; fallback `CC`. 4 cells (` <glyph> ` + trailing space).
+    // Click → `ai.claude_code` (toggles focus if already open).
+    let claude_glyph = if nerd { "\u{F1739}" } else { "CC" };
+    spans.push(Span::styled(
+        format!(" {claude_glyph}  "),
+        Style::default()
+            .fg(t.bg_darker)
+            .bg(t.green)
+            .add_modifier(Modifier::BOLD),
+    ));
+    app.rects.bufferline_claude_button = Some(ratatui::layout::Rect {
+        x: cluster_x,
+        y: area.y,
+        width: 4,
+        height: 1,
+    });
+    cluster_x += 4;
+
+    // Codex button — `nf-md-code-brackets` (\u{F0EE7}) glyph. Click →
+    // `ai.codex`.
+    let codex_glyph = if nerd { "\u{F0EE7}" } else { "CX" };
+    spans.push(Span::styled(
+        format!(" {codex_glyph}  "),
+        Style::default()
+            .fg(t.bg_darker)
+            .bg(t.cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
+    app.rects.bufferline_codex_button = Some(ratatui::layout::Rect {
+        x: cluster_x,
+        y: area.y,
+        width: 4,
+        height: 1,
+    });
+    cluster_x += 4;
 
     // New-tab button. `nf-md-plus` (\u{F0415}) — thicker than ASCII `+`,
     // same glyph NvChad uses for `TabNewBtn`. Colors match NvChad's

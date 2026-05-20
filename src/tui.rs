@@ -3927,6 +3927,16 @@ fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChip> {
     {
         return Some(crate::HoverChip::StatuslineLnCol);
     }
+    if let Some(r) = app.rects.bufferline_claude_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::BufferlineClaude);
+    }
+    if let Some(r) = app.rects.bufferline_codex_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::BufferlineCodex);
+    }
     if let Some(&(_, action)) = app
         .rects
         .rail_git_header_buttons
@@ -4300,6 +4310,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.open_ai_pane_context_menu((x, y));
                 return;
             }
+            // Right-click on a pty pane (terminal / Claude / Codex) →
+            // dock-position menu (left / right / top / bottom / maximize /
+            // zen). Pty panes register their rect in `editor_panes`.
+            if let Some(&(_, pid)) = app
+                .rects
+                .editor_panes
+                .iter()
+                .find(|(r, pid)| {
+                    contains(*r, x, y) && matches!(app.panes.get(*pid), Some(Pane::Pty(_)))
+                })
+            {
+                app.open_pty_dock_context_menu(pid, (x, y));
+                return;
+            }
             // Right-click on an editor gutter → per-line menu (toggle BP /
             // goto def / refs / blame / browse line). Translate the click
             // y into a file row using the pane's current scroll.
@@ -4653,9 +4677,22 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.reveal_pane(id);
                 return;
             }
-            // Bufferline right cluster — `+` new tab, per-tabpage chip / close,
-            // theme toggle, window close. Order matters (the `⊗` rect sits
-            // adjacent to its chip; check close before chip).
+            // Bufferline right cluster — Claude / Codex launch chips,
+            // `+` new tab, per-tabpage chip / close, theme toggle,
+            // window close. Order matters (the `⊗` rect sits adjacent
+            // to its chip; check close before chip).
+            if let Some(r) = app.rects.bufferline_claude_button
+                && contains(r, x, y)
+            {
+                app.open_claude_code();
+                return;
+            }
+            if let Some(r) = app.rects.bufferline_codex_button
+                && contains(r, x, y)
+            {
+                app.open_codex();
+                return;
+            }
             if let Some(r) = app.rects.bufferline_new_tab_button
                 && contains(r, x, y)
             {

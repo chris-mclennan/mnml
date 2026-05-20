@@ -1745,6 +1745,11 @@ pub struct PaneRects {
     pub bufferline_tab_page_close: Vec<(Rect, usize)>,
     pub bufferline_theme_toggle: Option<Rect>,
     pub bufferline_window_close: Option<Rect>,
+    /// Bufferline Claude-launch button (`󰭹` or `claude` text). Click →
+    /// `ai.claude_code` (toggles focus if already open).
+    pub bufferline_claude_button: Option<Rect>,
+    /// Bufferline Codex-launch button. Click → `ai.codex`.
+    pub bufferline_codex_button: Option<Rect>,
     /// Statusline git-branch chip — clickable shortcut to `git.graph`.
     /// Registered by `ui::statusline::draw` per render; absent when the
     /// branch isn't shown (no repo / non-git workspace).
@@ -3665,6 +3670,43 @@ impl App {
             ),
         ];
         let _ = prior_active; // Capture happened above for future hooks.
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
+    /// Right-click on a pty pane (terminal / Claude / Codex) — exposes
+    /// dock-position controls so the user can shift the pane around the
+    /// layout (left / right / top / bottom) or maximize it, without
+    /// memorizing the `Ctrl+W H/J/K/L` chords. Focuses the pane first
+    /// so the `view.move_split_*` commands act on it.
+    pub fn open_pty_dock_context_menu(&mut self, pane_id: PaneId, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        self.active = Some(pane_id);
+        self.focus_pane();
+        let title = self
+            .panes
+            .get(pane_id)
+            .map(|p| p.title())
+            .unwrap_or_else(|| "terminal".into());
+        let items = vec![
+            MenuItem::new("Dock left", MenuAction::Command("view.move_split_left")),
+            MenuItem::new("Dock right", MenuAction::Command("view.move_split_right")),
+            MenuItem::new("Dock top", MenuAction::Command("view.move_split_up")),
+            MenuItem::new("Dock bottom", MenuAction::Command("view.move_split_down")),
+            MenuItem::new(
+                "Maximize width",
+                MenuAction::Command("view.maximize_width"),
+            ),
+            MenuItem::new(
+                "Maximize height",
+                MenuAction::Command("view.maximize_height"),
+            ),
+            MenuItem::new("Full screen (zen)", MenuAction::Command("view.zen")),
+            MenuItem::new(
+                "Equalize splits",
+                MenuAction::Command("view.equalize_splits"),
+            ),
+            MenuItem::new("Close pane", MenuAction::Command("buffer.close")),
+        ];
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
@@ -10708,6 +10750,20 @@ impl App {
     /// Open an embedded terminal (`profile` = shell / `claude` / `codex`) as a
     /// stacked split below the focused leaf (a terminal "drawer"), and focus it.
     pub fn open_pty(&mut self, profile: crate::pty_pane::BinaryProfile) {
+        // Default: stacked below — matches the "open a small shell at
+        // the bottom" muscle memory most pty cases want.
+        self.open_pty_dir(profile, crate::layout::SplitDir::Vertical);
+    }
+
+    /// Like `open_pty` but caller picks the split direction. AI panes
+    /// (Claude, Codex) use `Horizontal` so they dock alongside the
+    /// editor on the right — the IDE-canonical "AI chat panel"
+    /// placement.
+    pub fn open_pty_dir(
+        &mut self,
+        profile: crate::pty_pane::BinaryProfile,
+        dir: crate::layout::SplitDir,
+    ) {
         // The initial size is a guess — `ui/pty_view` resizes the session to its
         // rendered area on the first frame.
         match crate::pty_pane::PtySession::spawn(profile, 24, 80) {
@@ -10715,8 +10771,7 @@ impl App {
                 let pane = Pane::Pty(s);
                 match self.active {
                     Some(cur) => {
-                        let new_id =
-                            self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                        let new_id = self.split_leaf_with(cur, dir, pane);
                         self.active = Some(new_id);
                     }
                     None => {
@@ -10751,14 +10806,47 @@ impl App {
         }
     }
     pub fn open_claude_code(&mut self) {
-        self.open_pty(crate::pty_pane::BinaryProfile::claude_code(
-            self.workspace.clone(),
-        ));
+        // If a Claude pane is already open, toggle focus / visibility-ish
+        // by revealing it instead of spawning a duplicate. (Claude
+        // sessions are expensive to bootstrap — same gesture as the
+        // claude-chat.nvim "toggle if already active" behavior.)
+        if let Some(id) = self.find_claude_pty() {
+            self.reveal_pane(id);
+            return;
+        }
+        // AI panes dock as a vertical split on the right of the active
+        // leaf — the IDE-canonical "chat panel" placement.
+        self.open_pty_dir(
+            crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone()),
+            crate::layout::SplitDir::Horizontal,
+        );
     }
     pub fn open_codex(&mut self) {
-        self.open_pty(crate::pty_pane::BinaryProfile::codex(
-            self.workspace.clone(),
-        ));
+        if let Some(id) = self.find_codex_pty() {
+            self.reveal_pane(id);
+            return;
+        }
+        self.open_pty_dir(
+            crate::pty_pane::BinaryProfile::codex(self.workspace.clone()),
+            crate::layout::SplitDir::Horizontal,
+        );
+    }
+
+    /// Return the pane id of any open Claude Code pty pane (matched by
+    /// `BinaryProfile.label`), or `None`.
+    fn find_claude_pty(&self) -> Option<PaneId> {
+        self.panes.iter().position(|p| match p {
+            Pane::Pty(s) => s.profile.label.starts_with("claude"),
+            _ => false,
+        })
+    }
+
+    /// Return the pane id of any open Codex pty pane.
+    fn find_codex_pty(&self) -> Option<PaneId> {
+        self.panes.iter().position(|p| match p {
+            Pane::Pty(s) => s.profile.label.starts_with("codex"),
+            _ => false,
+        })
     }
     /// Open the sibling `mixr-rs` TUI DJ as a pty pane below the focused leaf.
     /// Refuses cleanly when `mixr` isn't on PATH (toast + no pane). Mixr's

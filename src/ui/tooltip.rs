@@ -174,6 +174,16 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             "click: goto line".into(),
             None,
         )),
+        HoverChip::BufferlineClaude => Some((
+            app.rects.bufferline_claude_button?,
+            "click: open Claude Code (right dock)".into(),
+            Some("toggles focus if already open".into()),
+        )),
+        HoverChip::BufferlineCodex => Some((
+            app.rects.bufferline_codex_button?,
+            "click: open Codex (right dock)".into(),
+            Some("toggles focus if already open".into()),
+        )),
         HoverChip::RailHeaderChip(action) => {
             let rect = app
                 .rects

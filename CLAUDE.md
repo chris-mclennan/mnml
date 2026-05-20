@@ -83,6 +83,36 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Quit confirm + Claude/Codex launch buttons + right-dock AI panes (2026-05-19):**
+follow-ups on the Cmd+W work + an AI-pane UX pass.
+(1) **Quit confirmation** — the close-last-buffer confirm added
+earlier was the wrong target; the user wanted a confirm before
+*exiting mnml*. Reverted `close_active_pane` to its unconditional
+close; `request_quit` (`Ctrl+Q`) now opens a `PromptKind::
+QuitConfirm` prompt. Esc cancels, Enter quits. When buffers are
+dirty the prompt title appends `UNSAVED: <names>` so the user
+sees what's at stake. Replaces the old "press quit again" toast.
+(2) **Claude + Codex launch buttons** in the bufferline right
+cluster — `󰜘` (green) + `󰅩` (cyan) chips left of the `+` new-tab
+button. Click opens the respective AI pane; hover shows a tooltip.
+(3) **AI panes dock right** — `open_claude_code` / `open_codex`
+now open as a `SplitDir::Horizontal` split (vertical divider, pane
+on the right) instead of stacked-below — the IDE-canonical "AI
+chat panel" placement. New `open_pty_dir` takes the split
+direction; plain `open_pty` (shells) keeps stacked-below. Both AI
+openers now *toggle* — if a Claude/Codex pane is already open
+they reveal it instead of spawning a duplicate (matches
+claude-chat.nvim's "toggle if active" gesture). New
+`find_claude_pty` / `find_codex_pty` helpers match by
+`BinaryProfile.label`.
+(4) **Pty dock menu** — right-click any pty pane (terminal /
+Claude / Codex) opens a dock-position menu: Dock left / right /
+top / bottom, Maximize width / height, Full screen (zen),
+Equalize splits, Close. Routes to the existing `view.move_split_*`
+/ `view.maximize_*` / `view.zen` commands so the user can shift
+the AI panel around without the `Ctrl+W H/J/K/L` chords.
+678 lib tests + clippy clean.
+
 **Mac-canonical chords + About/Settings overlays + color hover + the private integration phase 9 (2026-05-19):**
 seven-item wave continuing today's polish work.
 (1) **More ⌘→⌃ chord translations in tmnl** (Native tabs only):

@@ -198,6 +198,9 @@ pub enum HoverChip {
     StatuslineAutosave,
     StatuslineFilesize,
     StatuslineLnCol,
+    /// Bufferline AI launchers.
+    BufferlineClaude,
+    BufferlineCodex,
 }
 
 /// One row in the F1 click-discovery overlay. Each variant maps to a list
