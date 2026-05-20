@@ -1782,8 +1782,10 @@ pub struct PaneRects {
     /// Pty-pane tab strip — `(rect, pty_pane_id)` per session tab. Click
     /// switches the leaf to that session. Repopulated per pty render.
     pub pty_tabs: Vec<(Rect, PaneId)>,
-    /// `+` button on the pty tab strip — click spawns a new Claude pane.
-    pub pty_tab_new: Option<Rect>,
+    /// `+` button on the pty tab strip — `(rect, strip_owner_pane_id)`.
+    /// Click spawns a new Claude *into the strip-owner's leaf* (a tab,
+    /// not a split). One entry per visible pty pane's strip.
+    pub pty_tab_new: Vec<(Rect, PaneId)>,
     /// One rect per row in the F1 click-discovery overlay — click a row
     /// to flash the matching on-screen rects. Cleared + repopulated by
     /// `ui::discovery::draw` when the overlay is visible.
@@ -10972,14 +10974,34 @@ impl App {
             crate::layout::SplitDir::Horizontal,
         );
     }
-    /// Always spawn a *new* Claude pane (no toggle / reuse) — the pty
-    /// tab strip's `+` button + `ai.claude_code_new`. Multiple Claude
-    /// sessions live side by side, switchable via the tab strip.
+    /// Always spawn a *new* Claude pane (no toggle / reuse) — the
+    /// `ai.claude_code_new` palette command. Splits the active leaf;
+    /// the pty tab strip's `+` uses `add_pty_tab` instead (tab, not
+    /// split).
     pub fn open_claude_code_new(&mut self) {
         self.open_pty_dir(
             crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone()),
             crate::layout::SplitDir::Horizontal,
         );
+    }
+
+    /// Spawn a new pty session as a *tab* of the pty pane `strip_owner`
+    /// — no split. The new session takes over `strip_owner`'s leaf;
+    /// `strip_owner` becomes a background pane reachable via the tab
+    /// strip. Backs the strip's `+` button.
+    pub fn add_pty_tab(&mut self, strip_owner: PaneId, profile: crate::pty_pane::BinaryProfile) {
+        match crate::pty_pane::PtySession::spawn(profile, 24, 80) {
+            Ok(s) => {
+                self.panes.push(Pane::Pty(s));
+                let new_id = self.panes.len() - 1;
+                // Re-point every leaf that shows `strip_owner` to the new
+                // session — keeps it a single leaf with a tab strip.
+                self.layout_mut().set_leaf_pane(strip_owner, new_id);
+                self.active = Some(new_id);
+                self.focus = crate::focus::Focus::Pane;
+            }
+            Err(e) => self.toast(format!("can't open session: {e}")),
+        }
     }
 
     pub fn open_codex(&mut self) {

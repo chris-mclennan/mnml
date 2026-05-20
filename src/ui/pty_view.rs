@@ -46,9 +46,6 @@ pub fn draw(
             width: area.width,
             height: area.height - 1,
         };
-    } else {
-        app.rects.pty_tabs.clear();
-        app.rects.pty_tab_new = None;
     }
     let area = grid_area;
     let Some(Pane::Pty(session)) = app.panes.get_mut(pane_id) else {
@@ -178,7 +175,7 @@ fn draw_tab_strip(frame: &mut Frame, app: &mut App, active_id: PaneId, strip: Re
         ));
         x += w + 1;
     }
-    // `+` chip — spawn a new Claude session.
+    // `+` chip — spawn a new Claude session as a TAB of this leaf.
     if x + 3 <= right_limit {
         spans.push(Span::styled(
             " + ",
@@ -187,12 +184,15 @@ fn draw_tab_strip(frame: &mut Frame, app: &mut App, active_id: PaneId, strip: Re
                 .bg(t.bg2)
                 .add_modifier(Modifier::BOLD),
         ));
-        app.rects.pty_tab_new = Some(Rect {
-            x,
-            y: strip.y,
-            width: 3,
-            height: 1,
-        });
+        app.rects.pty_tab_new.push((
+            Rect {
+                x,
+                y: strip.y,
+                width: 3,
+                height: 1,
+            },
+            active_id,
+        ));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), strip);
 }

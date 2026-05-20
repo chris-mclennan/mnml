@@ -4677,12 +4677,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.reveal_pane(id);
                 return;
             }
-            // Pty-pane tab strip — click a session tab to switch this
-            // leaf to it; click `+` to spawn a new Claude.
-            if let Some(r) = app.rects.pty_tab_new
-                && contains(r, x, y)
+            // Pty-pane tab strip — click `+` to add a new Claude session
+            // as a TAB of that strip's leaf (no split); click a session
+            // tab to switch the leaf to it.
+            if let Some(&(_, owner)) = app
+                .rects
+                .pty_tab_new
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
             {
-                app.open_claude_code_new();
+                let profile =
+                    crate::pty_pane::BinaryProfile::claude_code(app.workspace.clone());
+                app.add_pty_tab(owner, profile);
                 return;
             }
             if let Some(&(_, pid)) = app

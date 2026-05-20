@@ -321,7 +321,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.test_executions_rows.clear();
     app.rects.split_dividers.clear();
     app.rects.pty_tabs.clear();
-    app.rects.pty_tab_new = None;
+    app.rects.pty_tab_new.clear();
     let layout = app.layout().clone();
     let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {
         welcome::draw(frame, app, body_area);
