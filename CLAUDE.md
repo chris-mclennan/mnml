@@ -83,6 +83,27 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Stale-doc cleanup + persisted AI stats + write_file tool (2026-05-20):**
+three items. (1) **Stale-doc cleanup** — fixed doc comments
+that shipped code had outrun: `ai/mod.rs` ("not a raw API
+client"), `AiBackend` ("no tool use yet"), `SuggestBackend`
+(candle fallback note), `private/mod.rs` ("phase-1 skeleton ·
+stub-only docdb"), `vim.rs` ZFold (`zM` "not yet wired"). (2)
+**Persisted AI stats** — `ai_tokens_in/out` +
+`suggest_shown/accepted` now round-trip through `session.json`,
+so `ai.token_usage` (cost) and `ai.suggestion_stats` (accept
+rate) are lifetime reads, not per-launch. (3) **`write_file`
+agent tool** — opting into `[ai] api_write_tools` (default off)
+adds a `write_file` tool to the API agent loop so the model can
+create/overwrite workspace files. Path safety: absolute paths +
+any `..` refused, the created parent must canonicalize inside
+the workspace (symlink-escape guard); `execute_tool` also
+refuses it when the flag is off. Deliberately no shell tool —
+autonomous shell stays the CLI backend's job (it has Claude
+Code's per-action permission prompts). `ai.show_config` shows
+tools as read-only / read+write / off. 700 lib tests + e2e +
+clippy green.
+
 **AI cost visibility + aI text object (2026-05-20):**
 three bounded items. (1) **`ai.show_config`** — toasts the live
 AI backend / model / `api_tools` state (a reliable "what am I
