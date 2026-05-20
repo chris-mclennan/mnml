@@ -9,13 +9,14 @@
 //! API key required).
 //!
 //! `stream_to_channel` is the plain text-in/text-out streaming path.
-//! `agent_to_channel` adds an agentic loop: the model gets a small set
-//! of **read-only** workspace tools (`read_file` / `list_directory` /
-//! `grep`) and the client runs request → tool calls → request until a
-//! final answer. Read-only by design — no write_file / shell tool — so
-//! it's strictly safer than the CLI backend (`claude -p`, which runs
-//! with full permissions). `[ai] api_tools` (default on) picks between
-//! the two for the API backend.
+//! `agent_to_channel` adds an agentic loop: the model gets workspace
+//! tools — `read_file` / `list_directory` / `grep` (read-only, always),
+//! plus `write_file` when `[ai] api_write_tools` is opted in — and the
+//! client runs request → tool calls → request until a final answer.
+//! There is deliberately no shell tool: autonomous shell with no
+//! per-action confirmation is the CLI backend's job (`claude -p` has
+//! its own permission prompts). `[ai] api_tools` (default on) picks
+//! agent loop vs plain streaming for the API backend.
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -28,9 +29,8 @@ const ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
 /// API version header — pinned to a known-stable value. Bump when
 /// Anthropic publishes a new major.
 const API_VERSION: &str = "2023-06-01";
-/// Default model. Users can override per-call via `App` config (a
-/// follow-up — for now the constant is the only path). Picks Opus 4.7
-/// (the model mnml itself is shipped to talk to).
+/// Default model when `[ai] model` isn't set. Opus 4.7 (the model mnml
+/// itself ships to talk to); callers pass `Some(...)` to override.
 const DEFAULT_MODEL: &str = "claude-opus-4-7";
 /// Cap output tokens. The Messages API requires `max_tokens` so we
 /// pick a generous default. Most code-explanation / commit-msg
@@ -283,8 +283,9 @@ pub fn stream_to_channel(
 }
 
 /// Extract a `text` field out of a `content_block_delta` data JSON.
-/// Returns `None` for non-text deltas (e.g. tool-use deltas, which we
-/// don't render in the MVP).
+/// Returns `None` for non-text deltas (e.g. `input_json_delta` tool-use
+/// deltas — `stream_to_channel` is the plain text path; the agent loop
+/// handles tool-use blocks itself).
 fn parse_text_delta(json: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let delta = v.get("delta")?;
@@ -313,12 +314,13 @@ enum TurnBlock {
 }
 
 /// The agentic loop over `/v1/messages`. Gives the model the read-only
-/// workspace tools (`read_file` / `list_directory` / `grep`) and runs
-/// request → (tool calls) → request until it produces a final answer.
-/// Text streams to `sink` as `AiMsg::Delta`s; each tool call surfaces
-/// as a `[tool: …]` status line. A final `AiMsg::Done` carries the
-/// model's text across all turns (the status lines collapse away);
-/// errors / cancel become `AiMsg::Failed`.
+/// workspace tools (`read_file` / `list_directory` / `grep`) — plus
+/// `write_file` when `write_tools` is on — and runs request → (tool
+/// calls) → request until it produces a final answer. Text streams to
+/// `sink` as `AiMsg::Delta`s; each tool call surfaces as a `[tool: …]`
+/// status line. A final `AiMsg::Done` carries the model's text across
+/// all turns (the status lines collapse away); errors / cancel become
+/// `AiMsg::Failed`.
 ///
 /// Blocking — call from a worker thread. `cancel` is polled between SSE
 /// lines and between turns.
@@ -329,6 +331,7 @@ pub fn agent_to_channel(
     model: Option<&str>,
     system: Option<&str>,
     max_tokens: Option<u32>,
+    write_tools: bool,
     cancel: &AtomicBool,
     sink: std::sync::mpsc::Sender<(u64, AiMsg)>,
     job_id: u64,
@@ -354,7 +357,7 @@ pub fn agent_to_channel(
         .map(|n| n.clamp(16, 200_000))
         .unwrap_or(DEFAULT_MAX_TOKENS);
     let model = model.unwrap_or(DEFAULT_MODEL).to_string();
-    let sys = agent_system_prompt(system);
+    let sys = agent_system_prompt(system, write_tools);
     let mut messages: Vec<serde_json::Value> =
         vec![serde_json::json!({ "role": "user", "content": prompt })];
     let mut full_text = String::new();
@@ -373,7 +376,7 @@ pub fn agent_to_channel(
             "max_tokens": mt,
             "stream": true,
             "system": sys,
-            "tools": agent_tools(),
+            "tools": agent_tools(write_tools),
             "messages": messages,
         })
         .to_string();
@@ -451,7 +454,7 @@ pub fn agent_to_channel(
                 job_id,
                 AiMsg::Delta(format!("\n[tool: {}]\n", tool_summary(name, &input))),
             ));
-            let (text, is_error) = match execute_tool(workspace, name, &input) {
+            let (text, is_error) = match execute_tool(workspace, name, &input, write_tools) {
                 Ok(t) => (t, false),
                 Err(e) => (e, true),
             };
@@ -646,10 +649,12 @@ fn run_agent_turn(
     Ok((blocks, stop_reason, (input_tokens, output_tokens)))
 }
 
-/// The agent's tool definitions — all read-only, workspace-scoped.
-fn agent_tools() -> serde_json::Value {
-    serde_json::json!([
-        {
+/// The agent's tool definitions — workspace-scoped. The read-only three
+/// are always offered; `write_file` is included only when `write` is on
+/// (`[ai] api_write_tools`, default off).
+fn agent_tools(write: bool) -> serde_json::Value {
+    let mut tools = vec![
+        serde_json::json!({
             "name": "read_file",
             "description": "Read a UTF-8 text file from the project workspace. The path is workspace-relative.",
             "input_schema": {
@@ -659,8 +664,8 @@ fn agent_tools() -> serde_json::Value {
                 },
                 "required": ["path"]
             }
-        },
-        {
+        }),
+        serde_json::json!({
             "name": "list_directory",
             "description": "List the entries of a workspace directory. Path is workspace-relative; \".\" is the workspace root. Directories are suffixed with /.",
             "input_schema": {
@@ -670,8 +675,8 @@ fn agent_tools() -> serde_json::Value {
                 },
                 "required": ["path"]
             }
-        },
-        {
+        }),
+        serde_json::json!({
             "name": "grep",
             "description": "Search the workspace for a regular-expression pattern (ripgrep). Returns matching file:line:text rows.",
             "input_schema": {
@@ -681,17 +686,40 @@ fn agent_tools() -> serde_json::Value {
                 },
                 "required": ["pattern"]
             }
-        }
-    ])
+        }),
+    ];
+    if write {
+        tools.push(serde_json::json!({
+            "name": "write_file",
+            "description": "Write (creating or overwriting) a UTF-8 text file in the project workspace. The path is workspace-relative; parent directories are created as needed. Use sparingly and only when the user asked for an edit.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Workspace-relative file path." },
+                    "content": { "type": "string", "description": "The full new file contents." }
+                },
+                "required": ["path", "content"]
+            }
+        }));
+    }
+    serde_json::Value::Array(tools)
 }
 
 /// System prompt for the agent — a base instruction about the tools +
 /// the workspace, with the user's optional `[ai] system_prompt` appended.
-fn agent_system_prompt(user: Option<&str>) -> String {
-    let base = "You are an AI assistant embedded in the mnml code editor, working inside \
+fn agent_system_prompt(user: Option<&str>, write: bool) -> String {
+    let base = if write {
+        "You are an AI assistant embedded in the mnml code editor, working inside \
+        the user's project workspace. You have tools — read_file, list_directory, grep, \
+        and write_file — to explore and edit the codebase. Ground your work in the actual \
+        code (read before you write). Only use write_file when the user asked for an \
+        edit. Keep answers focused and concise."
+    } else {
+        "You are an AI assistant embedded in the mnml code editor, working inside \
         the user's project workspace. You have read-only tools — read_file, list_directory, \
         and grep — to explore the codebase. Use them to ground your answers in the actual \
-        code rather than guessing. Keep answers focused and concise.";
+        code rather than guessing. Keep answers focused and concise."
+    };
     match user {
         Some(u) if !u.trim().is_empty() => format!("{base}\n\n{u}"),
         _ => base.to_string(),
@@ -715,7 +743,14 @@ fn tool_summary(name: &str, input: &serde_json::Value) -> String {
 
 /// Dispatch + run one tool call. `Ok` is the tool result; `Err` is a
 /// user-visible error string (fed back to the model as an error result).
-fn execute_tool(workspace: &Path, name: &str, input: &serde_json::Value) -> Result<String, String> {
+/// `write_enabled` gates `write_file` (defense in depth — it's also
+/// absent from the tool list when off).
+fn execute_tool(
+    workspace: &Path,
+    name: &str,
+    input: &serde_json::Value,
+    write_enabled: bool,
+) -> Result<String, String> {
     match name {
         "read_file" => {
             let path = input
@@ -735,8 +770,54 @@ fn execute_tool(workspace: &Path, name: &str, input: &serde_json::Value) -> Resu
                 .ok_or("grep: missing `pattern`")?;
             tool_grep(workspace, pattern)
         }
+        "write_file" => {
+            if !write_enabled {
+                return Err(
+                    "write_file: disabled (set `[ai] api_write_tools = true` to enable)"
+                        .to_string(),
+                );
+            }
+            let path = input
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("write_file: missing `path`")?;
+            let content = input
+                .get("content")
+                .and_then(|v| v.as_str())
+                .ok_or("write_file: missing `content`")?;
+            tool_write_file(workspace, path, content)
+        }
         other => Err(format!("unknown tool: {other}")),
     }
+}
+
+/// Write a workspace file. Refuses absolute paths and any `..`
+/// component; the (created) parent must canonicalize to inside the
+/// workspace (catches a symlinked subdir escape).
+fn tool_write_file(workspace: &Path, rel: &str, content: &str) -> Result<String, String> {
+    use std::path::Component;
+    if rel.trim().is_empty() {
+        return Err("write_file: empty path".to_string());
+    }
+    let relp = Path::new(rel);
+    if relp.is_absolute() || relp.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err(format!(
+            "{rel}: must be a workspace-relative path with no `..`"
+        ));
+    }
+    let target = workspace.join(relp);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{rel}: {e}"))?;
+        let ws = workspace
+            .canonicalize()
+            .map_err(|e| format!("workspace: {e}"))?;
+        let cp = parent.canonicalize().map_err(|e| format!("{rel}: {e}"))?;
+        if !cp.starts_with(&ws) {
+            return Err(format!("{rel}: path escapes the workspace"));
+        }
+    }
+    std::fs::write(&target, content).map_err(|e| format!("{rel}: {e}"))?;
+    Ok(format!("wrote {} bytes to {rel}", content.len()))
 }
 
 /// Resolve a workspace-relative path, canonicalize it, and refuse
@@ -852,6 +933,7 @@ mod tests {
             dir.path(),
             "read_file",
             &serde_json::json!({ "path": "hello.txt" }),
+            false,
         )
         .unwrap();
         assert_eq!(out, "hi there");
@@ -864,6 +946,7 @@ mod tests {
             dir.path(),
             "read_file",
             &serde_json::json!({ "path": "../../../../../../etc/passwd" }),
+            false,
         );
         assert!(r.is_err(), "escape should be refused: {r:?}");
     }
@@ -877,6 +960,7 @@ mod tests {
             dir.path(),
             "list_directory",
             &serde_json::json!({ "path": "." }),
+            false,
         )
         .unwrap();
         assert!(out.contains("a.txt"), "out: {out:?}");
@@ -886,7 +970,55 @@ mod tests {
     #[test]
     fn execute_tool_unknown_name_errors() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(execute_tool(dir.path(), "delete_everything", &serde_json::json!({})).is_err());
+        assert!(
+            execute_tool(
+                dir.path(),
+                "delete_everything",
+                &serde_json::json!({}),
+                false
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn execute_tool_write_file_writes_when_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = execute_tool(
+            dir.path(),
+            "write_file",
+            &serde_json::json!({ "path": "out/note.txt", "content": "hello" }),
+            true,
+        )
+        .unwrap();
+        assert!(out.contains("wrote"), "out: {out:?}");
+        let written = std::fs::read_to_string(dir.path().join("out/note.txt")).unwrap();
+        assert_eq!(written, "hello");
+    }
+
+    #[test]
+    fn execute_tool_write_file_refused_when_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = execute_tool(
+            dir.path(),
+            "write_file",
+            &serde_json::json!({ "path": "x.txt", "content": "nope" }),
+            false,
+        );
+        assert!(r.is_err(), "write should be refused when disabled: {r:?}");
+        assert!(!dir.path().join("x.txt").exists());
+    }
+
+    #[test]
+    fn execute_tool_write_file_rejects_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = execute_tool(
+            dir.path(),
+            "write_file",
+            &serde_json::json!({ "path": "../escaped.txt", "content": "x" }),
+            true,
+        );
+        assert!(r.is_err(), "`..` escape should be refused: {r:?}");
     }
 
     #[test]

@@ -1683,7 +1683,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "ai.suggestion_stats",
-            title: "AI: inline-suggestion accept rate (this session)",
+            title: "AI: inline-suggestion accept rate",
             group: "ai",
             keys: &[],
             run: |app| app.ai_suggestion_stats(),
@@ -1697,7 +1697,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "ai.token_usage",
-            title: "AI: session token usage + cost estimate",
+            title: "AI: token usage + cost estimate",
             group: "ai",
             keys: &[],
             run: |app| app.ai_token_usage(),

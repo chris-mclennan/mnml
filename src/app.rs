@@ -1283,6 +1283,19 @@ struct SavedSession {
     diff_view_mode: Option<crate::pane::DiffViewMode>,
     #[serde(default, skip_serializing_if = "is_false")]
     diff_wrap: bool,
+    /// Direct-API AI token tally (`App.ai_tokens_in/out`) — persisted so
+    /// the running cost view (`ai.token_usage`) survives a relaunch.
+    #[serde(default)]
+    ai_tokens_in: u64,
+    #[serde(default)]
+    ai_tokens_out: u64,
+    /// Inline-suggestion accept tally (`App.suggest_shown/accepted`) —
+    /// persisted so the accept rate (`ai.suggestion_stats`) is a
+    /// lifetime read, not just per-launch.
+    #[serde(default)]
+    suggest_shown: u32,
+    #[serde(default)]
+    suggest_accepted: u32,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -6643,16 +6656,16 @@ impl App {
     }
 
     /// `ai.suggestion_stats` — toast the inline-suggestion accept rate
-    /// for this session (accepted / shown). Helps gauge whether the
-    /// chosen backend (local model / Claude API) is pulling its weight.
+    /// (accepted / shown, lifetime — persisted across launches). Helps
+    /// gauge whether the chosen backend is pulling its weight.
     pub fn ai_suggestion_stats(&mut self) {
         if self.suggest_shown == 0 {
-            self.toast("AI suggestions: none shown yet this session");
+            self.toast("AI suggestions: none shown yet");
             return;
         }
         let pct = (self.suggest_accepted as u64 * 100) / self.suggest_shown as u64;
         self.toast(format!(
-            "AI suggestions this session: {} accepted / {} shown ({}%)",
+            "AI suggestions: {} accepted / {} shown ({}%)",
             self.suggest_accepted, self.suggest_shown, pct
         ));
     }
@@ -11666,18 +11679,21 @@ impl App {
         let system = self.ai_system_prompt();
         let max_tokens = self.ai_max_tokens();
         let api_tools = self.ai_api_tools();
+        let api_write_tools = self.ai_api_write_tools();
         let workspace = self.workspace.clone();
         std::thread::spawn(move || match backend {
             crate::ai::AiBackend::Api => {
                 if api_tools {
-                    // Agentic loop — the model gets read-only workspace
-                    // tools (read_file / list_directory / grep).
+                    // Agentic loop — read-only workspace tools (read_file
+                    // / list_directory / grep), plus write_file when the
+                    // user opted in via `[ai] api_write_tools`.
                     crate::ai::api_client::agent_to_channel(
                         &prompt,
                         &workspace,
                         model.as_deref(),
                         system.as_deref(),
                         max_tokens,
+                        api_write_tools,
                         &worker_cancel,
                         tx,
                         job_id,
@@ -11751,6 +11767,18 @@ impl App {
             .unwrap_or(true)
     }
 
+    /// `[ai] api_write_tools` — whether the direct-API agent loop also
+    /// gets the `write_file` tool (it can create/overwrite workspace
+    /// files autonomously). Default **off** — read-only keeps the API
+    /// backend strictly safer than the CLI backend. Opt in deliberately.
+    pub fn ai_api_write_tools(&self) -> bool {
+        self.config
+            .ai
+            .get("api_write_tools")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
     /// `ai.show_config` — toast the live AI backend + model + tool
     /// state. A reliable "what am I running" readout (asking the model
     /// itself doesn't work — LLMs don't know their own version).
@@ -11763,22 +11791,29 @@ impl App {
                 let model = self
                     .ai_model()
                     .unwrap_or_else(|| "claude-opus-4-7 (default)".to_string());
-                let tools = if self.ai_api_tools() { "on" } else { "off" };
+                let tools = if !self.ai_api_tools() {
+                    "off"
+                } else if self.ai_api_write_tools() {
+                    "read+write"
+                } else {
+                    "read-only"
+                };
                 self.toast(format!("AI: backend=api · model={model} · tools={tools}"));
             }
         }
     }
 
-    /// `ai.token_usage` — toast the session's direct-API token tally
-    /// (summed across every job) + a rough cost estimate.
+    /// `ai.token_usage` — toast the direct-API token tally (summed
+    /// across every job, lifetime — persisted across launches) + a
+    /// rough cost estimate.
     pub fn ai_token_usage(&mut self) {
         if self.ai_tokens_in == 0 && self.ai_tokens_out == 0 {
-            self.toast("AI usage: no direct-API calls this session");
+            self.toast("AI usage: no direct-API calls recorded yet");
             return;
         }
         let model = self.ai_model();
         let base = format!(
-            "AI usage this session: {} in · {} out",
+            "AI usage: {} in · {} out",
             fmt_tokens(self.ai_tokens_in),
             fmt_tokens(self.ai_tokens_out)
         );
@@ -26265,6 +26300,10 @@ impl App {
                 Some(self.diff_view_mode_pref)
             },
             diff_wrap: self.diff_wrap_pref,
+            ai_tokens_in: self.ai_tokens_in,
+            ai_tokens_out: self.ai_tokens_out,
+            suggest_shown: self.suggest_shown,
+            suggest_accepted: self.suggest_accepted,
         };
         let Ok(text) = serde_json::to_string_pretty(&saved) else {
             return;
@@ -26599,6 +26638,12 @@ impl App {
             self.diff_view_mode_pref = m;
         }
         self.diff_wrap_pref = saved.diff_wrap;
+        // AI token tally + suggestion accept tally — restored so the
+        // cost / accept-rate readouts are lifetime, not per-launch.
+        self.ai_tokens_in = saved.ai_tokens_in;
+        self.ai_tokens_out = saved.ai_tokens_out;
+        self.suggest_shown = saved.suggest_shown;
+        self.suggest_accepted = saved.suggest_accepted;
         // Per-file change list — restore for any buffer we just re-opened.
         // Cursor sits past the newest entry so the first `g;` lands on the
         // most recent edit (vim convention).

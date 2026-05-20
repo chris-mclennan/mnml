@@ -41,7 +41,8 @@ fn main() {
     let cancel = AtomicBool::new(false);
 
     // Blocking — runs the whole agent loop, buffering messages into rx.
-    agent_to_channel(prompt, &dir, None, None, None, &cancel, tx, 1);
+    // write_tools = false: this smoke test exercises the read-only path.
+    agent_to_channel(prompt, &dir, None, None, None, false, &cancel, tx, 1);
 
     let mut done = false;
     for (_, msg) in rx.iter() {
