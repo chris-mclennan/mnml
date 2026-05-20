@@ -11626,17 +11626,34 @@ impl App {
         let model = self.ai_model();
         let system = self.ai_system_prompt();
         let max_tokens = self.ai_max_tokens();
+        let api_tools = self.ai_api_tools();
+        let workspace = self.workspace.clone();
         std::thread::spawn(move || match backend {
             crate::ai::AiBackend::Api => {
-                crate::ai::api_client::stream_to_channel(
-                    &prompt,
-                    model.as_deref(),
-                    system.as_deref(),
-                    max_tokens,
-                    &worker_cancel,
-                    tx,
-                    job_id,
-                );
+                if api_tools {
+                    // Agentic loop — the model gets read-only workspace
+                    // tools (read_file / list_directory / grep).
+                    crate::ai::api_client::agent_to_channel(
+                        &prompt,
+                        &workspace,
+                        model.as_deref(),
+                        system.as_deref(),
+                        max_tokens,
+                        &worker_cancel,
+                        tx,
+                        job_id,
+                    );
+                } else {
+                    crate::ai::api_client::stream_to_channel(
+                        &prompt,
+                        model.as_deref(),
+                        system.as_deref(),
+                        max_tokens,
+                        &worker_cancel,
+                        tx,
+                        job_id,
+                    );
+                }
             }
             crate::ai::AiBackend::Cli => {
                 crate::ai::stream_to_channel(&prompt, &sid, &worker_cancel, tx, job_id);
@@ -11679,6 +11696,20 @@ impl App {
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
             .map(str::to_string)
+    }
+
+    /// `[ai] api_tools` — whether the direct-API backend runs the
+    /// agentic loop with read-only workspace tools (`read_file` /
+    /// `list_directory` / `grep`) vs plain text-in/text-out streaming.
+    /// Default on — that's the point of the API backend being useful
+    /// for more than short asks. CLI backend is unaffected (it always
+    /// runs the full `claude` agent).
+    pub fn ai_api_tools(&self) -> bool {
+        self.config
+            .ai
+            .get("api_tools")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
     }
 
     /// Optional `[ai] system_prompt = "..."` from the config — prepended

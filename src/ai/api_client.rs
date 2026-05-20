@@ -8,13 +8,17 @@
 //! Default `[ai] backend = "cli"` keeps the existing behavior (no
 //! API key required).
 //!
-//! Tool use is NOT wired in this MVP — the request payload doesn't
-//! include `tools[]`, so the model can't read files or run shell. For
-//! agentic flows the user still wants the CLI backend (`claude -p` runs
-//! the full agent loop). Direct-API shines for short asks: commit
-//! messages, "explain this", "refactor to do X".
+//! `stream_to_channel` is the plain text-in/text-out streaming path.
+//! `agent_to_channel` adds an agentic loop: the model gets a small set
+//! of **read-only** workspace tools (`read_file` / `list_directory` /
+//! `grep`) and the client runs request → tool calls → request until a
+//! final answer. Read-only by design — no write_file / shell tool — so
+//! it's strictly safer than the CLI backend (`claude -p`, which runs
+//! with full permissions). `[ai] api_tools` (default on) picks between
+//! the two for the API backend.
 
 use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::AiMsg;
@@ -259,6 +263,482 @@ fn parse_text_delta(json: &str) -> Option<String> {
     None
 }
 
+/// Max agent turns (one model response = one turn) before the loop
+/// stops — guards against a tool-call cycle that never converges.
+const AGENT_MAX_ITERS: usize = 12;
+/// Per-tool output cap (bytes) — keeps a tool result from blowing the
+/// context window.
+const TOOL_OUTPUT_CAP: usize = 48 * 1024;
+
+/// One content block streamed back within an agent turn.
+enum TurnBlock {
+    Text(String),
+    ToolUse {
+        id: String,
+        name: String,
+        input_json: String,
+    },
+}
+
+/// The agentic loop over `/v1/messages`. Gives the model the read-only
+/// workspace tools (`read_file` / `list_directory` / `grep`) and runs
+/// request → (tool calls) → request until it produces a final answer.
+/// Text streams to `sink` as `AiMsg::Delta`s; each tool call surfaces
+/// as a `[tool: …]` status line. A final `AiMsg::Done` carries the
+/// model's text across all turns (the status lines collapse away);
+/// errors / cancel become `AiMsg::Failed`.
+///
+/// Blocking — call from a worker thread. `cancel` is polled between SSE
+/// lines and between turns.
+#[allow(clippy::too_many_arguments)]
+pub fn agent_to_channel(
+    prompt: &str,
+    workspace: &Path,
+    model: Option<&str>,
+    system: Option<&str>,
+    max_tokens: Option<u32>,
+    cancel: &AtomicBool,
+    sink: std::sync::mpsc::Sender<(u64, AiMsg)>,
+    job_id: u64,
+) {
+    let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") else {
+        let _ = sink.send((
+            job_id,
+            AiMsg::Failed(
+                "$ANTHROPIC_API_KEY not set — switch `[ai] backend = \"cli\"` or set the key"
+                    .to_string(),
+            ),
+        ));
+        return;
+    };
+    let client = match reqwest::blocking::Client::builder().build() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = sink.send((job_id, AiMsg::Failed(format!("build client: {e}"))));
+            return;
+        }
+    };
+    let mt = max_tokens
+        .map(|n| n.clamp(16, 200_000))
+        .unwrap_or(DEFAULT_MAX_TOKENS);
+    let model = model.unwrap_or(DEFAULT_MODEL).to_string();
+    let sys = agent_system_prompt(system);
+    let mut messages: Vec<serde_json::Value> =
+        vec![serde_json::json!({ "role": "user", "content": prompt })];
+    let mut full_text = String::new();
+
+    for iter in 0..AGENT_MAX_ITERS {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = sink.send((job_id, AiMsg::Failed("cancelled".to_string())));
+            return;
+        }
+        let body = serde_json::json!({
+            "model": model,
+            "max_tokens": mt,
+            "stream": true,
+            "system": sys,
+            "tools": agent_tools(),
+            "messages": messages,
+        })
+        .to_string();
+        let (blocks, stop_reason) =
+            match run_agent_turn(&client, &api_key, body, cancel, &sink, job_id) {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = sink.send((job_id, AiMsg::Failed(e)));
+                    return;
+                }
+            };
+        for b in &blocks {
+            if let TurnBlock::Text(t) = b {
+                full_text.push_str(t);
+            }
+        }
+        // Record the assistant turn so the next request has context.
+        let mut content = Vec::new();
+        for b in &blocks {
+            match b {
+                TurnBlock::Text(t) if !t.is_empty() => {
+                    content.push(serde_json::json!({ "type": "text", "text": t }));
+                }
+                TurnBlock::Text(_) => {}
+                TurnBlock::ToolUse {
+                    id,
+                    name,
+                    input_json,
+                } => {
+                    let input: serde_json::Value =
+                        serde_json::from_str(input_json).unwrap_or(serde_json::json!({}));
+                    content.push(serde_json::json!({
+                        "type": "tool_use", "id": id, "name": name, "input": input,
+                    }));
+                }
+            }
+        }
+        if content.is_empty() {
+            break; // nothing came back — don't loop forever
+        }
+        messages.push(serde_json::json!({ "role": "assistant", "content": content }));
+
+        let has_tool_use = blocks
+            .iter()
+            .any(|b| matches!(b, TurnBlock::ToolUse { .. }));
+        if stop_reason.as_deref() != Some("tool_use") || !has_tool_use {
+            break; // the model is done
+        }
+        // Execute each requested tool, feed the results back.
+        let mut results = Vec::new();
+        for b in &blocks {
+            let TurnBlock::ToolUse {
+                id,
+                name,
+                input_json,
+            } = b
+            else {
+                continue;
+            };
+            let input: serde_json::Value =
+                serde_json::from_str(input_json).unwrap_or(serde_json::json!({}));
+            let _ = sink.send((
+                job_id,
+                AiMsg::Delta(format!("\n[tool: {}]\n", tool_summary(name, &input))),
+            ));
+            let (text, is_error) = match execute_tool(workspace, name, &input) {
+                Ok(t) => (t, false),
+                Err(e) => (e, true),
+            };
+            let mut r = serde_json::json!({
+                "type": "tool_result", "tool_use_id": id, "content": text,
+            });
+            if is_error {
+                r["is_error"] = serde_json::json!(true);
+            }
+            results.push(r);
+        }
+        messages.push(serde_json::json!({ "role": "user", "content": results }));
+        if iter + 1 == AGENT_MAX_ITERS {
+            full_text.push_str("\n\n[stopped: tool-iteration cap reached]");
+        }
+    }
+    let _ = sink.send((job_id, AiMsg::Done(full_text.trim().to_string())));
+}
+
+/// Run one streaming agent turn — POST + read the SSE stream, forwarding
+/// text deltas to `sink` and collecting the turn's content blocks +
+/// `stop_reason`.
+fn run_agent_turn(
+    client: &reqwest::blocking::Client,
+    api_key: &str,
+    body: String,
+    cancel: &AtomicBool,
+    sink: &std::sync::mpsc::Sender<(u64, AiMsg)>,
+    job_id: u64,
+) -> Result<(Vec<TurnBlock>, Option<String>), String> {
+    let response = client
+        .post(ENDPOINT)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", API_VERSION)
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .map_err(|e| format!("POST: {e}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let snippet = response
+            .text()
+            .unwrap_or_default()
+            .chars()
+            .take(400)
+            .collect::<String>();
+        return Err(format!("HTTP {status}: {snippet}"));
+    }
+    let mut reader = BufReader::new(response);
+    let mut blocks: Vec<TurnBlock> = Vec::new();
+    let mut stop_reason: Option<String> = None;
+    let mut current_event: Option<String> = None;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("cancelled".to_string());
+        }
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(e) => return Err(format!("read SSE: {e}")),
+        }
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if let Some(name) = trimmed.strip_prefix("event: ") {
+            current_event = Some(name.to_string());
+            continue;
+        }
+        let Some(json) = trimmed.strip_prefix("data: ") else {
+            continue;
+        };
+        let Some(event) = current_event.as_deref() else {
+            continue;
+        };
+        match event {
+            "content_block_start" => {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
+                    let cb = v.get("content_block");
+                    let kind = cb
+                        .and_then(|c| c.get("type"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    if kind == "tool_use" {
+                        let id = cb
+                            .and_then(|c| c.get("id"))
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let name = cb
+                            .and_then(|c| c.get("name"))
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        blocks.push(TurnBlock::ToolUse {
+                            id,
+                            name,
+                            input_json: String::new(),
+                        });
+                    } else {
+                        // text (or anything else) — a placeholder keeps
+                        // later block indices aligned.
+                        blocks.push(TurnBlock::Text(String::new()));
+                    }
+                }
+            }
+            "content_block_delta" => {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
+                    let idx = v.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                    let delta = v.get("delta");
+                    let dtype = delta
+                        .and_then(|d| d.get("type"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    match dtype {
+                        "text_delta" => {
+                            if let Some(t) =
+                                delta.and_then(|d| d.get("text")).and_then(|x| x.as_str())
+                            {
+                                if let Some(TurnBlock::Text(buf)) = blocks.get_mut(idx) {
+                                    buf.push_str(t);
+                                }
+                                if !t.is_empty() {
+                                    let _ = sink.send((job_id, AiMsg::Delta(t.to_string())));
+                                }
+                            }
+                        }
+                        "input_json_delta" => {
+                            if let Some(p) = delta
+                                .and_then(|d| d.get("partial_json"))
+                                .and_then(|x| x.as_str())
+                                && let Some(TurnBlock::ToolUse { input_json, .. }) =
+                                    blocks.get_mut(idx)
+                            {
+                                input_json.push_str(p);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "message_delta" => {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(json)
+                    && let Some(sr) = v
+                        .get("delta")
+                        .and_then(|d| d.get("stop_reason"))
+                        .and_then(|s| s.as_str())
+                {
+                    stop_reason = Some(sr.to_string());
+                }
+            }
+            "message_stop" => break,
+            "error" => {
+                let snippet = json.chars().take(400).collect::<String>();
+                return Err(format!("API error: {snippet}"));
+            }
+            _ => {}
+        }
+    }
+    Ok((blocks, stop_reason))
+}
+
+/// The agent's tool definitions — all read-only, workspace-scoped.
+fn agent_tools() -> serde_json::Value {
+    serde_json::json!([
+        {
+            "name": "read_file",
+            "description": "Read a UTF-8 text file from the project workspace. The path is workspace-relative.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Workspace-relative file path." }
+                },
+                "required": ["path"]
+            }
+        },
+        {
+            "name": "list_directory",
+            "description": "List the entries of a workspace directory. Path is workspace-relative; \".\" is the workspace root. Directories are suffixed with /.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Workspace-relative directory path." }
+                },
+                "required": ["path"]
+            }
+        },
+        {
+            "name": "grep",
+            "description": "Search the workspace for a regular-expression pattern (ripgrep). Returns matching file:line:text rows.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "The regular expression to search for." }
+                },
+                "required": ["pattern"]
+            }
+        }
+    ])
+}
+
+/// System prompt for the agent — a base instruction about the tools +
+/// the workspace, with the user's optional `[ai] system_prompt` appended.
+fn agent_system_prompt(user: Option<&str>) -> String {
+    let base = "You are an AI assistant embedded in the mnml code editor, working inside \
+        the user's project workspace. You have read-only tools — read_file, list_directory, \
+        and grep — to explore the codebase. Use them to ground your answers in the actual \
+        code rather than guessing. Keep answers focused and concise.";
+    match user {
+        Some(u) if !u.trim().is_empty() => format!("{base}\n\n{u}"),
+        _ => base.to_string(),
+    }
+}
+
+/// A short human label for a tool call — shown as a `[tool: …]` status
+/// line while the agent runs.
+fn tool_summary(name: &str, input: &serde_json::Value) -> String {
+    let arg = input
+        .get("path")
+        .or_else(|| input.get("pattern"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if arg.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name} {arg}")
+    }
+}
+
+/// Dispatch + run one tool call. `Ok` is the tool result; `Err` is a
+/// user-visible error string (fed back to the model as an error result).
+fn execute_tool(workspace: &Path, name: &str, input: &serde_json::Value) -> Result<String, String> {
+    match name {
+        "read_file" => {
+            let path = input
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("read_file: missing `path`")?;
+            tool_read_file(workspace, path)
+        }
+        "list_directory" => {
+            let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            tool_list_directory(workspace, path)
+        }
+        "grep" => {
+            let pattern = input
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .ok_or("grep: missing `pattern`")?;
+            tool_grep(workspace, pattern)
+        }
+        other => Err(format!("unknown tool: {other}")),
+    }
+}
+
+/// Resolve a workspace-relative path, canonicalize it, and refuse
+/// anything that escapes the workspace root (`..`, absolute paths,
+/// symlinks pointing outside).
+fn resolve_in_workspace(workspace: &Path, rel: &str) -> Result<PathBuf, String> {
+    let canon = workspace
+        .join(rel)
+        .canonicalize()
+        .map_err(|e| format!("{rel}: {e}"))?;
+    let ws = workspace
+        .canonicalize()
+        .map_err(|e| format!("workspace: {e}"))?;
+    if !canon.starts_with(&ws) {
+        return Err(format!("{rel}: path escapes the workspace"));
+    }
+    Ok(canon)
+}
+
+fn tool_read_file(workspace: &Path, rel: &str) -> Result<String, String> {
+    let path = resolve_in_workspace(workspace, rel)?;
+    if !path.is_file() {
+        return Err(format!("{rel}: not a file"));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("{rel}: {e}"))?;
+    Ok(cap_output(&String::from_utf8_lossy(&bytes)))
+}
+
+fn tool_list_directory(workspace: &Path, rel: &str) -> Result<String, String> {
+    let dir = resolve_in_workspace(workspace, rel)?;
+    if !dir.is_dir() {
+        return Err(format!("{rel}: not a directory"));
+    }
+    let mut entries: Vec<String> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("{rel}: {e}"))?
+        .flatten()
+        .map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                format!("{name}/")
+            } else {
+                name
+            }
+        })
+        .collect();
+    entries.sort();
+    if entries.is_empty() {
+        return Ok("(empty directory)".to_string());
+    }
+    Ok(cap_output(&entries.join("\n")))
+}
+
+fn tool_grep(workspace: &Path, pattern: &str) -> Result<String, String> {
+    let out = std::process::Command::new("rg")
+        .args([
+            "--line-number",
+            "--no-heading",
+            "--color=never",
+            "--max-count=50",
+            "-e",
+            pattern,
+        ])
+        .current_dir(workspace)
+        .output()
+        .map_err(|e| format!("grep: ripgrep (rg) not available: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    if text.trim().is_empty() {
+        return Ok(format!("(no matches for {pattern:?})"));
+    }
+    Ok(cap_output(&text))
+}
+
+/// Truncate tool output at [`TOOL_OUTPUT_CAP`] on a char boundary.
+fn cap_output(s: &str) -> String {
+    if s.len() <= TOOL_OUTPUT_CAP {
+        return s.to_string();
+    }
+    let mut end = TOOL_OUTPUT_CAP;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\n…[truncated at {TOOL_OUTPUT_CAP} bytes]", &s[..end])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +760,60 @@ mod tests {
     fn parse_text_delta_handles_malformed_json() {
         assert_eq!(parse_text_delta("{not json"), None);
         assert_eq!(parse_text_delta("{}"), None);
+    }
+
+    #[test]
+    fn execute_tool_read_file_reads_workspace_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), "hi there").unwrap();
+        let out = execute_tool(
+            dir.path(),
+            "read_file",
+            &serde_json::json!({ "path": "hello.txt" }),
+        )
+        .unwrap();
+        assert_eq!(out, "hi there");
+    }
+
+    #[test]
+    fn execute_tool_read_file_rejects_workspace_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = execute_tool(
+            dir.path(),
+            "read_file",
+            &serde_json::json!({ "path": "../../../../../../etc/passwd" }),
+        );
+        assert!(r.is_err(), "escape should be refused: {r:?}");
+    }
+
+    #[test]
+    fn execute_tool_list_directory_lists_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        let out = execute_tool(
+            dir.path(),
+            "list_directory",
+            &serde_json::json!({ "path": "." }),
+        )
+        .unwrap();
+        assert!(out.contains("a.txt"), "out: {out:?}");
+        assert!(out.contains("sub/"), "out: {out:?}");
+    }
+
+    #[test]
+    fn execute_tool_unknown_name_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(execute_tool(dir.path(), "delete_everything", &serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn cap_output_truncates_on_char_boundary() {
+        let big = "x".repeat(TOOL_OUTPUT_CAP + 100);
+        let capped = cap_output(&big);
+        assert!(capped.len() < big.len());
+        assert!(capped.contains("truncated"));
+        // Short input passes through untouched.
+        assert_eq!(cap_output("short"), "short");
     }
 }
