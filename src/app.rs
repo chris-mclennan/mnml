@@ -25682,6 +25682,64 @@ impl App {
 
     /// Phase 7: native equivalent of the launcher's "Run Tests" action.
     /// Reads `playwright.env.{BRANCH,ENVIRONMENT,LOG_LEVEL}` from a
+    /// `private.diff_executions` — compute a counts-level diff between the
+    /// two most-recent TestExecution records for the same (env, branch),
+    /// toasting which counts changed. Useful for "did my fix actually
+    /// reduce failures?" at a glance. Phase 9 of the private track; an
+    /// assertion-level diff would need richer per-record data than the
+    /// current shape carries.
+    #[cfg(feature = "private")]
+    pub fn private_diff_executions(&mut self) {
+        let mut records: Vec<&crate::private::TestExecutionRecord> =
+            self.private_executions.values().collect();
+        // Newest first.
+        records.sort_by(|a, b| b.started_at_ms.cmp(&a.started_at_ms));
+        let Some(latest) = records.first().copied() else {
+            self.toast("private: no executions in cache yet (open the TestExecutions pane)");
+            return;
+        };
+        let prior = records
+            .iter()
+            .skip(1)
+            .find(|r| r.env == latest.env && r.branch == latest.branch)
+            .copied();
+        let Some(prior) = prior else {
+            self.toast(format!(
+                "private: only one execution for {:?} / {}",
+                latest.env, latest.branch
+            ));
+            return;
+        };
+        let delta_passed = latest.passed as i64 - prior.passed as i64;
+        let delta_failed = latest.failed as i64 - prior.failed as i64;
+        let delta_flaky = latest.flaky as i64 - prior.flaky as i64;
+        let delta_skipped = latest.skipped as i64 - prior.skipped as i64;
+        let sgn = |d: i64| -> String {
+            if d > 0 {
+                format!("+{d}")
+            } else {
+                format!("{d}")
+            }
+        };
+        self.toast(format!(
+            "diff vs prior ({:?}/{}): ✓ {} → {} ({})  ✗ {} → {} ({})  ≈ {} → {} ({})  ⊘ {} → {} ({})",
+            latest.env,
+            latest.branch,
+            prior.passed,
+            latest.passed,
+            sgn(delta_passed),
+            prior.failed,
+            latest.failed,
+            sgn(delta_failed),
+            prior.flaky,
+            latest.flaky,
+            sgn(delta_flaky),
+            prior.skipped,
+            latest.skipped,
+            sgn(delta_skipped),
+        ));
+    }
+
     /// settings.json (`$SETTINGS_FILE` env var > workspace `.vscode/settings.json`)
     /// and spawns `npx playwright test` in a pty pane with those as env
     /// vars. No interactive pickers — user edits settings.json (or runs the

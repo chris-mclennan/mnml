@@ -3044,6 +3044,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_private_tests(),
         });
         cmds.push(Command {
+            id: "private.diff_executions",
+            title: "the private integration: diff latest execution vs prior (same env+branch)",
+            group: "private",
+            keys: &[],
+            run: |app| app.private_diff_executions(),
+        });
+        cmds.push(Command {
             id: "private.run_tests_pick_env",
             title: "the private integration: run playwright tests… (pick env)",
             group: "private",

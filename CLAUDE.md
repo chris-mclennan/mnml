@@ -83,6 +83,47 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Mac-canonical chords + About/Settings overlays + color hover + the private integration phase 9 (2026-05-19):**
+seven-item wave continuing today's polish work.
+(1) **More ⌘→⌃ chord translations in tmnl** (Native tabs only):
+`⌘P` → file picker, `⌘⇧P` → command palette (Shift preserved by
+`pack_mods_cmd_to_ctrl`), `⌘B` → toggle file tree, `⌘G` → goto
+line, `⌘/` → toggle comment.
+(2) **`⌘⇧W` explicit close-whole-tab** sibling to `⌘W`-closes-
+mnml-buffer. Lets the user actually exit a Native tab.
+(3) **`⌘<N>` forwards to mnml tab pages** — translates to
+`⌥<N>` (mnml's `tab.goto_N` chord) on Native tabs; Shell tabs
+keep the original switch-tmnl-tab behavior. `⌘⇧[`/`⌘⇧]` still
+cycle tmnl tabs across all modes.
+(4) **About overlay** (`:about` / `view.about`) — centered panel
+showing build SHA, theme, workspace, repo count, LSP servers
+running, tab pages, editor buffers, total panes, input style,
+recent-files count. Replaces the removed bottom-right SHA chip
+with a richer on-demand view. New `ui::about_overlay` +
+`App.show_about` + `App::toggle_about`.
+(5) **Settings overlay** (`:settings` / `view.settings`) — list
+of the most-edited `[ui]` / `[editor]` boolean flags with `[x]`/
+`[ ]` checkboxes. Click toggles via the existing `:set <flag>!`
+ex command path so persistence + validation stays in one place.
+17 flags covered (wrap, scrollbar, render_markdown, sticky_context,
+relative_number, line_number, cursor_line, hlword, trailing,
+rainbow, syntax, todohl, clock, bufferline, autoindent, trim,
+eol). New `ui::settings_overlay` + `App.show_settings` +
+`app.rects.settings_rows`.
+(6) **Color hover hints** — extended the mode + branch chip
+tooltips to explain what their colors mean. Mode chip names the
+current color/mode pair (`green = INSERT`, `red = NORMAL`, etc.);
+branch chip lists which git-status glyphs are showing (`+ added`,
+`● changed`, `⇡ ahead`, `⚠ conflicts`).
+(7) **the private integration phase 9 — execution diff** (`private.diff_executions`)
+— pick the two most-recent `TestExecutionRecord`s for the same
+`(env, branch)` from `App.private_executions` and toast a counts-
+level diff (`✓ N → N (+M)`, `✗ N → N (-M)`, etc.). Useful for
+"did my fix actually reduce failures?" at a glance.
+Assertion-level diff is a follow-up that'd need richer per-record
+data than the current shape carries.
+678 lib tests + clippy clean.
+
 **Cmd+W closes mnml buffers via tmnl + last-buffer confirm (2026-05-19):**
 two-sided change spanning mnml + tmnl. On Mac, `Cmd+W` is canonical
 "close tab" — but tmnl was intercepting it to close the entire tmnl

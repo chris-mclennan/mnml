@@ -80,16 +80,58 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
 /// registered this frame (chip is hidden, terminal too narrow, etc.) — bail.
 fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)> {
     match chip {
-        HoverChip::StatuslineMode => Some((
-            app.rects.statusline_mode_chip?,
-            "click: toggle vim ⇄ standard".into(),
-            Some("right-click: input-style menu".into()),
-        )),
-        HoverChip::StatuslineBranch => Some((
-            app.rects.statusline_branch_chip?,
-            "click: open commit graph".into(),
-            Some("right-click: git ops menu".into()),
-        )),
+        HoverChip::StatuslineMode => {
+            // Mode chip color encodes the editing mode — name it in the
+            // tooltip so users learn the palette without trial and error.
+            let mode_desc = match app.editing_mode() {
+                crate::input::EditingMode::Insert => "green = INSERT",
+                crate::input::EditingMode::Replace => "orange = REPLACE",
+                crate::input::EditingMode::Visual => "purple = VISUAL",
+                crate::input::EditingMode::Normal => "red = NORMAL",
+                crate::input::EditingMode::None => match app.focus {
+                    crate::focus::Focus::Tree => "blue = TREE focus",
+                    crate::focus::Focus::Pane => "green = EDIT (cyan = read-only)",
+                },
+            };
+            Some((
+                app.rects.statusline_mode_chip?,
+                format!("click: toggle vim ⇄ standard · {mode_desc}"),
+                Some("right-click: input-style menu".into()),
+            ))
+        }
+        HoverChip::StatuslineBranch => {
+            // Branch chip carries the git counts; explain the glyphs.
+            let g = app.git.snapshot();
+            let mut extra: Vec<&'static str> = Vec::new();
+            if g.added > 0 {
+                extra.push("+ added");
+            }
+            if g.changed > 0 {
+                extra.push("● changed");
+            }
+            if g.removed > 0 {
+                extra.push("- removed");
+            }
+            if g.conflicts > 0 {
+                extra.push("⚠ conflicts");
+            }
+            if g.ahead > 0 {
+                extra.push("⇡ ahead");
+            }
+            if g.behind > 0 {
+                extra.push("⇣ behind");
+            }
+            let label = if extra.is_empty() {
+                "click: open commit graph".to_string()
+            } else {
+                format!("click: graph · {}", extra.join(" "))
+            };
+            Some((
+                app.rects.statusline_branch_chip?,
+                label,
+                Some("right-click: git ops menu".into()),
+            ))
+        }
         HoverChip::StatuslineWorkspace => {
             let primary = if app.repos.len() > 1 {
                 "click: switch repo"
