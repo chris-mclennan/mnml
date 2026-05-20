@@ -1,14 +1,16 @@
-//! The AI track — for now, one-shot `claude -p "<prompt>"` subprocesses (the
-//! Claude Code CLI in print/non-interactive mode: it does tool use, returns text,
-//! reuses the user's auth). A [`Pane::Ai`](crate::pane::Pane::Ai) shows the
-//! answer (rendered as markdown); on-selection actions (`ai.explain` / `ai.fix` /
-//! `ai.refactor` / `ai.write_tests`) and a free-text `ai.ask` build the prompt
-//! and spawn the run. The work happens on a thread; [`crate::app::App::tick`]
-//! polls the result channel — same pattern as the HTTP request pane.
+//! The AI track. Two backends, picked by `[ai] backend` (see [`AiBackend`]):
+//! `Cli` shells out to one-shot `claude -p "<prompt>"` subprocesses (the Claude
+//! Code CLI in print mode — full tool use, the user's auth); `Api` posts
+//! directly to `api.anthropic.com/v1/messages` ([`api_client`]) with an agentic
+//! loop of its own (read-only — and optionally write — workspace tools). A
+//! [`Pane::Ai`](crate::pane::Pane::Ai) shows the answer (rendered as markdown);
+//! on-selection actions (`ai.explain` / `ai.fix` / `ai.refactor` /
+//! `ai.write_tests`) and a free-text `ai.ask` build the prompt and spawn the
+//! run. The work happens on a thread; [`crate::app::App::tick`] polls the
+//! result channel — same pattern as the HTTP request pane.
 //!
-//! Deliberately *not* a raw Claude/OpenAI API client (see `.local/PLAN.md`):
-//! interactive agentic AI is the `Pane::Pty` `claude`/`codex` panes; this is the
-//! "do one thing to this code" surface.
+//! Interactive agentic AI is the `Pane::Pty` `claude`/`codex` panes; the
+//! `Pane::Ai` surface is the "ask / do one thing to this code" path.
 //!
 //! Each one-shot is given a session id, so a `Pane::Ai` can be *promoted* to a
 //! full interactive Claude Code pane (`claude --resume <id>`) when you want to go
@@ -34,10 +36,11 @@ pub mod api_client;
 pub mod transcript;
 
 /// Which backend an AI job hits. `Cli` shells out to `claude -p` (the
-/// historical default — uses the user's auth, supports tool use).
-/// `Api` posts directly to `https://api.anthropic.com/v1/messages` with
-/// SSE streaming (cheaper / faster for short asks; no tool use yet;
-/// requires `$ANTHROPIC_API_KEY`).
+/// default — uses the user's Claude Code auth / subscription, full tool
+/// use). `Api` posts directly to `https://api.anthropic.com/v1/messages`
+/// with SSE streaming + its own agentic tool loop (read-only workspace
+/// tools by default; see `[ai] api_tools`). Requires `$ANTHROPIC_API_KEY`
+/// and bills API credits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AiBackend {
     Cli,
@@ -56,8 +59,8 @@ impl AiBackend {
 /// Which engine produces inline ghost-text completions. `Unset` means
 /// the user hasn't picked yet — enabling inline suggestions opens the
 /// setup picker. `ClaudeApi` uses `api_client::complete_code`. `Local`
-/// is the candle-embedded model (a managed ~2 GB download); until that
-/// track lands it transparently falls back to `ClaudeApi`.
+/// is the `fim-engine` candle-embedded model (a managed ~1 GB GGUF
+/// download, runs in-process — offline, no API key).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuggestBackend {
     Unset,

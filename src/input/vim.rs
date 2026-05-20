@@ -70,9 +70,10 @@ enum Prefix {
     Gq,
     /// Saw `Z` — expecting `Z` (→ `:x`) or `Q` (→ `:q!`).
     Z,
-    /// Saw lowercase `z` — vim's fold prefix. `a` toggles, `R` unfolds all,
-    /// `M` (folds all — not yet wired). Distinct from [`Self::Z`] because
-    /// vim uses both letters for different families.
+    /// Saw lowercase `z` — vim's fold prefix. `a`/`o`/`c` toggle a fold,
+    /// `R`/`E` unfold all, `M` folds all (via `lsp.fold_all`). Distinct
+    /// from [`Self::Z`] because vim uses both letters for different
+    /// families.
     ZFold,
     /// Saw `r` — replace the char under the cursor with the next typed char.
     Replace,
