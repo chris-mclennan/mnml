@@ -2605,7 +2605,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "ai.ask",
-            title: "AI: ask Claude a question (claude -p)",
+            title: "AI: ask Claude a question",
             group: "ai",
             keys: &[],
             run: |app| app.open_ai_ask_prompt(),
