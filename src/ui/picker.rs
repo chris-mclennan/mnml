@@ -12,11 +12,18 @@ use crate::app::App;
 use crate::ui::theme;
 
 pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
-    // Geometry: centered, capped (clamps may exceed a tiny screen — it'll clip, fine).
+    // Geometry: capped (clamps may exceed a tiny screen — it'll clip, fine).
     let w = screen.width.saturating_sub(8).clamp(30, 90);
     let h = screen.height.saturating_sub(4).clamp(7, 22);
     let x = screen.x + (screen.width.saturating_sub(w)) / 2;
-    let y = screen.y + (screen.height.saturating_sub(h)) / 3; // a bit above center
+    // `[ui] picker_position` — `"top"` drops the box flush with the top
+    // edge (VS Code / Sublime / Zed quick-open convention); anything
+    // else floats it a third of the way down (the historic default).
+    let y = if app.config.ui.picker_position.eq_ignore_ascii_case("top") {
+        screen.y
+    } else {
+        screen.y + (screen.height.saturating_sub(h)) / 3
+    };
     let area = Rect {
         x,
         y,

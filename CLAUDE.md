@@ -83,6 +83,19 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Top-anchored picker option + Claude sparkle icon (2026-05-19):**
+two small polish items. (1) **`[ui] picker_position`** — `"center"`
+(default, historic behavior — floats a third of the way down) or
+`"top"` (drops the fuzzy-picker / command-palette box flush with
+the top edge, the VS Code / Sublime / Zed quick-open convention —
+palette appears where your eyes reach for it + doesn't cover the
+code below). New `view.toggle_picker_position` palette command
+flips it at runtime. (2) **Claude bufferline icon** swapped from
+`nf-md-chat-question` (green chip) to `nf-md-star-four-points`
+(`\u{F0E2D}` — the 4-point sparkle that reads as Anthropic's burst
+mark + the universal "AI" sparkle) on a `t.orange` (Claude-orange)
+chip.
+
 **`ai.chat` — claude-chat.nvim-style context wrapper (2026-05-19):**
 a unified context-aware Claude entry point modeled on
 claude-chat.nvim. `ai.chat` / `:ClaudeChat` / `:Claude` opens a

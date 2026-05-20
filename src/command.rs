@@ -162,6 +162,21 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_settings(),
         },
         Command {
+            id: "view.toggle_picker_position",
+            title: "Picker: toggle position (center ⇄ top)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let top = app.config.ui.picker_position.eq_ignore_ascii_case("top");
+                app.config.ui.picker_position =
+                    if top { "center" } else { "top" }.to_string();
+                app.toast(format!(
+                    "picker position: {}",
+                    app.config.ui.picker_position
+                ));
+            },
+        },
+        Command {
             id: "view.focus_tree",
             title: "Focus the file tree (without toggling)",
             group: "view",

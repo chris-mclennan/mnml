@@ -402,15 +402,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let t = theme::cur();
     let mut cluster_x = tabs_max_x;
 
-    // Claude button — `nf-md-chat-question` (\u{F1739}) when nerd fonts
-    // are on; fallback `CC`. 4 cells (` <glyph> ` + trailing space).
-    // Click → `ai.claude_code` (toggles focus if already open).
-    let claude_glyph = if nerd { "\u{F1739}" } else { "CC" };
+    // Claude button — `nf-md-star-four-points` (\u{F0E2D}), the
+    // 4-point sparkle that reads as Anthropic's burst mark + the
+    // universal "AI" sparkle. Claude-orange chip. Fallback `CC`.
+    // 4 cells (` <glyph> ` + trailing space). Click → `ai.claude_code`.
+    let claude_glyph = if nerd { "\u{F0E2D}" } else { "CC" };
     spans.push(Span::styled(
         format!(" {claude_glyph}  "),
         Style::default()
             .fg(t.bg_darker)
-            .bg(t.green)
+            .bg(t.orange)
             .add_modifier(Modifier::BOLD),
     ));
     app.rects.bufferline_claude_button = Some(ratatui::layout::Rect {

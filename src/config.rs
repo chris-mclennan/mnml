@@ -592,6 +592,13 @@ pub struct UiConfig {
     /// Override the right-side detail panel width. `None` ⇒ 40% of pane
     /// width (clamped 30..=70). The list area gets `pane_width - detail`.
     pub git_graph_detail_col: Option<usize>,
+    /// Where the fuzzy picker / command palette anchors. `"center"`
+    /// (default) floats it a bit above center; `"top"` drops it flush
+    /// with the top edge — the VS Code / Sublime / Zed quick-open
+    /// convention (palette appears where your eyes reach for it, and
+    /// doesn't cover the code below). Any other value falls back to
+    /// `"center"`.
+    pub picker_position: String,
 }
 
 impl Default for Config {
@@ -642,6 +649,7 @@ impl Default for Config {
                 git_graph_branch_col: None,
                 git_graph_author_col: None,
                 git_graph_detail_col: None,
+                picker_position: "center".to_string(),
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -883,6 +891,7 @@ struct RawUi {
     git_graph_branch_col: Option<usize>,
     git_graph_author_col: Option<usize>,
     git_graph_detail_col: Option<usize>,
+    picker_position: Option<String>,
 }
 
 impl Config {
@@ -1043,6 +1052,9 @@ impl Config {
         }
         if raw.ui.git_graph_detail_col.is_some() {
             self.ui.git_graph_detail_col = raw.ui.git_graph_detail_col;
+        }
+        if let Some(v) = raw.ui.picker_position {
+            self.ui.picker_position = v;
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;
