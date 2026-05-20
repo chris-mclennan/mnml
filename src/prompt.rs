@@ -131,6 +131,11 @@ pub enum PromptKind {
     /// `Ctrl+Q` doesn't kill the session unexpectedly. Esc cancels via
     /// the standard prompt machinery.
     QuitConfirm,
+    /// Accept ⇒ context-aware Claude Code dispatch (`App::dispatch_ai_chat`).
+    /// The wrapper formulates file + selection context and either seeds a
+    /// fresh interactive Claude pane or types into an already-open one.
+    /// Empty input + no selection ⇒ just open/focus a plain Claude pane.
+    AiChat,
 }
 
 #[derive(Debug)]

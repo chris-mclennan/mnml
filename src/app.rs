@@ -10805,6 +10805,98 @@ impl App {
             self.open_shell();
         }
     }
+    /// `ai.chat` — context-aware Claude dispatch (claude-chat.nvim-style
+    /// wrapper). Opens a prompt; the title adapts to whether there's a
+    /// selection. The accept routes to `dispatch_ai_chat`.
+    pub fn open_ai_chat_prompt(&mut self) {
+        let has_sel = self
+            .active_editor()
+            .map(|b| b.editor.has_selection())
+            .unwrap_or(false);
+        let title = if has_sel {
+            "Ask Claude about the selection (empty = send selection only)"
+        } else {
+            "Ask Claude (empty = open plain Claude pane)"
+        };
+        let prompt = crate::prompt::Prompt::new(crate::prompt::PromptKind::AiChat, title);
+        self.prompt = Some(prompt);
+    }
+
+    /// Build the context block the `ai.chat` wrapper sends to Claude —
+    /// a `[mnml]` file reference + the selected code in a fenced block.
+    /// `None` when there's no active editor / no selection.
+    fn ai_chat_context(&self) -> Option<String> {
+        let b = self.active_editor()?;
+        if !b.editor.has_selection() {
+            return None;
+        }
+        let sel = b.editor.selected_text();
+        if sel.trim().is_empty() {
+            return None;
+        }
+        let rel = b
+            .path
+            .as_ref()
+            .map(|p| {
+                p.strip_prefix(&self.workspace)
+                    .unwrap_or(p)
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .unwrap_or_else(|| b.display_name().to_string());
+        let ft = b.language_ext.clone().unwrap_or_default();
+        Some(format!("[mnml] {rel}\n```{ft}\n{sel}\n```"))
+    }
+
+    /// Accept handler for `PromptKind::AiChat`. Combines the typed prompt
+    /// with the selection context (if any) and either spawns a fresh
+    /// Claude pane seeded with it, or — when a Claude pane is already
+    /// open — types the message into its pty (bracketed paste so embedded
+    /// newlines don't submit early, then a final Enter).
+    pub fn dispatch_ai_chat(&mut self, typed: &str) {
+        let typed = typed.trim();
+        let context = self.ai_chat_context();
+        // Compose the full message: context block then the user's prompt.
+        let message = match (&context, typed.is_empty()) {
+            (Some(ctx), false) => format!("{ctx}\n\n{typed}"),
+            (Some(ctx), true) => ctx.clone(),
+            (None, false) => typed.to_string(),
+            (None, true) => String::new(),
+        };
+        if let Some(id) = self.find_claude_pty() {
+            // Claude is already running — paste into its live pty.
+            if !message.is_empty()
+                && let Some(Pane::Pty(s)) = self.panes.get_mut(id)
+            {
+                // Bracketed paste: `ESC[200~ … ESC[201~` keeps multi-line
+                // text from submitting on each embedded newline; the
+                // trailing `\r` then submits the whole message.
+                let mut bytes = Vec::with_capacity(message.len() + 16);
+                bytes.extend_from_slice(b"\x1b[200~");
+                bytes.extend_from_slice(message.as_bytes());
+                bytes.extend_from_slice(b"\x1b[201~\r");
+                s.write_bytes(&bytes);
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        // No Claude pane yet — spawn one, seeded with the message if any.
+        if message.is_empty() {
+            self.open_pty_dir(
+                crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone()),
+                crate::layout::SplitDir::Horizontal,
+            );
+        } else {
+            self.open_pty_dir(
+                crate::pty_pane::BinaryProfile::claude_code_with_prompt(
+                    self.workspace.clone(),
+                    message,
+                ),
+                crate::layout::SplitDir::Horizontal,
+            );
+        }
+    }
+
     pub fn open_claude_code(&mut self) {
         // If a Claude pane is already open, toggle focus / visibility-ish
         // by revealing it instead of spawning a duplicate. (Claude
@@ -15345,6 +15437,10 @@ impl App {
             }
             crate::prompt::PromptKind::QuitConfirm => {
                 self.accept_quit();
+            }
+            crate::prompt::PromptKind::AiChat => {
+                let typed = p.input.clone();
+                self.dispatch_ai_chat(&typed);
             }
         }
     }
@@ -21794,6 +21890,7 @@ impl App {
             "welcome" | "Welcome" => self.toggle_welcome(),
             "about" | "About" => self.toggle_about(),
             "settings" | "Settings" => self.toggle_settings(),
+            "ClaudeChat" | "Claude" | "claudechat" => self.open_ai_chat_prompt(),
             // `:reg` / `:registers` — toast clipboard contents (we have a
             // single anonymous register for now). Newlines render as `↵`,
             // truncated to keep the toast short.

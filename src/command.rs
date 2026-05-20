@@ -2374,15 +2374,22 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "ai.claude_code",
-            title: "AI: open Claude Code (split below)",
+            title: "AI: open Claude Code (right dock)",
             group: "ai",
             // No global key — `Ctrl+Shift+A` isn't distinguishable in most terminals; use `<leader>a c`.
             keys: &[],
             run: |app| app.open_claude_code(),
         },
         Command {
+            id: "ai.chat",
+            title: "AI: Claude chat — prompt + file/selection context",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_ai_chat_prompt(),
+        },
+        Command {
             id: "ai.codex",
-            title: "AI: open Codex (split below)",
+            title: "AI: open Codex (right dock)",
             group: "ai",
             keys: &[],
             run: |app| app.open_codex(),

@@ -83,6 +83,27 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**`ai.chat` — claude-chat.nvim-style context wrapper (2026-05-19):**
+a unified context-aware Claude entry point modeled on
+claude-chat.nvim. `ai.chat` / `:ClaudeChat` / `:Claude` opens a
+prompt (title adapts: "Ask Claude about the selection…" when a
+selection is live, "Ask Claude…" otherwise). On accept,
+`dispatch_ai_chat` composes a message from the typed prompt + a
+`[mnml] <rel-path>` + fenced-code context block built from the
+active editor's selection, then:
+* **No Claude pane open** → spawns one seeded with the message as
+  `claude`'s trailing positional arg (new `BinaryProfile::
+  claude_code_with_prompt`) — boots interactive already holding
+  the context, no cold-pty timing problem.
+* **Claude pane already open** → types the message into its live
+  pty via a bracketed-paste sequence (`ESC[200~ … ESC[201~`) so
+  embedded newlines don't submit early, then a trailing `\r`.
+* **Empty prompt + no selection** → just opens/focuses a plain
+  Claude pane.
+The wrapper feeds the *interactive* session (vs the existing
+`ai.explain`/`fix`/`ask` family which runs `claude -p` one-shots
+into a read-only `Pane::Ai`). New `PromptKind::AiChat`.
+
 **Quit confirm + Claude/Codex launch buttons + right-dock AI panes (2026-05-19):**
 follow-ups on the Cmd+W work + an AI-pane UX pass.
 (1) **Quit confirmation** — the close-last-buffer confirm added
