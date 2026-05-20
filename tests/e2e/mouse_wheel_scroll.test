@@ -1,0 +1,25 @@
+# The mouse wheel scrolls the editor body (3 lines per tick).
+write long.txt "W01\nW02\nW03\nW04\nW05\nW06\nW07\nW08\nW09\nW10\nW11\nW12\nW13\nW14\nW15\nW16\nW17\nW18\nW19\nW20\nW21\nW22\nW23\nW24\nW25\nW26\nW27\nW28\nW29\nW30\nW31\nW32\nW33\nW34\nW35\nW36\nW37\nW38\nW39\nW40\nW41\nW42\nW43\nW44\nW45\nW46\nW47\nW48\nW49\nW50"
+open long.txt
+command view.toggle_tree
+expect screen contains "W01"
+
+# Wheel down over the editor body — 15 ticks × 3 lines pushes the top
+# of the file well off-screen.
+scroll 40 20 down
+scroll 40 20 down
+scroll 40 20 down
+scroll 40 20 down
+scroll 40 20 down
+scroll 40 20 down
+scroll 40 20 down
+scroll 40 20 down
+scroll 40 20 down
+scroll 40 20 down
+scroll 40 20 down
+scroll 40 20 down
+scroll 40 20 down
+scroll 40 20 down
+scroll 40 20 down
+expect screen lacks "W01"
+expect screen contains "W46"

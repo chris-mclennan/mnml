@@ -1,0 +1,11 @@
+# Clicking in the editor body places the cursor on that line — the
+# statusline Ln chip confirms where it landed.
+write doc.txt "ED01\nED02\nED03\nED04\nED05\nED06\nED07\nED08\nED09\nED10\nED11\nED12\nED13\nED14\nED15\nED16\nED17\nED18\nED19\nED20"
+open doc.txt
+command view.toggle_tree
+expect screen contains "Ln 1"
+
+# The editor body starts at screen row 1 (below the bufferline), so a
+# click at screen y=9 lands on file line 9.
+click 40 9
+expect screen contains "Ln 9"
