@@ -83,6 +83,25 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**AI cost visibility + aI text object (2026-05-20):**
+three bounded items. (1) **`ai.show_config`** — toasts the live
+AI backend / model / `api_tools` state (a reliable "what am I
+running" readout — asking the model doesn't work, LLMs don't
+know their own version). (2) **Token-usage tracking** — the
+direct-API workers parse the `usage` block from the SSE stream
+(`input_tokens` from `message_start`, `output_tokens` from
+`message_delta`) and send a new `AiMsg::Usage` before `Done`;
+`drain_ai_jobs` accumulates a session tally + toasts each call's
+tokens + a rough cost estimate (approximate haiku/sonnet/opus
+per-Mtok rates; unrecognized models show tokens only). The
+agent loop sums usage across every turn. `ai.token_usage` shows
+the session total. (3) **`aI` text object** — completes the
+vim-indent-object trio (`ii` / `ai` / `aI`): `aI` selects the
+indent block + the header line above *and* the line below.
+`indent_block_bounds` now takes `(include_above, include_below)`;
+new `EditOp::SelectOuterIndentBlock`. 697 lib tests + e2e +
+clippy green.
+
 **AI API tool use — agentic loop over direct HTTP (2026-05-20):**
 the direct-HTTP AI backend was text-in/text-out; agent flows
 needed the CLI backend. New `agent_to_channel` (`ai/api_client.rs`)
