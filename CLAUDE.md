@@ -83,6 +83,40 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Ghost-text polish + indent text objects + private phase-9 diff (2026-05-20):**
+five bounded items. (1) **Partial ghost-text accept** —
+`Ctrl+Right` accepts the next word of an AI ghost suggestion,
+`Ctrl+Down` the next line; both leave the remainder as a ghost
+so accepts chain (Copilot convention). Bare `Tab` still accepts
+all. Shared `accept_ghost_with(boundary)` + `ghost_word_boundary`
+/ `ghost_line_boundary`. (2) **Eager local-model warm-up** — the
+fim-engine worker loads the model on spawn (not on first
+request), and picking the Local backend in the setup picker
+spawns the worker immediately, so the one-time ~1 GB download +
+progress overlay start right away instead of stalling the first
+keystroke-pause. `fim_worker_loop` restructured: load before the
+recv loop. (3) **Ghost-text request dedup** —
+`maybe_fire_suggestion` skips firing when the prefix/suffix
+context is byte-identical to the last request (`App.last_suggest_context`)
+— a cursor jiggle / type-then-undo no longer re-spends an API
+call. (4) **Indent-scoped text objects for CoffeeScript + YAML**
+— `if`/`af`/`ic`/`ac` previously only worked in Python/Ruby.
+`regex_outline` gained `coffee_patterns` (real fns/classes) +
+`yaml_patterns` (block-heading keys → `namespace` so `ic`/`ac`
+select a config block); the dispatch routes `coffee`/`yaml`/`yml`
+through `enclosing_indent_scope`. Bonus: outline pane /
+sticky-context / statusline symbol chip light up for those too.
+(5) **the private integration phase 9 — assertion-level execution diff** —
+`private.diff_executions` now, when both runs carry per-test data,
+computes which specific tests flipped (REGRESSED / FIXED / STILL
+FAILING / NEW / REMOVED) and opens a scratch buffer; falls back
+to the counts-level toast otherwise. New `TestCaseResult` /
+`TestCaseStatus` + a `tests` Vec on `TestExecutionRecord`;
+`parse_test_cases` probes the DocDB doc for a per-test array
+(schema not pinned — tolerant key probing, graceful empty
+fallback); `diff_test_cases` is a pure unit-tested free fn.
+686 lean / 726 private lib tests + e2e + clippy green.
+
 **fim-engine polish bundle — Metal + progress overlay + config knobs + E2E (2026-05-20):**
 four follow-ups on the local FIM backend. (1) **Metal GPU
 acceleration** — `fim-engine`'s default `metal` Cargo feature;
