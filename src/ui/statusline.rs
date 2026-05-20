@@ -282,13 +282,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // ── right ──
     let mut right: Vec<Seg> = Vec::new();
     let mut clock_seg_idx: Option<usize> = None;
+    let mut lsp_seg_idx: Option<usize> = None;
+    let mut wrap_seg_idx: Option<usize> = None;
+    let mut autosave_seg_idx: Option<usize> = None;
+    let mut filesize_seg_idx: Option<usize> = None;
+    let mut lncol_seg_idx: Option<usize> = None;
     app.rects.statusline_workspace_chip = None;
     app.rects.statusline_clock_chip = None;
+    app.rects.statusline_lsp_chip = None;
+    app.rects.statusline_wrap_chip = None;
+    app.rects.statusline_autosave_chip = None;
+    app.rects.statusline_filesize_chip = None;
+    app.rects.statusline_lncol_chip = None;
     // LSP indicator — `LSP {N}` chip when there's at least one running
     // language server in the workspace. Tells the user at a glance that
     // LSP features are available; `:LspStatus` for the breakdown.
     let lsp_n = app.lsp.server_count();
     if lsp_n > 0 {
+        lsp_seg_idx = Some(right.len());
         right.push(Seg::new(
             format!(" LSP {lsp_n} "),
             theme::cur().bg_darker,
@@ -312,6 +323,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // active when the file's lines aren't actually long; this gives a
     // quiet visible confirmation.
     if app.config.ui.wrap {
+        wrap_seg_idx = Some(right.len());
         right.push(Seg::new(
             " WRAP ".to_string(),
             theme::cur().bg_darker,
@@ -324,6 +336,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Lets the user see at a glance that idle saves are armed.
     let autosave = app.config.editor.autosave_secs;
     if autosave > 0 {
+        autosave_seg_idx = Some(right.len());
         right.push(Seg::new(
             format!(" AS {autosave}s "),
             theme::cur().bg_darker,
@@ -336,6 +349,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // are reflected). Compact: `<1KB` shows raw bytes, otherwise KB / MB.
         let bytes = b.editor.text().len();
         let size_label = format_byte_size(bytes);
+        filesize_seg_idx = Some(right.len());
         right.push(Seg::new(
             format!(" {size_label} "),
             theme::cur().comment,
@@ -343,6 +357,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ));
         // `Ln 12/580` (current of total) — the "/580" lets the user gauge
         // where they are in the file without scanning the scroll bar.
+        lncol_seg_idx = Some(right.len());
         right.push(Seg::new(
             format!(" Ln {}/{} Col {} ", row + 1, b.editor.line_count(), col + 1,),
             theme::cur().fg,
@@ -460,6 +475,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         });
     }
+    // Helper: translate an optional seg idx into a right-lane click rect.
+    let to_rect = |idx_opt: Option<usize>, rects: &[(usize, usize)]| -> Option<Rect> {
+        let idx = idx_opt?;
+        let &(start, w) = rects.get(idx)?;
+        if w == 0 {
+            return None;
+        }
+        Some(Rect {
+            x: right_lane_x + start as u16,
+            y: area.y,
+            width: w as u16,
+            height: 1,
+        })
+    };
+    app.rects.statusline_lsp_chip = to_rect(lsp_seg_idx, &right_rects);
+    app.rects.statusline_wrap_chip = to_rect(wrap_seg_idx, &right_rects);
+    app.rects.statusline_autosave_chip = to_rect(autosave_seg_idx, &right_rects);
+    app.rects.statusline_filesize_chip = to_rect(filesize_seg_idx, &right_rects);
+    app.rects.statusline_lncol_chip = to_rect(lncol_seg_idx, &right_rects);
 
     // Register the git-branch chip's click rect for `git.graph` routing.
     // `left_rects[i] = (start_col_within_left_lane, width_in_cols)` — translate

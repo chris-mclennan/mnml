@@ -12,7 +12,7 @@ use crate::layout::PaneId;
 use crate::pane::Pane;
 use crate::ui::theme;
 
-pub fn draw(frame: &mut Frame, app: &App, id: PaneId, area: Rect, focused: bool) {
+pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: bool) {
     let Some(Pane::Cheatsheet(p)) = app.panes.get(id) else {
         return;
     };
@@ -68,6 +68,9 @@ pub fn draw(frame: &mut Frame, app: &App, id: PaneId, area: Rect, focused: bool)
     let mut lines: Vec<Line> = Vec::new();
     let mut selectable_index: usize = 0;
     let mut selected_screen_y: Option<usize> = None;
+    // (lines.len() at push time, selectable_index) — so we can compute
+    // the on-screen rect for each non-header row after we scroll.
+    let mut row_line_indices: Vec<(usize, usize)> = Vec::new();
     let chord_w: usize = sections
         .iter()
         .flat_map(|s| s.rows.iter().map(|r| r.chord.chars().count()))
@@ -101,6 +104,7 @@ pub fn draw(frame: &mut Frame, app: &App, id: PaneId, area: Rect, focused: bool)
                     .map(|s| Span::styled(s.content.into_owned(), sel_style))
                     .collect();
             }
+            row_line_indices.push((lines.len(), selectable_index));
             lines.push(Line::from(spans));
             selectable_index += 1;
         }
@@ -120,6 +124,23 @@ pub fn draw(frame: &mut Frame, app: &App, id: PaneId, area: Rect, focused: bool)
     }
     if scroll >= lines.len() {
         scroll = lines.len().saturating_sub(1);
+    }
+    // Register per-row click rects for the visible window.
+    let scroll_u16 = scroll as u16;
+    for (line_idx, sel_idx) in &row_line_indices {
+        if *line_idx >= scroll && *line_idx < scroll + visible_h {
+            let y = inner.y + (*line_idx as u16 - scroll_u16);
+            app.rects.list_rows.push((
+                ratatui::layout::Rect {
+                    x: inner.x,
+                    y,
+                    width: inner.width,
+                    height: 1,
+                },
+                id,
+                *sel_idx,
+            ));
+        }
     }
     let visible: Vec<Line> = lines.into_iter().skip(scroll).take(visible_h).collect();
     frame.render_widget(Paragraph::new(visible), inner);

@@ -1635,6 +1635,16 @@ pub struct PaneRects {
     pub statusline_workspace_chip: Option<Rect>,
     /// Statusline clock chip — clickable shortcut to toggle local ↔ UTC.
     pub statusline_clock_chip: Option<Rect>,
+    /// `LSP {N}` chip — click opens `:LspStatus`.
+    pub statusline_lsp_chip: Option<Rect>,
+    /// `WRAP` chip — click toggles `[ui] wrap`.
+    pub statusline_wrap_chip: Option<Rect>,
+    /// `AS {N}s` autosave chip — click opens the autosave config prompt.
+    pub statusline_autosave_chip: Option<Rect>,
+    /// Filesize chip (`123B` / `4.2K` / `12M`) — click opens `:Stat`.
+    pub statusline_filesize_chip: Option<Rect>,
+    /// `Ln N/M Col K` chip — click opens the goto-line prompt.
+    pub statusline_lncol_chip: Option<Rect>,
     /// Chips on the `> GIT` rail header (Fetch / Pull / Push / Commit /
     /// Stage all / Graph) — one-click access to common ops.
     pub rail_git_header_buttons: Vec<(Rect, crate::GitRailHeaderAction)>,
@@ -19750,6 +19760,23 @@ impl App {
     }
 
     /// chords show up immediately). If one's already open, focuses it.
+    /// Run the cheatsheet's selected row's command — used by both Enter
+    /// (chord handler) and the new double-click mouse path.
+    pub fn cheatsheet_run_selected(&mut self) {
+        let Some(cur) = self.active else { return };
+        let cmd_id = if let Some(Pane::Cheatsheet(c)) = self.panes.get(cur) {
+            c.selected_command_id()
+        } else {
+            None
+        };
+        if let Some(id) = cmd_id {
+            // Leaking a 'static lifetime via boxing is the existing way mnml
+            // dispatches dynamic command ids (mirrors `:` ex command).
+            let id_static: &'static str = Box::leak(id.into_boxed_str());
+            let _ = crate::command::run(id_static, self);
+        }
+    }
+
     pub fn open_cheatsheet(&mut self) {
         if let Some(id) = self
             .panes

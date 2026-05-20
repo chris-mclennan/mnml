@@ -193,6 +193,11 @@ pub enum HoverChip {
     /// A code-lens chip (`⚡ <title>`) — tooltip shows the full title in case
     /// the rendered chip got truncated.
     CodeLensChip,
+    StatuslineLsp,
+    StatuslineWrap,
+    StatuslineAutosave,
+    StatuslineFilesize,
+    StatuslineLnCol,
 }
 
 /// One row in the F1 click-discovery overlay. Each variant maps to a list

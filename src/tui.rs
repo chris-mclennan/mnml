@@ -3864,6 +3864,31 @@ fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChip> {
     {
         return Some(crate::HoverChip::StatuslineClock);
     }
+    if let Some(r) = app.rects.statusline_lsp_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineLsp);
+    }
+    if let Some(r) = app.rects.statusline_wrap_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineWrap);
+    }
+    if let Some(r) = app.rects.statusline_autosave_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineAutosave);
+    }
+    if let Some(r) = app.rects.statusline_filesize_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineFilesize);
+    }
+    if let Some(r) = app.rects.statusline_lncol_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineLnCol);
+    }
     if let Some(&(_, action)) = app
         .rects
         .rail_git_header_buttons
@@ -4635,6 +4660,49 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 } else {
                     "clock: local"
                 });
+                return;
+            }
+            // LSP chip → :LspStatus toast (breakdown of running servers).
+            if let Some(r) = app.rects.statusline_lsp_chip
+                && contains(r, x, y)
+            {
+                app.run_ex_command("LspStatus");
+                return;
+            }
+            // WRAP chip → toggle `[ui] wrap`.
+            if let Some(r) = app.rects.statusline_wrap_chip
+                && contains(r, x, y)
+            {
+                app.config.ui.wrap = !app.config.ui.wrap;
+                app.toast(if app.config.ui.wrap {
+                    "wrap: on"
+                } else {
+                    "wrap: off"
+                });
+                return;
+            }
+            // Autosave chip → :set autosave_secs= prompt (palette command).
+            if let Some(r) = app.rects.statusline_autosave_chip
+                && contains(r, x, y)
+            {
+                app.toast(format!(
+                    "autosave: {}s (`:set autosave_secs=N` to change)",
+                    app.config.editor.autosave_secs
+                ));
+                return;
+            }
+            // Filesize chip → :Stat toast.
+            if let Some(r) = app.rects.statusline_filesize_chip
+                && contains(r, x, y)
+            {
+                app.run_ex_command("Stat");
+                return;
+            }
+            // Ln/Col chip → goto-line prompt.
+            if let Some(r) = app.rects.statusline_lncol_chip
+                && contains(r, x, y)
+            {
+                let _ = crate::command::run("editor.goto_line", app);
                 return;
             }
             // The `> WORKSPACE-NAME` section header — clicking it toggles the
@@ -5487,6 +5555,18 @@ fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_doubl
         }
         if is_double_click {
             app.open_selected_commit_diff();
+        }
+        return;
+    }
+    if matches!(app.panes.get(pane_id), Some(Pane::Cheatsheet(_))) {
+        if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(pane_id) {
+            let n = c.visible_rows_len();
+            if flat_idx < n {
+                c.selected = flat_idx;
+            }
+        }
+        if is_double_click {
+            app.cheatsheet_run_selected();
         }
         return;
     }

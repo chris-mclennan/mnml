@@ -65,6 +65,12 @@ impl CheatsheetPane {
         }
     }
 
+    /// Total number of selectable (non-header) rows in the current filtered
+    /// view. Used by the mouse click handler to clamp `selected`.
+    pub fn visible_rows_len(&self) -> usize {
+        self.visible_sections().iter().map(|s| s.rows.len()).sum()
+    }
+
     /// Return the sections filtered by the current `/` query. Sections with
     /// no matching rows are omitted entirely; rows inside a kept section
     /// match against chord OR id OR title (case-insensitive substring).

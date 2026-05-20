@@ -107,6 +107,31 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             "click: local ⇄ UTC".into(),
             Some("right-click: clock menu".into()),
         )),
+        HoverChip::StatuslineLsp => Some((
+            app.rects.statusline_lsp_chip?,
+            "click: :LspStatus (running servers)".into(),
+            None,
+        )),
+        HoverChip::StatuslineWrap => Some((
+            app.rects.statusline_wrap_chip?,
+            "click: toggle word wrap".into(),
+            None,
+        )),
+        HoverChip::StatuslineAutosave => Some((
+            app.rects.statusline_autosave_chip?,
+            "click: show autosave config".into(),
+            None,
+        )),
+        HoverChip::StatuslineFilesize => Some((
+            app.rects.statusline_filesize_chip?,
+            "click: :Stat (file metadata)".into(),
+            None,
+        )),
+        HoverChip::StatuslineLnCol => Some((
+            app.rects.statusline_lncol_chip?,
+            "click: goto line".into(),
+            None,
+        )),
         HoverChip::RailHeaderChip(action) => {
             let rect = app
                 .rects
