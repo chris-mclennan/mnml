@@ -1,0 +1,9 @@
+# Clicking the statusline mode chip toggles the input keymap.
+write x.txt hello
+open x.txt
+
+# Default is standard mode → the chip reads EDIT. The mode chip is the
+# leftmost statusline segment (bottom row of a 40-row screen = row 38).
+expect screen contains "EDIT"
+click 3 38
+expect screen contains "NORMAL"

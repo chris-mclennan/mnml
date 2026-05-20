@@ -1,0 +1,9 @@
+# A click anywhere dismisses an on-demand overlay (the About panel).
+write a.txt hello
+open a.txt
+
+command view.about
+expect screen contains "About mnml"
+click 60 20
+expect screen lacks "About mnml"
+expect pane "a.txt"
