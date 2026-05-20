@@ -10822,30 +10822,32 @@ impl App {
         self.prompt = Some(prompt);
     }
 
-    /// Build the context block the `ai.chat` wrapper sends to Claude —
-    /// a `[mnml]` file reference + the selected code in a fenced block.
-    /// `None` when there's no active editor / no selection.
+    /// Build the file reference the `ai.chat` wrapper hands to Claude —
+    /// `File <rel> (lines N-M)` (or just `File <rel>` with no selection).
+    /// A *reference*, not a paste: Claude reads fresh file state itself
+    /// via its Read tool instead of working off a stale snapshot.
+    /// `None` when there's no active editor with a path.
     fn ai_chat_context(&self) -> Option<String> {
         let b = self.active_editor()?;
-        if !b.editor.has_selection() {
-            return None;
+        let path = b.path.as_ref()?;
+        let rel = path
+            .strip_prefix(&self.workspace)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned();
+        // Live selection → include the 1-based inclusive line range.
+        if let Some((lo, hi)) = b.editor.selection() {
+            let (r1, _) = b.editor.row_col_at(lo);
+            let (mut r2, c2) = b.editor.row_col_at(hi);
+            // Roll back an exclusive end that sits at column 0 of the next
+            // line so the range reflects the last content row.
+            if r2 > r1 && c2 == 0 {
+                r2 -= 1;
+            }
+            Some(format!("File {rel} (lines {}-{})", r1 + 1, r2 + 1))
+        } else {
+            Some(format!("File {rel}"))
         }
-        let sel = b.editor.selected_text();
-        if sel.trim().is_empty() {
-            return None;
-        }
-        let rel = b
-            .path
-            .as_ref()
-            .map(|p| {
-                p.strip_prefix(&self.workspace)
-                    .unwrap_or(p)
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .unwrap_or_else(|| b.display_name().to_string());
-        let ft = b.language_ext.clone().unwrap_or_default();
-        Some(format!("[mnml] {rel}\n```{ft}\n{sel}\n```"))
     }
 
     /// Accept handler for `PromptKind::AiChat`. Combines the typed prompt
@@ -10856,10 +10858,12 @@ impl App {
     pub fn dispatch_ai_chat(&mut self, typed: &str) {
         let typed = typed.trim();
         let context = self.ai_chat_context();
-        // Compose the full message: context block then the user's prompt.
+        // Compose the message in claude-chat.nvim's reference style:
+        // `File <rel> (lines N-M).  Query: <prompt>`. The file reference
+        // lets Claude pull fresh state itself; the query is the ask.
         let message = match (&context, typed.is_empty()) {
-            (Some(ctx), false) => format!("{ctx}\n\n{typed}"),
-            (Some(ctx), true) => ctx.clone(),
+            (Some(ctx), false) => format!("{ctx}.  Query: {typed}"),
+            (Some(ctx), true) => format!("{ctx}.  Take a look."),
             (None, false) => typed.to_string(),
             (None, true) => String::new(),
         };
