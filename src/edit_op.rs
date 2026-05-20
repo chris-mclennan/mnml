@@ -165,6 +165,14 @@ pub enum EditOp {
     /// arg + adjacent comma + adjacent whitespace.
     SelectInnerArgument,
     SelectAroundArgument,
+    /// vim-indent-object text object — `ii` / `ai`. Selects the
+    /// contiguous block of lines whose indent is ≥ the cursor line's
+    /// (blank lines inside the run don't break it). `inner` = the block
+    /// itself; `around` = the block plus the less-indented header line
+    /// above it (the `def:` / `if:` / `key:` etc.). Language-agnostic —
+    /// the right tool for YAML and any indented file.
+    SelectInnerIndentBlock,
+    SelectAroundIndentBlock,
     /// vim `gv` — restore the editor's last remembered selection (anchor +
     /// cursor). No-op when no selection has been made yet.
     RestoreLastSelection,
@@ -428,6 +436,8 @@ impl EditOp {
             | SelectAroundBracket(_)
             | SelectInnerParagraph
             | SelectAroundParagraph
+            | SelectInnerIndentBlock
+            | SelectAroundIndentBlock
             | RestoreLastSelection
             | SwapAnchorCursor
             | FindCharOnLine { .. }

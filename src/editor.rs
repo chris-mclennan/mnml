@@ -2482,6 +2482,13 @@ impl Editor {
                     self.cursor = hi;
                 }
             }
+            SelectInnerIndentBlock | SelectAroundIndentBlock => {
+                let around = matches!(op, SelectAroundIndentBlock);
+                if let Some((lo, hi)) = self.indent_block_bounds(around) {
+                    self.anchor = Some(lo);
+                    self.cursor = hi;
+                }
+            }
             SelectAroundWord => {
                 // vim `aw` — `iw` extended to include trailing whitespace,
                 // or (when the word sits at end-of-line) leading whitespace
@@ -4267,6 +4274,61 @@ impl Editor {
         (self.line_start(start_line), self.line_end(end_line))
     }
 
+    /// vim-indent-object — the contiguous run of lines whose indent is
+    /// ≥ the cursor line's. Blank lines inside the run don't break it
+    /// but are trimmed off the edges. `around` extends the block upward
+    /// to swallow the nearest less-indented header line (the `def:` /
+    /// `if:` / `key:` above it). Returns a `(line_start, line_end)`
+    /// byte range; `None` for an all-blank buffer.
+    fn indent_block_bounds(&self, around: bool) -> Option<(usize, usize)> {
+        let n = self.line_count();
+        if n == 0 {
+            return None;
+        }
+        let cur = self.current_line();
+        let is_blank = |l: usize| self.line_str(l).trim().is_empty();
+        let indent_of = |l: usize| line_indent(&self.text, self.line_start(l));
+        // Reference indent: the cursor line's, or — when the cursor is
+        // on a blank line — the nearest non-blank neighbour's.
+        let ref_indent = if !is_blank(cur) {
+            indent_of(cur)
+        } else {
+            match (cur + 1..n)
+                .find(|&l| !is_blank(l))
+                .or_else(|| (0..cur).rev().find(|&l| !is_blank(l)))
+            {
+                Some(l) => indent_of(l),
+                None => return None,
+            }
+        };
+        let belongs = |l: usize| is_blank(l) || indent_of(l) >= ref_indent;
+        let mut start = cur;
+        while start > 0 && belongs(start - 1) {
+            start -= 1;
+        }
+        let mut end = cur;
+        while end + 1 < n && belongs(end + 1) {
+            end += 1;
+        }
+        // Trim blank lines off both edges.
+        while start < end && is_blank(start) {
+            start += 1;
+        }
+        while end > start && is_blank(end) {
+            end -= 1;
+        }
+        if is_blank(start) {
+            return None;
+        }
+        if around
+            && let Some(hdr) = (0..start).rev().find(|&l| !is_blank(l))
+            && indent_of(hdr) < ref_indent
+        {
+            start = hdr;
+        }
+        Some((self.line_start(start), self.line_end(end)))
+    }
+
     /// Find the smallest bracket pair surrounding the cursor. `open` /
     /// `close` are the matching delimiter chars (e.g. `(` and `)`).
     /// Returns `(open_byte, close_byte)` (pointing at the bracket chars
@@ -5200,6 +5262,47 @@ mod tests {
         assert!(body.contains("port: 8080"));
         assert!(!body.contains("server:"));
         assert!(!body.contains("database:"));
+    }
+
+    #[test]
+    fn inner_indent_block_selects_the_indented_run() {
+        // Language-agnostic — no language_ext set.
+        let src = "header:\n  a: 1\n  b: 2\nother: 3\n";
+        let (mut e, mut c) = ed(src);
+        e.cursor = src.find("a: 1").unwrap();
+        e.apply(SelectInnerIndentBlock, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        let body = &e.text()[sel.0..sel.1];
+        assert!(body.contains("a: 1"), "body: {body:?}");
+        assert!(body.contains("b: 2"));
+        assert!(!body.contains("header:"));
+        assert!(!body.contains("other: 3"));
+    }
+
+    #[test]
+    fn around_indent_block_includes_header_line() {
+        let src = "header:\n  a: 1\n  b: 2\nother: 3\n";
+        let (mut e, mut c) = ed(src);
+        e.cursor = src.find("b: 2").unwrap();
+        e.apply(SelectAroundIndentBlock, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        let body = &e.text()[sel.0..sel.1];
+        assert!(body.starts_with("header:"), "body: {body:?}");
+        assert!(body.contains("a: 1"));
+        assert!(!body.contains("other: 3"));
+    }
+
+    #[test]
+    fn inner_indent_block_spans_internal_blank_lines() {
+        let src = "head:\n  a: 1\n\n  b: 2\ntail: 3\n";
+        let (mut e, mut c) = ed(src);
+        e.cursor = src.find("a: 1").unwrap();
+        e.apply(SelectInnerIndentBlock, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        let body = &e.text()[sel.0..sel.1];
+        assert!(body.contains("a: 1"), "body: {body:?}");
+        assert!(body.contains("b: 2"));
+        assert!(!body.contains("tail"));
     }
 
     #[test]

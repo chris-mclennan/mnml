@@ -1426,6 +1426,15 @@ impl VimInputHandler {
                             SelectInnerArgument
                         }
                     }
+                    // `ii` / `ai` — vim-indent-object: the cursor's
+                    // indentation block (around = block + header line).
+                    KeyCode::Char('i') => {
+                        if around {
+                            SelectAroundIndentBlock
+                        } else {
+                            SelectInnerIndentBlock
+                        }
+                    }
                     // Brackets — vim accepts the open *or* the close as the
                     // text-object char; both mean "the surrounding pair".
                     // (`ib` / `iB` shorthands aren't wired yet — same shape.)
