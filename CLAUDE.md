@@ -83,6 +83,28 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Git undo stack + persisted session names + filename-inject + e2e (2026-05-19):**
+four items. (1) **Git undo/redo is a real operation stack** — not
+commit-only. `GitUndoEntry { description, undo, redo }` +
+`GitUndoAction { ResetSoft, CheckoutBranch }`. Commits register
+`ResetSoft(parent)`/`ResetSoft(head)`; local-branch checkouts
+register `CheckoutBranch(from/to)`. The toolbar Undo/Redo walk
+`git_undo_stack` / `git_redo_stack`; a new op clears the redo
+stack; cap 50; stale entries fail with a toast. (2) **Claude
+session names persist** — `SavedSession.pty_session_names`
+(session-id → name). Resuming a saved Claude session re-applies
+its `:rename` via `apply_saved_pty_name` at spawn. (3)
+**`Ctrl+F` in a focused Claude pane injects the current file
+path** (claude-chat.nvim's filename-inject) — the most-recent
+editor's workspace-relative path, trailing space, no Enter.
+Claude panes only; shells keep Ctrl+F as readline forward-char.
+(4) **E2E coverage** — new `overlays.test` (welcome / about /
+settings / discovery open + Esc-dismiss) + `git_undo_redo.test`
+(commit → undo → redo round-trip). Also fixed a **duplicate
+`view.about`** — a pre-existing hover-popup `view.about` +
+`App::show_about()` collided with the new About overlay; removed
+the old pair. 678 lib tests + e2e suite green.
+
 **GitGraph undo/redo toolbar + tmnl hover-event forwarding (2026-05-19):**
 two items. (1) **Undo / Redo toolbar buttons** — the `Pane::GitGraph`
 toolbar gained Undo + Redo chips at the LEFT edge (a popular Git GUI's

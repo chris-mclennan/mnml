@@ -10798,6 +10798,32 @@ impl App {
     // ─── pty / AI-CLI panes ─────────────────────────────────────────
     /// Open an embedded terminal (`profile` = shell / `claude` / `codex`) as a
     /// stacked split below the focused leaf (a terminal "drawer"), and focus it.
+    /// `Ctrl+F` while a Claude pty pane is focused — inject the most-
+    /// recently-active editor's workspace-relative path into the pty's
+    /// stdin (claude-chat.nvim's filename-inject gesture). Appends a
+    /// trailing space, no Enter — the user keeps typing their prompt.
+    pub fn inject_filename_to_claude(&mut self, pty_id: PaneId) {
+        // The "current file" is the most-recent editor in the MRU list
+        // (the Claude pane itself sits at the front; skip to the first
+        // editor with a path).
+        let rel = self.pane_mru.iter().find_map(|&id| match self.panes.get(id) {
+            Some(Pane::Editor(b)) => b.path.as_ref().map(|p| {
+                p.strip_prefix(&self.workspace)
+                    .unwrap_or(p)
+                    .to_string_lossy()
+                    .into_owned()
+            }),
+            _ => None,
+        });
+        let Some(rel) = rel else {
+            self.toast("no recent file to inject");
+            return;
+        };
+        if let Some(Pane::Pty(s)) = self.panes.get_mut(pty_id) {
+            s.write_bytes(format!("{rel} ").as_bytes());
+        }
+    }
+
     /// Re-apply a `:rename`'d name to a freshly-spawned pty whose
     /// `session_id` matches a saved entry. Only fires for *resumed*
     /// Claude sessions (a fresh `claude` gets a brand-new session id
@@ -16925,42 +16951,6 @@ impl App {
         let Some(cur) = self.active else { return };
         if !self.layout_mut().adjust_split_ratio_for(cur, dir, delta) {
             self.toast("no enclosing split in that direction");
-        }
-    }
-
-    /// `view.about` — pop a hover-style "About mnml" with build sha + a
-    /// snapshot of key state (workspace, theme, input style, keymap size,
-    /// open buffer count). Esc / mouse-click dismisses. Holds the spot until
-    /// a real settings pane lands.
-    pub fn show_about(&mut self) {
-        let sha = env!("MNML_GIT_SHA");
-        let ws = self
-            .workspace
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("workspace");
-        let theme = crate::ui::theme::cur().name.to_string();
-        let style = self.config.editor.input_style.clone();
-        let keymap_size = self.keymap.binding_count();
-        let buffers = self.panes.len();
-        let lines = vec![
-            format!("mnml — {sha}"),
-            String::new(),
-            format!("workspace · {ws}"),
-            format!("workspace path · {}", self.workspace.display()),
-            String::new(),
-            format!("input style · {style}"),
-            format!("theme · {theme}"),
-            format!("text width · {}", self.config.editor.text_width),
-            format!("tab width · {}", self.config.editor.tab_width),
-            String::new(),
-            format!("keymap · {keymap_size} chord(s)"),
-            format!("open panes · {buffers}"),
-            String::new(),
-            "Esc to dismiss · `:version` for just the sha".to_string(),
-        ];
-        if let Some(p) = crate::hover::HoverPopup::from_lines(lines) {
-            self.hover = Some(p);
         }
     }
 

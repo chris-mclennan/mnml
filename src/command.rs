@@ -189,13 +189,6 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
-            id: "view.about",
-            title: "About mnml — version + key state snapshot",
-            group: "view",
-            keys: &[],
-            run: |app| app.show_about(),
-        },
-        Command {
             id: "view.toggle_tree_section",
             title: "Toggle workspace section (collapse/expand the file list)",
             group: "view",

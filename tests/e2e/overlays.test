@@ -1,0 +1,33 @@
+# The on-demand overlays — welcome / about / settings / discovery —
+# each open via their `view.*` command and dismiss on Esc.
+write a.txt hello
+open a.txt
+
+# Welcome overlay.
+command view.welcome
+expect screen contains "Welcome to mnml"
+key esc
+expect screen lacks "Welcome to mnml"
+
+# About overlay — shows build/workspace metadata.
+command view.about
+expect screen contains "About mnml"
+expect screen contains "version"
+key esc
+expect screen lacks "About mnml"
+
+# Settings overlay — clickable flag list.
+command view.settings
+expect screen contains "Settings"
+expect screen contains "Word wrap"
+key esc
+expect screen lacks "Word wrap"
+
+# Discovery overlay (F1) — clickable-region map.
+command view.discovery
+expect screen contains "Click Discovery"
+key esc
+expect screen lacks "Click Discovery"
+
+# The editor content survived every overlay open/close.
+expect screen contains "hello"

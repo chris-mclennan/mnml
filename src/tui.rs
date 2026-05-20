@@ -3505,6 +3505,20 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // the way out — nothing here intercepts. (Esc is forwarded too — terminal apps
     // need it.) `Shift+PgUp/PgDn/Home/End` scroll the vt100 scroll-back instead of
     // being forwarded. An exited child swallows nothing; close it with `Ctrl+W`.
+    // Ctrl+F in a focused Claude pty → inject the current file path
+    // (claude-chat.nvim's filename-inject). Only Claude panes — shells
+    // keep Ctrl+F as readline forward-char. Checked before the pty
+    // borrow below so `inject_filename_to_claude` can read other panes.
+    if key.code == KeyCode::Char('f')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(
+            app.panes.get(i),
+            Some(Pane::Pty(s)) if !s.is_exited() && s.profile.label.starts_with("claude")
+        )
+    {
+        app.inject_filename_to_claude(i);
+        return;
+    }
     if let Some(Pane::Pty(s)) = app.panes.get_mut(i) {
         if s.is_exited() {
             if key.code == KeyCode::Esc {

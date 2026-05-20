@@ -1,0 +1,32 @@
+# Git undo/redo operation stack — commit, undo it (reset --soft, the
+# change stays staged), redo it. Exercises git.undo / git.redo.
+shell git init -q
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+
+# Initial commit so HEAD exists.
+write seed.txt "seed"
+shell git add seed.txt
+shell git commit -q -m "initial"
+
+# Stage + commit a second file through mnml's commit prompt.
+write feature.txt "feature work"
+shell git add feature.txt
+command git.commit
+type add feature
+key enter
+
+# Undo the commit — reset --soft HEAD~1. The toast confirms.
+command git.undo
+expect screen contains "undid"
+
+# Redo it — re-points HEAD forward.
+command git.redo
+expect screen contains "redid"
+
+# Undo again, then a redo with an empty stack toasts "nothing to redo"
+# only after we exhaust it — here just confirm a second undo is a
+# clean no-op path (initial commit has a parent? no — so it may toast
+# either way; the command must not crash).
+command git.undo
+expect screen contains "undid"
