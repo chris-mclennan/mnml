@@ -83,6 +83,20 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**private CodeBuild correlation fix + more mouse coverage (2026-05-20):**
+two items. (1) **CodeBuild correlation fixed** — the top-level
+`TestExecutions` doc has no `build_id` (it's a batch run); the
+CodeBuild numbers are `batch_id` + each `projects.<p>.build_id`.
+`TestExecutionRecord.build_id: Option<String>` →
+`build_ids: Vec<String>` collecting all of them;
+`correlate_executions_with_build` matches when the build's
+number is any of them — the primary (build-id) match now
+actually fires instead of always falling to the time-window
+fallback. (2) **More E2E mouse coverage** —
+`mouse_statusline_mode` (mode-chip click toggles the keymap)
+and `mouse_overlay_dismiss` (a click dismisses the About
+panel); eight mouse `.test` files total, 99 e2e green.
+
 **tmnl headless assertions + E2E mouse sweep (2026-05-20):**
 test-coverage push across both repos. (1) **tmnl `--headless`
 gained `expect` assertions** — was a manual dump tool; now
