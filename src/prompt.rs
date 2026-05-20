@@ -127,6 +127,13 @@ pub enum PromptKind {
     /// `App.pending_tree_move`. Used by the tree drag-and-drop flow as
     /// the confirmation step.
     TreeMoveConfirm,
+    /// Accept ⇒ close the pane stashed on `App.pending_close_last_pane`.
+    /// Used when `close_active_pane` is about to leave mnml with an
+    /// empty layout — Cmd+W / Ctrl+W on the last editor opens this
+    /// confirmation so the user doesn't accidentally drop to the
+    /// welcome screen (or, with a misconfigured terminal, the shell
+    /// behind it).
+    CloseLastPaneConfirm,
 }
 
 #[derive(Debug)]

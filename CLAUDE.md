@@ -83,6 +83,28 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Cmd+W closes mnml buffers via tmnl + last-buffer confirm (2026-05-19):**
+two-sided change spanning mnml + tmnl. On Mac, `Cmd+W` is canonical
+"close tab" — but tmnl was intercepting it to close the entire tmnl
+tab (including the embedded mnml). Now: on Native (mnml) tmnl tabs,
+`Cmd+W` translates to `Ctrl+W` and forwards to mnml so it closes
+the active buffer instead. Shell tmnl tabs keep the close-whole-tab
+behavior (no in-tab close gesture otherwise).
+
+mnml side: `close_active_pane` now opens a `PromptKind::
+CloseLastPaneConfirm` prompt when the close would leave the layout
+empty (i.e. the user is closing their last editor). Enter
+confirms; Esc cancels. Tests that relied on synchronous close use
+`force_close_active_pane` which bypasses both the dirty + last-pane
+prompts. `force_close_active_pane` is also the right hook for
+programmatic closes that shouldn't prompt.
+
+Combined effect: accidental ⌘W on a single-buffer mnml tab no
+longer drops the user onto the welcome screen (let alone — via
+misconfigured Cmd+W passthrough on other terminals — the shell
+behind it). The confirmation is a quiet safety net you can muscle-
+memory through (Enter) when you actually do mean to close.
+
 **Discoverability + small features wave (2026-05-19):**
 seven items in one big sweep.
 (1) **More statusline action chips wired** — LSP/WRAP/AS/filesize/
