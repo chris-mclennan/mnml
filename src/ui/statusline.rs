@@ -319,6 +319,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             theme::cur().cyan,
         ));
     }
+    // `✦ AI` chip while an inline-suggestion request is in flight — the
+    // ghost-text round-trip is ~0.5–1.5s, so this tells the user a
+    // completion is coming (vs the editor just sitting idle).
+    if app.ai_suggestion_in_flight() {
+        right.push(Seg::new(
+            " \u{F0E2D} AI ".to_string(),
+            theme::cur().bg_darker,
+            theme::cur().orange,
+        ));
+    }
     // `WRAP` chip when `[ui] wrap` is on. Easy to forget the mode is
     // active when the file's lines aren't actually long; this gives a
     // quiet visible confirmation.

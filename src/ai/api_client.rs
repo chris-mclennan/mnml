@@ -43,7 +43,16 @@ const COMPLETION_MODEL: &str = "claude-haiku-4-5";
 /// Deliberately separate from `stream_to_channel`: a focused system
 /// prompt, a small `max_tokens`, the fast model, and a hard request
 /// timeout so a slow response doesn't leave a stale job hanging.
-pub fn complete_code(prefix: &str, suffix: &str, language: &str) -> Result<String, String> {
+///
+/// `model` overrides [`COMPLETION_MODEL`] when `Some` (`[ai]
+/// suggest_model` config) — latency matters here, so the default is the
+/// fast model, but a user can pin a different one.
+pub fn complete_code(
+    prefix: &str,
+    suffix: &str,
+    language: &str,
+    model: Option<&str>,
+) -> Result<String, String> {
     let api_key =
         std::env::var("ANTHROPIC_API_KEY").map_err(|_| "$ANTHROPIC_API_KEY not set".to_string())?;
     let system = "You are an inline code-completion engine inside a text editor. \
@@ -59,7 +68,7 @@ pub fn complete_code(prefix: &str, suffix: &str, language: &str) -> Result<Strin
          Output the text to insert at the cursor:"
     );
     let body = serde_json::json!({
-        "model": COMPLETION_MODEL,
+        "model": model.unwrap_or(COMPLETION_MODEL),
         "max_tokens": 256u32,
         "system": system,
         "messages": [{ "role": "user", "content": user }],

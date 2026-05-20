@@ -1682,6 +1682,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_suggest_backend_picker(),
         },
         Command {
+            id: "ai.suggestion_stats",
+            title: "AI: inline-suggestion accept rate (this session)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.ai_suggestion_stats(),
+        },
+        Command {
             id: "view.image_open",
             title: "View: open image file (PNG/JPG/GIF/WebP/BMP)",
             group: "view",

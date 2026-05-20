@@ -2822,6 +2822,12 @@ pub struct App {
     /// fired — dedup so a cursor jiggle / type-then-undo back to the
     /// same state doesn't re-spend an API call or inference cycle.
     last_suggest_context: Option<(String, String)>,
+    /// Per-session count of inline suggestions shown / accepted — drives
+    /// `ai.suggestion_stats`. `suggest_current_accepted` guards against
+    /// double-counting when partial accepts chain on one suggestion.
+    suggest_shown: u32,
+    suggest_accepted: u32,
+    suggest_current_accepted: bool,
     /// Channel for background `npx playwright test` runs → the matching `Pane::Tests`.
     tests_chan: Option<(
         std::sync::mpsc::Sender<TestsJobDone>,
@@ -3272,6 +3278,9 @@ impl App {
             next_suggest_id: 0,
             suggest_dirty_at: None,
             last_suggest_context: None,
+            suggest_shown: 0,
+            suggest_accepted: 0,
+            suggest_current_accepted: false,
             fim_tx: None,
             fim_progress: std::sync::Arc::new(std::sync::Mutex::new(None)),
             tests_chan: None,
@@ -6336,6 +6345,13 @@ impl App {
         }
     }
 
+    /// True while an AI ghost-text request is in flight (sent to the
+    /// backend, reply not yet drained). Drives the statusline `✦ AI`
+    /// chip so the user knows a suggestion is coming.
+    pub fn ai_suggestion_in_flight(&self) -> bool {
+        self.pending_suggest.is_some()
+    }
+
     /// `tick` hook — fire an AI ghost-text request once the debounce
     /// window has elapsed since the last edit. No-op when the feature
     /// is off, a request is already in flight, or a suggestion is
@@ -6402,11 +6418,16 @@ impl App {
                     .get_or_insert_with(std::sync::mpsc::channel)
                     .0
                     .clone();
+                let suggest_model = self.ai_suggest_model();
                 std::thread::Builder::new()
                     .name("mnml-suggest".into())
                     .spawn(move || {
-                        let result =
-                            crate::ai::api_client::complete_code(&prefix, &suffix, &language);
+                        let result = crate::ai::api_client::complete_code(
+                            &prefix,
+                            &suffix,
+                            &language,
+                            suggest_model.as_deref(),
+                        );
                         let _ = tx.send((id, result));
                     })
                     .ok();
@@ -6507,6 +6528,8 @@ impl App {
                 && b.editor.cursor() == cursor
             {
                 b.editor.ghost_suggestion = Some(cleaned);
+                self.suggest_shown = self.suggest_shown.saturating_add(1);
+                self.suggest_current_accepted = false;
             }
         }
     }
@@ -6571,7 +6594,28 @@ impl App {
             );
             b.editor.ghost_suggestion = (!remaining.is_empty()).then_some(remaining);
         }
+        // Count the suggestion as accepted once — partial accepts of the
+        // same suggestion chain, so only the first one bumps the tally.
+        if !self.suggest_current_accepted {
+            self.suggest_current_accepted = true;
+            self.suggest_accepted = self.suggest_accepted.saturating_add(1);
+        }
         true
+    }
+
+    /// `ai.suggestion_stats` — toast the inline-suggestion accept rate
+    /// for this session (accepted / shown). Helps gauge whether the
+    /// chosen backend (local model / Claude API) is pulling its weight.
+    pub fn ai_suggestion_stats(&mut self) {
+        if self.suggest_shown == 0 {
+            self.toast("AI suggestions: none shown yet this session");
+            return;
+        }
+        let pct = (self.suggest_accepted as u64 * 100) / self.suggest_shown as u64;
+        self.toast(format!(
+            "AI suggestions this session: {} accepted / {} shown ({}%)",
+            self.suggest_accepted, self.suggest_shown, pct
+        ));
     }
 
     pub fn completion_on_edit(&mut self, typed: Option<char>) {
@@ -11618,6 +11662,20 @@ impl App {
         self.config
             .ai
             .get("model")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string)
+    }
+
+    /// Optional `[ai] suggest_model = "..."` from the config — overrides
+    /// the model used for inline ghost-text completion (the ClaudeApi
+    /// suggestion backend). Defaults to the fast `claude-haiku-4-5`
+    /// since latency matters more than depth for inline completion;
+    /// distinct from `[ai] model` (the chat/explain default).
+    pub fn ai_suggest_model(&self) -> Option<String> {
+        self.config
+            .ai
+            .get("suggest_model")
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
             .map(str::to_string)
