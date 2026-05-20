@@ -1,0 +1,16 @@
+# A left-click inside a split focuses that pane. Tree hidden so the
+# editor fills the full 120-wide screen — split → two 60-wide halves.
+write a.txt aaaa
+write b.txt bbbb
+open a.txt
+command view.toggle_tree
+command view.split_right
+open b.txt
+
+# Left half (x<60) is a.txt, right half is b.txt. Click each.
+click 18 18
+expect pane "a.txt"
+click 95 18
+expect pane "b.txt"
+click 18 18
+expect pane "a.txt"

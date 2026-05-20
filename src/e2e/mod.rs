@@ -16,6 +16,10 @@
 //! snippet <scope> <trig> <expansion>  # seed a [snippets.<scope>] entry on app.config
 //! shell <cmd>                    # run `<cmd>` via $SHELL -c in workspace (non-zero exit fails)
 //! ghost <text>                   # inject an AI ghost-text suggestion on the active editor
+//! click <x> <y>                  # left-click at screen cell (x,y) — 0-based
+//! rightclick <x> <y>             # right-click (opens context menus)
+//! doubleclick <x> <y>            # double-click (row activation in list panes)
+//! scroll <x> <y> <up|down>       # mouse wheel at (x,y)
 //! expect screen contains <text>  # the rendered virtual screen contains the substring
 //! expect screen lacks <text>     # …does not
 //! expect dirty <true|false>      # the active editor's dirty flag
@@ -31,7 +35,9 @@ use std::time::Duration;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 
 use crate::app::App;
 use crate::config::Config;
@@ -67,6 +73,24 @@ enum Step {
     /// can't run deterministically in a test, so this seeds the state
     /// directly to exercise the accept/dismiss key handling.
     Ghost(String),
+    /// A mouse interaction at `(x, y)` (0-based screen cells), dispatched
+    /// through `tui::dispatch_mouse` — the same path the real event loop
+    /// uses. Covers clicks, right-clicks, double-clicks, and wheel.
+    Mouse {
+        x: u16,
+        y: u16,
+        action: MouseAction,
+    },
+}
+
+/// What a `Step::Mouse` does at its `(x, y)`.
+#[derive(Debug, Clone, Copy)]
+enum MouseAction {
+    Click,
+    RightClick,
+    DoubleClick,
+    ScrollUp,
+    ScrollDown,
 }
 
 #[derive(Debug, Clone)]
@@ -194,6 +218,22 @@ fn parse(text: &str) -> Result<Vec<Line>, String> {
                 }
                 Stmt::Step(Step::Ghost(text))
             }
+            "click" | "rightclick" | "doubleclick" | "scroll" => {
+                let (x, y, rest2) = parse_xy(ln, head, rest)?;
+                let action = match head {
+                    "click" => MouseAction::Click,
+                    "rightclick" => MouseAction::RightClick,
+                    "doubleclick" => MouseAction::DoubleClick,
+                    _ => match rest2.trim() {
+                        "up" => MouseAction::ScrollUp,
+                        "down" => MouseAction::ScrollDown,
+                        _ => {
+                            return Err(format!("line {ln}: `scroll X Y <up|down>`"));
+                        }
+                    },
+                };
+                Stmt::Step(Step::Mouse { x, y, action })
+            }
             "expect" => parse_expect(ln, rest)?,
             other => return Err(format!("line {ln}: unknown statement `{other}`")),
         };
@@ -265,6 +305,17 @@ fn split1(s: &str) -> (&str, &str) {
         Some(i) => (&s[..i], s[i..].trim_start()),
         None => (s, ""),
     }
+}
+
+/// Parse a leading `X Y` cell-coordinate pair off `rest`; return
+/// `(x, y, remainder)`. Used by the mouse statements.
+fn parse_xy(ln: usize, kw: &str, rest: &str) -> Result<(u16, u16, String), String> {
+    let (xs, r1) = split1(rest);
+    let (ys, r2) = split1(r1);
+    let coord_err = || format!("line {ln}: `{kw}` needs `X Y` cell coordinates");
+    let x = xs.parse::<u16>().map_err(|_| coord_err())?;
+    let y = ys.parse::<u16>().map_err(|_| coord_err())?;
+    Ok((x, y, r2.to_string()))
 }
 
 /// Strip one optional layer of `"…"` and unescape `\n \t \\ \"`.
@@ -461,6 +512,33 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
             }
             _ => Err("ghost: no active editor pane".to_string()),
         },
+        Step::Mouse { x, y, action } => {
+            let ev = |kind| MouseEvent {
+                kind,
+                column: *x,
+                row: *y,
+                modifiers: KeyModifiers::NONE,
+            };
+            let mut click = |btn| {
+                crate::tui::dispatch_mouse(app, ev(MouseEventKind::Down(btn)));
+                crate::tui::dispatch_mouse(app, ev(MouseEventKind::Up(btn)));
+            };
+            match action {
+                MouseAction::Click => click(MouseButton::Left),
+                MouseAction::RightClick => click(MouseButton::Right),
+                MouseAction::DoubleClick => {
+                    click(MouseButton::Left);
+                    click(MouseButton::Left);
+                }
+                MouseAction::ScrollUp => {
+                    crate::tui::dispatch_mouse(app, ev(MouseEventKind::ScrollUp));
+                }
+                MouseAction::ScrollDown => {
+                    crate::tui::dispatch_mouse(app, ev(MouseEventKind::ScrollDown));
+                }
+            }
+            Ok(())
+        }
     }
 }
 
@@ -470,12 +548,16 @@ fn run_check(app: &App, screen: &str, check: &Check) -> Result<(), String> {
             if screen.contains(t.as_str()) {
                 Ok(())
             } else {
-                Err(format!("screen does not contain {t:?}"))
+                Err(format!(
+                    "screen does not contain {t:?}\n── rendered screen ──\n{screen}"
+                ))
             }
         }
         Check::ScreenLacks(t) => {
             if screen.contains(t.as_str()) {
-                Err(format!("screen unexpectedly contains {t:?}"))
+                Err(format!(
+                    "screen unexpectedly contains {t:?}\n── rendered screen ──\n{screen}"
+                ))
             } else {
                 Ok(())
             }
@@ -630,6 +712,45 @@ expect dirty false
             other => panic!("expected Ghost, got {other:?}"),
         }
         assert!(parse("ghost   \n").is_err());
+    }
+
+    #[test]
+    fn parses_mouse_steps() {
+        let stmts =
+            parse("click 12 5\nrightclick 3 1\ndoubleclick 8 8\nscroll 40 20 down\n").unwrap();
+        assert!(matches!(
+            stmts[0].1,
+            Stmt::Step(Step::Mouse {
+                x: 12,
+                y: 5,
+                action: MouseAction::Click
+            })
+        ));
+        assert!(matches!(
+            stmts[1].1,
+            Stmt::Step(Step::Mouse {
+                action: MouseAction::RightClick,
+                ..
+            })
+        ));
+        assert!(matches!(
+            stmts[2].1,
+            Stmt::Step(Step::Mouse {
+                action: MouseAction::DoubleClick,
+                ..
+            })
+        ));
+        assert!(matches!(
+            stmts[3].1,
+            Stmt::Step(Step::Mouse {
+                x: 40,
+                y: 20,
+                action: MouseAction::ScrollDown
+            })
+        ));
+        // Non-numeric coords + a bad scroll direction are rejected.
+        assert!(parse("click x y\n").is_err());
+        assert!(parse("scroll 1 2 sideways\n").is_err());
     }
 
     #[test]

@@ -1,0 +1,14 @@
+# Right-click on a file-tree row opens its context menu; Esc dismisses.
+write notes.txt hello
+open notes.txt
+# The fixture is written after App::new scanned the workspace — refresh
+# so the tree actually shows notes.txt.
+command tree.refresh
+
+# Rail: row 1 = workspace header, row 2 = the notes.txt file row.
+# Right-click the file row → the file context menu.
+rightclick 4 2
+expect screen contains "Copy path"
+key esc
+expect screen lacks "Copy path"
+expect pane "notes.txt"

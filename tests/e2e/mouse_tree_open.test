@@ -1,0 +1,12 @@
+# A left-click on a file row in the tree opens that file.
+write aa.txt content-of-aa
+write bb.txt content-of-bb
+open aa.txt
+command tree.refresh
+
+# Rail after refresh: row 1 = workspace header, then the files sorted —
+# aa.txt on row 2, bb.txt on row 3. Click bb.txt's row.
+expect pane "aa.txt"
+click 5 3
+expect pane "bb.txt"
+expect screen contains "content-of-bb"
