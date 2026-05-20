@@ -2482,9 +2482,13 @@ impl Editor {
                     self.cursor = hi;
                 }
             }
-            SelectInnerIndentBlock | SelectAroundIndentBlock => {
-                let around = matches!(op, SelectAroundIndentBlock);
-                if let Some((lo, hi)) = self.indent_block_bounds(around) {
+            SelectInnerIndentBlock | SelectAroundIndentBlock | SelectOuterIndentBlock => {
+                let (above, below) = match op {
+                    SelectInnerIndentBlock => (false, false),
+                    SelectAroundIndentBlock => (true, false),
+                    _ => (true, true), // SelectOuterIndentBlock — `aI`
+                };
+                if let Some((lo, hi)) = self.indent_block_bounds(above, below) {
                     self.anchor = Some(lo);
                     self.cursor = hi;
                 }
@@ -4276,11 +4280,16 @@ impl Editor {
 
     /// vim-indent-object — the contiguous run of lines whose indent is
     /// ≥ the cursor line's. Blank lines inside the run don't break it
-    /// but are trimmed off the edges. `around` extends the block upward
-    /// to swallow the nearest less-indented header line (the `def:` /
-    /// `if:` / `key:` above it). Returns a `(line_start, line_end)`
-    /// byte range; `None` for an all-blank buffer.
-    fn indent_block_bounds(&self, around: bool) -> Option<(usize, usize)> {
+    /// but are trimmed off the edges. `include_above` swallows the
+    /// nearest less-indented header line above (the `def:` / `if:` /
+    /// `key:`); `include_below` swallows the first non-blank line below
+    /// the block (the closing-context line). Returns a `(line_start,
+    /// line_end)` byte range; `None` for an all-blank buffer.
+    fn indent_block_bounds(
+        &self,
+        include_above: bool,
+        include_below: bool,
+    ) -> Option<(usize, usize)> {
         let n = self.line_count();
         if n == 0 {
             return None;
@@ -4320,11 +4329,14 @@ impl Editor {
         if is_blank(start) {
             return None;
         }
-        if around
+        if include_above
             && let Some(hdr) = (0..start).rev().find(|&l| !is_blank(l))
             && indent_of(hdr) < ref_indent
         {
             start = hdr;
+        }
+        if include_below && let Some(foot) = (end + 1..n).find(|&l| !is_blank(l)) {
+            end = foot;
         }
         Some((self.line_start(start), self.line_end(end)))
     }
@@ -5303,6 +5315,20 @@ mod tests {
         assert!(body.contains("a: 1"), "body: {body:?}");
         assert!(body.contains("b: 2"));
         assert!(!body.contains("tail"));
+    }
+
+    #[test]
+    fn outer_indent_block_includes_header_and_line_below() {
+        let src = "header:\n  a: 1\n  b: 2\nfooter: 3\nmore: 4\n";
+        let (mut e, mut c) = ed(src);
+        e.cursor = src.find("a: 1").unwrap();
+        e.apply(SelectOuterIndentBlock, 10, &mut c);
+        let sel = e.selection().expect("selection set");
+        let body = &e.text()[sel.0..sel.1];
+        assert!(body.starts_with("header:"), "body: {body:?}");
+        assert!(body.contains("b: 2"));
+        assert!(body.contains("footer: 3")); // the line below
+        assert!(!body.contains("more: 4")); // only one line below
     }
 
     #[test]

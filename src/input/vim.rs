@@ -1435,6 +1435,9 @@ impl VimInputHandler {
                             SelectInnerIndentBlock
                         }
                     }
+                    // `aI` — indent block + header line above *and* the
+                    // line below. (`iI` isn't a vim-indent-object verb.)
+                    KeyCode::Char('I') if around => SelectOuterIndentBlock,
                     // Brackets — vim accepts the open *or* the close as the
                     // text-object char; both mean "the surrounding pair".
                     // (`ib` / `iB` shorthands aren't wired yet — same shape.)
