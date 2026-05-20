@@ -70,6 +70,7 @@ pub mod test_executions_view;
 pub mod tests_view;
 pub mod theme;
 pub mod discovery;
+pub mod scratch_term_view;
 pub mod toast_stack;
 pub mod tooltip;
 pub mod trace_view;
@@ -280,8 +281,27 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // ── the split-tree of pane bodies ──
+    // If the scratch terminal is open, reserve its strip at the bottom
+    // before laying out the split tree so panes don't overlap it.
+    let mut body_area = body_area;
+    let mut scratch_strip: Option<Rect> = None;
+    if app.scratch_term.is_some() {
+        let want_h = crate::app::SCRATCH_TERM_ROWS;
+        if body_area.height > want_h + 2 {
+            let strip_h = want_h;
+            scratch_strip = Some(Rect {
+                x: body_area.x,
+                y: body_area.y + body_area.height - strip_h,
+                width: body_area.width,
+                height: strip_h,
+            });
+            body_area.height -= strip_h;
+        }
+    }
+    app.rects.scratch_term_strip = scratch_strip;
     app.rects.body = Some(body_area);
     app.rects.editor_panes.clear();
+    app.rects.editor_gutters.clear();
     app.rects.fold_chips.clear();
     app.rects.code_lens_chips.clear();
     app.rects.wip_buttons.clear();
@@ -291,6 +311,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.diff_toolbar_buttons.clear();
     app.rects.scrollbars.clear();
     app.rects.git_graph_detail_dividers.clear();
+    app.rects.git_graph_column_headers.clear();
     app.rects.request_tabs.clear();
     app.rects.request_fields.clear();
     app.rects.list_rows.clear();
@@ -305,6 +326,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let mut path = Vec::new();
         render_layout(frame, app, &layout, body_area, &mut path)
     };
+
+    // Scratch terminal strip — paints below the body. Resizes the pty
+    // so the shell knows about the new viewport.
+    if let Some(strip) = scratch_strip
+        && app.scratch_term.is_some()
+    {
+        scratch_term_view::draw(frame, app, strip);
+    }
 
     // Inline-rendered markdown overlay: paints heading-line bold + colored,
     // `**bold**` / `*italic*` / `` `code` `` / `[label](url)` decorations

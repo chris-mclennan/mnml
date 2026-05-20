@@ -229,6 +229,24 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // the user moved on to typing, the hover-cue is no longer relevant.
     app.hover_chip = None;
     app.hover_divider_idx = None;
+    // Scratch terminal — when focused, route keystrokes to the pty
+    // (with Esc as the way out). The chord that toggles it (`term.
+    // scratch_toggle`) still works as the close gesture because the
+    // command resolver runs against the keymap below — but only when
+    // the scratch term isn't focused.
+    if let Some(scratch) = app.scratch_term.as_mut()
+        && scratch.focused
+    {
+        if key.code == KeyCode::Esc {
+            scratch.focused = false;
+            return;
+        }
+        let bytes = pty_key_bytes(key);
+        if !bytes.is_empty() {
+            scratch.session.write_bytes(&bytes);
+        }
+        return;
+    }
     // Macro recording — capture every keystroke that flows through here.
     // Replaying explicitly skips this so it doesn't re-record into a new
     // macro mid-replay.
@@ -3987,6 +4005,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         app.show_discovery_overlay = false;
         return;
     }
+    // Scratch terminal — left-click on the strip focuses it; click off
+    // the strip blurs (so the next keystroke goes to the editor again).
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+        && let Some(strip) = app.rects.scratch_term_strip
+    {
+        if contains(strip, x, y) {
+            if let Some(s) = app.scratch_term.as_mut() {
+                s.focused = true;
+            }
+            return;
+        }
+        app.blur_scratch_term();
+    }
     // A click anywhere dismisses the hover / signature popups (the click
     // still lands). Completion popup clicks are handled specially: a click
     // ON a row selects + accepts; a click anywhere else dismisses.
@@ -4779,6 +4810,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     let idx = (y - tr.y) as usize + app.rects.tree_scroll;
                     if idx < app.tree.visible_rows().len() {
                         app.tree.set_cursor(idx);
+                        // Arm a drag — the source is captured here; the
+                        // actual move happens on mouse-up over a different
+                        // directory row.
+                        if let Some(row) = app.tree.selected_row() {
+                            app.begin_tree_drag(row.path.clone(), row.is_dir, y);
+                        }
                         if let Some(row) = app.tree.selected_row() {
                             if row.is_dir {
                                 // Multi-repo workspace: clicking a depth-0
@@ -4936,6 +4973,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
+            // Tree drag — arm if armed, update target idx. Runs alongside
+            // the other drag handlers since it doesn't conflict (the tree
+            // drag only fires on tree rect coordinates).
+            if app.tree_drag.is_some() {
+                if let Some(tr) = app.rects.tree
+                    && contains(tr, x, y)
+                {
+                    let idx = (y - tr.y) as usize + app.rects.tree_scroll;
+                    let target = (idx < app.tree.visible_rows().len()).then_some(idx);
+                    app.drag_tree_to(target, y);
+                } else {
+                    app.drag_tree_to(None, y);
+                }
+            }
             // Tab-page chip drag-to-reorder. If the user pressed on a
             // chip and is dragging across another chip's rect, swap
             // the two tabs. Update dragging_tab_page so the cursor
@@ -5004,6 +5055,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             app.end_divider_drag();
             app.drag_select = None;
             app.dragging_tab_page = None;
+            // Tree drag-drop — complete the move if armed.
+            if let Some(tr) = app.rects.tree
+                && contains(tr, x, y)
+            {
+                let idx = (y - tr.y) as usize + app.rects.tree_scroll;
+                let target = (idx < app.tree.visible_rows().len()).then_some(idx);
+                app.end_tree_drag(target);
+            } else {
+                // Released outside tree → cancel any in-flight drag.
+                app.tree_drag = None;
+            }
         }
         MouseEventKind::ScrollUp => scroll_under(app, x, y, -3),
         MouseEventKind::ScrollDown => scroll_under(app, x, y, 3),

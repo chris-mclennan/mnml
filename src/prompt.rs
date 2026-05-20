@@ -123,6 +123,10 @@ pub enum PromptKind {
     GitGraphAuthorFilter,
     /// Accept ⇒ set `LogFilter.grep` to the typed pattern. Empty ⇒ clear.
     GitGraphGrepFilter,
+    /// Accept ⇒ apply the pending tree move staged on
+    /// `App.pending_tree_move`. Used by the tree drag-and-drop flow as
+    /// the confirmation step.
+    TreeMoveConfirm,
 }
 
 #[derive(Debug)]

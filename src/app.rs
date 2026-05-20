@@ -1648,6 +1648,8 @@ pub struct PaneRects {
     /// Chips on the `> GIT` rail header (Fetch / Pull / Push / Commit /
     /// Stage all / Graph) — one-click access to common ops.
     pub rail_git_header_buttons: Vec<(Rect, crate::GitRailHeaderAction)>,
+    /// Scratch-terminal strip rect when visible — click to focus / blur.
+    pub scratch_term_strip: Option<Rect>,
     /// One rect per row in the F1 click-discovery overlay — click a row
     /// to flash the matching on-screen rects. Cleared + repopulated by
     /// `ui::discovery::draw` when the overlay is visible.
@@ -1928,6 +1930,39 @@ pub struct ExtraWorkspace {
     /// Section expand state — collapsed by default so a fresh window of N
     /// extra workspaces doesn't show every repo's contents at once.
     pub expanded: bool,
+}
+
+/// Persistent quick-scratch terminal — a small pty that lives at the
+/// bottom of the body across pane switches. Owns its session; dropping
+/// the App tears it down via the existing `PtySession::Drop`.
+pub struct ScratchTerm {
+    pub session: crate::pty_pane::PtySession,
+    /// True while keystrokes should route to the pty rather than the
+    /// active editor. Click on the strip focuses; Esc / click outside
+    /// blurs.
+    pub focused: bool,
+}
+
+/// Fixed height of the scratch-terminal strip when visible. 10 rows is a
+/// reasonable default — enough for `git status` or a short script's
+/// output without crowding the body.
+pub const SCRATCH_TERM_ROWS: u16 = 10;
+
+/// Tree drag state — populated by mouse-down on a tree row, armed when
+/// the mouse moves to a different row. Drop on a directory row triggers
+/// a confirmation prompt that moves the source path into the target dir.
+#[derive(Debug, Clone)]
+pub struct TreeDrag {
+    pub src_path: std::path::PathBuf,
+    pub src_is_dir: bool,
+    /// Initial click row (so a mouse-up on the same row is treated as a
+    /// click, not a drag).
+    pub origin_y: u16,
+    /// True after the cursor has moved off the origin row. Visual cue
+    /// kicks in only past this threshold.
+    pub armed: bool,
+    /// Most-recent row the drag was over — drives the highlight tint.
+    pub current_target_idx: Option<usize>,
 }
 
 pub struct App {
@@ -2237,6 +2272,19 @@ pub struct App {
     /// Statusline clock chip flips to UTC when true. Toggled by clicking
     /// the chip; persisted across launches via `SavedSession.clock_show_utc`.
     pub clock_show_utc: bool,
+    /// Persistent quick-scratch terminal — a ~10-row bottom strip
+    /// hosting a shell pty. Sibling to `Pane::Pty` (which is a full pane),
+    /// designed for "I want to run one command without rearranging my
+    /// splits". Toggled by `term.scratch_toggle`; survives pane switches.
+    pub scratch_term: Option<ScratchTerm>,
+    /// In-flight tree drag — populated by mouse-down on a tree row, armed
+    /// by mouse-move, applied on mouse-up onto a directory row (after a
+    /// confirmation prompt). Drop on the source's own parent (a no-op) is
+    /// silently ignored.
+    pub tree_drag: Option<TreeDrag>,
+    /// Pending tree move — set when the user releases a drag on a different
+    /// directory; the prompt accept reads from here and runs the rename.
+    pub pending_tree_move: Option<(std::path::PathBuf, std::path::PathBuf)>,
     /// Currently-hovered clickable chip + when it first became hovered.
     /// After `HOVER_TOOLTIP_DELAY_MS` of stable hover, the tooltip renders
     /// next to the chip. Cleared on click / typing / mouse-leave.
@@ -2822,6 +2870,9 @@ impl App {
             show_discovery_overlay: false,
             discovery_flash: None,
             show_welcome: false,
+            scratch_term: None,
+            tree_drag: None,
+            pending_tree_move: None,
             quit_armed: false,
             rects: PaneRects::default(),
             flash_state: None,
@@ -3090,6 +3141,166 @@ impl App {
                 self.after_git_change();
             }
             Err(e) => self.toast(format!("git add -A: {e}")),
+        }
+    }
+
+    /// Toggle the quick-scratch terminal at the bottom of the body. First
+    /// invocation spawns a shell; subsequent toggles hide/show + focus.
+    /// Dropping the App tears the pty down via `PtySession::Drop`.
+    pub fn toggle_scratch_term(&mut self) {
+        if let Some(s) = self.scratch_term.as_mut() {
+            // Already open: a second toggle either focuses it (if blurred)
+            // or closes it (if focused). Matches VS Code Ctrl+` semantics.
+            if s.focused {
+                self.scratch_term = None;
+            } else {
+                s.focused = true;
+                self.focus = crate::focus::Focus::Pane;
+            }
+            return;
+        }
+        let profile = crate::pty_pane::BinaryProfile::shell(Some(self.workspace.clone()));
+        match crate::pty_pane::PtySession::spawn(profile, SCRATCH_TERM_ROWS, 80) {
+            Ok(session) => {
+                self.scratch_term = Some(ScratchTerm {
+                    session,
+                    focused: true,
+                });
+                self.focus = crate::focus::Focus::Pane;
+            }
+            Err(e) => self.toast(format!("scratch term: {e}")),
+        }
+    }
+
+    /// Blur the scratch terminal (keep it visible but route keys back to
+    /// the active editor).
+    pub fn blur_scratch_term(&mut self) {
+        if let Some(s) = self.scratch_term.as_mut() {
+            s.focused = false;
+        }
+    }
+
+    /// Begin a tree drag from a row click. Stores the source path; the
+    /// drag is "armed" only after the mouse moves off this row, so a
+    /// pure click still acts as a click.
+    pub fn begin_tree_drag(&mut self, src_path: std::path::PathBuf, src_is_dir: bool, y: u16) {
+        self.tree_drag = Some(TreeDrag {
+            src_path,
+            src_is_dir,
+            origin_y: y,
+            armed: false,
+            current_target_idx: None,
+        });
+    }
+
+    /// Mouse-move within a tree drag — arms the drag once we leave the
+    /// origin row + records the current target idx for the highlight.
+    pub fn drag_tree_to(&mut self, target_idx: Option<usize>, y: u16) {
+        if let Some(d) = self.tree_drag.as_mut() {
+            if y != d.origin_y {
+                d.armed = true;
+            }
+            d.current_target_idx = target_idx;
+        }
+    }
+
+    /// Drop the in-flight tree drag onto `target_idx`. If the target is a
+    /// directory different from the source's parent (and not the source
+    /// itself), open a confirmation prompt; the prompt accept calls
+    /// `accept_tree_move`.
+    pub fn end_tree_drag(&mut self, target_idx: Option<usize>) {
+        let Some(drag) = self.tree_drag.take() else {
+            return;
+        };
+        if !drag.armed {
+            return;
+        }
+        let Some(idx) = target_idx else { return };
+        let rows = self.tree.visible_rows();
+        let Some(target_row) = rows.get(idx) else {
+            return;
+        };
+        // Determine the *directory* to drop into: clicking on a dir row
+        // means drop INTO it; clicking on a file means drop into its
+        // parent dir.
+        let target_dir = if target_row.is_dir {
+            target_row.path.clone()
+        } else {
+            match target_row.path.parent() {
+                Some(p) => p.to_path_buf(),
+                None => return,
+            }
+        };
+        // No-op cases: same dir as source, or dropping a dir into itself
+        // or its own subtree.
+        let Some(src_parent) = drag.src_path.parent() else {
+            self.toast("can't move workspace root");
+            return;
+        };
+        if target_dir == src_parent {
+            return;
+        }
+        if drag.src_is_dir && target_dir.starts_with(&drag.src_path) {
+            self.toast("can't move a directory into itself");
+            return;
+        }
+        let Some(src_name) = drag.src_path.file_name() else {
+            return;
+        };
+        let dest = target_dir.join(src_name);
+        if dest.exists() {
+            self.toast(format!(
+                "destination already exists: {}",
+                dest.display()
+            ));
+            return;
+        }
+        let dest_rel = dest
+            .strip_prefix(&self.workspace)
+            .unwrap_or(&dest)
+            .to_string_lossy()
+            .into_owned();
+        self.pending_tree_move = Some((drag.src_path.clone(), dest.clone()));
+        let prompt = crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::TreeMoveConfirm,
+            format!("Move to {dest_rel}? (Enter to confirm, Esc to cancel)"),
+            String::new(),
+        );
+        self.prompt = Some(prompt);
+    }
+
+    /// Apply the pending tree move — invoked from the confirmation prompt.
+    /// Renames the file, re-points any open editor on the source, and
+    /// refreshes the tree + git.
+    pub fn accept_tree_move(&mut self) {
+        let Some((src, dest)) = self.pending_tree_move.take() else {
+            return;
+        };
+        if let Some(parent) = dest.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::rename(&src, &dest) {
+            Ok(()) => {
+                // Update any open editor that was pointed at the source.
+                for p in &mut self.panes {
+                    if let Pane::Editor(b) = p
+                        && b.path.as_ref().is_some_and(|x| x == &src)
+                    {
+                        b.path = Some(dest.clone());
+                    }
+                }
+                self.toast(format!(
+                    "moved → {}",
+                    dest.strip_prefix(&self.workspace)
+                        .unwrap_or(&dest)
+                        .display()
+                ));
+                self.tree.refresh();
+                self.after_git_change();
+            }
+            Err(e) => {
+                self.toast(format!("move failed: {e}"));
+            }
         }
     }
 
@@ -14733,6 +14944,9 @@ impl App {
             crate::prompt::PromptKind::GitGraphGrepFilter => {
                 let typed = p.input.clone();
                 self.apply_git_graph_grep_filter(&typed);
+            }
+            crate::prompt::PromptKind::TreeMoveConfirm => {
+                self.accept_tree_move();
             }
         }
     }

@@ -2303,6 +2303,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_shell(),
         },
         Command {
+            id: "term.scratch_toggle",
+            title: "Terminal: quick scratch strip at the bottom (Ctrl+`)",
+            group: "ai",
+            keys: &["ctrl+`", "ctrl+\\"],
+            run: |app| app.toggle_scratch_term(),
+        },
+        Command {
             id: "term.focus_or_open_shell",
             title: "Terminal: focus existing shell or open one (VS Code Ctrl+`)",
             group: "ai",
