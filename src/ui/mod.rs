@@ -71,6 +71,7 @@ pub mod tests_view;
 pub mod theme;
 pub mod about_overlay;
 pub mod discovery;
+pub mod ghost_overlay;
 pub mod scratch_term_view;
 pub mod settings_overlay;
 pub mod toast_stack;
@@ -348,6 +349,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Yank flash overlay: tints the yanked byte range yellow for ~200ms
     // (vim.highlight.on_yank() equivalent).
     yank_flash_overlay::draw(frame, app);
+    // AI ghost-text: paint the active editor's pending suggestion in
+    // grey starting at the cursor cell.
+    ghost_overlay::draw(frame, app, cursor_pos);
     // Stacked toasts: top-right vertical column when more than one toast
     // is live (rapid-fire toasts no longer clobber each other).
     toast_stack::draw(frame, app);

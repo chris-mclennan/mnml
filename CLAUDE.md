@@ -83,6 +83,26 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**AI ghost-text inline suggestions (Cursor-style) (2026-05-19):**
+opt-in AI inline completion. `[ai] inline_suggestions = true`
+(default off — costs API tokens; `ai.toggle_inline_suggestions`
+flips at runtime). As you type, ~450ms after a pause
+(`SUGGEST_DEBOUNCE_MS`), mnml sends the code before + after the
+cursor to the Claude API (`claude-haiku-4-5` for speed, 8s request
+timeout) via the new non-streaming `ai::api_client::complete_code`.
+The reply paints as dim italic grey ghost-text at the cursor
+(`ui::ghost_overlay`, a post-process pass like `md_inline_overlay`).
+`Tab` accepts it (inserts + lands the cursor past it); any other
+key dismisses it. New `Editor.ghost_suggestion` +
+`App.{suggest_chan, pending_suggest, next_suggest_id,
+suggest_dirty_at}`. Stale replies (cursor moved, superseded by a
+newer request) are dropped by request-id + cursor match.
+`clean_suggestion` strips markdown fences / leading newlines the
+model occasionally adds. Latency is ~0.5-1.5s — usable, not
+Cursor-instant (that needs a purpose-built FIM model). Traditional
+LSP autocomplete (the popup) is unchanged + still the default.
+678 lib tests + clippy clean.
+
 **Git undo stack + persisted session names + filename-inject + e2e (2026-05-19):**
 four items. (1) **Git undo/redo is a real operation stack** — not
 commit-only. `GitUndoEntry { description, undo, redo }` +

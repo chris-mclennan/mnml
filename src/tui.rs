@@ -229,6 +229,15 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // the user moved on to typing, the hover-cue is no longer relevant.
     app.hover_chip = None;
     app.hover_divider_idx = None;
+    // AI ghost-text: while a suggestion is showing, bare `Tab` accepts
+    // it; any other key dismisses it (and then does its normal thing).
+    if app.has_ghost_suggestion() {
+        if key.code == KeyCode::Tab && key.modifiers.is_empty() {
+            app.accept_ghost_suggestion();
+            return;
+        }
+        app.clear_ghost_suggestion();
+    }
     // Scratch terminal — when focused, route keystrokes to the pty
     // (with Esc as the way out). The chord that toggles it (`term.
     // scratch_toggle`) still works as the close gesture because the
@@ -3627,6 +3636,8 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             // Drive the as-you-type completion popup off the fresh buffer state.
             app.completion_on_edit(typed_char);
+            // (Re)arm the AI ghost-text debounce — fires once typing pauses.
+            app.note_edit_for_suggest();
             // `[editor] format_on_type` — fire `textDocument/onTypeFormatting`
             // when a trigger char lands. `}`, `;`, `\n` cover the canonical
             // formatters' triggers (rustfmt-ish, prettier, etc.).

@@ -1669,6 +1669,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_ai_backend(),
         },
         Command {
+            id: "ai.toggle_inline_suggestions",
+            title: "AI: toggle inline ghost-text suggestions (Cursor-style)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.toggle_inline_suggestions(),
+        },
+        Command {
             id: "view.image_open",
             title: "View: open image file (PNG/JPG/GIF/WebP/BMP)",
             group: "view",

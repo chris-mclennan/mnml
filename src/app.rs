@@ -26,6 +26,10 @@ pub const HOVER_TOOLTIP_DELAY_MS: u64 = 500;
 /// How long the F1 overlay's "flash these rects" highlight stays painted
 /// after the user clicks a row in the panel.
 pub const DISCOVERY_FLASH_MS: u64 = 2000;
+/// Idle time after the last edit before an AI ghost-text completion
+/// fires. Long enough that mid-burst typing doesn't spam the API,
+/// short enough to feel responsive once you pause.
+pub const SUGGEST_DEBOUNCE_MS: u64 = 450;
 /// Per-workspace marker file written when the user dismisses the
 /// first-launch welcome overlay. Once present, mnml stops auto-opening
 /// the overlay on launch (`view.welcome` still opens it manually).
@@ -177,6 +181,27 @@ fn mixr_on_path() -> bool {
         }
     }
     false
+}
+
+/// Tidy a raw AI completion into ghost-text-insertable form. The model
+/// is told to output bare text but occasionally wraps it in a markdown
+/// fence or adds a stray leading newline — strip those. Caps the length
+/// so a runaway completion can't paint half the screen grey.
+fn clean_suggestion(raw: &str) -> String {
+    let mut s = raw;
+    // Strip an opening ``` / ```lang fence + its closing fence.
+    if let Some(rest) = s.strip_prefix("```") {
+        // Drop the optional language tag on the fence's first line.
+        let after_lang = rest.find('\n').map(|i| &rest[i + 1..]).unwrap_or("");
+        s = after_lang.strip_suffix("```").unwrap_or(after_lang);
+        s = s.strip_suffix("```\n").unwrap_or(s);
+    }
+    // A model sometimes leads with a newline; don't insert a blank line
+    // at the cursor. Trailing whitespace-only tails are also unhelpful.
+    let s = s.trim_end_matches([' ', '\t']);
+    let s = s.strip_prefix('\n').unwrap_or(s);
+    // Cap — 600 chars is plenty for a ghost completion.
+    s.chars().take(600).collect()
 }
 
 fn is_markdown_path(path: &Path) -> bool {
@@ -2131,6 +2156,9 @@ pub struct GitUndoEntry {
     pub redo: GitUndoAction,
 }
 
+/// One AI ghost-text worker reply — `(request_id, completion-or-error)`.
+type SuggestReply = (u64, Result<String, String>);
+
 pub struct App {
     pub workspace: PathBuf,
     pub config: Config,
@@ -2665,6 +2693,21 @@ pub struct App {
         std::sync::mpsc::Sender<AiJobMsg>,
         std::sync::mpsc::Receiver<AiJobMsg>,
     )>,
+    /// Channel for AI inline ghost-text completion jobs. A worker calls
+    /// `api_client::complete_code` and sends back `(request_id, result)`.
+    suggest_chan: Option<(
+        std::sync::mpsc::Sender<SuggestReply>,
+        std::sync::mpsc::Receiver<SuggestReply>,
+    )>,
+    /// In-flight ghost-text request — `(request_id, pane_id, cursor_byte)`.
+    /// A reply is only applied if `pane_id` is still active and the cursor
+    /// hasn't moved (stale completions are dropped).
+    pending_suggest: Option<(u64, PaneId, usize)>,
+    /// Monotonic id for ghost-text requests.
+    next_suggest_id: u64,
+    /// When the active editor was last edited — the ghost-text debounce
+    /// anchor. A request fires once this is `SUGGEST_DEBOUNCE_MS` old.
+    suggest_dirty_at: Option<Instant>,
     /// Channel for background `npx playwright test` runs → the matching `Pane::Tests`.
     tests_chan: Option<(
         std::sync::mpsc::Sender<TestsJobDone>,
@@ -3110,6 +3153,10 @@ impl App {
             completion: None,
             http_chan: None,
             ai_chan: None,
+            suggest_chan: None,
+            pending_suggest: None,
+            next_suggest_id: 0,
+            suggest_dirty_at: None,
             tests_chan: None,
             linter_chan: None,
             dap: None,
@@ -6157,6 +6204,165 @@ impl App {
     /// with what's being typed (re-filtering it, or closing it once the prefix
     /// empties / stops matching), and auto-triggers a fresh request on a member
     /// access (`.` / `:`) or the first character of a new word.
+    /// Called whenever the active editor changes — clears any visible
+    /// ghost suggestion + (re)arms the debounce timer so a fresh
+    /// completion fires once typing pauses. Also drops any in-flight
+    /// request (its reply will be stale).
+    pub fn note_edit_for_suggest(&mut self) {
+        if !self.ai_inline_suggestions() {
+            return;
+        }
+        if let Some(Pane::Editor(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {
+            b.editor.ghost_suggestion = None;
+        }
+        self.pending_suggest = None;
+        self.suggest_dirty_at = Some(Instant::now());
+    }
+
+    /// True when the active editor is showing an AI ghost suggestion.
+    pub fn has_ghost_suggestion(&self) -> bool {
+        matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Editor(b)) if b.editor.ghost_suggestion.is_some()
+        )
+    }
+
+    /// Drop any visible ghost suggestion on the active editor — used
+    /// when the cursor moves (a stale completion for the old position
+    /// would be wrong).
+    pub fn clear_ghost_suggestion(&mut self) {
+        if let Some(Pane::Editor(b)) = self.active.and_then(|i| self.panes.get_mut(i))
+            && b.editor.ghost_suggestion.is_some()
+        {
+            b.editor.ghost_suggestion = None;
+        }
+    }
+
+    /// `tick` hook — fire an AI ghost-text request once the debounce
+    /// window has elapsed since the last edit. No-op when the feature
+    /// is off, a request is already in flight, or a suggestion is
+    /// already showing.
+    fn maybe_fire_suggestion(&mut self) {
+        if !self.ai_inline_suggestions() || self.pending_suggest.is_some() {
+            return;
+        }
+        let Some(dirty_at) = self.suggest_dirty_at else {
+            return;
+        };
+        if dirty_at.elapsed().as_millis() < SUGGEST_DEBOUNCE_MS as u128 {
+            return;
+        }
+        let Some(pane_id) = self.active else { return };
+        let Some(Pane::Editor(b)) = self.panes.get(pane_id) else {
+            return;
+        };
+        if b.editor.ghost_suggestion.is_some() {
+            return;
+        }
+        let text = b.editor.text();
+        let cursor = b.editor.cursor();
+        // Cap context: last ~2000 chars before the cursor, first ~1000
+        // after. Sending a 100 KB file per keystroke-pause is wasteful.
+        let pre_start = text[..cursor]
+            .char_indices()
+            .rev()
+            .nth(2000)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let suf_end = text[cursor..]
+            .char_indices()
+            .nth(1000)
+            .map(|(i, _)| cursor + i)
+            .unwrap_or(text.len());
+        let prefix = text[pre_start..cursor].to_string();
+        let suffix = text[cursor..suf_end].to_string();
+        let language = b.language_ext.clone().unwrap_or_default();
+        self.suggest_dirty_at = None;
+        let id = self.next_suggest_id;
+        self.next_suggest_id += 1;
+        self.pending_suggest = Some((id, pane_id, cursor));
+        let tx = self
+            .suggest_chan
+            .get_or_insert_with(std::sync::mpsc::channel)
+            .0
+            .clone();
+        std::thread::Builder::new()
+            .name("mnml-suggest".into())
+            .spawn(move || {
+                let result = crate::ai::api_client::complete_code(&prefix, &suffix, &language);
+                let _ = tx.send((id, result));
+            })
+            .ok();
+    }
+
+    /// `tick` hook — apply a ghost-text reply if it's still relevant
+    /// (request id matches + the cursor hasn't moved).
+    fn drain_suggestions(&mut self) {
+        let replies: Vec<SuggestReply> = match &self.suggest_chan {
+            Some((_, rx)) => rx.try_iter().collect(),
+            None => return,
+        };
+        for (id, result) in replies {
+            let Some((pending_id, pane_id, cursor)) = self.pending_suggest else {
+                continue;
+            };
+            if pending_id != id {
+                continue; // a newer request superseded this one
+            }
+            self.pending_suggest = None;
+            let text = match result {
+                Ok(t) => t,
+                Err(_) => continue, // silent — ghost-text is best-effort
+            };
+            let cleaned = clean_suggestion(&text);
+            if cleaned.is_empty() {
+                continue;
+            }
+            // Only land it if the cursor is still where we asked.
+            if let Some(Pane::Editor(b)) = self.panes.get_mut(pane_id)
+                && b.editor.cursor() == cursor
+            {
+                b.editor.ghost_suggestion = Some(cleaned);
+            }
+        }
+    }
+
+    /// `Tab` accept of the active editor's ghost suggestion. Inserts the
+    /// suggestion text at the cursor. Returns true if a suggestion was
+    /// accepted (so the caller skips the normal Tab handling).
+    pub fn accept_ghost_suggestion(&mut self) -> bool {
+        let Some(pane_id) = self.active else {
+            return false;
+        };
+        let suggestion = match self.panes.get_mut(pane_id) {
+            Some(Pane::Editor(b)) => b.editor.ghost_suggestion.take(),
+            _ => None,
+        };
+        let Some(text) = suggestion else {
+            return false;
+        };
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(pane_id) {
+            let at = b.editor.cursor();
+            let end = at + text.len();
+            let clip = &mut self.clipboard;
+            b.apply_edit_ops(
+                vec![
+                    crate::edit_op::EditOp::ReplaceRange {
+                        start: at,
+                        end: at,
+                        text,
+                    },
+                    // Land the cursor past the accepted completion so the
+                    // user keeps typing from there.
+                    crate::edit_op::EditOp::SetCursorByte(end),
+                ],
+                clip,
+                0,
+            );
+        }
+        true
+    }
+
     pub fn completion_on_edit(&mut self, typed: Option<char>) {
         let is_id = |c: char| c.is_alphanumeric() || c == '_';
         let Some(prefix) = self.cursor_id_prefix() else {
@@ -11220,6 +11426,37 @@ impl App {
 
     /// Read the user's `[ai] backend = "cli" | "api"` setting. Default
     /// `Cli` (no surprises for users without an API key set).
+    /// `[ai] inline_suggestions` — whether Cursor-style AI ghost-text
+    /// fires as you type. Off by default (it costs API tokens per
+    /// suggestion). Toggle at runtime via `ai.toggle_inline_suggestions`.
+    pub fn ai_inline_suggestions(&self) -> bool {
+        self.config
+            .ai
+            .get("inline_suggestions")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// Flip `[ai] inline_suggestions` at runtime. Doesn't persist —
+    /// restart re-reads the config file.
+    pub fn toggle_inline_suggestions(&mut self) {
+        let next = !self.ai_inline_suggestions();
+        if !self.config.ai.is_table() {
+            self.config.ai = toml::Value::Table(toml::value::Table::new());
+        }
+        if let Some(t) = self.config.ai.as_table_mut() {
+            t.insert("inline_suggestions".to_string(), toml::Value::Boolean(next));
+        }
+        if next {
+            self.toast("AI ghost-text: on (needs $ANTHROPIC_API_KEY)");
+        } else {
+            self.clear_ghost_suggestion();
+            self.pending_suggest = None;
+            self.suggest_dirty_at = None;
+            self.toast("AI ghost-text: off");
+        }
+    }
+
     pub fn ai_backend(&self) -> crate::ai::AiBackend {
         let s = self
             .config
@@ -25019,6 +25256,8 @@ impl App {
         self.git.tick();
         self.drain_http_jobs();
         self.drain_ai_jobs();
+        self.drain_suggestions();
+        self.maybe_fire_suggestion();
         self.drain_tests_jobs();
         self.drain_linter_jobs();
         self.drain_dap_events();

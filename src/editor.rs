@@ -782,6 +782,10 @@ pub struct Editor {
     /// editor reads it for the tree-sitter text objects (`if`/`af`/`ic`/
     /// `ac`) so they can scope by `regex_outline` per language.
     pub language_ext: Option<String>,
+    /// AI inline ghost-text suggestion — the greyed completion painted
+    /// after the cursor (`[ai] inline_suggestions`). `Tab` accepts it,
+    /// any edit / cursor move clears it. Set by `App::drain_suggestions`.
+    pub ghost_suggestion: Option<String>,
 }
 
 impl Editor {
@@ -805,6 +809,7 @@ impl Editor {
             extra_cursors: Vec::new(),
             extra_anchors: Vec::new(),
             language_ext: None,
+            ghost_suggestion: None,
         }
     }
 

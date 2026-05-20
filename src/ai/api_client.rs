@@ -32,6 +32,75 @@ const DEFAULT_MODEL: &str = "claude-opus-4-7";
 /// pick a generous default. Most code-explanation / commit-msg
 /// answers come in under 1000.
 const DEFAULT_MAX_TOKENS: u32 = 4096;
+/// Fast model for inline ghost-text completion — latency matters far
+/// more than depth here.
+const COMPLETION_MODEL: &str = "claude-haiku-4-5";
+
+/// One-shot, non-streaming code completion for the inline ghost-text
+/// feature. Sends the code before + after the cursor and asks for ONLY
+/// the text to insert. Blocking — call from a worker thread.
+///
+/// Deliberately separate from `stream_to_channel`: a focused system
+/// prompt, a small `max_tokens`, the fast model, and a hard request
+/// timeout so a slow response doesn't leave a stale job hanging.
+pub fn complete_code(prefix: &str, suffix: &str, language: &str) -> Result<String, String> {
+    let api_key = std::env::var("ANTHROPIC_API_KEY")
+        .map_err(|_| "$ANTHROPIC_API_KEY not set".to_string())?;
+    let system = "You are an inline code-completion engine inside a text editor. \
+        You receive the code BEFORE the cursor and the code AFTER the cursor. \
+        Output ONLY the exact text that should be inserted at the cursor position \
+        to continue the code naturally. No explanation, no markdown fences, no \
+        repetition of the surrounding code. Prefer short completions — usually \
+        the rest of the current line or a few lines. If no useful completion is \
+        possible, output nothing.";
+    let user = format!(
+        "Language: {language}\n\n<code-before-cursor>\n{prefix}\n</code-before-cursor>\n\n\
+         <code-after-cursor>\n{suffix}\n</code-after-cursor>\n\n\
+         Output the text to insert at the cursor:"
+    );
+    let body = serde_json::json!({
+        "model": COMPLETION_MODEL,
+        "max_tokens": 256u32,
+        "system": system,
+        "messages": [{ "role": "user", "content": user }],
+    })
+    .to_string();
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| format!("build client: {e}"))?;
+    let resp = client
+        .post(ENDPOINT)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", API_VERSION)
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .map_err(|e| format!("POST: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!(
+            "HTTP {status}: {}",
+            text.chars().take(200).collect::<String>()
+        ));
+    }
+    // Non-streaming reply shape: `{ "content": [{ "type": "text",
+    // "text": "..." }, …] }`. Concatenate every text block.
+    let v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("parse reply: {e}"))?;
+    let out: String = v
+        .get("content")
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
+                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    Ok(out)
+}
 
 /// Stream a one-shot prompt through Anthropic's `/v1/messages` with
 /// `stream: true`. Each `content_block_delta` event with a `text_delta`
