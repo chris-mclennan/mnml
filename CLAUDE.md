@@ -83,6 +83,26 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**ratatui 0.30 + vt100 0.16 + E2E mouse harness (2026-05-20):**
+two dependency bumps + a test-harness gap closed. (1)
+**ratatui 0.29 → 0.30** — zero code changes (the facade
+re-exports kept mnml's API surface stable); its relaxed
+`unicode-width` requirement is what unblocked vt100. (2)
+**vt100 0.15 → 0.16** — `set_size` / `set_scrollback` moved to
+`Screen` (`parser.screen_mut()`), `Cell::contents()` now
+returns `&str`. mnml's pty panes get 0.16's multi-screen
+scrollback; keeps lockstep with the tmnl renderer. ratatui
+0.29's exact `unicode-width = "=0.2.0"` pin had blocked this —
+0.30 relaxed it. (3) **E2E mouse harness** — the `.test`
+format could only synthesize keys. New `click` / `rightclick`
+/ `doubleclick` / `scroll <x> <y>` steps dispatch through
+`tui::dispatch_mouse` (the real event-loop path). Coverage:
+`mouse_split_focus` (click focuses a split), `mouse_context_menu`
+(right-click → tree menu), `mouse_tree_open` (click a tree row
+→ opens the file). Failed `expect screen` checks now dump the
+rendered screen — `.test` debugging is far easier. 704 lib
+tests + e2e + ipc + clippy green.
+
 **the private integration DocDB schema fix + agent tool-confirmation UI (2026-05-20):**
 two items. (1) **the private integration assertion-diff fixed to the real schema** —
 `parse_test_cases` had guessed the per-test field names; verified
