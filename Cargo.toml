@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 # TUI — use ratatui's re-exported crossterm to avoid version skew.
-ratatui = { version = "0.29", features = ["crossterm"] }
+ratatui = { version = "0.30", features = ["crossterm"] }
 # Wire format for the `--blit` BlitBackend — shared with the tmnl renderer.
 tmnl-protocol = { path = "../tmnl-protocol" }
 # Embedded local FIM code completion (candle + quantized qwen2.5-coder).
@@ -55,9 +55,10 @@ tree-sitter-html = "0.23.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip", "brotli", "deflate"] }
 # Pty / AI-CLI panes — an embedded terminal (shell / claude / codex) per Pane::Pty.
 # portable-pty opens the pty + spawns the child; vt100 parses its output into a grid.
-# (0.8.1 / 0.15.2 is the known-good combo from mnml1 / rqst.)
+# vt100 0.16 — generic Parser, set_size/set_scrollback on Screen, multi-screen
+# scrollback. Kept in lockstep with the tmnl renderer.
 portable-pty = "0.8"
-vt100 = "0.15"
+vt100 = "0.16"
 tree-sitter-c = "0.24.2"
 tree-sitter-cpp = "0.23.4"
 tree-sitter-ruby = "0.23.1"

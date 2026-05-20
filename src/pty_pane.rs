@@ -258,7 +258,7 @@ impl PtySession {
             pixel_height: 0,
         });
         if let Ok(mut p) = self.parser.lock() {
-            p.set_size(rows, cols);
+            p.screen_mut().set_size(rows, cols);
         }
     }
 
@@ -272,19 +272,19 @@ impl PtySession {
     pub fn scroll_history(&self, delta: isize) {
         if let Ok(mut p) = self.parser.lock() {
             let cur = p.screen().scrollback() as isize;
-            p.set_scrollback((cur + delta).max(0) as usize);
+            p.screen_mut().set_scrollback((cur + delta).max(0) as usize);
         }
     }
     /// Jump to the oldest line (`usize::MAX` is clamped to the max history).
     pub fn scroll_to_top(&self) {
         if let Ok(mut p) = self.parser.lock() {
-            p.set_scrollback(usize::MAX);
+            p.screen_mut().set_scrollback(usize::MAX);
         }
     }
     /// Back to the live view (bottom).
     pub fn scroll_to_bottom(&self) {
         if let Ok(mut p) = self.parser.lock() {
-            p.set_scrollback(0);
+            p.screen_mut().set_scrollback(0);
         }
     }
 

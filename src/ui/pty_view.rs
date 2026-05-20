@@ -77,12 +77,13 @@ pub fn draw(
                 continue; // the wide grapheme was emitted by its left cell
             }
             let s = cell_style(cell, def_fg, def_bg);
-            let g = if cell.has_contents() {
+            // vt100 0.16: `Cell::contents()` returns `&str`.
+            let g: &str = if cell.has_contents() {
                 cell.contents()
             } else {
-                " ".to_string()
+                " "
             };
-            push_run(&mut spans, &mut text, &mut style, &g, s);
+            push_run(&mut spans, &mut text, &mut style, g, s);
         }
         if let Some(s) = style {
             spans.push(Span::styled(text, s));
