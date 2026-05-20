@@ -1,0 +1,20 @@
+[package]
+name = "fim-engine"
+version = "0.1.0"
+edition = "2024"
+description = "Embedded fill-in-the-middle code completion — quantized qwen2.5-coder via candle. Shared by mnml + tmnl."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+# Pure-Rust tensor + ML runtime. No C/C++ build deps, no external daemon.
+candle-core = "0.9"
+candle-transformers = "0.9"
+# The qwen2 BPE tokenizer (loaded from a tokenizer.json).
+tokenizers = "0.20"
+# Model-file download from the HuggingFace CDN (blocking — the engine
+# loads on a worker thread anyway). rustls so there's no OpenSSL dep.
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "rustls-tls",
+] }
