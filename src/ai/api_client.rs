@@ -332,6 +332,8 @@ pub fn agent_to_channel(
     system: Option<&str>,
     max_tokens: Option<u32>,
     write_tools: bool,
+    write_confirm: bool,
+    confirm_rx: &std::sync::mpsc::Receiver<bool>,
     cancel: &AtomicBool,
     sink: std::sync::mpsc::Sender<(u64, AiMsg)>,
     job_id: u64,
@@ -454,6 +456,37 @@ pub fn agent_to_channel(
                 job_id,
                 AiMsg::Delta(format!("\n[tool: {}]\n", tool_summary(name, &input))),
             ));
+            // Confirmation gate — a `write_file` blocks on the user's
+            // approval (sent back through `confirm_rx`) when enabled.
+            if write_confirm && name == "write_file" {
+                let _ = sink.send((
+                    job_id,
+                    AiMsg::ConfirmTool {
+                        summary: tool_summary(name, &input),
+                    },
+                ));
+                let approved = wait_for_confirm(confirm_rx, cancel);
+                match approved {
+                    None => {
+                        // Cancelled while waiting — bail the whole run.
+                        let _ = sink.send((job_id, AiMsg::Failed("cancelled".to_string())));
+                        return;
+                    }
+                    Some(false) => {
+                        let _ = sink.send((
+                            job_id,
+                            AiMsg::Delta("\n[write declined by user]\n".to_string()),
+                        ));
+                        results.push(serde_json::json!({
+                            "type": "tool_result", "tool_use_id": id,
+                            "content": "The user declined this write_file operation. Do not retry it; \
+                                        explain what you would have written instead.",
+                        }));
+                        continue;
+                    }
+                    Some(true) => {}
+                }
+            }
             let (text, is_error) = match execute_tool(workspace, name, &input, write_tools) {
                 Ok(t) => (t, false),
                 Err(e) => (e, true),
@@ -481,6 +514,27 @@ pub fn agent_to_channel(
         ));
     }
     let _ = sink.send((job_id, AiMsg::Done(full_text.trim().to_string())));
+}
+
+/// Block until the user answers a tool-confirmation prompt. Polls
+/// `confirm_rx` with a short timeout so `cancel` stays responsive.
+/// `Some(true/false)` is the answer; `None` ⇒ cancelled or the main
+/// thread hung up.
+fn wait_for_confirm(
+    confirm_rx: &std::sync::mpsc::Receiver<bool>,
+    cancel: &AtomicBool,
+) -> Option<bool> {
+    use std::sync::mpsc::RecvTimeoutError;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        match confirm_rx.recv_timeout(std::time::Duration::from_millis(120)) {
+            Ok(answer) => return Some(answer),
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => return None,
+        }
+    }
 }
 
 /// Run one streaming agent turn — POST + read the SSE stream, forwarding
@@ -1019,6 +1073,29 @@ mod tests {
             true,
         );
         assert!(r.is_err(), "`..` escape should be refused: {r:?}");
+    }
+
+    #[test]
+    fn wait_for_confirm_returns_the_answer() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(true).unwrap();
+        let cancel = AtomicBool::new(false);
+        assert_eq!(wait_for_confirm(&rx, &cancel), Some(true));
+    }
+
+    #[test]
+    fn wait_for_confirm_none_on_cancel() {
+        let (_tx, rx) = std::sync::mpsc::channel::<bool>();
+        let cancel = AtomicBool::new(true);
+        assert_eq!(wait_for_confirm(&rx, &cancel), None);
+    }
+
+    #[test]
+    fn wait_for_confirm_none_when_sender_dropped() {
+        let (tx, rx) = std::sync::mpsc::channel::<bool>();
+        drop(tx);
+        let cancel = AtomicBool::new(false);
+        assert_eq!(wait_for_confirm(&rx, &cancel), None);
     }
 
     #[test]

@@ -41,8 +41,22 @@ fn main() {
     let cancel = AtomicBool::new(false);
 
     // Blocking — runs the whole agent loop, buffering messages into rx.
-    // write_tools = false: this smoke test exercises the read-only path.
-    agent_to_channel(prompt, &dir, None, None, None, false, &cancel, tx, 1);
+    // write_tools = false: this smoke test exercises the read-only path,
+    // so the confirm channel is never used.
+    let (_confirm_tx, confirm_rx) = mpsc::channel();
+    agent_to_channel(
+        prompt,
+        &dir,
+        None,
+        None,
+        None,
+        false,
+        false,
+        &confirm_rx,
+        &cancel,
+        tx,
+        1,
+    );
 
     let mut done = false;
     for (_, msg) in rx.iter() {
@@ -53,6 +67,10 @@ fn main() {
                 output_tokens,
             } => {
                 println!("\n\n=== USAGE === {input_tokens} in / {output_tokens} out");
+            }
+            AiMsg::ConfirmTool { summary } => {
+                // Not reached in this read-only smoke test.
+                println!("\n[confirm requested: {summary}]");
             }
             AiMsg::Done(text) => {
                 println!("\n=== DONE ===\n{text}");

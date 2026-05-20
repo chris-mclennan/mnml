@@ -3077,6 +3077,13 @@ pub struct App {
     /// every job's `AiMsg::Usage`. Drives `ai.token_usage`.
     ai_tokens_in: u64,
     ai_tokens_out: u64,
+    /// Per-job confirm channels — the agent worker blocks on its
+    /// receiver when a `write_file` needs approval; the main thread
+    /// answers through the matching sender. Keyed by job id.
+    ai_confirm_senders: std::collections::HashMap<u64, std::sync::mpsc::Sender<bool>>,
+    /// The job id whose `write_file` is currently awaiting the user's
+    /// answer in an open `AiToolConfirm` prompt.
+    pending_tool_confirm: Option<u64>,
     /// Commands registered at runtime by IPC plugins (`register-command`). They
     /// show up in the palette/which-key + keymap; invoking one queues its id in
     /// `pending_plugin_invocations` for the IPC layer to log as an event.
@@ -3404,6 +3411,8 @@ impl App {
             next_job_id: 1,
             ai_tokens_in: 0,
             ai_tokens_out: 0,
+            ai_confirm_senders: std::collections::HashMap::new(),
+            pending_tool_confirm: None,
             dynamic_commands: Vec::new(),
             pending_plugin_invocations: Vec::new(),
             lsp,
@@ -11680,6 +11689,10 @@ impl App {
         let max_tokens = self.ai_max_tokens();
         let api_tools = self.ai_api_tools();
         let api_write_tools = self.ai_api_write_tools();
+        // Confirm before a write: on unless the user opted out.
+        let write_confirm = api_write_tools && self.ai_api_write_confirm();
+        let (confirm_tx, confirm_rx) = std::sync::mpsc::channel::<bool>();
+        self.ai_confirm_senders.insert(job_id, confirm_tx);
         let workspace = self.workspace.clone();
         std::thread::spawn(move || match backend {
             crate::ai::AiBackend::Api => {
@@ -11694,6 +11707,8 @@ impl App {
                         system.as_deref(),
                         max_tokens,
                         api_write_tools,
+                        write_confirm,
+                        &confirm_rx,
                         &worker_cancel,
                         tx,
                         job_id,
@@ -11777,6 +11792,28 @@ impl App {
             .get("api_write_tools")
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
+    }
+
+    /// `[ai] api_write_confirm` — whether each agent `write_file` blocks
+    /// for the user's approval before it runs. Default **on** — the
+    /// human-in-the-loop safety net for `api_write_tools`. Set false for
+    /// unattended writes.
+    pub fn ai_api_write_confirm(&self) -> bool {
+        self.config
+            .ai
+            .get("api_write_confirm")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    }
+
+    /// Relay the user's `AiToolConfirm` answer to the blocked agent
+    /// worker through its confirm channel.
+    fn resolve_tool_confirm(&mut self, approved: bool) {
+        if let Some(job_id) = self.pending_tool_confirm.take()
+            && let Some(tx) = self.ai_confirm_senders.get(&job_id)
+        {
+            let _ = tx.send(approved);
+        }
     }
 
     /// `ai.show_config` — toast the live AI backend + model + tool
@@ -12638,12 +12675,27 @@ impl App {
                 );
                 continue;
             }
+            // Tool-confirmation request — the agent worker is blocked
+            // waiting for the user to approve a write. Open the prompt.
+            if let AiMsg::ConfirmTool { summary } = &msg {
+                self.pending_tool_confirm = Some(job_id);
+                self.prompt = Some(crate::prompt::Prompt::seeded(
+                    crate::prompt::PromptKind::AiToolConfirm,
+                    format!("AI wants to {summary} — Enter: allow · Esc: deny"),
+                    String::new(),
+                ));
+                continue;
+            }
+            // Job finished — drop its confirm channel.
+            if matches!(msg, AiMsg::Done(_) | AiMsg::Failed(_)) {
+                self.ai_confirm_senders.remove(&job_id);
+            }
             // An "AI: rewrite HEAD's message" job? Route the final text to a
             // GitCommitAmend prompt (same shape as the GitCommit case below).
             if self.pending_amend_msg_job == Some(job_id) {
                 let result = match msg {
                     AiMsg::Delta(_) => continue,
-                    AiMsg::Usage { .. } => continue, // handled above
+                    AiMsg::Usage { .. } | AiMsg::ConfirmTool { .. } => continue, // handled above
                     AiMsg::Done(text) => Ok(text),
                     AiMsg::Failed(e) => Err(e),
                 };
@@ -12677,7 +12729,7 @@ impl App {
             if self.pending_commit_msg_job == Some(job_id) {
                 let result = match msg {
                     AiMsg::Delta(_) => continue,
-                    AiMsg::Usage { .. } => continue, // handled above
+                    AiMsg::Usage { .. } | AiMsg::ConfirmTool { .. } => continue, // handled above
                     AiMsg::Done(text) => Ok(text),
                     AiMsg::Failed(e) => Err(e),
                 };
@@ -12766,7 +12818,7 @@ impl App {
                     toasts.push(format!("AI: {e}"));
                     a.state = AiState::Failed(e);
                 }
-                AiMsg::Usage { .. } => {} // handled at the top of the loop
+                AiMsg::Usage { .. } | AiMsg::ConfirmTool { .. } => {} // handled at the top
             }
         }
         for t in toasts {
@@ -16208,10 +16260,13 @@ impl App {
     pub fn prompt_cancel(&mut self) {
         // Esc-cancel on a Find prompt restores the editor's prior find state
         // (incremental preview is dropped).
-        let was_find = matches!(
-            self.prompt.as_ref().map(|p| p.kind),
-            Some(crate::prompt::PromptKind::Find)
-        );
+        let kind = self.prompt.as_ref().map(|p| p.kind);
+        let was_find = matches!(kind, Some(crate::prompt::PromptKind::Find));
+        // Esc on a tool-confirm prompt means "deny" — the blocked agent
+        // worker is waiting for an answer.
+        if matches!(kind, Some(crate::prompt::PromptKind::AiToolConfirm)) {
+            self.resolve_tool_confirm(false);
+        }
         self.prompt = None;
         self.pending_rename = None;
         self.pending_fs_action = None;
@@ -16491,6 +16546,9 @@ impl App {
             }
             crate::prompt::PromptKind::QuitConfirm => {
                 self.accept_quit();
+            }
+            crate::prompt::PromptKind::AiToolConfirm => {
+                self.resolve_tool_confirm(true);
             }
             crate::prompt::PromptKind::AiChat => {
                 let typed = p.input.clone();

@@ -140,6 +140,10 @@ pub enum PromptKind {
     /// text (`:rename` / `term.rename`). Empty input clears the name
     /// back to the profile default.
     PtySessionName,
+    /// Accept ⇒ approve the AI agent's pending `write_file`; Esc ⇒ deny.
+    /// The answer is relayed to the blocked agent worker through its
+    /// confirm channel (`App::resolve_tool_confirm`).
+    AiToolConfirm,
 }
 
 #[derive(Debug)]

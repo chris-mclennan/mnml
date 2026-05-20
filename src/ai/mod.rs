@@ -339,6 +339,11 @@ pub enum AiMsg {
         input_tokens: u64,
         output_tokens: u64,
     },
+    /// The agent loop wants to run a risky tool (a `write_file`) and is
+    /// **blocked** waiting for the user to approve. The main thread opens
+    /// a confirm prompt and replies through the job's confirm channel.
+    /// `summary` describes the pending action.
+    ConfirmTool { summary: String },
 }
 
 /// Run `claude -p --session-id <session_id> <prompt>`, forwarding stdout chunks
