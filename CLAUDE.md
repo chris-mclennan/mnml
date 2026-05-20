@@ -83,6 +83,30 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**the private integration DocDB schema fix + agent tool-confirmation UI (2026-05-20):**
+two items. (1) **the private integration assertion-diff fixed to the real schema** —
+`parse_test_cases` had guessed the per-test field names; verified
+against the dev cluster (via a reworked recursive `examples/private_sample_doc.rs`
+dumper), all wrong. The real shape: per-test results nest as
+`projects.<project>.tests[]`, each test carrying `test_title` /
+`test_file` / `final_status`. Rewrote `parse_test_cases` to walk
+that; diff key is `<test_file> › <title>`. `private.diff_executions`
+now produces real per-test diffs. (Side finding: top-level docs
+have `batch_id` / `execution_id` but no `build_id`, so the
+CodeBuild correlation leans on its time-window fallback — separate,
+unfixed.) (2) **Tool-confirmation UI** — the API agent's
+`write_file` now blocks for the user's approval. New
+`AiMsg::ConfirmTool`; the worker blocks on a per-job confirm
+channel (`wait_for_confirm`, cancel-aware); `drain_ai_jobs` opens
+an `AiToolConfirm` prompt (Enter allow / Esc deny) and relays the
+answer through `App.ai_confirm_senders`. A denied write feeds the
+model a "don't retry" tool_result. `[ai] api_write_confirm`
+(default on) gates it. So write_file is opt-in
+(`api_write_tools`) → confirmed per call unless explicitly
+waived. **Deferred: Sixel** — the mnml encoder is bounded but the
+tmnl-side GPU decode/render is its own focused session. 700 lib
+tests + e2e + clippy green.
+
 **Stale-doc cleanup + persisted AI stats + write_file tool (2026-05-20):**
 three items. (1) **Stale-doc cleanup** — fixed doc comments
 that shipped code had outrun: `ai/mod.rs` ("not a raw API
