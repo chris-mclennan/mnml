@@ -209,19 +209,33 @@ fn clean_suggestion(raw: &str) -> String {
 /// is reported back as a `u64::MAX`-id reply so `drain_suggestions`
 /// can toast it.
 fn fim_worker_loop(
-    rx: std::sync::mpsc::Receiver<(u64, String, String)>,
+    rx: std::sync::mpsc::Receiver<FimRequest>,
     reply: std::sync::mpsc::Sender<SuggestReply>,
+    progress: std::sync::Arc<std::sync::Mutex<Option<fim_engine::DownloadProgress>>>,
+    model: fim_engine::ModelChoice,
 ) {
     let mut engine: Option<fim_engine::FimEngine> = None;
     let mut load_error: Option<String> = None;
-    while let Ok((id, prefix, suffix)) = rx.recv() {
+    while let Ok((id, prefix, suffix, max_tokens)) = rx.recv() {
         if let Some(err) = &load_error {
             let _ = reply.send((id, Err(err.clone())));
             continue;
         }
         if engine.is_none() {
             let cache = fim_engine::default_cache_dir();
-            match fim_engine::FimEngine::load(&cache, &|_p| {}) {
+            // The download-progress callback writes into the shared
+            // slot the overlay reads each frame.
+            let prog = std::sync::Arc::clone(&progress);
+            let load = fim_engine::FimEngine::load(&cache, model, &move |p| {
+                if let Ok(mut g) = prog.lock() {
+                    *g = Some(p);
+                }
+            });
+            // Download done (one way or another) — clear the bar.
+            if let Ok(mut g) = progress.lock() {
+                *g = None;
+            }
+            match load {
                 Ok(e) => {
                     engine = Some(e);
                     let _ = reply.send((u64::MAX, Ok("local model ready".to_string())));
@@ -238,7 +252,7 @@ fn fim_worker_loop(
             }
         }
         if let Some(e) = engine.as_mut() {
-            let result = e.complete(&prefix, &suffix, 64);
+            let result = e.complete(&prefix, &suffix, max_tokens);
             let _ = reply.send((id, result));
         }
     }
@@ -2211,6 +2225,9 @@ pub struct GitUndoEntry {
 /// One AI ghost-text worker reply — `(request_id, completion-or-error)`.
 type SuggestReply = (u64, Result<String, String>);
 
+/// One local-FIM worker request — `(request_id, prefix, suffix, max_tokens)`.
+type FimRequest = (u64, String, String, usize);
+
 pub struct App {
     pub workspace: PathBuf,
     pub config: Config,
@@ -2759,7 +2776,12 @@ pub struct App {
     /// = "local"`). `Some` once the worker is spawned. The worker owns
     /// the `FimEngine`, loads it lazily on the first request (a one-time
     /// ~1 GB download), and replies through `suggest_chan`.
-    fim_tx: Option<std::sync::mpsc::Sender<(u64, String, String)>>,
+    fim_tx: Option<std::sync::mpsc::Sender<FimRequest>>,
+    /// Live model-download progress, shared with the FIM worker thread.
+    /// `Some` while the one-time ~1 GB download runs; `ui::
+    /// fim_progress_overlay` paints a bar from it. `None` otherwise.
+    pub fim_progress:
+        std::sync::Arc<std::sync::Mutex<Option<fim_engine::DownloadProgress>>>,
     /// Monotonic id for ghost-text requests.
     next_suggest_id: u64,
     /// When the active editor was last edited — the ghost-text debounce
@@ -3215,6 +3237,7 @@ impl App {
             next_suggest_id: 0,
             suggest_dirty_at: None,
             fim_tx: None,
+            fim_progress: std::sync::Arc::new(std::sync::Mutex::new(None)),
             tests_chan: None,
             linter_chan: None,
             dap: None,
@@ -6347,8 +6370,9 @@ impl App {
             crate::ai::SuggestBackend::Local => {
                 // Local FIM — hand the request to the engine worker
                 // (it owns the model + replies through `suggest_chan`).
+                let max_tokens = self.ai_fim_max_tokens();
                 let fim_tx = self.ensure_fim_worker();
-                let _ = fim_tx.send((id, prefix, suffix));
+                let _ = fim_tx.send((id, prefix, suffix, max_tokens));
             }
             // ClaudeApi (and Unset — shouldn't reach here since the
             // setup picker gates first-enable, but be safe).
@@ -6374,25 +6398,55 @@ impl App {
     /// sender. The worker owns the `FimEngine`, loads it lazily on the
     /// first request (a one-time ~1 GB download), and replies through
     /// `suggest_chan` — load status arrives as the `u64::MAX` sentinel.
-    fn ensure_fim_worker(&mut self) -> std::sync::mpsc::Sender<(u64, String, String)> {
+    fn ensure_fim_worker(&mut self) -> std::sync::mpsc::Sender<FimRequest> {
         if let Some(tx) = &self.fim_tx {
             return tx.clone();
         }
-        let (tx, rx) = std::sync::mpsc::channel::<(u64, String, String)>();
+        let (tx, rx) = std::sync::mpsc::channel::<FimRequest>();
         let reply = self
             .suggest_chan
             .get_or_insert_with(std::sync::mpsc::channel)
             .0
             .clone();
+        let progress = std::sync::Arc::clone(&self.fim_progress);
+        let model = self.ai_fim_model();
         std::thread::Builder::new()
             .name("mnml-fim".into())
-            .spawn(move || fim_worker_loop(rx, reply))
+            .spawn(move || fim_worker_loop(rx, reply, progress, model))
             .ok();
         self.fim_tx = Some(tx.clone());
-        self.toast(
-            "fim-engine: loading local model (first run downloads ~1 GB, one-time)…",
-        );
+        let size = match model {
+            fim_engine::ModelChoice::Qwen3B => "3B",
+            fim_engine::ModelChoice::Qwen1_5B => "1.5B",
+        };
+        self.toast(format!(
+            "fim-engine: loading local model ({size}) — first run downloads ~1 GB, one-time…"
+        ));
         tx
+    }
+
+    /// The configured local FIM model size — `[ai] fim_model` (`"1.5b"`
+    /// default / `"3b"`). 3B is smarter at multi-line completion but
+    /// ~2x slower with a bigger download.
+    fn ai_fim_model(&self) -> fim_engine::ModelChoice {
+        self.config
+            .ai
+            .get("fim_model")
+            .and_then(|v| v.as_str())
+            .map(fim_engine::ModelChoice::parse)
+            .unwrap_or(fim_engine::ModelChoice::Qwen1_5B)
+    }
+
+    /// The per-request token cap for local FIM completions — `[ai]
+    /// fim_max_tokens` (default 64, clamped 8..=512). Bigger = longer
+    /// multi-line completions but slower per keystroke-pause.
+    fn ai_fim_max_tokens(&self) -> usize {
+        self.config
+            .ai
+            .get("fim_max_tokens")
+            .and_then(|v| v.as_integer())
+            .map(|n| (n.clamp(8, 512)) as usize)
+            .unwrap_or(64)
     }
 
     /// `tick` hook — apply a ghost-text reply if it's still relevant

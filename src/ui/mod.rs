@@ -71,6 +71,7 @@ pub mod tests_view;
 pub mod theme;
 pub mod about_overlay;
 pub mod discovery;
+pub mod fim_progress_overlay;
 pub mod ghost_overlay;
 pub mod scratch_term_view;
 pub mod settings_overlay;
@@ -352,6 +353,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // AI ghost-text: paint the active editor's pending suggestion in
     // grey starting at the cursor cell.
     ghost_overlay::draw(frame, app, cursor_pos);
+    // Local-model download progress — bottom-centered bar during the
+    // one-time fim-engine model pull.
+    fim_progress_overlay::draw(frame, app, area);
     // Stacked toasts: top-right vertical column when more than one toast
     // is live (rapid-fire toasts no longer clobber each other).
     toast_stack::draw(frame, app);
