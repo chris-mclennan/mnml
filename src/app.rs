@@ -1024,6 +1024,11 @@ struct SavedSession {
     /// field) ⇒ default to local time on launch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     clock_show_utc: Option<bool>,
+    /// `:rename`'d Claude session names, keyed by Claude `--session-id`.
+    /// Ptys themselves don't survive a relaunch, but resuming a saved
+    /// Claude session (`ai.session_picker`) re-applies its name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pty_session_names: Vec<(String, String)>,
     /// Last `[m] device emulation` preset picked this session (index into
     /// `crate::browser_pane::DEVICE_PRESETS`). Applied to every fresh
     /// `browser.open` so the user doesn't have to re-pick after a relaunch.
@@ -2104,6 +2109,28 @@ pub struct TreeDrag {
     pub current_target_idx: Option<usize>,
 }
 
+/// One reversible git operation for the GitGraph toolbar's Undo / Redo.
+/// `undo` reverts it; `redo` re-applies it. Each is a single git
+/// invocation kept deliberately narrow + non-destructive.
+#[derive(Debug, Clone)]
+pub enum GitUndoAction {
+    /// `git reset --soft <hash>` — moves the branch ref only; the
+    /// commit's changes stay staged. Vehicle for commit undo/redo.
+    ResetSoft(String),
+    /// `git checkout <branch>` — switch branches. Vehicle for checkout
+    /// undo/redo.
+    CheckoutBranch(String),
+}
+
+/// One entry on the git undo/redo stacks — a human-readable label plus
+/// the inverse + forward action.
+#[derive(Debug, Clone)]
+pub struct GitUndoEntry {
+    pub description: String,
+    pub undo: GitUndoAction,
+    pub redo: GitUndoAction,
+}
+
 pub struct App {
     pub workspace: PathBuf,
     pub config: Config,
@@ -2424,11 +2451,18 @@ pub struct App {
     /// Pending tree move — set when the user releases a drag on a different
     /// directory; the prompt accept reads from here and runs the rename.
     pub pending_tree_move: Option<(std::path::PathBuf, std::path::PathBuf)>,
-    /// Commit hashes undone via the GitGraph toolbar's Undo button —
-    /// `git_redo_commit` pops the top to re-point HEAD. In-memory only;
-    /// a real git op outside the undo/redo flow leaves stale entries
-    /// that simply fail harmlessly on redo.
-    pub git_redo_stack: Vec<String>,
+    /// `:rename`'d Claude session names from a previous launch, keyed
+    /// by `--session-id`. Restored from `SavedSession.pty_session_names`;
+    /// re-applied to a Claude pane whose session id matches when it's
+    /// (re)opened.
+    pub saved_pty_session_names: std::collections::HashMap<String, String>,
+    /// Git operation undo / redo stacks (GitGraph toolbar Undo / Redo).
+    /// A new git op pushes onto `git_undo_stack` + clears the redo
+    /// stack; Undo moves an entry undo→redo, Redo moves it back.
+    /// In-memory only — entries that no longer apply (HEAD moved by an
+    /// external git op) fail harmlessly with a toast.
+    pub git_undo_stack: Vec<GitUndoEntry>,
+    pub git_redo_stack: Vec<GitUndoEntry>,
     /// Currently-hovered clickable chip + when it first became hovered.
     /// After `HOVER_TOOLTIP_DELAY_MS` of stable hover, the tooltip renders
     /// next to the chip. Cleared on click / typing / mouse-leave.
@@ -3028,6 +3062,8 @@ impl App {
             scratch_term: None,
             tree_drag: None,
             pending_tree_move: None,
+            saved_pty_session_names: std::collections::HashMap::new(),
+            git_undo_stack: Vec::new(),
             git_redo_stack: Vec::new(),
             quit_armed: false,
             rects: PaneRects::default(),
@@ -10762,6 +10798,20 @@ impl App {
     // ─── pty / AI-CLI panes ─────────────────────────────────────────
     /// Open an embedded terminal (`profile` = shell / `claude` / `codex`) as a
     /// stacked split below the focused leaf (a terminal "drawer"), and focus it.
+    /// Re-apply a `:rename`'d name to a freshly-spawned pty whose
+    /// `session_id` matches a saved entry. Only fires for *resumed*
+    /// Claude sessions (a fresh `claude` gets a brand-new session id
+    /// that won't be in the map) — so resuming "frontend"'s session
+    /// brings the name back with it.
+    fn apply_saved_pty_name(&self, s: &mut crate::pty_pane::PtySession) {
+        if s.display_name.is_none()
+            && let Some(sid) = &s.profile.session_id
+            && let Some(name) = self.saved_pty_session_names.get(sid)
+        {
+            s.display_name = Some(name.clone());
+        }
+    }
+
     pub fn open_pty(&mut self, profile: crate::pty_pane::BinaryProfile) {
         // Default: stacked below — matches the "open a small shell at
         // the bottom" muscle memory most pty cases want.
@@ -10780,7 +10830,8 @@ impl App {
         // The initial size is a guess — `ui/pty_view` resizes the session to its
         // rendered area on the first frame.
         match crate::pty_pane::PtySession::spawn(profile, 24, 80) {
-            Ok(s) => {
+            Ok(mut s) => {
+                self.apply_saved_pty_name(&mut s);
                 let pane = Pane::Pty(s);
                 match self.active {
                     Some(cur) => {
@@ -10997,7 +11048,8 @@ impl App {
     /// strip. Backs the strip's `+` button.
     pub fn add_pty_tab(&mut self, strip_owner: PaneId, profile: crate::pty_pane::BinaryProfile) {
         match crate::pty_pane::PtySession::spawn(profile, 24, 80) {
-            Ok(s) => {
+            Ok(mut s) => {
+                self.apply_saved_pty_name(&mut s);
                 self.panes.push(Pane::Pty(s));
                 let new_id = self.panes.len() - 1;
                 // Re-point every leaf that shows `strip_owner` to the new
@@ -15080,51 +15132,91 @@ impl App {
         }
     }
 
-    /// `git.undo` / GitGraph toolbar Undo — uncommit HEAD via
-    /// `git reset --soft HEAD~1`. Non-destructive: `--soft` only moves
-    /// the branch ref, leaving every change staged in the working tree.
-    /// The undone commit's hash is pushed onto `git_redo_stack` so
-    /// `git_redo_commit` can re-point HEAD back to it.
-    pub fn git_undo_last_commit(&mut self) {
-        let repo = self.active_repo_path().to_path_buf();
-        // Capture the current HEAD so Redo can restore it.
-        let head = match crate::git::commit::rev_parse(&repo, "HEAD") {
-            Some(h) => h,
-            None => {
-                self.toast("undo: no HEAD (empty repo?)");
-                return;
-            }
-        };
-        // Refuse when HEAD has no parent — nothing to uncommit.
-        if crate::git::commit::rev_parse(&repo, "HEAD~1").is_none() {
-            self.toast("undo: HEAD has no parent commit");
-            return;
+    /// Record a reversible git operation — pushes onto the undo stack
+    /// and clears the redo stack (standard undo semantics: a new action
+    /// invalidates the redo history). Capped at 50 entries.
+    pub fn record_git_op(&mut self, entry: GitUndoEntry) {
+        self.git_undo_stack.push(entry);
+        if self.git_undo_stack.len() > 50 {
+            self.git_undo_stack.remove(0);
         }
-        match crate::git::commit::reset_soft(&repo, "HEAD~1") {
-            Ok(()) => {
-                self.git_redo_stack.push(head);
-                self.toast("undid last commit (changes kept staged)");
-                self.after_git_change();
-            }
-            Err(e) => self.toast(format!("undo: {e}")),
+        self.git_redo_stack.clear();
+    }
+
+    /// Note a just-completed commit on the undo stack. Captures HEAD
+    /// (the new commit) + HEAD~1 (its parent) so undo can `reset
+    /// --soft` to the parent and redo can `reset --soft` back.
+    pub fn note_commit_for_undo(&mut self) {
+        let repo = self.active_repo_path().to_path_buf();
+        let head = crate::git::commit::rev_parse(&repo, "HEAD");
+        let parent = crate::git::commit::rev_parse(&repo, "HEAD~1");
+        if let (Some(head), Some(parent)) = (head, parent) {
+            self.record_git_op(GitUndoEntry {
+                description: "commit".to_string(),
+                undo: GitUndoAction::ResetSoft(parent),
+                redo: GitUndoAction::ResetSoft(head),
+            });
         }
     }
 
-    /// GitGraph toolbar Redo — re-point HEAD to the most recently
-    /// undone commit (`git reset --soft <hash>`). No-op + toast when
-    /// the redo stack is empty.
+    /// Note a just-completed branch checkout (`from` → `to`) on the
+    /// undo stack. No-op when `from`/`to` are the same.
+    pub fn note_checkout_for_undo(&mut self, from: &str, to: &str) {
+        if from == to || from.is_empty() || to.is_empty() {
+            return;
+        }
+        self.record_git_op(GitUndoEntry {
+            description: format!("checkout {to}"),
+            undo: GitUndoAction::CheckoutBranch(from.to_string()),
+            redo: GitUndoAction::CheckoutBranch(to.to_string()),
+        });
+    }
+
+    /// Run a single [`GitUndoAction`] against the active repo.
+    fn apply_git_undo_action(&self, action: &GitUndoAction) -> Result<(), String> {
+        let repo = self.active_repo_path();
+        match action {
+            GitUndoAction::ResetSoft(rev) => crate::git::commit::reset_soft(repo, rev),
+            GitUndoAction::CheckoutBranch(name) => crate::git::branch::checkout(repo, name),
+        }
+    }
+
+    /// `git.undo` / GitGraph toolbar Undo — pop the undo stack, run the
+    /// entry's inverse, move it to the redo stack.
+    pub fn git_undo_last_commit(&mut self) {
+        let Some(entry) = self.git_undo_stack.pop() else {
+            self.toast("undo: nothing to undo");
+            return;
+        };
+        match self.apply_git_undo_action(&entry.undo) {
+            Ok(()) => {
+                let desc = entry.description.clone();
+                self.git_redo_stack.push(entry);
+                self.toast(format!("undid: {desc}"));
+                self.after_git_change();
+            }
+            Err(e) => {
+                // Keep the entry off both stacks — it no longer applies.
+                self.toast(format!("undo failed: {e}"));
+            }
+        }
+    }
+
+    /// GitGraph toolbar Redo — pop the redo stack, re-apply, move it
+    /// back to the undo stack.
     pub fn git_redo_commit(&mut self) {
-        let Some(hash) = self.git_redo_stack.pop() else {
+        let Some(entry) = self.git_redo_stack.pop() else {
             self.toast("redo: nothing to redo");
             return;
         };
-        let repo = self.active_repo_path().to_path_buf();
-        match crate::git::commit::reset_soft(&repo, &hash) {
+        match self.apply_git_undo_action(&entry.redo) {
             Ok(()) => {
-                self.toast(format!("redid commit {}", &hash[..hash.len().min(9)]));
+                let desc = entry.description.clone();
+                self.git_undo_stack.push(entry);
+                self.toast(format!("redid: {desc}"));
                 self.after_git_change();
             }
-            Err(e) => self.toast(format!("redo: {e}")),
+            Err(e) => self.toast(format!("redo failed: {e}")),
         }
     }
 
@@ -15347,6 +15439,7 @@ impl App {
                 match crate::git::commit::commit(self.active_repo_path(), msg) {
                     Ok(summary) => {
                         self.toast(summary);
+                        self.note_commit_for_undo();
                         self.after_git_change();
                         self.refresh_active_diff();
                     }
@@ -18458,6 +18551,7 @@ impl App {
                         g.wip_commit.clear();
                     }
                     self.toast(summary);
+                    self.note_commit_for_undo();
                     self.after_git_change();
                     self.refresh_active_git_graph();
                     self.refresh_active_diff();
@@ -18661,15 +18755,35 @@ impl App {
     /// Checkout the branch a `PickerKind::Branches` item id encodes.
     pub fn checkout_branch(&mut self, id: &str) {
         let repo = self.active_repo_path().to_path_buf();
-        let result = if let Some(name) = id.strip_prefix("local:") {
-            crate::git::branch::checkout(&repo, name).map(|_| name.to_string())
+        let from = crate::git::branch::current(&repo);
+        // `is_local` gates undo registration — remote-tracking checkouts
+        // create a new local branch whose redo semantics get fuzzy, so
+        // only plain local-branch switches join the undo stack.
+        let (result, is_local) = if let Some(name) = id.strip_prefix("local:") {
+            (
+                crate::git::branch::checkout(&repo, name).map(|_| name.to_string()),
+                true,
+            )
         } else if let Some(remote) = id.strip_prefix("remote:") {
-            crate::git::branch::checkout_track(&repo, remote).map(|_| remote.to_string())
+            (
+                crate::git::branch::checkout_track(&repo, remote).map(|_| remote.to_string()),
+                false,
+            )
         } else {
-            crate::git::branch::checkout(&repo, id).map(|_| id.to_string())
+            (
+                crate::git::branch::checkout(&repo, id).map(|_| id.to_string()),
+                true,
+            )
         };
         match result {
-            Ok(name) => self.after_checkout(&name),
+            Ok(name) => {
+                if is_local
+                    && let Some(from) = &from
+                {
+                    self.note_checkout_for_undo(from, &name);
+                }
+                self.after_checkout(&name);
+            }
             Err(e) => self.toast(format!("git checkout: {e}")),
         }
     }
@@ -24737,8 +24851,14 @@ impl App {
     }
     /// Right-click context-menu action: checkout an existing local branch.
     pub fn git_checkout_named(&mut self, name: &str) {
+        let from = crate::git::branch::current(self.active_repo_path());
         match crate::git::branch::checkout(self.active_repo_path(), name) {
-            Ok(()) => self.after_checkout(name),
+            Ok(()) => {
+                if let Some(from) = from {
+                    self.note_checkout_for_undo(&from, name);
+                }
+                self.after_checkout(name);
+            }
             Err(e) => self.toast(format!("checkout: {e}")),
         }
     }
@@ -25257,6 +25377,23 @@ impl App {
             theme: Some(crate::ui::theme::cur().name.to_string()),
             wrap: Some(self.config.ui.wrap),
             clock_show_utc: Some(self.clock_show_utc),
+            pty_session_names: {
+                // Walk pty panes — record (session_id, display_name)
+                // for any renamed Claude session so a later resume can
+                // re-apply the name. Carry forward prior-launch entries
+                // too (a Claude session not open this run still keeps
+                // its saved name).
+                let mut m = self.saved_pty_session_names.clone();
+                for p in &self.panes {
+                    if let Pane::Pty(s) = p
+                        && let (Some(sid), Some(name)) =
+                            (&s.profile.session_id, &s.display_name)
+                    {
+                        m.insert(sid.clone(), name.clone());
+                    }
+                }
+                m.into_iter().collect()
+            },
             macros: self
                 .macro_buffer
                 .iter()
@@ -25547,6 +25684,7 @@ impl App {
         if let Some(v) = saved.clock_show_utc {
             self.clock_show_utc = v;
         }
+        self.saved_pty_session_names = saved.pty_session_names.into_iter().collect();
         // Drop indices that no longer point into the (potentially
         // shorter) preset table — older sessions could have saved an
         // out-of-range value after a code change.
