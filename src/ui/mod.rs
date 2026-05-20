@@ -69,8 +69,10 @@ pub mod statusline;
 pub mod test_executions_view;
 pub mod tests_view;
 pub mod theme;
+pub mod about_overlay;
 pub mod discovery;
 pub mod scratch_term_view;
+pub mod settings_overlay;
 pub mod toast_stack;
 pub mod tooltip;
 pub mod trace_view;
@@ -411,6 +413,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     discovery::draw(frame, app, area);
     // Welcome overlay — peer of discovery; auto-open on first launch.
     welcome_overlay::draw(frame, app, area);
+    // About overlay — `:about` / view.about.
+    about_overlay::draw(frame, app, area);
+    // Settings overlay — `:settings` / view.settings.
+    settings_overlay::draw(frame, app, area);
     // …and the flash highlight paints last so it can sit on top of even
     // the discovery panel (if the user picks a category whose rect lies
     // beneath the panel, the highlight will still flash through).

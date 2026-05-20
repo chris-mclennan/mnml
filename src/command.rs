@@ -148,6 +148,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_welcome(),
         },
         Command {
+            id: "view.about",
+            title: "About mnml (version + workspace metadata)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_about(),
+        },
+        Command {
+            id: "view.settings",
+            title: "Settings overlay (click to toggle flags)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_settings(),
+        },
+        Command {
             id: "view.focus_tree",
             title: "Focus the file tree (without toggling)",
             group: "view",

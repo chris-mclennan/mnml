@@ -267,6 +267,8 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         if app.show_welcome {
             app.dismiss_welcome();
         }
+        app.show_about = false;
+        app.show_settings = false;
     }
     // Flash intercept: when label overlay is up, Esc cancels; a printable
     // char matching a label commits the jump; an unmatched key cancels
@@ -4002,6 +4004,30 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         && matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
     {
         app.dismiss_welcome();
+        return;
+    }
+    // About overlay — any left-click dismisses (no marker; pure in-memory).
+    if app.show_about
+        && matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+    {
+        app.show_about = false;
+        return;
+    }
+    // Settings overlay — click on a row toggles the flag; click outside
+    // dismisses.
+    if app.show_settings
+        && matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+    {
+        if let Some(&(_, flag)) = app
+            .rects
+            .settings_rows
+            .iter()
+            .find(|(r, _)| contains(*r, x, y))
+        {
+            app.settings_toggle_flag(flag);
+            return;
+        }
+        app.show_settings = false;
         return;
     }
     // Discovery overlay — intercept clicks on its rows so the user can
