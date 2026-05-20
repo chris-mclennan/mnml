@@ -26708,18 +26708,20 @@ impl App {
 
     /// Phase 7: native equivalent of the launcher's "Run Tests" action.
     /// Reads `playwright.env.{BRANCH,ENVIRONMENT,LOG_LEVEL}` from a
-    /// `private.diff_executions` — compute a counts-level diff between the
-    /// two most-recent TestExecution records for the same (env, branch),
-    /// toasting which counts changed. Useful for "did my fix actually
-    /// reduce failures?" at a glance. Phase 9 of the private track; an
-    /// assertion-level diff would need richer per-record data than the
-    /// current shape carries.
+    /// `private.diff_executions` — diff the two most-recent TestExecution
+    /// records for the same (env, branch). When both runs carry per-test
+    /// data, opens a scratch buffer with the **assertion-level** diff
+    /// (which specific tests regressed / were fixed / added / removed)
+    /// plus a one-line toast summary. When the reporter only stored
+    /// counts, falls back to the counts-level toast. Phase 9 of the
+    /// private track. Useful for "did my fix actually help, and what
+    /// exactly changed?".
     #[cfg(feature = "private")]
     pub fn private_diff_executions(&mut self) {
         let mut records: Vec<&crate::private::TestExecutionRecord> =
             self.private_executions.values().collect();
         // Newest first.
-        records.sort_by(|a, b| b.started_at_ms.cmp(&a.started_at_ms));
+        records.sort_by_key(|r| std::cmp::Reverse(r.started_at_ms));
         let Some(latest) = records.first().copied() else {
             self.toast("private: no executions in cache yet (open the TestExecutions pane)");
             return;
@@ -26736,6 +26738,49 @@ impl App {
             ));
             return;
         };
+
+        // Assertion-level diff when both runs carry per-test data.
+        if !latest.tests.is_empty() && !prior.tests.is_empty() {
+            let diff = crate::private::diff_test_cases(&prior.tests, &latest.tests);
+            let env = latest.env;
+            let branch = latest.branch.clone();
+            self.toast(format!(
+                "diff {}/{}: ↓{} regressed · ↑{} fixed · ✗{} still failing · +{} new · -{} gone",
+                env.label(),
+                branch,
+                diff.regressed.len(),
+                diff.fixed.len(),
+                diff.still_failing.len(),
+                diff.added.len(),
+                diff.removed.len(),
+            ));
+            if diff.is_empty() {
+                return;
+            }
+            let mut body = format!(
+                "Test execution diff — {}/{}\n(prior run vs latest run)\n",
+                env.label(),
+                branch
+            );
+            let section = |body: &mut String, title: &str, items: &[String]| {
+                if items.is_empty() {
+                    return;
+                }
+                body.push_str(&format!("\n{} ({})\n", title, items.len()));
+                for name in items {
+                    body.push_str(&format!("  {name}\n"));
+                }
+            };
+            section(&mut body, "REGRESSED (pass → fail)", &diff.regressed);
+            section(&mut body, "FIXED (fail → pass)", &diff.fixed);
+            section(&mut body, "STILL FAILING", &diff.still_failing);
+            section(&mut body, "NEW TESTS", &diff.added);
+            section(&mut body, "REMOVED TESTS", &diff.removed);
+            self.open_scratch_with_text("[private diff]".into(), body);
+            return;
+        }
+
+        // Counts-level fallback — the reporter didn't store per-test data.
         let delta_passed = latest.passed as i64 - prior.passed as i64;
         let delta_failed = latest.failed as i64 - prior.failed as i64;
         let delta_flaky = latest.flaky as i64 - prior.flaky as i64;
