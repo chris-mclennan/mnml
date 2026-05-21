@@ -54,6 +54,7 @@ pub mod layout;
 pub mod linter;
 pub mod lsp;
 pub mod markdown_outline;
+pub mod mixr_host;
 pub mod now_playing;
 pub mod pane;
 pub mod picker;
