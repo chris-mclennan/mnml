@@ -83,6 +83,29 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Pluggable now-playing miniplayer + macOS source (2026-05-21):**
+the statusline `♪` chip's data layer went pluggable. New
+`now_playing` module: a player-agnostic `NowPlaying` (source /
+playing / track / detail) + a `Source` enum (`Mixr` / `Macos` /
+`Auto`) + per-source sub-modules — `now_playing::mixr` (reads
+`~/.mixr/quick.txt`, the former `mixr_status` logic) and
+`now_playing::macos` (queries Music / Spotify via an `osascript`
+AppleScript — browser-tab audio isn't reachable, Apple locked
+`MediaRemote` down on macOS 15.4+; the script guards each app
+with `is running` so polling never launches a player).
+`Source::Auto` (the default) shows whatever's actually playing —
+mixr first (a cheap file read), macOS only when mixr is idle. A
+background poller thread (`spawn_poller`, 3s interval) keeps the
+`osascript` shell-out off the render path; `App.now_playing` is
+the drained snapshot, `App.now_playing_rx` the channel.
+`start_now_playing_poller` runs from the real terminal loop only
+— headless / e2e skip it, so no `osascript` spawns in tests. The
+chip now reads `App.now_playing` instead of reading the file
+per-render. `mixr_status` module folded into `now_playing::mixr`.
+711 lib tests (+3) + clippy green. Adding a third source = a new
+sub-module + one `poll` arm; the `[ui]`-config source picker is
+a noted follow-up (`Auto` is wired as the default for now).
+
 **mixr now-playing chip on the statusline (2026-05-20):** a `♪`
 chip on the statusline right lane — doubling as the mixr launch
 button *and* a miniplayer. New `mixr_status` module parses the

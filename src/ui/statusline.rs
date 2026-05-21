@@ -386,21 +386,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             ));
         }
     }
-    // mixr now-playing chip — doubles as the launch button. Reads the
-    // sibling DJ app's ~/.mixr/quick.txt (a cheap 141-byte file; absent
-    // ⇒ the plain `♪ mixr` button). Click → `mixr.show`. Read in render
-    // for simplicity; throttling it into `tick` is a fine follow-up.
+    // Now-playing chip — doubles as the mixr launch button. Shows the
+    // track from whatever player the background poller found (mixr, or
+    // macOS Music / Spotify); `♪ mixr` when nothing's playing. Click →
+    // `mixr.show`. Data is `App.now_playing`, refreshed off the render
+    // path by the `now_playing` poller thread.
     let mixr_seg_idx = {
-        let (label, fg) = match crate::mixr_status::read() {
-            Some(s) if s.is_playing() => {
-                let shown: String = if s.playing.chars().count() > 24 {
-                    s.playing
+        let (label, fg) = match &app.now_playing {
+            Some(np) if np.playing => {
+                let shown: String = if np.track.chars().count() > 24 {
+                    np.track
                         .chars()
                         .take(23)
                         .chain(std::iter::once('…'))
                         .collect()
                 } else {
-                    s.playing
+                    np.track.clone()
                 };
                 (format!(" ♪ {shown} "), theme::cur().purple)
             }

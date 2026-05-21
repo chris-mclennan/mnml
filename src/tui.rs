@@ -114,6 +114,10 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
     }
 
     app.run_startup_tasks();
+    // Background now-playing poller for the statusline miniplayer —
+    // real terminal loop only (headless / e2e skip it, so no
+    // `osascript` subprocess spawns in tests).
+    app.start_now_playing_poller();
 
     loop {
         app.tick();

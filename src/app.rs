@@ -2616,6 +2616,17 @@ pub struct App {
     /// Statusline clock chip flips to UTC when true. Toggled by clicking
     /// the chip; persisted across launches via `SavedSession.clock_show_utc`.
     pub clock_show_utc: bool,
+    /// The miniplayer's latest now-playing snapshot (mixr / macOS
+    /// Music / Spotify), refreshed off the render path by the
+    /// `now_playing` poller thread. `None` until the first poll lands
+    /// or when no player is available.
+    pub now_playing: Option<crate::now_playing::NowPlaying>,
+    /// Channel from the `now_playing` background poller. `Some` once
+    /// `start_now_playing_poller` has run — from the real terminal
+    /// loop only, so no `osascript` subprocess spawns under headless /
+    /// e2e. `tick` drains it into `now_playing`.
+    pub now_playing_rx:
+        Option<std::sync::mpsc::Receiver<Option<crate::now_playing::NowPlaying>>>,
     /// Persistent quick-scratch terminal — a ~10-row bottom strip
     /// hosting a shell pty. Sibling to `Pane::Pty` (which is a full pane),
     /// designed for "I want to run one command without rearranging my
@@ -3275,6 +3286,8 @@ impl App {
             restart_requested: false,
             redraw_requested: false,
             clock_show_utc: false,
+            now_playing: None,
+            now_playing_rx: None,
             hover_chip: None,
             hover_divider_idx: None,
             show_discovery_overlay: false,
@@ -25874,8 +25887,31 @@ impl App {
     }
 
     /// Per-event-loop housekeeping (cheap).
+    /// Start the background now-playing poller — call once, from the
+    /// real terminal loop only (`tui.rs`). Headless / e2e deliberately
+    /// skip it so no `osascript` subprocess spawns in tests; the
+    /// miniplayer chip just renders its idle form there.
+    pub fn start_now_playing_poller(&mut self) {
+        if self.now_playing_rx.is_none() {
+            self.now_playing_rx = Some(crate::now_playing::spawn_poller(
+                crate::now_playing::Source::Auto,
+            ));
+        }
+    }
+
+    /// Drain the now-playing poller channel into `now_playing` — the
+    /// latest snapshot wins. No-op until the poller is started.
+    fn drain_now_playing(&mut self) {
+        if let Some(rx) = &self.now_playing_rx {
+            while let Ok(np) = rx.try_recv() {
+                self.now_playing = np;
+            }
+        }
+    }
+
     pub fn tick(&mut self) {
         self.git.tick();
+        self.drain_now_playing();
         self.drain_http_jobs();
         self.drain_ai_jobs();
         self.drain_suggestions();
