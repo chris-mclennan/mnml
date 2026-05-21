@@ -48,27 +48,25 @@ impl MixrCell {
     }
 }
 
-/// How the mixr panel is drawn — `mixr.show` steps through these in
-/// order, wrapping back to `Minimized`.
+/// How the mixr panel is shown. `mixr.show` cycles
+/// `Minimized → BottomStrip → Full → Minimized`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MixrSize {
     /// Hidden — only the `♪` statusline chip shows; mixr keeps running.
     Minimized,
-    /// Compact overlay — sized for mixr's controller alone.
-    Short,
-    /// Taller overlay — controller + one `v`-carousel section below it.
-    Medium,
-    /// Full height — mixr's `Full` layout; the editor reflows to the
-    /// left half beside it.
-    Tall,
+    /// Docked — a strip along the bottom of the body, from the
+    /// file-tree edge across (capped at `MAX_WIDTH`).
+    BottomStrip,
+    /// Maximised — as tall + wide as the body allows (width capped).
+    Full,
 }
 
-/// Overlay-box height (rows) for `MixrSize::Short` — mixr's controller
-/// on its own.
-pub const SHORT_ROWS: u16 = 18;
-/// Overlay-box height for `MixrSize::Medium` — controller + one
-/// carousel section.
-pub const MEDIUM_ROWS: u16 = 32;
+/// Height (rows) of the docked `BottomStrip` view.
+pub const STRIP_ROWS: u16 = 22;
+/// Width cap (columns) for the docked panel — past this it stops
+/// growing (a very wide screen would make mixr unusably large) and
+/// stays left-aligned at the file-tree edge.
+pub const MAX_WIDTH: u16 = 200;
 
 /// Where the floating mixr panel (`Short` / `Medium`) is anchored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -212,7 +210,7 @@ impl MixrPanel {
             rows,
             cells: vec![MixrCell::blank(); cols as usize * rows as usize],
             cursor: None,
-            size: MixrSize::Short,
+            size: MixrSize::BottomStrip,
             focused: false,
             pos: MixrPos::BottomRight,
             custom_w: None,

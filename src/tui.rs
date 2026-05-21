@@ -270,12 +270,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // Native mixr panel — when focused, route keys to mixr over the
-    // wire (Esc leaves; the `♪` chip still toggles it via the mouse).
+    // Native mixr panel — when focused, route *every* key (incl. Esc,
+    // which mixr uses for back-navigation) to mixr over the wire.
+    // `Ctrl+E` releases focus back to the editor (mixr doesn't use it).
     if let Some(p) = app.mixr_panel.as_mut()
         && p.focused
     {
-        if key.code == KeyCode::Esc {
+        if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
             p.focused = false;
             return;
         }
@@ -4117,154 +4118,45 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         }
         app.blur_scratch_term();
     }
-    // Mixr panel header — width buttons, reposition buttons, drag.
+    // Native mixr panel. A click on its title header focuses it. A
+    // click on the cell area focuses + forwards; while focused, every
+    // mouse event over the cell area goes to mixr. A click off the
+    // panel blurs it.
     {
-        let down_left = matches!(m.kind, MouseEventKind::Down(MouseButton::Left));
-        // `‹` / `›` width buttons — step the overlay narrower / wider.
-        if down_left {
-            let minus = app
-                .rects
-                .mixr_width_minus
-                .is_some_and(|r| contains(r, x, y));
-            let plus = app.rects.mixr_width_plus.is_some_and(|r| contains(r, x, y));
-            if minus || plus {
-                let body_w = app.rects.body.map(|b| b.width).unwrap_or(80);
+        let down = matches!(m.kind, MouseEventKind::Down(_));
+        let on_header = app
+            .rects
+            .mixr_panel_header
+            .is_some_and(|h| contains(h, x, y));
+        if down && on_header {
+            if let Some(p) = app.mixr_panel.as_mut() {
+                p.focused = true;
+            }
+            return;
+        }
+        if let Some(mrect) = app.rects.mixr_panel {
+            let inside = contains(mrect, x, y);
+            let focused = app.mixr_panel.as_ref().is_some_and(|p| p.focused);
+            if inside && (down || focused) {
                 if let Some(p) = app.mixr_panel.as_mut() {
-                    let cur = p.custom_w.unwrap_or(body_w / 2);
-                    let next = if plus {
-                        cur.saturating_add(8)
-                    } else {
-                        cur.saturating_sub(8)
-                    };
-                    p.custom_w = Some(next.clamp(24, body_w.max(24)));
+                    if down {
+                        p.focused = true;
+                    }
+                    p.send_input(crate::mixr_host::crossterm_mouse_to_input(
+                        &m,
+                        x - mrect.x,
+                        y - mrect.y,
+                    ));
                 }
                 return;
             }
-        }
-        // A reposition-button click snaps straight to that anchor.
-        if down_left
-            && let Some(&(_, pos)) = app
-                .rects
-                .mixr_pos_buttons
-                .iter()
-                .find(|(r, _)| contains(*r, x, y))
-        {
-            if let Some(p) = app.mixr_panel.as_mut() {
-                p.pos = pos;
-            }
-            app.mixr_drag = None;
-            return;
-        }
-        // Mouse-down on the header (not a button) starts a drag.
-        if down_left
-            && let Some(hrect) = app.rects.mixr_panel_header
-            && contains(hrect, x, y)
-        {
-            app.mixr_drag = Some(crate::mixr_host::MixrPanelDrag {
-                grab_dx: x.saturating_sub(hrect.x),
-                grab_dy: y.saturating_sub(hrect.y),
-                x: hrect.x,
-                y: hrect.y,
-            });
-            return;
-        }
-        // Drag in progress — the panel follows the cursor.
-        if app.mixr_drag.is_some() && matches!(m.kind, MouseEventKind::Drag(MouseButton::Left)) {
-            if let Some(d) = app.mixr_drag.as_mut() {
-                d.x = x.saturating_sub(d.grab_dx);
-                d.y = y.saturating_sub(d.grab_dy);
-            }
-            return;
-        }
-        // Release — snap to the nearest anchor.
-        if app.mixr_drag.is_some() && matches!(m.kind, MouseEventKind::Up(MouseButton::Left)) {
-            if let (Some(d), Some(body), Some(cells)) =
-                (app.mixr_drag, app.rects.body, app.rects.mixr_panel)
+            if down
+                && !inside
+                && !on_header
+                && let Some(p) = app.mixr_panel.as_mut()
             {
-                let panel = ratatui::layout::Rect {
-                    x: d.x,
-                    y: d.y,
-                    width: cells.width,
-                    height: cells.height + 1,
-                };
-                if let Some(p) = app.mixr_panel.as_mut() {
-                    p.pos = crate::mixr_host::nearest_pos(body, panel);
-                }
+                p.focused = false;
             }
-            app.mixr_drag = None;
-            return;
-        }
-    }
-    // Mixr panel — drag the free edge (away from the anchor) to
-    // resize the width.
-    {
-        if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
-            && app
-                .rects
-                .mixr_resize_edge
-                .is_some_and(|r| contains(r, x, y))
-        {
-            app.mixr_resizing = true;
-            return;
-        }
-        if app.mixr_resizing {
-            match m.kind {
-                MouseEventKind::Drag(MouseButton::Left) => {
-                    if let (Some(body), Some(pos)) =
-                        (app.rects.body, app.mixr_panel.as_ref().map(|p| p.pos))
-                    {
-                        use crate::mixr_host::MixrPos;
-                        // The anchored edge stays put; the dragged edge
-                        // follows the cursor → that span is the width.
-                        let w = match pos {
-                            MixrPos::TopRight | MixrPos::BottomRight => {
-                                (body.x + body.width).saturating_sub(x)
-                            }
-                            MixrPos::TopLeft | MixrPos::BottomLeft => x.saturating_sub(body.x),
-                            MixrPos::Center => {
-                                let cx = body.x + body.width / 2;
-                                x.saturating_sub(cx).saturating_mul(2)
-                            }
-                        };
-                        if let Some(p) = app.mixr_panel.as_mut() {
-                            p.custom_w = Some(w.clamp(24, body.width.max(24)));
-                        }
-                    }
-                    return;
-                }
-                MouseEventKind::Up(MouseButton::Left) => {
-                    app.mixr_resizing = false;
-                    return;
-                }
-                _ => {}
-            }
-        }
-    }
-    // Native mixr panel — a click on it focuses + forwards; while
-    // focused, every mouse event over its rect goes to mixr. A click
-    // off the panel blurs it.
-    if let Some(mrect) = app.rects.mixr_panel {
-        let inside = contains(mrect, x, y);
-        let down = matches!(m.kind, MouseEventKind::Down(_));
-        let focused = app.mixr_panel.as_ref().is_some_and(|p| p.focused);
-        if inside && (down || focused) {
-            if let Some(p) = app.mixr_panel.as_mut() {
-                if down {
-                    p.focused = true;
-                }
-                p.send_input(crate::mixr_host::crossterm_mouse_to_input(
-                    &m,
-                    x - mrect.x,
-                    y - mrect.y,
-                ));
-            }
-            return;
-        }
-        if down
-            && !inside
-            && let Some(p) = app.mixr_panel.as_mut()
-        {
-            p.focused = false;
         }
     }
     // A click anywhere dismisses the hover / signature popups (the click

@@ -304,101 +304,50 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
     app.rects.scratch_term_strip = scratch_strip;
-    // The native mixr panel. `Tall` docks the right half of the body —
-    // the editor reflows into the left half. `Short`/`Medium` are
-    // floating overlay boxes (different heights) anchored at `pos` (or
-    // wherever a header drag put them) — the editor keeps its full
-    // layout underneath. `Minimized` = hidden (just the ♪ chip).
+    // The native mixr panel — an overlay docked at the bottom-left of
+    // the body (from the file-tree edge across). `BottomStrip` is a
+    // short strip; `Full` is full body height. Width is capped at
+    // `MAX_WIDTH` so a very wide screen doesn't blow it out.
+    // `Minimized` = hidden (just the ♪ chip).
     let mut mixr_area: Option<Rect> = None;
     let mut mixr_header: Option<Rect> = None;
-    let mut mixr_resize_edge: Option<Rect> = None;
-    app.rects.mixr_pos_buttons.clear();
     if let Some(size) = app.mixr_panel.as_ref().map(|p| p.size) {
         use crate::mixr_host::MixrSize;
-        match size {
-            MixrSize::Tall => {
-                let half = body_area.width / 2;
-                if half >= 12 {
-                    mixr_area = Some(Rect {
-                        x: body_area.x + body_area.width - half,
-                        y: body_area.y,
-                        width: half,
-                        height: body_area.height,
-                    });
-                    body_area.width -= half;
-                }
+        let panel: Option<Rect> = match size {
+            MixrSize::Minimized => None,
+            MixrSize::BottomStrip => {
+                let h = crate::mixr_host::STRIP_ROWS.min(body_area.height);
+                let w = body_area.width.min(crate::mixr_host::MAX_WIDTH);
+                (w >= 20 && h >= 6).then_some(Rect {
+                    x: body_area.x,
+                    y: body_area.y + body_area.height - h,
+                    width: w,
+                    height: h,
+                })
             }
-            MixrSize::Short | MixrSize::Medium => {
-                let rows = if size == MixrSize::Medium {
-                    crate::mixr_host::MEDIUM_ROWS
-                } else {
-                    crate::mixr_host::SHORT_ROWS
-                };
-                let w = app
-                    .mixr_panel
-                    .as_ref()
-                    .and_then(|p| p.custom_w)
-                    .map(|cw| cw.clamp(24, body_area.width.max(24)))
-                    .unwrap_or(body_area.width / 2);
-                let h = rows.min(body_area.height);
-                if w >= 12 && h >= 4 {
-                    // The drag's free spot if dragging, else the anchor.
-                    let panel = if let Some(d) = app.mixr_drag {
-                        let max_x = body_area.x + body_area.width.saturating_sub(w);
-                        let max_y = body_area.y + body_area.height.saturating_sub(h);
-                        Rect {
-                            x: d.x.clamp(body_area.x, max_x),
-                            y: d.y.clamp(body_area.y, max_y),
-                            width: w,
-                            height: h,
-                        }
-                    } else {
-                        let pos = app
-                            .mixr_panel
-                            .as_ref()
-                            .map(|p| p.pos)
-                            .unwrap_or(crate::mixr_host::MixrPos::BottomRight);
-                        crate::mixr_host::overlay_rect(body_area, w, h, pos)
-                    };
-                    // Split: 1-row header (drag handle) + mixr cells.
-                    mixr_header = Some(Rect { height: 1, ..panel });
-                    mixr_area = Some(Rect {
-                        x: panel.x,
-                        y: panel.y + 1,
-                        width: panel.width,
-                        height: panel.height - 1,
-                    });
-                    // Resize strip — the free edge (away from the
-                    // anchor), over the cell-area rows only so it
-                    // doesn't shadow the header buttons.
-                    let pos = app
-                        .mixr_panel
-                        .as_ref()
-                        .map(|p| p.pos)
-                        .unwrap_or(crate::mixr_host::MixrPos::BottomRight);
-                    let edge_x = if matches!(
-                        pos,
-                        crate::mixr_host::MixrPos::TopRight
-                            | crate::mixr_host::MixrPos::BottomRight
-                    ) {
-                        panel.x
-                    } else {
-                        panel.x + panel.width - 1
-                    };
-                    mixr_resize_edge = Some(Rect {
-                        x: edge_x,
-                        y: panel.y + 1,
-                        width: 1,
-                        height: panel.height - 1,
-                    });
-                }
+            MixrSize::Full => {
+                let w = body_area.width.min(crate::mixr_host::MAX_WIDTH);
+                (w >= 20 && body_area.height >= 6).then_some(Rect {
+                    x: body_area.x,
+                    y: body_area.y,
+                    width: w,
+                    height: body_area.height,
+                })
             }
-            MixrSize::Minimized => {}
+        };
+        if let Some(panel) = panel {
+            // Split: 1-row title header + mixr cells below.
+            mixr_header = Some(Rect { height: 1, ..panel });
+            mixr_area = Some(Rect {
+                x: panel.x,
+                y: panel.y + 1,
+                width: panel.width,
+                height: panel.height.saturating_sub(1),
+            });
         }
     }
     app.rects.mixr_panel = mixr_area;
     app.rects.mixr_panel_header = mixr_header;
-    app.rects.mixr_resize_edge = mixr_resize_edge;
     app.rects.body = Some(body_area);
     app.rects.editor_panes.clear();
     app.rects.editor_gutters.clear();
@@ -437,22 +386,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         scratch_term_view::draw(frame, app, strip);
     }
 
-    // Native mixr panel — the floating header (drag handle +
-    // reposition buttons), then mixr's streamed cells.
+    // Native mixr panel — the 1-row title header, then mixr's cells.
     if let Some(harea) = mixr_header {
-        let active = app
-            .mixr_panel
-            .as_ref()
-            .map(|p| p.pos)
-            .unwrap_or(crate::mixr_host::MixrPos::BottomRight);
-        mixr_view::draw_header(
-            frame,
-            harea,
-            active,
-            &mut app.rects.mixr_pos_buttons,
-            &mut app.rects.mixr_width_minus,
-            &mut app.rects.mixr_width_plus,
-        );
+        mixr_view::draw_header(frame, harea);
     }
     if let Some(marea) = mixr_area
         && let Some(panel) = app.mixr_panel.as_ref()

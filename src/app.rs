@@ -11689,34 +11689,38 @@ impl App {
         })
     }
     /// Open / toggle the native mixr panel — mnml hosts `mixr --blit`
-    /// itself (`mixr_host::MixrPanel`) and renders it in a right-docked
-    /// panel. First call launches it; later calls cycle its size:
-    /// minimized → short → medium → full → minimized (the `♪`
-    /// statusline chip is the minimized state). Refuses cleanly when
-    /// `mixr` isn't on PATH.
+    /// itself (`mixr_host::MixrPanel`). First call launches it as a
+    /// bottom strip; later calls cycle: bottom strip → full →
+    /// minimized → bottom strip (the `♪` statusline chip is the
+    /// minimized state). Refuses cleanly when `mixr` isn't on PATH.
     pub fn open_mixr_pane(&mut self) {
         if !mixr_on_path() {
             self.toast("mixr not found on PATH — install mixr-rs first");
             return;
         }
         if let Some(p) = self.mixr_panel.as_mut() {
-            // Cycle: minimized → short → medium → full → minimized.
+            use crate::mixr_host::MixrSize;
+            // Cycle: minimized → bottom strip → full → minimized.
             p.size = match p.size {
-                crate::mixr_host::MixrSize::Minimized => crate::mixr_host::MixrSize::Short,
-                crate::mixr_host::MixrSize::Short => crate::mixr_host::MixrSize::Medium,
-                crate::mixr_host::MixrSize::Medium => crate::mixr_host::MixrSize::Tall,
-                crate::mixr_host::MixrSize::Tall => crate::mixr_host::MixrSize::Minimized,
+                MixrSize::Minimized => MixrSize::BottomStrip,
+                MixrSize::BottomStrip => MixrSize::Full,
+                MixrSize::Full => MixrSize::Minimized,
             };
-            p.focused = p.size != crate::mixr_host::MixrSize::Minimized;
+            p.focused = p.size != MixrSize::Minimized;
             return;
         }
-        // First open — launch `mixr --blit` sized to the right half of
-        // the body (best-effort; `tick` keeps it sized to its rect).
+        // First open — launch `mixr --blit` sized to the bottom strip
+        // (best-effort; `tick` keeps it sized to its rect).
         let (cols, rows) = self
             .rects
             .body
-            .map(|b| (b.width / 2, b.height))
-            .unwrap_or((48, 24));
+            .map(|b| {
+                (
+                    b.width.min(crate::mixr_host::MAX_WIDTH),
+                    crate::mixr_host::STRIP_ROWS.min(b.height),
+                )
+            })
+            .unwrap_or((80, 22));
         match crate::mixr_host::MixrPanel::launch(cols, rows) {
             Ok(mut p) => {
                 p.focused = true;

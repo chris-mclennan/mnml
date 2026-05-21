@@ -62,31 +62,21 @@ pub fn draw(frame: &mut Frame, panel: &MixrPanel, area: Rect) {
 /// Draw the floating panel's 1-row header — a drag handle carrying the
 /// `‹` `›` width controls and the five reposition buttons. Registers
 /// each button's rect.
-pub fn draw_header(
-    frame: &mut Frame,
-    header: Rect,
-    active: crate::mixr_host::MixrPos,
-    pos_buttons: &mut Vec<(Rect, crate::mixr_host::MixrPos)>,
-    width_minus: &mut Option<Rect>,
-    width_plus: &mut Option<Rect>,
-) {
-    use crate::mixr_host::MixrPos;
-    *width_minus = None;
-    *width_plus = None;
+/// Draw the panel's 1-row title bar — a quiet `♪ mixr` label on the
+/// panel background.
+pub fn draw_header(frame: &mut Frame, header: Rect) {
     if header.height == 0 || header.width == 0 {
         return;
     }
     let t = crate::ui::theme::cur();
     let y = header.y;
     let buf = frame.buffer_mut();
-    // Background fill.
     for x in header.x..header.x + header.width {
         let c = &mut buf[(x, y)];
         c.set_char(' ');
         c.set_style(Style::default().bg(t.bg2));
     }
-    // Label / drag hint.
-    for (i, ch) in " ♪ mixr — drag".chars().enumerate() {
+    for (i, ch) in " ♪ mixr".chars().enumerate() {
         let x = header.x + i as u16;
         if x >= header.x + header.width {
             break;
@@ -94,55 +84,5 @@ pub fn draw_header(
         let c = &mut buf[(x, y)];
         c.set_char(ch);
         c.set_style(Style::default().fg(t.comment).bg(t.bg2));
-    }
-    let btn_w: u16 = 2;
-    let pos_total = MixrPos::ALL.len() as u16 * btn_w;
-    let width_total = 2 * btn_w;
-    if header.width < pos_total + width_total + 12 {
-        return;
-    }
-    let mut paint = |bx: u16, glyph: char, fg: Color, bg: Color| {
-        for dx in 0..btn_w {
-            let c = &mut buf[(bx + dx, y)];
-            c.set_char(if dx == 0 { glyph } else { ' ' });
-            c.set_style(Style::default().fg(fg).bg(bg));
-        }
-    };
-    // Width controls `- +` — non-directional, so they read the same
-    // whichever corner the panel is anchored to (`‹ ›` arrows fought
-    // the anchor: a right-pinned panel grows leftward). Then a 1-col
-    // gap, then the anchor buttons.
-    let w_start = header.x + header.width - pos_total - 1 - width_total;
-    paint(w_start, '-', t.fg, t.bg2);
-    paint(w_start + btn_w, '+', t.fg, t.bg2);
-    *width_minus = Some(Rect {
-        x: w_start,
-        y,
-        width: btn_w,
-        height: 1,
-    });
-    *width_plus = Some(Rect {
-        x: w_start + btn_w,
-        y,
-        width: btn_w,
-        height: 1,
-    });
-    // Anchor buttons, far right: ▘ ▝ ▖ ▗ ◆
-    let p_start = header.x + header.width - pos_total;
-    for (i, pos) in MixrPos::ALL.iter().enumerate() {
-        let bx = p_start + i as u16 * btn_w;
-        // Active anchor = a yellow glyph (not a loud full-yellow
-        // cell); the others a dim glyph. Header bg stays uniform.
-        let fg = if *pos == active { t.yellow } else { t.comment };
-        paint(bx, pos.glyph(), fg, t.bg2);
-        pos_buttons.push((
-            Rect {
-                x: bx,
-                y,
-                width: btn_w,
-                height: 1,
-            },
-            *pos,
-        ));
     }
 }
