@@ -83,6 +83,25 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**mixr panel redesigned — docked bottom-strip/full cycle (2026-05-21):**
+the in-mnml mixr panel's state model was reworked. `mixr.show` / the
+`♪` chip now cycle a docked 3-state model — **minimized →
+bottom-strip → full → minimized** — replacing the earlier 4-state
+floating model (short/medium/tall/anchored overlays). Bottom-strip
+is a strip docked at the bottom of the body from the file-tree edge
+across (`STRIP_ROWS=22`); full is full body height. Both **cap their
+width at `MAX_WIDTH=200`** so a very wide screen doesn't blow mixr
+out — past the cap they left-align at the tree edge (narrow breaks
+mixr's crossfader/transport, so wide-but-capped is the sweet spot).
+`Esc` now forwards to mixr (it uses Esc for back-navigation);
+`Ctrl+E` releases focus to the editor. The header is a plain
+`♪ mixr` title bar. The old floating drag / edge-resize /
+anchor-button machinery (`MixrPos`, `overlay_rect`, `MixrPanelDrag`,
+`custom_w`, …) is left in `mixr_host.rs` unused — a dead-code tidy +
+the planned mnml→mixr palette hand-off (so mixr's theme matches
+mnml's) are follow-ups. The `♪` statusline chip also got track-name
+sanitising + an 18-char truncation. 715 lib tests + clippy green.
+
 **mixr.show opens a native mixr panel inside mnml (2026-05-21):**
 supersedes the day's earlier sibling-tmnl-pane approach — mnml now
 *hosts* mixr itself, playing the tmnl-protocol *server* role (the
