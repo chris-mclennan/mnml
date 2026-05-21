@@ -3575,6 +3575,26 @@ impl App {
                 MenuAction::CopyPath(rel_path(&self.workspace, p)),
             ));
         }
+        // Claude / Codex / shell tabs can be renamed from here too.
+        if matches!(self.panes.get(id), Some(Pane::Pty(_))) {
+            items.push(MenuItem::new("Rename…", MenuAction::RenameSession(id)));
+        }
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
+    /// Right-click menu for a tab in a pty pane's own tab strip
+    /// (Claude / Codex / shell session): Rename → the session-name
+    /// prompt; Close → close that session.
+    pub fn open_pty_tab_context_menu(&mut self, id: PaneId, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        if !matches!(self.panes.get(id), Some(Pane::Pty(_))) {
+            return;
+        }
+        let title = self.panes.get(id).map(Pane::title).unwrap_or_default();
+        let items = vec![
+            MenuItem::new("Rename…", MenuAction::RenameSession(id)),
+            MenuItem::new("Close", MenuAction::CloseTab(id)),
+        ];
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
@@ -4392,6 +4412,12 @@ impl App {
             CloseTab(id) => self.close_pane(id),
             CloseOtherTabs(id) => self.close_panes_except(Some(id)),
             CloseAllTabs => self.close_panes_except(None),
+            RenameSession(id) => {
+                // Reveal the session so it's the active pane, then
+                // reuse the `:rename` prompt (which targets `active`).
+                self.reveal_pane(id);
+                self.open_rename_session_prompt();
+            }
             NewFile(parent) => self.open_new_file_prompt(parent),
             NewFolder(parent) => self.open_new_folder_prompt(parent),
             Rename(path) => self.open_fs_rename_prompt(path),

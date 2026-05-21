@@ -25,6 +25,9 @@ pub enum MenuAction {
     CloseTab(PaneId),
     CloseOtherTabs(PaneId),
     CloseAllTabs,
+    /// Rename a pty session (Claude / Codex / shell) — reveals the
+    /// pane, then opens the session-name prompt.
+    RenameSession(PaneId),
     /// Prompt for a name and create an empty file in `parent_dir`.
     NewFile(PathBuf),
     /// Prompt for a name and create an empty directory in `parent_dir`.

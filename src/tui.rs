@@ -4480,6 +4480,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.open_editor_gutter_context_menu(pid, line as u32, (x, y));
                 return;
             }
+            // Right-click a pty pane's tab strip (Claude / Codex / shell) →
+            // rename / close that session.
+            if let Some(&(_, pid)) = app.rects.pty_tabs.iter().find(|(r, _)| contains(*r, x, y)) {
+                app.open_pty_tab_context_menu(pid, (x, y));
+                return;
+            }
             // Right-click → a context menu on the bufferline tab / tree row under it.
             if let Some(&(_, id)) = app
                 .rects
