@@ -22,12 +22,30 @@ printf '[package]\nname = "demo"\n' > "$WS/Cargo.toml"
 echo "== launching headless on $WS =="
 MNML_COLS="${MNML_COLS:-100}" MNML_ROWS="${MNML_ROWS:-22}" ./target/debug/mnml --headless "$WS" "$@" &
 PID=$!
-sleep 0.5
 CMD="$WS/.mnml/ipc/command"
-[ -p "$CMD" ] || [ -f "$CMD" ] || { echo "IPC channel never appeared"; kill "$PID" 2>/dev/null; exit 1; }
+
+# Wait for the IPC channel to appear. mnml normally creates it in well
+# under 0.1s, but the FIRST exec of a freshly-built binary can stall a
+# second or more on the macOS Gatekeeper / quarantine scan — so a fixed
+# `sleep` is racy (it intermittently failed at 0.5s). Poll up to ~8s,
+# bailing early if the process dies.
+channel_up() { [ -p "$CMD" ] || [ -f "$CMD" ]; }
+for _ in $(seq 1 160); do
+  channel_up && break
+  kill -0 "$PID" 2>/dev/null || break
+  sleep 0.05
+done
+if ! channel_up; then
+  echo "IPC channel never appeared"
+  kill "$PID" 2>/dev/null
+  exit 1
+fi
 
 drive() { printf '%s\n' "$1" >> "$CMD"; sleep 0.25; }
 
+# A fresh workspace always hits the first-launch welcome overlay; Esc
+# dismisses it so the screen dump shows the actual editor, not chrome.
+drive '{"cmd":"key","key":"esc"}'
 drive '{"cmd":"open","path":"src/main.rs"}'
 drive '{"cmd":"key","key":"down"}'
 drive '{"cmd":"key","key":"down"}'
@@ -43,7 +61,11 @@ echo "== events.jsonl =="
 cat "$WS/.mnml/ipc/events.jsonl"
 
 drive '{"cmd":"quit"}'
-sleep 0.3
+# Poll for a clean exit — likewise don't trust a fixed sleep.
+for _ in $(seq 1 60); do
+  kill -0 "$PID" 2>/dev/null || break
+  sleep 0.05
+done
 if kill -0 "$PID" 2>/dev/null; then
   echo "did not quit on {\"cmd\":\"quit\"} — killing"
   kill "$PID" 2>/dev/null
