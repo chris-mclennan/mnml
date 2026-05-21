@@ -64,7 +64,7 @@ pub enum MixrSize {
 /// Height (rows) of the docked `BottomStrip` view — tall enough that
 /// mixr's controller section fits with its lower border showing (the
 /// header eats one row off the top).
-pub const STRIP_ROWS: u16 = 28;
+pub const STRIP_ROWS: u16 = 30;
 /// Width cap (columns) for the docked panel — past this it stops
 /// growing (a very wide screen would make mixr unusably large) and
 /// stays left-aligned at the file-tree edge.
