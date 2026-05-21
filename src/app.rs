@@ -1941,6 +1941,9 @@ pub struct PaneRects {
     /// `♪` mixr chip — the now-playing miniplayer + launch button;
     /// click opens `mixr.show`.
     pub statusline_mixr_chip: Option<Rect>,
+    /// The native mixr panel's docked rect (set by `ui::draw` when the
+    /// panel is shown) — `tick` reads it to keep mixr sized to it.
+    pub mixr_panel: Option<Rect>,
     /// `LSP {N}` chip — click opens `:LspStatus`.
     pub statusline_lsp_chip: Option<Rect>,
     /// `WRAP` chip — click toggles `[ui] wrap`.
@@ -2627,6 +2630,11 @@ pub struct App {
     /// e2e. `tick` drains it into `now_playing`.
     pub now_playing_rx:
         Option<std::sync::mpsc::Receiver<Option<crate::now_playing::NowPlaying>>>,
+    /// The native mixr panel — mnml hosts `mixr --blit` and renders it
+    /// as a right-docked half-width panel. `None` until `mixr.show`
+    /// first launches it; then it persists (minimize hides it, it
+    /// doesn't drop). See `crate::mixr_host`.
+    pub mixr_panel: Option<crate::mixr_host::MixrPanel>,
     /// True when mnml is running as a tmnl native client (`--blit`).
     /// `mixr.show` reads it to route mixr to a sibling tmnl pane (via
     /// `OpenPane`) rather than nesting it as a pty pane.
@@ -3296,6 +3304,7 @@ impl App {
             clock_show_utc: false,
             now_playing: None,
             now_playing_rx: None,
+            mixr_panel: None,
             under_tmnl: false,
             pending_open_panes: Vec::new(),
             hover_chip: None,
@@ -11663,24 +11672,35 @@ impl App {
             _ => false,
         })
     }
-    /// Open the sibling `mixr-rs` TUI DJ as a pty pane below the focused leaf.
-    /// Refuses cleanly when `mixr` isn't on PATH (toast + no pane). Mixr's
-    /// own `v` key cycles its Panel layouts to fit the available height.
+    /// Open / toggle the native mixr panel — mnml hosts `mixr --blit`
+    /// itself (`mixr_host::MixrPanel`) and renders it in a right-docked
+    /// half-width panel. First call launches it; later calls toggle
+    /// between shown and minimized (the `♪` statusline chip is the
+    /// minimized state). Refuses cleanly when `mixr` isn't on PATH.
     pub fn open_mixr_pane(&mut self) {
         if !mixr_on_path() {
             self.toast("mixr not found on PATH — install mixr-rs first");
             return;
         }
-        // Under tmnl, ask the host to open mixr as a sibling native
-        // pane (the blit loop forwards this as `Message::OpenPane`).
-        // Standalone, fall back to nesting it as an mnml pty pane.
-        if self.under_tmnl {
-            self.pending_open_panes
-                .push(("mixr".to_string(), Vec::new()));
-            self.toast("opening mixr in tmnl…");
+        if let Some(p) = self.mixr_panel.as_mut() {
+            p.size = if p.size == crate::mixr_host::MixrSize::Minimized {
+                crate::mixr_host::MixrSize::Short
+            } else {
+                crate::mixr_host::MixrSize::Minimized
+            };
             return;
         }
-        self.open_pty(crate::pty_pane::BinaryProfile::mixr(self.workspace.clone()));
+        // First open — launch `mixr --blit` sized to the right half of
+        // the body (best-effort; `tick` keeps it sized to its rect).
+        let (cols, rows) = self
+            .rects
+            .body
+            .map(|b| (b.width / 2, b.height))
+            .unwrap_or((48, 24));
+        match crate::mixr_host::MixrPanel::launch(cols, rows) {
+            Ok(p) => self.mixr_panel = Some(p),
+            Err(e) => self.toast(format!("mixr: {e}")),
+        }
     }
 
     /// True if any pane is a pty (the event loop polls faster while one's open so
@@ -25928,9 +25948,24 @@ impl App {
         }
     }
 
+    /// Drain frames from the hosted mixr panel + keep it sized to its
+    /// docked rect. No-op until `mixr.show` launches the panel.
+    fn drain_mixr_panel(&mut self) {
+        let rect = self.rects.mixr_panel;
+        if let Some(p) = self.mixr_panel.as_mut() {
+            if p.drain_frames() {
+                self.redraw_requested = true;
+            }
+            if let Some(r) = rect {
+                p.resize(r.width, r.height);
+            }
+        }
+    }
+
     pub fn tick(&mut self) {
         self.git.tick();
         self.drain_now_playing();
+        self.drain_mixr_panel();
         self.drain_http_jobs();
         self.drain_ai_jobs();
         self.drain_suggestions();

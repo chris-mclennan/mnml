@@ -65,6 +65,7 @@ pub mod pipeline_log_view;
 pub mod prompt;
 pub mod pty_view;
 pub mod rename_preview_overlay;
+pub mod mixr_view;
 pub mod request_view;
 pub mod scratch_term_view;
 pub mod scrollbar;
@@ -303,6 +304,27 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
     app.rects.scratch_term_strip = scratch_strip;
+    // The native mixr panel docks the right half of the body when
+    // shown (minimized = hidden, just the ♪ chip); the editor layout
+    // reflows into the left half.
+    let mut mixr_area: Option<Rect> = None;
+    if app
+        .mixr_panel
+        .as_ref()
+        .is_some_and(|p| p.size != crate::mixr_host::MixrSize::Minimized)
+    {
+        let half = body_area.width / 2;
+        if half >= 12 {
+            mixr_area = Some(Rect {
+                x: body_area.x + body_area.width - half,
+                y: body_area.y,
+                width: half,
+                height: body_area.height,
+            });
+            body_area.width -= half;
+        }
+    }
+    app.rects.mixr_panel = mixr_area;
     app.rects.body = Some(body_area);
     app.rects.editor_panes.clear();
     app.rects.editor_gutters.clear();
@@ -339,6 +361,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         && app.scratch_term.is_some()
     {
         scratch_term_view::draw(frame, app, strip);
+    }
+
+    // Native mixr panel — paint mixr's streamed cells into its rect.
+    if let Some(marea) = mixr_area
+        && let Some(panel) = app.mixr_panel.as_ref()
+    {
+        mixr_view::draw(frame, panel, marea);
     }
 
     // Inline-rendered markdown overlay: paints heading-line bold + colored,
