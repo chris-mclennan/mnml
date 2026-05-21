@@ -30,8 +30,14 @@ pub fn poll() -> Option<NowPlaying> {
 /// normalized to empty, never panics on a half-written file.
 /// Separated from [`poll`] so it's unit-testable without the
 /// filesystem.
+///
+/// `playing` keys off mixr's explicit `playing_active` flag (true only
+/// when the deck is actually producing audio, not merely cued). An
+/// older mixr that predates the flag has no `playing_active` line — we
+/// then fall back to "a track is loaded".
 pub fn project(text: &str) -> NowPlaying {
     let (mut track, mut bpm) = (String::new(), String::new());
+    let mut active: Option<bool> = None;
     for line in text.lines() {
         let Some((key, val)) = line.split_once('=') else {
             continue;
@@ -41,12 +47,13 @@ pub fn project(text: &str) -> NowPlaying {
         match key.trim() {
             "playing" => track = val.to_string(),
             "playing_bpm" => bpm = val.to_string(),
+            "playing_active" => active = Some(val.eq_ignore_ascii_case("true")),
             _ => {}
         }
     }
     NowPlaying {
         source: "mixr".to_string(),
-        playing: !track.is_empty(),
+        playing: active.unwrap_or(!track.is_empty()),
         track,
         detail: bpm,
     }
@@ -69,12 +76,35 @@ mod tests {
 
     #[test]
     fn a_playing_track_projects() {
+        // Legacy mixr (no `playing_active` line) — falls back to
+        // "a track is loaded" ⇒ playing.
         let txt = "state=Playing\nplaying=Daft Punk - Aerodynamic\n\
                    playing_bpm=123\nplaying_time=1:04/3:38\n";
         let n = project(txt);
         assert!(n.playing);
         assert_eq!(n.track, "Daft Punk - Aerodynamic");
         assert_eq!(n.detail, "123"); // bpm rides in `detail`
+    }
+
+    #[test]
+    fn playing_active_false_means_not_playing() {
+        // A track cued on the deck but not actually producing audio —
+        // what mixr writes when a deck is loaded but stopped/paused.
+        // Must report not-playing so `Source::Auto` falls through to
+        // another player (e.g. macOS Music).
+        let txt = "state=Playing\nplaying=Prospa - Baby\nplaying_active=false\n\
+                   playing_bpm=130\n";
+        let n = project(txt);
+        assert!(!n.playing);
+        assert_eq!(n.track, "Prospa - Baby"); // name still captured
+    }
+
+    #[test]
+    fn playing_active_true_means_playing() {
+        let txt = "state=Playing\nplaying=Prospa - Baby\nplaying_active=true\n";
+        let n = project(txt);
+        assert!(n.playing);
+        assert_eq!(n.track, "Prospa - Baby");
     }
 
     #[test]
