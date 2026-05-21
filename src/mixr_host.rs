@@ -59,6 +59,23 @@ pub enum MixrSize {
     BottomStrip,
     /// Maximised — as tall + wide as the body allows (width capped).
     Full,
+    /// A free-floating window — entered by dragging the panel's header
+    /// (move) or an edge (resize). `MixrPanel.float` holds its rect.
+    Floating,
+}
+
+/// An in-progress drag of the floating mixr panel.
+#[derive(Clone, Copy, Debug)]
+pub enum MixrDrag {
+    /// Moving the whole window — the cursor's offset within it.
+    Move {
+        grab_dx: u16,
+        grab_dy: u16,
+    },
+    /// Resizing — the named edge follows the cursor.
+    ResizeLeft,
+    ResizeRight,
+    ResizeBottom,
 }
 
 /// Height (rows) of the docked `BottomStrip` view — tall enough that
@@ -176,6 +193,9 @@ pub struct MixrPanel {
     /// User-set overlay width (columns) from the header `‹ ›` buttons;
     /// `None` ⇒ the default half-body width.
     pub custom_w: Option<u16>,
+    /// The window rect used when `size == Floating` — set when a drag
+    /// first tears the panel off, then moved / resized by the drag.
+    pub float: Rect,
 }
 
 impl MixrPanel {
@@ -216,6 +236,12 @@ impl MixrPanel {
             focused: false,
             pos: MixrPos::BottomRight,
             custom_w: None,
+            float: Rect {
+                x: 0,
+                y: 0,
+                width: cols,
+                height: rows,
+            },
         })
     }
 

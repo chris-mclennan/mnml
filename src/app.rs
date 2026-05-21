@@ -2644,11 +2644,9 @@ pub struct App {
     /// first launches it; then it persists (minimize hides it, it
     /// doesn't drop). See `crate::mixr_host`.
     pub mixr_panel: Option<crate::mixr_host::MixrPanel>,
-    /// In-progress drag of the floating mixr panel by its header —
-    /// `Some` between mouse-down on the header and release.
-    pub mixr_drag: Option<crate::mixr_host::MixrPanelDrag>,
-    /// True while dragging the floating panel's free edge to resize.
-    pub mixr_resizing: bool,
+    /// In-progress move / resize drag of the floating mixr panel —
+    /// `Some` between mouse-down on its header / edge and release.
+    pub mixr_drag: Option<crate::mixr_host::MixrDrag>,
     /// True when mnml is running as a tmnl native client (`--blit`).
     /// `mixr.show` reads it to route mixr to a sibling tmnl pane (via
     /// `OpenPane`) rather than nesting it as a pty pane.
@@ -3320,7 +3318,6 @@ impl App {
             now_playing_rx: None,
             mixr_panel: None,
             mixr_drag: None,
-            mixr_resizing: false,
             under_tmnl: false,
             pending_open_panes: Vec::new(),
             hover_chip: None,
@@ -11704,7 +11701,8 @@ impl App {
             p.size = match p.size {
                 MixrSize::Minimized => MixrSize::BottomStrip,
                 MixrSize::BottomStrip => MixrSize::Full,
-                MixrSize::Full => MixrSize::Minimized,
+                // Floating (drag-entered) also cycles back to hidden.
+                MixrSize::Full | MixrSize::Floating => MixrSize::Minimized,
             };
             p.focused = p.size != MixrSize::Minimized;
             return;

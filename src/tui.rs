@@ -4118,24 +4118,82 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         }
         app.blur_scratch_term();
     }
-    // Native mixr panel. A click on its title header focuses it. A
-    // click on the cell area focuses + forwards; while focused, every
-    // mouse event over the cell area goes to mixr. A click off the
-    // panel blurs it.
+    // Native mixr panel — drag the header to move it, drag the left /
+    // right / bottom edge to resize (it tears off into a free-floating
+    // window); the cell area focuses + forwards to mixr.
     {
-        let down = matches!(m.kind, MouseEventKind::Down(_));
-        let on_header = app
-            .rects
-            .mixr_panel_header
-            .is_some_and(|h| contains(h, x, y));
-        if down && on_header {
-            if let Some(p) = app.mixr_panel.as_mut() {
-                p.focused = true;
+        use crate::mixr_host::{MixrDrag, MixrSize};
+        let down = matches!(m.kind, MouseEventKind::Down(MouseButton::Left));
+        let drag = matches!(m.kind, MouseEventKind::Drag(MouseButton::Left));
+        let up = matches!(m.kind, MouseEventKind::Up(MouseButton::Left));
+        let any_down = matches!(m.kind, MouseEventKind::Down(_));
+
+        // An in-progress move / resize drag.
+        if let Some(kind) = app.mixr_drag {
+            if drag && let (Some(body), Some(p)) = (app.rects.body, app.mixr_panel.as_mut()) {
+                apply_mixr_drag(&mut p.float, body, kind, x, y);
+                return;
             }
-            return;
+            if up {
+                app.mixr_drag = None;
+                return;
+            }
         }
-        if let Some(mrect) = app.rects.mixr_panel {
-            let inside = contains(mrect, x, y);
+
+        // The full panel rect = header ∪ cell area.
+        let panel = match (app.rects.mixr_panel_header, app.rects.mixr_panel) {
+            (Some(h), Some(c)) => Some(Rect {
+                x: h.x,
+                y: h.y,
+                width: h.width,
+                height: h.height + c.height,
+            }),
+            _ => None,
+        };
+        if let Some(panel) = panel {
+            let cells = app.rects.mixr_panel.unwrap();
+            let on_header = app
+                .rects
+                .mixr_panel_header
+                .is_some_and(|h| contains(h, x, y));
+            let p_right = panel.x + panel.width - 1;
+            let p_bottom = panel.y + panel.height - 1;
+            let on_left = x == panel.x && y >= panel.y && y <= p_bottom;
+            let on_right = x == p_right && y >= panel.y && y <= p_bottom;
+            let on_bottom = y == p_bottom && x >= panel.x && x <= p_right;
+
+            if down {
+                // Edges win over the header / cells. Any of them tears
+                // the panel off into a free-floating window.
+                let kind = if on_left {
+                    Some(MixrDrag::ResizeLeft)
+                } else if on_right {
+                    Some(MixrDrag::ResizeRight)
+                } else if on_bottom {
+                    Some(MixrDrag::ResizeBottom)
+                } else if on_header {
+                    Some(MixrDrag::Move {
+                        grab_dx: x.saturating_sub(panel.x),
+                        grab_dy: y.saturating_sub(panel.y),
+                    })
+                } else {
+                    None
+                };
+                if let Some(kind) = kind {
+                    if let Some(p) = app.mixr_panel.as_mut() {
+                        if p.size != MixrSize::Floating {
+                            p.float = panel;
+                            p.size = MixrSize::Floating;
+                        }
+                        p.focused = true;
+                    }
+                    app.mixr_drag = Some(kind);
+                    return;
+                }
+            }
+
+            // Cell area → focus + forward to mixr.
+            let inside = contains(cells, x, y);
             let focused = app.mixr_panel.as_ref().is_some_and(|p| p.focused);
             if inside && (down || focused) {
                 if let Some(p) = app.mixr_panel.as_mut() {
@@ -4144,15 +4202,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     }
                     p.send_input(crate::mixr_host::crossterm_mouse_to_input(
                         &m,
-                        x - mrect.x,
-                        y - mrect.y,
+                        x - cells.x,
+                        y - cells.y,
                     ));
                 }
                 return;
             }
-            if down
-                && !inside
-                && !on_header
+            if any_down
+                && !contains(panel, x, y)
                 && let Some(p) = app.mixr_panel.as_mut()
             {
                 p.focused = false;
@@ -5698,6 +5755,42 @@ fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
 
 fn contains(r: Rect, x: u16, y: u16) -> bool {
     x >= r.x && x < r.x.saturating_add(r.width) && y >= r.y && y < r.y.saturating_add(r.height)
+}
+
+/// Apply an in-progress mixr-panel drag to its `float` rect — clamped
+/// to `body` so the window can't move or grow past an edge, and never
+/// shrinks below a usable minimum.
+fn apply_mixr_drag(float: &mut Rect, body: Rect, kind: crate::mixr_host::MixrDrag, x: u16, y: u16) {
+    use crate::mixr_host::MixrDrag;
+    const MIN_W: u16 = 24;
+    const MIN_H: u16 = 8;
+    let body_right = body.x.saturating_add(body.width);
+    let body_bottom = body.y.saturating_add(body.height);
+    match kind {
+        MixrDrag::Move { grab_dx, grab_dy } => {
+            let max_x = body_right.saturating_sub(float.width).max(body.x);
+            let max_y = body_bottom.saturating_sub(float.height).max(body.y);
+            float.x = x.saturating_sub(grab_dx).clamp(body.x, max_x);
+            float.y = y.saturating_sub(grab_dy).clamp(body.y, max_y);
+        }
+        MixrDrag::ResizeLeft => {
+            let right = float.x.saturating_add(float.width);
+            let hi = right.saturating_sub(MIN_W).max(body.x);
+            let new_x = x.clamp(body.x, hi);
+            float.x = new_x;
+            float.width = right.saturating_sub(new_x).max(MIN_W);
+        }
+        MixrDrag::ResizeRight => {
+            let lo = float.x.saturating_add(MIN_W).min(body_right);
+            let new_right = x.saturating_add(1).clamp(lo, body_right);
+            float.width = new_right.saturating_sub(float.x).max(MIN_W);
+        }
+        MixrDrag::ResizeBottom => {
+            let lo = float.y.saturating_add(MIN_H).min(body_bottom);
+            let new_bottom = y.saturating_add(1).clamp(lo, body_bottom);
+            float.height = new_bottom.saturating_sub(float.y).max(MIN_H);
+        }
+    }
 }
 
 /// Mouse click on a TestExecutions pane row. `env_idx` is 0/1/2 (dev/staging/prod).

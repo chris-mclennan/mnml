@@ -334,6 +334,28 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     height: body_area.height,
                 })
             }
+            MixrSize::Floating => {
+                // The free window — `panel.float`, clamped into the body.
+                let f = app
+                    .mixr_panel
+                    .as_ref()
+                    .map(|p| p.float)
+                    .unwrap_or(body_area);
+                let w = f.width.clamp(24, body_area.width.max(24));
+                let h = f.height.clamp(8, body_area.height.max(8));
+                let x =
+                    f.x.clamp(body_area.x, body_area.x + body_area.width.saturating_sub(w));
+                let y = f.y.clamp(
+                    body_area.y,
+                    body_area.y + body_area.height.saturating_sub(h),
+                );
+                (w >= 20 && h >= 6).then_some(Rect {
+                    x,
+                    y,
+                    width: w,
+                    height: h,
+                })
+            }
         };
         if let Some(panel) = panel {
             // Split: 1-row title header + mixr cells below.
