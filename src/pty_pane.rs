@@ -1,7 +1,7 @@
 //! Embedded terminal — one [`PtySession`] is the `Pane::Pty` payload: a live pty
 //! plus a child process (`$SHELL`, `claude`, `codex`, …) whose output is parsed
 //! into a [`vt100`] grid the renderer reads. A reader thread pumps the pty's
-//! output into a `Mutex<vt100::Parser>`; outbound keystrokes go through the pty's
+//! output into a `Mutex<vt100::Parser<TitleSink>>`; outbound keystrokes go through the pty's
 //! write half on the UI thread (event-driven, so no writer thread needed).
 //! Dropping the session kills the child and joins the reader.
 //!
@@ -18,6 +18,22 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 
 /// How many lines of output vt100 keeps for scroll-back (`Shift+PgUp` / wheel).
 const SCROLLBACK_LINES: usize = 5000;
+
+/// vt100 0.16 delivers the OSC window title (`ESC]0;…` / `ESC]2;…`)
+/// through a [`vt100::Callbacks`] impl rather than storing it on
+/// `Screen`. This sink keeps the latest title so [`PtySession::tab_label`]
+/// can pick it up — Claude Code / Codex / a shell all name their own
+/// session this way.
+#[derive(Default)]
+pub struct TitleSink {
+    title: String,
+}
+
+impl vt100::Callbacks for TitleSink {
+    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
+        self.title = String::from_utf8_lossy(title).into_owned();
+    }
+}
 
 /// What runs inside a pty pane — a config record so the caller picks "shell" vs
 /// "claude" without this module knowing about products.
@@ -147,7 +163,7 @@ pub struct PtySession {
     /// + the bufferline tab in place of `profile.label` when present.
     pub display_name: Option<String>,
     /// Shared with the reader thread (it writes, the renderer reads).
-    pub parser: Arc<Mutex<vt100::Parser>>,
+    pub parser: Arc<Mutex<vt100::Parser<TitleSink>>>,
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
     reader: Option<JoinHandle<()>>,
@@ -190,7 +206,12 @@ impl PtySession {
             .map_err(|e| format!("spawn {}: {e} — is it on PATH?", profile.exe))?;
         drop(pair.slave);
 
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, SCROLLBACK_LINES)));
+        let parser = Arc::new(Mutex::new(vt100::Parser::new_with_callbacks(
+            rows,
+            cols,
+            SCROLLBACK_LINES,
+            TitleSink::default(),
+        )));
         let exited = Arc::new(Mutex::new(false));
         let bytes_seen = Arc::new(AtomicU64::new(0));
 
@@ -305,13 +326,41 @@ impl PtySession {
         }
     }
 
-    /// The session's tab/title label — the user-set `display_name`
-    /// (`:rename`) when present, otherwise the binary profile's label.
+    /// The session's tab/title label. Precedence: the user-set
+    /// `display_name` (right-click rename / `:rename`) → the program's
+    /// OSC window title (Claude Code / Codex / a shell name their own
+    /// session this way) → the binary profile's label.
     pub fn tab_label(&self) -> String {
-        self.display_name
-            .clone()
-            .unwrap_or_else(|| self.profile.label.clone())
+        let osc = self
+            .parser
+            .lock()
+            .ok()
+            .map(|p| p.callbacks().title.clone())
+            .unwrap_or_default();
+        resolve_tab_label(self.display_name.as_deref(), &osc, &self.profile.label)
     }
+}
+
+/// Pick a pty session's tab label from the three candidate sources, in
+/// priority order: an explicit user-set name, then the program's OSC
+/// window title, then the binary profile's default label. A blank
+/// candidate is skipped. Pure — unit-tested without a live pty.
+pub(crate) fn resolve_tab_label(
+    display_name: Option<&str>,
+    osc_title: &str,
+    profile_label: &str,
+) -> String {
+    if let Some(n) = display_name {
+        let n = n.trim();
+        if !n.is_empty() {
+            return n.to_string();
+        }
+    }
+    let t = osc_title.trim();
+    if !t.is_empty() {
+        return t.to_string();
+    }
+    profile_label.to_string()
 }
 
 impl Drop for PtySession {
@@ -326,6 +375,25 @@ impl Drop for PtySession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_tab_label_prefers_name_then_osc_then_profile() {
+        // An explicit user name wins over everything.
+        assert_eq!(
+            resolve_tab_label(Some("mine"), "osc title", "Claude"),
+            "mine"
+        );
+        // No user name → the program's OSC window title.
+        assert_eq!(
+            resolve_tab_label(None, "Claude · refactor", "Claude"),
+            "Claude · refactor"
+        );
+        // Blank / whitespace OSC title → the binary profile's label.
+        assert_eq!(resolve_tab_label(None, "", "Claude"), "Claude");
+        assert_eq!(resolve_tab_label(None, "   ", "Codex"), "Codex");
+        // A blank user name is skipped, not used.
+        assert_eq!(resolve_tab_label(Some("  "), "osc", "Codex"), "osc");
+    }
 
     #[test]
     fn shell_profile_uses_env_shell() {
