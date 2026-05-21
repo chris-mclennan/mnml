@@ -113,6 +113,10 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
     let backend = TestBackend::new(cols, rows);
     let mut terminal = Terminal::new(backend).map_err(|e| format!("blit: terminal: {e}"))?;
 
+    // mnml is running as a tmnl native client — `mixr.show` routes
+    // mixr to a sibling tmnl pane (via `OpenPane`) instead of an
+    // mnml pty pane.
+    app.under_tmnl = true;
     app.run_startup_tasks();
 
     let mut frame_seq: u64 = 0;
@@ -120,6 +124,15 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
     let mut prev_dims: (u16, u16) = (0, 0);
     loop {
         app.tick();
+
+        // Forward any open-pane requests mnml queued this tick (e.g.
+        // `mixr.show`) to the tmnl host as `OpenPane` messages.
+        if !app.pending_open_panes.is_empty() {
+            let mut w = writer.lock().unwrap();
+            for (command, args) in app.pending_open_panes.drain(..) {
+                let _ = write_message(&mut *w, &Message::OpenPane { command, args });
+            }
+        }
 
         let mut new_size: Option<(u16, u16)> = None;
         loop {

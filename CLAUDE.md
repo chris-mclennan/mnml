@@ -83,6 +83,23 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**mixr.show opens mixr as a sibling tmnl pane (2026-05-21):**
+completes "Option C" of the mixr-native plan — under tmnl, mixr
+runs as its own native pane beside mnml, not nested as an mnml
+pty. When mnml is a tmnl native client (`--blit`),
+`App.under_tmnl` is set by the blit loop; `open_mixr_pane` then
+queues `(command, args)` onto `App.pending_open_panes` instead of
+spawning a `Pane::Pty`. The blit loop drains that outbox each tick
+into the new `tmnl-protocol` `Message::OpenPane`; tmnl receives it
+(`ServerEvent::OpenPane`), splits the focused pane, and launches
+`mixr --blit <socket>` as a sibling native pane. Standalone (not
+under tmnl), `mixr.show` keeps the old pty-pane behavior.
+Four-repo change — tmnl-protocol (new `OpenPane` message; the
+crate also got its first git history), tmnl
+(`open_pane_with_command`), mixr-rs (its `--blit` dispatch was
+written but unwired — now wired + verified against `fake_server`),
+mnml (this side). 711 lib tests + clippy green.
+
 **Pluggable now-playing miniplayer + macOS source (2026-05-21):**
 the statusline `♪` chip's data layer went pluggable. New
 `now_playing` module: a player-agnostic `NowPlaying` (source /

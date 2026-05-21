@@ -2627,6 +2627,14 @@ pub struct App {
     /// e2e. `tick` drains it into `now_playing`.
     pub now_playing_rx:
         Option<std::sync::mpsc::Receiver<Option<crate::now_playing::NowPlaying>>>,
+    /// True when mnml is running as a tmnl native client (`--blit`).
+    /// `mixr.show` reads it to route mixr to a sibling tmnl pane (via
+    /// `OpenPane`) rather than nesting it as a pty pane.
+    pub under_tmnl: bool,
+    /// Open-pane requests queued for the tmnl host — `(command, args)`.
+    /// The blit loop drains these into `Message::OpenPane` each tick.
+    /// Always empty when not `under_tmnl`.
+    pub pending_open_panes: Vec<(String, Vec<String>)>,
     /// Persistent quick-scratch terminal — a ~10-row bottom strip
     /// hosting a shell pty. Sibling to `Pane::Pty` (which is a full pane),
     /// designed for "I want to run one command without rearranging my
@@ -3288,6 +3296,8 @@ impl App {
             clock_show_utc: false,
             now_playing: None,
             now_playing_rx: None,
+            under_tmnl: false,
+            pending_open_panes: Vec::new(),
             hover_chip: None,
             hover_divider_idx: None,
             show_discovery_overlay: false,
@@ -11659,6 +11669,15 @@ impl App {
     pub fn open_mixr_pane(&mut self) {
         if !mixr_on_path() {
             self.toast("mixr not found on PATH — install mixr-rs first");
+            return;
+        }
+        // Under tmnl, ask the host to open mixr as a sibling native
+        // pane (the blit loop forwards this as `Message::OpenPane`).
+        // Standalone, fall back to nesting it as an mnml pty pane.
+        if self.under_tmnl {
+            self.pending_open_panes
+                .push(("mixr".to_string(), Vec::new()));
+            self.toast("opening mixr in tmnl…");
             return;
         }
         self.open_pty(crate::pty_pane::BinaryProfile::mixr(self.workspace.clone()));
