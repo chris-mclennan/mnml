@@ -305,37 +305,46 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     app.rects.scratch_term_strip = scratch_strip;
     // The native mixr panel. `Tall` docks the right half of the body —
-    // the editor layout reflows into the left half. `Short` is a
-    // compact bottom-right overlay box — the editor keeps its full
-    // layout underneath. `Minimized` = hidden (just the ♪ chip).
+    // the editor layout reflows into the left half. `Short`/`Medium`
+    // are compact bottom-right overlay boxes (different heights) — the
+    // editor keeps its full layout underneath. `Minimized` = hidden
+    // (just the ♪ chip).
     let mut mixr_area: Option<Rect> = None;
-    match app.mixr_panel.as_ref().map(|p| p.size) {
-        Some(crate::mixr_host::MixrSize::Tall) => {
-            let half = body_area.width / 2;
-            if half >= 12 {
-                mixr_area = Some(Rect {
-                    x: body_area.x + body_area.width - half,
-                    y: body_area.y,
-                    width: half,
-                    height: body_area.height,
-                });
-                body_area.width -= half;
+    if let Some(size) = app.mixr_panel.as_ref().map(|p| p.size) {
+        use crate::mixr_host::MixrSize;
+        match size {
+            MixrSize::Tall => {
+                let half = body_area.width / 2;
+                if half >= 12 {
+                    mixr_area = Some(Rect {
+                        x: body_area.x + body_area.width - half,
+                        y: body_area.y,
+                        width: half,
+                        height: body_area.height,
+                    });
+                    body_area.width -= half;
+                }
             }
-        }
-        Some(crate::mixr_host::MixrSize::Short) => {
-            let half = body_area.width / 2;
-            let h = crate::mixr_host::SHORT_ROWS.min(body_area.height);
-            if half >= 12 && h >= 4 {
-                // Overlay — no `body_area` carve.
-                mixr_area = Some(Rect {
-                    x: body_area.x + body_area.width - half,
-                    y: body_area.y + body_area.height - h,
-                    width: half,
-                    height: h,
-                });
+            MixrSize::Short | MixrSize::Medium => {
+                let rows = if size == MixrSize::Medium {
+                    crate::mixr_host::MEDIUM_ROWS
+                } else {
+                    crate::mixr_host::SHORT_ROWS
+                };
+                let half = body_area.width / 2;
+                let h = rows.min(body_area.height);
+                if half >= 12 && h >= 4 {
+                    // Overlay — no `body_area` carve.
+                    mixr_area = Some(Rect {
+                        x: body_area.x + body_area.width - half,
+                        y: body_area.y + body_area.height - h,
+                        width: half,
+                        height: h,
+                    });
+                }
             }
+            MixrSize::Minimized => {}
         }
-        _ => {}
     }
     app.rects.mixr_panel = mixr_area;
     app.rects.body = Some(body_area);

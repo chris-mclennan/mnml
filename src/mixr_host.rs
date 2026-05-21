@@ -47,20 +47,27 @@ impl MixrCell {
     }
 }
 
-/// How the mixr panel is drawn.
+/// How the mixr panel is drawn — `mixr.show` steps through these in
+/// order, wrapping back to `Minimized`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MixrSize {
     /// Hidden — only the `♪` statusline chip shows; mixr keeps running.
     Minimized,
-    /// Compact — mixr's `Panel` (controller + `v`-carousel) layout.
+    /// Compact overlay — sized for mixr's controller alone.
     Short,
-    /// Full height — mixr's `Full` layout, half-width beside the editor.
+    /// Taller overlay — controller + one `v`-carousel section below it.
+    Medium,
+    /// Full height — mixr's `Full` layout; the editor reflows to the
+    /// left half beside it.
     Tall,
 }
 
-/// Panel height (rows) for `MixrSize::Short` — a compact bottom-right
-/// overlay box. `Tall` uses the full body height instead.
-pub const SHORT_ROWS: u16 = 22;
+/// Overlay-box height (rows) for `MixrSize::Short` — mixr's controller
+/// on its own.
+pub const SHORT_ROWS: u16 = 18;
+/// Overlay-box height for `MixrSize::Medium` — controller + one
+/// carousel section.
+pub const MEDIUM_ROWS: u16 = 32;
 
 /// mnml's host side of a native mixr panel.
 pub struct MixrPanel {
