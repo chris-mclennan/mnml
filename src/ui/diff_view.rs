@@ -1982,3 +1982,51 @@ fn pad_or_truncate(s: &str, width: usize) -> String {
         out
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn digits_counts_decimal_digits() {
+        assert_eq!(digits(0), 1);
+        assert_eq!(digits(7), 1);
+        assert_eq!(digits(10), 2);
+        assert_eq!(digits(99), 2);
+        assert_eq!(digits(100), 3);
+        assert_eq!(digits(123_456), 6);
+    }
+
+    #[test]
+    fn pad_or_truncate_always_hits_exact_width() {
+        assert_eq!(pad_or_truncate("ab", 5), "ab   ");
+        assert_eq!(pad_or_truncate("abc", 3), "abc");
+        assert_eq!(pad_or_truncate("abcdef", 3), "abc");
+        assert_eq!(pad_or_truncate("ab", 0), "");
+        // Char-counted, not byte-counted — multi-byte stays exact.
+        assert_eq!(pad_or_truncate("\u{273d}\u{273d}", 4).chars().count(), 4);
+        assert_eq!(
+            pad_or_truncate("\u{273d}\u{273d}\u{273d}", 3)
+                .chars()
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn gutter_text_pair_fits_the_gutter_and_shows_both_numbers() {
+        // Zero-width gutter ⇒ nothing.
+        assert_eq!(gutter_text_pair(None, None, 0), "");
+        // A normal gutter never overflows and shows both line numbers.
+        let g = gutter_text_pair(Some(7), Some(42), 10);
+        assert!(g.chars().count() <= 10, "overflowed the gutter: {g:?}");
+        assert!(
+            g.contains('7') && g.contains("42"),
+            "missing a number: {g:?}"
+        );
+        // An empty slot renders as blank, not a stray digit.
+        let only_new = gutter_text_pair(None, Some(3), 10);
+        assert!(only_new.contains('3'));
+        assert!(only_new.chars().count() <= 10);
+    }
+}

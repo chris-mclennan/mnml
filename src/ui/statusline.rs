@@ -708,3 +708,22 @@ fn format_byte_size(bytes: usize) -> String {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_byte_size_picks_the_right_unit() {
+        assert_eq!(format_byte_size(0), "0B");
+        assert_eq!(format_byte_size(512), "512B");
+        assert_eq!(format_byte_size(1023), "1023B");
+        // 1 KiB and up — one decimal under 10K, whole numbers above.
+        assert_eq!(format_byte_size(1024), "1.0K");
+        assert_eq!(format_byte_size(1536), "1.5K");
+        assert_eq!(format_byte_size(20 * 1024), "20K");
+        // 1 MiB and up.
+        assert_eq!(format_byte_size(1024 * 1024), "1.0M");
+        assert_eq!(format_byte_size(20 * 1024 * 1024), "20M");
+    }
+}
