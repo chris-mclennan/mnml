@@ -113,11 +113,13 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
     let backend = TestBackend::new(cols, rows);
     let mut terminal = Terminal::new(backend).map_err(|e| format!("blit: terminal: {e}"))?;
 
-    // mnml is running as a tmnl native client — `mixr.show` routes
-    // mixr to a sibling tmnl pane (via `OpenPane`) instead of an
-    // mnml pty pane.
+    // mnml is running as a tmnl native client.
     app.under_tmnl = true;
     app.run_startup_tasks();
+    // Start the now-playing poller here too — the terminal loop in
+    // `tui.rs` does the same. Without it the `♪` statusline chip
+    // never tracks mixr when mnml is hosted under tmnl.
+    app.start_now_playing_poller();
 
     let mut frame_seq: u64 = 0;
     let mut prev_cells: Vec<WireCell> = Vec::new();
