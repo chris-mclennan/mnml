@@ -11673,22 +11673,23 @@ impl App {
     }
     /// Open / toggle the native mixr panel — mnml hosts `mixr --blit`
     /// itself (`mixr_host::MixrPanel`) and renders it in a right-docked
-    /// half-width panel. First call launches it; later calls toggle
-    /// between shown and minimized (the `♪` statusline chip is the
-    /// minimized state). Refuses cleanly when `mixr` isn't on PATH.
+    /// panel. First call launches it; later calls cycle its size:
+    /// minimized → short → full → minimized (the `♪` statusline chip
+    /// is the minimized state). Refuses cleanly when `mixr` isn't on
+    /// PATH.
     pub fn open_mixr_pane(&mut self) {
         if !mixr_on_path() {
             self.toast("mixr not found on PATH — install mixr-rs first");
             return;
         }
         if let Some(p) = self.mixr_panel.as_mut() {
-            if p.size == crate::mixr_host::MixrSize::Minimized {
-                p.size = crate::mixr_host::MixrSize::Short;
-                p.focused = true;
-            } else {
-                p.size = crate::mixr_host::MixrSize::Minimized;
-                p.focused = false;
-            }
+            // Cycle: minimized → short → full → minimized.
+            p.size = match p.size {
+                crate::mixr_host::MixrSize::Minimized => crate::mixr_host::MixrSize::Short,
+                crate::mixr_host::MixrSize::Short => crate::mixr_host::MixrSize::Tall,
+                crate::mixr_host::MixrSize::Tall => crate::mixr_host::MixrSize::Minimized,
+            };
+            p.focused = p.size != crate::mixr_host::MixrSize::Minimized;
             return;
         }
         // First open — launch `mixr --blit` sized to the right half of

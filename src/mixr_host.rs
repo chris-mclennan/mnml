@@ -58,6 +58,10 @@ pub enum MixrSize {
     Tall,
 }
 
+/// Panel height (rows) for `MixrSize::Short` — a compact bottom-right
+/// overlay box. `Tall` uses the full body height instead.
+pub const SHORT_ROWS: u16 = 22;
+
 /// mnml's host side of a native mixr panel.
 pub struct MixrPanel {
     socket_path: PathBuf,
