@@ -327,40 +327,92 @@ impl PtySession {
     }
 
     /// The session's tab/title label. Precedence: the user-set
-    /// `display_name` (right-click rename / `:rename`) → the program's
-    /// OSC window title (Claude Code / Codex / a shell name their own
-    /// session this way) → the binary profile's label.
+    /// `display_name` (right-click rename / `:rename`) → a live
+    /// Claude-Code-style spinner status line (`✽ Wandering…`, so the
+    /// tab tracks what Claude is doing) → the program's OSC window
+    /// title → the binary profile's label.
     pub fn tab_label(&self) -> String {
-        let osc = self
-            .parser
-            .lock()
-            .ok()
-            .map(|p| p.callbacks().title.clone())
-            .unwrap_or_default();
-        resolve_tab_label(self.display_name.as_deref(), &osc, &self.profile.label)
+        let (osc, status) = match self.parser.lock() {
+            Ok(p) => (p.callbacks().title.clone(), detect_status_line(p.screen())),
+            Err(_) => (String::new(), None),
+        };
+        resolve_tab_label(
+            self.display_name.as_deref(),
+            status.as_deref(),
+            &osc,
+            &self.profile.label,
+        )
     }
 }
 
-/// Pick a pty session's tab label from the three candidate sources, in
-/// priority order: an explicit user-set name, then the program's OSC
-/// window title, then the binary profile's default label. A blank
-/// candidate is skipped. Pure — unit-tested without a live pty.
+/// Pick a pty session's tab label from the candidate sources, in
+/// priority order: an explicit user-set name, a live spinner status
+/// line, the program's OSC window title, then the binary profile's
+/// default label. Blank candidates are skipped. Pure — unit-tested
+/// without a live pty.
 pub(crate) fn resolve_tab_label(
     display_name: Option<&str>,
+    status: Option<&str>,
     osc_title: &str,
     profile_label: &str,
 ) -> String {
-    if let Some(n) = display_name {
-        let n = n.trim();
-        if !n.is_empty() {
-            return n.to_string();
+    for cand in [display_name, status, Some(osc_title)]
+        .into_iter()
+        .flatten()
+    {
+        let cand = cand.trim();
+        if !cand.is_empty() {
+            return cand.to_string();
         }
     }
-    let t = osc_title.trim();
-    if !t.is_empty() {
-        return t.to_string();
-    }
     profile_label.to_string()
+}
+
+/// Scan a pty screen for a Claude-Code-style spinner status line — a
+/// row carrying *both* a spinner glyph and an ellipsis, e.g.
+/// `✽ Wandering… (3s · esc to interrupt)`. Returns the text from the
+/// glyph onward, trimmed of Claude's trailing `(…)` / `· …` metadata
+/// (so the tab shows just `✽ Wandering…`). `None` when no such line is
+/// visible — Claude idle, or a non-Claude program. The glyph the
+/// caller renders cycles frame to frame, so the tab "animates" for
+/// free. Bottom-up scan: Claude's spinner sits near the input prompt.
+fn detect_status_line(screen: &vt100::Screen) -> Option<String> {
+    const SPINNER_CHARS: &[char] = &[
+        '✱', '✶', '✦', '✧', '⋆', '✽', '✻', '❋', '✿', '✺', '✷', '✸', '✹', '❉', '❅', '◐', '◓', '◑',
+        '◒',
+    ];
+    const MAX_LABEL_CHARS: usize = 30;
+    let (rows, cols) = screen.size();
+    for row in (0..rows).rev() {
+        let mut line = String::new();
+        for col in 0..cols {
+            if let Some(c) = screen.cell(row, col) {
+                line.push_str(c.contents());
+            }
+        }
+        let line = line.trim_end();
+        // Require both a spinner glyph AND an ellipsis — the two-signal
+        // combo rejects unrelated lines that merely start with `*` etc.
+        let Some(glyph_pos) = line.chars().position(|c| SPINNER_CHARS.contains(&c)) else {
+            continue;
+        };
+        if !(line.contains('…') || line.contains("...")) {
+            continue;
+        }
+        let from_glyph: String = line.chars().skip(glyph_pos).take(MAX_LABEL_CHARS).collect();
+        // Stop at the first `(` (parenthetical context) or `·` (Claude's
+        // bullet separator) — drops the trailing "(3s · esc …)" metadata.
+        let cut = from_glyph
+            .char_indices()
+            .find(|(_, c)| *c == '(' || *c == '·')
+            .map(|(i, _)| i)
+            .unwrap_or(from_glyph.len());
+        let label = from_glyph[..cut].trim_end().to_string();
+        if !label.is_empty() {
+            return Some(label);
+        }
+    }
+    None
 }
 
 impl Drop for PtySession {
@@ -377,22 +429,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_tab_label_prefers_name_then_osc_then_profile() {
+    fn resolve_tab_label_priority_name_status_osc_profile() {
         // An explicit user name wins over everything.
         assert_eq!(
-            resolve_tab_label(Some("mine"), "osc title", "Claude"),
+            resolve_tab_label(Some("mine"), Some("✽ Thinking…"), "osc", "Claude"),
             "mine"
         );
-        // No user name → the program's OSC window title.
+        // No user name → the live spinner status.
         assert_eq!(
-            resolve_tab_label(None, "Claude · refactor", "Claude"),
+            resolve_tab_label(None, Some("✽ Wandering…"), "osc title", "Claude"),
+            "✽ Wandering…"
+        );
+        // No name, no status → the program's OSC window title.
+        assert_eq!(
+            resolve_tab_label(None, None, "Claude · refactor", "Claude"),
             "Claude · refactor"
         );
-        // Blank / whitespace OSC title → the binary profile's label.
-        assert_eq!(resolve_tab_label(None, "", "Claude"), "Claude");
-        assert_eq!(resolve_tab_label(None, "   ", "Codex"), "Codex");
-        // A blank user name is skipped, not used.
-        assert_eq!(resolve_tab_label(Some("  "), "osc", "Codex"), "osc");
+        // Nothing set → the binary profile's label.
+        assert_eq!(resolve_tab_label(None, None, "", "Claude"), "Claude");
+        assert_eq!(resolve_tab_label(None, None, "   ", "Codex"), "Codex");
+        // Blank candidates are skipped, not used.
+        assert_eq!(
+            resolve_tab_label(Some(" "), Some(""), "osc", "Codex"),
+            "osc"
+        );
+    }
+
+    #[test]
+    fn detect_status_line_finds_claude_spinner() {
+        let mut p = vt100::Parser::new(6, 60, 0);
+        p.process(b"idle output line\r\n");
+        p.process("✽ Wandering… (3s · esc to interrupt)\r\n".as_bytes());
+        assert_eq!(
+            detect_status_line(p.screen()).as_deref(),
+            Some("✽ Wandering…"),
+        );
+    }
+
+    #[test]
+    fn detect_status_line_none_without_a_spinner() {
+        let mut p = vt100::Parser::new(6, 60, 0);
+        p.process(b"just some normal output\r\nno spinner here\r\n");
+        assert!(detect_status_line(p.screen()).is_none());
+        // A spinner glyph but no ellipsis → rejected (two-signal combo).
+        let mut p2 = vt100::Parser::new(6, 60, 0);
+        p2.process("✽ a starred heading\r\n".as_bytes());
+        assert!(detect_status_line(p2.screen()).is_none());
     }
 
     #[test]
