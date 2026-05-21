@@ -289,14 +289,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mixr_seg_idx = {
         let (label, fg) = match &app.now_playing {
             Some(np) if np.playing => {
-                let shown: String = if np.track.chars().count() > 24 {
-                    np.track
-                        .chars()
-                        .take(23)
-                        .chain(std::iter::once('…'))
-                        .collect()
+                // Sanitise first — collapse control chars / whitespace
+                // runs (a stray tab in a title was splitting the chip)
+                // — then truncate hard so a long title can't crowd the
+                // right lane.
+                let clean = np.track.split_whitespace().collect::<Vec<_>>().join(" ");
+                let shown: String = if clean.chars().count() > 18 {
+                    clean.chars().take(17).chain(std::iter::once('…')).collect()
                 } else {
-                    np.track.clone()
+                    clean
                 };
                 (format!(" ♪ {shown} "), theme::cur().purple)
             }
