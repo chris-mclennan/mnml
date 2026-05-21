@@ -19,6 +19,7 @@ use ratatui::crossterm::event::{
     KeyCode as CtKeyCode, KeyEvent as CtKeyEvent, KeyModifiers as CtKeyMods,
     MouseButton as CtMouseButton, MouseEvent as CtMouseEvent, MouseEventKind as CtMouseKind,
 };
+use ratatui::layout::Rect;
 use tmnl_protocol::{
     BUTTON_LEFT, BUTTON_MIDDLE, BUTTON_NONE, BUTTON_RIGHT, Frame, InputEvent,
     KeyCode as WireKeyCode, KeyInput, MOD_ALT, MOD_CTRL, MOD_SHIFT, MOD_SUPER, Message, MouseInput,
@@ -69,6 +70,92 @@ pub const SHORT_ROWS: u16 = 18;
 /// carousel section.
 pub const MEDIUM_ROWS: u16 = 32;
 
+/// Where the floating mixr panel (`Short` / `Medium`) is anchored.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MixrPos {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+    Center,
+}
+
+impl MixrPos {
+    /// The five anchors, in reposition-button order.
+    pub const ALL: [MixrPos; 5] = [
+        MixrPos::TopLeft,
+        MixrPos::TopRight,
+        MixrPos::BottomLeft,
+        MixrPos::BottomRight,
+        MixrPos::Center,
+    ];
+
+    /// A glyph showing which anchor this is — for the header button.
+    pub fn glyph(self) -> char {
+        match self {
+            MixrPos::TopLeft => '▘',
+            MixrPos::TopRight => '▝',
+            MixrPos::BottomLeft => '▖',
+            MixrPos::BottomRight => '▗',
+            MixrPos::Center => '◆',
+        }
+    }
+}
+
+/// An in-progress drag of the floating mixr panel by its header.
+#[derive(Clone, Copy, Debug)]
+pub struct MixrPanelDrag {
+    /// Cursor offset within the panel where the drag was grabbed.
+    pub grab_dx: u16,
+    pub grab_dy: u16,
+    /// Current free top-left of the panel.
+    pub x: u16,
+    pub y: u16,
+}
+
+/// Anchor a `w`×`h` overlay panel within `body` at `pos`.
+pub fn overlay_rect(body: Rect, w: u16, h: u16, pos: MixrPos) -> Rect {
+    let w = w.min(body.width.max(1));
+    let h = h.min(body.height.max(1));
+    let (x, y) = match pos {
+        MixrPos::TopLeft => (body.x, body.y),
+        MixrPos::TopRight => (body.x + body.width - w, body.y),
+        MixrPos::BottomLeft => (body.x, body.y + body.height - h),
+        MixrPos::BottomRight => (body.x + body.width - w, body.y + body.height - h),
+        MixrPos::Center => (
+            body.x + (body.width - w) / 2,
+            body.y + (body.height - h) / 2,
+        ),
+    };
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
+}
+
+/// The anchor whose third of `body` the panel's centre sits in — used
+/// to snap a drag on release.
+pub fn nearest_pos(body: Rect, panel: Rect) -> MixrPos {
+    let cx = panel.x.saturating_add(panel.width / 2);
+    let cy = panel.y.saturating_add(panel.height / 2);
+    let (tx, ty) = (body.width / 3, body.height / 3);
+    let mid_x = cx >= body.x + tx && cx < body.x + 2 * tx;
+    let mid_y = cy >= body.y + ty && cy < body.y + 2 * ty;
+    if mid_x && mid_y {
+        return MixrPos::Center;
+    }
+    let left = cx < body.x + body.width / 2;
+    let top = cy < body.y + body.height / 2;
+    match (left, top) {
+        (true, true) => MixrPos::TopLeft,
+        (false, true) => MixrPos::TopRight,
+        (true, false) => MixrPos::BottomLeft,
+        (false, false) => MixrPos::BottomRight,
+    }
+}
+
 /// mnml's host side of a native mixr panel.
 pub struct MixrPanel {
     socket_path: PathBuf,
@@ -84,6 +171,8 @@ pub struct MixrPanel {
     pub cursor: Option<(u16, u16)>,
     pub size: MixrSize,
     pub focused: bool,
+    /// Where the floating (`Short` / `Medium`) panel is anchored.
+    pub pos: MixrPos,
 }
 
 impl MixrPanel {
@@ -122,6 +211,7 @@ impl MixrPanel {
             cursor: None,
             size: MixrSize::Short,
             focused: false,
+            pos: MixrPos::BottomRight,
         })
     }
 
@@ -414,5 +504,45 @@ mod tests {
         assert_eq!(cells[0].ch, 'a'); // kept
         assert_eq!(cells[1].ch, 'X'); // patched
         assert_eq!(cells[2].ch, 'c'); // kept
+    }
+
+    #[test]
+    fn overlay_rect_anchors_to_each_corner() {
+        let body = Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 40,
+        };
+        let br = overlay_rect(body, 20, 10, MixrPos::BottomRight);
+        assert_eq!((br.x, br.y), (80, 30));
+        let tl = overlay_rect(body, 20, 10, MixrPos::TopLeft);
+        assert_eq!((tl.x, tl.y), (0, 0));
+        let c = overlay_rect(body, 20, 10, MixrPos::Center);
+        assert_eq!((c.x, c.y), (40, 15));
+    }
+
+    #[test]
+    fn nearest_pos_snaps_to_the_containing_third() {
+        let body = Rect {
+            x: 0,
+            y: 0,
+            width: 90,
+            height: 30,
+        };
+        let tl = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 4,
+        };
+        assert_eq!(nearest_pos(body, tl), MixrPos::TopLeft);
+        let mid = Rect {
+            x: 40,
+            y: 13,
+            width: 10,
+            height: 4,
+        };
+        assert_eq!(nearest_pos(body, mid), MixrPos::Center);
     }
 }

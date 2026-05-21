@@ -1941,9 +1941,13 @@ pub struct PaneRects {
     /// `♪` mixr chip — the now-playing miniplayer + launch button;
     /// click opens `mixr.show`.
     pub statusline_mixr_chip: Option<Rect>,
-    /// The native mixr panel's docked rect (set by `ui::draw` when the
-    /// panel is shown) — `tick` reads it to keep mixr sized to it.
+    /// The native mixr panel's mixr-cell rect (set by `ui::draw` when
+    /// the panel is shown) — `tick` reads it to keep mixr sized to it.
     pub mixr_panel: Option<Rect>,
+    /// The floating panel's 1-row header rect — the drag handle.
+    pub mixr_panel_header: Option<Rect>,
+    /// Reposition buttons in the header — `(rect, target anchor)`.
+    pub mixr_pos_buttons: Vec<(Rect, crate::mixr_host::MixrPos)>,
     /// `LSP {N}` chip — click opens `:LspStatus`.
     pub statusline_lsp_chip: Option<Rect>,
     /// `WRAP` chip — click toggles `[ui] wrap`.
@@ -2634,6 +2638,9 @@ pub struct App {
     /// first launches it; then it persists (minimize hides it, it
     /// doesn't drop). See `crate::mixr_host`.
     pub mixr_panel: Option<crate::mixr_host::MixrPanel>,
+    /// In-progress drag of the floating mixr panel by its header —
+    /// `Some` between mouse-down on the header and release.
+    pub mixr_drag: Option<crate::mixr_host::MixrPanelDrag>,
     /// True when mnml is running as a tmnl native client (`--blit`).
     /// `mixr.show` reads it to route mixr to a sibling tmnl pane (via
     /// `OpenPane`) rather than nesting it as a pty pane.
@@ -3304,6 +3311,7 @@ impl App {
             now_playing: None,
             now_playing_rx: None,
             mixr_panel: None,
+            mixr_drag: None,
             under_tmnl: false,
             pending_open_panes: Vec::new(),
             hover_chip: None,

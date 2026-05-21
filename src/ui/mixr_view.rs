@@ -58,3 +58,64 @@ pub fn draw(frame: &mut Frame, panel: &MixrPanel, area: Rect) {
         }
     }
 }
+
+/// Draw the floating panel's 1-row header — a drag handle carrying the
+/// five reposition buttons. Pushes each button's `(rect, anchor)`.
+pub fn draw_header(
+    frame: &mut Frame,
+    header: Rect,
+    active: crate::mixr_host::MixrPos,
+    buttons: &mut Vec<(Rect, crate::mixr_host::MixrPos)>,
+) {
+    use crate::mixr_host::MixrPos;
+    if header.height == 0 || header.width == 0 {
+        return;
+    }
+    let t = crate::ui::theme::cur();
+    let y = header.y;
+    let buf = frame.buffer_mut();
+    // Background fill.
+    for x in header.x..header.x + header.width {
+        let c = &mut buf[(x, y)];
+        c.set_char(' ');
+        c.set_style(Style::default().bg(t.bg2));
+    }
+    // Label / drag hint.
+    for (i, ch) in " ♪ mixr — drag to move".chars().enumerate() {
+        let x = header.x + i as u16;
+        if x >= header.x + header.width {
+            break;
+        }
+        let c = &mut buf[(x, y)];
+        c.set_char(ch);
+        c.set_style(Style::default().fg(t.comment).bg(t.bg2));
+    }
+    // Reposition buttons, right-aligned: ▘ ▝ ▖ ▗ ◆
+    let btn_w: u16 = 2;
+    let total = MixrPos::ALL.len() as u16 * btn_w;
+    if header.width >= total + 6 {
+        let start = header.x + header.width - total;
+        for (i, pos) in MixrPos::ALL.iter().enumerate() {
+            let bx = start + i as u16 * btn_w;
+            let (fg, bg) = if *pos == active {
+                (t.bg2, t.yellow)
+            } else {
+                (t.fg, t.bg2)
+            };
+            for dx in 0..btn_w {
+                let c = &mut buf[(bx + dx, y)];
+                c.set_char(if dx == 0 { pos.glyph() } else { ' ' });
+                c.set_style(Style::default().fg(fg).bg(bg));
+            }
+            buttons.push((
+                Rect {
+                    x: bx,
+                    y,
+                    width: btn_w,
+                    height: 1,
+                },
+                *pos,
+            ));
+        }
+    }
+}

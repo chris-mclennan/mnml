@@ -4117,6 +4117,63 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         }
         app.blur_scratch_term();
     }
+    // Mixr panel header — reposition buttons + drag-to-move.
+    {
+        let down_left = matches!(m.kind, MouseEventKind::Down(MouseButton::Left));
+        // A reposition-button click snaps straight to that anchor.
+        if down_left
+            && let Some(&(_, pos)) = app
+                .rects
+                .mixr_pos_buttons
+                .iter()
+                .find(|(r, _)| contains(*r, x, y))
+        {
+            if let Some(p) = app.mixr_panel.as_mut() {
+                p.pos = pos;
+            }
+            app.mixr_drag = None;
+            return;
+        }
+        // Mouse-down on the header (not a button) starts a drag.
+        if down_left
+            && let Some(hrect) = app.rects.mixr_panel_header
+            && contains(hrect, x, y)
+        {
+            app.mixr_drag = Some(crate::mixr_host::MixrPanelDrag {
+                grab_dx: x.saturating_sub(hrect.x),
+                grab_dy: y.saturating_sub(hrect.y),
+                x: hrect.x,
+                y: hrect.y,
+            });
+            return;
+        }
+        // Drag in progress — the panel follows the cursor.
+        if app.mixr_drag.is_some() && matches!(m.kind, MouseEventKind::Drag(MouseButton::Left)) {
+            if let Some(d) = app.mixr_drag.as_mut() {
+                d.x = x.saturating_sub(d.grab_dx);
+                d.y = y.saturating_sub(d.grab_dy);
+            }
+            return;
+        }
+        // Release — snap to the nearest anchor.
+        if app.mixr_drag.is_some() && matches!(m.kind, MouseEventKind::Up(MouseButton::Left)) {
+            if let (Some(d), Some(body), Some(cells)) =
+                (app.mixr_drag, app.rects.body, app.rects.mixr_panel)
+            {
+                let panel = ratatui::layout::Rect {
+                    x: d.x,
+                    y: d.y,
+                    width: cells.width,
+                    height: cells.height + 1,
+                };
+                if let Some(p) = app.mixr_panel.as_mut() {
+                    p.pos = crate::mixr_host::nearest_pos(body, panel);
+                }
+            }
+            app.mixr_drag = None;
+            return;
+        }
+    }
     // Native mixr panel — a click on it focuses + forwards; while
     // focused, every mouse event over its rect goes to mixr. A click
     // off the panel blurs it.
