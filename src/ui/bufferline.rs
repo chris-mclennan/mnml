@@ -132,6 +132,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             w
         })
         .collect();
+    // pty panes (Claude / Codex / shell) carry their own in-pane tab
+    // strip, so they don't also get a bufferline tab. `visible` is the
+    // ordered PaneIds the strip shows; `bufferline_first_visible` and
+    // the scroll math index into it, not `app.panes`.
+    let visible: Vec<usize> = (0..app.panes.len())
+        .filter(|&i| !matches!(app.panes[i], Pane::Pty(_)))
+        .collect();
     let sep = 1u16; // cell between tabs (rendered as the bg color)
     // Reserve 2 cells on each side of the tab strip for the overflow chevrons
     // when there's content past the edge.
@@ -144,18 +151,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Adjust `bufferline_first_visible` so it (a) doesn't run off the end of
     // the pane list, (b) includes the active tab, (c) is the smallest start
     // that keeps the active tab visible.
-    if app.bufferline_first_visible >= app.panes.len() {
-        app.bufferline_first_visible = app.panes.len().saturating_sub(1);
+    if app.bufferline_first_visible >= visible.len() {
+        app.bufferline_first_visible = visible.len().saturating_sub(1);
     }
-    if let Some(active) = app.active {
-        if active < app.bufferline_first_visible {
-            app.bufferline_first_visible = active;
+    if let Some(active_pos) = app
+        .active
+        .and_then(|a| visible.iter().position(|&p| p == a))
+    {
+        if active_pos < app.bufferline_first_visible {
+            app.bufferline_first_visible = active_pos;
         } else {
-            // Walk back from `active` while the cumulative width fits.
+            // Walk back from the active tab while the cumulative width fits.
             let mut used = 0u16;
-            let mut first = active;
+            let mut first = active_pos;
             loop {
-                let w = widths[first] + if first > 0 { sep } else { 0 };
+                let w = widths[visible[first]] + if first > 0 { sep } else { 0 };
                 if used + w > inner_width {
                     first += 1;
                     break;
@@ -200,7 +210,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut x = area.x + left_chev_used as u16;
     let mut last_drawn: usize = first_visible;
     let mut overflow_right = false;
-    for (i, pane) in app.panes.iter().enumerate().skip(first_visible) {
+    for vis_pos in first_visible..visible.len() {
+        let i = visible[vis_pos];
+        let pane = &app.panes[i];
         let active = app.active == Some(i);
         let name = labels[i].clone();
         let (glyph, icon_color) = match pane {
@@ -273,7 +285,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             overflow_right = true;
             break;
         }
-        last_drawn = i;
+        last_drawn = vis_pos;
         let (bg, name_fg, badge_fg) = if active {
             (
                 theme::cur().bg,
@@ -344,7 +356,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         x += cells;
         // thin separator into the strip background
-        if i + 1 < app.panes.len() {
+        if vis_pos + 1 < visible.len() {
             spans.push(Span::styled(
                 " ",
                 Style::default().bg(theme::cur().bg_darker),
@@ -352,7 +364,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             x += 1;
         }
     }
-    if app.panes.is_empty() {
+    if visible.is_empty() {
         spans.push(Span::styled(
             "  no buffers ",
             Style::default()
@@ -363,7 +375,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     // Are there tabs past the right edge? (Either we broke out of the render
     // loop, or there are tabs after the last one we drew that we never reached.)
-    let more_right = overflow_right || (last_drawn + 1 < app.panes.len());
+    let more_right = overflow_right || (last_drawn + 1 < visible.len());
     // fill the gap up to the cap, then the right overflow chevron (or a blank
     // cell when nothing's past the edge).
     let fill_end = inner_right;
