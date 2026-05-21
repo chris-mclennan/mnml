@@ -23,8 +23,23 @@ use ratatui::layout::Rect;
 use tmnl_protocol::{
     BUTTON_LEFT, BUTTON_MIDDLE, BUTTON_NONE, BUTTON_RIGHT, Frame, InputEvent,
     KeyCode as WireKeyCode, KeyInput, MOD_ALT, MOD_CTRL, MOD_SHIFT, MOD_SUPER, Message, MouseInput,
-    MouseKind, PROTOCOL_VERSION, Resize, read_message, write_message,
+    MouseKind, PROTOCOL_VERSION, Resize, pack_rgba_u8, read_message, write_message,
 };
+
+/// The host theme colors handed to a hosted mixr so it re-themes to
+/// match mnml — `(bg, fg, accent)`, each a packed-rgba u32 ready for
+/// `Message::Palette`. Built by [`pack_color`] from the active theme.
+pub type HostPalette = (u32, u32, u32);
+
+/// Pack a ratatui `Color` into the wire's rgba u32. mnml's theme
+/// colors are always `Color::Rgb`; any other variant (shouldn't
+/// occur for a theme color) falls back to opaque black.
+pub fn pack_color(c: ratatui::style::Color) -> u32 {
+    match c {
+        ratatui::style::Color::Rgb(r, g, b) => pack_rgba_u8(r, g, b, 0xff),
+        _ => pack_rgba_u8(0, 0, 0, 0xff),
+    }
+}
 
 /// One cell of mixr's screen, as received over the wire. `fg` / `bg`
 /// are packed rgba (`tmnl_protocol::unpack_rgba` decodes them);
@@ -200,9 +215,10 @@ pub struct MixrPanel {
 
 impl MixrPanel {
     /// Launch `mixr --blit <socket>` and host it; `cols`/`rows` is the
-    /// initial panel grid. Errors if the socket can't be bound or
-    /// `mixr` can't be spawned.
-    pub fn launch(cols: u16, rows: u16) -> Result<MixrPanel, String> {
+    /// initial panel grid. `palette` is mnml's active theme handed to
+    /// mixr on connect (see [`HostPalette`]) so it re-themes to match.
+    /// Errors if the socket can't be bound or `mixr` can't be spawned.
+    pub fn launch(cols: u16, rows: u16, palette: HostPalette) -> Result<MixrPanel, String> {
         let (cols, rows) = (cols.max(1), rows.max(1));
         let socket_path =
             std::env::temp_dir().join(format!("mnml-mixr-{}.sock", std::process::id()));
@@ -214,7 +230,9 @@ impl MixrPanel {
         let writer: Arc<Mutex<Option<UnixStream>>> = Arc::new(Mutex::new(None));
         let title: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let (writer_c, title_c) = (writer.clone(), title.clone());
-        thread::spawn(move || accept_loop(listener, cols, rows, frame_tx, writer_c, title_c));
+        thread::spawn(move || {
+            accept_loop(listener, cols, rows, palette, frame_tx, writer_c, title_c)
+        });
 
         let child = std::process::Command::new("mixr")
             .arg("--blit")
@@ -327,6 +345,7 @@ fn accept_loop(
     listener: UnixListener,
     init_cols: u16,
     init_rows: u16,
+    palette: HostPalette,
     frame_tx: Sender<Frame>,
     writer_slot: Arc<Mutex<Option<UnixStream>>>,
     title_slot: Arc<Mutex<Option<String>>>,
@@ -345,7 +364,8 @@ fn accept_loop(
             *guard = Some(stream);
         }
         // Greet the client + send the initial size — mixr's blit loop
-        // blocks on a `Resize` before it starts rendering.
+        // blocks on a `Resize` before it starts rendering — then hand
+        // over mnml's theme palette so mixr re-themes to match.
         if let Some(s) = writer_slot.lock().unwrap().as_mut() {
             let _ = write_message(
                 s,
@@ -360,6 +380,8 @@ fn accept_loop(
                     rows: init_rows,
                 }),
             );
+            let (bg, fg, accent) = palette;
+            let _ = write_message(s, &Message::Palette { bg, fg, accent });
         }
         let ftx = frame_tx.clone();
         let tslot = title_slot.clone();

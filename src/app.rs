@@ -11719,7 +11719,15 @@ impl App {
                 )
             })
             .unwrap_or((80, 22));
-        match crate::mixr_host::MixrPanel::launch(cols, rows) {
+        // Hand mixr mnml's active theme so it re-themes to match: the
+        // editor-body background, primary text, and an accent (blue).
+        let theme = crate::ui::theme::cur();
+        let palette = (
+            crate::mixr_host::pack_color(theme.bg_dark),
+            crate::mixr_host::pack_color(theme.fg),
+            crate::mixr_host::pack_color(theme.blue),
+        );
+        match crate::mixr_host::MixrPanel::launch(cols, rows, palette) {
             Ok(mut p) => {
                 p.focused = true;
                 self.mixr_panel = Some(p);
