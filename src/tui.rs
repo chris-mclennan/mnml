@@ -4195,6 +4195,51 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             return;
         }
     }
+    // Mixr panel — drag the free edge (away from the anchor) to
+    // resize the width.
+    {
+        if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+            && app
+                .rects
+                .mixr_resize_edge
+                .is_some_and(|r| contains(r, x, y))
+        {
+            app.mixr_resizing = true;
+            return;
+        }
+        if app.mixr_resizing {
+            match m.kind {
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    if let (Some(body), Some(pos)) =
+                        (app.rects.body, app.mixr_panel.as_ref().map(|p| p.pos))
+                    {
+                        use crate::mixr_host::MixrPos;
+                        // The anchored edge stays put; the dragged edge
+                        // follows the cursor → that span is the width.
+                        let w = match pos {
+                            MixrPos::TopRight | MixrPos::BottomRight => {
+                                (body.x + body.width).saturating_sub(x)
+                            }
+                            MixrPos::TopLeft | MixrPos::BottomLeft => x.saturating_sub(body.x),
+                            MixrPos::Center => {
+                                let cx = body.x + body.width / 2;
+                                x.saturating_sub(cx).saturating_mul(2)
+                            }
+                        };
+                        if let Some(p) = app.mixr_panel.as_mut() {
+                            p.custom_w = Some(w.clamp(24, body.width.max(24)));
+                        }
+                    }
+                    return;
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    app.mixr_resizing = false;
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
     // Native mixr panel — a click on it focuses + forwards; while
     // focused, every mouse event over its rect goes to mixr. A click
     // off the panel blurs it.

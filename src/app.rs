@@ -1948,9 +1948,12 @@ pub struct PaneRects {
     pub mixr_panel_header: Option<Rect>,
     /// Reposition buttons in the header — `(rect, target anchor)`.
     pub mixr_pos_buttons: Vec<(Rect, crate::mixr_host::MixrPos)>,
-    /// Header `‹` / `›` width buttons (narrower / wider).
+    /// Header `-` / `+` width buttons (narrower / wider).
     pub mixr_width_minus: Option<Rect>,
     pub mixr_width_plus: Option<Rect>,
+    /// The floating panel's free-edge resize strip (cell-area rows) —
+    /// drag it to resize the width.
+    pub mixr_resize_edge: Option<Rect>,
     /// `LSP {N}` chip — click opens `:LspStatus`.
     pub statusline_lsp_chip: Option<Rect>,
     /// `WRAP` chip — click toggles `[ui] wrap`.
@@ -2644,6 +2647,8 @@ pub struct App {
     /// In-progress drag of the floating mixr panel by its header —
     /// `Some` between mouse-down on the header and release.
     pub mixr_drag: Option<crate::mixr_host::MixrPanelDrag>,
+    /// True while dragging the floating panel's free edge to resize.
+    pub mixr_resizing: bool,
     /// True when mnml is running as a tmnl native client (`--blit`).
     /// `mixr.show` reads it to route mixr to a sibling tmnl pane (via
     /// `OpenPane`) rather than nesting it as a pty pane.
@@ -3315,6 +3320,7 @@ impl App {
             now_playing_rx: None,
             mixr_panel: None,
             mixr_drag: None,
+            mixr_resizing: false,
             under_tmnl: false,
             pending_open_panes: Vec::new(),
             hover_chip: None,

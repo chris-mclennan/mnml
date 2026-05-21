@@ -311,6 +311,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // layout underneath. `Minimized` = hidden (just the ♪ chip).
     let mut mixr_area: Option<Rect> = None;
     let mut mixr_header: Option<Rect> = None;
+    let mut mixr_resize_edge: Option<Rect> = None;
     app.rects.mixr_pos_buttons.clear();
     if let Some(size) = app.mixr_panel.as_ref().map(|p| p.size) {
         use crate::mixr_host::MixrSize;
@@ -367,6 +368,29 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                         width: panel.width,
                         height: panel.height - 1,
                     });
+                    // Resize strip — the free edge (away from the
+                    // anchor), over the cell-area rows only so it
+                    // doesn't shadow the header buttons.
+                    let pos = app
+                        .mixr_panel
+                        .as_ref()
+                        .map(|p| p.pos)
+                        .unwrap_or(crate::mixr_host::MixrPos::BottomRight);
+                    let edge_x = if matches!(
+                        pos,
+                        crate::mixr_host::MixrPos::TopRight
+                            | crate::mixr_host::MixrPos::BottomRight
+                    ) {
+                        panel.x
+                    } else {
+                        panel.x + panel.width - 1
+                    };
+                    mixr_resize_edge = Some(Rect {
+                        x: edge_x,
+                        y: panel.y + 1,
+                        width: 1,
+                        height: panel.height - 1,
+                    });
                 }
             }
             MixrSize::Minimized => {}
@@ -374,6 +398,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     app.rects.mixr_panel = mixr_area;
     app.rects.mixr_panel_header = mixr_header;
+    app.rects.mixr_resize_edge = mixr_resize_edge;
     app.rects.body = Some(body_area);
     app.rects.editor_panes.clear();
     app.rects.editor_gutters.clear();
