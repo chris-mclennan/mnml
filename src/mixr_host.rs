@@ -173,6 +173,9 @@ pub struct MixrPanel {
     pub focused: bool,
     /// Where the floating (`Short` / `Medium`) panel is anchored.
     pub pos: MixrPos,
+    /// User-set overlay width (columns) from the header `‹ ›` buttons;
+    /// `None` ⇒ the default half-body width.
+    pub custom_w: Option<u16>,
 }
 
 impl MixrPanel {
@@ -212,6 +215,7 @@ impl MixrPanel {
             size: MixrSize::Short,
             focused: false,
             pos: MixrPos::BottomRight,
+            custom_w: None,
         })
     }
 

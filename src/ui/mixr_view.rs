@@ -60,14 +60,19 @@ pub fn draw(frame: &mut Frame, panel: &MixrPanel, area: Rect) {
 }
 
 /// Draw the floating panel's 1-row header — a drag handle carrying the
-/// five reposition buttons. Pushes each button's `(rect, anchor)`.
+/// `‹` `›` width controls and the five reposition buttons. Registers
+/// each button's rect.
 pub fn draw_header(
     frame: &mut Frame,
     header: Rect,
     active: crate::mixr_host::MixrPos,
-    buttons: &mut Vec<(Rect, crate::mixr_host::MixrPos)>,
+    pos_buttons: &mut Vec<(Rect, crate::mixr_host::MixrPos)>,
+    width_minus: &mut Option<Rect>,
+    width_plus: &mut Option<Rect>,
 ) {
     use crate::mixr_host::MixrPos;
+    *width_minus = None;
+    *width_plus = None;
     if header.height == 0 || header.width == 0 {
         return;
     }
@@ -81,7 +86,7 @@ pub fn draw_header(
         c.set_style(Style::default().bg(t.bg2));
     }
     // Label / drag hint.
-    for (i, ch) in " ♪ mixr — drag to move".chars().enumerate() {
+    for (i, ch) in " ♪ mixr — drag".chars().enumerate() {
         let x = header.x + i as u16;
         if x >= header.x + header.width {
             break;
@@ -90,32 +95,53 @@ pub fn draw_header(
         c.set_char(ch);
         c.set_style(Style::default().fg(t.comment).bg(t.bg2));
     }
-    // Reposition buttons, right-aligned: ▘ ▝ ▖ ▗ ◆
     let btn_w: u16 = 2;
-    let total = MixrPos::ALL.len() as u16 * btn_w;
-    if header.width >= total + 6 {
-        let start = header.x + header.width - total;
-        for (i, pos) in MixrPos::ALL.iter().enumerate() {
-            let bx = start + i as u16 * btn_w;
-            let (fg, bg) = if *pos == active {
-                (t.bg2, t.yellow)
-            } else {
-                (t.fg, t.bg2)
-            };
-            for dx in 0..btn_w {
-                let c = &mut buf[(bx + dx, y)];
-                c.set_char(if dx == 0 { pos.glyph() } else { ' ' });
-                c.set_style(Style::default().fg(fg).bg(bg));
-            }
-            buttons.push((
-                Rect {
-                    x: bx,
-                    y,
-                    width: btn_w,
-                    height: 1,
-                },
-                *pos,
-            ));
+    let pos_total = MixrPos::ALL.len() as u16 * btn_w;
+    let width_total = 2 * btn_w;
+    if header.width < pos_total + width_total + 12 {
+        return;
+    }
+    let mut paint = |bx: u16, glyph: char, fg: Color, bg: Color| {
+        for dx in 0..btn_w {
+            let c = &mut buf[(bx + dx, y)];
+            c.set_char(if dx == 0 { glyph } else { ' ' });
+            c.set_style(Style::default().fg(fg).bg(bg));
         }
+    };
+    // Width controls `‹ ›`, then a 1-col gap, then the anchor buttons.
+    let w_start = header.x + header.width - pos_total - 1 - width_total;
+    paint(w_start, '‹', t.fg, t.bg2);
+    paint(w_start + btn_w, '›', t.fg, t.bg2);
+    *width_minus = Some(Rect {
+        x: w_start,
+        y,
+        width: btn_w,
+        height: 1,
+    });
+    *width_plus = Some(Rect {
+        x: w_start + btn_w,
+        y,
+        width: btn_w,
+        height: 1,
+    });
+    // Anchor buttons, far right: ▘ ▝ ▖ ▗ ◆
+    let p_start = header.x + header.width - pos_total;
+    for (i, pos) in MixrPos::ALL.iter().enumerate() {
+        let bx = p_start + i as u16 * btn_w;
+        let (fg, bg) = if *pos == active {
+            (t.bg2, t.yellow)
+        } else {
+            (t.fg, t.bg2)
+        };
+        paint(bx, pos.glyph(), fg, bg);
+        pos_buttons.push((
+            Rect {
+                x: bx,
+                y,
+                width: btn_w,
+                height: 1,
+            },
+            *pos,
+        ));
     }
 }

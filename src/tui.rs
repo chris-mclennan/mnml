@@ -4117,9 +4117,30 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         }
         app.blur_scratch_term();
     }
-    // Mixr panel header — reposition buttons + drag-to-move.
+    // Mixr panel header — width buttons, reposition buttons, drag.
     {
         let down_left = matches!(m.kind, MouseEventKind::Down(MouseButton::Left));
+        // `‹` / `›` width buttons — step the overlay narrower / wider.
+        if down_left {
+            let minus = app
+                .rects
+                .mixr_width_minus
+                .is_some_and(|r| contains(r, x, y));
+            let plus = app.rects.mixr_width_plus.is_some_and(|r| contains(r, x, y));
+            if minus || plus {
+                let body_w = app.rects.body.map(|b| b.width).unwrap_or(80);
+                if let Some(p) = app.mixr_panel.as_mut() {
+                    let cur = p.custom_w.unwrap_or(body_w / 2);
+                    let next = if plus {
+                        cur.saturating_add(8)
+                    } else {
+                        cur.saturating_sub(8)
+                    };
+                    p.custom_w = Some(next.clamp(24, body_w.max(24)));
+                }
+                return;
+            }
+        }
         // A reposition-button click snaps straight to that anchor.
         if down_left
             && let Some(&(_, pos)) = app

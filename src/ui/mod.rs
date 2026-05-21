@@ -333,7 +333,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 } else {
                     crate::mixr_host::SHORT_ROWS
                 };
-                let w = body_area.width / 2;
+                let w = app
+                    .mixr_panel
+                    .as_ref()
+                    .and_then(|p| p.custom_w)
+                    .map(|cw| cw.clamp(24, body_area.width.max(24)))
+                    .unwrap_or(body_area.width / 2);
                 let h = rows.min(body_area.height);
                 if w >= 12 && h >= 4 {
                     // The drag's free spot if dragging, else the anchor.
@@ -415,7 +420,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             .as_ref()
             .map(|p| p.pos)
             .unwrap_or(crate::mixr_host::MixrPos::BottomRight);
-        mixr_view::draw_header(frame, harea, active, &mut app.rects.mixr_pos_buttons);
+        mixr_view::draw_header(
+            frame,
+            harea,
+            active,
+            &mut app.rects.mixr_pos_buttons,
+            &mut app.rects.mixr_width_minus,
+            &mut app.rects.mixr_width_plus,
+        );
     }
     if let Some(marea) = mixr_area
         && let Some(panel) = app.mixr_panel.as_ref()

@@ -1948,6 +1948,9 @@ pub struct PaneRects {
     pub mixr_panel_header: Option<Rect>,
     /// Reposition buttons in the header — `(rect, target anchor)`.
     pub mixr_pos_buttons: Vec<(Rect, crate::mixr_host::MixrPos)>,
+    /// Header `‹` / `›` width buttons (narrower / wider).
+    pub mixr_width_minus: Option<Rect>,
+    pub mixr_width_plus: Option<Rect>,
     /// `LSP {N}` chip — click opens `:LspStatus`.
     pub statusline_lsp_chip: Option<Rect>,
     /// `WRAP` chip — click toggles `[ui] wrap`.
