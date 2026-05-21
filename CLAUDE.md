@@ -83,6 +83,25 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**mixr now-playing chip on the statusline (2026-05-20):** a `♪`
+chip on the statusline right lane — doubling as the mixr launch
+button *and* a miniplayer. New `mixr_status` module parses the
+flat `key=value` summary the sibling `mixr-rs` DJ app already
+writes to `~/.mixr/quick.txt` on every render (purpose-built
+for a cheap external read, alongside the richer `status.json`):
+`MixrStatus` — state / playing / playing_bpm / playing_time /
+incoming; a tolerant `parse` (unknown keys ignored, the `—`
+"nothing" sentinel normalized to empty, never panics on a
+half-written file) + `read()` → `None` when the file is absent
+(mixr never ran). The statusline renders `♪ <track>` (purple)
+when mixr is playing, `♪ mixr` (muted) otherwise; clicking the
+chip runs `mixr.show` to open / focus the mixr pane. New
+`app.rects.statusline_mixr_chip`. No mixr-side change — it
+already writes `quick.txt`, the same decoupled file-IPC shape
+as mnml's own channel. Read in the render path for now (a
+141-byte file); throttling into `tick` is a noted follow-up.
+708 lib tests (+4) + clippy green.
+
 **private CodeBuild correlation fix + more mouse coverage (2026-05-20):**
 two items. (1) **CodeBuild correlation fixed** — the top-level
 `TestExecutions` doc has no `build_id` (it's a batch run); the

@@ -1938,6 +1938,9 @@ pub struct PaneRects {
     pub statusline_workspace_chip: Option<Rect>,
     /// Statusline clock chip — clickable shortcut to toggle local ↔ UTC.
     pub statusline_clock_chip: Option<Rect>,
+    /// `♪` mixr chip — the now-playing miniplayer + launch button;
+    /// click opens `mixr.show`.
+    pub statusline_mixr_chip: Option<Rect>,
     /// `LSP {N}` chip — click opens `:LspStatus`.
     pub statusline_lsp_chip: Option<Rect>,
     /// `WRAP` chip — click toggles `[ui] wrap`.

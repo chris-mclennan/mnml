@@ -289,6 +289,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut lncol_seg_idx: Option<usize> = None;
     app.rects.statusline_workspace_chip = None;
     app.rects.statusline_clock_chip = None;
+    app.rects.statusline_mixr_chip = None;
     app.rects.statusline_lsp_chip = None;
     app.rects.statusline_wrap_chip = None;
     app.rects.statusline_autosave_chip = None;
@@ -385,6 +386,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             ));
         }
     }
+    // mixr now-playing chip — doubles as the launch button. Reads the
+    // sibling DJ app's ~/.mixr/quick.txt (a cheap 141-byte file; absent
+    // ⇒ the plain `♪ mixr` button). Click → `mixr.show`. Read in render
+    // for simplicity; throttling it into `tick` is a fine follow-up.
+    let mixr_seg_idx = {
+        let (label, fg) = match crate::mixr_status::read() {
+            Some(s) if s.is_playing() => {
+                let shown: String = if s.playing.chars().count() > 24 {
+                    s.playing
+                        .chars()
+                        .take(23)
+                        .chain(std::iter::once('…'))
+                        .collect()
+                } else {
+                    s.playing
+                };
+                (format!(" ♪ {shown} "), theme::cur().purple)
+            }
+            _ => (" ♪ mixr ".to_string(), theme::cur().comment),
+        };
+        let idx = right.len();
+        right.push(Seg::new(label, fg, theme::cur().bg2));
+        idx
+    };
     // Optional clock chip (HH:MM, local time). On by default — costs
     // ~0 (a single SystemTime call per render + one cached offset lookup).
     // `[ui] clock = false` to turn off. `TZ_OFFSET_HOURS` env var still
@@ -499,6 +524,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         })
     };
+    app.rects.statusline_mixr_chip = to_rect(Some(mixr_seg_idx), &right_rects);
     app.rects.statusline_lsp_chip = to_rect(lsp_seg_idx, &right_rects);
     app.rects.statusline_wrap_chip = to_rect(wrap_seg_idx, &right_rects);
     app.rects.statusline_autosave_chip = to_rect(autosave_seg_idx, &right_rects);

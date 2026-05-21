@@ -4813,6 +4813,13 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 });
                 return;
             }
+            // mixr chip → open / focus the mixr DJ pane.
+            if let Some(r) = app.rects.statusline_mixr_chip
+                && contains(r, x, y)
+            {
+                command::run("mixr.show", app);
+                return;
+            }
             // LSP chip → :LspStatus toast (breakdown of running servers).
             if let Some(r) = app.rects.statusline_lsp_chip
                 && contains(r, x, y)
