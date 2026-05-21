@@ -83,6 +83,25 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**mixr.show opens a native mixr panel inside mnml (2026-05-21):**
+supersedes the day's earlier sibling-tmnl-pane approach — mnml now
+*hosts* mixr itself, playing the tmnl-protocol *server* role (the
+mirror of its own `blit` client). New `mixr_host` module:
+`MixrPanel::launch` binds a Unix socket, spawns `mixr --blit
+<socket>`, greets it (Hello + Resize), and a reader thread pumps
+`Frame`s; `drain_frames` applies them diff-aware to a `MixrCell`
+buffer. `mixr.show` launches the panel on first call, then toggles
+shown↔minimized (the `♪` chip is the minimized state, and clicking
+it already runs `mixr.show`). `ui::draw` carves the right half of
+the body for it — the editor layout reflows into the left half —
+and `ui/mixr_view.rs` paints mixr's streamed cells. When the panel
+is focused, keys + mouse route to mixr over the wire
+(`mixr_host::crossterm_{key,mouse}_to_input`); Esc unfocuses, a
+click off the panel blurs it. Works the same whether mnml is
+standalone or itself running under tmnl — mnml is always the host.
+The earlier `OpenPane` plumbing (tmnl-protocol / tmnl) is left in
+place, unused. 713 lib tests + clippy green.
+
 **mixr.show opens mixr as a sibling tmnl pane (2026-05-21):**
 completes "Option C" of the mixr-native plan — under tmnl, mixr
 runs as its own native pane beside mnml, not nested as an mnml

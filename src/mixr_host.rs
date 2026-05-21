@@ -15,8 +15,14 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use ratatui::crossterm::event::{
+    KeyCode as CtKeyCode, KeyEvent as CtKeyEvent, KeyModifiers as CtKeyMods,
+    MouseButton as CtMouseButton, MouseEvent as CtMouseEvent, MouseEventKind as CtMouseKind,
+};
 use tmnl_protocol::{
-    Frame, InputEvent, Message, PROTOCOL_VERSION, Resize, read_message, write_message,
+    BUTTON_LEFT, BUTTON_MIDDLE, BUTTON_NONE, BUTTON_RIGHT, Frame, InputEvent,
+    KeyCode as WireKeyCode, KeyInput, MOD_ALT, MOD_CTRL, MOD_SHIFT, MOD_SUPER, Message, MouseInput,
+    MouseKind, PROTOCOL_VERSION, Resize, read_message, write_message,
 };
 
 /// One cell of mixr's screen, as received over the wire. `fg` / `bg`
@@ -255,6 +261,77 @@ fn reader_loop(
         }
     }
     *writer_slot.lock().unwrap() = None;
+}
+
+/// Translate a crossterm `KeyEvent` into a wire `InputEvent` for the
+/// hosted mixr client. `None` for keys the protocol doesn't carry.
+pub fn crossterm_key_to_input(key: &CtKeyEvent) -> Option<InputEvent> {
+    let code = match key.code {
+        CtKeyCode::Char(c) => WireKeyCode::Char(c),
+        CtKeyCode::Backspace => WireKeyCode::Backspace,
+        CtKeyCode::Enter => WireKeyCode::Enter,
+        CtKeyCode::Left => WireKeyCode::Left,
+        CtKeyCode::Right => WireKeyCode::Right,
+        CtKeyCode::Up => WireKeyCode::Up,
+        CtKeyCode::Down => WireKeyCode::Down,
+        CtKeyCode::Home => WireKeyCode::Home,
+        CtKeyCode::End => WireKeyCode::End,
+        CtKeyCode::PageUp => WireKeyCode::PageUp,
+        CtKeyCode::PageDown => WireKeyCode::PageDown,
+        CtKeyCode::Tab => WireKeyCode::Tab,
+        CtKeyCode::BackTab => WireKeyCode::BackTab,
+        CtKeyCode::Delete => WireKeyCode::Delete,
+        CtKeyCode::Insert => WireKeyCode::Insert,
+        CtKeyCode::Esc => WireKeyCode::Esc,
+        CtKeyCode::F(n) => WireKeyCode::F(n),
+        _ => return None,
+    };
+    let m = key.modifiers;
+    let mut mods = 0u8;
+    if m.contains(CtKeyMods::SHIFT) {
+        mods |= MOD_SHIFT;
+    }
+    if m.contains(CtKeyMods::CONTROL) {
+        mods |= MOD_CTRL;
+    }
+    if m.contains(CtKeyMods::ALT) {
+        mods |= MOD_ALT;
+    }
+    if m.contains(CtKeyMods::SUPER) {
+        mods |= MOD_SUPER;
+    }
+    Some(InputEvent::Key(KeyInput {
+        code,
+        mods,
+        press: true,
+    }))
+}
+
+/// Translate a crossterm `MouseEvent` into a wire `InputEvent`.
+/// `col`/`row` must already be panel-local.
+pub fn crossterm_mouse_to_input(ev: &CtMouseEvent, col: u16, row: u16) -> InputEvent {
+    let button = |b: CtMouseButton| match b {
+        CtMouseButton::Left => BUTTON_LEFT,
+        CtMouseButton::Right => BUTTON_RIGHT,
+        CtMouseButton::Middle => BUTTON_MIDDLE,
+    };
+    let (kind, btn) = match ev.kind {
+        CtMouseKind::Down(b) => (MouseKind::Down, button(b)),
+        CtMouseKind::Up(b) => (MouseKind::Up, button(b)),
+        CtMouseKind::Drag(b) => (MouseKind::Drag, button(b)),
+        CtMouseKind::Moved => (MouseKind::Moved, BUTTON_NONE),
+        CtMouseKind::ScrollUp => (MouseKind::ScrollUp, BUTTON_NONE),
+        CtMouseKind::ScrollDown => (MouseKind::ScrollDown, BUTTON_NONE),
+        CtMouseKind::ScrollLeft => (MouseKind::ScrollLeft, BUTTON_NONE),
+        CtMouseKind::ScrollRight => (MouseKind::ScrollRight, BUTTON_NONE),
+    };
+    InputEvent::Mouse(MouseInput {
+        kind,
+        button: btn,
+        col,
+        row,
+        mods: 0,
+    })
 }
 
 #[cfg(test)]

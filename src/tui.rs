@@ -270,6 +270,20 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // Native mixr panel — when focused, route keys to mixr over the
+    // wire (Esc leaves; the `♪` chip still toggles it via the mouse).
+    if let Some(p) = app.mixr_panel.as_mut()
+        && p.focused
+    {
+        if key.code == KeyCode::Esc {
+            p.focused = false;
+            return;
+        }
+        if let Some(ev) = crate::mixr_host::crossterm_key_to_input(&key) {
+            p.send_input(ev);
+        }
+        return;
+    }
     // Macro recording — capture every keystroke that flows through here.
     // Replaying explicitly skips this so it doesn't re-record into a new
     // macro mid-replay.
@@ -4102,6 +4116,33 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             return;
         }
         app.blur_scratch_term();
+    }
+    // Native mixr panel — a click on it focuses + forwards; while
+    // focused, every mouse event over its rect goes to mixr. A click
+    // off the panel blurs it.
+    if let Some(mrect) = app.rects.mixr_panel {
+        let inside = contains(mrect, x, y);
+        let down = matches!(m.kind, MouseEventKind::Down(_));
+        let focused = app.mixr_panel.as_ref().is_some_and(|p| p.focused);
+        if inside && (down || focused) {
+            if let Some(p) = app.mixr_panel.as_mut() {
+                if down {
+                    p.focused = true;
+                }
+                p.send_input(crate::mixr_host::crossterm_mouse_to_input(
+                    &m,
+                    x - mrect.x,
+                    y - mrect.y,
+                ));
+            }
+            return;
+        }
+        if down
+            && !inside
+            && let Some(p) = app.mixr_panel.as_mut()
+        {
+            p.focused = false;
+        }
     }
     // A click anywhere dismisses the hover / signature popups (the click
     // still lands). Completion popup clicks are handled specially: a click

@@ -2628,8 +2628,7 @@ pub struct App {
     /// `start_now_playing_poller` has run — from the real terminal
     /// loop only, so no `osascript` subprocess spawns under headless /
     /// e2e. `tick` drains it into `now_playing`.
-    pub now_playing_rx:
-        Option<std::sync::mpsc::Receiver<Option<crate::now_playing::NowPlaying>>>,
+    pub now_playing_rx: Option<std::sync::mpsc::Receiver<Option<crate::now_playing::NowPlaying>>>,
     /// The native mixr panel — mnml hosts `mixr --blit` and renders it
     /// as a right-docked half-width panel. `None` until `mixr.show`
     /// first launches it; then it persists (minimize hides it, it
@@ -11683,11 +11682,13 @@ impl App {
             return;
         }
         if let Some(p) = self.mixr_panel.as_mut() {
-            p.size = if p.size == crate::mixr_host::MixrSize::Minimized {
-                crate::mixr_host::MixrSize::Short
+            if p.size == crate::mixr_host::MixrSize::Minimized {
+                p.size = crate::mixr_host::MixrSize::Short;
+                p.focused = true;
             } else {
-                crate::mixr_host::MixrSize::Minimized
-            };
+                p.size = crate::mixr_host::MixrSize::Minimized;
+                p.focused = false;
+            }
             return;
         }
         // First open — launch `mixr --blit` sized to the right half of
@@ -11698,7 +11699,10 @@ impl App {
             .map(|b| (b.width / 2, b.height))
             .unwrap_or((48, 24));
         match crate::mixr_host::MixrPanel::launch(cols, rows) {
-            Ok(p) => self.mixr_panel = Some(p),
+            Ok(mut p) => {
+                p.focused = true;
+                self.mixr_panel = Some(p);
+            }
             Err(e) => self.toast(format!("mixr: {e}")),
         }
     }
