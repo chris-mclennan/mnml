@@ -281,6 +281,31 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // ── right ──
     let mut right: Vec<Seg> = Vec::new();
+    // Now-playing chip — pushed first so it's the leftmost segment of
+    // the right cluster (closer to centre). Doubles as the mixr launch
+    // button: shows the track from whatever player the background
+    // poller found (mixr / macOS Music / Spotify), `♪ mixr` when idle.
+    // Click → `mixr.show`. Data is `App.now_playing`.
+    let mixr_seg_idx = {
+        let (label, fg) = match &app.now_playing {
+            Some(np) if np.playing => {
+                let shown: String = if np.track.chars().count() > 24 {
+                    np.track
+                        .chars()
+                        .take(23)
+                        .chain(std::iter::once('…'))
+                        .collect()
+                } else {
+                    np.track.clone()
+                };
+                (format!(" ♪ {shown} "), theme::cur().purple)
+            }
+            _ => (" ♪ mixr ".to_string(), theme::cur().comment),
+        };
+        let idx = right.len();
+        right.push(Seg::new(label, fg, theme::cur().bg2));
+        idx
+    };
     let mut clock_seg_idx: Option<usize> = None;
     let mut lsp_seg_idx: Option<usize> = None;
     let mut wrap_seg_idx: Option<usize> = None;
@@ -386,31 +411,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             ));
         }
     }
-    // Now-playing chip — doubles as the mixr launch button. Shows the
-    // track from whatever player the background poller found (mixr, or
-    // macOS Music / Spotify); `♪ mixr` when nothing's playing. Click →
-    // `mixr.show`. Data is `App.now_playing`, refreshed off the render
-    // path by the `now_playing` poller thread.
-    let mixr_seg_idx = {
-        let (label, fg) = match &app.now_playing {
-            Some(np) if np.playing => {
-                let shown: String = if np.track.chars().count() > 24 {
-                    np.track
-                        .chars()
-                        .take(23)
-                        .chain(std::iter::once('…'))
-                        .collect()
-                } else {
-                    np.track.clone()
-                };
-                (format!(" ♪ {shown} "), theme::cur().purple)
-            }
-            _ => (" ♪ mixr ".to_string(), theme::cur().comment),
-        };
-        let idx = right.len();
-        right.push(Seg::new(label, fg, theme::cur().bg2));
-        idx
-    };
     // Optional clock chip (HH:MM, local time). On by default — costs
     // ~0 (a single SystemTime call per render + one cached offset lookup).
     // `[ui] clock = false` to turn off. `TZ_OFFSET_HOURS` env var still
