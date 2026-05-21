@@ -3,14 +3,27 @@
 //! The sibling `mixr-rs` DJ app writes a flat `key=value` status
 //! summary to `~/.mixr/quick.txt` on every render — purpose-built for
 //! a cheap external read (alongside the richer `status.json`). An
-//! absent file ⇒ `None` (mixr has never run).
+//! absent file ⇒ `None` (mixr has never run); a *stale* file ⇒ `None`
+//! too (mixr exited and left the file behind — see [`STALE_AFTER`]).
 
 use super::NowPlaying;
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// mixr's em-dash "nothing" sentinel — `quick.txt` writes `—` for an
 /// empty deck; [`project`] normalizes it to an empty string.
 const NONE_SENTINEL: &str = "—";
+
+/// How long after `quick.txt`'s last write we treat it as stale. mixr
+/// rewrites the file on every render — many times a second — for as
+/// long as it's alive, so anything older than this means mixr has
+/// exited and the file is a leftover. Without this guard a dead
+/// mixr's last track is reported as "now playing" forever, masking
+/// every other source (the bug: the chip stuck on an old mixr track
+/// while Apple Music was actually playing). mnml SIGKILLs the hosted
+/// mixr on close, so mixr can't clear the file itself — freshness is
+/// the only reliable signal.
+const STALE_AFTER: Duration = Duration::from_secs(10);
 
 /// Path to mixr's quick-status file (`~/.mixr/quick.txt`).
 fn quick_path() -> Option<PathBuf> {
@@ -19,9 +32,21 @@ fn quick_path() -> Option<PathBuf> {
 }
 
 /// Read + project mixr's current state into a [`NowPlaying`]. `None`
-/// when `$HOME` is unset or the file is absent.
+/// when `$HOME` is unset, the file is absent, or the file is stale
+/// (older than [`STALE_AFTER`] — mixr is no longer running).
 pub fn poll() -> Option<NowPlaying> {
-    let text = std::fs::read_to_string(quick_path()?).ok()?;
+    let path = quick_path()?;
+    // Stale-file guard: a dead mixr leaves quick.txt behind with its
+    // last track still in it. A future mtime (clock skew) counts as
+    // fresh; a missing file / unreadable mtime ⇒ not fresh ⇒ `None`.
+    let fresh = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .map(|t| t.elapsed().map(|age| age <= STALE_AFTER).unwrap_or(true))
+        .unwrap_or(false);
+    if !fresh {
+        return None;
+    }
+    let text = std::fs::read_to_string(&path).ok()?;
     Some(project(&text))
 }
 
