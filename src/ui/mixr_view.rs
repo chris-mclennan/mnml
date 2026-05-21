@@ -108,10 +108,13 @@ pub fn draw_header(
             c.set_style(Style::default().fg(fg).bg(bg));
         }
     };
-    // Width controls `‹ ›`, then a 1-col gap, then the anchor buttons.
+    // Width controls `- +` — non-directional, so they read the same
+    // whichever corner the panel is anchored to (`‹ ›` arrows fought
+    // the anchor: a right-pinned panel grows leftward). Then a 1-col
+    // gap, then the anchor buttons.
     let w_start = header.x + header.width - pos_total - 1 - width_total;
-    paint(w_start, '‹', t.fg, t.bg2);
-    paint(w_start + btn_w, '›', t.fg, t.bg2);
+    paint(w_start, '-', t.fg, t.bg2);
+    paint(w_start + btn_w, '+', t.fg, t.bg2);
     *width_minus = Some(Rect {
         x: w_start,
         y,
