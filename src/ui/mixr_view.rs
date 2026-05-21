@@ -128,12 +128,10 @@ pub fn draw_header(
     let p_start = header.x + header.width - pos_total;
     for (i, pos) in MixrPos::ALL.iter().enumerate() {
         let bx = p_start + i as u16 * btn_w;
-        let (fg, bg) = if *pos == active {
-            (t.bg2, t.yellow)
-        } else {
-            (t.fg, t.bg2)
-        };
-        paint(bx, pos.glyph(), fg, bg);
+        // Active anchor = a yellow glyph (not a loud full-yellow
+        // cell); the others a dim glyph. Header bg stays uniform.
+        let fg = if *pos == active { t.yellow } else { t.comment };
+        paint(bx, pos.glyph(), fg, t.bg2);
         pos_buttons.push((
             Rect {
                 x: bx,
