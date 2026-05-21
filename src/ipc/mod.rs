@@ -426,6 +426,110 @@ mod tests {
     }
 
     #[test]
+    fn parse_command_covers_every_arm() {
+        use IpcCommand::*;
+        assert!(matches!(
+            parse_command(r#"{"cmd":"open","path":"a.txt"}"#),
+            Open(_)
+        ));
+        assert!(matches!(parse_command(r#"{"cmd":"open"}"#), Unknown(_)));
+        assert!(matches!(
+            parse_command(r#"{"cmd":"key","key":"ctrl+s"}"#),
+            Key(_)
+        ));
+        assert!(matches!(parse_command(r#"{"cmd":"key"}"#), Unknown(_)));
+        assert!(matches!(parse_command(r#"{"cmd":"type"}"#), Unknown(_)));
+        assert!(matches!(parse_command(r#"{"cmd":"snapshot"}"#), Snapshot));
+        assert!(matches!(parse_command(r#"{"cmd":"quit"}"#), Quit));
+        assert!(matches!(parse_command(r#"{"cmd":"restart"}"#), Restart));
+        assert!(matches!(parse_command(r#"{"cmd":"bogus"}"#), Unknown(_)));
+        // Malformed JSON ⇒ Unknown, never a panic.
+        assert!(matches!(parse_command("not json at all"), Unknown(_)));
+        assert!(matches!(parse_command("{"), Unknown(_)));
+    }
+
+    #[test]
+    fn poll_reads_complete_lines_then_advances_the_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ipc = Ipc::init(dir.path()).unwrap();
+        std::fs::write(
+            &ipc.cmd_path,
+            "{\"cmd\":\"quit\"}\n{\"cmd\":\"snapshot\"}\n",
+        )
+        .unwrap();
+        assert_eq!(ipc.poll().len(), 2);
+        // Already consumed — a second poll with no new bytes yields nothing.
+        assert!(ipc.poll().is_empty());
+    }
+
+    #[test]
+    fn poll_holds_a_partial_line_until_its_newline_arrives() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ipc = Ipc::init(dir.path()).unwrap();
+        // A line with no trailing newline is not yet a command.
+        std::fs::write(&ipc.cmd_path, "{\"cmd\":\"quit\"}").unwrap();
+        assert!(ipc.poll().is_empty(), "partial line must not be consumed");
+        // The host finishes the line — now it parses.
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&ipc.cmd_path)
+            .unwrap();
+        f.write_all(b"\n").unwrap();
+        drop(f);
+        assert_eq!(ipc.poll().len(), 1);
+    }
+
+    #[test]
+    fn poll_skips_blank_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ipc = Ipc::init(dir.path()).unwrap();
+        std::fs::write(&ipc.cmd_path, "\n\n{\"cmd\":\"quit\"}\n\n").unwrap();
+        assert_eq!(ipc.poll().len(), 1);
+    }
+
+    #[test]
+    fn poll_resets_when_the_command_file_is_truncated() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ipc = Ipc::init(dir.path()).unwrap();
+        std::fs::write(
+            &ipc.cmd_path,
+            "{\"cmd\":\"snapshot\"}\n{\"cmd\":\"snapshot\"}\n",
+        )
+        .unwrap();
+        assert_eq!(ipc.poll().len(), 2);
+        // The host rewrote (truncated) the channel — `len < offset` ⇒
+        // start over rather than miss the new content.
+        std::fs::write(&ipc.cmd_path, "{\"cmd\":\"quit\"}\n").unwrap();
+        assert_eq!(ipc.poll().len(), 1);
+    }
+
+    #[test]
+    fn apply_restart_sets_both_restart_and_quit() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Config::default()).unwrap();
+        apply(&mut app, &IpcCommand::Restart);
+        assert!(app.should_quit);
+        assert!(app.restart_requested);
+    }
+
+    #[test]
+    fn json_str_escapes_the_dangerous_characters() {
+        assert_eq!(json_str("plain"), "\"plain\"");
+        assert_eq!(json_str("a\"b"), "\"a\\\"b\"");
+        assert_eq!(json_str("a\\b"), "\"a\\\\b\"");
+        assert_eq!(json_str("line\nbreak"), "\"line\\nbreak\"");
+        assert_eq!(json_str("tab\there"), "\"tab\\there\"");
+        // A bare control char becomes a \u escape.
+        assert_eq!(json_str("\u{1}"), "\"\\u0001\"");
+    }
+
+    #[test]
+    fn screen_to_text_trims_trailing_space_and_joins_rows() {
+        let buf = ratatui::buffer::Buffer::with_lines(["ab  ", "cd"]);
+        assert_eq!(screen_to_text(&buf), "ab\ncd\n");
+    }
+
+    #[test]
     fn plugin_command_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let ipc = Ipc::init(dir.path()).unwrap();
