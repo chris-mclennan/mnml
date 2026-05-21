@@ -384,3 +384,45 @@ fn format_duration_secs(secs: u64) -> String {
         format!("{}h{:02}m", secs / 3600, (secs % 3600) / 60)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Smoke test for the flattener: with an empty cache, every
+    /// configured project / repo produces exactly one header row, in
+    /// config order. Guards the config-order ↔ render-order contract
+    /// (a mismatch there was a real bug — see 87ffef2).
+    #[test]
+    fn flatten_builds_orders_headers_by_config() {
+        let mut cfg = crate::config::Config::default();
+        cfg.azdevops.projects.push(crate::config::AzDevOpsProject {
+            org: "org".into(),
+            project: "aaa".into(),
+            repo: "r".into(),
+            branches: Vec::new(),
+        });
+        cfg.azdevops.projects.push(crate::config::AzDevOpsProject {
+            org: "org".into(),
+            project: "zzz".into(),
+            repo: "r".into(),
+            branches: Vec::new(),
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let app = App::new(dir.path().to_path_buf(), cfg).expect("app new");
+        let flat = flatten_builds(&app);
+        assert_eq!(flat.len(), 2, "two entries, empty cache => two headers");
+        assert!(matches!(flat[0].kind, RowKind::Header));
+        assert!(matches!(flat[1].kind, RowKind::Header));
+        assert!(
+            flat[0].header_label.contains("aaa"),
+            "first header out of order: {:?}",
+            flat[0].header_label
+        );
+        assert!(
+            flat[1].header_label.contains("zzz"),
+            "second header out of order: {:?}",
+            flat[1].header_label
+        );
+    }
+}
