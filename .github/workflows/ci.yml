@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: fmt · clippy · test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      # mnml depends on sibling crates by path (../tmnl-protocol, ../fim-engine),
+      # so check them out alongside this repo for the path deps to resolve.
+      - name: Checkout mnml
+        uses: actions/checkout@v4
+        with:
+          path: mnml
+      - name: Checkout tmnl-protocol
+        uses: actions/checkout@v4
+        with:
+          repository: chris-mclennan/tmnl-protocol
+          path: tmnl-protocol
+      - name: Checkout fim-engine
+        uses: actions/checkout@v4
+        with:
+          repository: chris-mclennan/fim-engine
+          path: fim-engine
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mnml
+
+      - name: rustfmt
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: mnml
+        run: cargo fmt --all --check
+
+      - name: clippy
+        working-directory: mnml
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: test
+        working-directory: mnml
+        run: cargo test

@@ -2,8 +2,17 @@
 name = "mnml"
 version = "0.1.0"
 edition = "2024"
-description = "NvChad-style TUI IDE: pluggable vim/standard editing, splits, LSP, git, fuzzy finder, command palette, embedded terminal + Claude Code/Codex, baked-in HTTP request client, CDP capture, file-IPC + headless E2E harness."
-license = "MIT"
+rust-version = "1.85"
+description = "A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, and an embedded HTTP client."
+authors = ["Chris McLennan"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/chris-mclennan/mnml"
+homepage = "https://github.com/chris-mclennan/mnml"
+documentation = "https://docs.rs/mnml"
+readme = "README.md"
+keywords = ["tui", "editor", "ide", "terminal", "ratatui"]
+categories = ["text-editors", "command-line-utilities", "development-tools"]
+exclude = [".local/", ".claude/", ".github/", "assets/", "run.sh", "dev.sh"]
 
 [lib]
 name = "mnml"

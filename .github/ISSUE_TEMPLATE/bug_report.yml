@@ -1,0 +1,51 @@
+name: Bug report
+description: Something in mnml isn't working as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. The single most useful thing
+        you can attach is a failing `.test` file (see `tests/e2e/`) — but a clear
+        set of steps is great too.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: |
+        1. Open a Rust file
+        2. Press ...
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: mnml version
+      description: Output of `mnml --version`, or the commit SHA if built from source.
+    validations:
+      required: true
+  - type: dropdown
+    id: input-style
+    attributes:
+      label: Input style
+      options:
+        - standard
+        - vim
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS & terminal
+      description: e.g. "macOS 15.4, Ghostty" or "Arch Linux, tmnl"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Any relevant output, a screenshot, or a `.test` file that reproduces it.
+      render: shell
