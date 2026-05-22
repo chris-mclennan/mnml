@@ -905,3 +905,42 @@ fn row_bg(is_cursor: bool, focused: bool, rail_bg: ratatui::style::Color) -> rat
         rail_bg
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Render-assertion: paint the rail into a `TestBackend` and check
+    /// that the workspace's files actually land in the file tree.
+    #[test]
+    fn draw_paints_workspace_files() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        // Create the files before App::new so the tree picks them up.
+        std::fs::write(ws.join("alpha.txt"), "a\n").unwrap();
+        std::fs::write(ws.join("beta.txt"), "b\n").unwrap();
+        let mut app = App::new(ws.clone(), crate::config::Config::default()).unwrap();
+
+        let mut term = Terminal::new(TestBackend::new(32, 24)).unwrap();
+        term.draw(|f| draw(f, &mut app, f.area())).unwrap();
+        let buf = term.backend().buffer();
+        let mut screen = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                screen.push_str(buf[(x, y)].symbol());
+            }
+            screen.push('\n');
+        }
+        assert!(
+            screen.contains("alpha.txt"),
+            "tree missing alpha.txt:\n{screen}"
+        );
+        assert!(
+            screen.contains("beta.txt"),
+            "tree missing beta.txt:\n{screen}"
+        );
+    }
+}

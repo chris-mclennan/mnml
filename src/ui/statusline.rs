@@ -726,4 +726,31 @@ mod tests {
         assert_eq!(format_byte_size(1024 * 1024), "1.0M");
         assert_eq!(format_byte_size(20 * 1024 * 1024), "20M");
     }
+
+    /// Render-assertion: with an editor open, the statusline's right
+    /// lane carries a `Ln <cur>/<total> Col <c>` chip.
+    #[test]
+    fn draw_paints_the_line_column_chip() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        std::fs::write(ws.join("note.txt"), "one\ntwo\nthree\n").unwrap();
+        let mut app = App::new(ws.clone(), crate::config::Config::default()).unwrap();
+        app.open_path(&ws.join("note.txt"));
+
+        let mut term = Terminal::new(TestBackend::new(120, 1)).unwrap();
+        term.draw(|f| draw(f, &mut app, f.area())).unwrap();
+        let buf = term.backend().buffer();
+        let row: String = (0..buf.area.width).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(
+            row.contains("Ln 1/"),
+            "statusline missing line chip: {row:?}"
+        );
+        assert!(
+            row.contains("Col 1"),
+            "statusline missing column chip: {row:?}"
+        );
+    }
 }

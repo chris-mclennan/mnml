@@ -672,4 +672,33 @@ mod tests {
         assert_eq!(labels[1], "ai/mod.rs");
         assert_eq!(labels[2], "lib.rs");
     }
+
+    /// Render-assertion: paint the real `draw` into a `TestBackend` and
+    /// check both open buffers' tab labels actually land on the strip.
+    #[test]
+    fn draw_paints_open_buffer_tabs() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        fs::write(ws.join("alpha.txt"), "first\n").unwrap();
+        fs::write(ws.join("beta.txt"), "second\n").unwrap();
+        let mut app = App::new(ws.clone(), Config::default()).unwrap();
+        app.open_path(&ws.join("alpha.txt"));
+        app.open_path(&ws.join("beta.txt"));
+
+        let mut term = Terminal::new(TestBackend::new(120, 1)).unwrap();
+        term.draw(|f| draw(f, &mut app, f.area())).unwrap();
+        let buf = term.backend().buffer();
+        let row: String = (0..buf.area.width).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(
+            row.contains("alpha.txt"),
+            "tab strip missing alpha.txt: {row:?}"
+        );
+        assert!(
+            row.contains("beta.txt"),
+            "tab strip missing beta.txt: {row:?}"
+        );
+    }
 }
