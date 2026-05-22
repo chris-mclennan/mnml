@@ -186,6 +186,7 @@ mnml is one of a small family of terminal-native Rust tools:
 | **mnml** | A terminal IDE | ← you are here |
 | [**mixr**](https://github.com/chris-mclennan/mixr) | A terminal DJ app | electronic-music mixing |
 | [**tmnl-protocol**](https://github.com/chris-mclennan/tmnl-protocol) | The binary wire protocol | the glue between them |
+| [**fim-engine**](https://github.com/chris-mclennan/fim-engine) | Embedded code completion | powers mnml's inline suggestions |
 
 mnml runs standalone in any terminal, and gains native-pane integration when
 hosted inside `tmnl`.
