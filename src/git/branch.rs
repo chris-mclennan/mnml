@@ -166,11 +166,14 @@ mod tests {
     fn init_repo() -> tempfile::TempDir {
         let d = tempfile::tempdir().unwrap();
         for args in [
-            &["init", "-q"][..],
+            // `-b main` forces the initial branch name — `git init`'s
+            // default is environment-dependent (`master` on CI runners),
+            // and a repo-local `init.defaultBranch` set after `init`
+            // would be too late to matter.
+            &["init", "-q", "-b", "main"][..],
             &["config", "user.email", "t@example.com"][..],
             &["config", "user.name", "Test"][..],
             &["config", "commit.gpgsign", "false"][..],
-            &["config", "init.defaultBranch", "main"][..],
         ] {
             let _ = Command::new("git")
                 .args(args)
