@@ -2,51 +2,60 @@
 #
 # Regenerate assets/demo.gif with VHS (https://github.com/charmbracelet/vhs):
 #
-#     vhs assets/demo.tape
+#     cargo build --release          # the tape runs ./target/release/mnml
+#     vhs assets/demo.tape           # run from the repo root → assets/demo.gif
 #
-# Tune the workspace path, keystrokes, and sleeps below before recording —
-# this is a sensible starting point, not a finished cut.
+# Tune the keystrokes and Sleep timings to taste before a final cut.
 
 Output assets/demo.gif
-
-Require mnml
 
 Set Shell       "bash"
 Set FontSize    14
 Set Width       1280
 Set Height      800
 Set Padding     20
-Set TypingSpeed 70ms
+Set TypingSpeed 75ms
 Set Theme       "Catppuccin Mocha"
 
+# ── setup (not recorded) ─────────────────────────────────────────────────
+# Clear any prior session so the demo launches from a clean state instead
+# of replaying whatever buffers were last open.
+Hide
+Type "rm -rf .mnml"
+Enter
+Sleep 400ms
+Show
+
 # ── launch ───────────────────────────────────────────────────────────────
-# Point this at any project worth showing off.
-Type "mnml ~/code/demo-project"
+# mnml opens on its own source tree — a real, rich Rust workspace.
+Type "./target/release/mnml ."
 Sleep 500ms
 Enter
-Sleep 2.5s
+Sleep 3.5s
+
+# Dismiss the first-launch welcome overlay.
+Escape
+Sleep 1.2s
 
 # ── fuzzy file finder ────────────────────────────────────────────────────
 Ctrl+P
-Sleep 800ms
-Type "main"
 Sleep 1.2s
+Type "app.rs"
+Sleep 1.5s
 Enter
-Sleep 1.8s
-
-# ── command palette ──────────────────────────────────────────────────────
-Ctrl+Shift+P
-Sleep 800ms
-Type "split"
-Sleep 1.2s
-Enter
-Sleep 1.8s
+Sleep 2.8s
 
 # ── which-key leader popup ───────────────────────────────────────────────
 Ctrl+K
-Sleep 1.5s
+Sleep 2.5s
 Escape
-Sleep 600ms
+Sleep 1s
+
+# ── toggle the file tree ─────────────────────────────────────────────────
+Ctrl+B
+Sleep 1.5s
+Ctrl+B
+Sleep 1.2s
 
 # ── settle on a final frame ──────────────────────────────────────────────
-Sleep 2s
+Sleep 2.5s
