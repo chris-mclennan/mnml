@@ -486,4 +486,18 @@ mod tests {
             flat[1].header_label
         );
     }
+
+    #[test]
+    fn flatten_my_prs_empty_cache_is_a_lone_header() {
+        let cfg = crate::config::Config::default();
+        let dir = tempfile::tempdir().unwrap();
+        let app = App::new(dir.path().to_path_buf(), cfg).expect("app new");
+        // The Mine view always emits its cross-repo header even with
+        // nothing cached — so the pane never renders empty.
+        let flat = flatten_my_prs(&app);
+        assert_eq!(flat.len(), 1);
+        assert!(matches!(flat[0].kind, RowKind::Header));
+        assert_eq!(flat[0].header_label, "mine (cross-repo)");
+        assert_eq!(flat[0].repo_count, 0);
+    }
 }

@@ -517,4 +517,24 @@ mod tests {
         assert_eq!(flat[0].header_label, "a/1");
         assert_eq!(flat[1].header_label, "a/2");
     }
+
+    #[test]
+    fn flatten_branch_runs_emits_header_then_branch_rows() {
+        let mut cfg = crate::config::Config::default();
+        cfg.github.repos.push(crate::config::GithubRepo {
+            owner: "o".into(),
+            repo: "r".into(),
+            branches: Vec::new(),
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), cfg).expect("app new");
+        app.github_branch_runs
+            .insert(("o".into(), "r".into()), vec![("main".into(), None)]);
+        let flat = flatten_branch_runs(&app);
+        assert_eq!(flat.len(), 2);
+        assert!(matches!(flat[0].kind, RowKind::Header));
+        assert_eq!(flat[0].repo_count, 1);
+        assert!(matches!(flat[1].kind, RowKind::Run));
+        assert_eq!(flat[1].branch_label.as_deref(), Some("main"));
+    }
 }

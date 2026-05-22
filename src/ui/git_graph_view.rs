@@ -2328,4 +2328,92 @@ mod tests {
         assert_eq!(c.branch, 0);
         assert_eq!(c.author, 12);
     }
+
+    #[test]
+    fn format_wip_summary_clean_and_dirty_trees() {
+        use crate::git::status::Snapshot;
+        let clean = Snapshot::default();
+        assert_eq!(format_wip_summary(&clean), "working tree clean");
+
+        // total = 3 + 1 + 2 + 0 conflicts = 6
+        let dirty = Snapshot {
+            modified: 3,
+            staged: 1,
+            untracked: 2,
+            ..Snapshot::default()
+        };
+        assert_eq!(format_wip_summary(&dirty), "6 change(s) · 1 staged · 2 new");
+
+        // Ahead/behind appends an `↑N ↓N` segment even on a clean tree.
+        let ahead = Snapshot {
+            ahead: 2,
+            behind: 1,
+            ..Snapshot::default()
+        };
+        assert_eq!(format_wip_summary(&ahead), "working tree clean · ↑2 ↓1");
+
+        // Conflicts carry the ⚠ marker.
+        let conflict = Snapshot {
+            conflicts: 1,
+            ..Snapshot::default()
+        };
+        assert_eq!(
+            format_wip_summary(&conflict),
+            "1 change(s) · ⚠ 1 conflict(s)"
+        );
+    }
+
+    #[test]
+    fn layout_textarea_rows_wraps_and_splits_on_newline() {
+        // Zero width ⇒ the whole text is one row.
+        assert_eq!(layout_textarea_rows("hello", 0), vec![(0, 5)]);
+        // An explicit newline ends a row; the `\n` itself isn't in either.
+        assert_eq!(layout_textarea_rows("ab\ncd", 10), vec![(0, 2), (3, 5)]);
+        // A line longer than `width` hard-wraps at the column boundary.
+        assert_eq!(layout_textarea_rows("abcdef", 3), vec![(0, 3), (3, 6)]);
+        // An empty string still yields one (empty) row.
+        assert_eq!(layout_textarea_rows("", 5), vec![(0, 0)]);
+    }
+
+    #[test]
+    fn locate_cursor_maps_byte_offset_to_row_col() {
+        let text = "abcdef";
+        let rows = layout_textarea_rows(text, 3); // [(0,3),(3,6)]
+        // Start of the buffer.
+        assert_eq!(locate_cursor(&rows, text, 0), (0, 0));
+        // Offset 4 sits on the second row, one char in.
+        assert_eq!(locate_cursor(&rows, text, 4), (1, 1));
+        // End-of-buffer offset lands at the end of the last row.
+        assert_eq!(locate_cursor(&rows, text, 6), (1, 3));
+    }
+
+    #[test]
+    fn chip_width_for_refs_sums_names_seps_and_tag_glyph() {
+        use crate::git::log::{RefKind, RefLabel};
+        // No refs ⇒ zero width.
+        assert_eq!(chip_width_for_refs(&[]), 0);
+        // "main"(4) + sep(1) + ⊙ + "v1.0"(4) = 4 + 1 + 5 = 10.
+        let refs = vec![
+            RefLabel {
+                kind: RefKind::LocalBranch,
+                name: "main".into(),
+            },
+            RefLabel {
+                kind: RefKind::Tag,
+                name: "v1.0".into(),
+            },
+        ];
+        assert_eq!(chip_width_for_refs(&refs), 10);
+    }
+
+    #[test]
+    fn lane_color_cycles_through_the_palette() {
+        let t = theme::onedark();
+        // The palette repeats every LANE_COLORS lanes.
+        assert_eq!(lane_color(&t, 0), lane_color(&t, LANE_COLORS as u8));
+        // Lane 0 and lane 1 are distinct hues.
+        assert_ne!(lane_color(&t, 0), lane_color(&t, 1));
+        // The 6th slot is the orange fallback.
+        assert_eq!(lane_color(&t, 5), t.orange);
+    }
 }

@@ -2046,4 +2046,192 @@ mod tests {
         // A non-RGB input (indexed-color theme) ⇒ the fallback.
         assert_eq!(blend_over(Color::Green, black, 128, fb), fb);
     }
+
+    fn mk_hunk(header: &str, lines: Vec<HunkLine>) -> crate::git::diff::Hunk {
+        crate::git::diff::Hunk {
+            file: std::path::PathBuf::from("/tmp/foo.rs"),
+            file_rel: "foo.rs".to_string(),
+            header: header.to_string(),
+            new_start: 1,
+            lines,
+            body: String::new(),
+        }
+    }
+
+    #[test]
+    fn hunk_start_lines_parses_the_at_at_header() {
+        // `@@ -10,3 +20,4 @@ fn foo` ⇒ old starts at 10, new at 20.
+        assert_eq!(
+            hunk_start_lines(&mk_hunk("@@ -10,3 +20,4 @@ fn foo", vec![])),
+            (10, 20)
+        );
+        // Single-count form (no `,B`) still parses.
+        assert_eq!(hunk_start_lines(&mk_hunk("@@ -1 +1 @@", vec![])), (1, 1));
+        // A garbage header falls back to (1, 1) rather than panicking.
+        assert_eq!(
+            hunk_start_lines(&mk_hunk("not a hunk header", vec![])),
+            (1, 1)
+        );
+    }
+
+    #[test]
+    fn pair_line_nos_advances_each_side_independently() {
+        let lines = vec![
+            HunkLine::Context("ctx".into()),
+            HunkLine::Removed("gone".into()),
+            HunkLine::Added("new".into()),
+            HunkLine::Context("ctx".into()),
+        ];
+        let nos = pair_line_nos(&lines, 10, 20);
+        assert_eq!(
+            nos,
+            vec![
+                (Some(10), Some(20)), // context bumps both
+                (Some(11), None),     // removed: old side only
+                (None, Some(21)),     // added: new side only
+                (Some(12), Some(22)), // context resumes from each running count
+            ]
+        );
+    }
+
+    #[test]
+    fn compute_gutter_width_sizes_to_the_largest_line_number() {
+        // No hunks ⇒ the 3+1+3+1 minimum.
+        assert_eq!(compute_gutter_width(&[]), 8);
+        // A hunk whose new side reaches 1234 needs a 4-wide new column.
+        let h = mk_hunk(
+            "@@ -1,1 +1230,5 @@",
+            vec![
+                HunkLine::Added("a".into()),
+                HunkLine::Added("b".into()),
+                HunkLine::Added("c".into()),
+                HunkLine::Added("d".into()),
+                HunkLine::Added("e".into()),
+            ],
+        );
+        // 3 (old, min) + 1 + 4 (new) + 1 = 9.
+        assert_eq!(compute_gutter_width(&[h]), 9);
+    }
+
+    #[test]
+    fn highlight_filter_spans_splits_around_matches() {
+        let base = Style::default();
+        let bg = Color::Yellow;
+        // Empty filter ⇒ exactly one un-highlighted span.
+        let s = highlight_filter_spans("hello world".into(), "", base, bg);
+        assert_eq!(s.len(), 1);
+        // A mid-string match ⇒ prefix / match / suffix.
+        let s = highlight_filter_spans("a FOO b".into(), "foo", base, bg);
+        assert_eq!(s.len(), 3);
+        assert_eq!(s[0].content.as_ref(), "a ");
+        assert_eq!(s[1].content.as_ref(), "FOO"); // original casing preserved
+        assert_eq!(s[1].style.bg, Some(bg));
+        assert_eq!(s[2].content.as_ref(), " b");
+        // No match ⇒ a single span, no highlight bg.
+        let s = highlight_filter_spans("nothing here".into(), "zzz", base, bg);
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].style.bg, None);
+    }
+
+    #[test]
+    fn chip_actions_match_the_diff_scope() {
+        use crate::pane::DiffScope;
+        let t = theme::onedark();
+        // Unstaged ⇒ Stage + Discard.
+        let a = chip_actions_for_scope(&DiffScope::Unstaged(None), &t);
+        assert_eq!(a.len(), 2);
+        assert_eq!(a[0].1, crate::DiffHunkAction::Stage);
+        assert_eq!(a[1].1, crate::DiffHunkAction::Discard);
+        // Staged ⇒ just Unstage.
+        let a = chip_actions_for_scope(&DiffScope::Staged, &t);
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].1, crate::DiffHunkAction::Unstage);
+        // A commit diff is read-only ⇒ no chips.
+        assert!(chip_actions_for_scope(&DiffScope::Commit("abc".into()), &t).is_empty());
+        // AllVsHead behaves like Unstaged.
+        assert_eq!(chip_actions_for_scope(&DiffScope::AllVsHead, &t).len(), 2);
+    }
+
+    #[test]
+    fn chips_total_width_sums_labels_plus_gaps() {
+        use crate::pane::DiffScope;
+        let t = theme::onedark();
+        let unstaged = chip_actions_for_scope(&DiffScope::Unstaged(None), &t);
+        // " Stage "(7)+1 + " Discard "(9)+1 = 18.
+        assert_eq!(chips_total_width(unstaged), 18);
+        assert_eq!(chips_total_width(&[]), 0);
+    }
+
+    fn mk_diff_view(
+        hunks: Vec<crate::git::diff::Hunk>,
+        filter: &str,
+        cursor: usize,
+    ) -> crate::pane::DiffView {
+        crate::pane::DiffView {
+            scope: crate::pane::DiffScope::AllVsHead,
+            hunks,
+            scroll: 0,
+            cursor,
+            view_mode: DiffViewMode::Hunk,
+            wrap: false,
+            hunk_collapsed: std::collections::HashSet::new(),
+            full_hunks: None,
+            filter: filter.to_string(),
+            filter_mode: false,
+        }
+    }
+
+    #[test]
+    fn next_filter_match_wraps_both_directions() {
+        let hunks = vec![
+            mk_hunk("@@ -1 +1 @@", vec![HunkLine::Context("alpha".into())]),
+            mk_hunk("@@ -2 +2 @@", vec![HunkLine::Added("beta".into())]),
+            mk_hunk("@@ -3 +3 @@", vec![HunkLine::Removed("FIND me".into())]),
+        ];
+        let d = mk_diff_view(hunks, "find", 0);
+        // Forward from hunk 0 lands on the matching hunk 2.
+        assert_eq!(next_filter_match(&d, true), Some(2));
+        // Backward from hunk 0 wraps around to hunk 2.
+        assert_eq!(next_filter_match(&d, false), Some(2));
+        // An empty filter never matches.
+        let empty = mk_diff_view(vec![mk_hunk("@@ -1 +1 @@", vec![])], "", 0);
+        assert_eq!(next_filter_match(&empty, true), None);
+        // A filter with no hit returns None.
+        let miss = mk_diff_view(
+            vec![mk_hunk("@@ -1 +1 @@", vec![HunkLine::Context("x".into())])],
+            "zzz",
+            0,
+        );
+        assert_eq!(next_filter_match(&miss, true), None);
+    }
+
+    #[test]
+    fn pair_row_kind_classifies_each_side_combination() {
+        let cell = |k: SideKind| SideCell {
+            text: String::new(),
+            kind: k,
+        };
+        let row = |l: SideKind, r: SideKind| PairRow {
+            left: cell(l),
+            right: cell(r),
+            left_no: None,
+            right_no: None,
+        };
+        assert_eq!(
+            pair_row_kind(&row(SideKind::Removed, SideKind::Added)),
+            RowKind::Both
+        );
+        assert_eq!(
+            pair_row_kind(&row(SideKind::Removed, SideKind::Empty)),
+            RowKind::Removed
+        );
+        assert_eq!(
+            pair_row_kind(&row(SideKind::Empty, SideKind::Added)),
+            RowKind::Added
+        );
+        assert_eq!(
+            pair_row_kind(&row(SideKind::Context, SideKind::Context)),
+            RowKind::Context
+        );
+    }
 }
