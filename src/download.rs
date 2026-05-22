@@ -77,8 +77,7 @@ pub fn ensure_model(
     choice: ModelChoice,
     progress: &(dyn Fn(DownloadProgress) + Sync),
 ) -> Result<ModelPaths, String> {
-    fs::create_dir_all(cache_dir)
-        .map_err(|e| format!("create {}: {e}", cache_dir.display()))?;
+    fs::create_dir_all(cache_dir).map_err(|e| format!("create {}: {e}", cache_dir.display()))?;
     let (gguf_repo, gguf_file, tok_repo) = choice.sources();
     let gguf = cache_dir.join(gguf_file);
     let tokenizer = cache_dir.join(choice.tokenizer_cache_name());
@@ -97,8 +96,7 @@ pub fn ensure_model(
 /// True when both model files for `choice` are already cached.
 pub fn is_model_cached(cache_dir: &Path, choice: ModelChoice) -> bool {
     let (_, gguf_file, _) = choice.sources();
-    cache_dir.join(gguf_file).exists()
-        && cache_dir.join(choice.tokenizer_cache_name()).exists()
+    cache_dir.join(gguf_file).exists() && cache_dir.join(choice.tokenizer_cache_name()).exists()
 }
 
 fn hf_url(repo: &str, file: &str) -> String {
@@ -153,8 +151,7 @@ fn download(
     }
     file.flush().map_err(|e| format!("flush {label}: {e}"))?;
     drop(file);
-    fs::rename(&part, dest)
-        .map_err(|e| format!("finalize {}: {e}", dest.display()))?;
+    fs::rename(&part, dest).map_err(|e| format!("finalize {}: {e}", dest.display()))?;
     progress(DownloadProgress {
         label,
         received,

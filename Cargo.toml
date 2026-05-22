@@ -2,9 +2,17 @@
 name = "fim-engine"
 version = "0.1.0"
 edition = "2024"
-description = "Embedded fill-in-the-middle code completion — quantized qwen2.5-coder via candle. Shared by mnml + tmnl."
+rust-version = "1.85"
+description = "Embedded fill-in-the-middle code completion — quantized qwen2.5-coder via candle, in-process and offline."
+authors = ["Chris McLennan"]
 license = "MIT OR Apache-2.0"
-publish = false
+repository = "https://github.com/chris-mclennan/fim-engine"
+homepage = "https://github.com/chris-mclennan/fim-engine"
+documentation = "https://docs.rs/fim-engine"
+readme = "README.md"
+keywords = ["completion", "llm", "candle", "inference", "fim"]
+categories = ["development-tools", "text-processing"]
+exclude = [".local/", ".claude/", ".github/"]
 
 [features]
 # GPU inference via Apple Metal — ~10x faster than CPU for the 1.5B

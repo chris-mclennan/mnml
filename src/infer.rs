@@ -31,14 +31,12 @@ impl Model {
     /// `metal` feature is on and a device is available, else CPU.
     pub fn load(gguf: &Path, tokenizer_path: &Path) -> Result<Self, String> {
         let device = pick_device();
-        let mut file =
-            std::fs::File::open(gguf).map_err(|e| format!("open gguf: {e}"))?;
-        let content = gguf_file::Content::read(&mut file)
-            .map_err(|e| format!("read gguf: {e}"))?;
+        let mut file = std::fs::File::open(gguf).map_err(|e| format!("open gguf: {e}"))?;
+        let content = gguf_file::Content::read(&mut file).map_err(|e| format!("read gguf: {e}"))?;
         let weights = ModelWeights::from_gguf(content, &mut file, &device)
             .map_err(|e| format!("load weights: {e}"))?;
-        let tokenizer = Tokenizer::from_file(tokenizer_path)
-            .map_err(|e| format!("load tokenizer: {e}"))?;
+        let tokenizer =
+            Tokenizer::from_file(tokenizer_path).map_err(|e| format!("load tokenizer: {e}"))?;
         let tid = |s: &str| -> Result<u32, String> {
             tokenizer
                 .token_to_id(s)
@@ -169,6 +167,44 @@ fn trim_at_suffix(completion: &str, suffix: &str) -> String {
     out.trim_end_matches([' ', '\t', '\n', '\r']).to_string()
 }
 
+/// Choose the inference device — Metal GPU when the `metal` feature is
+/// compiled in and a device initializes, otherwise CPU. Metal init can
+/// fail (no GPU, headless CI); the CPU fallback keeps the engine usable.
+fn pick_device() -> Device {
+    #[cfg(feature = "metal")]
+    {
+        match Device::new_metal(0) {
+            Ok(d) => return d,
+            Err(e) => {
+                eprintln!("fim-engine: Metal unavailable ({e}) — using CPU");
+            }
+        }
+    }
+    Device::Cpu
+}
+
+/// argmax over the vocab dimension of a logits tensor. Accepts either
+/// `[batch, vocab]` (quantized models return last-token logits) or
+/// `[batch, seq, vocab]` (take the final position).
+fn argmax_last(logits: &Tensor) -> Result<u32, String> {
+    let dims = logits.dims().len();
+    let vocab_row = match dims {
+        // [batch, vocab] → drop batch.
+        2 => logits.squeeze(0).map_err(|e| e.to_string())?,
+        // [batch, seq, vocab] → last seq position of batch 0.
+        3 => {
+            let seq = logits.dim(1).map_err(|e| e.to_string())?;
+            logits
+                .i((0, seq - 1))
+                .map_err(|e| format!("slice last token: {e}"))?
+        }
+        n => return Err(format!("unexpected logits rank {n}")),
+    };
+    let idx = vocab_row.argmax(0).map_err(|e| format!("argmax: {e}"))?;
+    idx.to_scalar::<u32>()
+        .map_err(|e| format!("argmax scalar: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::trim_at_suffix;
@@ -204,44 +240,4 @@ mod tests {
         let suffix = "\n} else {\n    fallback()\n}";
         assert_eq!(trim_at_suffix(completion, suffix), "do_thing()");
     }
-}
-
-/// Choose the inference device — Metal GPU when the `metal` feature is
-/// compiled in and a device initializes, otherwise CPU. Metal init can
-/// fail (no GPU, headless CI); the CPU fallback keeps the engine usable.
-fn pick_device() -> Device {
-    #[cfg(feature = "metal")]
-    {
-        match Device::new_metal(0) {
-            Ok(d) => return d,
-            Err(e) => {
-                eprintln!("fim-engine: Metal unavailable ({e}) — using CPU");
-            }
-        }
-    }
-    Device::Cpu
-}
-
-/// argmax over the vocab dimension of a logits tensor. Accepts either
-/// `[batch, vocab]` (quantized models return last-token logits) or
-/// `[batch, seq, vocab]` (take the final position).
-fn argmax_last(logits: &Tensor) -> Result<u32, String> {
-    let dims = logits.dims().len();
-    let vocab_row = match dims {
-        // [batch, vocab] → drop batch.
-        2 => logits.squeeze(0).map_err(|e| e.to_string())?,
-        // [batch, seq, vocab] → last seq position of batch 0.
-        3 => {
-            let seq = logits.dim(1).map_err(|e| e.to_string())?;
-            logits
-                .i((0, seq - 1))
-                .map_err(|e| format!("slice last token: {e}"))?
-        }
-        n => return Err(format!("unexpected logits rank {n}")),
-    };
-    let idx = vocab_row
-        .argmax(0)
-        .map_err(|e| format!("argmax: {e}"))?;
-    idx.to_scalar::<u32>()
-        .map_err(|e| format!("argmax scalar: {e}"))
 }
