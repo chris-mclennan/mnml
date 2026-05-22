@@ -24,16 +24,21 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: mnml
+      # `token:` lets CI check out the private sibling repos. Once the
+      # whole family is public, the default token works — drop the
+      # `token:` lines and the SIBLING_CHECKOUT_TOKEN secret then.
       - name: Checkout tmnl-protocol
         uses: actions/checkout@v4
         with:
           repository: chris-mclennan/tmnl-protocol
           path: tmnl-protocol
+          token: ${{ secrets.SIBLING_CHECKOUT_TOKEN }}
       - name: Checkout fim-engine
         uses: actions/checkout@v4
         with:
           repository: chris-mclennan/fim-engine
           path: fim-engine
+          token: ${{ secrets.SIBLING_CHECKOUT_TOKEN }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
