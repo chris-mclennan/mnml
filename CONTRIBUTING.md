@@ -6,8 +6,8 @@ and the bits of architecture worth knowing before you change code.
 ## Getting started
 
 ```bash
-git clone https://github.com/chris-mclennan/mnml
-cd mnml
+git clone https://github.com/chris-mclennan/mnml-rs
+cd mnml-rs
 cargo build
 cargo test
 ```
@@ -80,7 +80,7 @@ A few load-bearing pieces — read [`CLAUDE.md`](CLAUDE.md) and
 
 ## Reporting bugs & requesting features
 
-Use the [issue tracker](https://github.com/chris-mclennan/mnml/issues). For bugs,
+Use the [issue tracker](https://github.com/chris-mclennan/mnml-rs/issues). For bugs,
 include your OS, terminal, and steps to reproduce — a `.test` file that fails is
 the gold standard.
 

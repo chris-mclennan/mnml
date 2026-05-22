@@ -2281,7 +2281,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mnml"
+name = "mnml-rs"
 version = "0.1.0"
 dependencies = [
  "arboard",

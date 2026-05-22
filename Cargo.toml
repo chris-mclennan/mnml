@@ -1,14 +1,14 @@
 [package]
-name = "mnml"
+name = "mnml-rs"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 description = "A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, and an embedded HTTP client."
 authors = ["Chris McLennan"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/chris-mclennan/mnml"
-homepage = "https://github.com/chris-mclennan/mnml"
-documentation = "https://docs.rs/mnml"
+repository = "https://github.com/chris-mclennan/mnml-rs"
+homepage = "https://github.com/chris-mclennan/mnml-rs"
+documentation = "https://docs.rs/mnml-rs"
 readme = "README.md"
 keywords = ["tui", "editor", "ide", "terminal", "ratatui"]
 categories = ["text-editors", "command-line-utilities", "development-tools"]

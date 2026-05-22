@@ -189,7 +189,7 @@ The complete, organised feature inventory. For the front-door overview see
 - **Plugins** — out-of-process helpers over the IPC channel can register
   commands that appear in the palette and resolve as keybindings.
 - **`tmnl` integration** — runs standalone in any terminal; gains native-pane
-  hand-off when hosted inside the [`tmnl`](https://github.com/chris-mclennan/tmnl)
+  hand-off when hosted inside the [`tmnl`](https://github.com/chris-mclennan/tmnl-rs)
   terminal.
 
 ## Languages

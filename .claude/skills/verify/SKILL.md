@@ -14,7 +14,7 @@ Run the standard gate, in order, and stop at the first failure:
 4. `cargo test` — all tests pass.
 
 Report the outcome of each step. If clippy has warnings, list them and fix the
-trivial ones (`cargo clippy --fix --allow-dirty --lib -p mnml` / `--tests` handles
+trivial ones (`cargo clippy --fix --allow-dirty --lib -p mnml-rs` / `--tests` handles
 most). If a build/test fails, surface the error — don't paper over it.
 
 (The `PostToolUse` hook auto-restarts the running mnml after the `cargo build`

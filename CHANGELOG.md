@@ -47,5 +47,5 @@ capabilities present in the current `main`.
 - **Headless mode** — `mnml --headless` driven over a file-IPC channel, plus an
   out-of-process plugin surface.
 
-[Unreleased]: https://github.com/chris-mclennan/mnml/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/chris-mclennan/mnml/releases/tag/v0.1.0
+[Unreleased]: https://github.com/chris-mclennan/mnml-rs/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/chris-mclennan/mnml-rs/releases/tag/v0.1.0
