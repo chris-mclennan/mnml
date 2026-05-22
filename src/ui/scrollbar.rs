@@ -94,3 +94,56 @@ pub fn paint_horizontal_scrollbar(
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::theme;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// The horizontal scrollbar paints a `━` thumb over a `─` track —
+    /// the thumb width + offset are deterministic geometry.
+    #[test]
+    fn horizontal_scrollbar_places_the_thumb_by_scroll() {
+        let t = theme::onedark();
+        let row = |total: usize, viewport: usize, scroll: usize| -> String {
+            let mut term = Terminal::new(TestBackend::new(20, 1)).unwrap();
+            term.draw(|f| paint_horizontal_scrollbar(f, f.area(), &t, total, viewport, scroll))
+                .unwrap();
+            let buf = term.backend().buffer();
+            (0..20).map(|x| buf[(x, 0)].symbol().to_string()).collect()
+        };
+        // 20/100 visible ⇒ a 4-cell thumb. At scroll 0 it's flush left.
+        let r = row(100, 20, 0);
+        assert_eq!(r, format!("{}{}", "━".repeat(4), "─".repeat(16)));
+        // Scrolled to the end ⇒ thumb flush right.
+        let r = row(100, 20, 80);
+        assert_eq!(r, format!("{}{}", "─".repeat(16), "━".repeat(4)));
+        // Content fits the viewport ⇒ no thumb, all track.
+        assert_eq!(row(10, 20, 0), "─".repeat(20));
+    }
+
+    /// The vertical scrollbar paints a `comment`-bg thumb over a
+    /// `bg2`-bg track; the thumb height tracks the visible fraction.
+    #[test]
+    fn simple_scrollbar_sizes_and_places_the_thumb() {
+        let t = theme::onedark();
+        let thumb_rows = |total: usize, viewport: usize, scroll: usize| -> Vec<usize> {
+            let mut term = Terminal::new(TestBackend::new(1, 10)).unwrap();
+            term.draw(|f| paint_simple_scrollbar(f, f.area(), &t, total, viewport, scroll))
+                .unwrap();
+            let buf = term.backend().buffer();
+            (0..10u16)
+                .filter(|&y| buf[(0, y)].bg == t.comment)
+                .map(|y| y as usize)
+                .collect()
+        };
+        // 10/100 visible over a 10-cell bar ⇒ a 1-cell thumb at the top.
+        assert_eq!(thumb_rows(100, 10, 0), vec![0]);
+        // Scrolled to the bottom ⇒ the thumb sits on the last row.
+        assert_eq!(thumb_rows(100, 10, 90), vec![9]);
+        // Content fits ⇒ no thumb at all.
+        assert!(thumb_rows(10, 20, 0).is_empty());
+    }
+}
