@@ -2029,4 +2029,21 @@ mod tests {
         assert!(only_new.contains('3'));
         assert!(only_new.chars().count() <= 10);
     }
+
+    #[test]
+    fn blend_over_interpolates_rgb_and_falls_back_otherwise() {
+        let white = Color::Rgb(255, 255, 255);
+        let black = Color::Rgb(0, 0, 0);
+        let fb = Color::Rgb(9, 9, 9);
+        // Full alpha ⇒ the foreground; zero alpha ⇒ the background.
+        assert_eq!(blend_over(white, black, 255, fb), white);
+        assert_eq!(blend_over(white, black, 0, fb), black);
+        // Half alpha ⇒ a mid-grey between the two.
+        match blend_over(white, black, 128, fb) {
+            Color::Rgb(r, _, _) => assert!((120..=135).contains(&r), "mid blend r={r}"),
+            other => panic!("expected Rgb, got {other:?}"),
+        }
+        // A non-RGB input (indexed-color theme) ⇒ the fallback.
+        assert_eq!(blend_over(Color::Green, black, 128, fb), fb);
+    }
 }
