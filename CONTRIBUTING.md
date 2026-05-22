@@ -12,7 +12,7 @@ cargo build
 cargo test
 ```
 
-mnml builds on stable Rust — MSRV **1.85**, edition 2024. A
+mnml builds on stable Rust — MSRV **1.87**, edition 2024. A
 [Nerd Font](https://www.nerdfonts.com/) helps when running the UI, but isn't
 needed to build or test.
 

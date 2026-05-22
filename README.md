@@ -174,7 +174,7 @@ Development convenience wrappers:
 ./dev.sh               # cargo-watch auto-rebuild-on-save
 ```
 
-mnml builds on stable Rust (MSRV **1.85**, edition 2024).
+mnml builds on stable Rust (MSRV **1.87**, edition 2024).
 
 ## The tmnl family
 
