@@ -26,14 +26,14 @@ path = "src/main.rs"
 # TUI — use ratatui's re-exported crossterm to avoid version skew.
 ratatui = { version = "0.30", features = ["crossterm"] }
 # Wire format for the `--blit` BlitBackend — shared with the tmnl renderer.
-tmnl-protocol = { path = "../tmnl-protocol" }
+tmnl-protocol = { path = "../tmnl-protocol", version = "0.0.1" }
 # Embedded local FIM code completion (candle + quantized qwen2.5-coder).
 # Powers `[ai] suggest_backend = "local"`. Its own crate so candle stays
 # out of mnml's incremental rebuilds. Shared with tmnl.
 #
 # `default-features = false` keeps fim-engine's macOS-only `metal` feature
 # (Metal → objc2) off the Linux build; the macOS target below re-enables it.
-fim-engine = { path = "../fim-engine", default-features = false }
+fim-engine = { path = "../fim-engine", version = "0.1.0", default-features = false }
 # File enumeration honoring .gitignore.
 ignore = "0.4"
 # Temp workspaces for the `.test` E2E runner (and unit tests).
@@ -129,7 +129,7 @@ bson = { version = "2", optional = true }
 # the Apple Metal stack (objc2 etc.), which doesn't build on Linux. Elsewhere
 # fim-engine falls back to CPU candle (see the `default-features = false` above).
 [target.'cfg(target_os = "macos")'.dependencies]
-fim-engine = { path = "../fim-engine", default-features = false, features = ["metal"] }
+fim-engine = { path = "../fim-engine", version = "0.1.0", default-features = false, features = ["metal"] }
 
 [features]
 default = []
