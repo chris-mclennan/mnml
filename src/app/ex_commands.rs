@@ -865,65 +865,7 @@ impl App {
             // `:b <substr>` / `:buffer <substr>` — switch to the editor pane
             // whose path contains <substr> (case-insensitive). Vim convention:
             // ambiguous matches toast a hint; bare `:b` toasts a list.
-            "b" | "buffer" => {
-                let q = rest.trim();
-                if q.is_empty() {
-                    let names: Vec<String> = self
-                        .panes
-                        .iter()
-                        .filter_map(|p| match p {
-                            Pane::Editor(b) => Some(
-                                b.path
-                                    .as_ref()
-                                    .map(|pp| rel_path(&self.workspace, pp))
-                                    .unwrap_or_else(|| b.display_name().to_string()),
-                            ),
-                            _ => None,
-                        })
-                        .collect();
-                    if names.is_empty() {
-                        self.toast(":b — no buffers");
-                    } else {
-                        self.toast(format!(":b · {}", names.join("  ")));
-                    }
-                } else {
-                    let qlc = q.to_lowercase();
-                    let mut hits: Vec<(usize, String)> = Vec::new();
-                    for (idx, p) in self.panes.iter().enumerate() {
-                        if let Pane::Editor(b) = p {
-                            let label = b
-                                .path
-                                .as_ref()
-                                .map(|pp| rel_path(&self.workspace, pp))
-                                .unwrap_or_else(|| b.display_name().to_string());
-                            if label.to_lowercase().contains(&qlc) {
-                                hits.push((idx, label));
-                            }
-                        }
-                    }
-                    match hits.len() {
-                        0 => self.toast(format!(":b — no match for {q:?}")),
-                        1 => self.reveal_pane(hits[0].0),
-                        _ => {
-                            // Pick the one whose filename matches, else toast hint.
-                            let exact = hits.iter().find(|(_, l)| {
-                                std::path::Path::new(l)
-                                    .file_name()
-                                    .and_then(|s| s.to_str())
-                                    .map(|s| s.to_lowercase() == qlc)
-                                    .unwrap_or(false)
-                            });
-                            if let Some((idx, _)) = exact {
-                                self.reveal_pane(*idx);
-                            } else {
-                                let labels: Vec<String> =
-                                    hits.iter().map(|(_, l)| l.clone()).collect();
-                                self.toast(format!(":b — ambiguous: {}", labels.join(", ")));
-                            }
-                        }
-                    }
-                }
-            }
+            "b" | "buffer" => self.ex_buffer(rest),
             // Split commands. `:sp [path]` opens (or splits) below; `:vsp` /
             // `:vs` opens to the right. Bare form just splits the current
             // pane; with a path, splits and opens that file in the new leaf.
@@ -1393,121 +1335,9 @@ impl App {
             // the existing rename flow).
             // `:Cp <from> <to>` — copy a file (workspace-relative).
             // Refuses to overwrite. Creates the parent of `<to>` if needed.
-            "Cp" => {
-                let mut parts = rest.split_whitespace();
-                let (Some(from), Some(to)) = (parts.next(), parts.next()) else {
-                    self.toast(":Cp <from> <to> — needs two paths");
-                    return;
-                };
-                let resolve = |p: &str| -> std::path::PathBuf {
-                    let path = std::path::Path::new(p);
-                    if path.is_absolute() {
-                        path.to_path_buf()
-                    } else {
-                        self.workspace.join(path)
-                    }
-                };
-                let src = resolve(from);
-                let dst = resolve(to);
-                if dst.exists() {
-                    self.toast(format!("cp refused: {} exists", dst.display()));
-                } else if let Some(parent) = dst.parent()
-                    && !parent.exists()
-                    && let Err(e) = std::fs::create_dir_all(parent)
-                {
-                    self.toast(format!("cp: cannot create parent: {e}"));
-                } else if let Err(e) = std::fs::copy(&src, &dst) {
-                    self.toast(format!("cp failed: {e}"));
-                } else {
-                    self.tree.refresh();
-                    self.toast(format!("cp: {} → {}", src.display(), dst.display()));
-                }
-            }
-            "Mv" | "mv" => {
-                let mut parts = rest.split_whitespace();
-                let (Some(from), Some(to)) = (parts.next(), parts.next()) else {
-                    self.toast(":Mv <from> <to> — needs two paths");
-                    return;
-                };
-                let resolve = |p: &str| -> std::path::PathBuf {
-                    let path = std::path::Path::new(p);
-                    if path.is_absolute() {
-                        path.to_path_buf()
-                    } else {
-                        self.workspace.join(path)
-                    }
-                };
-                let src = resolve(from);
-                let dst = resolve(to);
-                if dst.exists() {
-                    self.toast(format!("mv refused: {} exists", dst.display()));
-                } else if let Some(parent) = dst.parent()
-                    && !parent.exists()
-                    && let Err(e) = std::fs::create_dir_all(parent)
-                {
-                    self.toast(format!("mv: cannot create parent: {e}"));
-                } else if let Err(e) = std::fs::rename(&src, &dst) {
-                    self.toast(format!("mv failed: {e}"));
-                } else {
-                    // Re-point any open editor pane + notify LSP +
-                    // update recent_files. Same bookkeeping shape as
-                    // `rename_fs_entry`.
-                    for pane in &mut self.panes {
-                        if let Pane::Editor(b) = pane
-                            && b.path.as_deref() == Some(src.as_path())
-                        {
-                            b.path = Some(dst.clone());
-                        }
-                    }
-                    self.lsp.did_close(&src);
-                    let new_text = self.panes.iter().find_map(|p| match p {
-                        Pane::Editor(b) if b.is_at(&dst) => Some(b.editor.text().to_string()),
-                        _ => None,
-                    });
-                    if let Some(t) = new_text {
-                        self.lsp.did_open(&dst, &t);
-                    }
-                    for p in &mut self.recent_files {
-                        if p == &src {
-                            *p = dst.clone();
-                        }
-                    }
-                    self.tree.refresh();
-                    self.toast(format!("mv: {} → {}", src.display(), dst.display()));
-                }
-            }
-            "Touch" | "touch" => {
-                let arg = rest.trim();
-                if arg.is_empty() {
-                    self.toast(":Touch <path> — needs a path");
-                } else {
-                    let target = std::path::Path::new(arg);
-                    let abs = if target.is_absolute() {
-                        target.to_path_buf()
-                    } else {
-                        self.workspace.join(target)
-                    };
-                    let parent_ok = abs
-                        .parent()
-                        .is_none_or(|p| p.exists() || std::fs::create_dir_all(p).is_ok());
-                    if !parent_ok {
-                        self.toast("touch: parent dir create failed");
-                    } else {
-                        match std::fs::OpenOptions::new()
-                            .write(true)
-                            .create(true)
-                            .truncate(false)
-                            .open(&abs)
-                        {
-                            Ok(_) => {
-                                self.tree.refresh();
-                                self.toast(format!("touch: {}", abs.display()));
-                            }
-                            Err(e) => self.toast(format!("touch failed: {e}")),
-                        }
-                    }
-                }
-            }
+            "Cp" => self.ex_cp(rest),
+            "Mv" | "mv" => self.ex_mv(rest),
+            "Touch" | "touch" => self.ex_touch(rest),
             // `:Macros` — toast each recorded macro register + key count.
             // `:Macro <reg>` — replay a specific register (alt: `@<reg>` in vim).
             "Macros" => {
@@ -1616,88 +1446,8 @@ impl App {
                 let text = self.message_log.join("\n");
                 self.open_scratch_with_text("[messages]".into(), text);
             }
-            "Sum" | "sum" => {
-                let text = self.active_editor().map(|b| {
-                    if let Some((s, e)) = b.editor.selection() {
-                        b.editor.text()[s..e].to_string()
-                    } else {
-                        b.editor.text().to_string()
-                    }
-                });
-                let Some(text) = text else {
-                    self.toast("no active editor");
-                    return;
-                };
-                let mut total: f64 = 0.0;
-                let mut count: usize = 0;
-                let mut buf = String::new();
-                for c in text.chars() {
-                    if c.is_ascii_digit() || c == '-' || c == '.' {
-                        buf.push(c);
-                    } else {
-                        if !buf.is_empty()
-                            && let Ok(n) = buf.parse::<f64>()
-                        {
-                            total += n;
-                            count += 1;
-                        }
-                        buf.clear();
-                    }
-                }
-                if !buf.is_empty()
-                    && let Ok(n) = buf.parse::<f64>()
-                {
-                    total += n;
-                    count += 1;
-                }
-                let total_disp = if total.fract().abs() < 1e-9 {
-                    format!("{}", total as i64)
-                } else {
-                    format!("{total:.4}")
-                };
-                self.toast(format!(":Sum — {count} number(s), total {total_disp}"));
-            }
-            "Wipeout" | "Wipe" => {
-                let sub = rest.trim();
-                if sub.is_empty() {
-                    self.toast(":Wipeout <substr> — needs a substring");
-                    return;
-                }
-                let sub_lower = sub.to_lowercase();
-                let workspace = self.workspace.clone();
-                let to_close: Vec<usize> = self
-                    .panes
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, p)| match p {
-                        Pane::Editor(b) => {
-                            let path = b.path.as_ref()?;
-                            let rel = path
-                                .strip_prefix(&workspace)
-                                .unwrap_or(path)
-                                .to_string_lossy()
-                                .to_lowercase();
-                            if rel.contains(&sub_lower) && !b.dirty {
-                                Some(i)
-                            } else {
-                                None
-                            }
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                if to_close.is_empty() {
-                    self.toast(format!(":Wipeout — no clean buffers match {sub:?}"));
-                    return;
-                }
-                // Close in reverse index order so earlier indices stay
-                // valid as we work backward.
-                let n = to_close.len();
-                for i in to_close.into_iter().rev() {
-                    self.close_pane(i);
-                }
-                self.toast(format!(":Wipeout — closed {n} buffer(s)"));
-            }
+            "Sum" | "sum" => self.ex_sum(rest),
+            "Wipeout" | "Wipe" => self.ex_wipeout(rest),
             "Bonly" | "bonly" => {
                 if let Some(id) = self.active {
                     self.close_panes_except(Some(id));
@@ -1882,43 +1632,7 @@ impl App {
             // `:RootFor [path]` — toast the LSP root for `<path>` (or
             // the active buffer). Walks ancestors for Cargo.toml /
             // package.json / etc.
-            "RootFor" | "rootfor" => {
-                let arg = rest.trim();
-                let path = if arg.is_empty() {
-                    self.active_editor().and_then(|b| b.path.clone())
-                } else {
-                    let p = std::path::PathBuf::from(arg);
-                    if p.is_absolute() {
-                        Some(p)
-                    } else {
-                        Some(self.workspace.join(p))
-                    }
-                };
-                let Some(path) = path else {
-                    self.toast(":RootFor <path> — needs a path");
-                    return;
-                };
-                let markers = [
-                    "Cargo.toml",
-                    "package.json",
-                    "go.mod",
-                    "pyproject.toml",
-                    ".git",
-                ];
-                let mut cur = path.parent();
-                let mut found: Option<std::path::PathBuf> = None;
-                while let Some(dir) = cur {
-                    if markers.iter().any(|m| dir.join(m).exists()) {
-                        found = Some(dir.to_path_buf());
-                        break;
-                    }
-                    cur = dir.parent();
-                }
-                match found {
-                    Some(p) => self.toast(format!(":RootFor → {}", p.display())),
-                    None => self.toast(":RootFor — no recognized root marker"),
-                }
-            }
+            "RootFor" | "rootfor" => self.ex_rootfor(rest),
             // `:Newer <N>` / `:Older <N>` — aliases for `:later` /
             // `:earlier`. Walks N undo steps forward / back.
             "Newer" => {
@@ -2046,72 +1760,8 @@ impl App {
             // `:wincmd <c>` — run the `Ctrl+W <c>` chord as an ex command
             // (vim canonical for "do window-cmd from cmdline"). Mirrors the
             // Prefix::Window arms in the vim handler.
-            "wincmd" | "winc" => {
-                let arg = rest.trim().chars().next();
-                let cmd = match arg {
-                    Some('h') => Some("view.focus_left"),
-                    Some('l') => Some("view.focus_right"),
-                    Some('k') => Some("view.focus_up"),
-                    Some('j') => Some("view.focus_down"),
-                    Some('w') => Some("view.focus_next_split"),
-                    Some('q') | Some('c') => Some("view.close_split"),
-                    Some('s') => Some("view.split_down"),
-                    Some('v') => Some("view.split_right"),
-                    Some('=') => Some("view.equalize_splits"),
-                    Some('o') => Some("view.close_others"),
-                    Some('r') | Some('x') | Some('R') => Some("view.rotate_splits"),
-                    Some('+') => Some("view.split_grow_height"),
-                    Some('-') => Some("view.split_shrink_height"),
-                    Some('>') => Some("view.split_grow_width"),
-                    Some('<') => Some("view.split_shrink_width"),
-                    Some('H') => Some("view.move_split_left"),
-                    Some('L') => Some("view.move_split_right"),
-                    Some('K') => Some("view.move_split_up"),
-                    Some('J') => Some("view.move_split_down"),
-                    Some('p') => Some("buffer.last"),
-                    Some('_') => Some("view.maximize_height"),
-                    Some('|') => Some("view.maximize_width"),
-                    Some('f') => Some("view.split_open_file_under_cursor"),
-                    Some('d') => Some("view.split_goto_definition"),
-                    Some('n') => Some("view.split_new_scratch"),
-                    _ => None,
-                };
-                if let Some(id) = cmd {
-                    crate::command::run(id, self);
-                } else {
-                    self.toast(":wincmd <c> — unknown chord");
-                }
-            }
-            "Maps" | "Keys" => {
-                let filter = rest.trim().to_lowercase();
-                let mut rows: Vec<(String, String)> = self
-                    .keymap
-                    .iter()
-                    .map(|(c, id)| (c.to_spec(), id.to_string()))
-                    .filter(|(spec, id)| {
-                        filter.is_empty()
-                            || spec.to_lowercase().contains(&filter)
-                            || id.to_lowercase().contains(&filter)
-                    })
-                    .collect();
-                rows.sort();
-                if rows.is_empty() {
-                    self.toast(format!(":Maps — no matches for {filter:?}"));
-                } else {
-                    let preview = rows
-                        .iter()
-                        .take(20)
-                        .map(|(spec, id)| format!("{spec}→{id}"))
-                        .collect::<Vec<_>>()
-                        .join(" · ");
-                    let more = if rows.len() > 20 {
-                        format!(" (…{} more)", rows.len() - 20)
-                    } else {
-                        String::new()
-                    };
-                    self.toast(format!(":Maps · {preview}{more}"));
-                }
-            }
+            "wincmd" | "winc" => self.ex_wincmd(cmd, rest),
+            "Maps" | "Keys" => self.ex_maps(rest),
             // `:diff` / `:diffs` / `:diffsplit` — open the diff pane for
             // the active file (alias for the existing `git.diff_file`
             // command). Vim users reach for `:diff` reflexively.
@@ -2182,43 +1832,7 @@ impl App {
             // unescape `\\` and `\"`, run the result as a fresh ex cmd.
             // No expression eval (vim's `:execute` does string concat
             // with `.`); strict literal MVP.
-            "execute" | "exe" => {
-                let s = rest.trim();
-                let inner = if s.len() >= 2
-                    && ((s.starts_with('"') && s.ends_with('"'))
-                        || (s.starts_with('\'') && s.ends_with('\'')))
-                {
-                    &s[1..s.len() - 1]
-                } else {
-                    s
-                };
-                // Unescape `\"` → `"` and `\\` → `\`.
-                let unescaped: String = {
-                    let mut out = String::with_capacity(inner.len());
-                    let mut chars = inner.chars().peekable();
-                    while let Some(c) = chars.next() {
-                        if c == '\\'
-                            && let Some(&n) = chars.peek()
-                        {
-                            match n {
-                                '"' | '\\' | '\'' => {
-                                    chars.next();
-                                    out.push(n);
-                                    continue;
-                                }
-                                _ => {}
-                            }
-                        }
-                        out.push(c);
-                    }
-                    out
-                };
-                if unescaped.is_empty() {
-                    self.toast(":execute — empty string");
-                } else {
-                    self.run_ex_command(&unescaped);
-                }
-            }
+            "execute" | "exe" => self.ex_execute(rest),
             // `:syntax on|off` — toggle tree-sitter highlights (master
             // switch). Off paints all editor text in the theme's
             // foreground color.
@@ -2325,43 +1939,7 @@ impl App {
             // `:jumps` — toast the jumplist (nav_back + nav_forward), newest
             // first. Capped to 10 entries each side so the toast stays
             // readable.
-            "jumps" => {
-                let back: Vec<String> = self
-                    .nav_back
-                    .iter()
-                    .rev()
-                    .take(10)
-                    .map(|np| {
-                        let rel = rel_path(&self.workspace, &np.path);
-                        format!("{rel}:{}", np.row + 1)
-                    })
-                    .collect();
-                let fwd: Vec<String> = self
-                    .nav_forward
-                    .iter()
-                    .rev()
-                    .take(10)
-                    .map(|np| {
-                        let rel = rel_path(&self.workspace, &np.path);
-                        format!("{rel}:{}", np.row + 1)
-                    })
-                    .collect();
-                if back.is_empty() && fwd.is_empty() {
-                    self.toast(":jumps — empty");
-                } else {
-                    let b_part = if back.is_empty() {
-                        String::new()
-                    } else {
-                        format!("← {}", back.join("  "))
-                    };
-                    let f_part = if fwd.is_empty() {
-                        String::new()
-                    } else {
-                        format!("  → {}", fwd.join("  "))
-                    };
-                    self.toast(format!(":jumps {}{}", b_part, f_part));
-                }
-            }
+            "jumps" => self.ex_jumps(rest),
             // `:wn` / `:wnext` — write the current buffer + jump to next.
             // `:wp` / `:wprev` — write + jump to prev.
             "wn" | "wnext" => {
@@ -2585,38 +2163,7 @@ impl App {
             // `:cexpr <text>` — populate the quickfix list from a
             // `file:line:col:message` string (vim canonical). Each newline-
             // separated line that parses becomes one entry.
-            "cexpr" | "cex" => {
-                let mut hits: Vec<crate::grep_pane::GrepHit> = Vec::new();
-                for ln in rest.lines() {
-                    let parts: Vec<&str> = ln.splitn(4, ':').collect();
-                    if parts.len() < 3 {
-                        continue;
-                    }
-                    let Ok(line) = parts[1].parse::<u32>() else {
-                        continue;
-                    };
-                    let col = parts[2].parse::<u32>().ok();
-                    let (col, text_idx) = match col {
-                        Some(c) => (c, 3),
-                        None => (1, 2),
-                    };
-                    let path = self.workspace.join(parts[0]);
-                    let rel = parts[0].to_string();
-                    let text = parts.get(text_idx).copied().unwrap_or("").to_string();
-                    hits.push(crate::grep_pane::GrepHit {
-                        path,
-                        rel,
-                        line: line.saturating_sub(1),
-                        col: col.saturating_sub(1),
-                        text,
-                    });
-                }
-                if hits.is_empty() {
-                    self.toast(":cexpr — no parseable entries");
-                } else {
-                    self.open_quickfix("cexpr", hits);
-                }
-            }
+            "cexpr" | "cex" => self.ex_cexpr(rest),
             "cnext" | "cn" => self.quickfix_navigate(1),
             "cprev" | "cp" | "cN" => self.quickfix_navigate(-1),
             "cfirst" | "cfir" => self.quickfix_navigate(i32::MIN),
@@ -2625,72 +2172,8 @@ impl App {
             // `:cdo <cmd>` — run `<cmd>` on every quickfix entry (jump,
             // execute, save). `:cfdo <cmd>` — same but once per unique file.
             // Vim canonical.
-            "cdo" | "cfdo" => {
-                let inner = rest.trim();
-                if inner.is_empty() {
-                    self.toast(":cdo <ex-command>");
-                    return;
-                }
-                let per_file = cmd == "cfdo";
-                let hits = self
-                    .panes
-                    .iter()
-                    .find_map(|p| match p {
-                        Pane::Quickfix(g) | Pane::Grep(g) => Some(g.hits.clone()),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
-                if hits.is_empty() {
-                    self.toast(":cdo — no quickfix entries");
-                    return;
-                }
-                let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-                let mut ran = 0usize;
-                for hit in hits {
-                    if per_file && !seen.insert(hit.path.clone()) {
-                        continue;
-                    }
-                    self.open_path(&hit.path);
-                    if let Some(b) = self.active_editor_mut() {
-                        b.editor.place_cursor(hit.line as usize, hit.col as usize);
-                    }
-                    self.run_ex_command(inner);
-                    self.save_active_now();
-                    ran += 1;
-                }
-                let scope = if per_file { "unique file " } else { "" };
-                self.toast(format!(":{cmd} {inner:?} — ran on {ran} {scope}entry/ies"));
-            }
-            "bufdo" | "argdo" => {
-                let inner = rest.trim();
-                if inner.is_empty() {
-                    self.toast(":bufdo <ex-command>");
-                    return;
-                }
-                let editor_indices: Vec<usize> = self
-                    .panes
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, p)| {
-                        if matches!(p, Pane::Editor(_)) {
-                            Some(i)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if editor_indices.is_empty() {
-                    self.toast(":bufdo — no editor buffers open");
-                    return;
-                }
-                let count = editor_indices.len();
-                let inner = inner.to_string();
-                for idx in editor_indices {
-                    self.reveal_pane(idx);
-                    self.run_ex_command(&inner);
-                }
-                self.toast(format!(":bufdo · ran on {count} buffer(s)"));
-            }
+            "cdo" | "cfdo" => self.ex_cdo(cmd, rest),
+            "bufdo" | "argdo" => self.ex_bufdo(rest),
             "tabdo" => {
                 // Vim canonical: switch to each tab in turn, run the
                 // command in that tab's active window, leave the
@@ -2725,51 +2208,7 @@ impl App {
             // command. `:Name <args>` runs `<expansion> <args>`. Bare
             // `:command` lists. `:delcommand <Name>` (alias `:delc`)
             // removes one. Vim canonical aliases.
-            "command" | "com" => {
-                let rest = rest.trim();
-                if rest.is_empty() {
-                    if self.user_ex_commands.is_empty() {
-                        self.toast(":command — none defined");
-                    } else {
-                        let mut entries: Vec<String> = self
-                            .user_ex_commands
-                            .iter()
-                            .map(|(k, v)| {
-                                let preview: String = v.expansion.chars().take(30).collect();
-                                let suffix = if v.expansion.chars().count() > 30 {
-                                    "…"
-                                } else {
-                                    ""
-                                };
-                                format!("{k}={preview}{suffix}")
-                            })
-                            .collect();
-                        entries.sort();
-                        self.toast(format!(":command · {}", entries.join("  ")));
-                    }
-                } else {
-                    // Optional leading `-nargs=...` flag (vim canonical).
-                    let (nargs, rest) = if let Some(after) = rest.strip_prefix("-nargs=") {
-                        let (val, tail) = match after.find(char::is_whitespace) {
-                            Some(i) => (&after[..i], after[i..].trim_start()),
-                            None => (after, ""),
-                        };
-                        (ExCommandNargs::parse(val), tail)
-                    } else {
-                        (ExCommandNargs::Any, rest)
-                    };
-                    if let Some((name, body)) = rest.split_once(char::is_whitespace) {
-                        let cmd = UserExCommand {
-                            expansion: body.trim().to_string(),
-                            nargs,
-                        };
-                        self.user_ex_commands.insert(name.trim().to_string(), cmd);
-                        self.toast(format!(":command {} = {}", name.trim(), body.trim()));
-                    } else {
-                        self.toast(":command [-nargs=…] <Name> <expansion>");
-                    }
-                }
-            }
+            "command" | "com" => self.ex_command_def(cmd, rest),
             "delcommand" | "delc" => {
                 let key = rest.trim();
                 if key.is_empty() {
@@ -2853,54 +2292,7 @@ impl App {
                     self.toast(format!(":history · {}{more}", preview.join("  ")));
                 }
             }
-            "reg" | "registers" | "di" | "display" => {
-                let mut parts: Vec<String> = Vec::new();
-                let preview = |s: &str, cap: usize| -> String {
-                    let mut out: String = s
-                        .chars()
-                        .take(cap)
-                        .map(|c| if c == '\n' { '↵' } else { c })
-                        .collect();
-                    if s.chars().count() > cap {
-                        out.push('…');
-                    }
-                    out
-                };
-                // `:reg abc` ⇒ filter to only show the named registers in
-                // the arg. Bare `:reg` shows them all. Vim canonical.
-                let filter: Option<std::collections::HashSet<char>> = if rest.trim().is_empty() {
-                    None
-                } else {
-                    Some(rest.chars().filter(|c| !c.is_whitespace()).collect())
-                };
-                let show_unnamed = filter.as_ref().map(|s| s.contains(&'"')).unwrap_or(true);
-                let unnamed = self.clipboard.text();
-                if show_unnamed && !unnamed.is_empty() {
-                    parts.push(format!("\"\"  {}", preview(&unnamed, 40)));
-                }
-                let mut named: Vec<(char, (String, bool))> = self
-                    .clipboard
-                    .named_registers()
-                    .iter()
-                    .map(|(c, v)| (*c, v.clone()))
-                    .collect();
-                named.sort_by_key(|(c, _)| *c);
-                for (c, (text, _linewise)) in named {
-                    if let Some(f) = &filter
-                        && !f.contains(&c)
-                    {
-                        continue;
-                    }
-                    if !text.is_empty() {
-                        parts.push(format!("\"{c}  {}", preview(&text, 40)));
-                    }
-                }
-                if parts.is_empty() {
-                    self.toast(":reg — empty");
-                } else {
-                    self.toast(format!(":reg · {}", parts.join("  ")));
-                }
-            }
+            "reg" | "registers" | "di" | "display" => self.ex_registers(rest),
             // `:source <path>` (alias `:so`) — re-apply a config file at
             // runtime. Layers on top of the current config (missing keys
             // keep their existing value). Rebuilds the keymap (input-style
@@ -2930,568 +2322,20 @@ impl App {
                     }
                 }
             }
-            "e" | "edit" => {
-                // `:e` (bare) and `:e %` both reload the active buffer
-                // (vim's `%` substitutes to the current file's path; we
-                // short-circuit it). Non-empty other paths open the file.
-                // `:e +N <path>` opens the file and jumps to line N (vim
-                // canonical). `:e +<path>` (no N) opens at last line.
-                if rest.is_empty() || rest.trim() == "%" {
-                    self.reload_active(false);
-                } else if let Some(after_plus) = rest.strip_prefix('+') {
-                    let (count_part, path_part) = match after_plus.find(char::is_whitespace) {
-                        Some(i) => (&after_plus[..i], after_plus[i..].trim()),
-                        None => ("", after_plus),
-                    };
-                    let p = self.workspace.join(path_part);
-                    self.open_path(&p);
-                    let line = if count_part.is_empty() {
-                        self.active_editor()
-                            .map(|b| b.editor.line_count())
-                            .unwrap_or(1)
-                    } else {
-                        count_part.parse::<usize>().unwrap_or(1).max(1)
-                    };
-                    if let Some(b) = self.active_editor_mut() {
-                        b.editor.place_cursor(line.saturating_sub(1), 0);
-                    }
-                } else {
-                    let p = self.workspace.join(rest);
-                    self.open_path(&p);
-                }
-            }
+            "e" | "edit" => self.ex_edit(rest),
             "e!" | "edit!" => self.reload_active(true),
             // `:r !cmd` / `:read !cmd` — fire `cmd` through the shell, splice
             // its stdout into the active editor below the cursor's line.
             // Vim convention: line is added below the *current* line, not at
             // the cursor's column. Without `!` (`:r path`) reads a file.
-            "r" | "read" => {
-                if let Some(rest) = rest.strip_prefix('!') {
-                    let rest = rest.trim();
-                    if rest.is_empty() {
-                        self.toast(":read ! — command required");
-                    } else {
-                        let shell =
-                            std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-                        let cwd = self.active_workspace_path().to_path_buf();
-                        let out = std::process::Command::new(&shell)
-                            .arg("-c")
-                            .arg(rest)
-                            .current_dir(&cwd)
-                            .output();
-                        match out {
-                            Ok(out) => {
-                                let body = String::from_utf8_lossy(&out.stdout).to_string();
-                                let body = body.trim_end_matches('\n').to_string();
-                                let Some(idx) = self.active else {
-                                    self.toast(":r ! — no active editor");
-                                    return;
-                                };
-                                let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
-                                    self.toast(":r ! — no active editor");
-                                    return;
-                                };
-                                let line_no = b.editor.row_col().0;
-                                let eol = b.editor.line_byte_range(line_no).1;
-                                let payload = format!("\n{body}");
-                                let payload_len = payload.len();
-                                b.apply_edit_ops(
-                                    vec![crate::edit_op::EditOp::ReplaceRange {
-                                        start: eol,
-                                        end: eol,
-                                        text: payload,
-                                    }],
-                                    &mut self.clipboard,
-                                    0,
-                                );
-                                self.toast(format!(":r ! — inserted {payload_len}B"));
-                            }
-                            Err(e) => self.toast(format!(":r ! — {e}")),
-                        }
-                    }
-                } else if rest.is_empty() {
-                    self.toast(":r — path or `!cmd` required");
-                } else {
-                    // `:r <path>` — splice file contents below the cursor.
-                    let path = if std::path::Path::new(rest).is_absolute() {
-                        std::path::PathBuf::from(rest)
-                    } else {
-                        self.workspace.join(rest)
-                    };
-                    match std::fs::read_to_string(&path) {
-                        Ok(body) => {
-                            let body = body.trim_end_matches('\n').to_string();
-                            let Some(idx) = self.active else {
-                                self.toast(":r — no active editor");
-                                return;
-                            };
-                            let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
-                                self.toast(":r — no active editor");
-                                return;
-                            };
-                            let line_no = b.editor.row_col().0;
-                            let eol = b.editor.line_byte_range(line_no).1;
-                            let payload = format!("\n{body}");
-                            let payload_len = payload.len();
-                            b.apply_edit_ops(
-                                vec![crate::edit_op::EditOp::ReplaceRange {
-                                    start: eol,
-                                    end: eol,
-                                    text: payload,
-                                }],
-                                &mut self.clipboard,
-                                0,
-                            );
-                            self.toast(format!(":r — inserted {payload_len}B"));
-                        }
-                        Err(e) => self.toast(format!(":r — {e}")),
-                    }
-                }
-            }
+            "r" | "read" => self.ex_read(cmd, rest),
             // `:setlocal` — like `:set`, but only mutates the active
             // buffer's per-buffer settings (tab_width / ensure_trailing
             // _newline / trim_trailing_ws_on_save). Buffers without the
             // setting fall through silently. Vim canonical for
             // file-specific overrides without touching the global config.
-            "setlocal" | "setl" => {
-                let opt = rest.trim();
-                let Some(idx) = self.active else {
-                    self.toast(":setlocal — no active editor");
-                    return;
-                };
-                let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
-                    self.toast(":setlocal — no active editor");
-                    return;
-                };
-                if let Some(v) = opt
-                    .strip_prefix("tab_width=")
-                    .or_else(|| opt.strip_prefix("tabstop="))
-                    .or_else(|| opt.strip_prefix("ts="))
-                    .or_else(|| opt.strip_prefix("shiftwidth="))
-                    .or_else(|| opt.strip_prefix("sw="))
-                    .or_else(|| opt.strip_prefix("softtabstop="))
-                    .or_else(|| opt.strip_prefix("sts="))
-                {
-                    if let Ok(n) = v.trim().parse::<usize>() {
-                        b.editor.set_tab_width(n);
-                        self.toast(format!(":setlocal tab_width={n}"));
-                    } else {
-                        self.toast(format!(":setlocal tab_width={v} — not a number"));
-                    }
-                } else if matches!(opt, "eol" | "endofline") {
-                    b.ensure_trailing_newline = true;
-                    self.toast(":setlocal eol");
-                } else if matches!(opt, "noeol" | "noendofline") {
-                    b.ensure_trailing_newline = false;
-                    self.toast(":setlocal noeol");
-                } else if matches!(opt, "trim" | "trim_trailing_whitespace") {
-                    b.trim_trailing_ws_on_save = true;
-                    self.toast(":setlocal trim");
-                } else if matches!(opt, "notrim" | "notrim_trailing_whitespace") {
-                    b.trim_trailing_ws_on_save = false;
-                    self.toast(":setlocal notrim");
-                } else if matches!(opt, "readonly" | "ro") {
-                    b.read_only = true;
-                    self.toast(":setlocal readonly");
-                } else if matches!(opt, "noreadonly" | "noro" | "modifiable") {
-                    b.read_only = false;
-                    self.toast(":setlocal modifiable");
-                } else if matches!(opt, "readonly!" | "invreadonly") {
-                    b.read_only = !b.read_only;
-                    let label = if b.read_only {
-                        "readonly"
-                    } else {
-                        "modifiable"
-                    };
-                    self.toast(format!(":setlocal {label}"));
-                } else {
-                    self.toast(format!(":setlocal — unknown option: {opt}"));
-                }
-            }
-            "set" => {
-                // `:set` (bare) → list every option's current value as a toast.
-                // `:set input=vim|standard` · `:set theme=…` · `:set tab_width=N`
-                // · `:set [no]relativenumber` / `[no]list` (toggle suffix `!`).
-                let opt = rest.trim();
-                if opt.is_empty() {
-                    let cfg = &self.config;
-                    let theme = crate::ui::theme::cur().name;
-                    self.toast(format!(
-                        "input={} · theme={theme} · tab_width={} · {} · {} · {}",
-                        cfg.editor.input_style,
-                        cfg.editor.tab_width,
-                        if cfg.ui.relative_line_numbers {
-                            "relativenumber"
-                        } else {
-                            "norelativenumber"
-                        },
-                        if cfg.ui.show_whitespace {
-                            "list"
-                        } else {
-                            "nolist"
-                        },
-                        if cfg.ui.bracket_rainbow {
-                            "rainbow"
-                        } else {
-                            "norainbow"
-                        },
-                    ));
-                } else if let Some(v) = rest.strip_prefix("input=") {
-                    self.set_input_style(v.trim());
-                } else if let Some(v) = rest.strip_prefix("theme=") {
-                    self.set_theme(v.trim());
-                } else if let Some(v) = rest
-                    .strip_prefix("filetype=")
-                    .or_else(|| rest.strip_prefix("ft="))
-                {
-                    let name = v.trim().to_string();
-                    if let Some(b) = self.active_editor_mut() {
-                        b.set_language_ext(Some(name.clone()));
-                        b.refresh_highlights();
-                        self.toast(format!(":set filetype={name}"));
-                    }
-                } else if let Some(v) = rest
-                    .strip_prefix("tab_width=")
-                    .or_else(|| rest.strip_prefix("tabstop="))
-                    .or_else(|| rest.strip_prefix("ts="))
-                    .or_else(|| rest.strip_prefix("shiftwidth="))
-                    .or_else(|| rest.strip_prefix("sw="))
-                    .or_else(|| rest.strip_prefix("softtabstop="))
-                    .or_else(|| rest.strip_prefix("sts="))
-                {
-                    // Vim has separate tabstop / shiftwidth / softtabstop knobs;
-                    // mnml has one (`tab_width`). All aliases route to the same
-                    // setter — close enough for the vim users who set them all
-                    // to the same value anyway.
-                    if let Ok(n) = v.trim().parse::<usize>() {
-                        self.set_tab_width(n);
-                    } else {
-                        self.toast(format!(":set tab_width={v} — not a number"));
-                    }
-                } else if let Some(v) = rest
-                    .strip_prefix("colorcolumn=")
-                    .or_else(|| rest.strip_prefix("cc="))
-                {
-                    let s = v.trim();
-                    if s.is_empty() {
-                        self.config.ui.color_column = 0;
-                        self.toast("colorcolumn: off");
-                    } else if let Ok(n) = s.parse::<usize>() {
-                        self.config.ui.color_column = n;
-                        if n == 0 {
-                            self.toast("colorcolumn: off");
-                        } else {
-                            self.toast(format!("colorcolumn: {n}"));
-                        }
-                    } else {
-                        self.toast(format!(":set colorcolumn={v} — not a number"));
-                    }
-                } else if let Some(v) = rest
-                    .strip_prefix("scrolloff=")
-                    .or_else(|| rest.strip_prefix("so="))
-                {
-                    if let Ok(n) = v.trim().parse::<usize>() {
-                        self.config.ui.scrolloff = n;
-                        self.toast(format!("scrolloff: {n}"));
-                    } else {
-                        self.toast(format!(":set scrolloff={v} — not a number"));
-                    }
-                } else if let Some(v) = rest
-                    .strip_prefix("sidescrolloff=")
-                    .or_else(|| rest.strip_prefix("siso="))
-                {
-                    if let Ok(n) = v.trim().parse::<usize>() {
-                        self.config.ui.sidescrolloff = n;
-                        self.toast(format!("sidescrolloff: {n}"));
-                    } else {
-                        self.toast(format!(":set sidescrolloff={v} — not a number"));
-                    }
-                } else if let Some(v) = rest.strip_prefix("text_width=") {
-                    if let Ok(n) = v.trim().parse::<usize>() {
-                        self.config.editor.text_width = n.max(8);
-                        self.toast(format!("text_width: {}", self.config.editor.text_width));
-                    } else {
-                        self.toast(format!(":set text_width={v} — not a number"));
-                    }
-                } else if matches!(opt, "endofline" | "eol") {
-                    self.config.editor.ensure_trailing_newline = true;
-                    self.toast("ensure_trailing_newline: on");
-                } else if matches!(opt, "noendofline" | "noeol") {
-                    self.config.editor.ensure_trailing_newline = false;
-                    self.toast("ensure_trailing_newline: off");
-                } else if matches!(opt, "breadcrumb") {
-                    self.set_breadcrumb(true);
-                } else if matches!(opt, "nobreadcrumb") {
-                    self.set_breadcrumb(false);
-                } else if matches!(opt, "breadcrumb!" | "invbreadcrumb") {
-                    self.toggle_breadcrumb();
-                } else if matches!(opt, "autopair" | "ap") {
-                    self.set_auto_pair(true);
-                } else if matches!(opt, "noautopair" | "noap") {
-                    self.set_auto_pair(false);
-                } else if matches!(opt, "autopair!" | "invautopair") {
-                    self.toggle_auto_pair();
-                } else if matches!(opt, "relativenumber" | "rnu") {
-                    self.set_relative_line_numbers(true);
-                } else if matches!(opt, "norelativenumber" | "nornu") {
-                    self.set_relative_line_numbers(false);
-                } else if matches!(opt, "relativenumber!" | "rnu!" | "invrelativenumber") {
-                    self.set_relative_line_numbers(!self.config.ui.relative_line_numbers);
-                } else if matches!(opt, "cursorline" | "cul") {
-                    self.config.ui.cursor_line = true;
-                    self.toast("cursorline: on");
-                } else if matches!(opt, "nocursorline" | "nocul") {
-                    self.config.ui.cursor_line = false;
-                    self.toast("cursorline: off");
-                } else if matches!(opt, "cursorline!" | "cul!" | "invcursorline") {
-                    self.config.ui.cursor_line = !self.config.ui.cursor_line;
-                    self.toast(format!(
-                        "cursorline: {}",
-                        if self.config.ui.cursor_line {
-                            "on"
-                        } else {
-                            "off"
-                        }
-                    ));
-                } else if matches!(opt, "number" | "nu") {
-                    self.config.ui.line_numbers = true;
-                    self.toast("number: on");
-                } else if matches!(opt, "nonumber" | "nonu") {
-                    self.config.ui.line_numbers = false;
-                    self.toast("number: off");
-                } else if matches!(opt, "number!" | "nu!" | "invnumber") {
-                    self.config.ui.line_numbers = !self.config.ui.line_numbers;
-                    self.toast(format!(
-                        "number: {}",
-                        if self.config.ui.line_numbers {
-                            "on"
-                        } else {
-                            "off"
-                        }
-                    ));
-                } else if matches!(opt, "list") {
-                    self.set_show_whitespace(true);
-                } else if matches!(opt, "nolist") {
-                    self.set_show_whitespace(false);
-                } else if matches!(opt, "list!" | "invlist") {
-                    self.set_show_whitespace(!self.config.ui.show_whitespace);
-                } else if matches!(opt, "rainbow") {
-                    self.set_bracket_rainbow(true);
-                } else if matches!(opt, "norainbow") {
-                    self.set_bracket_rainbow(false);
-                } else if matches!(opt, "rainbow!" | "invrainbow") {
-                    self.toggle_bracket_rainbow();
-                } else if matches!(opt, "scrollbar") {
-                    self.set_scrollbar(true);
-                } else if matches!(opt, "noscrollbar") {
-                    self.set_scrollbar(false);
-                } else if matches!(opt, "scrollbar!" | "invscrollbar") {
-                    self.toggle_scrollbar();
-                } else if matches!(opt, "headless") {
-                    self.set_browser_headless(true);
-                } else if matches!(opt, "noheadless") {
-                    self.set_browser_headless(false);
-                } else if matches!(opt, "headless!" | "invheadless") {
-                    self.toggle_browser_headless();
-                } else if matches!(opt, "trailing") {
-                    self.set_highlight_trailing_ws(true);
-                } else if matches!(opt, "notrailing") {
-                    self.set_highlight_trailing_ws(false);
-                } else if matches!(opt, "trailing!" | "invtrailing") {
-                    self.toggle_highlight_trailing_ws();
-                } else if matches!(opt, "hlword") {
-                    self.set_highlight_word_under_cursor(true);
-                } else if matches!(opt, "nohlword") {
-                    self.set_highlight_word_under_cursor(false);
-                } else if matches!(opt, "hlword!" | "invhlword") {
-                    self.toggle_highlight_word_under_cursor();
-                } else if matches!(opt, "inlayhints") {
-                    self.config.editor.inlay_hints = true;
-                    self.toast("inlay hints: on");
-                } else if matches!(opt, "noinlayhints") {
-                    self.config.editor.inlay_hints = false;
-                    self.toast("inlay hints: off");
-                } else if matches!(opt, "inlayhints!" | "invinlayhints") {
-                    self.config.editor.inlay_hints = !self.config.editor.inlay_hints;
-                    self.toast(format!(
-                        "inlay hints: {}",
-                        if self.config.editor.inlay_hints {
-                            "on"
-                        } else {
-                            "off"
-                        }
-                    ));
-                } else if matches!(opt, "clock") {
-                    self.config.ui.clock = true;
-                    self.toast("clock: on");
-                } else if matches!(opt, "noclock") {
-                    self.config.ui.clock = false;
-                    self.toast("clock: off");
-                } else if matches!(opt, "clock!" | "invclock") {
-                    self.config.ui.clock = !self.config.ui.clock;
-                    self.toast(format!(
-                        "clock: {}",
-                        if self.config.ui.clock { "on" } else { "off" }
-                    ));
-                } else if matches!(opt, "codelens") {
-                    self.config.editor.code_lens = true;
-                    self.toast("code lens: on");
-                } else if matches!(opt, "nocodelens") {
-                    self.config.editor.code_lens = false;
-                    self.toast("code lens: off");
-                } else if matches!(opt, "codelens!" | "invcodelens") {
-                    self.config.editor.code_lens = !self.config.editor.code_lens;
-                    self.toast(format!(
-                        "code lens: {}",
-                        if self.config.editor.code_lens {
-                            "on"
-                        } else {
-                            "off"
-                        }
-                    ));
-                } else if matches!(opt, "automdpreview") {
-                    self.config.ui.auto_md_preview = true;
-                    self.toast("auto-preview md: on");
-                } else if matches!(opt, "noautomdpreview") {
-                    self.config.ui.auto_md_preview = false;
-                    self.toast("auto-preview md: off");
-                } else if matches!(opt, "automdpreview!" | "invautomdpreview") {
-                    self.config.ui.auto_md_preview = !self.config.ui.auto_md_preview;
-                    self.toast(format!(
-                        "auto-preview md: {}",
-                        if self.config.ui.auto_md_preview {
-                            "on"
-                        } else {
-                            "off"
-                        }
-                    ));
-                } else if matches!(opt, "nocolorcolumn" | "nocc") {
-                    self.config.ui.color_column = 0;
-                    self.toast("colorcolumn: off");
-                } else if matches!(opt, "colorcolumn!" | "cc!" | "invcolorcolumn") {
-                    self.toggle_color_column();
-                } else if matches!(opt, "autoindent" | "ai") {
-                    self.config.editor.auto_indent = true;
-                    self.toast("auto-indent: on");
-                } else if matches!(opt, "noautoindent" | "noai") {
-                    self.config.editor.auto_indent = false;
-                    self.toast("auto-indent: off");
-                } else if matches!(opt, "autoindent!" | "invautoindent" | "ai!" | "invai") {
-                    self.config.editor.auto_indent = !self.config.editor.auto_indent;
-                    self.toast(format!(
-                        "auto-indent: {}",
-                        if self.config.editor.auto_indent {
-                            "on"
-                        } else {
-                            "off"
-                        }
-                    ));
-                // Vim-compat toasts — settings vim users reach for that mnml
-                // either always-honors or doesn't implement yet. Toast the
-                // current state instead of "unknown option" so muscle memory
-                // doesn't get punished.
-                } else if matches!(
-                    opt,
-                    "expandtab"
-                        | "et"
-                        | "ignorecase"
-                        | "ic"
-                        | "smartcase"
-                        | "scs"
-                        | "hlsearch"
-                        | "hls"
-                        | "incsearch"
-                        | "is"
-                ) {
-                    self.toast(format!(":set {opt} — already on (mnml default)"));
-                } else if matches!(
-                    opt,
-                    "noexpandtab"
-                        | "noet"
-                        | "noignorecase"
-                        | "noic"
-                        | "nosmartcase"
-                        | "noscs"
-                        | "nohlsearch"
-                        | "nohls"
-                        | "noincsearch"
-                        | "nois"
-                ) {
-                    self.toast(format!(":set {opt} — not supported in mnml"));
-                } else if opt == "wrap" {
-                    self.set_wrap(true);
-                } else if opt == "nowrap" {
-                    self.set_wrap(false);
-                } else if matches!(opt, "wrap!" | "invwrap") {
-                    self.toggle_wrap();
-                } else if matches!(opt, "todohl" | "todohighlight") {
-                    self.config.ui.highlight_todo_keywords = true;
-                    self.toast("todo highlight: on");
-                } else if matches!(opt, "notodohl" | "notodohighlight") {
-                    self.config.ui.highlight_todo_keywords = false;
-                    self.toast("todo highlight: off");
-                } else if matches!(opt, "todohl!" | "invtodohl") {
-                    self.toggle_todo_highlight();
-                } else if matches!(opt, "rendermarkdown" | "rendermd") {
-                    self.config.ui.render_markdown = true;
-                    self.toast("render markdown: on");
-                } else if matches!(opt, "norendermarkdown" | "norendermd") {
-                    self.config.ui.render_markdown = false;
-                    self.toast("render markdown: off");
-                } else if matches!(opt, "rendermarkdown!" | "invrendermarkdown") {
-                    self.toggle_render_markdown();
-                } else if matches!(opt, "stickycontext" | "sticky") {
-                    self.config.ui.sticky_context = true;
-                    self.toast("sticky context: on");
-                } else if matches!(opt, "nostickycontext" | "nosticky") {
-                    self.config.ui.sticky_context = false;
-                    self.toast("sticky context: off");
-                } else if matches!(opt, "stickycontext!" | "invstickycontext") {
-                    self.toggle_sticky_context();
-                } else if matches!(opt, "bufferline" | "bl") {
-                    self.bufferline_visible = true;
-                    self.toast("bufferline: on");
-                } else if matches!(opt, "nobufferline" | "nobl") {
-                    self.bufferline_visible = false;
-                    self.toast("bufferline: off");
-                } else if matches!(opt, "bufferline!" | "invbufferline") {
-                    self.toggle_bufferline();
-                } else if matches!(opt, "formatontype" | "fot") {
-                    self.config.editor.format_on_type = true;
-                    self.toast(":set formatontype");
-                } else if matches!(opt, "noformatontype" | "nofot") {
-                    self.config.editor.format_on_type = false;
-                    self.toast(":set noformatontype");
-                } else if matches!(opt, "formatonsave" | "fos") {
-                    self.config.editor.format_on_save = true;
-                    self.toast(":set formatonsave");
-                } else if matches!(opt, "noformatonsave" | "nofos") {
-                    self.config.editor.format_on_save = false;
-                    self.toast(":set noformatonsave");
-                } else if matches!(opt, "willsavewaituntil" | "wswu") {
-                    self.config.editor.will_save_wait_until = true;
-                    self.toast(":set willsavewaituntil");
-                } else if matches!(opt, "nowillsavewaituntil" | "nowswu") {
-                    self.config.editor.will_save_wait_until = false;
-                    self.toast(":set nowillsavewaituntil");
-                } else if matches!(opt, "semantictokensviewport" | "stviewport") {
-                    self.config.editor.semantic_tokens_viewport = true;
-                    self.toast(":set semantictokensviewport");
-                } else if matches!(opt, "nosemantictokensviewport" | "nostviewport") {
-                    self.config.editor.semantic_tokens_viewport = false;
-                    // Drop the cached viewports so the next refresh
-                    // (now driven by the full/delta path) doesn't think
-                    // it already requested.
-                    for p in self.panes.iter_mut() {
-                        if let Pane::Editor(b) = p {
-                            b.last_semantic_viewport = None;
-                        }
-                    }
-                    self.toast(":set nosemantictokensviewport");
-                } else {
-                    self.toast(format!(":set {rest} — not supported"));
-                }
-            }
+            "setlocal" | "setl" => self.ex_setlocal(rest),
+            "set" => self.ex_set(rest),
             // `:noh` / `:nohlsearch` — clear the active buffer's find state
             // (drops the highlights). Vim convention.
             "noh" | "nohl" | "nohlsearch" => {
@@ -3507,6 +2351,1200 @@ impl App {
                     self.toast(format!(":{line} — unknown command"));
                 }
             }
+        }
+    }
+
+    fn ex_buffer(&mut self, rest: &str) {
+        let q = rest.trim();
+        if q.is_empty() {
+            let names: Vec<String> = self
+                .panes
+                .iter()
+                .filter_map(|p| match p {
+                    Pane::Editor(b) => Some(
+                        b.path
+                            .as_ref()
+                            .map(|pp| rel_path(&self.workspace, pp))
+                            .unwrap_or_else(|| b.display_name().to_string()),
+                    ),
+                    _ => None,
+                })
+                .collect();
+            if names.is_empty() {
+                self.toast(":b — no buffers");
+            } else {
+                self.toast(format!(":b · {}", names.join("  ")));
+            }
+        } else {
+            let qlc = q.to_lowercase();
+            let mut hits: Vec<(usize, String)> = Vec::new();
+            for (idx, p) in self.panes.iter().enumerate() {
+                if let Pane::Editor(b) = p {
+                    let label = b
+                        .path
+                        .as_ref()
+                        .map(|pp| rel_path(&self.workspace, pp))
+                        .unwrap_or_else(|| b.display_name().to_string());
+                    if label.to_lowercase().contains(&qlc) {
+                        hits.push((idx, label));
+                    }
+                }
+            }
+            match hits.len() {
+                0 => self.toast(format!(":b — no match for {q:?}")),
+                1 => self.reveal_pane(hits[0].0),
+                _ => {
+                    // Pick the one whose filename matches, else toast hint.
+                    let exact = hits.iter().find(|(_, l)| {
+                        std::path::Path::new(l)
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .map(|s| s.to_lowercase() == qlc)
+                            .unwrap_or(false)
+                    });
+                    if let Some((idx, _)) = exact {
+                        self.reveal_pane(*idx);
+                    } else {
+                        let labels: Vec<String> = hits.iter().map(|(_, l)| l.clone()).collect();
+                        self.toast(format!(":b — ambiguous: {}", labels.join(", ")));
+                    }
+                }
+            }
+        }
+    }
+
+    fn ex_cp(&mut self, rest: &str) {
+        let mut parts = rest.split_whitespace();
+        let (Some(from), Some(to)) = (parts.next(), parts.next()) else {
+            self.toast(":Cp <from> <to> — needs two paths");
+            return;
+        };
+        let resolve = |p: &str| -> std::path::PathBuf {
+            let path = std::path::Path::new(p);
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                self.workspace.join(path)
+            }
+        };
+        let src = resolve(from);
+        let dst = resolve(to);
+        if dst.exists() {
+            self.toast(format!("cp refused: {} exists", dst.display()));
+        } else if let Some(parent) = dst.parent()
+            && !parent.exists()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            self.toast(format!("cp: cannot create parent: {e}"));
+        } else if let Err(e) = std::fs::copy(&src, &dst) {
+            self.toast(format!("cp failed: {e}"));
+        } else {
+            self.tree.refresh();
+            self.toast(format!("cp: {} → {}", src.display(), dst.display()));
+        }
+    }
+
+    fn ex_mv(&mut self, rest: &str) {
+        let mut parts = rest.split_whitespace();
+        let (Some(from), Some(to)) = (parts.next(), parts.next()) else {
+            self.toast(":Mv <from> <to> — needs two paths");
+            return;
+        };
+        let resolve = |p: &str| -> std::path::PathBuf {
+            let path = std::path::Path::new(p);
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                self.workspace.join(path)
+            }
+        };
+        let src = resolve(from);
+        let dst = resolve(to);
+        if dst.exists() {
+            self.toast(format!("mv refused: {} exists", dst.display()));
+        } else if let Some(parent) = dst.parent()
+            && !parent.exists()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            self.toast(format!("mv: cannot create parent: {e}"));
+        } else if let Err(e) = std::fs::rename(&src, &dst) {
+            self.toast(format!("mv failed: {e}"));
+        } else {
+            // Re-point any open editor pane + notify LSP +
+            // update recent_files. Same bookkeeping shape as
+            // `rename_fs_entry`.
+            for pane in &mut self.panes {
+                if let Pane::Editor(b) = pane
+                    && b.path.as_deref() == Some(src.as_path())
+                {
+                    b.path = Some(dst.clone());
+                }
+            }
+            self.lsp.did_close(&src);
+            let new_text = self.panes.iter().find_map(|p| match p {
+                Pane::Editor(b) if b.is_at(&dst) => Some(b.editor.text().to_string()),
+                _ => None,
+            });
+            if let Some(t) = new_text {
+                self.lsp.did_open(&dst, &t);
+            }
+            for p in &mut self.recent_files {
+                if p == &src {
+                    *p = dst.clone();
+                }
+            }
+            self.tree.refresh();
+            self.toast(format!("mv: {} → {}", src.display(), dst.display()));
+        }
+    }
+
+    fn ex_touch(&mut self, rest: &str) {
+        let arg = rest.trim();
+        if arg.is_empty() {
+            self.toast(":Touch <path> — needs a path");
+        } else {
+            let target = std::path::Path::new(arg);
+            let abs = if target.is_absolute() {
+                target.to_path_buf()
+            } else {
+                self.workspace.join(target)
+            };
+            let parent_ok = abs
+                .parent()
+                .is_none_or(|p| p.exists() || std::fs::create_dir_all(p).is_ok());
+            if !parent_ok {
+                self.toast("touch: parent dir create failed");
+            } else {
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .open(&abs)
+                {
+                    Ok(_) => {
+                        self.tree.refresh();
+                        self.toast(format!("touch: {}", abs.display()));
+                    }
+                    Err(e) => self.toast(format!("touch failed: {e}")),
+                }
+            }
+        }
+    }
+
+    fn ex_sum(&mut self, _rest: &str) {
+        let text = self.active_editor().map(|b| {
+            if let Some((s, e)) = b.editor.selection() {
+                b.editor.text()[s..e].to_string()
+            } else {
+                b.editor.text().to_string()
+            }
+        });
+        let Some(text) = text else {
+            self.toast("no active editor");
+            return;
+        };
+        let mut total: f64 = 0.0;
+        let mut count: usize = 0;
+        let mut buf = String::new();
+        for c in text.chars() {
+            if c.is_ascii_digit() || c == '-' || c == '.' {
+                buf.push(c);
+            } else {
+                if !buf.is_empty()
+                    && let Ok(n) = buf.parse::<f64>()
+                {
+                    total += n;
+                    count += 1;
+                }
+                buf.clear();
+            }
+        }
+        if !buf.is_empty()
+            && let Ok(n) = buf.parse::<f64>()
+        {
+            total += n;
+            count += 1;
+        }
+        let total_disp = if total.fract().abs() < 1e-9 {
+            format!("{}", total as i64)
+        } else {
+            format!("{total:.4}")
+        };
+        self.toast(format!(":Sum — {count} number(s), total {total_disp}"));
+    }
+
+    fn ex_wipeout(&mut self, rest: &str) {
+        let sub = rest.trim();
+        if sub.is_empty() {
+            self.toast(":Wipeout <substr> — needs a substring");
+            return;
+        }
+        let sub_lower = sub.to_lowercase();
+        let workspace = self.workspace.clone();
+        let to_close: Vec<usize> = self
+            .panes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| match p {
+                Pane::Editor(b) => {
+                    let path = b.path.as_ref()?;
+                    let rel = path
+                        .strip_prefix(&workspace)
+                        .unwrap_or(path)
+                        .to_string_lossy()
+                        .to_lowercase();
+                    if rel.contains(&sub_lower) && !b.dirty {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+        if to_close.is_empty() {
+            self.toast(format!(":Wipeout — no clean buffers match {sub:?}"));
+            return;
+        }
+        // Close in reverse index order so earlier indices stay
+        // valid as we work backward.
+        let n = to_close.len();
+        for i in to_close.into_iter().rev() {
+            self.close_pane(i);
+        }
+        self.toast(format!(":Wipeout — closed {n} buffer(s)"));
+    }
+
+    fn ex_rootfor(&mut self, rest: &str) {
+        let arg = rest.trim();
+        let path = if arg.is_empty() {
+            self.active_editor().and_then(|b| b.path.clone())
+        } else {
+            let p = std::path::PathBuf::from(arg);
+            if p.is_absolute() {
+                Some(p)
+            } else {
+                Some(self.workspace.join(p))
+            }
+        };
+        let Some(path) = path else {
+            self.toast(":RootFor <path> — needs a path");
+            return;
+        };
+        let markers = [
+            "Cargo.toml",
+            "package.json",
+            "go.mod",
+            "pyproject.toml",
+            ".git",
+        ];
+        let mut cur = path.parent();
+        let mut found: Option<std::path::PathBuf> = None;
+        while let Some(dir) = cur {
+            if markers.iter().any(|m| dir.join(m).exists()) {
+                found = Some(dir.to_path_buf());
+                break;
+            }
+            cur = dir.parent();
+        }
+        match found {
+            Some(p) => self.toast(format!(":RootFor → {}", p.display())),
+            None => self.toast(":RootFor — no recognized root marker"),
+        }
+    }
+
+    fn ex_wincmd(&mut self, _cmd: &str, rest: &str) {
+        let arg = rest.trim().chars().next();
+        let cmd = match arg {
+            Some('h') => Some("view.focus_left"),
+            Some('l') => Some("view.focus_right"),
+            Some('k') => Some("view.focus_up"),
+            Some('j') => Some("view.focus_down"),
+            Some('w') => Some("view.focus_next_split"),
+            Some('q') | Some('c') => Some("view.close_split"),
+            Some('s') => Some("view.split_down"),
+            Some('v') => Some("view.split_right"),
+            Some('=') => Some("view.equalize_splits"),
+            Some('o') => Some("view.close_others"),
+            Some('r') | Some('x') | Some('R') => Some("view.rotate_splits"),
+            Some('+') => Some("view.split_grow_height"),
+            Some('-') => Some("view.split_shrink_height"),
+            Some('>') => Some("view.split_grow_width"),
+            Some('<') => Some("view.split_shrink_width"),
+            Some('H') => Some("view.move_split_left"),
+            Some('L') => Some("view.move_split_right"),
+            Some('K') => Some("view.move_split_up"),
+            Some('J') => Some("view.move_split_down"),
+            Some('p') => Some("buffer.last"),
+            Some('_') => Some("view.maximize_height"),
+            Some('|') => Some("view.maximize_width"),
+            Some('f') => Some("view.split_open_file_under_cursor"),
+            Some('d') => Some("view.split_goto_definition"),
+            Some('n') => Some("view.split_new_scratch"),
+            _ => None,
+        };
+        if let Some(id) = cmd {
+            crate::command::run(id, self);
+        } else {
+            self.toast(":wincmd <c> — unknown chord");
+        }
+    }
+
+    fn ex_maps(&mut self, rest: &str) {
+        let filter = rest.trim().to_lowercase();
+        let mut rows: Vec<(String, String)> = self
+            .keymap
+            .iter()
+            .map(|(c, id)| (c.to_spec(), id.to_string()))
+            .filter(|(spec, id)| {
+                filter.is_empty()
+                    || spec.to_lowercase().contains(&filter)
+                    || id.to_lowercase().contains(&filter)
+            })
+            .collect();
+        rows.sort();
+        if rows.is_empty() {
+            self.toast(format!(":Maps — no matches for {filter:?}"));
+        } else {
+            let preview = rows
+                .iter()
+                .take(20)
+                .map(|(spec, id)| format!("{spec}→{id}"))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            let more = if rows.len() > 20 {
+                format!(" (…{} more)", rows.len() - 20)
+            } else {
+                String::new()
+            };
+            self.toast(format!(":Maps · {preview}{more}"));
+        }
+    }
+
+    fn ex_execute(&mut self, rest: &str) {
+        let s = rest.trim();
+        let inner = if s.len() >= 2
+            && ((s.starts_with('"') && s.ends_with('"'))
+                || (s.starts_with('\'') && s.ends_with('\'')))
+        {
+            &s[1..s.len() - 1]
+        } else {
+            s
+        };
+        // Unescape `\"` → `"` and `\\` → `\`.
+        let unescaped: String = {
+            let mut out = String::with_capacity(inner.len());
+            let mut chars = inner.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '\\'
+                    && let Some(&n) = chars.peek()
+                {
+                    match n {
+                        '"' | '\\' | '\'' => {
+                            chars.next();
+                            out.push(n);
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+                out.push(c);
+            }
+            out
+        };
+        if unescaped.is_empty() {
+            self.toast(":execute — empty string");
+        } else {
+            self.run_ex_command(&unescaped);
+        }
+    }
+
+    fn ex_jumps(&mut self, _rest: &str) {
+        let back: Vec<String> = self
+            .nav_back
+            .iter()
+            .rev()
+            .take(10)
+            .map(|np| {
+                let rel = rel_path(&self.workspace, &np.path);
+                format!("{rel}:{}", np.row + 1)
+            })
+            .collect();
+        let fwd: Vec<String> = self
+            .nav_forward
+            .iter()
+            .rev()
+            .take(10)
+            .map(|np| {
+                let rel = rel_path(&self.workspace, &np.path);
+                format!("{rel}:{}", np.row + 1)
+            })
+            .collect();
+        if back.is_empty() && fwd.is_empty() {
+            self.toast(":jumps — empty");
+        } else {
+            let b_part = if back.is_empty() {
+                String::new()
+            } else {
+                format!("← {}", back.join("  "))
+            };
+            let f_part = if fwd.is_empty() {
+                String::new()
+            } else {
+                format!("  → {}", fwd.join("  "))
+            };
+            self.toast(format!(":jumps {}{}", b_part, f_part));
+        }
+    }
+
+    fn ex_cexpr(&mut self, rest: &str) {
+        let mut hits: Vec<crate::grep_pane::GrepHit> = Vec::new();
+        for ln in rest.lines() {
+            let parts: Vec<&str> = ln.splitn(4, ':').collect();
+            if parts.len() < 3 {
+                continue;
+            }
+            let Ok(line) = parts[1].parse::<u32>() else {
+                continue;
+            };
+            let col = parts[2].parse::<u32>().ok();
+            let (col, text_idx) = match col {
+                Some(c) => (c, 3),
+                None => (1, 2),
+            };
+            let path = self.workspace.join(parts[0]);
+            let rel = parts[0].to_string();
+            let text = parts.get(text_idx).copied().unwrap_or("").to_string();
+            hits.push(crate::grep_pane::GrepHit {
+                path,
+                rel,
+                line: line.saturating_sub(1),
+                col: col.saturating_sub(1),
+                text,
+            });
+        }
+        if hits.is_empty() {
+            self.toast(":cexpr — no parseable entries");
+        } else {
+            self.open_quickfix("cexpr", hits);
+        }
+    }
+
+    fn ex_cdo(&mut self, cmd: &str, rest: &str) {
+        let inner = rest.trim();
+        if inner.is_empty() {
+            self.toast(":cdo <ex-command>");
+            return;
+        }
+        let per_file = cmd == "cfdo";
+        let hits = self
+            .panes
+            .iter()
+            .find_map(|p| match p {
+                Pane::Quickfix(g) | Pane::Grep(g) => Some(g.hits.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        if hits.is_empty() {
+            self.toast(":cdo — no quickfix entries");
+            return;
+        }
+        let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        let mut ran = 0usize;
+        for hit in hits {
+            if per_file && !seen.insert(hit.path.clone()) {
+                continue;
+            }
+            self.open_path(&hit.path);
+            if let Some(b) = self.active_editor_mut() {
+                b.editor.place_cursor(hit.line as usize, hit.col as usize);
+            }
+            self.run_ex_command(inner);
+            self.save_active_now();
+            ran += 1;
+        }
+        let scope = if per_file { "unique file " } else { "" };
+        self.toast(format!(":{cmd} {inner:?} — ran on {ran} {scope}entry/ies"));
+    }
+
+    fn ex_bufdo(&mut self, rest: &str) {
+        let inner = rest.trim();
+        if inner.is_empty() {
+            self.toast(":bufdo <ex-command>");
+            return;
+        }
+        let editor_indices: Vec<usize> = self
+            .panes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| {
+                if matches!(p, Pane::Editor(_)) {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if editor_indices.is_empty() {
+            self.toast(":bufdo — no editor buffers open");
+            return;
+        }
+        let count = editor_indices.len();
+        let inner = inner.to_string();
+        for idx in editor_indices {
+            self.reveal_pane(idx);
+            self.run_ex_command(&inner);
+        }
+        self.toast(format!(":bufdo · ran on {count} buffer(s)"));
+    }
+
+    fn ex_command_def(&mut self, _cmd: &str, rest: &str) {
+        let rest = rest.trim();
+        if rest.is_empty() {
+            if self.user_ex_commands.is_empty() {
+                self.toast(":command — none defined");
+            } else {
+                let mut entries: Vec<String> = self
+                    .user_ex_commands
+                    .iter()
+                    .map(|(k, v)| {
+                        let preview: String = v.expansion.chars().take(30).collect();
+                        let suffix = if v.expansion.chars().count() > 30 {
+                            "…"
+                        } else {
+                            ""
+                        };
+                        format!("{k}={preview}{suffix}")
+                    })
+                    .collect();
+                entries.sort();
+                self.toast(format!(":command · {}", entries.join("  ")));
+            }
+        } else {
+            // Optional leading `-nargs=...` flag (vim canonical).
+            let (nargs, rest) = if let Some(after) = rest.strip_prefix("-nargs=") {
+                let (val, tail) = match after.find(char::is_whitespace) {
+                    Some(i) => (&after[..i], after[i..].trim_start()),
+                    None => (after, ""),
+                };
+                (ExCommandNargs::parse(val), tail)
+            } else {
+                (ExCommandNargs::Any, rest)
+            };
+            if let Some((name, body)) = rest.split_once(char::is_whitespace) {
+                let cmd = UserExCommand {
+                    expansion: body.trim().to_string(),
+                    nargs,
+                };
+                self.user_ex_commands.insert(name.trim().to_string(), cmd);
+                self.toast(format!(":command {} = {}", name.trim(), body.trim()));
+            } else {
+                self.toast(":command [-nargs=…] <Name> <expansion>");
+            }
+        }
+    }
+
+    fn ex_registers(&mut self, rest: &str) {
+        let mut parts: Vec<String> = Vec::new();
+        let preview = |s: &str, cap: usize| -> String {
+            let mut out: String = s
+                .chars()
+                .take(cap)
+                .map(|c| if c == '\n' { '↵' } else { c })
+                .collect();
+            if s.chars().count() > cap {
+                out.push('…');
+            }
+            out
+        };
+        // `:reg abc` ⇒ filter to only show the named registers in
+        // the arg. Bare `:reg` shows them all. Vim canonical.
+        let filter: Option<std::collections::HashSet<char>> = if rest.trim().is_empty() {
+            None
+        } else {
+            Some(rest.chars().filter(|c| !c.is_whitespace()).collect())
+        };
+        let show_unnamed = filter.as_ref().map(|s| s.contains(&'"')).unwrap_or(true);
+        let unnamed = self.clipboard.text();
+        if show_unnamed && !unnamed.is_empty() {
+            parts.push(format!("\"\"  {}", preview(&unnamed, 40)));
+        }
+        let mut named: Vec<(char, (String, bool))> = self
+            .clipboard
+            .named_registers()
+            .iter()
+            .map(|(c, v)| (*c, v.clone()))
+            .collect();
+        named.sort_by_key(|(c, _)| *c);
+        for (c, (text, _linewise)) in named {
+            if let Some(f) = &filter
+                && !f.contains(&c)
+            {
+                continue;
+            }
+            if !text.is_empty() {
+                parts.push(format!("\"{c}  {}", preview(&text, 40)));
+            }
+        }
+        if parts.is_empty() {
+            self.toast(":reg — empty");
+        } else {
+            self.toast(format!(":reg · {}", parts.join("  ")));
+        }
+    }
+
+    fn ex_edit(&mut self, rest: &str) {
+        // `:e` (bare) and `:e %` both reload the active buffer
+        // (vim's `%` substitutes to the current file's path; we
+        // short-circuit it). Non-empty other paths open the file.
+        // `:e +N <path>` opens the file and jumps to line N (vim
+        // canonical). `:e +<path>` (no N) opens at last line.
+        if rest.is_empty() || rest.trim() == "%" {
+            self.reload_active(false);
+        } else if let Some(after_plus) = rest.strip_prefix('+') {
+            let (count_part, path_part) = match after_plus.find(char::is_whitespace) {
+                Some(i) => (&after_plus[..i], after_plus[i..].trim()),
+                None => ("", after_plus),
+            };
+            let p = self.workspace.join(path_part);
+            self.open_path(&p);
+            let line = if count_part.is_empty() {
+                self.active_editor()
+                    .map(|b| b.editor.line_count())
+                    .unwrap_or(1)
+            } else {
+                count_part.parse::<usize>().unwrap_or(1).max(1)
+            };
+            if let Some(b) = self.active_editor_mut() {
+                b.editor.place_cursor(line.saturating_sub(1), 0);
+            }
+        } else {
+            let p = self.workspace.join(rest);
+            self.open_path(&p);
+        }
+    }
+
+    fn ex_read(&mut self, _cmd: &str, rest: &str) {
+        if let Some(rest) = rest.strip_prefix('!') {
+            let rest = rest.trim();
+            if rest.is_empty() {
+                self.toast(":read ! — command required");
+            } else {
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+                let cwd = self.active_workspace_path().to_path_buf();
+                let out = std::process::Command::new(&shell)
+                    .arg("-c")
+                    .arg(rest)
+                    .current_dir(&cwd)
+                    .output();
+                match out {
+                    Ok(out) => {
+                        let body = String::from_utf8_lossy(&out.stdout).to_string();
+                        let body = body.trim_end_matches('\n').to_string();
+                        let Some(idx) = self.active else {
+                            self.toast(":r ! — no active editor");
+                            return;
+                        };
+                        let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+                            self.toast(":r ! — no active editor");
+                            return;
+                        };
+                        let line_no = b.editor.row_col().0;
+                        let eol = b.editor.line_byte_range(line_no).1;
+                        let payload = format!("\n{body}");
+                        let payload_len = payload.len();
+                        b.apply_edit_ops(
+                            vec![crate::edit_op::EditOp::ReplaceRange {
+                                start: eol,
+                                end: eol,
+                                text: payload,
+                            }],
+                            &mut self.clipboard,
+                            0,
+                        );
+                        self.toast(format!(":r ! — inserted {payload_len}B"));
+                    }
+                    Err(e) => self.toast(format!(":r ! — {e}")),
+                }
+            }
+        } else if rest.is_empty() {
+            self.toast(":r — path or `!cmd` required");
+        } else {
+            // `:r <path>` — splice file contents below the cursor.
+            let path = if std::path::Path::new(rest).is_absolute() {
+                std::path::PathBuf::from(rest)
+            } else {
+                self.workspace.join(rest)
+            };
+            match std::fs::read_to_string(&path) {
+                Ok(body) => {
+                    let body = body.trim_end_matches('\n').to_string();
+                    let Some(idx) = self.active else {
+                        self.toast(":r — no active editor");
+                        return;
+                    };
+                    let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+                        self.toast(":r — no active editor");
+                        return;
+                    };
+                    let line_no = b.editor.row_col().0;
+                    let eol = b.editor.line_byte_range(line_no).1;
+                    let payload = format!("\n{body}");
+                    let payload_len = payload.len();
+                    b.apply_edit_ops(
+                        vec![crate::edit_op::EditOp::ReplaceRange {
+                            start: eol,
+                            end: eol,
+                            text: payload,
+                        }],
+                        &mut self.clipboard,
+                        0,
+                    );
+                    self.toast(format!(":r — inserted {payload_len}B"));
+                }
+                Err(e) => self.toast(format!(":r — {e}")),
+            }
+        }
+    }
+
+    fn ex_setlocal(&mut self, rest: &str) {
+        let opt = rest.trim();
+        let Some(idx) = self.active else {
+            self.toast(":setlocal — no active editor");
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+            self.toast(":setlocal — no active editor");
+            return;
+        };
+        if let Some(v) = opt
+            .strip_prefix("tab_width=")
+            .or_else(|| opt.strip_prefix("tabstop="))
+            .or_else(|| opt.strip_prefix("ts="))
+            .or_else(|| opt.strip_prefix("shiftwidth="))
+            .or_else(|| opt.strip_prefix("sw="))
+            .or_else(|| opt.strip_prefix("softtabstop="))
+            .or_else(|| opt.strip_prefix("sts="))
+        {
+            if let Ok(n) = v.trim().parse::<usize>() {
+                b.editor.set_tab_width(n);
+                self.toast(format!(":setlocal tab_width={n}"));
+            } else {
+                self.toast(format!(":setlocal tab_width={v} — not a number"));
+            }
+        } else if matches!(opt, "eol" | "endofline") {
+            b.ensure_trailing_newline = true;
+            self.toast(":setlocal eol");
+        } else if matches!(opt, "noeol" | "noendofline") {
+            b.ensure_trailing_newline = false;
+            self.toast(":setlocal noeol");
+        } else if matches!(opt, "trim" | "trim_trailing_whitespace") {
+            b.trim_trailing_ws_on_save = true;
+            self.toast(":setlocal trim");
+        } else if matches!(opt, "notrim" | "notrim_trailing_whitespace") {
+            b.trim_trailing_ws_on_save = false;
+            self.toast(":setlocal notrim");
+        } else if matches!(opt, "readonly" | "ro") {
+            b.read_only = true;
+            self.toast(":setlocal readonly");
+        } else if matches!(opt, "noreadonly" | "noro" | "modifiable") {
+            b.read_only = false;
+            self.toast(":setlocal modifiable");
+        } else if matches!(opt, "readonly!" | "invreadonly") {
+            b.read_only = !b.read_only;
+            let label = if b.read_only {
+                "readonly"
+            } else {
+                "modifiable"
+            };
+            self.toast(format!(":setlocal {label}"));
+        } else {
+            self.toast(format!(":setlocal — unknown option: {opt}"));
+        }
+    }
+
+    fn ex_set(&mut self, rest: &str) {
+        // `:set` (bare) → list every option's current value as a toast.
+        // `:set input=vim|standard` · `:set theme=…` · `:set tab_width=N`
+        // · `:set [no]relativenumber` / `[no]list` (toggle suffix `!`).
+        let opt = rest.trim();
+        if opt.is_empty() {
+            let cfg = &self.config;
+            let theme = crate::ui::theme::cur().name;
+            self.toast(format!(
+                "input={} · theme={theme} · tab_width={} · {} · {} · {}",
+                cfg.editor.input_style,
+                cfg.editor.tab_width,
+                if cfg.ui.relative_line_numbers {
+                    "relativenumber"
+                } else {
+                    "norelativenumber"
+                },
+                if cfg.ui.show_whitespace {
+                    "list"
+                } else {
+                    "nolist"
+                },
+                if cfg.ui.bracket_rainbow {
+                    "rainbow"
+                } else {
+                    "norainbow"
+                },
+            ));
+        } else if let Some(v) = rest.strip_prefix("input=") {
+            self.set_input_style(v.trim());
+        } else if let Some(v) = rest.strip_prefix("theme=") {
+            self.set_theme(v.trim());
+        } else if let Some(v) = rest
+            .strip_prefix("filetype=")
+            .or_else(|| rest.strip_prefix("ft="))
+        {
+            let name = v.trim().to_string();
+            if let Some(b) = self.active_editor_mut() {
+                b.set_language_ext(Some(name.clone()));
+                b.refresh_highlights();
+                self.toast(format!(":set filetype={name}"));
+            }
+        } else if let Some(v) = rest
+            .strip_prefix("tab_width=")
+            .or_else(|| rest.strip_prefix("tabstop="))
+            .or_else(|| rest.strip_prefix("ts="))
+            .or_else(|| rest.strip_prefix("shiftwidth="))
+            .or_else(|| rest.strip_prefix("sw="))
+            .or_else(|| rest.strip_prefix("softtabstop="))
+            .or_else(|| rest.strip_prefix("sts="))
+        {
+            // Vim has separate tabstop / shiftwidth / softtabstop knobs;
+            // mnml has one (`tab_width`). All aliases route to the same
+            // setter — close enough for the vim users who set them all
+            // to the same value anyway.
+            if let Ok(n) = v.trim().parse::<usize>() {
+                self.set_tab_width(n);
+            } else {
+                self.toast(format!(":set tab_width={v} — not a number"));
+            }
+        } else if let Some(v) = rest
+            .strip_prefix("colorcolumn=")
+            .or_else(|| rest.strip_prefix("cc="))
+        {
+            let s = v.trim();
+            if s.is_empty() {
+                self.config.ui.color_column = 0;
+                self.toast("colorcolumn: off");
+            } else if let Ok(n) = s.parse::<usize>() {
+                self.config.ui.color_column = n;
+                if n == 0 {
+                    self.toast("colorcolumn: off");
+                } else {
+                    self.toast(format!("colorcolumn: {n}"));
+                }
+            } else {
+                self.toast(format!(":set colorcolumn={v} — not a number"));
+            }
+        } else if let Some(v) = rest
+            .strip_prefix("scrolloff=")
+            .or_else(|| rest.strip_prefix("so="))
+        {
+            if let Ok(n) = v.trim().parse::<usize>() {
+                self.config.ui.scrolloff = n;
+                self.toast(format!("scrolloff: {n}"));
+            } else {
+                self.toast(format!(":set scrolloff={v} — not a number"));
+            }
+        } else if let Some(v) = rest
+            .strip_prefix("sidescrolloff=")
+            .or_else(|| rest.strip_prefix("siso="))
+        {
+            if let Ok(n) = v.trim().parse::<usize>() {
+                self.config.ui.sidescrolloff = n;
+                self.toast(format!("sidescrolloff: {n}"));
+            } else {
+                self.toast(format!(":set sidescrolloff={v} — not a number"));
+            }
+        } else if let Some(v) = rest.strip_prefix("text_width=") {
+            if let Ok(n) = v.trim().parse::<usize>() {
+                self.config.editor.text_width = n.max(8);
+                self.toast(format!("text_width: {}", self.config.editor.text_width));
+            } else {
+                self.toast(format!(":set text_width={v} — not a number"));
+            }
+        } else if matches!(opt, "endofline" | "eol") {
+            self.config.editor.ensure_trailing_newline = true;
+            self.toast("ensure_trailing_newline: on");
+        } else if matches!(opt, "noendofline" | "noeol") {
+            self.config.editor.ensure_trailing_newline = false;
+            self.toast("ensure_trailing_newline: off");
+        } else if matches!(opt, "breadcrumb") {
+            self.set_breadcrumb(true);
+        } else if matches!(opt, "nobreadcrumb") {
+            self.set_breadcrumb(false);
+        } else if matches!(opt, "breadcrumb!" | "invbreadcrumb") {
+            self.toggle_breadcrumb();
+        } else if matches!(opt, "autopair" | "ap") {
+            self.set_auto_pair(true);
+        } else if matches!(opt, "noautopair" | "noap") {
+            self.set_auto_pair(false);
+        } else if matches!(opt, "autopair!" | "invautopair") {
+            self.toggle_auto_pair();
+        } else if matches!(opt, "relativenumber" | "rnu") {
+            self.set_relative_line_numbers(true);
+        } else if matches!(opt, "norelativenumber" | "nornu") {
+            self.set_relative_line_numbers(false);
+        } else if matches!(opt, "relativenumber!" | "rnu!" | "invrelativenumber") {
+            self.set_relative_line_numbers(!self.config.ui.relative_line_numbers);
+        } else if matches!(opt, "cursorline" | "cul") {
+            self.config.ui.cursor_line = true;
+            self.toast("cursorline: on");
+        } else if matches!(opt, "nocursorline" | "nocul") {
+            self.config.ui.cursor_line = false;
+            self.toast("cursorline: off");
+        } else if matches!(opt, "cursorline!" | "cul!" | "invcursorline") {
+            self.config.ui.cursor_line = !self.config.ui.cursor_line;
+            self.toast(format!(
+                "cursorline: {}",
+                if self.config.ui.cursor_line {
+                    "on"
+                } else {
+                    "off"
+                }
+            ));
+        } else if matches!(opt, "number" | "nu") {
+            self.config.ui.line_numbers = true;
+            self.toast("number: on");
+        } else if matches!(opt, "nonumber" | "nonu") {
+            self.config.ui.line_numbers = false;
+            self.toast("number: off");
+        } else if matches!(opt, "number!" | "nu!" | "invnumber") {
+            self.config.ui.line_numbers = !self.config.ui.line_numbers;
+            self.toast(format!(
+                "number: {}",
+                if self.config.ui.line_numbers {
+                    "on"
+                } else {
+                    "off"
+                }
+            ));
+        } else if matches!(opt, "list") {
+            self.set_show_whitespace(true);
+        } else if matches!(opt, "nolist") {
+            self.set_show_whitespace(false);
+        } else if matches!(opt, "list!" | "invlist") {
+            self.set_show_whitespace(!self.config.ui.show_whitespace);
+        } else if matches!(opt, "rainbow") {
+            self.set_bracket_rainbow(true);
+        } else if matches!(opt, "norainbow") {
+            self.set_bracket_rainbow(false);
+        } else if matches!(opt, "rainbow!" | "invrainbow") {
+            self.toggle_bracket_rainbow();
+        } else if matches!(opt, "scrollbar") {
+            self.set_scrollbar(true);
+        } else if matches!(opt, "noscrollbar") {
+            self.set_scrollbar(false);
+        } else if matches!(opt, "scrollbar!" | "invscrollbar") {
+            self.toggle_scrollbar();
+        } else if matches!(opt, "headless") {
+            self.set_browser_headless(true);
+        } else if matches!(opt, "noheadless") {
+            self.set_browser_headless(false);
+        } else if matches!(opt, "headless!" | "invheadless") {
+            self.toggle_browser_headless();
+        } else if matches!(opt, "trailing") {
+            self.set_highlight_trailing_ws(true);
+        } else if matches!(opt, "notrailing") {
+            self.set_highlight_trailing_ws(false);
+        } else if matches!(opt, "trailing!" | "invtrailing") {
+            self.toggle_highlight_trailing_ws();
+        } else if matches!(opt, "hlword") {
+            self.set_highlight_word_under_cursor(true);
+        } else if matches!(opt, "nohlword") {
+            self.set_highlight_word_under_cursor(false);
+        } else if matches!(opt, "hlword!" | "invhlword") {
+            self.toggle_highlight_word_under_cursor();
+        } else if matches!(opt, "inlayhints") {
+            self.config.editor.inlay_hints = true;
+            self.toast("inlay hints: on");
+        } else if matches!(opt, "noinlayhints") {
+            self.config.editor.inlay_hints = false;
+            self.toast("inlay hints: off");
+        } else if matches!(opt, "inlayhints!" | "invinlayhints") {
+            self.config.editor.inlay_hints = !self.config.editor.inlay_hints;
+            self.toast(format!(
+                "inlay hints: {}",
+                if self.config.editor.inlay_hints {
+                    "on"
+                } else {
+                    "off"
+                }
+            ));
+        } else if matches!(opt, "clock") {
+            self.config.ui.clock = true;
+            self.toast("clock: on");
+        } else if matches!(opt, "noclock") {
+            self.config.ui.clock = false;
+            self.toast("clock: off");
+        } else if matches!(opt, "clock!" | "invclock") {
+            self.config.ui.clock = !self.config.ui.clock;
+            self.toast(format!(
+                "clock: {}",
+                if self.config.ui.clock { "on" } else { "off" }
+            ));
+        } else if matches!(opt, "codelens") {
+            self.config.editor.code_lens = true;
+            self.toast("code lens: on");
+        } else if matches!(opt, "nocodelens") {
+            self.config.editor.code_lens = false;
+            self.toast("code lens: off");
+        } else if matches!(opt, "codelens!" | "invcodelens") {
+            self.config.editor.code_lens = !self.config.editor.code_lens;
+            self.toast(format!(
+                "code lens: {}",
+                if self.config.editor.code_lens {
+                    "on"
+                } else {
+                    "off"
+                }
+            ));
+        } else if matches!(opt, "automdpreview") {
+            self.config.ui.auto_md_preview = true;
+            self.toast("auto-preview md: on");
+        } else if matches!(opt, "noautomdpreview") {
+            self.config.ui.auto_md_preview = false;
+            self.toast("auto-preview md: off");
+        } else if matches!(opt, "automdpreview!" | "invautomdpreview") {
+            self.config.ui.auto_md_preview = !self.config.ui.auto_md_preview;
+            self.toast(format!(
+                "auto-preview md: {}",
+                if self.config.ui.auto_md_preview {
+                    "on"
+                } else {
+                    "off"
+                }
+            ));
+        } else if matches!(opt, "nocolorcolumn" | "nocc") {
+            self.config.ui.color_column = 0;
+            self.toast("colorcolumn: off");
+        } else if matches!(opt, "colorcolumn!" | "cc!" | "invcolorcolumn") {
+            self.toggle_color_column();
+        } else if matches!(opt, "autoindent" | "ai") {
+            self.config.editor.auto_indent = true;
+            self.toast("auto-indent: on");
+        } else if matches!(opt, "noautoindent" | "noai") {
+            self.config.editor.auto_indent = false;
+            self.toast("auto-indent: off");
+        } else if matches!(opt, "autoindent!" | "invautoindent" | "ai!" | "invai") {
+            self.config.editor.auto_indent = !self.config.editor.auto_indent;
+            self.toast(format!(
+                "auto-indent: {}",
+                if self.config.editor.auto_indent {
+                    "on"
+                } else {
+                    "off"
+                }
+            ));
+        // Vim-compat toasts — settings vim users reach for that mnml
+        // either always-honors or doesn't implement yet. Toast the
+        // current state instead of "unknown option" so muscle memory
+        // doesn't get punished.
+        } else if matches!(
+            opt,
+            "expandtab"
+                | "et"
+                | "ignorecase"
+                | "ic"
+                | "smartcase"
+                | "scs"
+                | "hlsearch"
+                | "hls"
+                | "incsearch"
+                | "is"
+        ) {
+            self.toast(format!(":set {opt} — already on (mnml default)"));
+        } else if matches!(
+            opt,
+            "noexpandtab"
+                | "noet"
+                | "noignorecase"
+                | "noic"
+                | "nosmartcase"
+                | "noscs"
+                | "nohlsearch"
+                | "nohls"
+                | "noincsearch"
+                | "nois"
+        ) {
+            self.toast(format!(":set {opt} — not supported in mnml"));
+        } else if opt == "wrap" {
+            self.set_wrap(true);
+        } else if opt == "nowrap" {
+            self.set_wrap(false);
+        } else if matches!(opt, "wrap!" | "invwrap") {
+            self.toggle_wrap();
+        } else if matches!(opt, "todohl" | "todohighlight") {
+            self.config.ui.highlight_todo_keywords = true;
+            self.toast("todo highlight: on");
+        } else if matches!(opt, "notodohl" | "notodohighlight") {
+            self.config.ui.highlight_todo_keywords = false;
+            self.toast("todo highlight: off");
+        } else if matches!(opt, "todohl!" | "invtodohl") {
+            self.toggle_todo_highlight();
+        } else if matches!(opt, "rendermarkdown" | "rendermd") {
+            self.config.ui.render_markdown = true;
+            self.toast("render markdown: on");
+        } else if matches!(opt, "norendermarkdown" | "norendermd") {
+            self.config.ui.render_markdown = false;
+            self.toast("render markdown: off");
+        } else if matches!(opt, "rendermarkdown!" | "invrendermarkdown") {
+            self.toggle_render_markdown();
+        } else if matches!(opt, "stickycontext" | "sticky") {
+            self.config.ui.sticky_context = true;
+            self.toast("sticky context: on");
+        } else if matches!(opt, "nostickycontext" | "nosticky") {
+            self.config.ui.sticky_context = false;
+            self.toast("sticky context: off");
+        } else if matches!(opt, "stickycontext!" | "invstickycontext") {
+            self.toggle_sticky_context();
+        } else if matches!(opt, "bufferline" | "bl") {
+            self.bufferline_visible = true;
+            self.toast("bufferline: on");
+        } else if matches!(opt, "nobufferline" | "nobl") {
+            self.bufferline_visible = false;
+            self.toast("bufferline: off");
+        } else if matches!(opt, "bufferline!" | "invbufferline") {
+            self.toggle_bufferline();
+        } else if matches!(opt, "formatontype" | "fot") {
+            self.config.editor.format_on_type = true;
+            self.toast(":set formatontype");
+        } else if matches!(opt, "noformatontype" | "nofot") {
+            self.config.editor.format_on_type = false;
+            self.toast(":set noformatontype");
+        } else if matches!(opt, "formatonsave" | "fos") {
+            self.config.editor.format_on_save = true;
+            self.toast(":set formatonsave");
+        } else if matches!(opt, "noformatonsave" | "nofos") {
+            self.config.editor.format_on_save = false;
+            self.toast(":set noformatonsave");
+        } else if matches!(opt, "willsavewaituntil" | "wswu") {
+            self.config.editor.will_save_wait_until = true;
+            self.toast(":set willsavewaituntil");
+        } else if matches!(opt, "nowillsavewaituntil" | "nowswu") {
+            self.config.editor.will_save_wait_until = false;
+            self.toast(":set nowillsavewaituntil");
+        } else if matches!(opt, "semantictokensviewport" | "stviewport") {
+            self.config.editor.semantic_tokens_viewport = true;
+            self.toast(":set semantictokensviewport");
+        } else if matches!(opt, "nosemantictokensviewport" | "nostviewport") {
+            self.config.editor.semantic_tokens_viewport = false;
+            // Drop the cached viewports so the next refresh
+            // (now driven by the full/delta path) doesn't think
+            // it already requested.
+            for p in self.panes.iter_mut() {
+                if let Pane::Editor(b) = p {
+                    b.last_semantic_viewport = None;
+                }
+            }
+            self.toast(":set nosemantictokensviewport");
+        } else {
+            self.toast(format!(":set {rest} — not supported"));
         }
     }
 
