@@ -48,10 +48,13 @@ A few load-bearing pieces — read [`CLAUDE.md`](CLAUDE.md) and
   yourself adding `if vim { … }` outside the statusline or cursor-shape code,
   step back: the design exists specifically to avoid that.
 - **Headless mode** (`src/headless.rs`) and the **file-IPC channel**
-  (`src/ipc/`) share `app.rs` + `ui::draw` with the terminal loop, so headless
+  (`src/ipc/`) share `App` + `ui::draw` with the terminal loop, so headless
   behaviour matches the real UI — that's the substrate for `.test` E2E coverage.
-- **No giant files.** `src/app.rs` is render-free; `src/tui.rs` is only the
-  crossterm event loop; chrome lives in `src/ui/`; subsystems get their own dirs.
+- **No giant files.** `App` state is render-free and lives across
+  `src/app/mod.rs` + per-subsystem siblings (`src/app/{bitbucket,github,git,
+  lsp,ai,dap,cdp,…}.rs` — 25 files, each owning one cohesive surface).
+  `src/tui.rs` is only the crossterm event loop; chrome lives in `src/ui/`;
+  other subsystems get their own top-level dirs.
 
 ## Conventions
 
