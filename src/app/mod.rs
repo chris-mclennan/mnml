@@ -114,10 +114,6 @@ pub enum FocusDir {
     Down,
 }
 
-/// True when `path`'s extension marks it as Markdown — used by the outline
-/// pane to extract headings directly instead of going through the LSP.
-/// True iff `mixr` resolves to an executable on `$PATH`. Walks `$PATH`
-/// entries and probes for the binary; cheap, sync, no extra crate.
 /// One row in the `dap.attach` picker. `pid` is the OS process id;
 /// `user` is the owning user (best-effort — empty when `ps` doesn't
 /// surface it); `cmd` is the command line, truncated for legibility.
@@ -259,6 +255,8 @@ fn fim_worker_loop(
     }
 }
 
+/// True when `path`'s extension marks it as Markdown — used by the outline
+/// pane to extract headings directly instead of going through the LSP.
 fn is_markdown_path(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),

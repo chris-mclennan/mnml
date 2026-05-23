@@ -7,6 +7,8 @@
 
 use super::*;
 
+/// True iff `mixr` resolves to an executable on `$PATH`. Walks `$PATH`
+/// entries and probes for the binary; cheap, sync, no extra crate.
 fn mixr_on_path() -> bool {
     let Some(path) = std::env::var_os("PATH") else {
         return false;
