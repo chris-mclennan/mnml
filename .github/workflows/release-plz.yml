@@ -1,0 +1,82 @@
+# Automated releases via release-plz (https://release-plz.dev).
+#
+# Two jobs:
+#   - release-plz-release  publishes to crates.io + tags + creates a GitHub
+#     release when the PR from `release-plz-pr` is merged.
+#   - release-plz-pr       opens / updates a "release PR" on every push to
+#     `main` that bumps the version and updates CHANGELOG.md.
+#
+# Required repository secrets (Settings → Secrets → Actions):
+#   CARGO_REGISTRY_TOKEN  — a crates.io API token (create via
+#     https://crates.io/me; scope to "publish-new" + "publish-update").
+#   (GITHUB_TOKEN is the default per-run token — already provided.)
+#
+# Publish order: tmnl-protocol + fim-engine MUST be published to crates.io
+# before this mnml workflow's release job can succeed. Each crate's `path = "..."`
+# dependency carries a `version = "X.Y.Z"` for crates.io's resolver.
+
+name: release-plz
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# To enable: set repo variable RELEASE_PLZ_ENABLED=true via
+# Settings → Secrets and variables → Actions → Variables tab.
+# Also set the CARGO_REGISTRY_TOKEN secret (see above). Until both
+# are set, this workflow runs but every job is skipped.
+
+jobs:
+  # Publishes crates + creates GitHub releases for any version bumps merged via
+  # the release PR. Runs first so it can complete before a new PR opens.
+  release-plz-release:
+    if: vars.RELEASE_PLZ_ENABLED == 'true' 
+    name: Release-plz · release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz
+        uses: release-plz/action@v0
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Opens or updates the "Release: vX.Y.Z" PR so a human can approve the bump
+  # + CHANGELOG before anything gets published.
+  release-plz-pr:
+    if: vars.RELEASE_PLZ_ENABLED == 'true'
+    name: Release-plz · open PR
+    runs-on: ubuntu-latest
+    needs: release-plz-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz
+        uses: release-plz/action@v0
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
