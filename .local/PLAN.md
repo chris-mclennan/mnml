@@ -480,3 +480,57 @@ Unit tests (the cheap, high-value ones):
 Reference implementations (mirror the structure, port the logic, but this is mnml's own code — not crate deps):
 `/Users/chrismclennan/Projects/mnml1/src/{editor,app,buffer,highlight,pty_pane,tree,theme,icons,git_status}.rs` (editor + IDE bones);
 `/Users/chrismclennan/Projects/rqst/src/{curl,http_file,template,script,chain,discover,history,config,ipc,ipc_files,proxy,cookies,jwt,picker,lookup,snippets,mock}.rs` and `rqst/src/cdp/*` and `rqst/src/ai/*` and `rqst/src/{claude,openai}/*` (the HTTP / IPC / CDP / AI stacks to port into `src/http/`, `src/ipc/`, `src/cdp/`, `src/ai/`), and `rqst/src/app.rs` for the request-pane field-tabs + response-view layout (port the shape, not the monolith).
+
+## Refactor: split `app.rs` and slim `tui.rs`
+
+**Problem.** `src/app.rs` is **31,652 lines** — 26 % of mnml's 120 k LOC in one file. `src/tui.rs` is **6,310 lines** despite CLAUDE.md's "only the crossterm event loop" rule. Both have accumulated past the point where `git blame`, rust-analyzer responsiveness, and human review hold up.
+
+**Approach — non-destructive file split.** Rust allows `impl App` blocks across any number of files in the same crate. The whole refactor is just moving methods to their natural home: no API change, no new types, no behaviour change, identical compiled output. Pure file reorganisation.
+
+`src/app.rs`  →  `src/app/mod.rs`  +  `src/app/<subsystem>.rs` files, each containing an `impl App { … }` block for one subsystem.
+
+**Phases.** Run in this order — least-coupled first, most-coupled last so the risky phases happen against a tree that's already been split-verified once. Each phase is one commit; each commit independently passes `cargo fmt` + `clippy --all-targets -- -D warnings` + `cargo test`.
+
+- [ ] **0. Scaffold** — rename `src/app.rs` → `src/app/mod.rs`. No content move, just the file move + a sanity build.
+- [ ] **A. SCM dashboards** — `bitbucket_*` / `github_*` / `gitlab_*` / `azdevops_*` methods → `src/app/{bitbucket,github,gitlab,azdevops}.rs`. One commit per host.
+- [ ] **B. the private integration (feature-gated)** — `private_*` + DocDB/CodeBuild plumbing → `src/app/private.rs`.
+- [ ] **C. Integrated services** — one commit each: CDP / browser → `src/app/cdp.rs`; DAP → `src/app/dap.rs`; Playwright + flaky → `src/app/tests.rs`; HTTP / rqst → `src/app/http.rs`; AI → `src/app/ai.rs`; mixr panel → `src/app/mixr.rs`; now-playing → `src/app/now_playing.rs`.
+- [ ] **D. Editor-coupled** — LSP → `src/app/lsp.rs`; git → `src/app/git.rs`.
+- [ ] **E. Picker + editor features** — picker accept paths → `src/app/picker.rs`; snippets / macros / marks / find / replace / multi-cursor / ex-commands → `src/app/editor_features.rs` (split further if it ends > 2 k lines).
+- [ ] **F. Pane / layout** — `open_pane`, `close_pane`, `reveal_pane`, `split_*`, `focus_*`, `tab_*` → `src/app/layout.rs`. Last because it touches the most call-sites.
+- [ ] **G. Slim `tui.rs`** — move dispatch helpers out (mostly into the now-existing `src/app/*` files where the dispatched method lives). `tui.rs` ends up genuinely "only the crossterm event loop" per CLAUDE.md. Target: < 1 k lines.
+
+**Per-phase checklist.** Each subsystem move:
+
+- [ ] cut the `impl App { … }` block from `src/app/mod.rs`, paste into `src/app/<area>.rs`.
+- [ ] add `mod <area>;` to `src/app/mod.rs`.
+- [ ] resolve imports.
+- [ ] `cargo fmt && cargo build && cargo clippy --all-targets -- -D warnings && cargo test`.
+- [ ] commit (`refactor: split app.rs — move <subsystem> to app/<area>.rs`).
+- [ ] push.
+
+**Decisions to make as the phases land.**
+
+- A method that touches two subsystems — pick the primary state-owner (often obvious; can re-home later cheaply).
+- Cross-subsystem private helpers — keep in `app/mod.rs` if used by 2 + subsystems; move to the subsystem if used by exactly one.
+- Field grouping (e.g. wrap `bitbucket_pipelines` + `bitbucket_branch_*` + `bitbucket_my_*` into a `BitbucketState` on `App`) is **out of scope** for this refactor — it changes field access syntax everywhere. Defer to a follow-up *after* the file split.
+
+**Targets when done.**
+
+- `src/app/mod.rs` < 2 000 lines (just the struct + core methods).
+- No file under `src/app/` > 2 500 lines.
+- `src/tui.rs` < 1 000 lines.
+- `cargo build` time unchanged or improved; rust-analyzer specifically should be much snappier.
+- Every existing test still passes; no public API change.
+
+**Risks + mitigations.**
+
+- Huge `git blame` shift — one-time cost; subsequent blames become useful again (currently they all point at `app.rs`).
+- Subsystem ambiguity — pick one, document the choice in the commit, revisit if it bites.
+- Long-lived branch hazard — execute one phase per session so the tree doesn't sit half-split for weeks.
+
+**Explicitly out of scope (separate refactors, later):**
+
+- The other accumulating files — `editor.rs` (~6 k, the edit chokepoint), `input/vim.rs` (~3 k), `command.rs` (~3 k), `lsp/client.rs` (~3 k), `browser_pane.rs` (~3 k). More cohesive single-concept files than `app.rs`; less urgent.
+- Field grouping into subsystem structs (above).
+- Method renames / API tweaks.
