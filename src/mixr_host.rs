@@ -135,6 +135,7 @@ impl MixrPos {
 }
 
 /// An in-progress drag of the floating mixr panel by its header.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct MixrPanelDrag {
     /// Cursor offset within the panel where the drag was grabbed.
@@ -146,6 +147,7 @@ pub struct MixrPanelDrag {
 }
 
 /// Anchor a `w`×`h` overlay panel within `body` at `pos`.
+#[allow(dead_code)]
 pub fn overlay_rect(body: Rect, w: u16, h: u16, pos: MixrPos) -> Rect {
     let w = w.min(body.width.max(1));
     let h = h.min(body.height.max(1));
@@ -169,6 +171,7 @@ pub fn overlay_rect(body: Rect, w: u16, h: u16, pos: MixrPos) -> Rect {
 
 /// The anchor whose third of `body` the panel's centre sits in — used
 /// to snap a drag on release.
+#[allow(dead_code)]
 pub fn nearest_pos(body: Rect, panel: Rect) -> MixrPos {
     let cx = panel.x.saturating_add(panel.width / 2);
     let cy = panel.y.saturating_add(panel.height / 2);

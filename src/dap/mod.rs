@@ -414,6 +414,7 @@ impl DapManager {
 
 /// Parse the `[dap.*]` config sub-table out of mnml's main config.
 /// Returns a `name -> AdapterConfig` map.
+#[allow(dead_code)]
 pub fn parse_adapters(table: &BTreeMap<String, toml::Value>) -> BTreeMap<String, AdapterConfig> {
     let mut out = BTreeMap::new();
     for (name, v) in table {
@@ -430,6 +431,7 @@ pub fn parse_adapters(table: &BTreeMap<String, toml::Value>) -> BTreeMap<String,
 }
 
 /// Type alias for the App-side outbound event channel.
+#[allow(dead_code)]
 pub type DapEventTx = Sender<DapEvent>;
 
 #[cfg(test)]

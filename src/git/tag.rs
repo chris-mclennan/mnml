@@ -40,6 +40,7 @@ fn run(workspace: &Path, args: &[&str]) -> Result<String, String> {
 
 /// `git tag <name> [<commit>]` — lightweight tag pointing at `commit` (or HEAD
 /// when `commit` is None).
+#[allow(dead_code)]
 pub fn create_lightweight(
     workspace: &Path,
     name: &str,
@@ -84,6 +85,7 @@ pub fn delete_local(workspace: &Path, name: &str) -> Result<String, String> {
 
 /// `git push origin :refs/tags/<name>` — drop the tag from the remote so a
 /// fresh local tag with the same name isn't rejected on the next `push --tags`.
+#[allow(dead_code)]
 pub fn delete_remote(workspace: &Path, name: &str) -> Result<String, String> {
     run(
         workspace,

@@ -246,6 +246,7 @@ pub fn parse_lsp_snippet(body: &str) -> LspSnippetParse {
 /// * Unrecognised `$<thing>` (variables like `$TM_FILENAME`) — passed
 ///   through as-is so the text isn't damaged; they won't be picked up as
 ///   placeholders.
+#[allow(dead_code)]
 pub fn lsp_snippet_to_mnml(body: &str) -> String {
     let bytes = body.as_bytes();
     let mut out = String::with_capacity(body.len());

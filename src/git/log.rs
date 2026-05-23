@@ -339,6 +339,7 @@ pub fn full_message(workspace: &Path, hash: &str) -> String {
 /// short hash, or the path is a rename target that doesn't exist
 /// under the same name at the parent commit). Lossy UTF-8 — non-UTF-8
 /// bytes get the standard replacement character.
+#[allow(dead_code)]
 pub fn file_at_commit(workspace: &Path, hash: &str, rel_path: &str) -> Option<String> {
     let spec = format!("{hash}:{rel_path}");
     let out = Command::new("git")

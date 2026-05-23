@@ -44,6 +44,8 @@ impl Chord {
 
     /// Pretty-print as a key spec (`ctrl+shift+p`, `enter`, `f5`, etc.). Round-
     /// trips through [`parse_key_spec`] for the chord forms we use.
+    #[allow(clippy::wrong_self_convention)] // `Chord` is Copy + small; clippy
+    // wants `self`-by-value but `to_spec` reads better as `chord.to_spec()`.
     pub fn to_spec(&self) -> String {
         let mut parts: Vec<&str> = Vec::new();
         if self.mods.contains(KeyModifiers::CONTROL) {

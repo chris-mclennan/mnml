@@ -2193,6 +2193,7 @@ pub fn parse_code_lenses(result: &serde_json::Value) -> Vec<crate::lsp::CodeLens
 ///
 /// Returns `Vec<SemanticToken>` in source order. Empty when the reply is
 /// shaped weirdly (no `data` array, or non-multiple-of-5 length).
+#[allow(dead_code)]
 pub fn parse_semantic_tokens(
     result: &serde_json::Value,
     legend: &[String],
