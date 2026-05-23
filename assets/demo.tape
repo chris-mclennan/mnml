@@ -5,6 +5,10 @@
 #     cargo build --release          # the tape runs ./target/release/mnml
 #     vhs assets/demo.tape           # run from the repo root → assets/demo.gif
 #
+# Then shrink with gifsicle (visually identical at lossy=80, ~37% smaller):
+#
+#     gifsicle --optimize=3 --lossy=80 assets/demo.gif -o assets/demo.gif
+#
 # Tune the keystrokes and Sleep timings to taste before a final cut.
 
 Output assets/demo.gif
