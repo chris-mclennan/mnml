@@ -614,219 +614,13 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
 fn handle_pane_key(app: &mut App, key: KeyEvent) {
     let viewport = crate::app::dispatch::pane_viewport(app);
     let Some(i) = app.active else { return };
-    // A markdown preview is read-only: only scroll + Esc.
-    if let Some(Pane::MdPreview(p)) = app.panes.get_mut(i) {
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => p.scroll = p.scroll.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => p.scroll += 1,
-            KeyCode::PageUp => p.scroll = p.scroll.saturating_sub(viewport),
-            KeyCode::PageDown => p.scroll += viewport,
-            KeyCode::Home | KeyCode::Char('g') => p.scroll = 0,
-            KeyCode::End | KeyCode::Char('G') => p.scroll = usize::MAX, // clamped on draw
-            KeyCode::Esc => app.focus_tree(),
-            _ => {}
-        }
+    if handle_md_preview_key(app, key, viewport, i) {
         return;
     }
-    // A git diff pane: `↑↓` and `n`/`p` jump between hunks (the user's
-    // primary navigation); `j`/`k` scroll one row at a time;
-    // `s`/`u` stage/unstage the cursor hunk; `r` refresh; Enter jumps
-    // to the hunk in the source; Esc → tree. View-mode + wrap toggle
-    // are surfaced via the top-of-pane toolbar buttons (click).
-    if let Some(Pane::Diff(d)) = app.panes.get_mut(i) {
-        // Filter mode wins — `/` opens it; printable keys / Backspace
-        // append / pop; Enter exits (keeping the filter); Esc clears.
-        if d.filter_mode {
-            match key.code {
-                KeyCode::Esc => {
-                    d.filter.clear();
-                    d.filter_mode = false;
-                }
-                KeyCode::Enter => d.filter_mode = false,
-                KeyCode::Backspace => {
-                    d.filter.pop();
-                }
-                KeyCode::Char(ch)
-                    if !key
-                        .modifiers
-                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-                {
-                    d.filter.push(ch);
-                }
-                _ => {}
-            }
-            return;
-        }
-        let in_split = d.view_mode == crate::pane::DiffViewMode::Split;
-        match key.code {
-            KeyCode::Char('/') => {
-                d.filter.clear();
-                d.filter_mode = true;
-                return;
-            }
-            // Up / Down — in Inline/Hunk mode they jump hunks
-            // (user's preferred change-navigation gesture); in Split
-            // mode they scroll by row since one "hunk" is a whole
-            // file and the user is reading line-by-line.
-            KeyCode::Up if in_split => d.scroll = d.scroll.saturating_sub(1),
-            KeyCode::Down if in_split => d.scroll += 1,
-            KeyCode::Up => d.cursor = d.cursor.saturating_sub(1),
-            KeyCode::Down => {
-                d.cursor = (d.cursor + 1).min(d.hunks.len().saturating_sub(1));
-            }
-            // j / k still scroll a single row (vim convention).
-            KeyCode::Char('k') => d.scroll = d.scroll.saturating_sub(1),
-            KeyCode::Char('j') => d.scroll += 1,
-            KeyCode::PageUp => d.scroll = d.scroll.saturating_sub(viewport),
-            KeyCode::PageDown => d.scroll += viewport,
-            KeyCode::Char('n') | KeyCode::Char(']') => {
-                if !d.filter.is_empty() {
-                    if let Some(idx) = crate::ui::diff_view::next_filter_match(d, true) {
-                        d.cursor = idx;
-                    }
-                } else {
-                    d.cursor = (d.cursor + 1).min(d.hunks.len().saturating_sub(1));
-                }
-            }
-            KeyCode::Char('p') | KeyCode::Char('[') => {
-                if !d.filter.is_empty() {
-                    if let Some(idx) = crate::ui::diff_view::next_filter_match(d, false) {
-                        d.cursor = idx;
-                    }
-                } else {
-                    d.cursor = d.cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Home | KeyCode::Char('g') => {
-                d.scroll = 0;
-                d.cursor = 0;
-            }
-            KeyCode::End | KeyCode::Char('G') => d.scroll = usize::MAX,
-            // `w` toggles wrap (sibling chord to the `[Wrap]` toolbar
-            // button). Pref updated below after the borrow on `d`.
-            KeyCode::Char('w') => d.wrap = !d.wrap,
-            // `v` cycles view modes Hunk → Inline → Split → Hunk
-            // (matches the toolbar button order so muscle-memory
-            // lines up with the visual layout).
-            KeyCode::Char('v') => {
-                d.view_mode = match d.view_mode {
-                    crate::pane::DiffViewMode::Hunk => crate::pane::DiffViewMode::Inline,
-                    crate::pane::DiffViewMode::Inline => crate::pane::DiffViewMode::Split,
-                    crate::pane::DiffViewMode::Split => crate::pane::DiffViewMode::Hunk,
-                };
-            }
-            KeyCode::Char('s') => app.apply_cursor_hunk(false),
-            KeyCode::Char('u') => app.apply_cursor_hunk(true),
-            KeyCode::Char('r') => app.refresh_active_diff(),
-            KeyCode::Char('f') => app.diff_jump_file(true),
-            KeyCode::Char('F') => app.diff_jump_file(false),
-            KeyCode::Enter => app.jump_to_cursor_hunk(),
-            KeyCode::Esc => app.focus_tree(),
-            _ => {}
-        }
-        // Sync App-level prefs from the (possibly just-updated) pane
-        // state. `v` / `w` chords mutate `d` first; the next diff open
-        // should pick up that mode/wrap as the new default.
-        if let Some(Pane::Diff(d)) = app.panes.get(i) {
-            app.diff_view_mode_pref = d.view_mode;
-            app.diff_wrap_pref = d.wrap;
-        }
+    if handle_diff_key(app, key, viewport, i) {
         return;
     }
-    // A request pane: two modes. Response (default) is read-only — j/k scroll,
-    // r re-fire, y copy-as-curl, Tab → Edit, Esc → tree. Edit is the Postman
-    // form — Shift-Tab/Tab cycle the focused field, typing/backspace/arrows
-    // edit, Space on Method cycles HTTP verbs, r re-fires with the current
-    // values, Tab back to Response, Esc → tree.
-    if let Some(Pane::Request(rp)) = app.panes.get_mut(i) {
-        use crate::request_pane::ViewMode;
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-        if rp.view == ViewMode::Edit {
-            match key.code {
-                KeyCode::Tab if shift => rp.focus_prev_field(),
-                // Tab inside Body inserts a literal `\t` (multi-line code-y
-                // field — typing indented JSON / XML is common). Other
-                // fields keep the form-cycle gesture so the user can walk
-                // URL → Method → Headers → Body → URL.
-                KeyCode::Tab if rp.focus == crate::request_pane::EditField::Body => {
-                    rp.type_char('\t');
-                }
-                KeyCode::Tab => rp.focus_next_field(),
-                KeyCode::BackTab => rp.focus_prev_field(),
-                KeyCode::Esc => app.focus_tree(),
-                KeyCode::Backspace => rp.backspace(),
-                KeyCode::Left => rp.move_left(),
-                KeyCode::Right => rp.move_right(),
-                KeyCode::Home => rp.move_home(),
-                KeyCode::End => rp.move_end(),
-                KeyCode::Up
-                    if matches!(
-                        rp.focus,
-                        crate::request_pane::EditField::Body
-                            | crate::request_pane::EditField::Headers
-                    ) =>
-                {
-                    // Cross-line motion for multi-line fields (URL is one line).
-                    rp.move_left();
-                    rp.move_home();
-                }
-                KeyCode::Down
-                    if matches!(
-                        rp.focus,
-                        crate::request_pane::EditField::Body
-                            | crate::request_pane::EditField::Headers
-                    ) =>
-                {
-                    rp.move_end();
-                    rp.move_right();
-                }
-                KeyCode::Enter => {
-                    if matches!(
-                        rp.focus,
-                        crate::request_pane::EditField::Body
-                            | crate::request_pane::EditField::Headers
-                    ) {
-                        rp.type_char('\n');
-                    } else {
-                        // Enter on URL/Method = fire (Postman-style "send").
-                        app.send_request_from_active();
-                    }
-                }
-                KeyCode::Char(c) if !ctrl => {
-                    // `r` from URL / Method fires; `r` inside multi-line fields
-                    // is a literal char (so typing "Authorization" etc. works).
-                    let multi_line = matches!(
-                        rp.focus,
-                        crate::request_pane::EditField::Body
-                            | crate::request_pane::EditField::Headers
-                    );
-                    if c == 'r' && !multi_line {
-                        app.send_request_from_active();
-                    } else {
-                        rp.type_char(c);
-                    }
-                }
-                _ => {}
-            }
-            return;
-        }
-        match key.code {
-            KeyCode::Tab => rp.toggle_view(),
-            KeyCode::Up | KeyCode::Char('k') => rp.scroll = rp.scroll.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => rp.scroll += 1,
-            KeyCode::PageUp => rp.scroll = rp.scroll.saturating_sub(viewport),
-            KeyCode::PageDown => rp.scroll += viewport,
-            KeyCode::Home | KeyCode::Char('g') => rp.scroll = 0,
-            KeyCode::End | KeyCode::Char('G') => rp.scroll = usize::MAX, // clamped on draw
-            KeyCode::Char('r') => app.send_request_from_active(),
-            KeyCode::Char('y') => app.copy_active_curl(),
-            KeyCode::Char('Y') => app.copy_active_response_body(),
-            KeyCode::Char('e') => rp.toggle_view(),
-            KeyCode::Char('.') => app.ai_debug_request(),
-            KeyCode::Esc => app.focus_tree(),
-            _ => {}
-        }
+    if handle_request_key(app, key, viewport, i) {
         return;
     }
     // A tests pane: ↑↓ select, Enter → jump to the test's source, t → open the
@@ -4975,4 +4769,220 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         MouseEventKind::ScrollDown => crate::app::dispatch::scroll_under(app, x, y, 3),
         _ => {}
     }
+}
+
+fn handle_md_preview_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -> bool {
+    if let Some(Pane::MdPreview(p)) = app.panes.get_mut(i) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => p.scroll = p.scroll.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => p.scroll += 1,
+            KeyCode::PageUp => p.scroll = p.scroll.saturating_sub(viewport),
+            KeyCode::PageDown => p.scroll += viewport,
+            KeyCode::Home | KeyCode::Char('g') => p.scroll = 0,
+            KeyCode::End | KeyCode::Char('G') => p.scroll = usize::MAX, // clamped on draw
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return true;
+    }
+    false
+}
+
+fn handle_diff_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -> bool {
+    if let Some(Pane::Diff(d)) = app.panes.get_mut(i) {
+        // Filter mode wins — `/` opens it; printable keys / Backspace
+        // append / pop; Enter exits (keeping the filter); Esc clears.
+        if d.filter_mode {
+            match key.code {
+                KeyCode::Esc => {
+                    d.filter.clear();
+                    d.filter_mode = false;
+                }
+                KeyCode::Enter => d.filter_mode = false,
+                KeyCode::Backspace => {
+                    d.filter.pop();
+                }
+                KeyCode::Char(ch)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    d.filter.push(ch);
+                }
+                _ => {}
+            }
+            return true;
+        }
+        let in_split = d.view_mode == crate::pane::DiffViewMode::Split;
+        match key.code {
+            KeyCode::Char('/') => {
+                d.filter.clear();
+                d.filter_mode = true;
+                return true;
+            }
+            // Up / Down — in Inline/Hunk mode they jump hunks
+            // (user's preferred change-navigation gesture); in Split
+            // mode they scroll by row since one "hunk" is a whole
+            // file and the user is reading line-by-line.
+            KeyCode::Up if in_split => d.scroll = d.scroll.saturating_sub(1),
+            KeyCode::Down if in_split => d.scroll += 1,
+            KeyCode::Up => d.cursor = d.cursor.saturating_sub(1),
+            KeyCode::Down => {
+                d.cursor = (d.cursor + 1).min(d.hunks.len().saturating_sub(1));
+            }
+            // j / k still scroll a single row (vim convention).
+            KeyCode::Char('k') => d.scroll = d.scroll.saturating_sub(1),
+            KeyCode::Char('j') => d.scroll += 1,
+            KeyCode::PageUp => d.scroll = d.scroll.saturating_sub(viewport),
+            KeyCode::PageDown => d.scroll += viewport,
+            KeyCode::Char('n') | KeyCode::Char(']') => {
+                if !d.filter.is_empty() {
+                    if let Some(idx) = crate::ui::diff_view::next_filter_match(d, true) {
+                        d.cursor = idx;
+                    }
+                } else {
+                    d.cursor = (d.cursor + 1).min(d.hunks.len().saturating_sub(1));
+                }
+            }
+            KeyCode::Char('p') | KeyCode::Char('[') => {
+                if !d.filter.is_empty() {
+                    if let Some(idx) = crate::ui::diff_view::next_filter_match(d, false) {
+                        d.cursor = idx;
+                    }
+                } else {
+                    d.cursor = d.cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                d.scroll = 0;
+                d.cursor = 0;
+            }
+            KeyCode::End | KeyCode::Char('G') => d.scroll = usize::MAX,
+            // `w` toggles wrap (sibling chord to the `[Wrap]` toolbar
+            // button). Pref updated below after the borrow on `d`.
+            KeyCode::Char('w') => d.wrap = !d.wrap,
+            // `v` cycles view modes Hunk → Inline → Split → Hunk
+            // (matches the toolbar button order so muscle-memory
+            // lines up with the visual layout).
+            KeyCode::Char('v') => {
+                d.view_mode = match d.view_mode {
+                    crate::pane::DiffViewMode::Hunk => crate::pane::DiffViewMode::Inline,
+                    crate::pane::DiffViewMode::Inline => crate::pane::DiffViewMode::Split,
+                    crate::pane::DiffViewMode::Split => crate::pane::DiffViewMode::Hunk,
+                };
+            }
+            KeyCode::Char('s') => app.apply_cursor_hunk(false),
+            KeyCode::Char('u') => app.apply_cursor_hunk(true),
+            KeyCode::Char('r') => app.refresh_active_diff(),
+            KeyCode::Char('f') => app.diff_jump_file(true),
+            KeyCode::Char('F') => app.diff_jump_file(false),
+            KeyCode::Enter => app.jump_to_cursor_hunk(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        // Sync App-level prefs from the (possibly just-updated) pane
+        // state. `v` / `w` chords mutate `d` first; the next diff open
+        // should pick up that mode/wrap as the new default.
+        if let Some(Pane::Diff(d)) = app.panes.get(i) {
+            app.diff_view_mode_pref = d.view_mode;
+            app.diff_wrap_pref = d.wrap;
+        }
+        return true;
+    }
+    false
+}
+
+fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -> bool {
+    if let Some(Pane::Request(rp)) = app.panes.get_mut(i) {
+        use crate::request_pane::ViewMode;
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        if rp.view == ViewMode::Edit {
+            match key.code {
+                KeyCode::Tab if shift => rp.focus_prev_field(),
+                // Tab inside Body inserts a literal `\t` (multi-line code-y
+                // field — typing indented JSON / XML is common). Other
+                // fields keep the form-cycle gesture so the user can walk
+                // URL → Method → Headers → Body → URL.
+                KeyCode::Tab if rp.focus == crate::request_pane::EditField::Body => {
+                    rp.type_char('\t');
+                }
+                KeyCode::Tab => rp.focus_next_field(),
+                KeyCode::BackTab => rp.focus_prev_field(),
+                KeyCode::Esc => app.focus_tree(),
+                KeyCode::Backspace => rp.backspace(),
+                KeyCode::Left => rp.move_left(),
+                KeyCode::Right => rp.move_right(),
+                KeyCode::Home => rp.move_home(),
+                KeyCode::End => rp.move_end(),
+                KeyCode::Up
+                    if matches!(
+                        rp.focus,
+                        crate::request_pane::EditField::Body
+                            | crate::request_pane::EditField::Headers
+                    ) =>
+                {
+                    // Cross-line motion for multi-line fields (URL is one line).
+                    rp.move_left();
+                    rp.move_home();
+                }
+                KeyCode::Down
+                    if matches!(
+                        rp.focus,
+                        crate::request_pane::EditField::Body
+                            | crate::request_pane::EditField::Headers
+                    ) =>
+                {
+                    rp.move_end();
+                    rp.move_right();
+                }
+                KeyCode::Enter => {
+                    if matches!(
+                        rp.focus,
+                        crate::request_pane::EditField::Body
+                            | crate::request_pane::EditField::Headers
+                    ) {
+                        rp.type_char('\n');
+                    } else {
+                        // Enter on URL/Method = fire (Postman-style "send").
+                        app.send_request_from_active();
+                    }
+                }
+                KeyCode::Char(c) if !ctrl => {
+                    // `r` from URL / Method fires; `r` inside multi-line fields
+                    // is a literal char (so typing "Authorization" etc. works).
+                    let multi_line = matches!(
+                        rp.focus,
+                        crate::request_pane::EditField::Body
+                            | crate::request_pane::EditField::Headers
+                    );
+                    if c == 'r' && !multi_line {
+                        app.send_request_from_active();
+                    } else {
+                        rp.type_char(c);
+                    }
+                }
+                _ => {}
+            }
+            return true;
+        }
+        match key.code {
+            KeyCode::Tab => rp.toggle_view(),
+            KeyCode::Up | KeyCode::Char('k') => rp.scroll = rp.scroll.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => rp.scroll += 1,
+            KeyCode::PageUp => rp.scroll = rp.scroll.saturating_sub(viewport),
+            KeyCode::PageDown => rp.scroll += viewport,
+            KeyCode::Home | KeyCode::Char('g') => rp.scroll = 0,
+            KeyCode::End | KeyCode::Char('G') => rp.scroll = usize::MAX, // clamped on draw
+            KeyCode::Char('r') => app.send_request_from_active(),
+            KeyCode::Char('y') => app.copy_active_curl(),
+            KeyCode::Char('Y') => app.copy_active_response_body(),
+            KeyCode::Char('e') => rp.toggle_view(),
+            KeyCode::Char('.') => app.ai_debug_request(),
+            KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return true;
+    }
+    false
 }
