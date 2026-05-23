@@ -491,14 +491,31 @@ Reference implementations (mirror the structure, port the logic, but this is mnm
 
 **Phases.** Run in this order — least-coupled first, most-coupled last so the risky phases happen against a tree that's already been split-verified once. Each phase is one commit; each commit independently passes `cargo fmt` + `clippy --all-targets -- -D warnings` + `cargo test`.
 
-- [ ] **0. Scaffold** — rename `src/app.rs` → `src/app/mod.rs`. No content move, just the file move + a sanity build.
-- [ ] **A. SCM dashboards** — `bitbucket_*` / `github_*` / `gitlab_*` / `azdevops_*` methods → `src/app/{bitbucket,github,gitlab,azdevops}.rs`. One commit per host.
-- [ ] **B. the private integration (feature-gated)** — `private_*` + DocDB/CodeBuild plumbing → `src/app/private.rs`.
-- [ ] **C. Integrated services** — one commit each: CDP / browser → `src/app/cdp.rs`; DAP → `src/app/dap.rs`; Playwright + flaky → `src/app/tests.rs`; HTTP / rqst → `src/app/http.rs`; AI → `src/app/ai.rs`; mixr panel → `src/app/mixr.rs`; now-playing → `src/app/now_playing.rs`.
-- [ ] **D. Editor-coupled** — LSP → `src/app/lsp.rs`; git → `src/app/git.rs`.
-- [ ] **E. Picker + editor features** — picker accept paths → `src/app/picker.rs`; snippets / macros / marks / find / replace / multi-cursor / ex-commands → `src/app/editor_features.rs` (split further if it ends > 2 k lines).
-- [ ] **F. Pane / layout** — `open_pane`, `close_pane`, `reveal_pane`, `split_*`, `focus_*`, `tab_*` → `src/app/layout.rs`. Last because it touches the most call-sites.
-- [ ] **G. Slim `tui.rs`** — move dispatch helpers out (mostly into the now-existing `src/app/*` files where the dispatched method lives). `tui.rs` ends up genuinely "only the crossterm event loop" per CLAUDE.md. Target: < 1 k lines.
+- [x] **0. Scaffold** — `src/app.rs` → `src/app/mod.rs` (commit `3aa2a10`).
+- [x] **A. SCM dashboards** — four commits, one per host:
+      bitbucket (`f74a532`), github (`6946b19`), gitlab (`1b9ed54`), azdevops (`50bccaf`).
+- [x] **B. the private integration (feature-gated)** — `src/app/private.rs` (`4e13bfb`).
+- [x] **C. Integrated services** — seven commits: cdp (`ec9b9c5`), dap (`06a8516`),
+      playwright (`f5d0b30`, renamed from `tests.rs` to avoid clashing with the
+      inline `mod tests`), http (`6d29c04`), ai (`1cd72dd`), mixr (`bdce41c`),
+      now_playing (`5edf442`).
+- [x] **D. Editor-coupled** — LSP (`9addf5a`) + git (`42b720e`).
+- [x] **E. Picker + editor features** — picker (`0606249`) + editor_features
+      (`b48975b`). E.2 landed at 5121 lines, over the 2.5k threshold, so it was
+      sub-split (`1441c66`) into five topic files: `snippets.rs`,
+      `macros_marks.rs`, `find.rs`, `grep.rs`, `ex_commands.rs`.
+- [x] **F. Pane / layout** — `src/app/layout.rs` (`9f8f2d7`).
+- [x] **G. Slim `tui.rs`** — dispatch helpers → `src/app/dispatch.rs` (`468ddae`);
+      three clean per-pane key handlers extracted (`7e30429`). tui.rs is
+      currently at 4775 lines (target was <1k — see "Outstanding work" below).
+
+**Bonus extractions** (not in the original plan, surfaced during the work):
+
+- [x] `run_ex_command` 20-arm split (`96e90ee`) — 1136 lines moved out of the
+      giant match into per-topic helpers (`ex_set`, `ex_read`, `ex_buffer`, etc.).
+- [x] Session save/restore → `src/app/session.rs` (`59f6d31`).
+- [x] Context menus → `src/app/context_menus.rs` (`57b6ae2`).
+- [x] Pipeline-log machinery → `src/app/pipeline_log.rs` (`341dc55`).
 
 **Per-phase checklist.** Each subsystem move:
 
@@ -515,13 +532,31 @@ Reference implementations (mirror the structure, port the logic, but this is mnm
 - Cross-subsystem private helpers — keep in `app/mod.rs` if used by 2 + subsystems; move to the subsystem if used by exactly one.
 - Field grouping (e.g. wrap `bitbucket_pipelines` + `bitbucket_branch_*` + `bitbucket_my_*` into a `BitbucketState` on `App`) is **out of scope** for this refactor — it changes field access syntax everywhere. Defer to a follow-up *after* the file split.
 
-**Targets when done.**
+**Targets vs reality.**
 
-- `src/app/mod.rs` < 2 000 lines (just the struct + core methods).
-- No file under `src/app/` > 2 500 lines.
-- `src/tui.rs` < 1 000 lines.
-- `cargo build` time unchanged or improved; rust-analyzer specifically should be much snappier.
-- Every existing test still passes; no public API change.
+| Target | Pre-refactor | After file-split | Status |
+|--------|--------------|-------------------|--------|
+| `src/app/mod.rs` < 2 000 lines | 31 652 | 9 480 | **Missed.** What's left is the App struct (1 100+ fields) + `App::new` + a long tail of small one-off methods that don't cluster cleanly. Further splits hit diminishing returns. |
+| No file under `src/app/` > 2 500 lines | n/a | `ex_commands.rs` at 3 555 | **Missed for one file.** The remaining bulk is `run_ex_command` itself (~2k lines after its 20-arm extraction) — every match arm is 1-30 lines and doesn't justify further extraction. |
+| `src/tui.rs` < 1 000 lines | 6 310 | 4 775 | **Missed.** The remaining bulk is `handle_pane_key` (~2 800 lines of chord-state-interleaved per-pane behaviour). That's a true refactor — restructuring how chord state composes with per-pane actions, not a file move. |
+| `cargo build` time | n/a | unchanged | ✅ |
+| All tests pass | 765 | 765 | ✅ |
+| No public API change | — | — | ✅ |
+
+**Outstanding work** (genuine refactors that need design input, not just file moves):
+
+- `handle_pane_key` in `src/tui.rs` — chord-state-interleaved per-pane key
+  dispatch. Each arm of the big match touches both global chord state (operator-
+  pending, register-target, count) and per-pane state. Untangling that needs a
+  design sketch first.
+- `run_ex_command` in `src/app/ex_commands.rs` — the 20 biggest arms came out
+  (`96e90ee`), but the remaining 195 small arms (1-25 lines each) live in one
+  match block still. Splitting them is mostly busywork unless someone wants a
+  more aggressive size cap.
+- The App struct field-grouping refactor (`bitbucket_*` fields → `BitbucketState`
+  field, etc.) — explicitly out of scope for the file split. Each grouping would
+  ripple to every reference site, which currently number in the hundreds across
+  the 25-file `src/app/` layout.
 
 **Risks + mitigations.**
 
