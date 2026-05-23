@@ -558,6 +558,126 @@ Reference implementations (mirror the structure, port the logic, but this is mnm
   ripple to every reference site, which currently number in the hundreds across
   the 25-file `src/app/` layout.
 
+**API surface narrowing** (from a post-refactor surface audit; biggest items
+are mechanical sweeps but they touch hundreds of sites, so defer to a focused
+session). Pre-first-publish is the right time for these — after v0.1.0 hits
+crates.io, narrowing a public type becomes a semver break.
+
+- **41 of 55 `pub mod` declarations in `src/lib.rs` should be `pub(crate) mod`**.
+  Only 14 modules are imported by `src/main.rs` / `tests/ipc.rs` / `examples/`:
+  `ai`, `app`, `azdevops`, `bitbucket`, `blit`, `config`, `e2e`, `edit_op`,
+  `github`, `headless`, `highlight`, `http`, `ipc`, `private`, `tui`, `ui`. The
+  other 41 (`flash`, `hover`, `prompt`, `signature`, `whichkey`, `cheatsheet`,
+  `snippets`, `editorconfig`, `mixr_host`, `now_playing`, `picker`, `pane`,
+  `layout`, `focus`, `tree`, `command`, `clipboard`, `completion`,
+  `context_menu`, `dap`, `lsp`, `cdp`, `playwright`, `formatter`, `linter`,
+  `tools`, `fuzzy`, `regex_outline`, `markdown_outline`, `editor`, `buffer`,
+  `image`, `pty_pane`, `request_pane`, `grep_pane`, `browser_pane`, `input`,
+  `gitlab`, `git`) can be `pub(crate)` without breaking any caller.
+
+- **7 click-action enums** are `pub` but used only inside the crate:
+  `GitToolbarAction`, `WipAction`, `DiffToolbarAction`, `GitRailHeaderAction`,
+  `HoverChip`, `DiscoveryCategory`, `DiffHunkAction`. All can be `pub(crate)`.
+
+- **131 `pub` fields on `App`** (alongside 40 `pub(crate)` + 51 private). Sample
+  audit shows none are accessed from outside `src/`. Wholesale `pub` →
+  `pub(crate)` should be safe; cargo build will surface anything that breaks.
+
+- **Free fns marked `pub(super)` callable from inside their own file** could
+  drop the visibility tier. `src/app/cdp.rs:78 pub(super) fn host_of_url` is
+  one example.
+
+**Test coverage gaps** (from a coverage-audit pass; 5 of 8 newly-extracted
+modules — `snippets.rs`, `macros_marks.rs`, `find.rs`, `ex_commands.rs`,
+`context_menus.rs` — have zero `#[test]` blocks):
+
+- **Critical** (mutates persistent state, no test guard): `run_wip_action`
+  (shells out to `git add` / `git restore --staged`), `run_move_or_copy_line`
+  (drives `:m N` / `:co N`), `run_filter_through_shell` (drives `:%!cmd` /
+  `:'<,'>!cmd`).
+- **Important** (user-visible, no e2e coverage): `accept_quit`,
+  `snippet_pick_all`, the 7 context-menu openers besides `open_tree_context_menu`,
+  `context_menu_accept`, `select_all_occurrences`,
+  `insert_word_under_cursor` / `insert_bigword_under_cursor`,
+  `find_word_under_cursor` / `find_selection_under_cursor`, `select_find_match`,
+  `keyword_complete`.
+- **`run_ex_command` ~150 dispatched commands; only 5 covered**. 25+ of the
+  per-arm helpers (`ex_cp`, `ex_mv`, `ex_touch`, `ex_sum`, `ex_wipeout`,
+  `ex_rootfor`, `ex_wincmd`, `ex_maps`, `ex_execute`, `ex_jumps`, `ex_bufdo`,
+  `ex_command_def`, `ex_read`) have zero direct coverage.
+- The `.test` harness has an `ex <cmd>` step that's currently used by **1 of
+  99** scripts (`vim_literal_next_tab_aliases.test`). Bumping ex-command
+  coverage could happen via e2e (cheaper per test) instead of unit tests.
+
+**`src/editor.rs` future-extraction guidebook** (from a read-only deep dive
+on the 5 967-line file — explicitly out of scope of the just-completed
+refactor; this is reconnaissance for an eventual focused split).
+
+Layout (line ranges):
+- **A** 1–789      Module prelude + free fns (persisted-undo I/O, smart-
+                   increment, HTML/XML tag-match, find_whole_word_occurrences,
+                   bracket_depths_per_line, infer_single_edit, …).
+- **B** 727–814    `Editor` struct (17 fields) + `new` / `empty`.
+- **C** 815–1198   Multi-cursor machinery (`add_extra_cursor`, `multi_*`).
+- **D** 1199–1500  Persistent-undo serde + simple accessors.
+- **E** 1536–1786  Line/char geometry + auto-pair + bracket-match + undo
+                   plumbing.
+- **F** 1789–1845  `apply` prologue (the dispatch chokepoint).
+- **G** 1847–3916  `apply_one` — the 2070-line flat `match op`. Five
+                   `// ── X ──` dividers mark **motion** (1856–2177),
+                   **selection** (2179–2604), **text mutation** (2606–3615),
+                   **clipboard / registers** (3617–3895), **history**
+                   (3898–3914).
+- **H** 3920–3939  `pop_checkpoint` + `delete_selection_if_any`.
+- **I** 3942–4240  Motion internals.
+- **J** 4242–4684  Text-object range computers (paragraph / indent / bracket
+                   / function / argument / quote).
+- **K** 4686–4740  Line-mutation helpers.
+- **L** 4743–5967  `mod tests` (91 tests).
+
+Best extraction candidates (cleanness-ordered):
+1. **`editor/persistent_undo.rs`** (section A's persisted-history I/O + B's
+   `Snapshot` + D's serde) — closed system, ~200 lines, no cross-couple.
+2. **`editor/text_objects.rs`** (section J) — pure read-only range
+   computers, ~440 lines, reach only into `text` / `cursor` / `language_ext`.
+3. **`editor/multi_cursor.rs`** (section C) — 11 fns, all touch only
+   `extra_*` + `text` / `cursor` / `anchor`, ~385 lines.
+4. **`editor/motion.rs`** (section I + motion arms of `apply_one`) — tricky
+   because the motion arms fan out to multi-cursor.
+5. **`editor/dial.rs`** (smart-increment), **`editor/html_tag.rs`** (tag
+   match) — small, closed.
+
+Blockers for a split today:
+- `apply_one`'s 2070-line match must stay in one place (Rust syntax). The
+  arms each touch undo / selection / multi-cursor / auto-pair, so even with
+  sub-areas extracted, the arms remain in `apply_one`.
+- `self.checkpoint()` called from 25+ arms.
+- `for_each_selected_line` passes a closure that mutates `ed.text` directly.
+- `extra_cursors` + `extra_anchors` are parallel `Vec`s with hard sort-
+  invariant maintained by `sort_extras` / `commit_multi`.
+- No `pub(crate)` fields — every internal field is `impl`-private, so a
+  per-area module would need accessor methods.
+- `apply` and `apply_one` are recursive via `Repeat(n, inner)`.
+
+Pre-existing concerns to NOT touch in any future refactor:
+- Columns counted in chars, not display-width (P2 deferment).
+- `String` storage with `O(n)` splicing — rope can swap in later behind the
+  same `apply` chokepoint without touching call sites.
+- `infer_single_edit` catches ~95% of edit shapes from before/after
+  `(len, cursor)` snapshots; multi-cursor/indent/auto-pair fall through
+  to "untracked; drop the cached parse tree." Don't try to instrument every
+  arm with explicit `TextEdit`s.
+- `extra_cursors` + `extra_anchors` as parallel `Vec`s — flipping to
+  `Vec<(usize, Option<usize>)>` would touch every helper.
+- `BUDGET = 50_000` in `enclosing_bracket_pair` / `bracket_match` — caps so
+  a malformed file can't hang the editor. Don't drop for "performance."
+- Replace-mode session (`replace_stack`) intentionally not in undo.
+
+Existing test coverage: 91 tests in the `mod tests` block at lines 4743–
+5967 (~1225 lines). Strong on insert/undo/motion/text-objects/case/etc.
+Gaps: multi-cursor as a unit, wrap motions, Replace mode, `infer_single_
+edit`, paragraph/sentence motions.
+
 **Performance findings** (from a perf-review pass over editor + render hot paths;
 no code changes yet — each fix wants careful design). Ordered by impact:
 
