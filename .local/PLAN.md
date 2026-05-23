@@ -558,6 +558,24 @@ Reference implementations (mirror the structure, port the logic, but this is mnm
   ripple to every reference site, which currently number in the hundreds across
   the 25-file `src/app/` layout.
 
+**Pre-existing issues surfaced by the post-refactor review.** Not introduced
+by the file split — present in the original `app.rs`, just more visible now
+that they live in named subsystem files. Worth a cleanup pass eventually.
+
+- `src/app/ex_commands.rs` lines 177, 298: `run_sort_lines_opts` and
+  `run_move_or_copy_line` build a throwaway `Clipboard::new()` to pass to
+  `apply_edit_ops` instead of `&mut self.clipboard`. Means `:sort` and
+  `:move`/`:copy` never write to the `"0` register or the `"1`-`"9` delete
+  ring. Vim's `:sort` doesn't yank either, but `:move` does shift lines in
+  a way that should populate `"1`. Same pattern at `src/app/grep.rs:415`.
+- `src/app/ex_commands.rs` lines 46-79: `run_filter_through_shell` wraps a
+  `child.wait_with_output()` in `std::thread::scope` — the scope adds no
+  concurrency, it's semantically identical to calling `wait_with_output()`
+  directly, and it blocks the crossterm loop. Same issue with the `:!cmd`
+  path at line 619. Fix is moving to a detached thread + channel (the
+  established codebase pattern) or just dropping the misleading scope
+  wrapper.
+
 **Risks + mitigations.**
 
 - Huge `git blame` shift — one-time cost; subsequent blames become useful again (currently they all point at `app.rs`).
