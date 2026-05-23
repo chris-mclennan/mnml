@@ -1672,16 +1672,6 @@ impl App {
         }
     }
 
-    #[doc(hidden)]
-    pub fn after_git_change_pub_for_test(&mut self) {
-        self.after_git_change();
-    }
-
-    #[doc(hidden)]
-    pub fn after_checkout_pub_for_test(&mut self, label: &str) {
-        self.after_checkout(label);
-    }
-
     /// After any staging/commit change: refresh the cached status + all git
     /// panes + the rail's `GIT` section (the current branch may have moved /
     /// a branch may have been created).
@@ -2640,7 +2630,7 @@ mod git_tests {
             ],
         );
         // Force a refresh — on main, PR #1 should be marked current.
-        app.after_git_change_pub_for_test();
+        app.after_git_change();
         let on_main: Vec<bool> = app
             .git_rail
             .pulls
@@ -2662,7 +2652,7 @@ mod git_tests {
             .args(["checkout", "-q", "-b", "feat"])
             .current_dir(d.path())
             .status();
-        app.after_checkout_pub_for_test("feat");
+        app.after_checkout("feat");
         let main_pr = app.git_rail.pulls.iter().find(|p| p.title == "main PR");
         let feat_pr = app.git_rail.pulls.iter().find(|p| p.title == "feat PR");
         assert!(

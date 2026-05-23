@@ -184,28 +184,6 @@ pub(crate) fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
         Save => {
             command::run("file.save", app);
         }
-        SaveAll => {
-            command::run("file.save_all", app);
-        }
-        Quit => app.request_quit(),
-        ForceQuit => app.should_quit = true,
-        CloseBuffer => {
-            command::run("buffer.close", app);
-        }
-        NextBuffer => {
-            command::run("buffer.next", app);
-        }
-        PrevBuffer => {
-            command::run("buffer.prev", app);
-        }
-        GotoLine(n) => {
-            if let Some(i) = app.active
-                && let Some(Pane::Editor(b)) = app.panes.get_mut(i)
-            {
-                b.editor
-                    .apply(EditOp::MoveToLine(n), 20, &mut app.clipboard);
-            }
-        }
         ExCommand(s) => {
             // Push onto persistent ex history (de-duped against newest,
             // capped at 100). The handler-side history mirror is updated

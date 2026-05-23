@@ -63,13 +63,6 @@ impl EditingMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppCommand {
     Save,
-    SaveAll,
-    Quit,
-    ForceQuit,
-    CloseBuffer,
-    NextBuffer,
-    PrevBuffer,
-    GotoLine(usize),
     /// A vim `:`-line — the interpreter lives in `app.rs`, not in the handler.
     ExCommand(String),
     /// Bridge into the command registry by id (e.g. vim `gd` → `"lsp.goto_definition"`).
