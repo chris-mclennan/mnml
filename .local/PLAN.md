@@ -558,6 +558,55 @@ Reference implementations (mirror the structure, port the logic, but this is mnm
   ripple to every reference site, which currently number in the hundreds across
   the 25-file `src/app/` layout.
 
+**Performance findings** (from a perf-review pass over editor + render hot paths;
+no code changes yet — each fix wants careful design). Ordered by impact:
+
+- **The headline win: cache `Editor.line_starts: Vec<usize>`**, incrementally
+  maintained by `Editor::apply` on every text-changing op. Today, `line_count`
+  / `line_start` / `line_end` / `row_col_at` / `col_at_byte` / `line_at_byte` /
+  `byte_at_col` (`src/editor.rs:1348-1564`) all scan the whole text byte-by-byte
+  counting `\n`s. These are called per-row by `editor_view.rs` and per-match
+  for find / word / TODO highlight conversions. On a 600-line buffer with 50
+  word-match ranges that's ~60+ full-text scans per frame. With a `line_starts`
+  cache: every helper becomes O(1) or O(log lines). Single change unlocks 3
+  critical findings + several important ones. The data is already maintained
+  by `Buffer.prev_line_starts` for tree-sitter (`buffer.rs:480`) — moving it to
+  Editor (the actual edit chokepoint, where it's authoritative) reuses it
+  everywhere.
+
+- `move_vertical` does 3 full-text scans per arrow press
+  (`editor.rs:3949-3964`). Wheel handler at `app/dispatch.rs:454-461` loops
+  `for _ in 0..delta { apply(MoveUp/Down) }` — a single delta=5 wheel tick =
+  15 full-text scans. line_starts cache fixes this too.
+
+- `refresh_find_matches` re-runs whole-text scan on every text-changing edit
+  (`buffer.rs:971-975`). Either debounce like `highlights_dirty`, or shift
+  cached ranges by the edit's delta instead of re-scanning.
+
+- `max_line_w` (`ui/editor_view.rs:128-135`) walks 8000 lines × 80 chars
+  per frame even when wrap is off. Cache on Buffer, update on edit.
+
+- Per-row Vec allocations in `editor_view.rs:504-523` —
+  `word_matches_on_line`, `todo_on_line`, `doc_highlights_on_line`,
+  `extra_line_sels`, `line_matches`. Five fresh `Vec::new()`s per visible row
+  × O(total_matches) linear scan each. Lift to a single per-frame bucketed
+  walk like the semantic-token grid (which is already correct).
+
+- `chars: Vec<char>` allocation per visible row (`editor_view.rs:570`),
+  String allocation per span coalesce (`editor_view.rs:956-960`),
+  `app.layout().clone()` per frame (`ui/mod.rs:151, 399`),
+  `color_decorations` linear-scanned per row (`editor_view.rs:822-842`).
+
+- Nits: SIMD line-counting via `bytecount`, pre-sorted tokens for binary-
+  search lookup, `is_line_folded_body` should use `BTreeMap::range(..=line)`
+  for O(log) instead of linear scan.
+
+What's working well: the `highlights_dirty` + `120ms` debounce
+(`app/mod.rs:8518-8531`) genuinely saves work. The `line_color_grid` per-cell
+optimization (`editor_view.rs:1300`) is correctly wired. Tree-sitter
+incremental parsing actually does work-skipping via `collapse_edits` +
+`plan_incremental`.
+
 **Pre-existing issues surfaced by the post-refactor review.** Not introduced
 by the file split — present in the original `app.rs`, just more visible now
 that they live in named subsystem files. Worth a cleanup pass eventually.
