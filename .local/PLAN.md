@@ -577,7 +577,11 @@ crates.io, narrowing a public type becomes a semver break.
 
 - **7 click-action enums** are `pub` but used only inside the crate:
   `GitToolbarAction`, `WipAction`, `DiffToolbarAction`, `GitRailHeaderAction`,
-  `HoverChip`, `DiscoveryCategory`, `DiffHunkAction`. All can be `pub(crate)`.
+  `HoverChip`, `DiscoveryCategory`, `DiffHunkAction`. All can be `pub(crate)`,
+  but narrowing them alone fails `-D warnings` with 18 "type X is more
+  private than item Y" errors — every enum is used in a `pub` App field
+  or `pub` method signature. So this only flips with the App-fields sweep.
+  Bundle them.
 
 - **131 `pub` fields on `App`** (alongside 40 `pub(crate)` + 51 private). Sample
   audit shows none are accessed from outside `src/`. Wholesale `pub` →
