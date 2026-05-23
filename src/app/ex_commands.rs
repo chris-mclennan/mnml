@@ -3553,3 +3553,70 @@ impl App {
         self.should_quit = true;
     }
 }
+
+#[cfg(test)]
+mod ex_commands_tests {
+    use super::*;
+    use std::fs;
+
+    fn app_with_buffer(text: &str) -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.txt");
+        fs::write(&p, text).unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_path(&p);
+        (d, app)
+    }
+
+    #[test]
+    fn run_move_or_copy_line_moves_cursor_line_to_after_dest() {
+        // Move line 1 ("alpha") to after line 3 ("gamma"). Result:
+        // beta / gamma / alpha / delta.
+        let (_d, mut app) = app_with_buffer("alpha\nbeta\ngamma\ndelta\n");
+        app.run_move_or_copy_line("3", false);
+        let text = app
+            .active_editor()
+            .map(|b| b.editor.text().to_string())
+            .unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines, vec!["beta", "gamma", "alpha", "delta"]);
+    }
+
+    #[test]
+    fn run_move_or_copy_line_copy_keeps_source() {
+        // Copy line 1 ("alpha") to after line 2 ("beta"). Result:
+        // alpha / beta / alpha / gamma.
+        let (_d, mut app) = app_with_buffer("alpha\nbeta\ngamma\n");
+        app.run_move_or_copy_line("2", true);
+        let text = app
+            .active_editor()
+            .map(|b| b.editor.text().to_string())
+            .unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines, vec!["alpha", "beta", "alpha", "gamma"]);
+    }
+
+    #[test]
+    fn run_filter_through_shell_sorts_buffer() {
+        let (_d, mut app) = app_with_buffer("charlie\nalpha\nbravo\n");
+        app.run_filter_through_shell("sort", false);
+        let text = app
+            .active_editor()
+            .map(|b| b.editor.text().to_string())
+            .unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines, vec!["alpha", "bravo", "charlie"]);
+    }
+
+    #[test]
+    fn run_filter_through_shell_non_zero_exit_leaves_buffer_untouched() {
+        // `false` exits non-zero with no stdout. Buffer must be untouched.
+        let (_d, mut app) = app_with_buffer("alpha\nbeta\n");
+        app.run_filter_through_shell("false", false);
+        let text = app
+            .active_editor()
+            .map(|b| b.editor.text().to_string())
+            .unwrap();
+        assert_eq!(text, "alpha\nbeta\n");
+    }
+}
