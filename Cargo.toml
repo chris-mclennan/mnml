@@ -23,11 +23,11 @@ exclude = [
     # for repo contributors via the GitHub source tree, not for crates.io
     # consumers (they'd need the workspace setup anyway).
     "tests/e2e/",
-    # External-API smoke binaries (need real tokens / endpoints to run) and
-    # the perf-bench scratch examples. Not useful to a docs.rs reader.
-    "examples/*_smoke.rs",
-    "examples/bench_*.rs",
-    "examples/private_*.rs",
+    # Note: examples/*.rs all ship — Cargo auto-discovers them, and
+    # excluding individual files just orphans the cargo-publish warnings.
+    # The 12 examples (~60 KB total: 7 external-API smokes + 3 highlight
+    # benches + plugins/insert-timestamp.sh) double as documentation-by-
+    # example for crates.io / docs.rs readers; the cost is trivial.
 ]
 
 [lib]
