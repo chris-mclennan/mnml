@@ -22,14 +22,16 @@ authoritative spec; read it before architectural decisions).
   what the palette / which-key / keybindings / plugins all hang off. Adding a feature
   = register commands + maybe a `Pane`/`EditOp` variant — not a refactor.
 - **Headless mode (`src/headless.rs`, renders via ratatui `TestBackend`) + the file-IPC
-  channel (`src/ipc/`) share `app.rs` + `ui::draw` + `tui::dispatch_*` with the
+  channel (`src/ipc/`) share `src/app/` + `ui::draw` + `tui::dispatch_*` with the
   terminal loop (`src/tui.rs`)** so headless behavior matches the real UI. This is the
   substrate for the planned `.test` E2E format. IPC lives at `<workspace>/.mnml/ipc/`:
   `command` (JSONL host→mnml), `screen.txt` / `status.json` / `events.jsonl` (mnml→host).
-- **No giant files.** `src/app.rs` is render-free; `src/tui.rs` is *only* the crossterm
-  event loop; chrome lives in `src/ui/`, subsystems get their own dirs (`src/git/`,
-  later `src/http/`, `src/lsp/`, `src/ai/`, `src/cdp/`). mnml1's `tui.rs` (~56k chars)
-  and rqst's `app.rs` (~468k chars) both rotted — don't repeat that.
+- **No giant files.** App state is render-free and split across `src/app/mod.rs` plus
+  per-subsystem siblings (`src/app/{git,lsp,ai,cdp,dap,…}.rs` — 25 files). `src/tui.rs`
+  is *only* the crossterm event loop; chrome lives in `src/ui/`, subsystems get their
+  own top-level dirs (`src/git/`, `src/http/`, `src/lsp/`, `src/ai/`, `src/cdp/`).
+  mnml1's `tui.rs` (~56k chars) and rqst's `app.rs` (~468k chars) both rotted — don't
+  repeat that.
 - Storage is a plain `String` + byte cursor in `Editor`; all mutation goes through
   `apply` so a rope can slide in later without touching call sites. Columns are chars
   for now (display-width / tabs / CJK is a P2 refinement).
