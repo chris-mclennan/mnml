@@ -149,10 +149,16 @@ fim-engine = { path = "../fim-engine", version = "0.1.0", default-features = fal
 
 [features]
 default = []
-# The the private integration org build: DocDB live `TestExecutions` browser + CodeBuild
-# builds pane + native launcher actions. Drags in `mongodb` and a contained
-# tokio runtime. Plain `cargo build` is the lean editor.
-private = ["dep:mongodb", "dep:tokio", "dep:futures-util", "dep:bson"]
+# Generic AWS CodeBuild + CloudWatch panes (`Pane::CodeBuilds` /
+# `Pane::LogTail`). Shells out to the `aws` CLI; pulls in no new deps. Off
+# by default — `cargo build --features aws-codebuild` opts in. Anything
+# org-specific lives in plugins / private blit-host binaries, not here.
+aws-codebuild = []
+# The the private integration org build: DocDB live `TestExecutions` browser + correlation
+# against AWS CodeBuild runs (the CodeBuild panes themselves are in the
+# `aws-codebuild` feature, which `private` implies). Drags in `mongodb` and
+# a contained tokio runtime. Plain `cargo build` is the lean editor.
+private = ["aws-codebuild", "dep:mongodb", "dep:tokio", "dep:futures-util", "dep:bson"]
 
 [[example]]
 name = "private_smoke"
@@ -168,7 +174,7 @@ required-features = ["private"]
 
 [[example]]
 name = "private_codebuild_smoke"
-required-features = ["private"]
+required-features = ["aws-codebuild"]
 
 [profile.release]
 lto = true

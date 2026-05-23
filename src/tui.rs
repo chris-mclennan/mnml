@@ -2617,9 +2617,9 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // the private integration CodeBuilds browser (cfg-gated): ↑↓ select, Enter open URL,
+    // AWS CodeBuilds browser (cfg-gated): ↑↓ select, Enter open URL,
     // y copy URL, r refresh, Esc → tree.
-    #[cfg(feature = "private")]
+    #[cfg(feature = "aws-codebuild")]
     if matches!(app.panes.get(i), Some(Pane::CodeBuilds(_))) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -2656,6 +2656,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('y') => app.copy_selected_codebuild_url(),
             KeyCode::Char('t') => app.tail_selected_codebuild_logs(),
             KeyCode::Char('T') => app.tail_selected_codebuild_logs_classified(),
+            #[cfg(feature = "private")]
             KeyCode::Char('x') => app.show_test_executions_for_selected_build(),
             KeyCode::Char('r') => app.refresh_active_codebuilds(),
             KeyCode::Esc => app.focus_tree(),
@@ -2663,8 +2664,8 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // the private integration LogTailPane — scrollable + severity-colored aws-logs tail.
-    #[cfg(feature = "private")]
+    // LogTailPane — scrollable + severity-colored `aws logs tail` view.
+    #[cfg(feature = "aws-codebuild")]
     if matches!(app.panes.get(i), Some(Pane::LogTail(_))) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {

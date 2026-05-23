@@ -22,7 +22,7 @@ mod azdevops;
 mod bitbucket;
 mod github;
 mod gitlab;
-#[cfg(feature = "private")]
+#[cfg(any(feature = "private", feature = "aws-codebuild"))]
 mod private;
 
 mod ai;
@@ -2660,12 +2660,12 @@ pub struct App {
     /// Receiver for the (single) LogTailPane's streaming aws CLI worker.
     /// `App::tick` drains it into the open `Pane::LogTail`. `None` when
     /// no tail pane is active.
-    #[cfg(feature = "private")]
-    log_tail_chan: Option<std::sync::mpsc::Receiver<crate::private::log_tail_pane::LogTailEvent>>,
+    #[cfg(feature = "aws-codebuild")]
+    log_tail_chan: Option<std::sync::mpsc::Receiver<crate::aws::log_tail_pane::LogTailEvent>>,
     /// Pane id of the currently-streaming LogTailPane (the one that owns
     /// `log_tail_chan`). Set in `tail_selected_codebuild_logs_classified`,
     /// cleared on EOF or pane close.
-    #[cfg(feature = "private")]
+    #[cfg(feature = "aws-codebuild")]
     log_tail_pane_id: Option<crate::layout::PaneId>,
     /// Channel for background Bitbucket pipeline-log fetches.
     /// Each worker thread fetches one pipeline's combined log; the reply
@@ -3081,9 +3081,9 @@ impl App {
             dap_watch_results: std::collections::HashMap::new(),
             dap_pending_bp_condition: None,
             dap_pending_set_variable: None,
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             log_tail_chan: None,
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             log_tail_pane_id: None,
             pipeline_log_chan: None,
             pipeline_log_next_job: 1,
@@ -7100,9 +7100,9 @@ impl App {
             Pane::AzDevOpsPullRequests(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "private")]
             Pane::TestExecutions(p) => Some((p.tab_title(), false)),
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(p) => Some((p.tab_title(), false)),
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Pane::LogTail(p) => Some((p.tab_title(), false)),
             Pane::Cheatsheet(_) => Some(("Cheatsheet".to_string(), false)),
             Pane::Debug(_) => Some(("Debug".to_string(), false)),
@@ -8456,14 +8456,14 @@ impl App {
         self.drain_cdp_events();
         #[cfg(feature = "private")]
         self.drain_docdb_events();
-        #[cfg(feature = "private")]
+        #[cfg(feature = "aws-codebuild")]
         self.drain_codebuild_events();
         self.drain_bitbucket_events();
         self.drain_github_events();
         self.drain_gitlab_events();
         self.drain_azdevops_events();
         self.drain_pipeline_log_events();
-        #[cfg(feature = "private")]
+        #[cfg(feature = "aws-codebuild")]
         self.drain_log_tail_events();
         self.refresh_live_ai_panes();
         self.autosave_idle_buffers();

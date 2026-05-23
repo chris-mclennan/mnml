@@ -1,6 +1,7 @@
-//! `Pane::CodeBuilds` renderer (the private integration build only). One row per build:
-//! status glyph (colored by status) · build number · short SHA · branch ·
-//! duration · age · initiator. Header banner with loading/error chips.
+//! `Pane::CodeBuilds` renderer (`aws-codebuild` feature). One row per
+//! build: status glyph (colored by status) · build number · short SHA ·
+//! branch · duration · age · initiator. Header banner with
+//! loading/error chips.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -11,7 +12,7 @@ use ratatui::widgets::Paragraph;
 use crate::app::App;
 use crate::layout::PaneId;
 use crate::pane::Pane;
-use crate::private::codebuild::BuildStatus;
+use crate::aws::codebuild::BuildStatus;
 use crate::ui::theme;
 
 pub fn draw(
@@ -46,7 +47,7 @@ pub fn draw(
                 p.scroll = p.selected + 1 - body_h;
             }
         }
-        let items_window: Vec<(usize, crate::private::codebuild::CodeBuildRecord)> = p
+        let items_window: Vec<(usize, crate::aws::codebuild::CodeBuildRecord)> = p
             .items
             .iter()
             .enumerate()
@@ -65,7 +66,9 @@ pub fn draw(
 
     // Phase 8: per-build test-execution stat tuples (passed, failed, skipped,
     // flaky) aggregated across every matched TE record. None when no record
-    // correlates with the build.
+    // correlates with the build. the private integration-only — without the TestExecutions
+    // browser there are no records to correlate.
+    #[cfg(feature = "private")]
     let stats_per_visible: Vec<Option<(u32, u32, u32, u32)>> = items_window
         .iter()
         .map(|(_, rec)| {
@@ -83,6 +86,9 @@ pub fn draw(
             Some(acc)
         })
         .collect();
+    #[cfg(not(feature = "private"))]
+    let stats_per_visible: Vec<Option<(u32, u32, u32, u32)>> =
+        items_window.iter().map(|_| None).collect();
 
     let n = items_count;
     let mut lines: Vec<Line> = Vec::new();

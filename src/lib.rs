@@ -65,6 +65,8 @@ pub(crate) mod regex_outline;
 pub(crate) mod request_pane;
 pub(crate) mod signature;
 pub(crate) mod snippets;
+#[cfg(feature = "aws-codebuild")]
+pub mod aws;
 #[cfg(feature = "private")]
 pub mod private;
 pub(crate) mod tools;

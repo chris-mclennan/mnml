@@ -257,9 +257,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             }
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (if nerd { "\u{f0668}" } else { "⏵" }, theme::cur().teal),
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(_) => (if nerd { "\u{f487}" } else { "⚒" }, theme::cur().orange),
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Pane::LogTail(_) => (if nerd { "\u{f120}" } else { "≡" }, theme::cur().teal),
             Pane::Cheatsheet(_) => (if nerd { "\u{f128}" } else { "?" }, theme::cur().yellow),
             Pane::Debug(_) => (if nerd { "\u{f188}" } else { "🐛" }, theme::cur().red),

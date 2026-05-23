@@ -31,7 +31,7 @@ pub mod cheatsheet_view;
 pub mod close_prompt;
 pub mod cmdline_bar;
 pub mod cmdline_history_view;
-#[cfg(feature = "private")]
+#[cfg(feature = "aws-codebuild")]
 pub mod codebuilds_view;
 pub mod completion;
 pub mod context_menu;
@@ -55,7 +55,7 @@ pub mod grep_view;
 pub mod hover;
 pub mod icons;
 pub mod image_view;
-#[cfg(feature = "private")]
+#[cfg(feature = "aws-codebuild")]
 pub mod log_tail_view;
 pub mod md_inline_overlay;
 pub mod md_preview;
@@ -569,7 +569,7 @@ fn render_layout(
                 Some(crate::pane::Pane::Quickfix(_)) => 16,
                 #[cfg(feature = "private")]
                 Some(crate::pane::Pane::TestExecutions(_)) => 17,
-                #[cfg(feature = "private")]
+                #[cfg(feature = "aws-codebuild")]
                 Some(crate::pane::Pane::CodeBuilds(_)) => 18,
                 Some(crate::pane::Pane::BitbucketPipelines(_)) => 19,
                 Some(crate::pane::Pane::GithubActions(_)) => 20,
@@ -580,7 +580,7 @@ fn render_layout(
                 Some(crate::pane::Pane::AzDevOpsBuilds(_)) => 25,
                 Some(crate::pane::Pane::AzDevOpsPullRequests(_)) => 26,
                 Some(crate::pane::Pane::BitbucketPipelineLog(_)) => 27,
-                #[cfg(feature = "private")]
+                #[cfg(feature = "aws-codebuild")]
                 Some(crate::pane::Pane::LogTail(_)) => 28,
                 Some(crate::pane::Pane::Cheatsheet(_)) => 29,
                 Some(crate::pane::Pane::Debug(_)) => 30,
@@ -609,7 +609,7 @@ fn render_layout(
                 16 => grep_view::draw(frame, app, *id, area, focused),
                 #[cfg(feature = "private")]
                 17 => test_executions_view::draw(frame, app, *id, area, focused),
-                #[cfg(feature = "private")]
+                #[cfg(feature = "aws-codebuild")]
                 18 => codebuilds_view::draw(frame, app, *id, area, focused),
                 19 => bitbucket_pipelines_view::draw(frame, app, *id, area, focused),
                 20 => github_actions_view::draw(frame, app, *id, area, focused),
@@ -626,7 +626,7 @@ fn render_layout(
                     }
                     None
                 }
-                #[cfg(feature = "private")]
+                #[cfg(feature = "aws-codebuild")]
                 28 => {
                     if let Some(crate::pane::Pane::LogTail(p)) = app.panes.get_mut(*id) {
                         log_tail_view::draw(frame, p, area);

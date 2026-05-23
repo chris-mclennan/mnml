@@ -362,9 +362,9 @@ impl App {
             | None => None,
             #[cfg(feature = "private")]
             Some(Pane::TestExecutions(_)) => None,
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Some(Pane::CodeBuilds(_)) => None,
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Some(Pane::LogTail(_)) => None,
         };
         let new_buf = match path {
@@ -698,9 +698,9 @@ impl App {
             | Pane::Image(_) => (None, None),
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => (None, None),
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(_) => (None, None),
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Pane::LogTail(_) => (None, None),
         };
         if self.layout().contains(id) {

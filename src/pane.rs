@@ -25,10 +25,10 @@ use crate::playwright::flaky_pane::FlakyPane;
 use crate::playwright::trace_pane::TracePane;
 use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
-#[cfg(feature = "private")]
-use crate::private::codebuilds_pane::CodeBuildsPane;
-#[cfg(feature = "private")]
-use crate::private::log_tail_pane::LogTailPane;
+#[cfg(feature = "aws-codebuild")]
+use crate::aws::codebuilds_pane::CodeBuildsPane;
+#[cfg(feature = "aws-codebuild")]
+use crate::aws::log_tail_pane::LogTailPane;
 #[cfg(feature = "private")]
 use crate::private::private_executions_pane::TestExecutionsPane;
 
@@ -99,14 +99,14 @@ pub enum Pane {
     /// the `private` Cargo feature — the lean build doesn't have this.
     #[cfg(feature = "private")]
     TestExecutions(TestExecutionsPane),
-    /// AWS CodeBuild recent-builds browser (the private integration org build). Behind the
-    /// `private` Cargo feature.
-    #[cfg(feature = "private")]
+    /// AWS CodeBuild recent-builds browser. Behind the `aws-codebuild`
+    /// Cargo feature; shells out to the `aws` CLI.
+    #[cfg(feature = "aws-codebuild")]
     CodeBuilds(CodeBuildsPane),
     /// `aws logs tail --follow ...` streaming view with per-line
     /// severity coloring. Sibling to the existing pty-based log tail.
-    /// `private` feature only.
-    #[cfg(feature = "private")]
+    /// `aws-codebuild` feature only.
+    #[cfg(feature = "aws-codebuild")]
     LogTail(LogTailPane),
     /// NvCheatsheet-style browseable list of every active chord → command,
     /// grouped by `Command::group`. `/`-filterable, scrollable. Opened
@@ -459,9 +459,9 @@ impl Pane {
             Pane::AzDevOpsPullRequests(p) => p.tab_title(),
             #[cfg(feature = "private")]
             Pane::TestExecutions(p) => p.tab_title(),
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(p) => p.tab_title(),
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Pane::LogTail(p) => p.tab_title(),
             Pane::Cheatsheet(_) => "Cheatsheet".to_string(),
             Pane::Debug(_) => "Debug".to_string(),
@@ -505,9 +505,9 @@ impl Pane {
             | Pane::Image(_) => false,
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => false,
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(_) => false,
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Pane::LogTail(_) => false,
         }
     }

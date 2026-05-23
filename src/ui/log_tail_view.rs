@@ -1,9 +1,10 @@
-//! Renderer for `Pane::LogTail` (private-feature only). A scrollable
-//! list-of-lines view where each line is colored by its classified
-//! severity (`Error` red, `Warn` yellow, `Info` cyan, `Debug` dim,
-//! `Plain` foreground). Follows the tail when `scroll == usize::MAX`.
+//! Renderer for `Pane::LogTail` (`aws-codebuild`-feature only). A
+//! scrollable list-of-lines view where each line is colored by its
+//! classified severity (`Error` red, `Warn` yellow, `Info` cyan,
+//! `Debug` dim, `Plain` foreground). Follows the tail when
+//! `scroll == usize::MAX`.
 
-#![cfg(feature = "private")]
+#![cfg(feature = "aws-codebuild")]
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -11,7 +12,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::private::log_tail_pane::{LineSeverity, LogTailPane};
+use crate::aws::log_tail_pane::{LineSeverity, LogTailPane};
 use crate::ui::theme;
 
 pub fn draw(frame: &mut Frame, pane: &mut LogTailPane, area: Rect) {

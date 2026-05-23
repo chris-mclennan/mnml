@@ -585,11 +585,11 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             Some(Pane::TestExecutions(p)) => {
                 p.move_selection(delta as i64);
             }
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Some(Pane::CodeBuilds(p)) => {
                 p.move_selection(delta as i64);
             }
-            #[cfg(feature = "private")]
+            #[cfg(feature = "aws-codebuild")]
             Some(Pane::LogTail(p)) => {
                 let n = delta.unsigned_abs() as usize;
                 // Wheel-up = scroll up; if we were following (Max), break
