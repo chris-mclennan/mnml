@@ -146,6 +146,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         #[cfg(feature = "private")]
         app.rects.test_executions_rows.clear();
         app.rects.split_dividers.clear();
+        app.rects.pty_tabs.clear();
+        app.rects.pty_tab_new.clear();
         let layout = app.layout().clone();
         let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {
             welcome::draw(frame, app, area);
@@ -377,14 +379,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.code_lens_chips.clear();
     app.rects.wip_buttons.clear();
     app.rects.wip_file_rows.clear();
+    app.rects.wip_commit_textarea = None;
     app.rects.git_toolbar_buttons.clear();
     app.rects.commit_file_rows.clear();
     app.rects.diff_toolbar_buttons.clear();
+    app.rects.diff_hunk_buttons.clear();
     app.rects.scrollbars.clear();
     app.rects.git_graph_detail_dividers.clear();
     app.rects.git_graph_column_headers.clear();
     app.rects.request_tabs.clear();
     app.rects.request_fields.clear();
+    app.rects.completion_rows.clear();
     app.rects.list_rows.clear();
     #[cfg(feature = "private")]
     app.rects.test_executions_rows.clear();
