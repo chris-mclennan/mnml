@@ -38,7 +38,7 @@ jobs:
   # Publishes crates + creates GitHub releases for any version bumps merged via
   # the release PR. Runs first so it can complete before a new PR opens.
   release-plz-release:
-    if: vars.RELEASE_PLZ_ENABLED == 'true' 
+    if: vars.RELEASE_PLZ_ENABLED == 'true'
     name: Release-plz · release
     runs-on: ubuntu-latest
     steps:
