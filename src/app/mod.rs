@@ -28,6 +28,7 @@ mod private;
 mod ai;
 mod cdp;
 mod dap;
+pub(crate) mod dispatch;
 mod editor_features;
 mod git;
 mod http;

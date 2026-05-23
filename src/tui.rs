@@ -23,7 +23,6 @@ use ratatui::layout::Rect;
 
 use crate::app::App;
 use crate::buffer::BufferEvent;
-use crate::edit_op::EditOp;
 use crate::focus::Focus;
 use crate::ipc::{self, Ipc};
 use crate::pane::Pane;
@@ -128,7 +127,7 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
             term.clear()?;
         }
         term.draw(|f| ui::draw(f, app))?;
-        emit_image_placements(app);
+        crate::app::dispatch::emit_image_placements(app);
         if let Some(ipc) = ipc.as_mut() {
             ipc::dump_screen_status(ipc, term.current_buffer_mut(), app);
             ipc::drain_commands(ipc, app);
@@ -170,62 +169,6 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
     Ok(())
 }
 
-/// Drain `app.image_paint_requests` and emit the protocol-specific image
-/// escapes directly to stdout. Called after `terminal.draw()` so the
-/// images paint *on top of* the placeholder cells ratatui reserved.
-///
-/// Also handles clearing stale placements: when image panes disappear
-/// (closed / scrolled out), we emit a `clear-all` so the previous
-/// frame's images don't linger.
-fn emit_image_placements(app: &mut App) {
-    use crate::image::ImageProtocol;
-    use std::io::Write;
-    let protocol = app.image_protocol;
-    if matches!(protocol, ImageProtocol::None) {
-        app.image_paint_requests.clear();
-        app.had_image_pane = false;
-        return;
-    }
-    let pending = std::mem::take(&mut app.image_paint_requests);
-    let any_now = !pending.is_empty();
-    let needs_clear = any_now || app.had_image_pane;
-    let mut out = io::stdout();
-    if needs_clear && matches!(protocol, ImageProtocol::Kitty) {
-        let _ = out.write_all(crate::image::kitty::clear_all().as_bytes());
-    }
-    for req in pending {
-        // Move cursor to the area's top-left (1-based row;col).
-        let _ = write!(
-            out,
-            "\x1b[{};{}H",
-            req.area.y.saturating_add(1),
-            req.area.x.saturating_add(1)
-        );
-        match protocol {
-            ImageProtocol::Kitty => {
-                if let Ok(esc) = crate::image::kitty::encode_placement(
-                    &req.png_bytes,
-                    req.area.width,
-                    req.area.height,
-                ) {
-                    let _ = out.write_all(esc.as_bytes());
-                }
-            }
-            ImageProtocol::Iterm2 => {
-                let esc = crate::image::iterm2::encode_placement(
-                    &req.png_bytes,
-                    req.area.width,
-                    req.area.height,
-                );
-                let _ = out.write_all(esc.as_bytes());
-            }
-            ImageProtocol::None => {}
-        }
-    }
-    let _ = out.flush();
-    app.had_image_pane = any_now;
-}
-
 // ─── key dispatch (shared with headless/IPC) ────────────────────────
 
 pub fn dispatch_key(app: &mut App, key: KeyEvent) {
@@ -264,7 +207,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             scratch.focused = false;
             return;
         }
-        let bytes = pty_key_bytes(key);
+        let bytes = crate::app::dispatch::pty_key_bytes(key);
         if !bytes.is_empty() {
             scratch.session.write_bytes(&bytes);
         }
@@ -669,7 +612,7 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_pane_key(app: &mut App, key: KeyEvent) {
-    let viewport = pane_viewport(app);
+    let viewport = crate::app::dispatch::pane_viewport(app);
     let Some(i) = app.active else { return };
     // A markdown preview is read-only: only scroll + Esc.
     if let Some(Pane::MdPreview(p)) = app.panes.get_mut(i) {
@@ -3584,7 +3527,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             _ => {}
         }
-        let bytes = pty_key_bytes(key);
+        let bytes = crate::app::dispatch::pty_key_bytes(key);
         if !bytes.is_empty() {
             s.write_bytes(&bytes);
         }
@@ -3683,7 +3626,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             // (whitespace / punctuation) AND the active handler is in
             // Insert, look back for an abbreviation word.
             if let Some(c) = typed_char
-                && is_abbreviation_trigger(c)
+                && crate::app::dispatch::is_abbreviation_trigger(c)
                 && let Some(Pane::Editor(b)) = app.panes.get(i)
                 && b.input.mode() == crate::input::EditingMode::Insert
             {
@@ -3704,7 +3647,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 app.sync_md_previews_to_cursor(&p, row);
             }
         }
-        BufferEvent::App(cmd) => apply_app_command(app, cmd),
+        BufferEvent::App(cmd) => crate::app::dispatch::apply_app_command(app, cmd),
         BufferEvent::Unhandled(k) => {
             // Not text-editing. Esc releases focus to the tree; the rest (config-
             // driven keymap → command resolver) lands with the keymap work in P3.
@@ -3720,7 +3663,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             Some(Pane::Editor(b)) => (Some(b.input.mode()), b.input.pending_display()),
             _ => (None, None),
         };
-        record_dot(
+        crate::app::dispatch::record_dot(
             app,
             key,
             mode_before,
@@ -3732,307 +3675,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-/// Update [`App::dot_recording`] / [`App::dot_keys`] based on the mode +
-/// chord-state transition this dispatch caused. The recording starts
-/// when a "change" begins and finalizes when it ends. Boundaries:
-///
-/// - Normal + no chord pending → Insert ⇒ start recording (this `key`).
-/// - Normal + no chord pending → Normal + chord pending (e.g. `d` from
-///   normal opens operator-pending) ⇒ start recording.
-/// - During recording (chord still pending OR in Insert) ⇒ append.
-/// - End of recording: chord cleared and (mode is Normal OR back from
-///   Insert), AND a buffer mutation occurred ⇒ finalize into `dot_keys`.
-/// - End of recording with no mutation (e.g. user `Esc`'d the operator
-///   before completing it) ⇒ discard.
-/// - One-shot Normal-mode mutation with no chord (e.g. `p`) ⇒ record this
-///   `key` and finalize immediately.
-fn record_dot(
-    app: &mut crate::app::App,
-    key: KeyEvent,
-    mode_before: Option<crate::input::EditingMode>,
-    mode_after: Option<crate::input::EditingMode>,
-    pending_before: Option<String>,
-    pending_after: Option<String>,
-    edited: bool,
-) {
-    use crate::input::EditingMode;
-    let (Some(before), Some(after)) = (mode_before, mode_after) else {
-        return;
-    };
-    let recording = app.dot_recording.is_some();
-    // 1. Already recording — append. Then check if we just finalized.
-    if recording {
-        if let Some(rec) = &mut app.dot_recording {
-            rec.push(key);
-        }
-        if edited {
-            app.dot_recording_saw_edit = true;
-        }
-        let in_flight = after == EditingMode::Insert || pending_after.is_some();
-        if !in_flight {
-            // Recording terminated. If any earlier keystroke in the
-            // session produced a mutation, finalize. Otherwise discard
-            // (the chord was cancelled — e.g. ESC out of operator-pending).
-            if app.dot_recording_saw_edit {
-                if let Some(rec) = app.dot_recording.take() {
-                    app.dot_keys = rec;
-                }
-            } else {
-                app.dot_recording = None;
-            }
-            app.dot_recording_saw_edit = false;
-        }
-        return;
-    }
-    // 2. Not currently recording — does this key start a new change?
-    let in_flight_after = after == EditingMode::Insert || pending_after.is_some();
-    let started_change =
-        before == EditingMode::Normal && pending_before.is_none() && in_flight_after;
-    if started_change {
-        app.dot_recording = Some(vec![key]);
-        app.dot_recording_saw_edit = edited;
-        return;
-    }
-    // 3. Visual → Insert (visual `c`) starts a change too.
-    if before == EditingMode::Visual && after == EditingMode::Insert {
-        app.dot_recording = Some(vec![key]);
-        app.dot_recording_saw_edit = edited;
-        return;
-    }
-    // 4. One-shot Normal-mode mutation (`p`, `~`, `u`, etc.) — record the
-    //    single key and finalize.
-    if before == EditingMode::Normal
-        && after == EditingMode::Normal
-        && pending_before.is_none()
-        && pending_after.is_none()
-        && edited
-    {
-        app.dot_keys = vec![key];
-    }
-    // 5. Visual op (e.g. `vlld`) ⇒ also a one-shot capture.
-    if before == EditingMode::Visual && after == EditingMode::Normal && edited {
-        app.dot_keys = vec![key];
-    }
-}
-
-/// Vim abbreviation trigger: chars that "complete" the previous word and
-/// signal expansion. Roughly: whitespace + most punctuation. Letters /
-/// digits / `_` are *not* triggers (they keep the word in flight).
-fn is_abbreviation_trigger(c: char) -> bool {
-    c.is_whitespace()
-        || matches!(
-            c,
-            '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '"' | '\'' | '`'
-        )
-}
-
-fn pane_viewport(app: &App) -> usize {
-    app.active
-        .and_then(|cur| {
-            app.rects
-                .editor_panes
-                .iter()
-                .find(|(_, p)| *p == cur)
-                .map(|(r, _)| r.height as usize)
-        })
-        .unwrap_or(20)
-        .max(1)
-}
-
-fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
-    use crate::input::AppCommand::*;
-    match cmd {
-        Save => {
-            command::run("file.save", app);
-        }
-        SaveAll => {
-            command::run("file.save_all", app);
-        }
-        Quit => app.request_quit(),
-        ForceQuit => app.should_quit = true,
-        CloseBuffer => {
-            command::run("buffer.close", app);
-        }
-        NextBuffer => {
-            command::run("buffer.next", app);
-        }
-        PrevBuffer => {
-            command::run("buffer.prev", app);
-        }
-        GotoLine(n) => {
-            if let Some(i) = app.active
-                && let Some(Pane::Editor(b)) = app.panes.get_mut(i)
-            {
-                b.editor
-                    .apply(EditOp::MoveToLine(n), 20, &mut app.clipboard);
-            }
-        }
-        ExCommand(s) => {
-            // Push onto persistent ex history (de-duped against newest,
-            // capped at 100). The handler-side history mirror is updated
-            // on launch from `App.ex_history` via `set_ex_history`.
-            if app.ex_history.last() != Some(&s) {
-                app.ex_history.push(s.clone());
-                if app.ex_history.len() > 100 {
-                    let drop = app.ex_history.len() - 100;
-                    app.ex_history.drain(..drop);
-                }
-            }
-            app.run_ex_command(&s);
-        }
-        RunCommand(id) => {
-            command::run(&id, app);
-        }
-        SetMark(c) => app.set_mark_at_cursor(c),
-        JumpToMarkLine(c) => app.jump_to_mark(c, false),
-        JumpToMarkExact(c) => app.jump_to_mark(c, true),
-        MacroRecordInto(c) => {
-            app.set_pending_macro_register(c);
-            app.macro_toggle();
-        }
-        MacroReplayFrom(c) => {
-            app.set_pending_macro_register(c);
-            app.macro_replay();
-        }
-        BlockInsertStart { append } => app.block_insert_start(append),
-        BlockChangeStart => app.block_change_start(),
-        CmdlineTabComplete => app.cmdline_tab_complete(),
-        RepeatInsertStart { count, above } => app.repeat_insert_start(count as usize, above),
-        FlashStart(a, b) => app.flash_start(a, b),
-    }
-}
-
 // ─── mouse dispatch (shared with headless/IPC) ──────────────────────
-
-/// Translate a click within an editor pane's text rect to a `(file_row,
-/// file_col)`. Wrap-aware: when `[ui] wrap` is on, the visible row is
-/// walked via [`Buffer::wrap_to_file_pos`] so clicks inside a wrapped
-/// continuation land on the right char column. With wrap off this is
-/// the classic `visible_to_file_row` + `h_scroll` mapping.
-fn click_to_file_pos(
-    b: &crate::buffer::Buffer,
-    tr: Rect,
-    wrap: bool,
-    x: u16,
-    y: u16,
-) -> (usize, usize) {
-    let visible_row = (y.saturating_sub(tr.y)) as usize;
-    let click_col = (x.saturating_sub(tr.x)) as usize;
-    let tw = tr.width as usize;
-    if wrap && tw > 0 {
-        let (row, char_start) = b
-            .wrap_to_file_pos(b.scroll, visible_row, tw)
-            .unwrap_or((b.scroll, 0));
-        (row, char_start + click_col)
-    } else {
-        let row = b
-            .visible_to_file_row(b.scroll, visible_row)
-            .unwrap_or(b.scroll);
-        (row, b.h_scroll + click_col)
-    }
-}
-
-/// Which clickable statusline chip (if any) sits under the given mouse coords.
-/// Used by the hover-tooltip system; right-click + left-click handlers do their
-/// own per-chip rect checks since they need to act, not just identify.
-fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChip> {
-    if let Some(r) = app.rects.statusline_mode_chip
-        && contains(r, x, y)
-    {
-        return Some(crate::HoverChip::StatuslineMode);
-    }
-    if let Some(r) = app.rects.statusline_branch_chip
-        && contains(r, x, y)
-    {
-        return Some(crate::HoverChip::StatuslineBranch);
-    }
-    if let Some(r) = app.rects.statusline_workspace_chip
-        && contains(r, x, y)
-    {
-        return Some(crate::HoverChip::StatuslineWorkspace);
-    }
-    if let Some(r) = app.rects.statusline_clock_chip
-        && contains(r, x, y)
-    {
-        return Some(crate::HoverChip::StatuslineClock);
-    }
-    if let Some(r) = app.rects.statusline_lsp_chip
-        && contains(r, x, y)
-    {
-        return Some(crate::HoverChip::StatuslineLsp);
-    }
-    if let Some(r) = app.rects.statusline_wrap_chip
-        && contains(r, x, y)
-    {
-        return Some(crate::HoverChip::StatuslineWrap);
-    }
-    if let Some(r) = app.rects.statusline_autosave_chip
-        && contains(r, x, y)
-    {
-        return Some(crate::HoverChip::StatuslineAutosave);
-    }
-    if let Some(r) = app.rects.statusline_filesize_chip
-        && contains(r, x, y)
-    {
-        return Some(crate::HoverChip::StatuslineFilesize);
-    }
-    if let Some(r) = app.rects.statusline_lncol_chip
-        && contains(r, x, y)
-    {
-        return Some(crate::HoverChip::StatuslineLnCol);
-    }
-    if let Some(r) = app.rects.bufferline_claude_button
-        && contains(r, x, y)
-    {
-        return Some(crate::HoverChip::BufferlineClaude);
-    }
-    if let Some(r) = app.rects.bufferline_codex_button
-        && contains(r, x, y)
-    {
-        return Some(crate::HoverChip::BufferlineCodex);
-    }
-    if let Some(&(_, action)) = app
-        .rects
-        .rail_git_header_buttons
-        .iter()
-        .find(|(r, _)| contains(*r, x, y))
-    {
-        return Some(crate::HoverChip::RailHeaderChip(action));
-    }
-    if let Some(&(_, pid)) = app
-        .rects
-        .bufferline_tabs
-        .iter()
-        .find(|(r, _)| contains(*r, x, y))
-    {
-        return Some(crate::HoverChip::BufferlineTab(pid));
-    }
-    if let Some(&(_, _, action)) = app
-        .rects
-        .diff_toolbar_buttons
-        .iter()
-        .find(|(r, _, _)| contains(*r, x, y))
-    {
-        return Some(crate::HoverChip::DiffToolbar(action));
-    }
-    if app
-        .rects
-        .fold_chips
-        .iter()
-        .any(|(r, _, _)| contains(*r, x, y))
-    {
-        return Some(crate::HoverChip::FoldChip);
-    }
-    if app
-        .rects
-        .code_lens_chips
-        .iter()
-        .any(|(r, _, _)| contains(*r, x, y))
-    {
-        return Some(crate::HoverChip::CodeLensChip);
-    }
-    None
-}
 
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
@@ -4044,7 +3687,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // it (handled elsewhere).
     if matches!(m.kind, MouseEventKind::Moved) {
         let now = std::time::Instant::now();
-        let new_chip = hover_chip_at(app, x, y);
+        let new_chip = crate::app::dispatch::hover_chip_at(app, x, y);
         let prev_chip = app.hover_chip.map(|(c, _)| c);
         if new_chip != prev_chip {
             app.hover_chip = new_chip.map(|c| (c, now));
@@ -4080,7 +3723,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             .rects
             .settings_rows
             .iter()
-            .find(|(r, _)| contains(*r, x, y))
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
         {
             app.settings_toggle_flag(flag);
             return;
@@ -4096,7 +3739,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             .rects
             .discovery_rows
             .iter()
-            .find(|(r, _)| contains(*r, x, y))
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
         {
             app.discovery_flash = Some((cat, std::time::Instant::now()));
             return;
@@ -4110,7 +3753,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
         && let Some(strip) = app.rects.scratch_term_strip
     {
-        if contains(strip, x, y) {
+        if crate::app::dispatch::contains(strip, x, y) {
             if let Some(s) = app.scratch_term.as_mut() {
                 s.focused = true;
             }
@@ -4131,7 +3774,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         // An in-progress move / resize drag.
         if let Some(kind) = app.mixr_drag {
             if drag && let (Some(body), Some(p)) = (app.rects.body, app.mixr_panel.as_mut()) {
-                apply_mixr_drag(&mut p.float, body, kind, x, y);
+                crate::app::dispatch::apply_mixr_drag(&mut p.float, body, kind, x, y);
                 return;
             }
             if up {
@@ -4155,7 +3798,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             let on_header = app
                 .rects
                 .mixr_panel_header
-                .is_some_and(|h| contains(h, x, y));
+                .is_some_and(|h| crate::app::dispatch::contains(h, x, y));
             let p_right = panel.x + panel.width - 1;
             let p_bottom = panel.y + panel.height - 1;
             let on_left = x == panel.x && y >= panel.y && y <= p_bottom;
@@ -4193,7 +3836,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
 
             // Cell area → focus + forward to mixr.
-            let inside = contains(cells, x, y);
+            let inside = crate::app::dispatch::contains(cells, x, y);
             let focused = app.mixr_panel.as_ref().is_some_and(|p| p.focused);
             if inside && (down || focused) {
                 if let Some(p) = app.mixr_panel.as_mut() {
@@ -4209,7 +3852,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             if any_down
-                && !contains(panel, x, y)
+                && !crate::app::dispatch::contains(panel, x, y)
                 && let Some(p) = app.mixr_panel.as_mut()
             {
                 p.focused = false;
@@ -4229,7 +3872,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     .rects
                     .completion_rows
                     .iter()
-                    .find(|(r, _)| contains(*r, x, y))
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
                     .map(|(_, fi)| *fi);
                 if let Some(fi) = hit {
                     if let Some(p) = app.completion.as_mut() {
@@ -4251,7 +3894,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     .rects
                     .picker_items
                     .iter()
-                    .find(|(r, _)| contains(*r, x, y))
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
                 {
                     if let Some(p) = app.picker.as_mut() {
                         p.set_selected(fi);
@@ -4260,7 +3903,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 } else if app
                     .rects
                     .picker_box
-                    .map(|r| !contains(r, x, y))
+                    .map(|r| !crate::app::dispatch::contains(r, x, y))
                     .unwrap_or(true)
                 {
                     app.close_picker(); // click outside dismisses
@@ -4293,7 +3936,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .close_prompt_buttons
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
         {
             app.close_prompt_resolve(choice);
         }
@@ -4309,7 +3952,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     .rects
                     .context_menu_items
                     .iter()
-                    .find(|(r, _)| contains(*r, x, y))
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
                 {
                     app.context_menu_select(i);
                     app.context_menu_accept();
@@ -4331,7 +3974,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             .rects
             .bufferline_tabs
             .iter()
-            .find(|(r, _)| contains(*r, x, y))
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
         app.close_pane(id);
         return;
@@ -4347,7 +3990,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             .rects
             .dashboard_rows
             .iter()
-            .find(|(r, _)| contains(*r, x, y))
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             .map(|(_, p)| p.clone());
         if let Some(path) = target {
             app.open_path(&path);
@@ -4364,14 +4007,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             .rects
             .editor_panes
             .iter()
-            .find(|(r, _)| contains(*r, x, y))
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
         app.active = Some(pid);
         app.focus_pane();
         let wrap = app.config.ui.wrap;
         let vp = tr.height as usize;
         if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
-            let (row, col) = click_to_file_pos(b, tr, wrap, x, y);
+            let (row, col) = crate::app::dispatch::click_to_file_pos(b, tr, wrap, x, y);
             b.editor.place_cursor(row, col);
             b.apply_edit_ops(
                 vec![crate::edit_op::EditOp::PasteAfter],
@@ -4387,32 +4030,32 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // Right-click on a statusline chip — context menus for the four
             // clickable chips (branch / workspace / mode / clock).
             if let Some(r) = app.rects.statusline_branch_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.open_statusline_branch_context_menu((x, y));
                 return;
             }
             if let Some(r) = app.rects.statusline_workspace_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.open_statusline_workspace_context_menu((x, y));
                 return;
             }
             if let Some(r) = app.rects.statusline_mode_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.open_statusline_mode_context_menu((x, y));
                 return;
             }
             if let Some(r) = app.rects.statusline_clock_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.open_statusline_clock_context_menu((x, y));
                 return;
             }
             // Right-click on the `> WORKSPACE` header → workspace menu.
             if let Some(tr) = app.rects.tree_toggle
-                && contains(tr, x, y)
+                && crate::app::dispatch::contains(tr, x, y)
             {
                 app.open_workspace_header_context_menu((x, y));
                 return;
@@ -4422,7 +4065,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .extra_workspace_toggles
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.open_extra_workspace_header_context_menu(ws_idx, (x, y));
                 return;
@@ -4433,7 +4076,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .request_fields
                 .iter()
-                .any(|(r, _, _)| contains(*r, x, y))
+                .any(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.open_request_url_context_menu((x, y));
                 return;
@@ -4458,7 +4101,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // dock-position menu (left / right / top / bottom / maximize /
             // zen). Pty panes register their rect in `editor_panes`.
             if let Some(&(_, pid)) = app.rects.editor_panes.iter().find(|(r, pid)| {
-                contains(*r, x, y) && matches!(app.panes.get(*pid), Some(Pane::Pty(_)))
+                crate::app::dispatch::contains(*r, x, y)
+                    && matches!(app.panes.get(*pid), Some(Pane::Pty(_)))
             }) {
                 app.open_pty_dock_context_menu(pid, (x, y));
                 return;
@@ -4470,7 +4114,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .editor_gutters
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 let row_in_pane = (y - gr.y) as usize;
                 let line = match app.panes.get(pid) {
@@ -4482,7 +4126,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
             // Right-click a pty pane's tab strip (Claude / Codex / shell) →
             // rename / close that session.
-            if let Some(&(_, pid)) = app.rects.pty_tabs.iter().find(|(r, _)| contains(*r, x, y)) {
+            if let Some(&(_, pid)) = app
+                .rects
+                .pty_tabs
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
                 app.open_pty_tab_context_menu(pid, (x, y));
                 return;
             }
@@ -4491,13 +4140,13 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .bufferline_tabs
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.open_tab_context_menu(id, (x, y));
                 return;
             }
             if let Some(tr) = app.rects.tree
-                && contains(tr, x, y)
+                && crate::app::dispatch::contains(tr, x, y)
             {
                 let idx = (y - tr.y) as usize + app.rects.tree_scroll;
                 if idx < app.tree.visible_rows().len() {
@@ -4514,7 +4163,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .git_rail_rows
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.open_git_rail_context_menu(hit, (x, y));
                 return;
@@ -4528,7 +4177,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .list_rows
                 .iter()
-                .find(|(r, _, _)| contains(*r, x, y))
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 match app.panes.get(pid) {
                     Some(Pane::Diff(_)) => {
@@ -4578,7 +4227,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .fold_chips
                 .iter()
-                .find(|(r, _, _)| contains(*r, x, y))
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.active = Some(pid);
                 app.focus_pane();
@@ -4593,7 +4242,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .code_lens_chips
                 .iter()
-                .find(|(r, _, _)| contains(*r, x, y))
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.active = Some(pid);
                 app.focus_pane();
@@ -4608,7 +4257,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .wip_buttons
                 .iter()
-                .find(|(r, _, _)| contains(*r, x, y))
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
                 .cloned()
             {
                 app.active = Some(pid);
@@ -4626,7 +4275,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .wip_file_rows
                 .iter()
-                .find(|(r, _, _, _)| contains(*r, x, y))
+                .find(|(r, _, _, _)| crate::app::dispatch::contains(*r, x, y))
                 .cloned()
             {
                 app.active = Some(pid);
@@ -4639,7 +4288,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // Wins over the pane-focus handler so the click both
             // focuses the GitGraph pane AND focuses the textarea.
             if let Some((r, pid)) = app.rects.wip_commit_textarea
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.active = Some(pid);
                 app.focus_pane();
@@ -4654,7 +4303,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .git_toolbar_buttons
                 .iter()
-                .find(|(r, _, _)| contains(*r, x, y))
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.active = Some(pid);
                 app.focus_pane();
@@ -4670,7 +4319,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .diff_hunk_buttons
                 .iter()
-                .find(|(r, _, _, _)| contains(*r, x, y))
+                .find(|(r, _, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.active = Some(pid);
                 app.focus_pane();
@@ -4688,7 +4337,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .diff_toolbar_buttons
                 .iter()
-                .find(|(r, _, _)| contains(*r, x, y))
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.active = Some(pid);
                 app.focus_pane();
@@ -4750,7 +4399,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .commit_file_rows
                 .iter()
-                .find(|(r, _, _)| contains(*r, x, y))
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.active = Some(pid);
                 app.focus_pane();
@@ -4762,7 +4411,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .request_tabs
                 .iter()
-                .find(|(r, _, _)| contains(*r, x, y))
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.active = Some(pid);
                 app.focus_pane();
@@ -4776,7 +4425,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .request_fields
                 .iter()
-                .find(|(r, _, _)| contains(*r, x, y))
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.active = Some(pid);
                 app.focus_pane();
@@ -4788,7 +4437,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
             // Bufferline overflow chevrons — scroll the tab strip by one.
             if let Some(r) = app.rects.bufferline_overflow_left
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 if app.bufferline_first_visible > 0 {
                     app.bufferline_first_visible -= 1;
@@ -4796,7 +4445,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             if let Some(r) = app.rects.bufferline_overflow_right
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 if app.bufferline_first_visible + 1 < app.panes.len() {
                     app.bufferline_first_visible += 1;
@@ -4808,7 +4457,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .bufferline_tab_close
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.close_pane(id);
                 return;
@@ -4817,7 +4466,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .bufferline_tabs
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.reveal_pane(id);
                 return;
@@ -4829,13 +4478,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .pty_tab_new
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 let profile = crate::pty_pane::BinaryProfile::claude_code(app.workspace.clone());
                 app.add_pty_tab(owner, profile);
                 return;
             }
-            if let Some(&(_, pid)) = app.rects.pty_tabs.iter().find(|(r, _)| contains(*r, x, y)) {
+            if let Some(&(_, pid)) = app
+                .rects
+                .pty_tabs
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
                 app.reveal_pane(pid);
                 return;
             }
@@ -4844,19 +4498,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // window close. Order matters (the `⊗` rect sits adjacent
             // to its chip; check close before chip).
             if let Some(r) = app.rects.bufferline_claude_button
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.open_claude_code();
                 return;
             }
             if let Some(r) = app.rects.bufferline_codex_button
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.open_codex();
                 return;
             }
             if let Some(r) = app.rects.bufferline_new_tab_button
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.tab_new(None);
                 return;
@@ -4865,7 +4519,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .bufferline_tab_page_close
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.tab_close_at(idx);
                 return;
@@ -4874,7 +4528,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .bufferline_tab_page_chips
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.switch_tab(idx);
                 // Arm a drag — a subsequent mouse-drag over a
@@ -4883,7 +4537,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             if let Some(r) = app.rects.bufferline_theme_toggle
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 // NvChad convention: the slider is a binary toggle between
                 // `[ui] theme` ↔ `[ui] theme_toggle`. Falls back to opening
@@ -4896,7 +4550,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             if let Some(r) = app.rects.bufferline_window_close
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.close_active_pane();
                 return;
@@ -4904,14 +4558,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // Statusline branch chip → open the commit graph. Always-visible
             // click target for git.graph (vs the keyboard-only `<leader>g l`).
             if let Some(r) = app.rects.statusline_branch_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 let _ = crate::command::run("git.graph", app);
                 return;
             }
             // Statusline mode chip → toggle input style (vim ↔ standard).
             if let Some(r) = app.rects.statusline_mode_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 let _ = crate::command::run("editor.toggle_keymap", app);
                 return;
@@ -4919,14 +4573,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // Statusline workspace / active-repo chip → open the repo picker
             // (single-repo workspace toasts "only one repo").
             if let Some(r) = app.rects.statusline_workspace_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.open_repo_picker();
                 return;
             }
             // Statusline clock chip → flip between local and UTC.
             if let Some(r) = app.rects.statusline_clock_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.clock_show_utc = !app.clock_show_utc;
                 app.toast(if app.clock_show_utc {
@@ -4938,21 +4592,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
             // mixr chip → open / focus the mixr DJ pane.
             if let Some(r) = app.rects.statusline_mixr_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 command::run("mixr.show", app);
                 return;
             }
             // LSP chip → :LspStatus toast (breakdown of running servers).
             if let Some(r) = app.rects.statusline_lsp_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.run_ex_command("LspStatus");
                 return;
             }
             // WRAP chip → toggle `[ui] wrap`.
             if let Some(r) = app.rects.statusline_wrap_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.config.ui.wrap = !app.config.ui.wrap;
                 app.toast(if app.config.ui.wrap {
@@ -4964,7 +4618,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
             // Autosave chip → :set autosave_secs= prompt (palette command).
             if let Some(r) = app.rects.statusline_autosave_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.toast(format!(
                     "autosave: {}s (`:set autosave_secs=N` to change)",
@@ -4974,14 +4628,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
             // Filesize chip → :Stat toast.
             if let Some(r) = app.rects.statusline_filesize_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 app.run_ex_command("Stat");
                 return;
             }
             // Ln/Col chip → goto-line prompt.
             if let Some(r) = app.rects.statusline_lncol_chip
-                && contains(r, x, y)
+                && crate::app::dispatch::contains(r, x, y)
             {
                 let _ = crate::command::run("editor.goto_line", app);
                 return;
@@ -4989,7 +4643,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // The `> WORKSPACE-NAME` section header — clicking it toggles the
             // workspace section's expand/collapse state (VS-Code Explorer-style).
             if let Some(tr) = app.rects.tree_toggle
-                && contains(tr, x, y)
+                && crate::app::dispatch::contains(tr, x, y)
             {
                 app.toggle_tree_root_expanded();
                 return;
@@ -5001,7 +4655,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .rail_git_header_buttons
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.run_git_rail_header_action(action);
                 return;
@@ -5013,7 +4667,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .git_graph_column_headers
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 if let Some(cur) = app.active
                     && let Some(crate::pane::Pane::GitGraph(g)) = app.panes.get_mut(cur)
@@ -5024,7 +4678,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
             // The `> GIT` section header — same idea for the git rail.
             if let Some(tr) = app.rects.git_section_toggle
-                && contains(tr, x, y)
+                && crate::app::dispatch::contains(tr, x, y)
             {
                 app.toggle_git_section_expanded();
                 return;
@@ -5034,7 +4688,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .extra_workspace_toggles
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.toggle_extra_workspace(ws_idx);
                 return;
@@ -5044,7 +4698,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .extra_workspace_bodies
                 .iter()
-                .find(|(r, _, _)| contains(*r, x, y))
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 let row_idx = (y - tr.y) as usize + scroll;
                 app.click_extra_workspace_row(ws_idx, row_idx);
@@ -5052,7 +4706,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
             // Tree? (no header now — row 0 of the rail is the first entry)
             if let Some(tr) = app.rects.tree
-                && contains(tr, x, y)
+                && crate::app::dispatch::contains(tr, x, y)
             {
                 app.focus_tree();
                 app.rail_section = crate::app::RailSection::Workspace;
@@ -5097,7 +4751,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .git_rail_rows
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.click_git_rail(hit);
                 return;
@@ -5111,7 +4765,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .list_rows
                 .iter()
-                .find(|(r, _, _)| contains(*r, x, y))
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.active = Some(pid);
                 app.focus_pane();
@@ -5131,7 +4785,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 // (the user is moving focus to the commits / status
                 // list, not the editor box).
                 app.blur_active_wip_commit_textarea();
-                handle_scm_row_click(app, pid, flat_idx, count >= 2);
+                crate::app::dispatch::handle_scm_row_click(app, pid, flat_idx, count >= 2);
                 return;
             }
 
@@ -5143,11 +4797,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .test_executions_rows
                 .iter()
-                .find(|(r, _, _, _)| contains(*r, x, y))
+                .find(|(r, _, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.active = Some(pid);
                 app.focus_pane();
-                handle_test_executions_row_click(app, pid, env_idx, row_idx);
+                crate::app::dispatch::handle_test_executions_row_click(app, pid, env_idx, row_idx);
                 return;
             }
 
@@ -5158,7 +4812,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .editor_panes
                 .iter()
-                .find(|(r, _)| contains(*r, x, y))
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 // Alt+click → add an extra cursor at the clicked position
                 // (VS Code convention). Skips the focus / drag-arm path so
@@ -5166,7 +4820,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 if m.modifiers.contains(KeyModifiers::ALT) {
                     let wrap = app.config.ui.wrap;
                     if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
-                        let (row, col) = click_to_file_pos(b, tr, wrap, x, y);
+                        let (row, col) = crate::app::dispatch::click_to_file_pos(b, tr, wrap, x, y);
                         let byte = b.editor.byte_at_col_pub(row, col);
                         b.editor.add_extra_cursor(byte);
                     }
@@ -5191,7 +4845,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 let ctrl_click = m.modifiers.contains(KeyModifiers::CONTROL);
                 let wrap = app.config.ui.wrap;
                 if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
-                    let (row, col) = click_to_file_pos(b, tr, wrap, x, y);
+                    let (row, col) = crate::app::dispatch::click_to_file_pos(b, tr, wrap, x, y);
                     b.editor.place_cursor(row, col);
                     if count >= 2 {
                         let clip = &mut app.clipboard;
@@ -5228,7 +4882,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // drag only fires on tree rect coordinates).
             if app.tree_drag.is_some() {
                 if let Some(tr) = app.rects.tree
-                    && contains(tr, x, y)
+                    && crate::app::dispatch::contains(tr, x, y)
                 {
                     let idx = (y - tr.y) as usize + app.rects.tree_scroll;
                     let target = (idx < app.tree.visible_rows().len()).then_some(idx);
@@ -5246,7 +4900,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     .rects
                     .bufferline_tab_page_chips
                     .iter()
-                    .find(|(r, _)| contains(*r, x, y))
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
                     .map(|(_, idx)| *idx);
                 if let Some(dst) = dst
                     && dst != src
@@ -5278,11 +4932,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     .rects
                     .editor_panes
                     .iter()
-                    .find(|(r, _)| contains(*r, x, y))
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
                     && p2 == pid
                     && let Some(Pane::Editor(b)) = app.panes.get_mut(pid)
                 {
-                    let (row, col) = click_to_file_pos(b, tr, wrap, x, y);
+                    let (row, col) = crate::app::dispatch::click_to_file_pos(b, tr, wrap, x, y);
                     if !armed {
                         b.editor.place_cursor(oy, ox);
                         b.editor.apply(
@@ -5307,7 +4961,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             app.dragging_tab_page = None;
             // Tree drag-drop — complete the move if armed.
             if let Some(tr) = app.rects.tree
-                && contains(tr, x, y)
+                && crate::app::dispatch::contains(tr, x, y)
             {
                 let idx = (y - tr.y) as usize + app.rects.tree_scroll;
                 let target = (idx < app.tree.visible_rows().len()).then_some(idx);
@@ -5317,994 +4971,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.tree_drag = None;
             }
         }
-        MouseEventKind::ScrollUp => scroll_under(app, x, y, -3),
-        MouseEventKind::ScrollDown => scroll_under(app, x, y, 3),
+        MouseEventKind::ScrollUp => crate::app::dispatch::scroll_under(app, x, y, -3),
+        MouseEventKind::ScrollDown => crate::app::dispatch::scroll_under(app, x, y, 3),
         _ => {}
-    }
-}
-
-fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
-    if let Some(tr) = app.rects.tree
-        && contains(tr, x, y)
-    {
-        for _ in 0..delta.unsigned_abs() {
-            if delta < 0 {
-                app.tree.move_up();
-            } else {
-                app.tree.move_down();
-            }
-        }
-        return;
-    }
-    // Wheel over an extra workspace's tree body (the file list under
-    // `> name`) → scroll that extra's tree cursor.
-    if let Some(&(_, ws_idx, _)) = app
-        .rects
-        .extra_workspace_bodies
-        .iter()
-        .find(|(r, _, _)| contains(*r, x, y))
-    {
-        if let Some(ws) = app.extra_workspaces.get_mut(ws_idx) {
-            for _ in 0..delta.unsigned_abs() {
-                if delta < 0 {
-                    ws.tree.move_up();
-                } else {
-                    ws.tree.move_down();
-                }
-            }
-        }
-        return;
-    }
-    // Wheel over the GIT section header → cycle the active repo in
-    // multi-repo workspaces (no-op when there's only one repo, so the
-    // wheel falls through to the next rect). Up = previous, Down = next
-    // — matches the bufferline / tab-strip wheel convention.
-    if let Some(hr) = app.rects.git_section_toggle
-        && contains(hr, x, y)
-        && app.repos.len() > 1
-    {
-        app.cycle_active_repo(delta > 0);
-        return;
-    }
-    // Wheel over any row in the GIT section → scroll the git rail cursor.
-    if app
-        .rects
-        .git_rail_rows
-        .iter()
-        .any(|(r, _)| contains(*r, x, y))
-    {
-        for _ in 0..delta.unsigned_abs() {
-            if delta < 0 {
-                app.git_rail_move_up();
-            } else {
-                app.git_rail_move_down();
-            }
-        }
-        return;
-    }
-    // Wheel over the bufferline → scroll the tab strip by one per tick.
-    if let Some(br) = app.rects.bufferline
-        && contains(br, x, y)
-    {
-        if delta < 0 {
-            app.bufferline_first_visible = app.bufferline_first_visible.saturating_sub(1);
-        } else if app.bufferline_first_visible + 1 < app.panes.len() {
-            app.bufferline_first_visible += 1;
-        }
-        return;
-    }
-    // Scroll whichever split leaf is under the pointer (not necessarily the focused one).
-    if let Some(&(tr, pid)) = app
-        .rects
-        .editor_panes
-        .iter()
-        .find(|(r, _)| contains(*r, x, y))
-    {
-        let vp = (tr.height as usize).max(1);
-        match app.panes.get_mut(pid) {
-            Some(Pane::Editor(b)) => {
-                let op = if delta < 0 {
-                    EditOp::MoveUp
-                } else {
-                    EditOp::MoveDown
-                };
-                for _ in 0..delta.unsigned_abs() {
-                    b.editor.apply(op.clone(), vp, &mut app.clipboard);
-                }
-            }
-            Some(Pane::MdPreview(p)) => {
-                let n = delta.unsigned_abs() as usize;
-                p.scroll = if delta < 0 {
-                    p.scroll.saturating_sub(n)
-                } else {
-                    p.scroll + n
-                };
-            }
-            Some(Pane::Diff(d)) => {
-                let n = delta.unsigned_abs() as usize;
-                d.scroll = if delta < 0 {
-                    d.scroll.saturating_sub(n)
-                } else {
-                    d.scroll + n
-                };
-            }
-            Some(Pane::Request(rp)) => {
-                let n = delta.unsigned_abs() as usize;
-                rp.scroll = if delta < 0 {
-                    rp.scroll.saturating_sub(n)
-                } else {
-                    rp.scroll + n
-                };
-            }
-            Some(Pane::Pty(s)) => s.scroll_history(if delta < 0 {
-                delta.unsigned_abs() as isize
-            } else {
-                -(delta.unsigned_abs() as isize)
-            }),
-            Some(Pane::Ai(a)) => {
-                let n = delta.unsigned_abs() as usize;
-                a.scroll = if delta < 0 {
-                    a.scroll.saturating_sub(n)
-                } else {
-                    a.scroll + n
-                };
-            }
-            Some(Pane::Tests(t)) => {
-                let n = delta.unsigned_abs() as usize;
-                t.scroll = if delta < 0 {
-                    t.scroll.saturating_sub(n)
-                } else {
-                    t.scroll + n
-                };
-            }
-            Some(Pane::GitGraph(g)) => {
-                // Wheel over the embedded diff (file picked from the
-                // right-side detail panel) scrolls the diff body
-                // instead of moving the commit-list selection.
-                if let Some(d) = g.embedded_diff.as_mut() {
-                    let n = delta.unsigned_abs() as usize;
-                    d.scroll = if delta < 0 {
-                        d.scroll.saturating_sub(n)
-                    } else {
-                        d.scroll + n
-                    };
-                } else {
-                    g.move_selection(if delta < 0 {
-                        -(delta.unsigned_abs() as isize)
-                    } else {
-                        delta.unsigned_abs() as isize
-                    });
-                }
-            }
-            Some(Pane::GitStatus(g)) => {
-                g.move_selection(if delta < 0 {
-                    -(delta.unsigned_abs() as isize)
-                } else {
-                    delta.unsigned_abs() as isize
-                });
-            }
-            Some(Pane::Diagnostics(d)) => {
-                d.move_selection(if delta < 0 {
-                    -(delta.unsigned_abs() as isize)
-                } else {
-                    delta.unsigned_abs() as isize
-                });
-            }
-            Some(Pane::Grep(g)) => {
-                g.move_selection(if delta < 0 {
-                    -(delta.unsigned_abs() as isize)
-                } else {
-                    delta.unsigned_abs() as isize
-                });
-            }
-            Some(Pane::Trace(tr)) => {
-                tr.move_selection(if delta < 0 {
-                    -(delta.unsigned_abs() as isize)
-                } else {
-                    delta.unsigned_abs() as isize
-                });
-            }
-            Some(Pane::Browser(b)) => {
-                let step = if delta < 0 {
-                    -(delta.unsigned_abs() as isize)
-                } else {
-                    delta.unsigned_abs() as isize
-                };
-                if b.dom_focus {
-                    b.move_dom_sel(step);
-                } else if b.net_focus {
-                    b.move_net_sel(step);
-                } else if b.cookies_focus {
-                    b.move_cookies_sel(step);
-                } else if b.storage_focus {
-                    b.move_storage_sel(step);
-                } else {
-                    let n = delta.unsigned_abs() as usize;
-                    b.scroll = if delta < 0 {
-                        b.scroll.saturating_sub(n)
-                    } else {
-                        b.scroll.saturating_add(n)
-                    };
-                }
-            }
-            Some(Pane::Flaky(f)) => {
-                f.move_selection(if delta < 0 {
-                    -(delta.unsigned_abs() as isize)
-                } else {
-                    delta.unsigned_abs() as isize
-                });
-            }
-            Some(Pane::Outline(o)) => {
-                o.move_selection(if delta < 0 {
-                    -(delta.unsigned_abs() as isize)
-                } else {
-                    delta.unsigned_abs() as isize
-                });
-            }
-            Some(Pane::CmdlineHistory(h)) => {
-                h.move_selection(if delta < 0 {
-                    -(delta.unsigned_abs() as isize)
-                } else {
-                    delta.unsigned_abs() as isize
-                });
-            }
-            Some(Pane::Quickfix(g)) => {
-                g.move_selection(if delta < 0 {
-                    -(delta.unsigned_abs() as isize)
-                } else {
-                    delta.unsigned_abs() as isize
-                });
-            }
-            #[cfg(feature = "private")]
-            Some(Pane::TestExecutions(p)) => {
-                p.move_selection(delta as i64);
-            }
-            #[cfg(feature = "private")]
-            Some(Pane::CodeBuilds(p)) => {
-                p.move_selection(delta as i64);
-            }
-            #[cfg(feature = "private")]
-            Some(Pane::LogTail(p)) => {
-                let n = delta.unsigned_abs() as usize;
-                // Wheel-up = scroll up; if we were following (Max), break
-                // out into a fixed position near the bottom so the user
-                // can read older lines without the tail snapping back.
-                if delta < 0 {
-                    if p.scroll == usize::MAX {
-                        p.scroll = p.lines.len().saturating_sub(1);
-                    }
-                    p.scroll = p.scroll.saturating_sub(n);
-                } else {
-                    p.scroll = p.scroll.saturating_add(n);
-                }
-            }
-            Some(Pane::BitbucketPipelineLog(p)) => {
-                let n = delta.unsigned_abs() as usize;
-                p.scroll = if delta < 0 {
-                    p.scroll.saturating_sub(n)
-                } else {
-                    p.scroll + n
-                };
-            }
-            Some(Pane::BitbucketPipelines(_))
-            | Some(Pane::BitbucketPullRequests(_))
-            | Some(Pane::GithubActions(_))
-            | Some(Pane::GithubPullRequests(_))
-            | Some(Pane::GitlabPipelines(_))
-            | Some(Pane::GitlabMergeRequests(_))
-            | Some(Pane::AzDevOpsBuilds(_))
-            | Some(Pane::AzDevOpsPullRequests(_)) => {
-                // Wheel-scroll for the SCM/CI panes is handled below the
-                // match so the borrow on `app.panes` releases first — we
-                // need an immutable read of `app.config` to compute the
-                // flat-list max index.
-            }
-            Some(Pane::Cheatsheet(c)) => {
-                if delta < 0 {
-                    c.move_up();
-                } else {
-                    c.move_down();
-                }
-            }
-            Some(Pane::Debug(p)) => {
-                // Wheel moves whichever sub-section currently has
-                // keyboard focus — same routing rule as j/k.
-                let d = delta.signum() as isize;
-                let n = delta.unsigned_abs() as isize;
-                let section = p.section;
-                match section {
-                    crate::pane::DebugSection::Stack => app.debug_pane_move(d * n),
-                    crate::pane::DebugSection::Variables => app.debug_pane_vars_move(d * n),
-                }
-            }
-            Some(Pane::DapRepl(_)) => {
-                // Scroll the history. usize::MAX ⇒ pinned to tail;
-                // any upward scroll lands at a concrete index.
-                let mag = delta.unsigned_abs() as usize;
-                if delta < 0 {
-                    if let Some(Pane::DapRepl(p)) = app.panes.get_mut(pid) {
-                        let total = p.history.len();
-                        let cur = if p.scroll == usize::MAX {
-                            total
-                        } else {
-                            p.scroll
-                        };
-                        p.scroll = cur.saturating_sub(mag);
-                    }
-                } else if let Some(Pane::DapRepl(p)) = app.panes.get_mut(pid) {
-                    let total = p.history.len();
-                    let new = if p.scroll == usize::MAX {
-                        usize::MAX
-                    } else {
-                        let next = p.scroll.saturating_add(mag);
-                        if next >= total { usize::MAX } else { next }
-                    };
-                    p.scroll = new;
-                }
-            }
-            Some(Pane::Image(_)) => {
-                // Nothing to scroll — the image pane is "what you see is
-                // what you get". Future v2 could pan a too-large image.
-            }
-            None => {}
-        }
-        // Each SCM/CI pane's max_idx depends on which view-mode is
-        // active — same trap as the key handlers above (flat must match
-        // the rendered layout).
-        if matches!(app.panes.get(pid), Some(Pane::BitbucketPipelines(_))) {
-            let flat = match app.bb_pipelines_view_mode {
-                crate::bitbucket::PipelineViewMode::Recent => {
-                    crate::ui::bitbucket_pipelines_view::flatten_pipelines(app)
-                }
-                crate::bitbucket::PipelineViewMode::PerBranch => {
-                    crate::ui::bitbucket_pipelines_view::flatten_branch_pipelines(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        } else if matches!(app.panes.get(pid), Some(Pane::BitbucketPullRequests(_))) {
-            let flat = match app.bb_prs_view_mode {
-                crate::bitbucket::PrViewMode::PerRepo => {
-                    crate::ui::bitbucket_pull_requests_view::flatten_prs(app)
-                }
-                crate::bitbucket::PrViewMode::Mine => {
-                    crate::ui::bitbucket_pull_requests_view::flatten_my_prs(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        } else if matches!(app.panes.get(pid), Some(Pane::GithubActions(_))) {
-            let flat = match app.gh_actions_view_mode {
-                crate::github::ActionsViewMode::Recent => {
-                    crate::ui::github_actions_view::flatten_runs(app)
-                }
-                crate::github::ActionsViewMode::PerBranch => {
-                    crate::ui::github_actions_view::flatten_branch_runs(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::GithubActions(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        } else if matches!(app.panes.get(pid), Some(Pane::GithubPullRequests(_))) {
-            let flat = match app.gh_prs_view_mode {
-                crate::github::GhPrViewMode::PerRepo => {
-                    crate::ui::github_pull_requests_view::flatten_prs(app)
-                }
-                crate::github::GhPrViewMode::Mine => {
-                    crate::ui::github_pull_requests_view::flatten_my_prs(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        } else if matches!(app.panes.get(pid), Some(Pane::GitlabPipelines(_))) {
-            let flat = match app.gl_pipelines_view_mode {
-                crate::gitlab::GlPipelineViewMode::Recent => {
-                    crate::ui::gitlab_pipelines_view::flatten_pipelines(app)
-                }
-                crate::gitlab::GlPipelineViewMode::PerBranch => {
-                    crate::ui::gitlab_pipelines_view::flatten_branch_pipelines(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        } else if matches!(app.panes.get(pid), Some(Pane::GitlabMergeRequests(_))) {
-            let flat = match app.gl_mrs_view_mode {
-                crate::gitlab::GlMrViewMode::PerProject => {
-                    crate::ui::gitlab_merge_requests_view::flatten_mrs(app)
-                }
-                crate::gitlab::GlMrViewMode::Mine => {
-                    crate::ui::gitlab_merge_requests_view::flatten_my_mrs(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        } else if matches!(app.panes.get(pid), Some(Pane::AzDevOpsBuilds(_))) {
-            let flat = match app.az_builds_view_mode {
-                crate::azdevops::AzBuildsViewMode::Recent => {
-                    crate::ui::azdevops_builds_view::flatten_builds(app)
-                }
-                crate::azdevops::AzBuildsViewMode::PerBranch => {
-                    crate::ui::azdevops_builds_view::flatten_branch_builds(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::AzDevOpsBuilds(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        } else if matches!(app.panes.get(pid), Some(Pane::AzDevOpsPullRequests(_))) {
-            let flat = match app.az_prs_view_mode {
-                crate::azdevops::AzPrViewMode::PerRepo => {
-                    crate::ui::azdevops_pull_requests_view::flatten_prs(app)
-                }
-                crate::azdevops::AzPrViewMode::Mine => {
-                    crate::ui::azdevops_pull_requests_view::flatten_my_prs(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::AzDevOpsPullRequests(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        }
-    }
-}
-
-fn contains(r: Rect, x: u16, y: u16) -> bool {
-    x >= r.x && x < r.x.saturating_add(r.width) && y >= r.y && y < r.y.saturating_add(r.height)
-}
-
-/// Apply an in-progress mixr-panel drag to its `float` rect — clamped
-/// to `body` so the window can't move or grow past an edge, and never
-/// shrinks below a usable minimum.
-fn apply_mixr_drag(float: &mut Rect, body: Rect, kind: crate::mixr_host::MixrDrag, x: u16, y: u16) {
-    use crate::mixr_host::MixrDrag;
-    const MIN_W: u16 = 24;
-    const MIN_H: u16 = 8;
-    let body_right = body.x.saturating_add(body.width);
-    let body_bottom = body.y.saturating_add(body.height);
-    match kind {
-        MixrDrag::Move { grab_dx, grab_dy } => {
-            let max_x = body_right.saturating_sub(float.width).max(body.x);
-            let max_y = body_bottom.saturating_sub(float.height).max(body.y);
-            float.x = x.saturating_sub(grab_dx).clamp(body.x, max_x);
-            float.y = y.saturating_sub(grab_dy).clamp(body.y, max_y);
-        }
-        MixrDrag::ResizeLeft => {
-            let right = float.x.saturating_add(float.width);
-            let hi = right.saturating_sub(MIN_W).max(body.x);
-            let new_x = x.clamp(body.x, hi);
-            float.x = new_x;
-            float.width = right.saturating_sub(new_x).max(MIN_W);
-        }
-        MixrDrag::ResizeRight => {
-            let lo = float.x.saturating_add(MIN_W).min(body_right);
-            let new_right = x.saturating_add(1).clamp(lo, body_right);
-            float.width = new_right.saturating_sub(float.x).max(MIN_W);
-        }
-        MixrDrag::ResizeBottom => {
-            let lo = float.y.saturating_add(MIN_H).min(body_bottom);
-            let new_bottom = y.saturating_add(1).clamp(lo, body_bottom);
-            float.height = new_bottom.saturating_sub(float.y).max(MIN_H);
-        }
-    }
-}
-
-/// Mouse click on a TestExecutions pane row. `env_idx` is 0/1/2 (dev/staging/prod).
-/// `row_idx == HEADER_ROW_SENTINEL` ⇒ flip the active env without selecting
-/// a record; otherwise also set the env's selected_row.
-#[cfg(feature = "private")]
-fn handle_test_executions_row_click(app: &mut App, pane_id: usize, env_idx: u8, row_idx: usize) {
-    use crate::pane::Pane;
-    use crate::ui::test_executions_view::{HEADER_ROW_SENTINEL, idx_to_env};
-    let Some(env) = idx_to_env(env_idx) else {
-        return;
-    };
-    if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(pane_id) {
-        p.selected_env = env;
-        if row_idx != HEADER_ROW_SENTINEL {
-            // Only set if the click was on a real data row.
-            p.selected_row.insert(env, row_idx);
-        }
-    }
-}
-
-/// Mouse click on a list-style pane row. Dispatches based on the pane
-/// at `pane_id`. `flat_idx` is the index into either the active view's
-/// flatten output (SCM/CI panes) or directly into the pane's items vec
-/// (plain list panes). `is_double_click` ⇒ trigger the primary action.
-fn handle_scm_row_click(app: &mut App, pane_id: usize, flat_idx: usize, is_double_click: bool) {
-    use crate::pane::Pane;
-    // Plain list panes — set selected, optionally fire primary action.
-    if matches!(app.panes.get(pane_id), Some(Pane::Diagnostics(_))) {
-        if let Some(Pane::Diagnostics(d)) = app.panes.get_mut(pane_id)
-            && flat_idx < d.items.len()
-        {
-            d.selected = flat_idx;
-        }
-        if is_double_click {
-            app.jump_to_selected_diagnostic();
-        }
-        return;
-    }
-    if matches!(app.panes.get(pane_id), Some(Pane::Outline(_))) {
-        if let Some(Pane::Outline(o)) = app.panes.get_mut(pane_id) {
-            let len = o.visible_indices().len();
-            if flat_idx < len {
-                o.selected = flat_idx;
-            }
-        }
-        if is_double_click {
-            app.jump_to_selected_outline();
-        }
-        return;
-    }
-    if matches!(app.panes.get(pane_id), Some(Pane::Flaky(_))) {
-        if let Some(Pane::Flaky(f)) = app.panes.get_mut(pane_id)
-            && flat_idx < f.items.len()
-        {
-            f.selected = flat_idx;
-        }
-        if is_double_click {
-            app.jump_to_selected_flaky();
-        }
-        return;
-    }
-    if matches!(app.panes.get(pane_id), Some(Pane::Diff(_))) {
-        if let Some(Pane::Diff(d)) = app.panes.get_mut(pane_id)
-            && flat_idx < d.hunks.len()
-        {
-            d.cursor = flat_idx;
-            // In Hunk mode, clicking a hunk row also toggles its
-            // collapse (expanded-by-default — click chevron to
-            // collapse one you don't need).
-            if d.view_mode == crate::pane::DiffViewMode::Hunk {
-                if d.hunk_collapsed.contains(&flat_idx) {
-                    d.hunk_collapsed.remove(&flat_idx);
-                } else {
-                    d.hunk_collapsed.insert(flat_idx);
-                }
-            }
-        }
-        if is_double_click {
-            app.jump_to_cursor_hunk();
-        }
-        return;
-    }
-    #[cfg(feature = "private")]
-    if matches!(app.panes.get(pane_id), Some(Pane::CodeBuilds(_))) {
-        if let Some(Pane::CodeBuilds(p)) = app.panes.get_mut(pane_id)
-            && flat_idx < p.items.len()
-        {
-            p.selected = flat_idx;
-        }
-        if is_double_click {
-            app.open_selected_codebuild_url();
-        }
-        return;
-    }
-    if matches!(app.panes.get(pane_id), Some(Pane::GitGraph(_))) {
-        if let Some(Pane::GitGraph(g)) = app.panes.get_mut(pane_id) {
-            // `flat_idx` is the *virtual* row index (0 = WIP if present,
-            // then commits). `jump_to` clamps to total_rows AND calls
-            // `reload_detail` so the right-side panel actually populates
-            // — directly assigning `selected` skipped the reload, leaving
-            // the detail empty after a click.
-            g.jump_to(flat_idx);
-        }
-        if is_double_click {
-            app.open_selected_commit_diff();
-        }
-        return;
-    }
-    if matches!(app.panes.get(pane_id), Some(Pane::Cheatsheet(_))) {
-        if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(pane_id) {
-            let n = c.visible_rows_len();
-            if flat_idx < n {
-                c.selected = flat_idx;
-            }
-        }
-        if is_double_click {
-            app.cheatsheet_run_selected();
-        }
-        return;
-    }
-    if matches!(app.panes.get(pane_id), Some(Pane::CmdlineHistory(_))) {
-        if let Some(Pane::CmdlineHistory(h)) = app.panes.get_mut(pane_id)
-            && flat_idx < h.entries.len()
-        {
-            h.selected = flat_idx;
-        }
-        if is_double_click {
-            app.cmdline_history_accept();
-        }
-        return;
-    }
-    if matches!(app.panes.get(pane_id), Some(Pane::Tests(_))) {
-        if let Some(Pane::Tests(t)) = app.panes.get_mut(pane_id)
-            && let crate::playwright::TestsState::Done(r) = &t.state
-            && flat_idx < r.tests.len()
-        {
-            t.selected = flat_idx;
-        }
-        if is_double_click {
-            app.jump_to_selected_test();
-        }
-        return;
-    }
-    if matches!(app.panes.get(pane_id), Some(Pane::GitStatus(_))) {
-        if let Some(Pane::GitStatus(g)) = app.panes.get_mut(pane_id) {
-            let total = g.unstaged.len() + g.staged.len();
-            if flat_idx < total {
-                g.selected = flat_idx;
-            }
-        }
-        if is_double_click {
-            app.git_status_open_diff();
-        }
-        return;
-    }
-    if matches!(
-        app.panes.get(pane_id),
-        Some(Pane::Grep(_)) | Some(Pane::Quickfix(_))
-    ) {
-        // Both share the GrepPane struct; treat them identically.
-        let len = match app.panes.get(pane_id) {
-            Some(Pane::Grep(g)) | Some(Pane::Quickfix(g)) => g.hits.len(),
-            _ => 0,
-        };
-        if let Some(pane) = app.panes.get_mut(pane_id) {
-            let target = match pane {
-                Pane::Grep(g) | Pane::Quickfix(g) => Some(g),
-                _ => None,
-            };
-            if let Some(g) = target
-                && flat_idx < len
-            {
-                g.selected = flat_idx;
-            }
-        }
-        if is_double_click {
-            app.jump_to_selected_grep_hit();
-        }
-        return;
-    }
-    // Browser sub-panels — clicks select the row inside whichever panel
-    // is focused (network / DOM / cookies / storage). Double-click on a
-    // network row opens it as a Request pane (sibling to Enter).
-    if matches!(app.panes.get(pane_id), Some(Pane::Browser(_))) {
-        let net_double_open = {
-            let Some(Pane::Browser(b)) = app.panes.get_mut(pane_id) else {
-                return;
-            };
-            if b.dom_focus {
-                let n = b.visible_dom_indices().len();
-                if flat_idx < n {
-                    b.set_dom_sel(flat_idx);
-                }
-                false
-            } else if b.cookies_focus {
-                if flat_idx < b.cookies.len() {
-                    b.cookies_sel = flat_idx;
-                }
-                false
-            } else if b.storage_focus {
-                if flat_idx < b.storage.len() {
-                    b.storage_sel = flat_idx;
-                }
-                false
-            } else if b.net_focus {
-                let n = b.visible_net_indices().len();
-                if flat_idx < n {
-                    b.net_sel = flat_idx;
-                }
-                is_double_click
-            } else {
-                false
-            }
-        };
-        if net_double_open {
-            app.open_net_entry_as_request();
-        }
-        return;
-    }
-    // SCM/CI panes — header-vs-data dispatch with collapse + URL open.
-    match app.panes.get(pane_id) {
-        Some(Pane::BitbucketPipelines(_)) => {
-            let flat = match app.bb_pipelines_view_mode {
-                crate::bitbucket::PipelineViewMode::Recent => {
-                    crate::ui::bitbucket_pipelines_view::flatten_pipelines(app)
-                }
-                crate::bitbucket::PipelineViewMode::PerBranch => {
-                    crate::ui::bitbucket_pipelines_view::flatten_branch_pipelines(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::bitbucket_pipelines_view::RowKind::Header;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.bb_pipelines_collapsed.contains(&header_label) {
-                    app.bb_pipelines_collapsed.remove(&header_label);
-                } else {
-                    app.bb_pipelines_collapsed.insert(header_label);
-                }
-            } else if is_double_click {
-                app.open_selected_bitbucket_pipeline_url();
-            }
-        }
-        Some(Pane::BitbucketPullRequests(_)) => {
-            let flat = match app.bb_prs_view_mode {
-                crate::bitbucket::PrViewMode::PerRepo => {
-                    crate::ui::bitbucket_pull_requests_view::flatten_prs(app)
-                }
-                crate::bitbucket::PrViewMode::Mine => {
-                    crate::ui::bitbucket_pull_requests_view::flatten_my_prs(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::bitbucket_pull_requests_view::RowKind::Header;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.bb_prs_collapsed.contains(&header_label) {
-                    app.bb_prs_collapsed.remove(&header_label);
-                } else {
-                    app.bb_prs_collapsed.insert(header_label);
-                }
-            } else if is_double_click {
-                app.open_selected_bitbucket_pr_url();
-            }
-        }
-        Some(Pane::GithubActions(_)) => {
-            let flat = match app.gh_actions_view_mode {
-                crate::github::ActionsViewMode::Recent => {
-                    crate::ui::github_actions_view::flatten_runs(app)
-                }
-                crate::github::ActionsViewMode::PerBranch => {
-                    crate::ui::github_actions_view::flatten_branch_runs(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::github_actions_view::RowKind::Header;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::GithubActions(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.gh_actions_collapsed.contains(&header_label) {
-                    app.gh_actions_collapsed.remove(&header_label);
-                } else {
-                    app.gh_actions_collapsed.insert(header_label);
-                }
-            } else if is_double_click {
-                app.open_selected_github_run_url();
-            }
-        }
-        Some(Pane::GithubPullRequests(_)) => {
-            let flat = match app.gh_prs_view_mode {
-                crate::github::GhPrViewMode::PerRepo => {
-                    crate::ui::github_pull_requests_view::flatten_prs(app)
-                }
-                crate::github::GhPrViewMode::Mine => {
-                    crate::ui::github_pull_requests_view::flatten_my_prs(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::github_pull_requests_view::RowKind::Header;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.gh_prs_collapsed.contains(&header_label) {
-                    app.gh_prs_collapsed.remove(&header_label);
-                } else {
-                    app.gh_prs_collapsed.insert(header_label);
-                }
-            } else if is_double_click {
-                app.open_selected_github_pr_url();
-            }
-        }
-        Some(Pane::GitlabPipelines(_)) => {
-            let flat = match app.gl_pipelines_view_mode {
-                crate::gitlab::GlPipelineViewMode::Recent => {
-                    crate::ui::gitlab_pipelines_view::flatten_pipelines(app)
-                }
-                crate::gitlab::GlPipelineViewMode::PerBranch => {
-                    crate::ui::gitlab_pipelines_view::flatten_branch_pipelines(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::gitlab_pipelines_view::RowKind::Header;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::GitlabPipelines(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.gl_pipelines_collapsed.contains(&header_label) {
-                    app.gl_pipelines_collapsed.remove(&header_label);
-                } else {
-                    app.gl_pipelines_collapsed.insert(header_label);
-                }
-            } else if is_double_click {
-                app.open_selected_gitlab_pipeline_url();
-            }
-        }
-        Some(Pane::GitlabMergeRequests(_)) => {
-            let flat = match app.gl_mrs_view_mode {
-                crate::gitlab::GlMrViewMode::PerProject => {
-                    crate::ui::gitlab_merge_requests_view::flatten_mrs(app)
-                }
-                crate::gitlab::GlMrViewMode::Mine => {
-                    crate::ui::gitlab_merge_requests_view::flatten_my_mrs(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::gitlab_merge_requests_view::RowKind::Header;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.gl_mrs_collapsed.contains(&header_label) {
-                    app.gl_mrs_collapsed.remove(&header_label);
-                } else {
-                    app.gl_mrs_collapsed.insert(header_label);
-                }
-            } else if is_double_click {
-                app.open_selected_gitlab_mr_url();
-            }
-        }
-        Some(Pane::AzDevOpsBuilds(_)) => {
-            let flat = match app.az_builds_view_mode {
-                crate::azdevops::AzBuildsViewMode::Recent => {
-                    crate::ui::azdevops_builds_view::flatten_builds(app)
-                }
-                crate::azdevops::AzBuildsViewMode::PerBranch => {
-                    crate::ui::azdevops_builds_view::flatten_branch_builds(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::azdevops_builds_view::RowKind::Header;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::AzDevOpsBuilds(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.az_builds_collapsed.contains(&header_label) {
-                    app.az_builds_collapsed.remove(&header_label);
-                } else {
-                    app.az_builds_collapsed.insert(header_label);
-                }
-            } else if is_double_click {
-                app.open_selected_azdevops_build_url();
-            }
-        }
-        Some(Pane::AzDevOpsPullRequests(_)) => {
-            let flat = match app.az_prs_view_mode {
-                crate::azdevops::AzPrViewMode::PerRepo => {
-                    crate::ui::azdevops_pull_requests_view::flatten_prs(app)
-                }
-                crate::azdevops::AzPrViewMode::Mine => {
-                    crate::ui::azdevops_pull_requests_view::flatten_my_prs(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::azdevops_pull_requests_view::RowKind::Header;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::AzDevOpsPullRequests(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.az_prs_collapsed.contains(&header_label) {
-                    app.az_prs_collapsed.remove(&header_label);
-                } else {
-                    app.az_prs_collapsed.insert(header_label);
-                }
-            } else if is_double_click {
-                app.open_selected_azdevops_pr_url();
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Translate a key event into the byte sequence a pty child expects (xterm-ish).
-fn pty_key_bytes(key: KeyEvent) -> Vec<u8> {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let alt = key.modifiers.contains(KeyModifiers::ALT);
-    let prefix_alt = |b: Vec<u8>| {
-        if alt {
-            let mut v = vec![0x1b];
-            v.extend(b);
-            v
-        } else {
-            b
-        }
-    };
-    match key.code {
-        KeyCode::Char(c) => {
-            if ctrl {
-                // Control char: letters → 1..26, plus the usual @ [ \ ] ^ _.
-                let b = match c.to_ascii_lowercase() {
-                    'a'..='z' => Some((c.to_ascii_lowercase() as u8) - b'a' + 1),
-                    ' ' | '@' => Some(0),
-                    '[' => Some(0x1b),
-                    '\\' => Some(0x1c),
-                    ']' => Some(0x1d),
-                    '^' => Some(0x1e),
-                    '_' | '?' => Some(0x1f),
-                    _ => None,
-                };
-                match b {
-                    Some(b) => prefix_alt(vec![b]),
-                    None => prefix_alt(c.to_string().into_bytes()),
-                }
-            } else {
-                prefix_alt(c.to_string().into_bytes())
-            }
-        }
-        KeyCode::Enter => prefix_alt(vec![b'\r']),
-        KeyCode::Tab => prefix_alt(vec![b'\t']),
-        KeyCode::BackTab => b"\x1b[Z".to_vec(),
-        KeyCode::Backspace => prefix_alt(vec![0x7f]),
-        KeyCode::Esc => vec![0x1b],
-        KeyCode::Up => b"\x1b[A".to_vec(),
-        KeyCode::Down => b"\x1b[B".to_vec(),
-        KeyCode::Right => b"\x1b[C".to_vec(),
-        KeyCode::Left => b"\x1b[D".to_vec(),
-        KeyCode::Home => b"\x1b[H".to_vec(),
-        KeyCode::End => b"\x1b[F".to_vec(),
-        KeyCode::PageUp => b"\x1b[5~".to_vec(),
-        KeyCode::PageDown => b"\x1b[6~".to_vec(),
-        KeyCode::Insert => b"\x1b[2~".to_vec(),
-        KeyCode::Delete => b"\x1b[3~".to_vec(),
-        KeyCode::F(n @ 1..=4) => format!("\x1bO{}", (b'P' + (n - 1)) as char).into_bytes(),
-        KeyCode::F(n) => {
-            // xterm "modifyOtherKeys"-ish CSI for F5..F12.
-            let code = match n {
-                5 => 15,
-                6 => 17,
-                7 => 18,
-                8 => 19,
-                9 => 20,
-                10 => 21,
-                11 => 23,
-                12 => 24,
-                _ => return Vec::new(),
-            };
-            format!("\x1b[{code}~").into_bytes()
-        }
-        _ => Vec::new(),
     }
 }
