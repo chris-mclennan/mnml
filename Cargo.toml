@@ -12,7 +12,23 @@ documentation = "https://docs.rs/mnml-rs"
 readme = "README.md"
 keywords = ["tui", "editor", "ide", "terminal", "ratatui"]
 categories = ["text-editors", "command-line-utilities", "development-tools"]
-exclude = [".local/", ".claude/", ".github/", "assets/", "run.sh", "dev.sh"]
+exclude = [
+    ".local/",
+    ".claude/",
+    ".github/",
+    "assets/",
+    "run.sh",
+    "dev.sh",
+    # ~400 KiB of e2e .test fixtures + per-pane integration tests — useful
+    # for repo contributors via the GitHub source tree, not for crates.io
+    # consumers (they'd need the workspace setup anyway).
+    "tests/e2e/",
+    # External-API smoke binaries (need real tokens / endpoints to run) and
+    # the perf-bench scratch examples. Not useful to a docs.rs reader.
+    "examples/*_smoke.rs",
+    "examples/bench_*.rs",
+    "examples/private_*.rs",
+]
 
 [lib]
 name = "mnml"
