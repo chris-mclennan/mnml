@@ -586,6 +586,14 @@ crates.io, narrowing a public type becomes a semver break.
 - **131 `pub` fields on `App`** (alongside 40 `pub(crate)` + 51 private). Sample
   audit shows none are accessed from outside `src/`. Wholesale `pub` →
   `pub(crate)` should be safe; cargo build will surface anything that breaks.
+  **Deliberately deferred** — mnml-rs is a binary tool whose `[lib]` exists for
+  internal code-sharing with `tests/ipc.rs` + `examples/*.rs` + `src/main.rs`,
+  not as a library other projects build against. The wider-than-necessary
+  `pub` surface has near-zero practical cost. The 39-mod narrowing this
+  session captured the meaningful surface signal (which 16 modules are
+  intentional vs internal); finishing the cascade would be ~1-2 hours of
+  mostly-aesthetic work with real risk of breaking subtle internal touchpoints.
+  Skip unless someone actually depends on mnml-rs as a library someday.
 
 - **Free fns marked `pub(super)` callable from inside their own file** could
   drop the visibility tier. `src/app/cdp.rs:78 pub(super) fn host_of_url` is
