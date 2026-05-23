@@ -57,6 +57,7 @@ pub(crate) mod markdown_outline;
 pub(crate) mod mixr_host;
 pub(crate) mod now_playing;
 pub(crate) mod pane;
+pub(crate) mod pane_host;
 pub(crate) mod picker;
 pub(crate) mod playwright;
 pub(crate) mod prompt;

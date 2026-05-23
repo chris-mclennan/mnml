@@ -24,6 +24,7 @@ pub mod ai_view;
 pub mod azdevops_builds_view;
 pub mod azdevops_pull_requests_view;
 pub mod bitbucket_pipelines_view;
+pub mod blit_host_view;
 pub mod bitbucket_pull_requests_view;
 pub mod browser_view;
 pub mod bufferline;
@@ -586,6 +587,7 @@ fn render_layout(
                 Some(crate::pane::Pane::Debug(_)) => 30,
                 Some(crate::pane::Pane::DapRepl(_)) => 31,
                 Some(crate::pane::Pane::Image(_)) => 32,
+                Some(crate::pane::Pane::BlitHost(_)) => 33,
                 _ => 0,
             };
             match kind {
@@ -646,6 +648,7 @@ fn render_layout(
                     None
                 }
                 32 => image_view::draw(frame, app, *id, area, focused),
+                33 => blit_host_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }

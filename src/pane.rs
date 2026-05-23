@@ -22,6 +22,7 @@ use crate::lsp::diagnostics_pane::DiagnosticsPane;
 use crate::lsp::outline_pane::OutlinePane;
 use crate::playwright::TestsPane;
 use crate::playwright::flaky_pane::FlakyPane;
+use crate::pane_host::BlitHostPane;
 use crate::playwright::trace_pane::TracePane;
 use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
@@ -128,6 +129,12 @@ pub enum Pane {
     /// is painted over the pane's body via a post-ratatui escape
     /// emission. Otherwise the body shows a metadata-only placeholder.
     Image(ImagePane),
+    /// A mnml-hosted external binary speaking the tmnl-protocol blit
+    /// wire (`<binary> --blit <socket>`). Mnml paints the cells the
+    /// child sends and forwards input back. The third class of
+    /// integration alongside command plugins and Cargo features —
+    /// see `docs/PLUGINS.md`. Opened via `:host.launch <binary> [args…]`.
+    BlitHost(BlitHostPane),
 }
 
 /// State for [`Pane::DapRepl`]. `input` is the single-line entry;
@@ -463,6 +470,7 @@ impl Pane {
             Pane::CodeBuilds(p) => p.tab_title(),
             #[cfg(feature = "aws-codebuild")]
             Pane::LogTail(p) => p.tab_title(),
+            Pane::BlitHost(p) => p.tab_title(),
             Pane::Cheatsheet(_) => "Cheatsheet".to_string(),
             Pane::Debug(_) => "Debug".to_string(),
             Pane::DapRepl(_) => "DAP REPL".to_string(),
@@ -502,7 +510,8 @@ impl Pane {
             | Pane::Cheatsheet(_)
             | Pane::Debug(_)
             | Pane::DapRepl(_)
-            | Pane::Image(_) => false,
+            | Pane::Image(_)
+            | Pane::BlitHost(_) => false,
             #[cfg(feature = "private")]
             Pane::TestExecutions(_) => false,
             #[cfg(feature = "aws-codebuild")]

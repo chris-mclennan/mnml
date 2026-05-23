@@ -85,6 +85,36 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**blit-host integration class — `pane_host` + `Pane::BlitHost` (2026-05-23):**
+Added the third class of integration (alongside command-only plugins and
+Cargo features): an out-of-process program owns a regular pane and
+renders into it via `tmnl-protocol` over a Unix socket. New `src/pane_host.rs`
+contains `BlitChannel` (the generic spawn + socket + frame pump), `BlitCell`,
+`BlitHostPane`, and the crossterm-input translators. New `src/app/blit_host.rs`
+holds the App method `host_launch(binary, args)`; new `src/ui/blit_host_view.rs`
+paints the cell grid. Opened via the `:host.launch <binary> [args…]` ex-command.
+Key events forward through; `Ctrl+E` releases focus back to the tree. Wheel
+forwards via `dispatch.rs`. Mixr's `mixr_host.rs` is left untouched for now —
+Phase 2b will consolidate it on `pane_host`'s primitives. The pane_host
+machinery is currently a thin wrapper that re-exports `mixr_host`'s key/mouse
+translators to avoid duplicating the (already correct) implementations.
+Docs: `docs/PLUGINS.md` has a new section describing the integration class
+and its protocol contract. 772 lib tests under default + 813 under
+`--features private` + clippy clean under all three feature configs.
+Phase 3 will move the private integration code out of the public crate to a private
+`internal-app` binary hosted via this facility.
+
+**Phase 1: AWS CodeBuild + CloudWatch generification (2026-05-23):**
+Split the AWS-generic CodeBuild + CloudWatch panes out of the
+the private integration-specific `private` feature into a new `aws-codebuild` feature.
+Code moved from `src/private/{codebuild,codebuilds_pane,log_tail_pane}.rs`
+to `src/aws/`, the Pane variants + their match arms re-gated, the
+`private` feature now implies `aws-codebuild`. Zero new deps for
+aws-codebuild — both panes shell out to the `aws` CLI. `src/app/private.rs`
+is currently `#[cfg(any(feature = "private", feature = "aws-codebuild"))]`
+with private-only methods inline-gated; Phase 3 will split it to
+`src/app/aws.rs` + `src/app/private.rs` when private leaves entirely.
+
 **mixr panel redesigned — docked bottom-strip/full cycle (2026-05-21):**
 the in-mnml mixr panel's state model was reworked. `mixr.show` / the
 `♪` chip now cycle a docked 3-state model — **minimized →

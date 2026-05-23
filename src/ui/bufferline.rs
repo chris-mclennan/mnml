@@ -261,6 +261,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::CodeBuilds(_) => (if nerd { "\u{f487}" } else { "⚒" }, theme::cur().orange),
             #[cfg(feature = "aws-codebuild")]
             Pane::LogTail(_) => (if nerd { "\u{f120}" } else { "≡" }, theme::cur().teal),
+            // nf-mdi-application-cog — generic "hosted external app" glyph.
+            Pane::BlitHost(_) => (if nerd { "\u{F0EAA}" } else { "▤" }, theme::cur().purple),
             Pane::Cheatsheet(_) => (if nerd { "\u{f128}" } else { "?" }, theme::cur().yellow),
             Pane::Debug(_) => (if nerd { "\u{f188}" } else { "🐛" }, theme::cur().red),
             // nf-md-console (terminal arrow) — REPL prompt vibe.

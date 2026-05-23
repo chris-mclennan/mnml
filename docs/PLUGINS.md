@@ -10,6 +10,19 @@ events, and send any IPC command. It **cannot** add a new `Pane` kind, a new
 (Want something compiled *into* mnml because it needs a heavy dep or renders its own
 UI panel? That's a **Cargo feature**, not a plugin — different mechanism.)
 
+There's also a **third class**: a **blit-host integration** — an out-of-process
+program that owns a `Pane` and renders into it over the
+[tmnl-protocol](https://github.com/chris-mclennan/tmnl-protocol) wire. mnml binds
+a Unix socket, spawns `<binary> --blit <socket> [args…]`, and paints the cell
+`Frame`s the child sends back; input goes the other way. Opened via the
+`:host.launch <binary> [args…]` ex-command. The mixr DJ panel uses the same
+mechanism (under a docked-panel UX); the `host.launch` form opens a plain
+`Pane::BlitHost` like any other tabbed pane. Useful when you want a TUI
+companion with its own deps + render path (database viewers, ticket viewers,
+org-specific dashboards, etc.) without dragging those deps into mnml's
+own dependency tree. The wire contract is `tmnl-protocol::Message::*` —
+`Hello`, `Resize`, `Palette`, `Title`, `Frame`, `Input`, `Quit`.
+
 ## The channel
 
 When mnml opens a workspace it creates `<workspace>/.mnml/ipc/`:

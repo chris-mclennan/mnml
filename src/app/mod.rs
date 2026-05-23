@@ -26,6 +26,7 @@ mod gitlab;
 mod private;
 
 mod ai;
+mod blit_host;
 mod cdp;
 mod context_menus;
 mod dap;
@@ -7104,6 +7105,7 @@ impl App {
             Pane::CodeBuilds(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "aws-codebuild")]
             Pane::LogTail(p) => Some((p.tab_title(), false)),
+            Pane::BlitHost(p) => Some((p.tab_title(), false)),
             Pane::Cheatsheet(_) => Some(("Cheatsheet".to_string(), false)),
             Pane::Debug(_) => Some(("Debug".to_string(), false)),
             Pane::DapRepl(_) => Some(("DAP REPL".to_string(), false)),
@@ -8465,6 +8467,7 @@ impl App {
         self.drain_pipeline_log_events();
         #[cfg(feature = "aws-codebuild")]
         self.drain_log_tail_events();
+        self.drain_blit_host_events();
         self.refresh_live_ai_panes();
         self.autosave_idle_buffers();
         self.check_external_file_changes();

@@ -366,6 +366,7 @@ impl App {
             Some(Pane::CodeBuilds(_)) => None,
             #[cfg(feature = "aws-codebuild")]
             Some(Pane::LogTail(_)) => None,
+            Some(Pane::BlitHost(_)) => None,
         };
         let new_buf = match path {
             Some(p) => {
@@ -702,6 +703,7 @@ impl App {
             Pane::CodeBuilds(_) => (None, None),
             #[cfg(feature = "aws-codebuild")]
             Pane::LogTail(_) => (None, None),
+            Pane::BlitHost(_) => (None, None),
         };
         if self.layout().contains(id) {
             self.layout_mut().remove_leaf(id);

@@ -672,6 +672,29 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 // Nothing to scroll — the image pane is "what you see is
                 // what you get". Future v2 could pan a too-large image.
             }
+            Some(Pane::BlitHost(p)) => {
+                // Forward wheel events to the hosted child as
+                // scroll-up/down with the panel-local coordinates;
+                // it owns its own scroll model.
+                let kind = if delta < 0 {
+                    tmnl_protocol::MouseKind::ScrollUp
+                } else {
+                    tmnl_protocol::MouseKind::ScrollDown
+                };
+                let col = (x.saturating_sub(tr.x)).min(p.channel.cols.saturating_sub(1));
+                let row = (y.saturating_sub(tr.y)).min(p.channel.rows.saturating_sub(1));
+                for _ in 0..delta.unsigned_abs() {
+                    p.channel.send_input(tmnl_protocol::InputEvent::Mouse(
+                        tmnl_protocol::MouseInput {
+                            kind,
+                            button: tmnl_protocol::BUTTON_NONE,
+                            col,
+                            row,
+                            mods: 0,
+                        },
+                    ));
+                }
+            }
             None => {}
         }
         // Each SCM/CI pane's max_idx depends on which view-mode is

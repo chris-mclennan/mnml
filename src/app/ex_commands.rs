@@ -710,6 +710,20 @@ impl App {
             // "close window"). Same dirty-prompt path as `:bd` so unsaved
             // editors prompt.
             "close" | "clo" | "hide" => self.close_active_pane(),
+            // `:host.launch <binary> [args...]` — spawn `<binary> --blit
+            // <socket> [args...]` and open it as a `Pane::BlitHost`. See
+            // `docs/PLUGINS.md`'s "blit-host integration" section for the
+            // protocol contract.
+            "host.launch" => {
+                if rest.is_empty() {
+                    self.toast(":host.launch <binary> [args...] — binary required");
+                    return;
+                }
+                let mut parts = rest.split_whitespace();
+                let binary = parts.next().unwrap().to_string();
+                let args: Vec<String> = parts.map(|s| s.to_string()).collect();
+                self.host_launch(binary, args);
+            }
             // `:Explore` / `:E` / `:Sex[plore]` / `:Vex[plore]` / `:Lex[plore]`
             // — vim's netrw file-explorer aliases. mnml routes them to the
             // file tree (`view.toggle_tree`) since that's the closest thing.

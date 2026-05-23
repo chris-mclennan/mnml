@@ -2773,6 +2773,21 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // A `Pane::BlitHost` — forward every key to the hosted child (it
+    // owns its own keymap). `Ctrl+E` releases focus to the tree, mirroring
+    // the `mixr` panel's escape hatch.
+    if matches!(app.panes.get(i), Some(Pane::BlitHost(_))) {
+        if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app.focus_tree();
+            return;
+        }
+        if let Some(ev) = crate::pane_host::crossterm_key_to_input(&key)
+            && let Some(Pane::BlitHost(p)) = app.panes.get(i)
+        {
+            p.channel.send_input(ev);
+        }
+        return;
+    }
     // A diagnostics ("Problems") list: ↑↓ select, Enter → jump to the location,
     // r refresh, Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::Diagnostics(_))) {
