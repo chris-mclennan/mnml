@@ -117,6 +117,17 @@ impl App {
 mod tests {
     use super::*;
 
+    /// Serialize tests that mutate `$TMNL_TRANSFER_SOCKET`. Rust's
+    /// default test harness runs `#[test]` functions in parallel, so
+    /// two tests reading + writing the same env var on different
+    /// threads can interleave (one's `set_var` clobbers another's
+    /// state mid-test). Lock + drop at function scope.
+    #[cfg(unix)]
+    fn env_lock() -> &'static std::sync::Mutex<()> {
+        static M: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        M.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
     #[test]
     fn tmnl_open_tab_no_op_when_not_under_tmnl() {
         let d = tempfile::tempdir().unwrap();
@@ -156,16 +167,15 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn pop_pty_no_focused_pty_is_a_no_op() {
+        let _env_guard = env_lock().lock().unwrap();
         // No focused pane at all → toast + no panic. The shape of the
         // call is what we're asserting; toast contents are inspected
         // by the full-loop tests, not here.
         let d = tempfile::tempdir().unwrap();
         let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
         assert!(app.active.is_none());
-        // SAFETY: tests are sequential within the suite (`cargo test`
-        // serializes env-mutating calls via `set_var` only here); the
-        // env var is set so we don't fail the "missing socket" branch
-        // before reaching the focused-pane check.
+        // SAFETY: env_lock above serializes against the other tests
+        // here that mutate this var; we own it for the duration.
         unsafe { std::env::set_var("TMNL_TRANSFER_SOCKET", "/tmp/unused-pop-pty-test.sock") };
         app.pop_pty_to_tmnl();
         // No panic, no state mutation past the toast.
@@ -182,6 +192,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn pop_pty_transfers_master_fd_via_scm_rights() {
+        let _env_guard = env_lock().lock().unwrap();
         use std::os::unix::io::FromRawFd;
         use std::os::unix::net::UnixListener;
         use std::sync::atomic::{AtomicU32, Ordering};
@@ -312,6 +323,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn pop_pty_socket_env_unset_is_a_no_op() {
+        let _env_guard = env_lock().lock().unwrap();
         use crate::pty_pane::{BinaryProfile, PtySession};
 
         let d = tempfile::tempdir().unwrap();
@@ -351,6 +363,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn pop_pty_connect_failure_is_a_no_op() {
+        let _env_guard = env_lock().lock().unwrap();
         use crate::pty_pane::{BinaryProfile, PtySession};
 
         let d = tempfile::tempdir().unwrap();
