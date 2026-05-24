@@ -30,8 +30,6 @@ use crate::request_pane::RequestPane;
 use crate::aws::codebuilds_pane::CodeBuildsPane;
 #[cfg(feature = "aws-codebuild")]
 use crate::aws::log_tail_pane::LogTailPane;
-#[cfg(feature = "private")]
-use crate::private::private_executions_pane::TestExecutionsPane;
 
 // `Editor`'s payload (`Buffer`) is much bigger than the others'; boxing it would
 // ripple a `Box` through every `Pane::Editor(b)` site for a handful of bytes of
@@ -96,10 +94,6 @@ pub enum Pane {
     AzDevOpsBuilds(AzDevOpsBuildsPane),
     /// Azure DevOps active pull requests list.
     AzDevOpsPullRequests(AzDevOpsPullRequestsPane),
-    /// DocumentDB live `TestExecutions` browser (the private integration org build). Behind
-    /// the `private` Cargo feature — the lean build doesn't have this.
-    #[cfg(feature = "private")]
-    TestExecutions(TestExecutionsPane),
     /// AWS CodeBuild recent-builds browser. Behind the `aws-codebuild`
     /// Cargo feature; shells out to the `aws` CLI.
     #[cfg(feature = "aws-codebuild")]
@@ -464,8 +458,6 @@ impl Pane {
             Pane::GitlabMergeRequests(p) => p.tab_title(),
             Pane::AzDevOpsBuilds(p) => p.tab_title(),
             Pane::AzDevOpsPullRequests(p) => p.tab_title(),
-            #[cfg(feature = "private")]
-            Pane::TestExecutions(p) => p.tab_title(),
             #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(p) => p.tab_title(),
             #[cfg(feature = "aws-codebuild")]
@@ -512,8 +504,6 @@ impl Pane {
             | Pane::DapRepl(_)
             | Pane::Image(_)
             | Pane::BlitHost(_) => false,
-            #[cfg(feature = "private")]
-            Pane::TestExecutions(_) => false,
             #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(_) => false,
             #[cfg(feature = "aws-codebuild")]

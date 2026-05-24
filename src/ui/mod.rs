@@ -73,8 +73,6 @@ pub mod scrollbar;
 pub mod settings_overlay;
 pub mod signature;
 pub mod statusline;
-#[cfg(feature = "private")]
-pub mod test_executions_view;
 pub mod tests_view;
 pub mod theme;
 pub mod toast_stack;
@@ -144,8 +142,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.request_fields.clear();
         app.rects.completion_rows.clear();
         app.rects.list_rows.clear();
-        #[cfg(feature = "private")]
-        app.rects.test_executions_rows.clear();
         app.rects.split_dividers.clear();
         app.rects.pty_tabs.clear();
         app.rects.pty_tab_new.clear();
@@ -392,8 +388,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.request_fields.clear();
     app.rects.completion_rows.clear();
     app.rects.list_rows.clear();
-    #[cfg(feature = "private")]
-    app.rects.test_executions_rows.clear();
     app.rects.split_dividers.clear();
     app.rects.pty_tabs.clear();
     app.rects.pty_tab_new.clear();
@@ -568,8 +562,6 @@ fn render_layout(
                 Some(crate::pane::Pane::Outline(_)) => 14,
                 Some(crate::pane::Pane::CmdlineHistory(_)) => 15,
                 Some(crate::pane::Pane::Quickfix(_)) => 16,
-                #[cfg(feature = "private")]
-                Some(crate::pane::Pane::TestExecutions(_)) => 17,
                 #[cfg(feature = "aws-codebuild")]
                 Some(crate::pane::Pane::CodeBuilds(_)) => 18,
                 Some(crate::pane::Pane::BitbucketPipelines(_)) => 19,
@@ -609,8 +601,6 @@ fn render_layout(
                 // Quickfix shares the Grep view — same shape, different
                 // pane identity so `:grep` results don't clobber it.
                 16 => grep_view::draw(frame, app, *id, area, focused),
-                #[cfg(feature = "private")]
-                17 => test_executions_view::draw(frame, app, *id, area, focused),
                 #[cfg(feature = "aws-codebuild")]
                 18 => codebuilds_view::draw(frame, app, *id, area, focused),
                 19 => bitbucket_pipelines_view::draw(frame, app, *id, area, focused),

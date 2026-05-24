@@ -360,8 +360,6 @@ impl App {
             | Some(Pane::DapRepl(_))
             | Some(Pane::Image(_))
             | None => None,
-            #[cfg(feature = "private")]
-            Some(Pane::TestExecutions(_)) => None,
             #[cfg(feature = "aws-codebuild")]
             Some(Pane::CodeBuilds(_)) => None,
             #[cfg(feature = "aws-codebuild")]
@@ -697,8 +695,6 @@ impl App {
             | Pane::Debug(_)
             | Pane::DapRepl(_)
             | Pane::Image(_) => (None, None),
-            #[cfg(feature = "private")]
-            Pane::TestExecutions(_) => (None, None),
             #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(_) => (None, None),
             #[cfg(feature = "aws-codebuild")]

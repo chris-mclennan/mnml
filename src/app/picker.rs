@@ -651,18 +651,6 @@ impl App {
                     self.remove_workspace_runtime(idx);
                 }
             }
-            #[cfg(feature = "private")]
-            PickerKind::the private integrationEnv => {
-                self.run_private_tests_with_overrides(Some(item.id), None);
-            }
-            #[cfg(not(feature = "private"))]
-            PickerKind::the private integrationEnv => {}
-            #[cfg(feature = "private")]
-            PickerKind::the private integrationBranch => {
-                self.run_private_tests_with_overrides(None, Some(item.id));
-            }
-            #[cfg(not(feature = "private"))]
-            PickerKind::the private integrationBranch => {}
             PickerKind::Tools => {
                 // `id` is a `KNOWN_TOOLS[i].name`. Find the entry and
                 // copy its install command to the clipboard.
@@ -1349,9 +1337,9 @@ mod picker_tests {
         );
         // GH — middle update.
         app.github_pull_requests.insert(
-            ("private-org".into(), "repo".into()),
+            ("exampleorg".into(), "repo".into()),
             vec![crate::github::PullRequestRecord {
-                owner: "private-org".into(),
+                owner: "exampleorg".into(),
                 repo: "repo".into(),
                 number: 7,
                 title: "GH refactor".into(),
@@ -1366,7 +1354,7 @@ mod picker_tests {
                 review_comment_count: 4,
                 created_at_ms: Some(2_000),
                 updated_at_ms: Some(2_000),
-                web_url: "https://github.com/private-org/repo/pull/7".into(),
+                web_url: "https://github.com/exampleorg/repo/pull/7".into(),
             }],
         );
         // GL — newest update.
@@ -1430,7 +1418,7 @@ mod picker_tests {
         assert_eq!(parts[1], "GL");
         assert_eq!(parts[2], "group/project");
         assert_eq!(parts[3], "feature/gl");
-        // Fuzzy match shrinks to one host (label contains "private-org" and "refactor").
+        // Fuzzy match shrinks to one host (label contains "exampleorg" and "refactor").
         let mut picker = app.picker.take().unwrap();
         for c in "refactor".chars() {
             picker.type_char(c);

@@ -128,19 +128,6 @@ tree-sitter-astro-next = "0.1"
 #   tungstenite        — Chrome DevTools Protocol                 [CDP track]
 #   lsp-types          — LSP client types                        [LSP track]
 
-# Async DocumentDB client for the `private` feature (live `TestExecutions`
-# browser). Optional — the lean build doesn't drag in `mongodb` / `tokio`.
-mongodb = { version = "3", optional = true }
-# `mongodb` needs a tokio runtime. We don't want a global one in the lean
-# build, so the worker thread spawns a contained `Runtime` (see
-# `src/private/docdb.rs`). `rt` for `Runtime::new_current_thread`, `time` for
-# `sleep` between polls, `sync` for `mpsc`.
-tokio = { version = "1", features = ["rt", "time", "sync", "macros"], optional = true }
-# `mongodb`'s cursor results are async streams; we need `StreamExt::try_next`.
-# Pulled in only with the private feature so the lean build stays slim.
-futures-util = { version = "0.3", optional = true }
-bson = { version = "2", optional = true }
-
 # Metal-accelerated FIM inference, macOS only — the `metal` feature pulls in
 # the Apple Metal stack (objc2 etc.), which doesn't build on Linux. Elsewhere
 # fim-engine falls back to CPU candle (see the `default-features = false` above).
@@ -154,27 +141,6 @@ default = []
 # by default — `cargo build --features aws-codebuild` opts in. Anything
 # org-specific lives in plugins / private blit-host binaries, not here.
 aws-codebuild = []
-# The the private integration org build: DocDB live `TestExecutions` browser + correlation
-# against AWS CodeBuild runs (the CodeBuild panes themselves are in the
-# `aws-codebuild` feature, which `private` implies). Drags in `mongodb` and
-# a contained tokio runtime. Plain `cargo build` is the lean editor.
-private = ["aws-codebuild", "dep:mongodb", "dep:tokio", "dep:futures-util", "dep:bson"]
-
-[[example]]
-name = "private_smoke"
-required-features = ["private"]
-
-[[example]]
-name = "private_discover"
-required-features = ["private"]
-
-[[example]]
-name = "private_sample_doc"
-required-features = ["private"]
-
-[[example]]
-name = "private_codebuild_smoke"
-required-features = ["aws-codebuild"]
 
 [profile.release]
 lto = true

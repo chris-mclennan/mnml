@@ -5,8 +5,8 @@
 //! Playwright's `file:line` selector) / `--last-failed`.
 //!
 //! Baked in — only shells out to `npx playwright` (degrades to a toast if it's
-//! not there), like the git track shells out to `git`. The DocDB live-executions
-//! feed and CodeBuild bits land later behind a `private` Cargo feature.
+//! not there), like the git track shells out to `git`. CodeBuild integration
+//! (for runs triggered from CI) is behind the `aws-codebuild` feature.
 //!
 //! Trace pane — runs with `--trace=retain-on-failure`; `t` on a failed test opens
 //! its `trace.zip` parsed into a text timeline (see [`trace`] / [`trace_pane`]).

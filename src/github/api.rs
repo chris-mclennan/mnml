@@ -1054,7 +1054,7 @@ mod tests {
               "created_at":     "2026-05-15T14:37:02Z",
               "updated_at":     "2026-05-15T14:42:08Z",
               "run_started_at": "2026-05-15T14:37:05Z",
-              "html_url": "https://github.com/exampleorg/private-claude-knowledge/actions/runs/8814561234"
+              "html_url": "https://github.com/exampleorg/example-knowledge/actions/runs/8814561234"
             },
             {
               "id": 8814561235,
@@ -1070,7 +1070,7 @@ mod tests {
             }
           ]
         }"#;
-        let rows = parse_runs_response(body, "exampleorg", "private-claude-knowledge").unwrap();
+        let rows = parse_runs_response(body, "exampleorg", "example-knowledge").unwrap();
         assert_eq!(rows.len(), 2);
         let r = &rows[0];
         assert_eq!(r.run_number, 42);
@@ -1136,7 +1136,7 @@ mod tests {
             "review_comments": 12,
             "created_at": "2026-05-10T14:37:02Z",
             "updated_at": "2026-05-15T09:00:00Z",
-            "html_url": "https://github.com/exampleorg/private-claude-knowledge/pull/4521"
+            "html_url": "https://github.com/exampleorg/example-knowledge/pull/4521"
           },
           {
             "number": 4522,
@@ -1152,7 +1152,7 @@ mod tests {
             "updated_at": "2026-05-15T10:00:00Z"
           }
         ]"#;
-        let rows = parse_pulls_response(body, "exampleorg", "private-claude-knowledge").unwrap();
+        let rows = parse_pulls_response(body, "exampleorg", "example-knowledge").unwrap();
         assert_eq!(rows.len(), 2);
         let p = &rows[0];
         assert_eq!(p.number, 4521);

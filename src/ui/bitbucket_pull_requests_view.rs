@@ -5,8 +5,8 @@
 //!  ⇄ 5 open PRs · polling every 30s · (r refresh · Enter open · y copy · Esc tree)
 //!
 //!  ▸ exampleorg/example-api  (3)
-//!  #4521 Add Safari fallback for auth middleware           👀 3 ✓1 ✗1 · 💬 7 · feature/safari-auth → main · 1h ago · Chris McLennan
-//!  #4499 Reward eligibility refactor                        👀 2 ✓2     · 💬 3 · refactor/rewards    → main · 1d ago · Tal Doron
+//!  #4521 Add Safari fallback for auth middleware           👀 3 ✓1 ✗1 · 💬 7 · feature/safari-auth → main · 1h ago · alice
+//!  #4499 Reward eligibility refactor                        👀 2 ✓2     · 💬 3 · refactor/rewards    → main · 1d ago · bob
 //! ```
 
 use ratatui::Frame;

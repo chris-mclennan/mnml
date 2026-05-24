@@ -1,4 +1,4 @@
-//! CodeBuild integration for the `private` feature — phase 6 (builds list).
+//! CodeBuild integration for the `aws-codebuild` feature — builds list.
 //!
 //! Shells out to the AWS CLI (no SDK; same pattern as the `git` track):
 //!   1. `aws codebuild list-builds-for-project --project-name <p>`
@@ -350,22 +350,22 @@ mod tests {
     #[test]
     fn parse_build_full_response() {
         let json = serde_json::json!({
-            "id": "private-playwright:abc",
+            "id": "my-playwright:abc",
             "buildNumber": 38788,
             "buildStatus": "FAILED",
             "startTime": "2026-05-15T14:37:02.559000-04:00",
             "endTime":   "2026-05-15T14:37:31.431000-04:00",
             "resolvedSourceVersion": "629eda29d63c03c1fcfa01de38204e5b9d25559b",
             "sourceVersion": "arn:aws:s3:::pipeline-stuff",
-            "initiator": "codepipeline/private-playwright",
+            "initiator": "codepipeline/my-playwright",
             "logs": {
                 "deepLink": "https://console.aws.amazon.com/cloudwatch/…",
-                "groupName": "private-playwright",
+                "groupName": "my-playwright",
                 "streamName": "abc"
             }
         });
         let rec = parse_build(&json).expect("parses");
-        assert_eq!(rec.id, "private-playwright:abc");
+        assert_eq!(rec.id, "my-playwright:abc");
         assert_eq!(rec.build_number, 38788);
         assert_eq!(rec.status, BuildStatus::Failed);
         assert!(rec.started_at_ms.is_some());
@@ -379,9 +379,9 @@ mod tests {
         );
         assert_eq!(
             rec.initiator.as_deref(),
-            Some("codepipeline/private-playwright")
+            Some("codepipeline/my-playwright")
         );
-        assert_eq!(rec.logs_group.as_deref(), Some("private-playwright"));
+        assert_eq!(rec.logs_group.as_deref(), Some("my-playwright"));
     }
 
     #[test]

@@ -22,8 +22,8 @@ mod azdevops;
 mod bitbucket;
 mod github;
 mod gitlab;
-#[cfg(any(feature = "private", feature = "aws-codebuild"))]
-mod private;
+#[cfg(feature = "aws-codebuild")]
+mod aws;
 
 mod ai;
 mod blit_host;
@@ -1770,8 +1770,6 @@ pub struct PaneRects {
     /// records each column's header rect with `row_in_env_filter = usize::MAX`
     /// so a header-click flips to that env without selecting a record.
     /// Cleared + rebuilt per render.
-    #[cfg(feature = "private")]
-    pub test_executions_rows: Vec<(Rect, PaneId, u8, usize)>,
     /// One entry per split divider, with enough info to drag-resize it.
     pub split_dividers: Vec<crate::layout::DividerHit>,
     pub statusline: Option<Rect>,
@@ -2678,22 +2676,6 @@ pub struct App {
     )>,
     /// Next job-id for a pipeline-log fetch (so re-fetches can drop stale replies).
     pipeline_log_next_job: u64,
-    /// DocumentDB worker channel for the `private` feature's
-    /// [`crate::pane::Pane::TestExecutions`] pane. `Some` while a worker
-    /// thread is alive. Drained by [`Self::tick`] into the open
-    /// `TestExecutions` pane(s) — there's only one of these at a time in
-    /// the first cut, but the field is shared (not pane-local) so the
-    /// channel survives pane open/close churn.
-    #[cfg(feature = "private")]
-    docdb_handle: Option<crate::private::docdb::DocDbHandle>,
-    /// App-level cache of every `TestExecutionRecord` seen on the DocDB
-    /// channel, keyed by record id. Populated by [`Self::drain_docdb_events`]
-    /// in parallel to the per-pane push so the cache survives `Pane::
-    /// TestExecutions` open/close churn and is available to other panes
-    /// (notably `Pane::CodeBuilds`, which surfaces a per-row test-result
-    /// chip via [`Self::match_test_executions_for_build`]).
-    #[cfg(feature = "private")]
-    pub private_executions: std::collections::HashMap<String, crate::private::TestExecutionRecord>,
     /// Bitbucket REST worker handle. `Some` while a worker thread is alive
     /// polling the configured `[[bitbucket.repos]]` for recent pipelines.
     /// Spawned lazily on first `bitbucket.*` command (phase 2+); phase 1
@@ -3088,10 +3070,6 @@ impl App {
             log_tail_pane_id: None,
             pipeline_log_chan: None,
             pipeline_log_next_job: 1,
-            #[cfg(feature = "private")]
-            docdb_handle: None,
-            #[cfg(feature = "private")]
-            private_executions: std::collections::HashMap::new(),
             bitbucket_handle: None,
             bitbucket_pipelines: std::collections::HashMap::new(),
             bitbucket_pull_requests: std::collections::HashMap::new(),
@@ -7099,8 +7077,6 @@ impl App {
             Pane::GitlabMergeRequests(p) => Some((p.tab_title(), false)),
             Pane::AzDevOpsBuilds(p) => Some((p.tab_title(), false)),
             Pane::AzDevOpsPullRequests(p) => Some((p.tab_title(), false)),
-            #[cfg(feature = "private")]
-            Pane::TestExecutions(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "aws-codebuild")]
@@ -8456,8 +8432,6 @@ impl App {
         self.drain_dap_events();
         self.drain_lsp_events();
         self.drain_cdp_events();
-        #[cfg(feature = "private")]
-        self.drain_docdb_events();
         #[cfg(feature = "aws-codebuild")]
         self.drain_codebuild_events();
         self.drain_bitbucket_events();
@@ -8655,11 +8629,6 @@ impl App {
 }
 
 // ── Bitbucket integration (lean-build-safe — no Cargo-feature gate) ───
-//
-// Lives in its own `impl App` block so the private-feature-gated block
-// above stays self-contained and the lean build picks up the Bitbucket
-// methods unconditionally. Phase 1 is just spawn + drain; phase 2 wires
-// these into a `Pane::BitbucketPipelines` opener.
 
 impl App {
     // ── GitHub Actions — sibling of the Bitbucket methods above. ──────

@@ -64,29 +64,10 @@ pub fn draw(
         )
     };
 
-    // Phase 8: per-build test-execution stat tuples (passed, failed, skipped,
-    // flaky) aggregated across every matched TE record. None when no record
-    // correlates with the build. the private integration-only — without the TestExecutions
-    // browser there are no records to correlate.
-    #[cfg(feature = "private")]
-    let stats_per_visible: Vec<Option<(u32, u32, u32, u32)>> = items_window
-        .iter()
-        .map(|(_, rec)| {
-            let matched = app.match_test_executions_for_build(rec);
-            if matched.is_empty() {
-                return None;
-            }
-            let mut acc = (0u32, 0u32, 0u32, 0u32);
-            for r in matched {
-                acc.0 += r.passed;
-                acc.1 += r.failed;
-                acc.2 += r.skipped;
-                acc.3 += r.flaky;
-            }
-            Some(acc)
-        })
-        .collect();
-    #[cfg(not(feature = "private"))]
+    // Per-build test-execution stat tuples — left as Nones in the lean
+    // build (mnml has no test-results data source of its own). A future
+    // blit-host integration (or a Cargo feature that provides its own
+    // correlator) can fill these in by re-introducing the lookup.
     let stats_per_visible: Vec<Option<(u32, u32, u32, u32)>> =
         items_window.iter().map(|_| None).collect();
 

@@ -1030,9 +1030,9 @@ struct RawParticipant {
 
 // ─── ISO-8601 → ms parser ──────────────────────────────────────────────
 //
-// Same hand-rolled parser used in `private::codebuild::parse_iso_ms`, kept
-// inline here so the `bitbucket` module has no cross-cargo-feature deps
-// (codebuild lives under `--features private`).
+// Same hand-rolled parser shape used in `aws::codebuild::parse_iso_ms`,
+// kept inline here so the `bitbucket` module has no cross-cargo-feature
+// deps (codebuild lives under `--features aws-codebuild`).
 
 /// Parse `2026-05-15T14:37:02.559Z` / `…+05:30` / `…-04:00` → UTC epoch ms.
 /// Returns `None` for any malformed input. Cheap, dependency-free.

@@ -85,18 +85,10 @@ pub enum PickerKind {
     /// drop the extra workspace at that index. Populated by
     /// `view.remove_workspace`.
     RemoveWorkspace,
-    /// `id` = an env name (`"dev"` / `"staging"` / `"prod"`). Accept ⇒
-    /// run playwright tests against that env (private-feature only).
-    /// Populated by `private.run_tests_pick_env`.
-    the private integrationEnv,
     /// `id` = `"<slot1>"` (1..=9) for an occupied harpoon slot.
     /// Accept ⇒ jump to that slot's pinned file. Empty-slot rows are
     /// not added to the picker. Populated by `harpoon.menu`.
     Harpoon,
-    /// `id` = a branch name. Accept ⇒ run playwright tests with
-    /// `BRANCH=<id>` (private-feature only). Populated by
-    /// `private.run_tests_pick_branch`.
-    the private integrationBranch,
     /// `id` = `"<tool-name>"` matching `crate::tools::KNOWN_TOOLS`. Accept ⇒
     /// copy the install command to the clipboard. Populated by
     /// `tools.installer` (mnml's Mason-style picker — lists every LSP /

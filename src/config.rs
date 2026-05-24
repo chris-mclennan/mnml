@@ -83,7 +83,7 @@ pub struct Config {
 
 /// One additional workspace surfaced alongside the launched one. Lets the
 /// user keep a curated set of related repo groups visible together (e.g.
-/// "private" + "mnml-family" in one mnml window). Each workspace gets its own
+/// "work" + "mnml-family" in one mnml window). Each workspace gets its own
 /// `Tree` rooted at `path`, its own discovered repos, and renders as a
 /// collapsible section in the rail.
 #[derive(Debug, Clone)]
@@ -111,7 +111,7 @@ pub struct WorkspaceConfig {
 ///
 /// [[bitbucket.repos]]
 /// workspace = "exampleorg"
-/// slug      = "private-playwright"
+/// slug      = "example-playwright"
 /// ```
 ///
 /// The worker reads the auth token from `$<auth_env>` at spawn time —
@@ -155,7 +155,7 @@ pub struct BitbucketRepo {
 ///
 /// [[github.repos]]
 /// owner = "exampleorg"
-/// repo  = "private-claude-knowledge"
+/// repo  = "example-knowledge"
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct GithubConfig {
@@ -197,7 +197,7 @@ pub fn default_branches() -> &'static [&'static str] {
 /// base_url  = "https://gitlab.com/api/v4"    # optional, override for self-hosted
 ///
 /// [[gitlab.projects]]
-/// project = "private-org/private-claude-plugins"  # path OR numeric ID
+/// project = "example-org/example-plugins"  # path OR numeric ID
 ///
 /// [[gitlab.projects]]
 /// project  = "12345"
@@ -318,13 +318,14 @@ impl BitbucketConfig {
 }
 
 /// `[ci]` — Continuous-integration provider settings. Consumed by the
-/// `private` Cargo feature's CodeBuild integration (`Pane::CodeBuilds`).
-/// Unconditional in `Config` so lean builds parse it cleanly.
+/// `aws-codebuild` Cargo feature's CodeBuild integration
+/// (`Pane::CodeBuilds`). Unconditional in `Config` so lean builds parse
+/// it cleanly.
 ///
 /// ```toml
 /// [ci]
 /// provider = "codebuild"           # only "codebuild" recognized today
-/// project  = "private-playwright"   # required for codebuild
+/// project  = "my-playwright"       # required for codebuild
 /// region   = "us-east-1"           # optional; falls back to AWS CLI defaults
 /// ```
 #[derive(Debug, Clone, Default)]
@@ -334,49 +335,11 @@ pub struct CiConfig {
     pub region: Option<String>,
 }
 
-/// `[playwright]` — settings used by the Playwright integration and (when
-/// the `private` Cargo feature is built) the DocumentDB live-executions
-/// browser. The config struct lives unconditionally so a private-built mnml
-/// can read URIs out of a lean-built user's config file without forcing
-/// every user to install the feature.
+/// `[playwright]` — settings used by the Playwright integration. Reserved
+/// for future expansion (currently empty after `[playwright.docdb]` moved
+/// out to a private blit-host integration).
 #[derive(Debug, Clone, Default)]
-pub struct PlaywrightConfig {
-    pub docdb: PlaywrightDocDbConfig,
-}
-
-/// `[playwright.docdb]` — per-env DocumentDB connection strings consumed
-/// by the `private` feature. Each field is `None` until the user sets it
-/// in `~/.config/mnml/config.toml` (or a workspace `.mnml/config.toml`):
-///
-/// ```toml
-/// [playwright.docdb]
-/// dev_uri     = "mongodb://…/test_db?replicaSet=rs0&tlsCAFile=…"
-/// staging_uri = "mongodb://…"
-/// prod_uri    = "mongodb://…"
-/// database    = "playwright"         # optional, defaults to "playwright"
-/// collection  = "TestExecutions"     # optional, defaults to "TestExecutions"
-/// ```
-///
-/// Connection strings stay out of the codebase. When all three URIs are
-/// `None`, the private worker thread emits a "configure [playwright.docdb]"
-/// status event and stays idle.
-#[derive(Debug, Clone, Default)]
-pub struct PlaywrightDocDbConfig {
-    pub dev_uri: Option<String>,
-    pub staging_uri: Option<String>,
-    pub prod_uri: Option<String>,
-    /// Defaults to `"playwright"` at consumer-site if `None`.
-    pub database: Option<String>,
-    /// Defaults to `"TestExecutions"` at consumer-site if `None`.
-    pub collection: Option<String>,
-}
-
-impl PlaywrightDocDbConfig {
-    /// `true` when at least one env URI is set — the worker can connect.
-    pub fn any_configured(&self) -> bool {
-        self.dev_uri.is_some() || self.staging_uri.is_some() || self.prod_uri.is_some()
-    }
-}
+pub struct PlaywrightConfig {}
 
 #[derive(Debug, Clone)]
 pub struct BrowserConfig {
@@ -711,8 +674,6 @@ struct RawConfig {
     #[serde(default)]
     browser: RawBrowser,
     #[serde(default)]
-    playwright: RawPlaywright,
-    #[serde(default)]
     ci: RawCi,
     #[serde(default)]
     bitbucket: RawBitbucket,
@@ -809,21 +770,6 @@ struct RawCi {
 struct RawBrowser {
     headless: Option<bool>,
     profile_mode: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawPlaywright {
-    #[serde(default)]
-    docdb: RawPlaywrightDocDb,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawPlaywrightDocDb {
-    dev_uri: Option<String>,
-    staging_uri: Option<String>,
-    prod_uri: Option<String>,
-    database: Option<String>,
-    collection: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1108,24 +1054,6 @@ impl Config {
                 _ => "workspace".to_string(),
             };
         }
-        // `[playwright.docdb]` — overlay only the fields that are set, so a
-        // workspace-level file can override the home file's defaults per-key.
-        let docdb_raw = raw.playwright.docdb;
-        if let Some(v) = docdb_raw.dev_uri {
-            self.playwright.docdb.dev_uri = Some(v);
-        }
-        if let Some(v) = docdb_raw.staging_uri {
-            self.playwright.docdb.staging_uri = Some(v);
-        }
-        if let Some(v) = docdb_raw.prod_uri {
-            self.playwright.docdb.prod_uri = Some(v);
-        }
-        if let Some(v) = docdb_raw.database {
-            self.playwright.docdb.database = Some(v);
-        }
-        if let Some(v) = docdb_raw.collection {
-            self.playwright.docdb.collection = Some(v);
-        }
         if let Some(v) = raw.ci.provider {
             self.ci.provider = Some(v);
         }
@@ -1264,8 +1192,8 @@ mod tests {
             f,
             r#"
 [[workspaces]]
-name = "private"
-path = "/tmp/private-claude-workspace"
+name = "work"
+path = "/tmp/work-stuff"
 
 [[workspaces]]
 path = "/tmp/mnml-stuff"
@@ -1276,10 +1204,10 @@ path = "/tmp/mnml-stuff"
         let mut cfg = Config::default();
         cfg.apply_file_pub(&cfg_path);
         assert_eq!(cfg.workspaces.len(), 2);
-        assert_eq!(cfg.workspaces[0].name, "private");
+        assert_eq!(cfg.workspaces[0].name, "work");
         assert_eq!(
             cfg.workspaces[0].path,
-            std::path::PathBuf::from("/tmp/private-claude-workspace")
+            std::path::PathBuf::from("/tmp/work-stuff")
         );
         // Missing `name` defaults to the path's basename.
         assert_eq!(cfg.workspaces[1].name, "mnml-stuff");
@@ -1302,43 +1230,6 @@ path  = "/tmp/extra"
     }
 
     #[test]
-    fn playwright_docdb_config_parses() {
-        let dir = tempfile::tempdir().unwrap();
-        let cfg_path = dir.path().join("config.toml");
-        let mut f = std::fs::File::create(&cfg_path).unwrap();
-        writeln!(
-            f,
-            r#"
-[playwright.docdb]
-dev_uri     = "mongodb://dev.example/test_db"
-staging_uri = "mongodb://stg.example/test_db"
-database    = "playwright"
-"#
-        )
-        .unwrap();
-
-        let mut cfg = Config::default();
-        cfg.apply_file_pub(&cfg_path);
-        assert_eq!(
-            cfg.playwright.docdb.dev_uri.as_deref(),
-            Some("mongodb://dev.example/test_db")
-        );
-        assert_eq!(
-            cfg.playwright.docdb.staging_uri.as_deref(),
-            Some("mongodb://stg.example/test_db")
-        );
-        assert!(cfg.playwright.docdb.prod_uri.is_none());
-        assert_eq!(cfg.playwright.docdb.database.as_deref(), Some("playwright"));
-        assert!(cfg.playwright.docdb.any_configured());
-    }
-
-    #[test]
-    fn playwright_docdb_default_is_empty() {
-        let cfg = Config::default();
-        assert!(!cfg.playwright.docdb.any_configured());
-    }
-
-    #[test]
     fn bitbucket_config_parses_multi_repo() {
         let dir = tempfile::tempdir().unwrap();
         let cfg_path = dir.path().join("config.toml");
@@ -1356,7 +1247,7 @@ slug      = "example-api"
 
 [[bitbucket.repos]]
 workspace = "exampleorg"
-slug      = "private-playwright"
+slug      = "example-playwright"
 "#
         )
         .unwrap();
@@ -1368,7 +1259,7 @@ slug      = "private-playwright"
         assert_eq!(cfg.bitbucket.repos.len(), 2);
         assert_eq!(cfg.bitbucket.repos[0].workspace, "exampleorg");
         assert_eq!(cfg.bitbucket.repos[0].slug, "example-api");
-        assert_eq!(cfg.bitbucket.repos[1].slug, "private-playwright");
+        assert_eq!(cfg.bitbucket.repos[1].slug, "example-playwright");
         assert!(cfg.bitbucket.any_configured());
     }
 
@@ -1385,8 +1276,8 @@ auth_env   = "AZDO_TOKEN"
 creator_id = "abcdef12-3456-7890-abcd-ef1234567890"
 
 [[azdevops.projects]]
-org     = "private"
-project = "the private integration"
+org     = "exampleorg"
+project = "Example"
 repo    = "api"
 "#
         )
@@ -1445,7 +1336,7 @@ poll_secs = 45
 
 [[github.repos]]
 owner = "exampleorg"
-repo  = "private-claude-knowledge"
+repo  = "example-knowledge"
 "#
         )
         .unwrap();
@@ -1455,7 +1346,7 @@ repo  = "private-claude-knowledge"
         assert_eq!(cfg.github.poll_secs_or_default(), 45);
         assert_eq!(cfg.github.repos.len(), 1);
         assert_eq!(cfg.github.repos[0].owner, "exampleorg");
-        assert_eq!(cfg.github.repos[0].repo, "private-claude-knowledge");
+        assert_eq!(cfg.github.repos[0].repo, "example-knowledge");
         assert!(cfg.github.any_configured());
     }
 
@@ -1489,7 +1380,7 @@ slug      = "example-api"
             r#"
 [[bitbucket.repos]]
 workspace = "exampleorg"
-slug      = "private-playwright"
+slug      = "example-playwright"
 "#
         )
         .unwrap();

@@ -33,7 +33,7 @@ use crate::{command, ui};
 pub fn run(mut app: App) -> Result<bool, String> {
     // Workspace basename for the terminal-window title — picks up the
     // current project name so multiple mnml tabs are distinguishable
-    // ("mnml — mnml", "mnml — tmnl", "mnml — private", …).
+    // ("mnml — mnml", "mnml — tmnl", "mnml — work", …).
     let title = match app.workspace.file_name().and_then(|s| s.to_str()) {
         Some(name) if !name.is_empty() => format!("mnml — {name}"),
         _ => "mnml".to_string(),
@@ -2656,8 +2656,6 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('y') => app.copy_selected_codebuild_url(),
             KeyCode::Char('t') => app.tail_selected_codebuild_logs(),
             KeyCode::Char('T') => app.tail_selected_codebuild_logs_classified(),
-            #[cfg(feature = "private")]
-            KeyCode::Char('x') => app.show_test_executions_for_selected_build(),
             KeyCode::Char('r') => app.refresh_active_codebuilds(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
@@ -2716,56 +2714,6 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     } else {
                         usize::MAX
                     };
-                }
-            }
-            KeyCode::Esc => app.focus_tree(),
-            _ => {}
-        }
-        return;
-    }
-    // the private integration TestExecutions browser (cfg-gated): ↑↓ move within the active
-    // env column, ←→ cycle column (Dev/Staging/Prod), Esc → tree.
-    #[cfg(feature = "private")]
-    if matches!(app.panes.get(i), Some(Pane::TestExecutions(_))) {
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
-                    p.move_selection(-1);
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
-                    p.move_selection(1);
-                }
-            }
-            KeyCode::PageUp => {
-                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
-                    p.move_selection(-(viewport as i64));
-                }
-            }
-            KeyCode::PageDown => {
-                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
-                    p.move_selection(viewport as i64);
-                }
-            }
-            KeyCode::Home | KeyCode::Char('g') => {
-                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
-                    p.move_selection(i64::MIN / 2);
-                }
-            }
-            KeyCode::End | KeyCode::Char('G') => {
-                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
-                    p.move_selection(i64::MAX / 2);
-                }
-            }
-            KeyCode::Left | KeyCode::Char('h') => {
-                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
-                    p.move_column(-1);
-                }
-            }
-            KeyCode::Right | KeyCode::Char('l') => {
-                if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(i) {
-                    p.move_column(1);
                 }
             }
             KeyCode::Esc => app.focus_tree(),
@@ -4596,22 +4544,6 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 // list, not the editor box).
                 app.blur_active_wip_commit_textarea();
                 crate::app::dispatch::handle_scm_row_click(app, pid, flat_idx, count >= 2);
-                return;
-            }
-
-            // TestExecutions pane row click. Multi-env column layout — the
-            // row registry records env-idx + row-index per visible record
-            // (and a sentinel for column headers).
-            #[cfg(feature = "private")]
-            if let Some(&(_, pid, env_idx, row_idx)) = app
-                .rects
-                .test_executions_rows
-                .iter()
-                .find(|(r, _, _, _)| crate::app::dispatch::contains(*r, x, y))
-            {
-                app.active = Some(pid);
-                app.focus_pane();
-                crate::app::dispatch::handle_test_executions_row_click(app, pid, env_idx, row_idx);
                 return;
             }
 

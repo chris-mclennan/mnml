@@ -68,8 +68,6 @@ pub(crate) mod signature;
 pub(crate) mod snippets;
 #[cfg(feature = "aws-codebuild")]
 pub mod aws;
-#[cfg(feature = "private")]
-pub mod private;
 pub(crate) mod tools;
 pub(crate) mod tree;
 pub mod tui;

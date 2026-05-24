@@ -4,12 +4,12 @@
 //!  ⌥ 24 pipelines · polling every 30s · (r refresh · Enter open · y copy url · Esc tree)
 //!
 //!  ▸ exampleorg/example-api
-//!  ✓  #4521  main             5m02s   2m ago    Chris McLennan       PUSH
-//!  ⏵  #4522  feature/login    —       just now  Tal Doron            PUSH
-//!  ✗  #4520  develop          1m38s   15m ago   Pipelines (bot)      SCHEDULE
+//!  ✓  #4521  main             5m02s   2m ago    alice               PUSH
+//!  ⏵  #4522  feature/login    —       just now  bob                 PUSH
+//!  ✗  #4520  develop          1m38s   15m ago   Pipelines (bot)     SCHEDULE
 //!
-//!  ▸ exampleorg/private-playwright
-//!  ✓  #312   main             8m15s   1h ago    Chris McLennan       PUSH
+//!  ▸ exampleorg/example-playwright
+//!  ✓  #312   main             8m15s   1h ago    alice               PUSH
 //! ```
 //!
 //! Reads from `App.bitbucket_pipelines` (the per-tick-updated cache) at

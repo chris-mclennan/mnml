@@ -726,7 +726,7 @@ mod tests {
 
     fn project_fixture() -> crate::config::AzDevOpsProject {
         crate::config::AzDevOpsProject {
-            org: "getprivate".to_string(),
+            org: "exampleorg".to_string(),
             project: "hello-world".to_string(),
             repo: "hello-world".to_string(),
             branches: vec![],
@@ -735,7 +735,7 @@ mod tests {
 
     #[test]
     fn parses_branch_build_response() {
-        // Shape verified against getprivate/hello-world on 2026-05-16.
+        // Shape verified against exampleorg/hello-world on 2026-05-16.
         let body = r#"{
           "count": 1,
           "value": [{
@@ -749,7 +749,7 @@ mod tests {
             "finishTime": "2026-05-16T14:00:13Z",
             "requestedFor": { "displayName": "Chris McLennan" },
             "reason": "individualCI",
-            "_links": { "web": { "href": "https://dev.azure.com/getprivate/hello-world/_build/results?buildId=42" } }
+            "_links": { "web": { "href": "https://dev.azure.com/exampleorg/hello-world/_build/results?buildId=42" } }
           }]
         }"#;
         let rows = parse_builds_response(body, &project_fixture()).unwrap();
@@ -765,7 +765,7 @@ mod tests {
         assert_eq!(b.reason.as_deref(), Some("individualCI"));
         assert_eq!(b.duration_secs, Some(13));
         assert!(b.web_url.contains("buildId=42"));
-        assert_eq!(b.label, "getprivate/hello-world/hello-world");
+        assert_eq!(b.label, "exampleorg/hello-world/hello-world");
     }
 
     #[test]
@@ -847,7 +847,7 @@ mod tests {
             { "vote": -10 },
             { "vote": 0 }
           ],
-          "_links": { "web": { "href": "https://dev.azure.com/getprivate/hello-world/_git/hello-world/pullrequest/7" } }
+          "_links": { "web": { "href": "https://dev.azure.com/exampleorg/hello-world/_git/hello-world/pullrequest/7" } }
         }] }"#;
         let rows = parse_prs_response(body, &project_fixture()).unwrap();
         assert_eq!(rows.len(), 1);
@@ -890,7 +890,7 @@ mod tests {
             "project": { "name": "OtherProject" }
           }
         }] }"#;
-        let rows = parse_prs_response_mine(body, "getprivate").unwrap();
-        assert_eq!(rows[0].label, "getprivate/OtherProject/other-repo");
+        let rows = parse_prs_response_mine(body, "exampleorg").unwrap();
+        assert_eq!(rows[0].label, "exampleorg/OtherProject/other-repo");
     }
 }

@@ -1,8 +1,7 @@
 //! Bitbucket Cloud REST API integration — phase 1 (worker skeleton).
 //!
-//! Architecture mirrors `crate::private::docdb`, but with simpler plumbing
-//! because the Bitbucket surface is plain HTTPS — no async-only dep, no
-//! contained tokio runtime, just one OS thread driving `reqwest::blocking`.
+//! Architecture: one OS worker thread driving `reqwest::blocking`. Plain
+//! HTTPS — no async-only dep, no contained tokio runtime.
 //!
 //! One worker thread per [`BitbucketHandle`]. The loop iterates the
 //! configured `[[bitbucket.repos]]` in order, fetching recent pipelines

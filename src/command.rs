@@ -3096,54 +3096,19 @@ fn builtin_commands() -> Vec<Command> {
         keys: &[],
         run: |app| app.jump_from_az_build_to_pr(),
     });
-    #[cfg(feature = "private")]
+    #[cfg(feature = "aws-codebuild")]
     {
         cmds.push(Command {
-            id: "private.test_executions",
-            title: "the private integration: open DocumentDB live TestExecutions browser",
-            group: "private",
-            keys: &[],
-            run: |app| app.open_private_executions_pane(),
-        });
-        cmds.push(Command {
-            id: "private.codebuilds",
-            title: "the private integration: open AWS CodeBuild builds-list pane",
-            group: "private",
+            id: "aws.codebuilds",
+            title: "AWS: open CodeBuild builds-list pane",
+            group: "aws",
             keys: &[],
             run: |app| app.open_codebuilds_pane(),
         });
         cmds.push(Command {
-            id: "private.run_tests",
-            title: "the private integration: run playwright tests with settings.json defaults",
-            group: "private",
-            keys: &[],
-            run: |app| app.run_private_tests(),
-        });
-        cmds.push(Command {
-            id: "private.diff_executions",
-            title: "the private integration: diff latest execution vs prior (same env+branch)",
-            group: "private",
-            keys: &[],
-            run: |app| app.private_diff_executions(),
-        });
-        cmds.push(Command {
-            id: "private.run_tests_pick_env",
-            title: "the private integration: run playwright tests… (pick env)",
-            group: "private",
-            keys: &[],
-            run: |app| app.open_private_env_picker(),
-        });
-        cmds.push(Command {
-            id: "private.run_tests_pick_branch",
-            title: "the private integration: run playwright tests… (pick branch)",
-            group: "private",
-            keys: &[],
-            run: |app| app.open_private_branch_picker(),
-        });
-        cmds.push(Command {
-            id: "private.tail_codebuild_logs_classified",
-            title: "the private integration: tail CodeBuild logs (severity-colored, in-app)",
-            group: "private",
+            id: "aws.tail_codebuild_logs_classified",
+            title: "AWS: tail selected CodeBuild logs (severity-colored, in-app)",
+            group: "aws",
             keys: &[],
             run: |app| app.tail_selected_codebuild_logs_classified(),
         });

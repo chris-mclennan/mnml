@@ -2582,17 +2582,17 @@ mod git_tests {
                 "remote",
                 "add",
                 "origin",
-                "git@github.com:private-org/repo.git",
+                "git@github.com:exampleorg/repo.git",
             ])
             .current_dir(d.path())
             .status();
         let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
         // Seed two open GH PRs — one on `main`, one on `feat`.
         app.github_pull_requests.insert(
-            ("private-org".into(), "repo".into()),
+            ("exampleorg".into(), "repo".into()),
             vec![
                 crate::github::PullRequestRecord {
-                    owner: "private-org".into(),
+                    owner: "exampleorg".into(),
                     repo: "repo".into(),
                     number: 1,
                     title: "main PR".into(),
@@ -2610,7 +2610,7 @@ mod git_tests {
                     web_url: "u".into(),
                 },
                 crate::github::PullRequestRecord {
-                    owner: "private-org".into(),
+                    owner: "exampleorg".into(),
                     repo: "repo".into(),
                     number: 2,
                     title: "feat PR".into(),
@@ -2669,9 +2669,9 @@ mod git_tests {
         // Seed a GH PR; tempdir has no `remote.origin.url` so the parser will
         // produce no match and pulls should stay empty.
         app.github_pull_requests.insert(
-            ("private-org".into(), "repo".into()),
+            ("exampleorg".into(), "repo".into()),
             vec![crate::github::PullRequestRecord {
-                owner: "private-org".into(),
+                owner: "exampleorg".into(),
                 repo: "repo".into(),
                 number: 7,
                 title: "X".into(),
@@ -2686,7 +2686,7 @@ mod git_tests {
                 review_comment_count: 0,
                 created_at_ms: Some(0),
                 updated_at_ms: Some(0),
-                web_url: "https://github.com/private-org/repo/pull/7".into(),
+                web_url: "https://github.com/exampleorg/repo/pull/7".into(),
             }],
         );
         app.refresh_rail_pulls();
@@ -2709,16 +2709,16 @@ mod git_tests {
                 "remote",
                 "add",
                 "origin",
-                "git@github.com:private-org/repo.git",
+                "git@github.com:exampleorg/repo.git",
             ])
             .current_dir(d.path())
             .status();
         let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
         // GH cache (matching).
         app.github_pull_requests.insert(
-            ("private-org".into(), "repo".into()),
+            ("exampleorg".into(), "repo".into()),
             vec![crate::github::PullRequestRecord {
-                owner: "private-org".into(),
+                owner: "exampleorg".into(),
                 repo: "repo".into(),
                 number: 7,
                 title: "GH match".into(),
@@ -2733,7 +2733,7 @@ mod git_tests {
                 review_comment_count: 0,
                 created_at_ms: Some(0),
                 updated_at_ms: Some(0),
-                web_url: "https://github.com/private-org/repo/pull/7".into(),
+                web_url: "https://github.com/exampleorg/repo/pull/7".into(),
             }],
         );
         // BB cache (must NOT bleed through; we're on a GH remote).

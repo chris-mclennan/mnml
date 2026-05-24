@@ -581,10 +581,6 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     delta.unsigned_abs() as isize
                 });
             }
-            #[cfg(feature = "private")]
-            Some(Pane::TestExecutions(p)) => {
-                p.move_selection(delta as i64);
-            }
             #[cfg(feature = "aws-codebuild")]
             Some(Pane::CodeBuilds(p)) => {
                 p.move_selection(delta as i64);
@@ -854,30 +850,6 @@ pub(crate) fn apply_mixr_drag(
     }
 }
 
-/// Mouse click on a TestExecutions pane row. `env_idx` is 0/1/2 (dev/staging/prod).
-/// `row_idx == HEADER_ROW_SENTINEL` ⇒ flip the active env without selecting
-/// a record; otherwise also set the env's selected_row.
-#[cfg(feature = "private")]
-pub(crate) fn handle_test_executions_row_click(
-    app: &mut App,
-    pane_id: usize,
-    env_idx: u8,
-    row_idx: usize,
-) {
-    use crate::pane::Pane;
-    use crate::ui::test_executions_view::{HEADER_ROW_SENTINEL, idx_to_env};
-    let Some(env) = idx_to_env(env_idx) else {
-        return;
-    };
-    if let Some(Pane::TestExecutions(p)) = app.panes.get_mut(pane_id) {
-        p.selected_env = env;
-        if row_idx != HEADER_ROW_SENTINEL {
-            // Only set if the click was on a real data row.
-            p.selected_row.insert(env, row_idx);
-        }
-    }
-}
-
 /// Mouse click on a list-style pane row. Dispatches based on the pane
 /// at `pane_id`. `flat_idx` is the index into either the active view's
 /// flatten output (SCM/CI panes) or directly into the pane's items vec
@@ -945,7 +917,7 @@ pub(crate) fn handle_scm_row_click(
         }
         return;
     }
-    #[cfg(feature = "private")]
+    #[cfg(feature = "aws-codebuild")]
     if matches!(app.panes.get(pane_id), Some(Pane::CodeBuilds(_))) {
         if let Some(Pane::CodeBuilds(p)) = app.panes.get_mut(pane_id)
             && flat_idx < p.items.len()

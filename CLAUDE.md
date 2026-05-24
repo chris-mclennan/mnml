@@ -79,11 +79,32 @@ user might be mid-edit *inside mnml* on something untouched.
 - The user is happy to have Claude pick which track/feature to do next ("keep going,
   you decide the order — we'll do them all eventually") — choose the most valuable;
   don't ask which. Lean toward *bounded* items when starting a fresh session; save the
-  big tracks (the `private` feature, CDP follow-ups, Git GUI phase 4, Mixr pane) for
+  big tracks (CDP follow-ups, Git GUI phase 4, Mixr pane) for
   when there's room.
   After each landed feature: update this Status block + commit + `./run.sh restart`.
 
 ## Status
+
+**Phase 3a: the private integration stripped from public mnml (2026-05-23):** Deleted
+`src/private/`, `src/app/private.rs`, `src/ui/test_executions_view.rs`,
+and the four `examples/private_*.rs`. Extracted the AWS-generic App
+methods (`open_codebuilds_pane`, `tail_selected_codebuild_logs*`, etc.)
+into a new `src/app/aws.rs` gated on `aws-codebuild`. Removed the
+`private` Cargo feature + its `mongodb`/`tokio`/`futures-util`/`bson`
+optional deps. Stripped every `#[cfg(feature = "private")]` gate. The
+`Pane::TestExecutions` variant + the `App.docdb_handle` /
+`private_executions` / `test_executions_rows` fields are gone too.
+Hardcoded `exampleorg`/`example-api` test fixtures in `bitbucket.rs`
+renamed to `exampleorg`/`example-api` (neutral placeholder data).
+Snapshot of the deleted code is at
+`~/Projects/internal-app-snapshot-2026-05-23.tar.gz` (25 KB) for the
+future Phase 3b — rebuilding it as a private blit-host binary that
+mnml hosts via Phase 2's `:host.launch`. mnml's git history still
+contains the the private integration code; Phase 3c (later, on explicit go-ahead)
+would scrub it via `git filter-repo` before the repo goes public.
+Verified clean under default + `aws-codebuild`: 772 / 785 tests
+pass, clippy clean on both. Phase 3b (build the `internal-app`
+binary) and Phase 3c (history scrub) are separate later sessions.
 
 **blit-host integration class — `pane_host` + `Pane::BlitHost` (2026-05-23):**
 Added the third class of integration (alongside command-only plugins and
