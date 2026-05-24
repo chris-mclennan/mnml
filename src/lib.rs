@@ -64,6 +64,7 @@ pub(crate) mod picker;
 pub(crate) mod playwright;
 pub(crate) mod prompt;
 pub(crate) mod pty_pane;
+pub(crate) mod shell_prompt;
 pub(crate) mod regex_outline;
 pub(crate) mod request_pane;
 pub(crate) mod signature;

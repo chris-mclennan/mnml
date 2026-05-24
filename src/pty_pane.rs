@@ -205,6 +205,18 @@ impl PtySession {
         for (k, v) in &profile.env {
             cmd.env(k, v);
         }
+        // Themed powerline prompt. Sets `MNML_PROMPT_SCRIPT` (path to the
+        // installed `prompt.sh`) plus the palette env vars the script
+        // reads. The user opts in once via a one-line source in their
+        // `.zshrc`/`.bashrc` — see README. Skipped for non-shell pty
+        // sessions (claude / codex / etc.) since they don't render
+        // their own prompt — heuristic: the profile.exe basename ends
+        // in `sh` or matches a known shell.
+        if is_shell_profile(&profile.exe) {
+            for (k, v) in crate::shell_prompt::theme_env_vars("mnml") {
+                cmd.env(k, v);
+            }
+        }
         let child = pair
             .slave
             .spawn_command(cmd)
@@ -406,6 +418,21 @@ pub(crate) fn resolve_tab_label(
 /// Returns the *current* glyph; Claude cycles it frame to frame, so a
 /// caller that appends it to the tab label gets a live animation while
 /// keeping the session name. `None` when no such line is visible —
+/// Heuristic: is this `BinaryProfile.exe` a shell program (`bash`,
+/// `zsh`, `fish`, `sh`, …) for which the themed prompt env vars are
+/// meaningful? AI CLIs (claude, codex) and one-shot tools render their
+/// own UI and shouldn't get a shell-style PS1 injected.
+fn is_shell_profile(exe: &str) -> bool {
+    let base = std::path::Path::new(exe)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(exe);
+    matches!(
+        base,
+        "sh" | "bash" | "zsh" | "fish" | "dash" | "ksh" | "tcsh"
+    )
+}
+
 /// Claude idle, or a non-Claude program. The two-signal (glyph +
 /// ellipsis) test rejects unrelated lines that merely contain a star.
 /// Bottom-up scan: Claude's spinner sits near the input prompt.

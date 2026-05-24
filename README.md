@@ -164,6 +164,24 @@ tooltip  = "Claude Code (right dock)"
 the SCM dashboard tables are all configurable too — see
 [FEATURES.md](FEATURES.md) for the full surface.
 
+### Themed shell prompt (optional)
+
+mnml ships a small powerline-style prompt (`themes/mnml-prompt.sh`)
+that auto-themes against the active mnml palette. When mnml or tmnl
+spawn a shell they install the script to `~/.config/mnml/prompt.sh`
+and export `$MNML_PROMPT_SCRIPT` plus the palette colors. To enable
+it, add one line to your `~/.zshrc` (or `.bashrc`):
+
+```sh
+[ -n "$MNML_PROMPT_SCRIPT" ] && source "$MNML_PROMPT_SCRIPT"
+```
+
+Outside mnml/tmnl shells the env var is unset and the line is a
+no-op, so normal terminals are unaffected. The prompt shows `cwd ·
+git branch (± when dirty) · exit code (only non-zero) · clock ·
+context-chip`. Switching mnml themes auto-rethemes the next shell
+spawned. No external binary required — pure bash/zsh + ANSI.
+
 ## Building from source
 
 ```bash
