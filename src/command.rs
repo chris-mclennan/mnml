@@ -3130,5 +3130,16 @@ fn builtin_commands() -> Vec<Command> {
         keys: &[],
         run: |app| app.tmnl_open_codex_in_tab(),
     });
+    // Transfer the focused pty pane to tmnl as a new tab (SCM_RIGHTS
+    // fd handoff). Toasts when there's no focused pty or when not
+    // running under a tmnl that exposes a transfer socket.
+    #[cfg(unix)]
+    cmds.push(Command {
+        id: "tmnl.pop_pty",
+        title: "tmnl: pop focused terminal into a new tab",
+        group: "tmnl",
+        keys: &[],
+        run: |app| app.pop_pty_to_tmnl(),
+    });
     cmds
 }

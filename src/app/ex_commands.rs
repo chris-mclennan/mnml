@@ -744,6 +744,14 @@ impl App {
                 let args: Vec<String> = parts.map(|s| s.to_string()).collect();
                 self.tmnl_open_tab(command, args);
             }
+            // `:tmnl.pop-pty` — the *hard* handoff: transfer the focused
+            // pty pane's master fd to tmnl via SCM_RIGHTS so the running
+            // process becomes a sibling tab. The local pane is removed
+            // without killing the child (its new owner is tmnl).
+            #[cfg(unix)]
+            "tmnl.pop-pty" | "tmnl.pop" => {
+                self.pop_pty_to_tmnl();
+            }
             // `:Explore` / `:E` / `:Sex[plore]` / `:Vex[plore]` / `:Lex[plore]`
             // — vim's netrw file-explorer aliases. mnml routes them to the
             // file tree (`view.toggle_tree`) since that's the closest thing.

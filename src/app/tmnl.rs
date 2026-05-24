@@ -11,9 +11,9 @@
 //! than embedded in a `Pane::Pty`.
 //!
 //! The hard variant — *moving* a running pty session from mnml's
-//! pane into a new tmnl tab via `SCM_RIGHTS` fd-passing — needs new
-//! tmnl-protocol messages + a fair bit of unsafe Unix. Left as future
-//! work (task #36's "(3)").
+//! pane into a new tmnl tab via `SCM_RIGHTS` fd-passing — landed in
+//! task #49 / #50. See `pop_pty_to_tmnl` below for the sender side
+//! and tmnl's `src/transfer.rs` for the receiver.
 
 use super::*;
 
@@ -42,6 +42,76 @@ impl App {
     /// Convenience — open Codex in a new tmnl tab.
     pub fn tmnl_open_codex_in_tab(&mut self) {
         self.tmnl_open_tab("codex".to_string(), Vec::new());
+    }
+
+    /// Pop the focused pty pane out of mnml into a new tmnl tab —
+    /// the *hard* handoff. Sends `Message::OpenPaneTransfer` with the
+    /// pty master fd attached via SCM_RIGHTS to tmnl's transfer
+    /// socket (`$TMNL_TRANSFER_SOCKET`). tmnl wraps the fd in an
+    /// adopted `ShellSession` and surfaces it as a new tab; mnml
+    /// removes its pane (without killing the child — the released
+    /// flag on `PtySession` makes its `Drop` skip the kill).
+    ///
+    /// No-op + toast when:
+    ///   • The focused pane isn't a `Pane::Pty` (nothing to pop).
+    ///   • `$TMNL_TRANSFER_SOCKET` is unset (mnml isn't under a tmnl
+    ///     new enough to expose the receiver — or isn't under tmnl
+    ///     at all).
+    ///   • The pty master doesn't expose a raw fd (portable-pty's
+    ///     non-Unix backends; never hit on mnml's macOS / Linux
+    ///     targets, but defended for safety).
+    ///   • Connecting / writing to the transfer socket fails.
+    #[cfg(unix)]
+    pub fn pop_pty_to_tmnl(&mut self) {
+        use std::os::unix::net::UnixStream;
+        use tmnl_protocol::{Message, send_message_with_fd};
+
+        let Some(pane_id) = self.active else {
+            self.toast(":tmnl.pop-pty — no focused pane");
+            return;
+        };
+        let Some(crate::pane::Pane::Pty(session)) = self.panes.get(pane_id) else {
+            self.toast(":tmnl.pop-pty — focused pane isn't a terminal");
+            return;
+        };
+        let Ok(socket_path) = std::env::var("TMNL_TRANSFER_SOCKET") else {
+            self.toast(
+                ":tmnl.pop-pty — not running under tmnl \
+                 (TMNL_TRANSFER_SOCKET unset)",
+            );
+            return;
+        };
+        let Some(raw_fd) = session.raw_master_fd() else {
+            self.toast(":tmnl.pop-pty — pty has no transferable fd");
+            return;
+        };
+        // Snapshot the parts we need before we go mutable; the borrow
+        // checker doesn't let us hold `session` across `close_pane`.
+        let command = session.profile.exe.clone();
+        let args = session.profile.args.clone();
+
+        let stream = match UnixStream::connect(&socket_path) {
+            Ok(s) => s,
+            Err(e) => {
+                self.toast(format!(
+                    ":tmnl.pop-pty — connect {socket_path}: {e}"
+                ));
+                return;
+            }
+        };
+        let msg = Message::OpenPaneTransfer { command, args };
+        if let Err(e) = send_message_with_fd(&stream, &msg, Some(raw_fd)) {
+            self.toast(format!(":tmnl.pop-pty — send: {e}"));
+            return;
+        }
+        // SCM_RIGHTS duplicated the fd into tmnl's process — we can
+        // safely release ours now. Mark released *before* close so the
+        // Drop path skips `child.kill()`.
+        if let Some(crate::pane::Pane::Pty(session)) = self.panes.get_mut(pane_id) {
+            session.mark_released();
+        }
+        self.toast("tmnl: handed off to a new tab");
+        self.close_pane(pane_id);
     }
 }
 
@@ -83,5 +153,111 @@ mod tests {
         app.tmnl_open_claude_in_tab();
         assert_eq!(app.pending_open_panes[0].0, "claude");
         assert!(app.pending_open_panes[0].1.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pop_pty_no_focused_pty_is_a_no_op() {
+        // No focused pane at all → toast + no panic. The shape of the
+        // call is what we're asserting; toast contents are inspected
+        // by the full-loop tests, not here.
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        assert!(app.active.is_none());
+        // SAFETY: tests are sequential within the suite (`cargo test`
+        // serializes env-mutating calls via `set_var` only here); the
+        // env var is set so we don't fail the "missing socket" branch
+        // before reaching the focused-pane check.
+        unsafe { std::env::set_var("TMNL_TRANSFER_SOCKET", "/tmp/unused-pop-pty-test.sock") };
+        app.pop_pty_to_tmnl();
+        // No panic, no state mutation past the toast.
+        assert!(app.active.is_none());
+    }
+
+    /// End-to-end SCM_RIGHTS round-trip: spin up a real pty pane
+    /// (the child is a `cat` so the pty is alive but quiet),
+    /// listen on a temp transfer socket, fire `pop_pty_to_tmnl`,
+    /// and assert that the receiver got an `OpenPaneTransfer` *with*
+    /// an attached fd. Validates the whole sender side: connect,
+    /// send_message_with_fd with the master fd, mark released, close
+    /// the pane.
+    #[cfg(unix)]
+    #[test]
+    fn pop_pty_transfers_master_fd_via_scm_rights() {
+        use std::os::unix::io::FromRawFd;
+        use std::os::unix::net::UnixListener;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::time::Duration;
+        use tmnl_protocol::{Message, read_message_with_fd};
+
+        static N: AtomicU32 = AtomicU32::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let socket_path = std::env::temp_dir().join(format!(
+            "mnml-pop-pty-test-{}-{}.sock",
+            std::process::id(),
+            n
+        ));
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).expect("bind");
+        let (event_tx, event_rx) = std::sync::mpsc::channel::<(Message, bool)>();
+        let listener_thread = std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                if let Ok((msg, fd)) = read_message_with_fd(&stream) {
+                    let _ = event_tx.send((msg, fd.is_some()));
+                    if let Some(raw) = fd {
+                        // SAFETY: read_message_with_fd hands us a raw
+                        // fd that's freshly duplicated by the kernel —
+                        // it's unique to this process. Wrapping +
+                        // dropping closes it cleanly.
+                        let _ = unsafe { std::os::unix::io::OwnedFd::from_raw_fd(raw) };
+                    }
+                }
+            }
+        });
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // Spawn a tiny pty pane running `cat` (quiet, doesn't exit).
+        // Use an explicit BinaryProfile so `exe` is literally "cat"
+        // (the convenience `BinaryProfile::task` wraps via `$SHELL -c`,
+        // which would assert on the shell path instead).
+        let profile = crate::pty_pane::BinaryProfile {
+            label: "cat".to_string(),
+            exe: "cat".to_string(),
+            args: Vec::new(),
+            cwd: Some(app.workspace.clone()),
+            env: Vec::new(),
+            session_id: None,
+        };
+        let session = crate::pty_pane::PtySession::spawn(profile, 24, 80)
+            .expect("spawn cat pty");
+        let pane_id = app.panes.len();
+        app.panes.push(crate::pane::Pane::Pty(session));
+        app.active = Some(pane_id);
+
+        // SAFETY: tests are sequential per env-var write; this thread
+        // is the only writer.
+        unsafe { std::env::set_var("TMNL_TRANSFER_SOCKET", &socket_path) };
+        app.pop_pty_to_tmnl();
+
+        let (msg, had_fd) = event_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("receiver got the handoff");
+        listener_thread.join().expect("listener thread");
+        let _ = std::fs::remove_file(&socket_path);
+
+        match msg {
+            Message::OpenPaneTransfer { command, args } => {
+                assert_eq!(command, "cat");
+                assert!(args.is_empty());
+            }
+            other => panic!("expected OpenPaneTransfer, got {other:?}"),
+        }
+        assert!(had_fd, "SCM_RIGHTS fd was not attached");
+        // After a successful handoff the pane is removed.
+        assert!(app.panes.get(pane_id).is_none() || !matches!(
+            app.panes.get(pane_id),
+            Some(crate::pane::Pane::Pty(_))
+        ));
     }
 }

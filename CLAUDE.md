@@ -105,6 +105,30 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Pty-fd handoff: mnml sender side (`:tmnl.pop-pty`, 2026-05-24):**
+Lands #49 — the sender half of the SCM_RIGHTS pty-fd handoff
+(receiver was #50, see tmnl). `:tmnl.pop-pty` (alias `:tmnl.pop`)
+takes the focused `Pane::Pty`, opens `$TMNL_TRANSFER_SOCKET`
+(exported by tmnl), and `send_message_with_fd`s the pty master fd
+with `Message::OpenPaneTransfer { command, args }`. On success
+`session.mark_released()` is set so `PtySession::Drop` skips
+`child.kill()` (the new owner is tmnl) and *detaches* the reader
+thread (joining would block forever — the reader holds a duped
+master fd that doesn't get EOF when ours closes; no portable_pty
+API can interrupt a blocking pty read). New `released: bool`
+field on `PtySession`; new `raw_master_fd(&self) -> Option<RawFd>`
++ `mark_released(&mut self)` methods. Palette command
+`tmnl.pop_pty`. Toasts on every failure mode (no focused pane,
+not a pty, `TMNL_TRANSFER_SOCKET` unset, connect/send error).
+v1 known limitation: between the moment of handoff and mnml's own
+exit, both processes' reader threads contend for the pty stream
+(documented at the `Drop` call site). Typical flow is "pop, then
+close mnml", so the window is short. 2 new tests including an
+end-to-end socketpair round-trip that spawns a real `cat` pty,
+fires the handoff, and asserts the receiver got the
+`OpenPaneTransfer` *with* an attached fd. 786 lib tests pass,
+clippy clean.
+
 **Phase 3b v1: internal-app private blit-host binary scaffold (2026-05-23):**
 Created `~/Projects/internal-app/` (separate sibling, private repo at
 `chris-mclennan/internal-app`). Mnml hosts it via

@@ -176,6 +176,11 @@ pub struct PtySession {
     /// Total bytes the reader has processed — the event loop snapshots this to
     /// know when to redraw (an idle pty shouldn't force per-tick repaints).
     pub bytes_seen: Arc<AtomicU64>,
+    /// `true` after the master fd has been handed off to another
+    /// process (typically tmnl via SCM_RIGHTS — see
+    /// `App::pop_pty_to_tmnl`). [`Drop`] checks this so the released
+    /// child is not killed — its new owner is responsible for it.
+    released: bool,
 }
 
 impl PtySession {
@@ -261,7 +266,27 @@ impl PtySession {
             exited,
             last_size: (rows, cols),
             bytes_seen,
+            released: false,
         })
+    }
+
+    /// Raw fd of the pty master, when available. Used by the
+    /// `:tmnl.pop-pty` handoff path to attach the fd via SCM_RIGHTS
+    /// before transferring ownership to tmnl. `None` for backends
+    /// that don't expose an OS fd (portable-pty's serial / Windows
+    /// paths; not hit in practice on mnml's Unix-only targets).
+    #[cfg(unix)]
+    pub fn raw_master_fd(&self) -> Option<std::os::unix::io::RawFd> {
+        self.master.as_raw_fd()
+    }
+
+    /// Mark this session as released — its master fd has been
+    /// transferred to another process (tmnl). [`Drop`] now skips
+    /// killing the child + waiting on it; the new owner is the
+    /// reaper. The reader thread is still joined so its exit isn't
+    /// stranded.
+    pub fn mark_released(&mut self) {
+        self.released = true;
     }
 
     /// Resize the pty (and the parser grid) to `rows × cols`. No-op when
@@ -400,6 +425,33 @@ fn detect_spinner_glyph(screen: &vt100::Screen) -> Option<char> {
 
 impl Drop for PtySession {
     fn drop(&mut self) {
+        if self.released {
+            // Released sessions belong to another process now (tmnl,
+            // via the pty-fd handoff). Killing the child here would
+            // terminate the code the user is still using over in the
+            // new tab — the child's pid is shared between processes,
+            // not parent-specific.
+            //
+            // We also intentionally don't `join` the reader thread:
+            // it holds a *duped* master fd (from `try_clone_reader`),
+            // so closing our `master` doesn't make it see EOF. There
+            // is no portable_pty API to interrupt a blocking pty
+            // read, so the thread would hang forever in `read()`
+            // until the child dies in the receiving process. Letting
+            // the JoinHandle drop detaches the thread — the OS reaps
+            // it on process exit (which, for the `:tmnl.pop-pty`
+            // flow, is usually shortly after).
+            //
+            // v1 known limitation: until then, both mnml's leaked
+            // reader and tmnl's adopted reader contend for the pty
+            // master. The bytes mnml reads are dropped (its parser
+            // Arc decrefs but the reader's clone keeps it alive),
+            // so tmnl may see a thinned-out stream. Acceptable
+            // because the typical flow is "pop, then close mnml" —
+            // the leak window is short.
+            self.reader.take();
+            return;
+        }
         let _ = self.child.kill();
         if let Some(j) = self.reader.take() {
             let _ = j.join();
