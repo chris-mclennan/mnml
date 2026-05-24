@@ -208,9 +208,11 @@ pub enum HoverChip {
     StatuslineAutosave,
     StatuslineFilesize,
     StatuslineLnCol,
-    /// Bufferline AI launchers.
-    BufferlineClaude,
-    BufferlineCodex,
+    /// Bufferline launcher-icon — the `usize` indexes
+    /// `App.config.ui.launcher_icons`. Built-in defaults are
+    /// `0 = Claude`, `1 = Codex`; users can replace / append via
+    /// `[[ui.launcher_icon]]` in their config.
+    LauncherIcon(usize),
 }
 
 /// One row in the F1 click-discovery overlay. Each variant maps to a list

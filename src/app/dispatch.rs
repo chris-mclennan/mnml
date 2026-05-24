@@ -296,15 +296,13 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::StatuslineLnCol);
     }
-    if let Some(r) = app.rects.bufferline_claude_button
-        && contains(r, x, y)
+    if let Some(&(_, icon_idx)) = app
+        .rects
+        .launcher_icon_rects
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
     {
-        return Some(crate::HoverChip::BufferlineClaude);
-    }
-    if let Some(r) = app.rects.bufferline_codex_button
-        && contains(r, x, y)
-    {
-        return Some(crate::HoverChip::BufferlineCodex);
+        return Some(crate::HoverChip::LauncherIcon(icon_idx));
     }
     if let Some(&(_, action)) = app
         .rects

@@ -4255,16 +4255,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // `+` new tab, per-tabpage chip / close, theme toggle,
             // window close. Order matters (the `⊗` rect sits adjacent
             // to its chip; check close before chip).
-            if let Some(r) = app.rects.bufferline_claude_button
-                && crate::app::dispatch::contains(r, x, y)
+            // Launcher-icon strip — click hands off to the configured
+            // command (registered command id, or ex-cmdline string).
+            if let Some(&(_, icon_idx)) = app
+                .rects
+                .launcher_icon_rects
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                && let Some(icon) = app.config.ui.launcher_icons.get(icon_idx)
             {
-                app.open_claude_code();
-                return;
-            }
-            if let Some(r) = app.rects.bufferline_codex_button
-                && crate::app::dispatch::contains(r, x, y)
-            {
-                app.open_codex();
+                let cmd = icon.command.clone();
+                if let Some(rest) = cmd.strip_prefix(':') {
+                    app.run_ex_command(rest);
+                } else {
+                    crate::command::run(&cmd, app);
+                }
                 return;
             }
             if let Some(r) = app.rects.bufferline_new_tab_button

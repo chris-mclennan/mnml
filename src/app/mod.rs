@@ -1607,11 +1607,12 @@ pub struct PaneRects {
     pub bufferline_tab_page_close: Vec<(Rect, usize)>,
     pub bufferline_theme_toggle: Option<Rect>,
     pub bufferline_window_close: Option<Rect>,
-    /// Bufferline Claude-launch button (`󰭹` or `claude` text). Click →
-    /// `ai.claude_code` (toggles focus if already open).
-    pub bufferline_claude_button: Option<Rect>,
-    /// Bufferline Codex-launch button. Click → `ai.codex`.
-    pub bufferline_codex_button: Option<Rect>,
+    /// Bufferline launcher-icon strip — one entry per icon rendered, in
+    /// the order configured. `(rect, icon_idx)` where `icon_idx` indexes
+    /// `App.config.ui.launcher_icons`. Replaces the older fixed
+    /// `bufferline_claude_button` / `bufferline_codex_button` fields —
+    /// Claude + Codex are now built-in defaults in that config Vec.
+    pub launcher_icon_rects: Vec<(Rect, usize)>,
     /// Statusline git-branch chip — clickable shortcut to `git.graph`.
     /// Registered by `ui::statusline::draw` per render; absent when the
     /// branch isn't shown (no repo / non-git workspace).

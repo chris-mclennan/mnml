@@ -562,6 +562,58 @@ pub struct UiConfig {
     /// doesn't cover the code below). Any other value falls back to
     /// `"center"`.
     pub picker_position: String,
+    /// Configurable launcher-icon strip on the right side of the
+    /// bufferline. Each entry renders as a 4-cell colored chip that
+    /// runs `command` on click. Default has Claude Code + Codex; users
+    /// can append entries via `[[ui.launcher_icon]]` in their config to
+    /// add `host.launch <binary>` shortcuts for blit-host integrations
+    /// (database viewers, ticket viewers, etc.) or any registered
+    /// command. See [`LauncherIcon`].
+    pub launcher_icons: Vec<LauncherIcon>,
+}
+
+/// One entry in the bufferline's right-side launcher-icon strip.
+///
+/// ```toml
+/// # An icon for the (private) `internal-app` blit-host binary:
+/// [[ui.launcher_icon]]
+/// id       = "private"
+/// glyph    = "\u{F0668}"        # nf-md-test-tube; nerd-fonts
+/// fallback = "TT"               # when --ascii / [ui] ascii_icons = true
+/// command  = ":host.launch private"  # leading `:` ⇒ ex-cmdline string
+/// color    = "teal"             # theme slot name for the chip bg
+/// tooltip  = "the private integration TestExecutions browser"
+///
+/// # Or fire any registered command directly (no leading `:`):
+/// [[ui.launcher_icon]]
+/// id       = "mixr"
+/// glyph    = "\u{F1011}"        # nf-md-music
+/// fallback = "♪"
+/// command  = "mixr.show"
+/// color    = "purple"
+/// ```
+#[derive(Debug, Clone)]
+pub struct LauncherIcon {
+    /// Stable identifier — used for the hover-tooltip rect key + as a
+    /// debug hint. Should be unique within the strip.
+    pub id: String,
+    /// Nerd-Font glyph (single char, e.g. `"\u{F0E2D}"`). The 4-cell
+    /// chip paints the glyph centred on a colored background.
+    pub glyph: String,
+    /// ASCII fallback when `[ui] ascii_icons = true` or `--ascii` is on.
+    /// Typically 1-2 chars (e.g. `"CC"`).
+    pub fallback: String,
+    /// What to fire on click. Either a registered command id
+    /// (`"ai.claude_code"`, `"mixr.show"`) or a colon-prefixed cmdline
+    /// string that goes through `run_ex_command` (`":host.launch /bin"`).
+    pub command: String,
+    /// Theme slot name for the chip background. Recognized: `"orange"`,
+    /// `"cyan"`, `"blue"`, `"green"`, `"yellow"`, `"purple"`, `"red"`,
+    /// `"teal"`, `"bg2"`. Anything else falls back to `bg2` (dark chip).
+    pub color: String,
+    /// Optional hover-tooltip text. When `None`, the tooltip shows
+    /// the `command` string verbatim as a debug hint.
+    pub tooltip: Option<String>,
 }
 
 impl Default for Config {
@@ -613,6 +665,24 @@ impl Default for Config {
                 git_graph_author_col: None,
                 git_graph_detail_col: None,
                 picker_position: "center".to_string(),
+                launcher_icons: vec![
+                    LauncherIcon {
+                        id: "claude_code".to_string(),
+                        glyph: "\u{F0E2D}".to_string(),
+                        fallback: "CC".to_string(),
+                        command: "ai.claude_code".to_string(),
+                        color: "orange".to_string(),
+                        tooltip: Some("Claude Code (right dock)".to_string()),
+                    },
+                    LauncherIcon {
+                        id: "codex".to_string(),
+                        glyph: "\u{F0EE7}".to_string(),
+                        fallback: "CX".to_string(),
+                        command: "ai.codex".to_string(),
+                        color: "cyan".to_string(),
+                        tooltip: Some("Codex (right dock)".to_string()),
+                    },
+                ],
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -838,6 +908,22 @@ struct RawUi {
     git_graph_author_col: Option<usize>,
     git_graph_detail_col: Option<usize>,
     picker_position: Option<String>,
+    /// Array of `[[ui.launcher_icon]]` entries. When this key is present
+    /// (even as `[]`), it **replaces** the built-in Claude+Codex defaults.
+    /// Users who just want to *append* can copy the defaults from
+    /// `LauncherIcon` docs and add their own entries.
+    #[serde(default, rename = "launcher_icon")]
+    launcher_icons: Option<Vec<RawLauncherIcon>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawLauncherIcon {
+    id: Option<String>,
+    glyph: Option<String>,
+    fallback: Option<String>,
+    command: Option<String>,
+    color: Option<String>,
+    tooltip: Option<String>,
 }
 
 impl Config {
@@ -1001,6 +1087,35 @@ impl Config {
         }
         if let Some(v) = raw.ui.picker_position {
             self.ui.picker_position = v;
+        }
+        // `[[ui.launcher_icon]]` replaces the built-in defaults entirely
+        // when set — that lets users start from scratch. Empty array is
+        // valid and means "no launcher icons at all."
+        if let Some(raws) = raw.ui.launcher_icons {
+            self.ui.launcher_icons = raws
+                .into_iter()
+                .filter_map(|r| {
+                    let glyph = r.glyph?;
+                    let command = r.command?;
+                    // Generate a stable id from the command if not given.
+                    let id = r.id.unwrap_or_else(|| {
+                        command
+                            .trim_start_matches(':')
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("launcher")
+                            .to_string()
+                    });
+                    Some(LauncherIcon {
+                        id,
+                        glyph,
+                        fallback: r.fallback.unwrap_or_else(|| "*".to_string()),
+                        command,
+                        color: r.color.unwrap_or_else(|| "bg2".to_string()),
+                        tooltip: r.tooltip,
+                    })
+                })
+                .collect();
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;
@@ -1388,5 +1503,85 @@ slug      = "example-playwright"
         cfg.apply_file_pub(&home);
         cfg.apply_file_pub(&ws);
         assert_eq!(cfg.bitbucket.repos.len(), 2);
+    }
+
+    #[test]
+    fn default_launcher_icons_has_claude_and_codex() {
+        let cfg = Config::default();
+        assert_eq!(cfg.ui.launcher_icons.len(), 2);
+        assert_eq!(cfg.ui.launcher_icons[0].id, "claude_code");
+        assert_eq!(cfg.ui.launcher_icons[0].command, "ai.claude_code");
+        assert_eq!(cfg.ui.launcher_icons[0].color, "orange");
+        assert_eq!(cfg.ui.launcher_icons[1].id, "codex");
+        assert_eq!(cfg.ui.launcher_icons[1].command, "ai.codex");
+        assert_eq!(cfg.ui.launcher_icons[1].color, "cyan");
+    }
+
+    #[test]
+    fn launcher_icons_config_replaces_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&cfg_path).unwrap();
+        writeln!(
+            f,
+            r#"
+[[ui.launcher_icon]]
+glyph    = "T"
+fallback = "TT"
+command  = ":host.launch private"
+color    = "teal"
+tooltip  = "the private integration browser"
+
+[[ui.launcher_icon]]
+id       = "db"
+glyph    = "D"
+fallback = "DB"
+command  = "host.launch psql-viewer"
+color    = "purple"
+"#
+        )
+        .unwrap();
+
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&cfg_path);
+        // Setting `[[ui.launcher_icon]]` replaces, not appends — built-in
+        // Claude+Codex defaults are gone.
+        assert_eq!(cfg.ui.launcher_icons.len(), 2);
+        // First entry — id auto-derived from the command's first token
+        // when omitted (`host.launch` here, leading `:` stripped).
+        assert_eq!(cfg.ui.launcher_icons[0].id, "host.launch");
+        assert_eq!(cfg.ui.launcher_icons[0].command, ":host.launch private");
+        assert_eq!(cfg.ui.launcher_icons[0].color, "teal");
+        assert_eq!(
+            cfg.ui.launcher_icons[0].tooltip.as_deref(),
+            Some("the private integration browser")
+        );
+        // Second entry — explicit id, no leading `:` on command.
+        assert_eq!(cfg.ui.launcher_icons[1].id, "db");
+        assert_eq!(cfg.ui.launcher_icons[1].command, "host.launch psql-viewer");
+        assert!(cfg.ui.launcher_icons[1].tooltip.is_none());
+    }
+
+    #[test]
+    fn launcher_icons_empty_array_clears_defaults() {
+        // `launcher_icon = []` would be ambiguous in TOML; the proper
+        // form is no `[[ui.launcher_icon]]` blocks at all + the key
+        // set explicitly to an empty array. Verify we accept it.
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&cfg_path).unwrap();
+        // `launcher_icon = []` under `[ui]`.
+        writeln!(
+            f,
+            r#"
+[ui]
+launcher_icon = []
+"#
+        )
+        .unwrap();
+
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&cfg_path);
+        assert!(cfg.ui.launcher_icons.is_empty());
     }
 }

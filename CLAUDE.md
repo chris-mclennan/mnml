@@ -85,6 +85,23 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Config-driven launcher-icon strip (2026-05-23):** Bufferline's right-cluster
+launcher chips are now config-driven via `[[ui.launcher_icon]]`. Each entry
+has `id` / `glyph` / `fallback` / `command` / `color` / `tooltip`. Claude
+Code + Codex are built-in defaults (no behavior change for existing users).
+The `command` field accepts either a registered command id (e.g.
+`"ai.claude_code"`, `"mixr.show"`) or a colon-prefixed cmdline string
+(`":host.launch private"`) — leading `:` ⇒ dispatched via `run_ex_command`.
+New `LauncherIcon` struct in config.rs + `App.rects.launcher_icon_rects:
+Vec<(Rect, usize)>` (replaces the named `bufferline_claude_button` /
+`bufferline_codex_button` fields). Hover-tooltip works via
+`HoverChip::LauncherIcon(usize)` indexing into the config Vec. Bufferline
+width math reserves `4 * n_icons` cells dynamically. Drop in
+`[[ui.launcher_icon]]` entries for blit-host integrations
+(`:host.launch private`, `:host.launch psql-viewer`, etc.) without touching
+mnml's code. 773 default tests pass (+3 new config tests), clippy clean
+under default + aws-codebuild.
+
 **Phase 3a: the private integration stripped from public mnml (2026-05-23):** Deleted
 `src/private/`, `src/app/private.rs`, `src/ui/test_executions_view.rs`,
 and the four `examples/private_*.rs`. Extracted the AWS-generic App
