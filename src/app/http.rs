@@ -2,7 +2,7 @@
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
 //!. Pure non-destructive move: no API
-//! change. Owns the `rqst.*` palette commands, the background HTTP
+//! change. Owns the `http.*` palette commands, the background HTTP
 //! worker thread, request-pane multi-block writeback, and the
 //! `splice_http_block` free fn.
 
@@ -65,11 +65,11 @@ impl App {
     pub fn open_request_url_context_menu(&mut self, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let items = vec![
-            MenuItem::new("Send", MenuAction::Command("rqst.send")),
-            MenuItem::new("Copy as curl", MenuAction::Command("rqst.copy_curl")),
+            MenuItem::new("Send", MenuAction::Command("http.send")),
+            MenuItem::new("Copy as curl", MenuAction::Command("http.copy_curl")),
             MenuItem::new(
                 "Switch to Response",
-                MenuAction::Command("rqst.toggle_view"),
+                MenuAction::Command("http.toggle_view"),
             ),
         ];
         self.context_menu = Some(ContextMenu::new(Some("Request".into()), anchor, items));
@@ -115,7 +115,7 @@ impl App {
         self.focus = Focus::Pane;
     }
 
-    /// `rqst.send` — parse the active `.http`/`.rest`/`.curl` editor (the block
+    /// `http.send` — parse the active `.http`/`.rest`/`.curl` editor (the block
     /// under the cursor for multi-block `.http` files), expand `{{vars}}` against
     /// `.mnml/env/$MNML_ENV`, open a `Pane::Request` split, and fire the request
     /// on a background thread. `tick` delivers the response.
@@ -125,7 +125,7 @@ impl App {
             self.toast("no active editor");
             return;
         };
-        // From an existing request pane, `rqst.send` just re-fires it.
+        // From an existing request pane, `http.send` just re-fires it.
         if matches!(self.panes.get(cur), Some(Pane::Request(_))) {
             self.refire_request(cur);
             return;
@@ -143,7 +143,7 @@ impl App {
             }
         };
         if !matches!(ext.as_str(), "http" | "rest" | "curl") {
-            self.toast("rqst.send needs a .http / .rest / .curl file");
+            self.toast("http.send needs a .http / .rest / .curl file");
             return;
         }
 
@@ -210,7 +210,7 @@ impl App {
         self.focus = Focus::Pane;
     }
 
-    /// Re-send the request a `Pane::Request` already holds (its `r` key / re-`rqst.send`).
+    /// Re-send the request a `Pane::Request` already holds (its `r` key / re-`http.send`).
     fn refire_request(&mut self, pane_id: PaneId) {
         // Apply edits from the Headers field (the editable buffer is the
         // source of truth in Edit mode — parse it back before sending).
@@ -274,7 +274,7 @@ impl App {
         job_id
     }
 
-    /// `rqst.copy_curl` — copy the active request (in an editor: parse the buffer;
+    /// `http.copy_curl` — copy the active request (in an editor: parse the buffer;
     /// in a request pane: the request it holds) to the clipboard as a curl command.
     pub fn copy_active_curl(&mut self) {
         let curl = match self.active.and_then(|i| self.panes.get(i)) {

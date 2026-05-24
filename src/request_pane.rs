@@ -1,5 +1,5 @@
 //! `Pane::Request` — a request fired from a `.http` / `.curl` / `.rest` editor
-//! (the `rqst.send` command), with its response below: status line, headers,
+//! (the `http.send` command), with its response below: status line, headers,
 //! pretty-printed body, and `@assert` / `@capture` results. The send runs on a
 //! background thread; [`crate::app::App::tick`] polls the result channel and
 //! flips the pane from [`RunState::Sending`] to `Done` / `Failed`.
@@ -116,7 +116,7 @@ pub fn headers_to_text(headers: &[(String, String)]) -> String {
 /// Parse the editable headers buffer back into `Vec<(name, value)>`. Lines
 /// without a `:` are dropped; whitespace around the name and value is
 /// trimmed. Blank lines are skipped. Header *names* are lower-cased? No —
-/// preserved as typed, like rqst's other parsers.
+/// preserved as typed, like the other parsers in `crate::http`.
 pub fn parse_headers_text(text: &str) -> Vec<(String, String)> {
     text.lines()
         .filter_map(|l| {
@@ -400,7 +400,7 @@ impl RequestPane {
         format!("{} {}", self.request.method, self.request.url)
     }
 
-    /// Render this request as a `curl` command line (for `rqst.copy_curl`).
+    /// Render this request as a `curl` command line (for `http.copy_curl`).
     pub fn as_curl(&self) -> String {
         let mut out = format!("curl '{}'", self.request.url);
         if self.request.method != "GET"

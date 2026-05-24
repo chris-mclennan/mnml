@@ -2553,7 +2553,7 @@ pub struct App {
     /// `textDocument/completion` reply (auto-triggered as you type, or via
     /// `lsp.completion`); re-filtered locally as you keep typing.
     pub completion: Option<crate::completion::CompletionPopup>,
-    /// Channel for background HTTP sends (lazily created on the first `rqst.send`):
+    /// Channel for background HTTP sends (lazily created on the first `http.send`):
     /// worker threads send `(job_id, result)`; [`Self::tick`] drains it and updates
     /// the matching `Pane::Request`.
     http_chan: Option<(

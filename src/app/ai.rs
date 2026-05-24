@@ -1351,7 +1351,7 @@ impl App {
         self.toast("applied — review it; undo to revert");
     }
 
-    /// `rqst.ai_debug` (`.` in a request pane) — hand the request + its response
+    /// `http.ai_debug` (`.` in a request pane) — hand the request + its response
     /// (or transport error) to `claude -p` and ask why it's failing / how to fix.
     pub fn ai_debug_request(&mut self) {
         use crate::request_pane::RunState;
@@ -1388,7 +1388,7 @@ impl App {
                 )
             }
             _ => {
-                self.toast("open a request pane first (rqst.send)");
+                self.toast("open a request pane first (http.send)");
                 return;
             }
         };

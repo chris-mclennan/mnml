@@ -118,9 +118,9 @@ pub fn root() -> &'static Leader {
                     group(
                         "+http",
                         vec![
-                            ('s', cmd("rqst.send", "send request")),
-                            ('y', cmd("rqst.copy_curl", "copy as curl")),
-                            ('d', cmd("rqst.ai_debug", "ask Claude (debug)")),
+                            ('s', cmd("http.send", "send request")),
+                            ('y', cmd("http.copy_curl", "copy as curl")),
+                            ('d', cmd("http.ai_debug", "ask Claude (debug)")),
                         ],
                     ),
                 ),

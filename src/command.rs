@@ -2331,7 +2331,7 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.snippet_prev_placeholder(),
         },
         Command {
-            id: "rqst.send",
+            id: "http.send",
             title: "HTTP: send request (.http/.curl) — or re-fire a request pane",
             group: "http",
             // No global default key (`Ctrl+R` is vim's redo). Use `<leader>h s` or
@@ -2340,14 +2340,14 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.send_request_from_active(),
         },
         Command {
-            id: "rqst.copy_curl",
+            id: "http.copy_curl",
             title: "HTTP: copy the request as a curl command",
             group: "http",
             keys: &[],
             run: |app| app.copy_active_curl(),
         },
         Command {
-            id: "rqst.toggle_view",
+            id: "http.toggle_view",
             title: "HTTP: toggle Request pane between Edit ⇄ Response",
             group: "http",
             keys: &[],
@@ -2365,14 +2365,14 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
-            id: "rqst.copy_response_body",
+            id: "http.copy_response_body",
             title: "HTTP: copy the response body",
             group: "http",
             keys: &[],
             run: |app| app.copy_active_response_body(),
         },
         Command {
-            id: "rqst.ai_debug",
+            id: "http.ai_debug",
             title: "HTTP: ask Claude why this request is failing",
             group: "http",
             keys: &[],

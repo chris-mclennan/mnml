@@ -19,7 +19,7 @@ key down
 # Fire the request — opens a Request pane. The send itself will fail (no
 # network) but `send_request_from_active` runs synchronously up to the spawn,
 # capturing `source_block_name = Some("two")` on the new pane.
-command rqst.send
+command http.send
 
 # Tab into Edit mode so we can mutate the URL.
 key tab
