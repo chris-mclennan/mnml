@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # mnml wrapper — build (in the repo) + run (in *your* cwd) with a restart-aware
 # loop, plus subcommands for driving the running mnml from another shell.
+# Family convention: subcommands `build`/`release`/`test`/`check`/`watch`/`help`
+# are common across mnml + tmnl + mixr-rs + internal-app. Per-app modes follow.
 #
 # Usage:
 #   ./run.sh                      Open the directory you ran it from. Builds with
@@ -10,12 +12,26 @@
 #                                 command, or `./run.sh restart`).
 #   ./run.sh WORKSPACE [flags…]   Open WORKSPACE instead. Extra flags pass through
 #                                 to mnml (e.g. --input vim, --ascii).
+#
+# Common dev subcommands (family-wide):
+#   ./run.sh build [args]         cargo build [args]
+#   ./run.sh release [args]       cargo build --release [args]
+#   ./run.sh test [args]          cargo test [args]
+#   ./run.sh check                cargo clippy --all-targets
+#   ./run.sh watch                cargo watch -x build  (needs cargo-watch)
+#   ./run.sh help                 show this
+#
+# mnml-specific modes:
 #   ./run.sh restart              Tell the running mnml to rebuild + relaunch
 #                                 (drops {"cmd":"restart"} in its IPC mailbox).
 #   ./run.sh stop                 Send {"cmd":"quit"} to the running mnml.
 #   ./run.sh status               Print marker state (workspace, IPC dir).
-#   ./run.sh headless [WORKSPACE]  Same restart loop, but --headless (virtual
+#   ./run.sh headless [WORKSPACE] Same restart loop, but --headless (virtual
 #                                 screen + file-IPC; nothing on the terminal).
+#   ./run.sh blit SOCKET          Run mnml as a tmnl native client (--blit).
+#                                 Renders into the parent tmnl, not the terminal.
+#   ./run.sh under-tmnl [WS]      Launch tmnl with mnml as a native tab (calls
+#                                 `tmnl --mnml`). tmnl must be on $PATH.
 #
 # Env:
 #   MNML_RELEASE=1   Build/run target/release/mnml (the release profile has LTO
@@ -52,6 +68,19 @@ send_cmd() {
 
 HEADLESS=0
 case "${1:-start}" in
+  # ── Family-wide dev subcommands ─────────────────────────────────
+  build)   shift; exec cargo build "$@" ;;
+  release) shift; exec cargo build --release "$@" ;;
+  test)    shift; exec cargo test "$@" ;;
+  check)   exec cargo clippy --all-targets ;;
+  watch)
+    if ! command -v cargo-watch >/dev/null 2>&1; then
+      echo "[run.sh] cargo-watch not installed — \`cargo install cargo-watch\`" >&2
+      exit 1
+    fi
+    exec cargo watch -x build
+    ;;
+  # ── mnml-specific IPC subcommands ───────────────────────────────
   restart) send_cmd '{"cmd":"restart"}'; exit $? ;;
   stop)    send_cmd '{"cmd":"quit"}'; exit $? ;;
   status)
@@ -65,7 +94,35 @@ case "${1:-start}" in
       echo "no marker — no mnml tracked"
     fi
     exit 0 ;;
-  -h|--help) grep -E '^# ' "$0" | sed 's/^# \?//'; exit 0 ;;
+  # ── tmnl-integration shortcuts ──────────────────────────────────
+  blit)
+    shift
+    socket="${1:-}"
+    if [ -z "$socket" ]; then
+      echo "[run.sh] blit needs a socket path: ./run.sh blit <socket>" >&2
+      exit 2
+    fi
+    # Build first (debug profile — release is opt-in via MNML_RELEASE=1).
+    if [ "${MNML_RELEASE:-0}" = "1" ]; then
+      cargo build --release --quiet && exec "$REPO/target/release/mnml" --blit "$socket"
+    else
+      cargo build --quiet && exec "$REPO/target/debug/mnml" --blit "$socket"
+    fi
+    ;;
+  under-tmnl)
+    shift
+    if ! command -v tmnl >/dev/null 2>&1; then
+      echo "[run.sh] tmnl not found on PATH — build + install ../tmnl first" >&2
+      exit 1
+    fi
+    # tmnl --mnml spawns its own mnml as a native client. Pass through
+    # the remaining args (workspace, --input, etc.) — tmnl forwards them
+    # to mnml via its launcher template.
+    exec tmnl --mnml "$@"
+    ;;
+  # ── Misc ────────────────────────────────────────────────────────
+  -h|--help|help) grep -E '^# ' "$0" | sed 's/^# \?//'; exit 0 ;;
+  # ── Implicit default ────────────────────────────────────────────
   headless) HEADLESS=1; shift ;;
   start) [ "$#" -gt 0 ] && shift ;;   # the implicit default when run with no args
 esac
