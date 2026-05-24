@@ -156,10 +156,10 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.settings",
-            title: "Settings overlay (click to toggle flags)",
+            title: "Settings overlay (keyboard-driven schema editor)",
             group: "view",
             keys: &[],
-            run: |app| app.toggle_settings(),
+            run: |app| app.open_settings_overlay(),
         },
         Command {
             id: "view.toggle_picker_position",

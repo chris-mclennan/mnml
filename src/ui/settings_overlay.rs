@@ -1,8 +1,12 @@
-//! Settings overlay — a clickable list of the most-edited `[ui]` and
-//! `[editor]` flags. Each row is a checkbox that flips the flag via
-//! the existing `:set <name>!` ex command path so persistence /
-//! validation lives in one place. Sibling to the About / Welcome /
-//! Discovery overlays.
+//! Settings overlay renderer. Paints a centered bordered overlay
+//! showing every `SettingItem` from `app::settings::build_settings`
+//! — section headers as `── <name> ──`, rows as
+//! `▸ <label>:  [active] / other  *`. See the "Family settings UI
+//! convention" in CLAUDE.md.
+//!
+//! Sizing: overlay takes ~60% of the screen width (clamped 60..=120)
+//! and ~70% of the height (clamped 20..=60). Scrolls when the row
+//! list exceeds the visible area.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -11,151 +15,169 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::app::App;
+use crate::app::settings::{RESET_ALL_KEY, SettingItem, build_settings};
 use crate::ui::theme;
 
-/// `(flag_name, label, accessor)` — the accessor returns the current
-/// boolean state given the App. Adding a row here is the cheap path to
-/// a new toggle (any flag with a `:set <name>!` ex command works).
-type SettingRow = (&'static str, &'static str, fn(&App) -> bool);
-
-fn settings_rows() -> Vec<SettingRow> {
-    vec![
-        ("wrap", "Word wrap", |a| a.config.ui.wrap),
-        ("scrollbar", "Editor scrollbar", |a| a.config.ui.scrollbar),
-        ("rendermarkdown", "Inline-render markdown", |a| {
-            a.config.ui.render_markdown
-        }),
-        ("stickycontext", "Sticky scope context", |a| {
-            a.config.ui.sticky_context
-        }),
-        ("relativenumber", "Relative line numbers", |a| {
-            a.config.ui.relative_line_numbers
-        }),
-        ("number", "Show line numbers", |a| a.config.ui.line_numbers),
-        ("cursorline", "Highlight cursor line", |a| {
-            a.config.ui.cursor_line
-        }),
-        ("hlword", "Highlight word under cursor", |a| {
-            a.config.ui.highlight_word_under_cursor
-        }),
-        ("trailing", "Highlight trailing whitespace", |a| {
-            a.config.ui.highlight_trailing_ws
-        }),
-        ("rainbow", "Rainbow brackets", |a| {
-            a.config.ui.bracket_rainbow
-        }),
-        ("syntax", "Tree-sitter syntax", |a| a.config.ui.syntax),
-        ("todohl", "Highlight TODO/FIXME/HACK", |a| {
-            a.config.ui.highlight_todo_keywords
-        }),
-        ("clock", "Statusline clock", |a| a.config.ui.clock),
-        ("bufferline", "Show bufferline tab strip", |a| {
-            a.bufferline_visible
-        }),
-        ("autoindent", "Auto-indent on Enter", |a| {
-            a.config.editor.auto_indent
-        }),
-        ("trim", "Trim trailing whitespace on save", |a| {
-            a.config.editor.trim_trailing_ws_on_save
-        }),
-        ("eol", "Ensure trailing newline on save", |a| {
-            a.config.editor.ensure_trailing_newline
-        }),
-    ]
-}
-
-pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
-    if !app.show_settings {
-        app.rects.settings_rows.clear();
-        return;
-    }
-    let t = theme::cur();
-    let rows = settings_rows();
-    let title = " Settings — click row to toggle · Esc closes ";
-    let key_w = rows
-        .iter()
-        .map(|(_, label, _)| label.chars().count())
-        .max()
-        .unwrap_or(20);
-    let inner_w = (4 + key_w + 12).max(title.chars().count() + 2); // [x] label  + state
-    let w = (inner_w as u16 + 4).min(screen.width);
-    let h = (rows.len() as u16 + 2 + 2).min(screen.height);
-    let x = screen
-        .x
-        .saturating_add((screen.width.saturating_sub(w)) / 2);
-    let y = screen
-        .y
-        .saturating_add((screen.height.saturating_sub(h)) / 6);
-    let area = Rect {
-        x,
-        y,
+/// Compute the overlay rect — centered, ~60% width × ~70% height,
+/// clamped to comfortable terminal sizes.
+fn overlay_rect(parent: Rect) -> Rect {
+    let w = ((parent.width as f32) * 0.6) as u16;
+    let w = w.clamp(60, 120).min(parent.width.saturating_sub(4));
+    let h = ((parent.height as f32) * 0.7) as u16;
+    let h = h.clamp(20, 60).min(parent.height.saturating_sub(4));
+    Rect {
+        x: parent.x + (parent.width.saturating_sub(w)) / 2,
+        y: parent.y + (parent.height.saturating_sub(h)) / 2,
         width: w,
         height: h,
-    };
+    }
+}
+
+/// Paint the settings overlay. No-op when the overlay is closed.
+pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
+    if app.settings_overlay.is_none() {
+        return;
+    }
+    let area = overlay_rect(parent);
+    let t = theme::cur();
+
+    // Solid background — Clear wipes whatever the editor painted underneath.
     frame.render_widget(Clear, area);
 
-    // Register per-row click rects.
-    app.rects.settings_rows.clear();
-    let inner_x = area.x + 1;
-    let inner_w_cells = area.width.saturating_sub(2);
-    for (i, (flag, _, _)) in rows.iter().enumerate() {
-        let row_y = area.y + 1 + i as u16;
-        if row_y >= area.y + area.height.saturating_sub(2) {
-            break;
-        }
-        app.rects.settings_rows.push((
-            Rect {
-                x: inner_x,
-                y: row_y,
-                width: inner_w_cells,
-                height: 1,
-            },
-            *flag,
-        ));
-    }
-
+    // Outer block — title "Settings", blue bg / dark fg accent chip.
     let block = Block::default()
         .borders(Borders::ALL)
         .title(Span::styled(
-            title,
+            " Settings ",
             Style::default()
-                .fg(t.bg_darker)
-                .bg(t.purple)
+                .fg(t.bg_dark)
+                .bg(t.blue)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().fg(t.fg).bg(t.bg2));
-    let mut lines: Vec<Line<'static>> = Vec::with_capacity(rows.len() + 1);
-    for (_flag, label, accessor) in rows.iter() {
-        let on = accessor(app);
-        let (chip, chip_fg) = if on {
-            ("[x]", t.green)
-        } else {
-            ("[ ]", t.comment)
-        };
-        let label_style = if on {
-            Style::default().fg(t.fg).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(t.comment)
-        };
-        lines.push(Line::from(vec![
-            Span::styled(" ", Style::default().bg(t.bg2)),
-            Span::styled(
-                chip,
-                Style::default()
-                    .fg(chip_fg)
-                    .bg(t.bg2)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("  ", Style::default().bg(t.bg2)),
-            Span::styled(label.to_string(), label_style),
-        ]));
+        .style(Style::default().fg(t.fg).bg(t.bg_dark));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Build rows + paint.
+    let items = build_settings(&app.config);
+    let selected = app
+        .settings_overlay
+        .as_ref()
+        .map(|s| s.selected_row)
+        .unwrap_or(0);
+
+    // Find the `items`-level index of the focused row (skipping section
+    // headers, which selected_row doesn't count).
+    let mut row_counter = 0usize;
+    let mut focused_item_idx: Option<usize> = None;
+    for (i, item) in items.iter().enumerate() {
+        if let SettingItem::Row(_) = item {
+            if row_counter == selected {
+                focused_item_idx = Some(i);
+                break;
+            }
+            row_counter += 1;
+        }
     }
-    lines.push(Line::from(Span::styled(
-        " runtime only — :set <flag> persists / writes config.toml ".to_string(),
-        Style::default()
-            .fg(t.comment)
-            .bg(t.bg2)
-            .add_modifier(Modifier::ITALIC),
-    )));
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+
+    // Build rendered lines.
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        match item {
+            SettingItem::Section(name) => {
+                lines.push(Line::from(Span::styled(
+                    format!("── {name} ──"),
+                    Style::default()
+                        .fg(t.comment)
+                        .add_modifier(Modifier::BOLD | Modifier::DIM),
+                )));
+            }
+            SettingItem::Row(row) => {
+                let is_focused = Some(i) == focused_item_idx;
+                let marker = if is_focused { "▸ " } else { "  " };
+
+                let mut spans = vec![
+                    Span::styled(
+                        marker,
+                        Style::default().fg(if is_focused { t.blue } else { t.bg2 }),
+                    ),
+                    Span::styled(
+                        format!("{:30}  ", row.label),
+                        Style::default().fg(if is_focused { t.fg } else { t.comment }),
+                    ),
+                ];
+
+                if row.key == RESET_ALL_KEY {
+                    // Sentinel row — paint a red-tinted "Enter to reset" hint.
+                    spans.push(Span::styled(
+                        "(Enter to reset)",
+                        Style::default().fg(t.red).add_modifier(if is_focused {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::DIM
+                        }),
+                    ));
+                } else {
+                    for (j, opt) in row.options.iter().enumerate() {
+                        let is_current = j == row.current_idx;
+                        if j > 0 {
+                            spans.push(Span::styled(" / ", Style::default().fg(t.bg2)));
+                        }
+                        if is_current {
+                            spans.push(Span::styled(
+                                format!("[{opt}]"),
+                                Style::default()
+                                    .fg(if is_focused { t.cyan } else { t.fg })
+                                    .add_modifier(Modifier::BOLD),
+                            ));
+                        } else {
+                            spans.push(Span::styled(opt.clone(), Style::default().fg(t.bg2)));
+                        }
+                    }
+                    if row.modified {
+                        spans.push(Span::styled(
+                            "  *",
+                            Style::default().fg(t.yellow).add_modifier(Modifier::BOLD),
+                        ));
+                    }
+                }
+
+                lines.push(Line::from(spans));
+            }
+        }
+    }
+
+    // Scroll-window the lines so the focused row stays visible. Reserve
+    // a 1-row hint bar at the bottom of the inner rect.
+    let body_h = (inner.height as usize).saturating_sub(1);
+    let focused_line_idx = focused_item_idx.unwrap_or(0);
+    let scroll = if focused_line_idx >= body_h {
+        focused_line_idx + 1 - body_h
+    } else {
+        0
+    };
+    let window: Vec<Line<'static>> = lines.iter().skip(scroll).take(body_h).cloned().collect();
+    let body_rect = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: body_h as u16,
+    };
+    frame.render_widget(Paragraph::new(window), body_rect);
+
+    // 1-line hint bar at the bottom.
+    let hint = "←→ adjust · ↑↓ move · r reset row · R reset all · Enter save · Esc cancel";
+    let hint_rect = Rect {
+        x: inner.x,
+        y: inner.y + inner.height.saturating_sub(1),
+        width: inner.width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            hint,
+            Style::default().fg(t.comment).add_modifier(Modifier::DIM),
+        )),
+        hint_rect,
+    );
 }

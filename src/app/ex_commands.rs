@@ -729,6 +729,11 @@ impl App {
             // new native tab running `<command>`. No-op (with a toast) when
             // mnml isn't under tmnl. Useful for popping a long-running CLI
             // (claude, codex, a shell) out into its own dedicated tab.
+            // `:settings` — open the settings overlay. Same as
+            // `view.settings` in the palette.
+            "settings" => {
+                self.open_settings_overlay();
+            }
             "tmnl.open-tab" | "tmnl.tab" => {
                 if rest.is_empty() {
                     self.toast(":tmnl.open-tab <command> [args...] — command required");
@@ -990,7 +995,7 @@ impl App {
             // discoverability gesture after the marker has been written.
             "welcome" | "Welcome" => self.toggle_welcome(),
             "about" | "About" => self.toggle_about(),
-            "settings" | "Settings" => self.toggle_settings(),
+            "Settings" => self.open_settings_overlay(),
             "ClaudeChat" | "Claude" | "claudechat" => self.open_ai_chat_prompt(),
             // `:rename` (lowercase) renames the pty session — `:Rename`
             // (capital) is the LSP-rename alias handled below.

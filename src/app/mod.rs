@@ -45,6 +45,7 @@ mod picker;
 mod pipeline_log;
 mod playwright;
 mod session;
+pub(crate) mod settings;
 mod snippets;
 mod tmnl;
 
@@ -1673,9 +1674,6 @@ pub struct PaneRects {
     /// GitGraph column header rects (Author / Date / SHA) — click to
     /// cycle that column's sort (asc / desc / none).
     pub git_graph_column_headers: Vec<(Rect, crate::git::graph::SortColumn)>,
-    /// Settings overlay row rects — `(rect, flag_name)` — click toggles
-    /// the flag via the corresponding `:set` runtime command.
-    pub settings_rows: Vec<(Rect, &'static str)>,
     /// `(rect, pane_id)` for each tab's close badge (the trailing `×`/`●` → close).
     pub bufferline_tab_close: Vec<(Rect, PaneId)>,
     /// The whole central split-tree area.
@@ -2394,11 +2392,6 @@ pub struct App {
     /// SHA + workspace metadata (theme, repos, LSP servers, tab/pane
     /// counts). In-memory only, dismisses on Esc / click outside.
     pub show_about: bool,
-    /// Settings overlay — `view.settings` / `:settings`. Toggleable list
-    /// of common `[ui]`/`[editor]` flags with one-click toggles routed
-    /// through the existing `:set <flag>` ex commands so persistence /
-    /// validation stays centralized.
-    pub show_settings: bool,
     /// True after a quit was refused because of unsaved changes — a second
     /// `request_quit` then goes through. Cleared by saving.
     pub quit_armed: bool,
@@ -2428,6 +2421,10 @@ pub struct App {
     /// A buffer whose close is awaiting a Save/Discard/Cancel decision (the
     /// confirm overlay is up). Steals key input like the picker.
     pub close_prompt: Option<PaneId>,
+    /// Settings overlay state. `Some` while the overlay is open, `None`
+    /// otherwise. Carries the `original` Config snapshot for the
+    /// Esc/cancel revert path. See `app/settings.rs` for the schema.
+    pub settings_overlay: Option<settings::SettingsOverlayState>,
     /// The single-line text-input overlay (commit message, …), when open. Steals
     /// key input like the picker.
     pub prompt: Option<crate::prompt::Prompt>,
@@ -2993,7 +2990,6 @@ impl App {
             discovery_flash: None,
             show_welcome: false,
             show_about: false,
-            show_settings: false,
             scratch_term: None,
             tree_drag: None,
             pending_tree_move: None,
@@ -3010,6 +3006,7 @@ impl App {
             whichkey: None,
             dragging: None,
             close_prompt: None,
+            settings_overlay: None,
             prompt: None,
             context_menu: None,
             hover: None,
@@ -3336,22 +3333,6 @@ impl App {
     /// welcome overlay which only auto-opens once per workspace).
     pub fn toggle_about(&mut self) {
         self.show_about = !self.show_about;
-    }
-
-    /// Toggle the Settings overlay.
-    pub fn toggle_settings(&mut self) {
-        self.show_settings = !self.show_settings;
-    }
-
-    /// Settings overlay — click on a flag row toggles it via the same
-    /// `:set <flag>` ex commands the user could type. Centralizes
-    /// persistence + validation; we don't need a separate config-writer
-    /// here.
-    pub fn settings_toggle_flag(&mut self, flag: &str) {
-        // The `:set foo!` form flips a boolean. mnml already supports
-        // this idiomatic syntax across every flag we expose here.
-        let line = format!("set {flag}!");
-        self.run_ex_command(&line);
     }
 
     /// Toggle the welcome overlay manually (palette / `:welcome`). Showing

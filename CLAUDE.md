@@ -71,6 +71,26 @@ user might be mid-edit *inside mnml* on something untouched.
 
 - `cargo fmt` + `cargo clippy --all-targets` clean before every commit. Run the test
   suite. Commit messages end with the `Co-Authored-By: Claude …` trailer.
+- **Family settings UI convention.** mnml, tmnl, and mixr each have their
+  own settings UI (Option A — no shared crate, see thread). They all
+  follow this idiom for visual + interaction consistency:
+  - Scrollable sectioned list (overlay, not pane). Sections are
+    `── UI ──` / `── Editor ──` / `── Integrations ──` / `── Reset ──`
+    style headers.
+  - Each row: `▸ <label>:  [active] / other1 / other2  *` —
+    `▸` = focused, `[bracket]` = current choice, `*` = modified from
+    default. Trailing-space alignment on the colon.
+  - Keys: `←→` / `h l` adjust value · `↑↓` / `j k` move row · `r`
+    reset focused row to default · `R` reset all · `Enter` save +
+    close · `Esc` cancel (revert to opened-state config).
+  - v1 supports **discrete-choice rows only** (a fixed list of
+    options). Number / Text / Color rows are v2.
+  - The settings UI never edits arrays of complex things
+    (`[[workspaces]]`, `[[bitbucket.repos]]`) — those stay
+    TOML-edited. Settings is for everyday UX toggles.
+  - Each app implements its own ~150-200 lines of settings code.
+    Drift risk is mitigated by this paragraph + by occasional
+    cross-app review when one app's UI changes.
 - Work on a branch only if asked / on `main` — this repo's default workflow is small
   commits straight to `main` (the user authorized that).
 - Don't copy code verbatim from `../mnml1` or `../rqst`; port + restructure.
@@ -84,6 +104,23 @@ user might be mid-edit *inside mnml* on something untouched.
   After each landed feature: update this Status block + commit + `./run.sh restart`.
 
 ## Status
+
+**Settings overlay — schema-driven, keyboard-first (2026-05-23):** mnml
+now has a proper settings overlay (`:settings` / `view.settings`). Replaces
+the earlier click-only flag-toggle overlay. New `src/app/settings.rs`
+defines `SettingItem` / `SettingRow` / `SettingsOverlayState` + the
+`build_settings(&Config) -> Vec<SettingItem>` schema (sectioned: UI /
+Editor / Session / Reset) + `apply_setting(&mut Config, key, opt_idx)`
+dispatcher. New `src/ui/settings_overlay.rs` paints a centered bordered
+overlay (~60% × 70%) with `▸ <label>: [active] / other  *` rows, section
+headers `── UI ──` etc., and a `(Enter to reset)` sentinel row at the
+bottom for reset-all. Keys: `←→` adjust · `↑↓` move · `r` reset row ·
+`R` reset all · `Enter` save · `Esc` cancel (reverts to the opened-state
+snapshot). v1 supports discrete-choice rows only — Number/Text/Color
+row kinds are v2. Convention captured in CLAUDE.md so tmnl + mixr can
+match later. Settings doesn't edit arrays of complex things
+(`[[workspaces]]`, `[[bitbucket.repos]]`) — those stay TOML-edited.
+8 new unit tests (783 → 784 default pass), clippy clean.
 
 **tmnl-handoff (simple variant) + integrations design doc (2026-05-23):**
 Added `App::tmnl_open_tab(command, args)` in `src/app/tmnl.rs` — when mnml

@@ -249,7 +249,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             app.dismiss_welcome();
         }
         app.show_about = false;
-        app.show_settings = false;
     }
     // Flash intercept: when label overlay is up, Esc cancels; a printable
     // char matching a label commits the jump; an unmatched key cancels
@@ -266,6 +265,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         }
         // No match — drop state and re-dispatch the keystroke normally.
         app.flash_cancel();
+    }
+    // The settings overlay steals all keys until it's saved (Enter) or
+    // cancelled (Esc). Keyboard-only — see CLAUDE.md's "Family settings
+    // UI convention".
+    if app.settings_overlay.is_some() {
+        handle_settings_overlay_key(app, key);
+        return;
     }
     // An open picker / palette overlay steals all keys until it's dismissed.
     if app.picker.is_some() {
@@ -473,6 +479,25 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     match app.focus {
         Focus::Tree => handle_tree_key(app, key),
         Focus::Pane => handle_pane_key(app, key),
+    }
+}
+
+fn handle_settings_overlay_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => app.close_settings_overlay_cancel(),
+        KeyCode::Enter => app.settings_enter_row(),
+        KeyCode::Up | KeyCode::Char('k') => app.settings_move_row(-1),
+        KeyCode::Down | KeyCode::Char('j') => app.settings_move_row(1),
+        KeyCode::Left | KeyCode::Char('h') => app.settings_adjust_value(-1),
+        KeyCode::Right | KeyCode::Char('l') => app.settings_adjust_value(1),
+        KeyCode::Char('r') => app.settings_reset_row(),
+        KeyCode::Char('R') => {
+            // Shift+r — reset all to defaults (the explicit reset-all
+            // path; the same as Enter on the sentinel row).
+            app.config = crate::config::Config::default();
+            app.toast("settings: all reset to defaults");
+        }
+        _ => {}
     }
 }
 
@@ -3474,19 +3499,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         app.show_about = false;
         return;
     }
-    // Settings overlay — click on a row toggles the flag; click outside
-    // dismisses.
-    if app.show_settings && matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
-        if let Some(&(_, flag)) = app
-            .rects
-            .settings_rows
-            .iter()
-            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-        {
-            app.settings_toggle_flag(flag);
-            return;
-        }
-        app.show_settings = false;
+    // Settings overlay — keyboard-driven; ignore mouse while open
+    // (click-to-cycle is a v2 polish item).
+    if app.settings_overlay.is_some() {
         return;
     }
     // Discovery overlay — intercept clicks on its rows so the user can
