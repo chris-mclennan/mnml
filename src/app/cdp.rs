@@ -1,7 +1,7 @@
 //! Chrome DevTools Protocol (CDP) + browser pane methods on `App`.
 //!
-//! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase C.1). Pure non-destructive move: no API
+//! Extracted from `app/mod.rs` in the file-split refactor.
+//! Pure non-destructive move: no API
 //! change. Owns the `browser.*` palette commands, the CDP event drain,
 //! all browser sub-panel pickers (DOM / cookies / storage / perf /
 //! targets / devices / URL history), the Chrome profile-dir resolver,

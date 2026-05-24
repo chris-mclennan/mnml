@@ -1,6 +1,7 @@
-//! Parser for the `.http` / `.rest` request-file format (humao.rest-client,
-//! JetBrains' HTTP Client, VS Code's REST client) — and `.curl` files, which the
-//! auto-detector in [`super::parse`] routes to the cURL parser instead.
+//! Parser for the `.http` / `.rest` request-file format (the de-facto
+//! plain-text HTTP request format used by various REST clients) — and
+//! `.curl` files, which the auto-detector in [`super::parse`] routes
+//! to the cURL parser instead.
 //!
 //! Grammar (the supported subset):
 //!
@@ -14,7 +15,7 @@
 //! ```
 //!
 //! Out of scope (not parsed): response-handler scripts (`> {% … %}`), pre-request
-//! scripts, `< file` body references. Ported from `../rqst/src/http_file.rs`.
+//! scripts, `< file` body references.
 
 use super::{ParseError, Request};
 

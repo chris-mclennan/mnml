@@ -1,7 +1,7 @@
 //! Picker + prompt accept dispatchers + picker openers.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase E.1). Pure non-destructive move.
+//!. Pure non-destructive move.
 
 use super::*;
 

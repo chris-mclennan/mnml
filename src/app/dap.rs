@@ -1,7 +1,7 @@
 //! Debug Adapter Protocol (DAP) methods on `App`.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase C.2). Pure non-destructive move: no API
+//!. Pure non-destructive move: no API
 //! change. Owns the `dap.*` palette commands (run / attach / step /
 //! continue / pause / breakpoints / watches / exceptions / repl)
 //! and the `Pane::Debug` viewer.

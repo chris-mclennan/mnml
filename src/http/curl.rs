@@ -2,7 +2,7 @@
 //! / Firefox / Playwright "Copy as cURL" emit (`-X`, `-H`, `-d`/`--data*`, `-b`,
 //! `-A`, `-e`, plus the no-op `--compressed`/`-L`/`-k`/`-s`), bash-style quoting
 //! and `\`-newline continuations, and strips any response body a tool appended
-//! after the command. Ported from `../rqst/src/curl.rs`.
+//! after the command.
 
 use super::{ParseError, Request, dedupe_keep_last};
 

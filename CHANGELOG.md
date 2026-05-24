@@ -6,8 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Day-to-day development history lives in [`CLAUDE.md`](CLAUDE.md) (the Status
-block) and the roadmap in [`.local/PLAN.md`](.local/PLAN.md); this file is the
-curated, user-facing summary.
+block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 

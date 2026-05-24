@@ -1,8 +1,7 @@
 # mnml — Features
 
 The complete, organised feature inventory. For the front-door overview see
-[README.md](README.md); for design rationale and the roadmap see
-[`CLAUDE.md`](CLAUDE.md) and [`.local/PLAN.md`](.local/PLAN.md).
+[README.md](README.md); for design rationale see [`CLAUDE.md`](CLAUDE.md).
 
 ---
 
@@ -133,7 +132,7 @@ The complete, organised feature inventory. For the front-door overview see
 - **Request files** — send `.http` / `.rest` / `.curl` files, with multi-block
   files, `{{variable}}` templating, environments, and pre/post-request scripts
   (`@set-*`, `@assert`, `@capture`).
-- **Request pane** — an editable, Postman-style pane (method / URL / headers /
+- **Request pane** — an editable, form-style pane (method / URL / headers /
   body), re-send, copy-as-curl, and write-back to the source file.
 - **Chains** — run a `.chain.json` of dependent requests, extracting values
   between steps.

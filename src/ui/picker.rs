@@ -17,8 +17,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let h = screen.height.saturating_sub(4).clamp(7, 22);
     let x = screen.x + (screen.width.saturating_sub(w)) / 2;
     // `[ui] picker_position` — `"top"` drops the box flush with the top
-    // edge (VS Code / Sublime / Zed quick-open convention); anything
-    // else floats it a third of the way down (the historic default).
+    // edge (the common modern quick-open convention); anything else
+    // floats it a third of the way down (the historic default).
     let y = if app.config.ui.picker_position.eq_ignore_ascii_case("top") {
         screen.y
     } else {

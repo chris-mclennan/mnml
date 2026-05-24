@@ -5,8 +5,8 @@
 //! write half on the UI thread (event-driven, so no writer thread needed).
 //! Dropping the session kills the child and joins the reader.
 //!
-//! Ported in spirit from `../mnml1/src/pty_pane.rs`, but here each pty is a pane
-//! in the split tree — no separate tab strip; multiple shells = multiple splits.
+//! Each pty is a pane in the split tree — no separate tab strip;
+//! multiple shells = multiple splits.
 
 use std::io::{Read, Write};
 use std::path::PathBuf;

@@ -5,7 +5,7 @@
 //! tokens, document symbol + workspace symbol pickers + outline pane.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase D.1). Pure non-destructive move.
+//!. Pure non-destructive move.
 
 use super::*;
 

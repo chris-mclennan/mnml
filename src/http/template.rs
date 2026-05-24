@@ -9,9 +9,9 @@
 //! - Var names are `[A-Za-z0-9_]+` (or `$[A-Za-z0-9_]+` for dynamics);
 //!   whitespace inside `{{ FOO }}` is allowed.
 //!
-//! A trimmed port of `../rqst/src/template.rs` — the faker-style name lists and
-//! the calendar-formatting dynamics live in rqst; here we keep the handful that
-//! need no extra machinery.
+//! A trimmed implementation — the faker-style name lists and the
+//! calendar-formatting dynamics are intentionally out of scope; we
+//! keep the handful of substitutions that need no extra machinery.
 
 use std::collections::HashMap;
 use std::fs;

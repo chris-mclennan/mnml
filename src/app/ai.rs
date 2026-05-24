@@ -3,7 +3,7 @@
 //! commit-message + recompose generation, request-debug.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase C.5). Pure non-destructive move:
+//!. Pure non-destructive move:
 //! no API change.
 
 use super::*;

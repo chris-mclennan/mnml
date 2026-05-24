@@ -4,7 +4,7 @@
 //! revert / tag / reflog / sync (fetch/pull/push) / multi-repo cycle.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase D.2). Pure non-destructive move.
+//!. Pure non-destructive move.
 
 use super::*;
 

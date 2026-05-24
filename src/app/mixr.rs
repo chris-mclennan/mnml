@@ -3,7 +3,7 @@
 //! pane, routes keys/mouse back to the child.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase C.6). Pure non-destructive move.
+//!. Pure non-destructive move.
 
 use super::*;
 

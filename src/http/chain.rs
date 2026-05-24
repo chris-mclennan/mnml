@@ -15,7 +15,6 @@
 //! accepts. `@assert` / `@capture` directives in a step's file work too (captures
 //! also flow into the running env). The chain stops at the first transport error,
 //! non-2xx/3xx status, failed assertion, or extraction that produces nothing.
-//! Ported from `../rqst/src/chain.rs`.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};

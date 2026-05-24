@@ -1,7 +1,7 @@
 //! Bitbucket dashboard methods on `App`.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase A.1). Pure non-destructive move: no API
+//!. Pure non-destructive move: no API
 //! change. The methods here all manipulate `App` state declared in
 //! `app/mod.rs` and use `Bitbucket*` types from `crate::bitbucket`.
 

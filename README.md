@@ -54,7 +54,7 @@ and render layers never branch on which one is active.
   panes; on-selection AI actions (explain / fix / refactor / write tests) and
   Copilot-style inline suggestions, with a CLI or direct-API backend.
 - **A baked-in HTTP client.** Send `.http` / `.curl` / `.rest` files, run request
-  chains, generate stubs from an OpenAPI spec — an editable, Postman-style request
+  chains, generate stubs from an OpenAPI spec — an editable, form-style request
   pane lives right in the IDE.
 - **Headless & scriptable.** `mnml --headless` renders to a virtual screen driven
   over a file-IPC channel; a line-based `.test` format runs end-to-end UI tests
@@ -162,8 +162,7 @@ tooltip  = "Claude Code (right dock)"
 
 `[lsp.*]`, `[ai]`, `[dap.*]`, `[linters.*]`, `[formatters.*]`, `[tasks.*]`, and
 the SCM dashboard tables are all configurable too — see
-[FEATURES.md](FEATURES.md) and [`.local/PLAN.md`](.local/PLAN.md) for the full
-surface.
+[FEATURES.md](FEATURES.md) for the full surface.
 
 ## Building from source
 
@@ -222,8 +221,7 @@ hosted inside `tmnl`.
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
 workflow, conventions, and architecture notes, and [`CLAUDE.md`](CLAUDE.md) for
-the load-bearing design spine. The roadmap lives in
-[`.local/PLAN.md`](.local/PLAN.md) and the release history in
+the load-bearing design spine; the release history lives in
 [CHANGELOG.md](CHANGELOG.md).
 
 ## License

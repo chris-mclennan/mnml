@@ -1,9 +1,9 @@
 # mnml — a NvChad-style terminal IDE (Rust + ratatui)
 
-Greenfield. Supersedes the `../mnml1` prototype and absorbs `../rqst` (a ratatui
-Postman-in-the-terminal) — both are **reference implementations to port logic
-from, not dependencies**. Full design + phased roadmap: **`.local/PLAN.md`** (the
-authoritative spec; read it before architectural decisions).
+Greenfield rewrite of two earlier prototypes — an editor and an in-terminal HTTP
+client — folded together. Earlier code is reference for porting logic, not a
+dependency. The authoritative design notes live alongside this file (read them
+before architectural decisions).
 
 ## Architecture spine — keep these load-bearing
 
@@ -30,8 +30,8 @@ authoritative spec; read it before architectural decisions).
   per-subsystem siblings (`src/app/{git,lsp,ai,cdp,dap,…}.rs` — 25 files). `src/tui.rs`
   is *only* the crossterm event loop; chrome lives in `src/ui/`, subsystems get their
   own top-level dirs (`src/git/`, `src/http/`, `src/lsp/`, `src/ai/`, `src/cdp/`).
-  mnml1's `tui.rs` (~56k chars) and rqst's `app.rs` (~468k chars) both rotted — don't
-  repeat that.
+  Earlier prototypes' top-level files (one ~56k chars, one ~468k) both rotted
+  — don't repeat that.
 - Storage is a plain `String` + byte cursor in `Editor`; all mutation goes through
   `apply` so a rope can slide in later without touching call sites. Columns are chars
   for now (display-width / tabs / CJK is a P2 refinement).
@@ -93,7 +93,7 @@ user might be mid-edit *inside mnml* on something untouched.
     cross-app review when one app's UI changes.
 - Work on a branch only if asked / on `main` — this repo's default workflow is small
   commits straight to `main` (the user authorized that).
-- Don't copy code verbatim from `../mnml1` or `../rqst`; port + restructure.
+- Don't copy code verbatim from the earlier prototypes; port + restructure.
 - When a track needs something from the core, add a `Command` / `EditOp` / `Pane`
   variant — don't special-case across layers.
 - The user is happy to have Claude pick which track/feature to do next ("keep going,
@@ -329,9 +329,8 @@ per-render. `mixr_status` module folded into `now_playing::mixr`.
 sub-module + one `poll` arm; the `[ui]`-config source picker is
 a noted follow-up (`Auto` is wired as the default for now).
 
-> Older entries (everything before 2026-05-21) live in
-> [`.local/STATUS-HISTORY.md`](.local/STATUS-HISTORY.md) — kept out of
-> this file so the dev-log doesn't bloat every Claude conversation.
+> Older Status entries (everything before 2026-05-21) are archived
+> separately so the dev-log doesn't bloat every Claude conversation.
 
 ## Not set up yet (could add later)
 

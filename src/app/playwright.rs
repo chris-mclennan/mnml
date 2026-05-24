@@ -1,7 +1,7 @@
 //! Playwright runner + flaky-test dashboard + trace viewer.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase C.3). Pure non-destructive move: no API
+//!. Pure non-destructive move: no API
 //! change. Owns the `test.*` palette commands, the `Pane::Tests` /
 //! `Pane::Trace` / `Pane::Flaky` lifecycle, and the heal-with-AI
 //! handoffs into a `Pane::Ai`.

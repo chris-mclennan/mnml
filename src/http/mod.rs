@@ -1,4 +1,4 @@
-//! The baked-in HTTP request client (ported + restructured from `../rqst`).
+//! The baked-in HTTP request client.
 //!
 //! - [`Request`] — method / url / headers / body, the shared shape every source
 //!   parses into (pasted curl via [`curl`], `.http`/`.rest`/`.curl` files via

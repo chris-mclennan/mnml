@@ -6,8 +6,7 @@
 //! operation with a `security` requirement gets `Authorization: Bearer {{TOKEN}}`;
 //! a JSON request body is filled from `requestBody.content."application/json".
 //! example` if the spec provides one. Schema-driven example synthesis and the
-//! named-`examples` map are intentionally out of scope (rqst's `discover` has them).
-//! A trimmed port of `../rqst/src/discover.rs`.
+//! named-`examples` map are intentionally out of scope.
 
 use std::path::PathBuf;
 

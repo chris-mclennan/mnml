@@ -1,7 +1,7 @@
 //! GitHub Actions / Pull Requests dashboard methods on `App`.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase A.2). Pure non-destructive move: no API
+//!. Pure non-destructive move: no API
 //! change. The methods here all manipulate `App` state declared in
 //! `app/mod.rs` and use `Github*` / `WorkflowRun*` / `PullRequest*`
 //! types from `crate::github`.

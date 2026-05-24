@@ -3,7 +3,7 @@
 //! surfaces the result for the statusline `♪` chip.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase C.7). Pure non-destructive move.
+//!. Pure non-destructive move.
 
 use super::*;
 

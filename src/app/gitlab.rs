@@ -1,7 +1,7 @@
 //! GitLab CI / Merge Requests dashboard methods on `App`.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase A.3). Pure non-destructive move: no API
+//!. Pure non-destructive move: no API
 //! change. The methods here all manipulate `App` state declared in
 //! `app/mod.rs` and use `Gitlab*` / `MergeRequest*` types from
 //! `crate::gitlab`.

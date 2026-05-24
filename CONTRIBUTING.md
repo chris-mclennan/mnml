@@ -33,8 +33,7 @@ nice-to-have. If you're working in mnml itself, the `/verify` skill in
 
 ## Architecture spine
 
-A few load-bearing pieces — read [`CLAUDE.md`](CLAUDE.md) and
-[`.local/PLAN.md`](.local/PLAN.md) for the full design:
+A few load-bearing pieces — read [`CLAUDE.md`](CLAUDE.md) for the full design:
 
 - **Pluggable input layer** (`src/input/`) — `Box<dyn InputHandler>` translates
   key events into a closed set of `EditOp`s (interpreted by the single chokepoint

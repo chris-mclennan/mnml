@@ -4912,7 +4912,7 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     ) {
                         rp.type_char('\n');
                     } else {
-                        // Enter on URL/Method = fire (Postman-style "send").
+                        // Enter on URL/Method = fire the request.
                         app.send_request_from_active();
                     }
                 }

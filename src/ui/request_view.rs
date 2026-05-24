@@ -2,7 +2,7 @@
 //!
 //! * **Response (default)** — read-only summary of the last send: status,
 //!   headers, pretty body, `@assert` results, `@capture`s. `r` re-fires.
-//! * **Edit** — Postman-style form: URL, method, headers, body editable in
+//! * **Edit** — interactive form: URL, method, headers, body editable in
 //!   place. Tab toggles modes; in Edit, Shift-Tab / Tab cycle the focused
 //!   field (URL → Method → Headers → Body → URL); Tab inside Body inserts a
 //!   literal `\t` (for typing indented JSON / XML); typing / backspace /

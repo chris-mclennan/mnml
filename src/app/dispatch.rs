@@ -5,8 +5,8 @@
 //! or `&App`. They're called from `tui::dispatch_key` /
 //! `dispatch_mouse` via `crate::app::dispatch::*`.
 //!
-//! Extracted from `tui.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase G — partial). Pure non-destructive move.
+//! Extracted from `tui.rs` in the file-split refactor. Pure
+//! non-destructive move.
 
 use super::*;
 use crate::command;

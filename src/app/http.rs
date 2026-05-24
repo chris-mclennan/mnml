@@ -1,7 +1,7 @@
 //! HTTP send + `.http` / `.curl` / `.rest` file + request pane.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase C.4). Pure non-destructive move: no API
+//!. Pure non-destructive move: no API
 //! change. Owns the `rqst.*` palette commands, the background HTTP
 //! worker thread, request-pane multi-block writeback, and the
 //! `splice_http_block` free fn.

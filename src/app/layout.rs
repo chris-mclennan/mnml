@@ -2,7 +2,7 @@
 //! split tree mutators, focus / divider drag / tab pages, zen mode.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase F). Pure non-destructive move. This is
+//!. Pure non-destructive move. This is
 //! the most cross-coupled subsystem; every other `app/*.rs` reaches
 //! these methods via `pub` (mostly) — visibility lifted where
 //! `pub(super)` is sufficient.

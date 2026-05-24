@@ -557,8 +557,8 @@ pub struct UiConfig {
     pub git_graph_detail_col: Option<usize>,
     /// Where the fuzzy picker / command palette anchors. `"center"`
     /// (default) floats it a bit above center; `"top"` drops it flush
-    /// with the top edge — the VS Code / Sublime / Zed quick-open
-    /// convention (palette appears where your eyes reach for it, and
+    /// with the top edge — the common modern quick-open convention
+    /// (palette appears where your eyes reach for it, and
     /// doesn't cover the code below). Any other value falls back to
     /// `"center"`.
     pub picker_position: String,

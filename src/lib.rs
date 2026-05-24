@@ -14,7 +14,7 @@
 //!   - `ui`                               — the (backend-agnostic) render path + theme + icons.
 //!   - `tui` / `headless` / `ipc`         — the terminal event loop, the virtual-screen loop, the file-IPC channel.
 //!
-//! See `.local/PLAN.md` for the full design + roadmap.
+//! See `CLAUDE.md` for the full design.
 
 pub mod ai;
 pub mod app;

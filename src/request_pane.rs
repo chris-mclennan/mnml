@@ -4,7 +4,7 @@
 //! background thread; [`crate::app::App::tick`] polls the result channel and
 //! flips the pane from [`RunState::Sending`] to `Done` / `Failed`.
 //!
-//! **Postman-style editable fields.** A `Tab` keypress flips between
+//! **Editable form fields.** A `Tab` keypress flips between
 //! [`ViewMode::Response`] (the read-only view of the last send) and
 //! [`ViewMode::Edit`], where the URL, method, and body are editable in place.
 //! In Edit mode `Shift+Tab` / `Tab` cycle which field has the caret; typing /

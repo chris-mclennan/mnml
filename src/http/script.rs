@@ -17,7 +17,7 @@
 //! substitution; `@set-header` overrides a header. `@assert` and `@capture`
 //! (post-response) run against the result; captures land in the `EnvSet` so a
 //! follow-up request can `{{name}}` them. Directive lines that don't parse are
-//! silently treated as plain comments. Ported from `../rqst/src/script.rs`.
+//! silently treated as plain comments.
 
 use serde_json::Value;
 

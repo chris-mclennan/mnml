@@ -1,7 +1,7 @@
 //! Azure DevOps Builds / Pull Requests dashboard methods on `App`.
 //!
 //! Extracted from `app/mod.rs` in the file-split refactor
-//! (`.local/PLAN.md` Phase A.4). Pure non-destructive move: no API
+//!. Pure non-destructive move: no API
 //! change. The methods here all manipulate `App` state declared in
 //! `app/mod.rs` and use `Azdevops*` / `Build*` / `PullRequest*`
 //! types from `crate::azdevops`.
