@@ -6,6 +6,10 @@
 use std::path::PathBuf;
 
 use crate::ai::AiPane;
+#[cfg(feature = "aws-codebuild")]
+use crate::aws::codebuilds_pane::CodeBuildsPane;
+#[cfg(feature = "aws-codebuild")]
+use crate::aws::log_tail_pane::LogTailPane;
 use crate::azdevops::{AzDevOpsBuildsPane, AzDevOpsPullRequestsPane};
 use crate::bitbucket::{BitbucketPipelinesPane, BitbucketPullRequestsPane, PipelineLogPane};
 use crate::browser_pane::BrowserPane;
@@ -20,16 +24,12 @@ use crate::grep_pane::GrepPane;
 use crate::image::ImagePane;
 use crate::lsp::diagnostics_pane::DiagnosticsPane;
 use crate::lsp::outline_pane::OutlinePane;
+use crate::pane_host::BlitHostPane;
 use crate::playwright::TestsPane;
 use crate::playwright::flaky_pane::FlakyPane;
-use crate::pane_host::BlitHostPane;
 use crate::playwright::trace_pane::TracePane;
 use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
-#[cfg(feature = "aws-codebuild")]
-use crate::aws::codebuilds_pane::CodeBuildsPane;
-#[cfg(feature = "aws-codebuild")]
-use crate::aws::log_tail_pane::LogTailPane;
 
 // `Editor`'s payload (`Buffer`) is much bigger than the others'; boxing it would
 // ripple a `Box` through every `Pane::Editor(b)` site for a handful of bytes of

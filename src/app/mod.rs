@@ -18,12 +18,12 @@ use crate::pane::Pane;
 use crate::picker::{Picker, PickerKind};
 use crate::tree::Tree;
 
+#[cfg(feature = "aws-codebuild")]
+mod aws;
 mod azdevops;
 mod bitbucket;
 mod github;
 mod gitlab;
-#[cfg(feature = "aws-codebuild")]
-mod aws;
 
 mod ai;
 mod blit_host;

@@ -109,9 +109,24 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: line_numbers_idx != line_numbers_default_idx,
     }));
 
-    out.push(bool_row("ui.cursor_line", "Cursor line", cfg.ui.cursor_line, d.ui.cursor_line));
-    out.push(bool_row("ui.scrollbar", "Scrollbar", cfg.ui.scrollbar, d.ui.scrollbar));
-    out.push(bool_row("ui.syntax", "Syntax highlighting", cfg.ui.syntax, d.ui.syntax));
+    out.push(bool_row(
+        "ui.cursor_line",
+        "Cursor line",
+        cfg.ui.cursor_line,
+        d.ui.cursor_line,
+    ));
+    out.push(bool_row(
+        "ui.scrollbar",
+        "Scrollbar",
+        cfg.ui.scrollbar,
+        d.ui.scrollbar,
+    ));
+    out.push(bool_row(
+        "ui.syntax",
+        "Syntax highlighting",
+        cfg.ui.syntax,
+        d.ui.syntax,
+    ));
     out.push(bool_row(
         "ui.show_whitespace",
         "Show whitespace",
@@ -130,7 +145,12 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         cfg.ui.highlight_trailing_ws,
         d.ui.highlight_trailing_ws,
     ));
-    out.push(bool_row("ui.clock", "Statusline clock", cfg.ui.clock, d.ui.clock));
+    out.push(bool_row(
+        "ui.clock",
+        "Statusline clock",
+        cfg.ui.clock,
+        d.ui.clock,
+    ));
     out.push(bool_row(
         "ui.highlight_word_under_cursor",
         "Highlight word under cursor",
@@ -158,7 +178,11 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
     ));
 
     // Picker position — center vs top.
-    let picker_idx = if cfg.ui.picker_position == "top" { 1 } else { 0 };
+    let picker_idx = if cfg.ui.picker_position == "top" {
+        1
+    } else {
+        0
+    };
     let picker_default_idx = if d.ui.picker_position == "top" { 1 } else { 0 };
     out.push(SettingItem::Row(SettingRow {
         key: "ui.picker_position",
@@ -172,7 +196,11 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
     out.push(SettingItem::Section("Editor"));
 
     // Input style — vim vs standard.
-    let input_idx = if cfg.editor.input_style == "vim" { 0 } else { 1 };
+    let input_idx = if cfg.editor.input_style == "vim" {
+        0
+    } else {
+        1
+    };
     let input_default_idx = if d.editor.input_style == "vim" { 0 } else { 1 };
     out.push(SettingItem::Row(SettingRow {
         key: "editor.input_style",
@@ -268,12 +296,7 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
     out
 }
 
-fn bool_row(
-    key: &'static str,
-    label: &'static str,
-    cur: bool,
-    default: bool,
-) -> SettingItem {
+fn bool_row(key: &'static str, label: &'static str, cur: bool, default: bool) -> SettingItem {
     SettingItem::Row(SettingRow {
         key,
         label,
@@ -295,8 +318,7 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
                 1 => (false, true),  // absolute
                 _ => (false, false), // off
             };
-            let changed =
-                cfg.ui.relative_line_numbers != rel || cfg.ui.line_numbers != on;
+            let changed = cfg.ui.relative_line_numbers != rel || cfg.ui.line_numbers != on;
             cfg.ui.relative_line_numbers = rel;
             cfg.ui.line_numbers = on;
             changed
@@ -592,7 +614,10 @@ mod tests {
         apply_setting(&mut app.config, "ui.cursor_line", 0); // on
         assert!(app.config.ui.cursor_line);
         app.close_settings_overlay_cancel();
-        assert!(!app.config.ui.cursor_line, "Esc should revert to pre-open value");
+        assert!(
+            !app.config.ui.cursor_line,
+            "Esc should revert to pre-open value"
+        );
     }
 
     #[test]

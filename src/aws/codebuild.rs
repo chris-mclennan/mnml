@@ -377,10 +377,7 @@ mod tests {
                 .unwrap()
                 .starts_with("629eda29")
         );
-        assert_eq!(
-            rec.initiator.as_deref(),
-            Some("codepipeline/my-playwright")
-        );
+        assert_eq!(rec.initiator.as_deref(), Some("codepipeline/my-playwright"));
         assert_eq!(rec.logs_group.as_deref(), Some("my-playwright"));
     }
 

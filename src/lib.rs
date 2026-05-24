@@ -18,6 +18,8 @@
 
 pub mod ai;
 pub mod app;
+#[cfg(feature = "aws-codebuild")]
+pub mod aws;
 pub mod azdevops;
 pub mod bitbucket;
 pub mod blit;
@@ -66,8 +68,6 @@ pub(crate) mod regex_outline;
 pub(crate) mod request_pane;
 pub(crate) mod signature;
 pub(crate) mod snippets;
-#[cfg(feature = "aws-codebuild")]
-pub mod aws;
 pub(crate) mod tools;
 pub(crate) mod tree;
 pub mod tui;

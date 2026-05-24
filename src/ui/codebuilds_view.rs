@@ -10,9 +10,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::App;
+use crate::aws::codebuild::BuildStatus;
 use crate::layout::PaneId;
 use crate::pane::Pane;
-use crate::aws::codebuild::BuildStatus;
 use crate::ui::theme;
 
 pub fn draw(

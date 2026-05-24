@@ -93,9 +93,7 @@ impl App {
         let stream = match UnixStream::connect(&socket_path) {
             Ok(s) => s,
             Err(e) => {
-                self.toast(format!(
-                    ":tmnl.pop-pty — connect {socket_path}: {e}"
-                ));
+                self.toast(format!(":tmnl.pop-pty — connect {socket_path}: {e}"));
                 return;
             }
         };
@@ -229,8 +227,7 @@ mod tests {
             env: Vec::new(),
             session_id: None,
         };
-        let session = crate::pty_pane::PtySession::spawn(profile, 24, 80)
-            .expect("spawn cat pty");
+        let session = crate::pty_pane::PtySession::spawn(profile, 24, 80).expect("spawn cat pty");
         let pane_id = app.panes.len();
         app.panes.push(crate::pane::Pane::Pty(session));
         app.active = Some(pane_id);
@@ -255,10 +252,10 @@ mod tests {
         }
         assert!(had_fd, "SCM_RIGHTS fd was not attached");
         // After a successful handoff the pane is removed.
-        assert!(app.panes.get(pane_id).is_none() || !matches!(
-            app.panes.get(pane_id),
-            Some(crate::pane::Pane::Pty(_))
-        ));
+        assert!(
+            app.panes.get(pane_id).is_none()
+                || !matches!(app.panes.get(pane_id), Some(crate::pane::Pane::Pty(_)))
+        );
     }
 
     /// Verify that dropping a released `PtySession` does **not** kill

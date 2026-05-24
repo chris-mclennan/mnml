@@ -50,8 +50,7 @@ impl App {
             .position(|p| matches!(p, Pane::CodeBuilds(_)))
         {
             // Re-fire the refresh so `r` isn't the only way to get fresh data.
-            let rx =
-                crate::aws::codebuild::spawn_refresh(project, self.config.ci.region.clone());
+            let rx = crate::aws::codebuild::spawn_refresh(project, self.config.ci.region.clone());
             if let Some(Pane::CodeBuilds(p)) = self.panes.get_mut(id) {
                 p.pending = Some(rx);
                 p.loading = true;

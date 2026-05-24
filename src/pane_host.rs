@@ -89,11 +89,8 @@ impl BlitChannel {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("blit");
-        let socket_path = std::env::temp_dir().join(format!(
-            "mnml-host-{}-{}.sock",
-            sock_id,
-            std::process::id()
-        ));
+        let socket_path =
+            std::env::temp_dir().join(format!("mnml-host-{}-{}.sock", sock_id, std::process::id()));
         let _ = std::fs::remove_file(&socket_path);
         let listener = UnixListener::bind(&socket_path)
             .map_err(|e| format!("pane_host: bind {}: {e}", socket_path.display()))?;
@@ -301,9 +298,7 @@ pub fn pack_color(c: ratatui::style::Color) -> u32 {
 /// hosted child. `None` for keys the protocol doesn't carry. Mirrors
 /// `mixr_host::crossterm_key_to_input` exactly — kept here as a thin
 /// re-export so callers don't need to pull `mixr_host` in.
-pub fn crossterm_key_to_input(
-    key: &ratatui::crossterm::event::KeyEvent,
-) -> Option<InputEvent> {
+pub fn crossterm_key_to_input(key: &ratatui::crossterm::event::KeyEvent) -> Option<InputEvent> {
     crate::mixr_host::crossterm_key_to_input(key)
 }
 
