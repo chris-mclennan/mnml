@@ -55,6 +55,15 @@ A few load-bearing pieces — read [`CLAUDE.md`](CLAUDE.md) and
   lsp,ai,dap,cdp,…}.rs` — 25 files, each owning one cohesive surface).
   `src/tui.rs` is only the crossterm event loop; chrome lives in `src/ui/`;
   other subsystems get their own top-level dirs.
+- **Cargo features.** The default build has no optional features. `aws-codebuild`
+  adds `Pane::CodeBuilds` + `Pane::LogTail` (AWS CodeBuild + CloudWatch log
+  tail, both shelling out to the `aws` CLI; no new crate deps). Gate org-specific
+  code in private blit-host binaries rather than adding new features here.
+- **Blit-host integrations** (`src/pane_host.rs`, `src/app/blit_host.rs`).
+  Out-of-process binaries render into a `Pane::BlitHost` over a Unix socket using
+  the `tmnl-protocol` wire format. Opened via `:host.launch <binary>`. Adding a
+  new integration requires no changes to mnml — wire up a binary and add a
+  `[[ui.launcher_icon]]` config entry.
 
 ## Conventions
 

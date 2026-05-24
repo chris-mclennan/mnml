@@ -14,6 +14,45 @@ curated, user-facing summary.
 mnml has not yet had a tagged release. The `0.1.0` line below summarises the
 capabilities present in the current `main`.
 
+### Added (2026-05-24)
+
+- **Blit-host integration** (`Pane::BlitHost`) — `:host.launch <binary> [args…]`
+  spawns an out-of-process binary and renders its output into a pane over a Unix
+  socket using the `tmnl-protocol` wire format. Key events forward through;
+  `Ctrl+E` releases focus. Protocol contract documented in `docs/PLUGINS.md`.
+- **Settings overlay** — `:settings` / `view.settings` opens a keyboard-driven
+  schema editor for everyday config toggles. Section headers, `▸ row` focus, `*`
+  modified marker. Keys: `←→` adjust, `↑↓` move, `r` reset row, `R` reset all,
+  `Enter` save, `Esc` cancel.
+- **Config-driven launcher-icon strip** — `[[ui.launcher_icon]]` TOML entries
+  drive the bufferline right-cluster. Fields: `id`, `glyph`, `fallback`,
+  `command`, `color`, `tooltip`. `command` accepts a registered command id or a
+  `:host.launch …` ex-string. Setting the key replaces the built-in
+  Claude Code + Codex defaults.
+- **tmnl tab hand-off** — `:tmnl.open-tab <command>` (alias `:tmnl.tab`),
+  palette commands `tmnl.open_claude_in_tab` / `tmnl.open_codex_in_tab`: when
+  mnml is hosted under tmnl, asks tmnl to spawn the command as a new native tab.
+  No-ops with a toast otherwise.
+- **pty fd hand-off** — `:tmnl.pop-pty` (alias `:tmnl.pop`, palette
+  `tmnl.pop_pty`): transfers the focused terminal pane's pty master fd to tmnl
+  via SCM_RIGHTS, turning it into a sibling native tab without killing the child.
+  Unix only.
+- **`aws-codebuild` Cargo feature** — `Pane::CodeBuilds` (recent-builds browser)
+  and `Pane::LogTail` (CloudWatch log tail) moved out of the removed `private`
+  feature into a new, generic `aws-codebuild` feature. Shells out to the `aws`
+  CLI; no new crate dependencies. Off by default.
+- **`run.sh` family subcommands** — `build`, `release`, `test`, `check`, `watch`,
+  `help` (dev wrappers), plus `blit <socket>` (run as tmnl native client) and
+  `under-tmnl [WS]` (launch tmnl with mnml as a native tab).
+
+### Removed (2026-05-24)
+
+- **`private` Cargo feature** — stripped from the public crate (`src/private/`,
+  `src/app/private.rs`, `Pane::TestExecutions`, the four `examples/private_*.rs`).
+  AWS-generic code moved to `src/app/aws.rs` under `aws-codebuild`. The private
+  `internal-app` blit-host binary rebuilds the the private integration functionality as an
+  out-of-process integration.
+
 ## [0.1.0]
 
 ### Added

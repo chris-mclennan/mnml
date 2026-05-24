@@ -289,6 +289,15 @@ impl PtySession {
         self.released = true;
     }
 
+    /// Return the child's OS pid. Used only by tests that verify
+    /// `Drop` skips `child.kill()` when `released` is set — locking
+    /// that invariant down so a future refactor can't silently
+    /// reintroduce the kill-the-adopted-child bug.
+    #[cfg(test)]
+    pub fn child_pid_for_test(&self) -> Option<u32> {
+        self.child.process_id()
+    }
+
     /// Resize the pty (and the parser grid) to `rows × cols`. No-op when
     /// unchanged — every resize SIGWINCHes the child into a redraw.
     pub fn resize(&mut self, rows: u16, cols: u16) {

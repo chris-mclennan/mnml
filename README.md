@@ -147,6 +147,17 @@ wrap        = false
 [lsp.rust]
 cmd        = "rust-analyzer"
 extensions = ["rs"]
+
+# Bufferline right-cluster icons. Setting this key replaces the built-in
+# Claude Code + Codex defaults. `command` is a registered command id or
+# a colon-prefixed ex-cmdline string (e.g. ":host.launch my-binary").
+[[ui.launcher_icon]]
+id       = "claude_code"
+glyph    = "\u{F0E2D}"
+fallback = "CC"
+command  = "ai.claude_code"
+color    = "orange"
+tooltip  = "Claude Code (right dock)"
 ```
 
 `[lsp.*]`, `[ai]`, `[dap.*]`, `[linters.*]`, `[formatters.*]`, `[tasks.*]`, and
@@ -169,9 +180,25 @@ cargo fmt
 Development convenience wrappers:
 
 ```bash
-./run.sh [WORKSPACE]   # build + run, with a rebuild-on-exit-75 loop
-./run.sh restart       # tell a running instance to rebuild + relaunch (IPC)
-./dev.sh               # cargo-watch auto-rebuild-on-save
+./run.sh [WORKSPACE]        # build + run, with a rebuild-on-exit-75 loop
+./run.sh restart            # tell a running instance to rebuild + relaunch (IPC)
+./run.sh stop               # send quit to the running instance
+./run.sh status             # show marker (workspace, IPC dir)
+./run.sh headless [WS]      # same loop but --headless
+./run.sh blit SOCKET        # run as a tmnl native client (--blit)
+./run.sh under-tmnl [WS]    # launch tmnl with mnml as a native tab
+./run.sh build|release|test|check|watch   # cargo wrappers
+./dev.sh                    # cargo-watch auto-rebuild-on-save
+```
+
+Optional Cargo features:
+
+| Feature | What it adds |
+|---------|-------------|
+| `aws-codebuild` | `Pane::CodeBuilds` + `Pane::LogTail` — AWS CodeBuild builds browser and CloudWatch log tail, both shelling out to the `aws` CLI. Off by default. |
+
+```bash
+cargo build --features aws-codebuild
 ```
 
 mnml builds on stable Rust (MSRV **1.87**, edition 2024).

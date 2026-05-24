@@ -188,9 +188,27 @@ The complete, organised feature inventory. For the front-door overview see
   `events.jsonl` out) — the same `App` and draw path as the terminal UI.
 - **Plugins** — out-of-process helpers over the IPC channel can register
   commands that appear in the palette and resolve as keybindings.
+- **Blit-host integration** — `:host.launch <binary>` spawns an out-of-process
+  binary as a `Pane::BlitHost`; the binary renders into the pane over a Unix
+  socket using the `tmnl-protocol` wire format. No changes to mnml needed to add
+  an integration — drop a `[[ui.launcher_icon]]` entry in config. `Ctrl+E`
+  returns focus to the split tree.
 - **`tmnl` integration** — runs standalone in any terminal; gains native-pane
   hand-off when hosted inside the [`tmnl`](https://github.com/chris-mclennan/tmnl-rs)
-  terminal.
+  terminal. `:tmnl.open-tab <command>` (alias `:tmnl.tab`) asks tmnl to open a
+  command in a new native tab. `:tmnl.pop-pty` (alias `:tmnl.pop`) transfers the
+  focused terminal pane's pty fd to tmnl via SCM_RIGHTS, making it a sibling tab
+  without killing the child process (Unix only).
+- **Settings overlay** — `:settings` / `view.settings` opens a keyboard-driven
+  overlay (centered, ~60 % × 70 %) for everyday config toggles. Rows are
+  `▸ <label>: [active] / other  *`; section headers `── UI ──` etc. Keys:
+  `←→` adjust, `↑↓` move, `r` reset row, `R` reset all, `Enter` save, `Esc`
+  cancel.
+- **Config-driven launcher-icon strip** — the bufferline's right cluster is
+  driven by `[[ui.launcher_icon]]` TOML entries (`id`, `glyph`, `fallback`,
+  `command`, `color`, `tooltip`). The `command` field accepts a registered
+  command id or a colon-prefixed ex-cmdline string (`:host.launch binary`).
+  Setting the key replaces the built-in Claude Code + Codex defaults.
 
 ## Languages
 

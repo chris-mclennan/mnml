@@ -260,4 +260,128 @@ mod tests {
             Some(crate::pane::Pane::Pty(_))
         ));
     }
+
+    /// Verify that dropping a released `PtySession` does **not** kill
+    /// the child process. A regression here would silently terminate
+    /// the program the user just handed off to tmnl. Asserts via
+    /// `kill -0 <pid>` which returns 0 when the process is alive.
+    #[cfg(unix)]
+    #[test]
+    fn released_pty_drop_does_not_kill_child() {
+        use crate::pty_pane::{BinaryProfile, PtySession};
+
+        let profile = BinaryProfile {
+            label: "cat".to_string(),
+            exe: "cat".to_string(),
+            args: Vec::new(),
+            cwd: None,
+            env: Vec::new(),
+            session_id: None,
+        };
+        let mut session = match PtySession::spawn(profile, 24, 80) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let pid = match session.child_pid_for_test() {
+            Some(p) => p,
+            None => return,
+        };
+
+        session.mark_released();
+        drop(session);
+
+        // Give the OS a moment to propagate any kill (if it happened).
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let status = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .expect("kill -0 invocation failed");
+        assert!(
+            status.success(),
+            "child (pid {pid}) was killed by Drop despite released=true — \
+             regression in PtySession::drop released guard"
+        );
+        // Clean up the surviving `cat`.
+        let _ = std::process::Command::new("kill")
+            .args([&pid.to_string()])
+            .status();
+    }
+
+    /// `pop_pty_to_tmnl` no-ops when `TMNL_TRANSFER_SOCKET` is unset,
+    /// even with a focused pty pane present. The existing
+    /// `pop_pty_no_focused_pty_is_a_no_op` test sets the env var so it
+    /// short-circuits at "no focused pane"; this one is its complement.
+    #[cfg(unix)]
+    #[test]
+    fn pop_pty_socket_env_unset_is_a_no_op() {
+        use crate::pty_pane::{BinaryProfile, PtySession};
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let profile = BinaryProfile {
+            label: "cat".to_string(),
+            exe: "cat".to_string(),
+            args: Vec::new(),
+            cwd: Some(app.workspace.clone()),
+            env: Vec::new(),
+            session_id: None,
+        };
+        let session = match PtySession::spawn(profile, 24, 80) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let pane_id = app.panes.len();
+        app.panes.push(crate::pane::Pane::Pty(session));
+        app.active = Some(pane_id);
+
+        let saved = std::env::var("TMNL_TRANSFER_SOCKET").ok();
+        // SAFETY: tests are single-threaded at env-mutation; save+restore.
+        unsafe { std::env::remove_var("TMNL_TRANSFER_SOCKET") };
+        app.pop_pty_to_tmnl();
+        if let Some(v) = saved {
+            unsafe { std::env::set_var("TMNL_TRANSFER_SOCKET", v) };
+        }
+
+        assert!(
+            matches!(app.panes.get(pane_id), Some(crate::pane::Pane::Pty(_))),
+            "pty pane was removed despite TMNL_TRANSFER_SOCKET being unset"
+        );
+    }
+
+    /// `pop_pty_to_tmnl` no-ops when the transfer socket env var
+    /// points at a non-existent socket file.
+    #[cfg(unix)]
+    #[test]
+    fn pop_pty_connect_failure_is_a_no_op() {
+        use crate::pty_pane::{BinaryProfile, PtySession};
+
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let profile = BinaryProfile {
+            label: "cat".to_string(),
+            exe: "cat".to_string(),
+            args: Vec::new(),
+            cwd: Some(app.workspace.clone()),
+            env: Vec::new(),
+            session_id: None,
+        };
+        let session = match PtySession::spawn(profile, 24, 80) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let pane_id = app.panes.len();
+        app.panes.push(crate::pane::Pane::Pty(session));
+        app.active = Some(pane_id);
+
+        let bogus = d.path().join("no-such-transfer.sock");
+        // SAFETY: see above.
+        unsafe { std::env::set_var("TMNL_TRANSFER_SOCKET", &bogus) };
+        app.pop_pty_to_tmnl();
+
+        assert!(
+            matches!(app.panes.get(pane_id), Some(crate::pane::Pane::Pty(_))),
+            "pty pane was removed despite connect failing to {bogus:?}"
+        );
+    }
 }
