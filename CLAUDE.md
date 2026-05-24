@@ -105,6 +105,20 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Phase 3b v1: internal-app private blit-host binary scaffold (2026-05-23):**
+Created `~/Projects/internal-app/` (separate sibling, private repo at
+`chris-mclennan/internal-app`). Mnml hosts it via
+`:host.launch /Users/chrismclennan/Projects/internal-app/target/release/internal-app`.
+Ships ~500 lines: `main.rs` (CLI), `blit.rs` (tmnl-protocol transport —
+near-verbatim copy of `mixr-rs/src/tui/blit.rs`), `app.rs` (stub App +
+Env + handle_input), `ui.rs` (ratatui-based 3-env-column placeholder
+UI). The DocumentDB worker / TestExecutionRecord schema / correlation
+logic / Playwright launcher are NOT yet ported — they live in
+`~/Projects/internal-app-snapshot-2026-05-23.tar.gz` and queue up as
+Phase 3b.2 / 3b.3 / 3b.4 / 3b.5. v1 proves the architecture works
+end-to-end: mnml-as-host + separate binary speaking tmnl-protocol over
+UDS. Build + clippy clean.
+
 **Settings overlay — schema-driven, keyboard-first (2026-05-23):** mnml
 now has a proper settings overlay (`:settings` / `view.settings`). Replaces
 the earlier click-only flag-toggle overlay. New `src/app/settings.rs`
