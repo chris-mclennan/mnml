@@ -6783,7 +6783,7 @@ impl App {
         self.reveal_pane(pane_id);
     }
 
-    // ─── git graph (graphical-Git-GUI-style commit DAG) ─────────────────────
+    // ─── git graph (coloured-lane commit DAG) ───────────────────────
     // ─── git status / staging view ──────────────────────────────────
     /// The git-rooted path for the *currently-active* repo. In the
     /// single-repo case (or no-repo case) this is the workspace itself;

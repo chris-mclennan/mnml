@@ -1,4 +1,4 @@
-//! `Pane::GitGraph` — a graphical-Git-GUI-style commit-DAG view: the lane graph + commit
+//! `Pane::GitGraph` — a coloured-lane commit-DAG view: the lane graph + commit
 //! list on the left, the selected commit's details (full message + changed
 //! files) below it. Built on [`super::log`]. Read-only for now; "stage & commit
 //! (with Claude / Codex)" and worktree management are follow-ups (see

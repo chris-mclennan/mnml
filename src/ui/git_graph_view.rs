@@ -1,4 +1,4 @@
-//! The graphical-Git-GUI-style commit-DAG pane (`Pane::GitGraph`). Top region: a
+//! The coloured-lane commit-DAG pane (`Pane::GitGraph`). Top region: a
 //! columnar list — `<lane-bar> <sel-arrow> <branch/tag chips> <graph> <subject>
 //! · <author> <age> <sha>` with right-aligned trailing columns and a per-row
 //! colored "swimlane indicator" cell in the commit's lane color. Bottom region:
@@ -111,7 +111,7 @@ pub fn draw(
     );
 
     // ── horizontal split: list on left, detail on right ──────────────
-    // Detail panel takes ~40% of the width (clamped), graphical-Git-GUI-style.
+    // Detail panel takes ~40% of the width (clamped).
     // Falls back to no detail panel when the pane is very narrow.
     let detail_w: u16 = if body_area_full.width >= 80 {
         if let Some(w) = detail_w_cfg {
@@ -1694,8 +1694,7 @@ fn draw_header(
     cell_x += 3;
     // Visible `│` column separators replace the previous bare 2-space
     // gaps between columns. Drag to resize is a follow-up — for now
-    // they're purely visual cues advertising column boundaries
-    // (mirrors a popular Git GUI).
+    // they're purely visual cues advertising column boundaries.
     let sep_style = Style::default().fg(t.grey).bg(bg);
     let sep_span = || Span::styled(" │ ", sep_style);
     // Branch column header
@@ -1973,9 +1972,9 @@ pub fn draw_git_toolbar(
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
 
     // Button definitions: (label, nerd icon, ascii icon, action, color).
-    // Order: Undo/Redo first (a popular Git GUI puts them at the left edge of
-    // the toolbar), then Pull/Push, Fetch, Branch/Commit/Stash/Pop,
-    // Reflog, Terminal.
+    // Order: Undo/Redo first (left edge of the toolbar, matching the
+    // common convention), then Pull/Push, Fetch, Branch/Commit/Stash/
+    // Pop, Reflog, Terminal.
     let buttons: [(
         &str,
         &str,

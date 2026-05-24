@@ -43,7 +43,7 @@ pub enum Pane {
     MdPreview(MdPreview),
     /// A `git diff` view (hunk nav + stage/unstage).
     Diff(DiffView),
-    /// A graphical-Git-GUI-style commit-DAG browser (`git log --all` + commit details).
+    /// A coloured-lane commit-DAG browser (`git log --all` + commit details).
     GitGraph(GitGraphPane),
     /// A staging view — worktree/index file lists + stage/unstage + commit.
     GitStatus(GitStatusPane),

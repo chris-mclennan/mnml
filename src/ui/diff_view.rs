@@ -2,14 +2,12 @@
 //! three layout modes (chosen by clickable toolbar buttons at the top
 //! of the pane):
 //! * `Hunk` — focused, expanded-by-default hunks with their
-//!   `@@ -X,Y +Z,W @@` banner and a `<old> <new>` line-number gutter
-//!   (a popular Git GUI's "Hunk" view).
+//!   `@@ -X,Y +Z,W @@` banner and a `<old> <new>` line-number gutter.
 //! * `Inline` — entire file as one continuous column, line-number
-//!   gutter, green for additions, red for removals (a popular Git GUI's
-//!   "Inline").
+//!   gutter, green for additions, red for removals.
 //! * `Split` — whole file with old on the left, new on the right;
 //!   a 1-cell change-density minimap on the far right shows where
-//!   additions / removals fall through the file (a popular Git GUI's "Split").
+//!   additions / removals fall through the file.
 //!
 //! Plus a `[Wrap]` toggle that wraps long lines to the pane width
 //! (default off — long lines clip). Up/Down jump between hunks (or
@@ -96,9 +94,9 @@ pub fn draw(
 
     // For Inline + Split, lazy-fetch full-file-context hunks BEFORE
     // borrowing `d` mutably (the renderer no longer reaches into App).
-    // Inline now renders the entire file as one continuous view (matches
-    // a popular Git GUI's Inline column) so it needs the same full-context
-    // payload Split uses. Hunk view stays at `d.hunks` (focused regions).
+    // Inline now renders the entire file as one continuous view so it
+    // needs the same full-context payload Split uses. Hunk view stays at
+    // `d.hunks` (focused regions).
     let needs_full = matches!(
         app.panes.get(pane_id),
         Some(Pane::Diff(d)) if matches!(d.view_mode, DiffViewMode::Split | DiffViewMode::Inline)
@@ -287,9 +285,9 @@ pub fn draw_diff_toolbar(
     );
 }
 
-/// Inline view — show the **whole file** in one continuous column
-/// (matches a popular Git GUI's Inline view). Uses `d.full_hunks` (lazy-fetched
-/// in `draw`) for the full-file context. Falls back to `d.hunks`
+/// Inline view — show the **whole file** in one continuous column.
+/// Uses `d.full_hunks` (lazy-fetched in `draw`) for the full-file
+/// context. Falls back to `d.hunks`
 /// (with per-hunk headers) if full-context isn't available.
 ///
 /// Each row gets a `<old_no> <new_no>` line-number gutter, then a
@@ -399,7 +397,7 @@ pub fn render_inline(
         let removed_bg = removed_row_bg(t);
 
         for (li, hl) in h.lines.iter().enumerate() {
-            // graphical-Git-GUI-style: row bg tints added / removed; body fg
+            // Tinted-row style: row bg tints added / removed; body fg
             // stays `t.fg` (so the code reads naturally); only the
             // `+`/`-` marker + the left chip carry the change color.
             let (marker, marker_color, body, fg, sign, row_bg, kind) = match hl {
@@ -593,8 +591,8 @@ pub fn render_inline(
     }
 }
 
-/// `Hunk` view: focused, expanded-by-default chevron-fold hunks
-/// (a popular Git GUI's "Hunk" view). Each hunk shows its `@@ -X,Y +Z,W @@`
+/// `Hunk` view: focused, expanded-by-default chevron-fold hunks.
+/// Each hunk shows its `@@ -X,Y +Z,W @@`
 /// banner + the changed lines with a `<old_no> <new_no>` line-number
 /// gutter. Click a chevron to collapse one you don't need.
 #[allow(clippy::too_many_arguments)]
@@ -729,9 +727,9 @@ pub fn render_hunk(
             let added_bg = added_row_bg(t);
             let removed_bg = removed_row_bg(t);
             for (li, hl) in h.lines.iter().enumerate() {
-                // Tinted row bg + normal-fg body text (a popular Git GUI's
-                // styling). The `+`/`-` marker + the left `▏` chip
-                // stay saturated as the change indicators.
+                // Tinted row bg + normal-fg body text. The `+`/`-`
+                // marker + the left `▏` chip stay saturated as the
+                // change indicators.
                 let (marker, marker_color, body, sign, row_bg, body_fg, kind) = match hl {
                     HunkLine::Context(s) => (
                         " ",
@@ -870,7 +868,7 @@ pub fn render_hunk(
     }
 }
 
-/// graphical-Git-GUI-style split view — old text on the left, new on
+/// Side-by-side split view — old text on the left, new on
 /// the right with a `│` divider. Each side gets a 4-cell line-number
 /// gutter. Removed lines render on the left with a subtle red bg;
 /// Added on the right with a subtle green bg. Context lines appear
@@ -1429,7 +1427,7 @@ fn filter_status_line(d: &crate::pane::DiffView, t: &Theme) -> Option<Line<'stat
 
 /// Mix `fg` over `bg` at `alpha / 255` opacity. Used to derive the
 /// subtle green / red row-background tints for added / removed lines
-/// (graphical-Git-GUI-style) from the theme's own green / red colors. When
+/// from the theme's own green / red colors. When
 /// either input isn't an `Rgb` variant (named / indexed colors don't
 /// have a known palette here) the function falls back to `fallback`
 /// — picks a sensible muted tint for the typical dark-bg case.
@@ -1543,7 +1541,7 @@ fn digits(n: usize) -> usize {
 }
 
 /// Render `<old> <new> ` clamped to `gutter_w`. Empty slots show as
-/// blank space — never as `─` (matches a popular Git GUI's quieter style).
+/// blank space — never as `─` (a quieter, less-noisy gutter style).
 fn gutter_text_pair(old_no: Option<usize>, new_no: Option<usize>, gutter_w: usize) -> String {
     // Reserve trailing space for separation from the marker; split the
     // remaining width evenly across the two columns.
@@ -1758,7 +1756,7 @@ fn side_by_side_spans_v2(
     gutter_w: usize,
     pair: &PairRow,
 ) -> Vec<Span<'static>> {
-    // Tinted backgrounds for added/removed (graphical-Git-GUI-style); bg_dark
+    // Tinted backgrounds for added/removed; bg_dark
     // for everything else. `bg2` for empty filler so it visually reads
     // as "nothing here" without disappearing into the surrounding bg.
     let added_bg = added_row_bg(t);

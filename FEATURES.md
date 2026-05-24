@@ -81,7 +81,7 @@ The complete, organised feature inventory. For the front-door overview see
   discard, intraline highlighting, a `/`-filter, change-density minimap.
 - **Staging view** — `git status` unstaged/staged lists, stage/unstage whole
   files or dive into hunks, commit from inside the IDE.
-- **Commit graph** — a graphical-Git-GUI-style coloured-lane commit DAG with a
+- **Commit graph** — a coloured-lane commit DAG with a
   right-side detail panel, sortable columns, branch/date/author/subject filters,
   hash-jump, and a working-tree (WIP) row with interactive staging buttons.
 - **Branch rail** — a collapsible rail of branches / worktrees / open PRs;

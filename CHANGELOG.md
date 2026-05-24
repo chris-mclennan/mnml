@@ -65,7 +65,7 @@ capabilities present in the current `main`.
   go-to-definition, references, rename, code actions, diagnostics, inlay hints,
   semantic tokens, hierarchies, signature help, folding, and an Outline pane.
 - **Git** — gutter signs, a diff pane with per-hunk staging, a staging view, a
-  graphical-Git-GUI-style commit graph, a branch/worktree/PR rail, blame, sync
+  coloured-lane commit graph, a branch/worktree/PR rail, blame, sync
   operations, and AI-written commit messages.
 - **SCM & CI dashboards** — pipelines / builds and pull requests across
   Bitbucket, GitHub, GitLab, and Azure DevOps.

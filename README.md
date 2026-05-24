@@ -45,7 +45,7 @@ and render layers never branch on which one is active.
   references, rename with preview, code actions, inlay hints, semantic tokens,
   document/type/call hierarchy, signature help, and a Problems pane — driven by a
   config-driven server table.
-- **Rich git + a graphical-Git-GUI-style commit graph.** Gutter line-signs, a diff pane
+- **Rich git + a coloured-lane commit graph.** Gutter line-signs, a diff pane
   with per-hunk staging, blame, a staging view, a coloured-lane commit DAG, a
   branch/worktree/PR rail, and AI-written commit messages.
 - **Fuzzy everything.** File finder, command palette, buffer switcher, symbol
