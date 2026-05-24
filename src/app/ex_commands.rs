@@ -724,6 +724,21 @@ impl App {
                 let args: Vec<String> = parts.map(|s| s.to_string()).collect();
                 self.host_launch(binary, args);
             }
+            // `:tmnl.open-tab <command> [args...]` — when mnml is running
+            // as a tmnl `--blit` client, ask the parent tmnl to spawn a
+            // new native tab running `<command>`. No-op (with a toast) when
+            // mnml isn't under tmnl. Useful for popping a long-running CLI
+            // (claude, codex, a shell) out into its own dedicated tab.
+            "tmnl.open-tab" | "tmnl.tab" => {
+                if rest.is_empty() {
+                    self.toast(":tmnl.open-tab <command> [args...] — command required");
+                    return;
+                }
+                let mut parts = rest.split_whitespace();
+                let command = parts.next().unwrap().to_string();
+                let args: Vec<String> = parts.map(|s| s.to_string()).collect();
+                self.tmnl_open_tab(command, args);
+            }
             // `:Explore` / `:E` / `:Sex[plore]` / `:Vex[plore]` / `:Lex[plore]`
             // — vim's netrw file-explorer aliases. mnml routes them to the
             // file tree (`view.toggle_tree`) since that's the closest thing.

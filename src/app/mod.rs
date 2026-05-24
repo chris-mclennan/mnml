@@ -46,6 +46,7 @@ mod pipeline_log;
 mod playwright;
 mod session;
 mod snippets;
+mod tmnl;
 
 const TOAST_TTL: Duration = Duration::from_secs(4);
 const TOAST_STACK_MAX: usize = 5;

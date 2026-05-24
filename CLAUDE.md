@@ -85,6 +85,29 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**tmnl-handoff (simple variant) + integrations design doc (2026-05-23):**
+Added `App::tmnl_open_tab(command, args)` in `src/app/tmnl.rs` — when mnml
+is running as a tmnl `--blit` native client, pushes onto the existing
+`pending_open_panes` outbox which the blit loop drains into a
+`Message::OpenPane`. tmnl then spawns the command as a new native tab.
+No-ops with a toast when mnml isn't under tmnl. Ex-cmdline:
+`:tmnl.open-tab <command> [args...]`. Convenience palette commands
+`tmnl.open_claude_in_tab` / `tmnl.open_codex_in_tab`. **Note:** this is
+the *simple* variant — spawn-in-new-tab. The hard variant (transferring
+a *running* pty session from mnml's pane into a new tmnl tab via
+`SCM_RIGHTS` fd-passing) needs new tmnl-protocol messages + unsafe Unix;
+left as a follow-up.
+
+Also wrote `docs/INTEGRATIONS.md` — design briefs for the three planned
+blit-host integration families: database viewers
+(`mnml-db-{postgres,mysql,redis,sqlite}`), ticket viewers
+(`mnml-tickets-{linear,jira,github,gitlab}`), Playwright runner
+(three interpretations flagged; default = richer results browser).
+Each entry covers UI shape, auth, what lives in the binary vs in mnml,
+open questions. Recommended build order: `mnml-db-postgres` first to
+validate the pattern end-to-end. 776 default tests pass (+3 new tmnl
+tests), clippy clean.
+
 **Config-driven launcher-icon strip (2026-05-23):** Bufferline's right-cluster
 launcher chips are now config-driven via `[[ui.launcher_icon]]`. Each entry
 has `id` / `glyph` / `fallback` / `command` / `color` / `tooltip`. Claude

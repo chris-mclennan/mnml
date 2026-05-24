@@ -3113,5 +3113,22 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.tail_selected_codebuild_logs_classified(),
         });
     }
+    // tmnl-handoff — only useful when mnml is running as a tmnl
+    // `--blit` client. The commands are registered unconditionally; at
+    // runtime they toast an explanation if mnml's not under tmnl.
+    cmds.push(Command {
+        id: "tmnl.open_claude_in_tab",
+        title: "tmnl: open Claude Code in a new tab",
+        group: "tmnl",
+        keys: &[],
+        run: |app| app.tmnl_open_claude_in_tab(),
+    });
+    cmds.push(Command {
+        id: "tmnl.open_codex_in_tab",
+        title: "tmnl: open Codex in a new tab",
+        group: "tmnl",
+        keys: &[],
+        run: |app| app.tmnl_open_codex_in_tab(),
+    });
     cmds
 }
