@@ -570,6 +570,35 @@ pub struct UiConfig {
     /// (database viewers, ticket viewers, etc.) or any registered
     /// command. See [`LauncherIcon`].
     pub launcher_icons: Vec<LauncherIcon>,
+    /// Plain-glyph icons stacked in the rail's INTEGRATIONS section
+    /// (under GIT). Each runs `command` on click; no chip background.
+    /// Defaults empty — populate via `[[ui.integration_icon]]` entries
+    /// for shortcuts to Jira, Bitbucket, GitHub Actions, DB viewers,
+    /// etc. See [`IntegrationIcon`].
+    pub integration_icons: Vec<IntegrationIcon>,
+}
+
+/// One entry in the rail's INTEGRATIONS section. Same shape as
+/// [`LauncherIcon`] but rendered as a plain monochrome glyph instead
+/// of a colored chip — fits the muted "quick-launch row" aesthetic.
+///
+/// ```toml
+/// [[ui.integration_icon]]
+/// id       = "jira"
+/// glyph    = "\u{F0411}"             # nf-md-jira
+/// fallback = "J"
+/// command  = ":host.launch jira-viewer"
+/// color    = "blue"
+/// tooltip  = "Open Jira board"
+/// ```
+#[derive(Debug, Clone)]
+pub struct IntegrationIcon {
+    pub id: String,
+    pub glyph: String,
+    pub fallback: String,
+    pub command: String,
+    pub color: String,
+    pub tooltip: Option<String>,
 }
 
 /// One entry in the bufferline's right-side launcher-icon strip.
@@ -665,22 +694,75 @@ impl Default for Config {
                 git_graph_author_col: None,
                 git_graph_detail_col: None,
                 picker_position: "center".to_string(),
-                launcher_icons: vec![
-                    LauncherIcon {
+                // Launcher chips on the bufferline-right are empty by
+                // default now — Claude + Codex moved into INTEGRATIONS
+                // (rail) below. Users can still add chips here via
+                // `[[ui.launcher_icon]]`.
+                launcher_icons: vec![],
+                // Default INTEGRATIONS row — Claude / Codex / Bitbucket /
+                // GitHub. Replace or extend via `[[ui.integration_icon]]`
+                // in user config; empty array there removes the section.
+                integration_icons: vec![
+                    IntegrationIcon {
                         id: "claude_code".to_string(),
-                        glyph: "\u{F0E2D}".to_string(),
+                        // Branded Claude Spark glyph patched into the
+                        // user's Nerd Font at U+F8B0 by
+                        // `scripts/patch_nerd_font.py`.
+                        glyph: "\u{F8B0}".to_string(),
                         fallback: "CC".to_string(),
                         command: "ai.claude_code".to_string(),
                         color: "orange".to_string(),
-                        tooltip: Some("Claude Code (right dock)".to_string()),
+                        tooltip: Some("Claude Code".to_string()),
                     },
-                    LauncherIcon {
+                    IntegrationIcon {
                         id: "codex".to_string(),
-                        glyph: "\u{F0EE7}".to_string(),
+                        // Branded Codex glyph (cloud + `>_`) patched at
+                        // U+F8B1.
+                        glyph: "\u{F8B1}".to_string(),
                         fallback: "CX".to_string(),
                         command: "ai.codex".to_string(),
                         color: "cyan".to_string(),
-                        tooltip: Some("Codex (right dock)".to_string()),
+                        tooltip: Some("Codex".to_string()),
+                    },
+                    IntegrationIcon {
+                        id: "bitbucket".to_string(),
+                        glyph: "\u{E703}".to_string(), // nf-dev-bitbucket
+                        fallback: "B".to_string(),
+                        command: "bitbucket.pull_requests".to_string(),
+                        color: "blue".to_string(),
+                        tooltip: Some("Bitbucket pull requests".to_string()),
+                    },
+                    IntegrationIcon {
+                        id: "http".to_string(),
+                        glyph: "\u{F1D8B}".to_string(), // nf-md-send (paper plane)
+                        fallback: "→".to_string(),
+                        command: "http.send".to_string(),
+                        color: "green".to_string(),
+                        tooltip: Some("HTTP: send active request".to_string()),
+                    },
+                    IntegrationIcon {
+                        id: "playwright".to_string(),
+                        glyph: "\u{F0668}".to_string(), // nf-md-test-tube
+                        fallback: "T".to_string(),
+                        command: ":host.launch internal-app".to_string(),
+                        color: "purple".to_string(),
+                        tooltip: Some("Playwright runner (via internal-app)".to_string()),
+                    },
+                    IntegrationIcon {
+                        id: "codebuild".to_string(),
+                        glyph: "\u{F0492}".to_string(), // nf-md-hammer-wrench
+                        fallback: "C".to_string(),
+                        command: "aws.codebuilds".to_string(),
+                        color: "yellow".to_string(),
+                        tooltip: Some("AWS CodeBuild builds".to_string()),
+                    },
+                    IntegrationIcon {
+                        id: "github".to_string(),
+                        glyph: "\u{F02A4}".to_string(), // nf-md-github
+                        fallback: "G".to_string(),
+                        command: "github.actions".to_string(),
+                        color: "fg".to_string(),
+                        tooltip: Some("GitHub Actions".to_string()),
                     },
                 ],
             },
@@ -914,6 +996,11 @@ struct RawUi {
     /// `LauncherIcon` docs and add their own entries.
     #[serde(default, rename = "launcher_icon")]
     launcher_icons: Option<Vec<RawLauncherIcon>>,
+    /// Array of `[[ui.integration_icon]]` entries for the rail's
+    /// INTEGRATIONS section. Replaces the built-in defaults (currently
+    /// empty) when present.
+    #[serde(default, rename = "integration_icon")]
+    integration_icons: Option<Vec<RawLauncherIcon>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1112,6 +1199,33 @@ impl Config {
                         fallback: r.fallback.unwrap_or_else(|| "*".to_string()),
                         command,
                         color: r.color.unwrap_or_else(|| "bg2".to_string()),
+                        tooltip: r.tooltip,
+                    })
+                })
+                .collect();
+        }
+        // `[[ui.integration_icon]]` — rail INTEGRATIONS section. Same
+        // shape, same merge rule (presence replaces defaults).
+        if let Some(raws) = raw.ui.integration_icons {
+            self.ui.integration_icons = raws
+                .into_iter()
+                .filter_map(|r| {
+                    let glyph = r.glyph?;
+                    let command = r.command?;
+                    let id = r.id.unwrap_or_else(|| {
+                        command
+                            .trim_start_matches(':')
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("integration")
+                            .to_string()
+                    });
+                    Some(IntegrationIcon {
+                        id,
+                        glyph,
+                        fallback: r.fallback.unwrap_or_else(|| "*".to_string()),
+                        command,
+                        color: r.color.unwrap_or_else(|| "fg".to_string()),
                         tooltip: r.tooltip,
                     })
                 })

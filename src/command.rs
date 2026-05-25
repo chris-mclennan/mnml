@@ -1040,6 +1040,16 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "file.new_folder",
+            title: "New folder… (workspace-relative path)",
+            group: "file",
+            keys: &[],
+            run: |app| {
+                let ws = app.workspace.clone();
+                app.open_new_folder_prompt(ws);
+            },
+        },
+        Command {
             id: "file.reload",
             title: "Reload active buffer from disk (refuses if dirty)",
             group: "file",
@@ -1420,6 +1430,33 @@ fn builtin_commands() -> Vec<Command> {
             group: "view",
             keys: &[],
             run: |app| app.tree.refresh(),
+        },
+        Command {
+            id: "tree.collapse_all",
+            title: "Collapse all folders in the file tree",
+            group: "view",
+            keys: &[],
+            run: |app| app.tree.collapse_all(),
+        },
+        Command {
+            id: "tree.expand_all",
+            title: "Expand all folders in the file tree",
+            group: "view",
+            keys: &[],
+            run: |app| app.tree.expand_all_dirs(),
+        },
+        Command {
+            id: "tree.toggle_collapse_all",
+            title: "Toggle: collapse-all / expand-all",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                if app.tree.is_fully_collapsed() {
+                    app.tree.expand_all_dirs();
+                } else {
+                    app.tree.collapse_all();
+                }
+            },
         },
         Command {
             id: "editor.use_vim",

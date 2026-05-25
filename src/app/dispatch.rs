@@ -304,6 +304,35 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::LauncherIcon(icon_idx));
     }
+    if let Some(&(_, cmd_id)) = app
+        .rects
+        .tree_icon_buttons
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::TreeIcon(cmd_id));
+    }
+    if let Some(tr) = app.rects.tree_toggle
+        && contains(tr, x, y)
+    {
+        return Some(crate::HoverChip::WorkspaceHeader);
+    }
+    if let Some(&(_, ws_idx)) = app
+        .rects
+        .extra_workspace_toggles
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::ExtraWorkspaceHeader(ws_idx));
+    }
+    if let Some(&(_, icon_idx)) = app
+        .rects
+        .integration_icon_rects
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::IntegrationIcon(icon_idx));
+    }
     if let Some(&(_, action)) = app
         .rects
         .rail_git_header_buttons

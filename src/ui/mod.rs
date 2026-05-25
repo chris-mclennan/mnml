@@ -187,14 +187,29 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Split off the bottom statusline + cmdline bar (each 1 row, full width).
     // Cmdline bar sits BELOW the statusline (vim/neovim convention: the
     // statusline shows steady state, the cmdline below it shows the live `:`
-    // line + transient echo messages).
+    // line + transient echo messages). The top row is a 1-row palette bar
+    // (VS Code-style centered "search files, run commands…" chip) — visible
+    // when the window is wide enough AND we're not under tmnl. Under tmnl,
+    // the host renders the palette chip directly in its native chrome
+    // strip (next to the macOS traffic lights), so the inline bar would
+    // be duplicate chrome.
+    let palette_bar_visible = area.width >= 80 && !app.under_tmnl;
+    let palette_bar_h: u16 = if palette_bar_visible { 1 } else { 0 };
     let v = RLayout::vertical([
+        Constraint::Length(palette_bar_h),
         Constraint::Min(1),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
     .split(area);
-    let (upper, statusline_area, cmdline_bar_area) = (v[0], v[1], v[2]);
+    let (palette_bar_area, upper, statusline_area, cmdline_bar_area) =
+        (v[0], v[1], v[2], v[3]);
+
+    if palette_bar_visible {
+        draw_palette_bar(frame, app, palette_bar_area);
+    } else {
+        app.rects.palette_search_chip = None;
+    }
 
     // tree rail | right column. `tree_visible` here means "the rail itself is
     // showing" (toggled by `Ctrl+B`); a separate `tree_root_expanded` flag,
@@ -669,6 +684,139 @@ fn render_layout(
             c1.or(c2)
         }
     }
+}
+
+/// VS Code-style top "command palette" strip — a single row across the
+/// full window width with three regions, centered as a group:
+///
+///   `[ ← ][ → ]   [ 🔍  search files, run commands…  ▾ ]`
+///
+/// * Back / Forward arrows → `buffer.prev` / `buffer.next` (file history).
+/// * Center chip → opens the command palette.
+/// * Dropdown chevron → opens the recent-files picker.
+///
+/// Auto-hides when the window is narrower than `MIN_WIDTH`.
+fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
+    if area.height == 0 || area.width == 0 {
+        app.rects.palette_search_chip = None;
+        app.rects.palette_back_button = None;
+        app.rects.palette_forward_button = None;
+        app.rects.palette_dropdown_button = None;
+        return;
+    }
+    let t = theme::cur();
+    let ascii = app.config.ui.ascii_icons;
+    frame.render_widget(
+        Block::default().style(Style::default().bg(t.bg_dark)),
+        area,
+    );
+
+    let back_glyph = if ascii { "<" } else { "\u{EA9B}" }; // codicon: arrow-left
+    let fwd_glyph = if ascii { ">" } else { "\u{EA9C}" }; // codicon: arrow-right
+    let magnify = if ascii { "?" } else { "\u{F0349}" };
+    let dropdown_glyph = if ascii { "v" } else { "\u{EAA1}" }; // codicon: chevron-down
+    let placeholder = "search files, run commands…";
+
+    // Button strings — each ` glyph ` = 3 cells.
+    let back_str = format!(" {back_glyph} ");
+    let fwd_str = format!(" {fwd_glyph} ");
+    let dropdown_str = format!(" {dropdown_glyph} ");
+    // Chip text without the dropdown — that's a separate clickable cell.
+    let chip_text = format!("  {magnify}  {placeholder}  ");
+
+    let back_w = back_str.chars().count() as u16;
+    let fwd_w = fwd_str.chars().count() as u16;
+    let dropdown_w = dropdown_str.chars().count() as u16;
+    let chip_w = chip_text.chars().count() as u16;
+    // Layout: `[back][fwd] gap [chip][dropdown]` — gap of 3 cells
+    // separates the navigation cluster from the search cluster.
+    const NAV_GAP: u16 = 3;
+    let total_w = back_w + fwd_w + NAV_GAP + chip_w + dropdown_w;
+    if total_w > area.width {
+        // Window too narrow for the full layout — fall back to chip only,
+        // centered. Skips arrows + dropdown until there's room.
+        let chip_only_w = chip_w.min(area.width);
+        let cx = area.x + area.width.saturating_sub(chip_only_w) / 2;
+        let chip_rect = Rect {
+            x: cx,
+            y: area.y,
+            width: chip_only_w,
+            height: 1,
+        };
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(chip_text)
+                .style(Style::default().fg(t.comment).bg(t.bg2)),
+            chip_rect,
+        );
+        app.rects.palette_search_chip = Some(chip_rect);
+        app.rects.palette_back_button = None;
+        app.rects.palette_forward_button = None;
+        app.rects.palette_dropdown_button = None;
+        return;
+    }
+
+    let mut x = area.x + (area.width - total_w) / 2;
+    let y = area.y;
+
+    // Back button.
+    let back_rect = Rect {
+        x,
+        y,
+        width: back_w,
+        height: 1,
+    };
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(back_str)
+            .style(Style::default().fg(t.fg).bg(t.bg2)),
+        back_rect,
+    );
+    app.rects.palette_back_button = Some(back_rect);
+    x += back_w;
+
+    // Forward button.
+    let fwd_rect = Rect {
+        x,
+        y,
+        width: fwd_w,
+        height: 1,
+    };
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(fwd_str)
+            .style(Style::default().fg(t.fg).bg(t.bg2)),
+        fwd_rect,
+    );
+    app.rects.palette_forward_button = Some(fwd_rect);
+    x += fwd_w + NAV_GAP;
+
+    // Search chip.
+    let chip_rect = Rect {
+        x,
+        y,
+        width: chip_w,
+        height: 1,
+    };
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(chip_text)
+            .style(Style::default().fg(t.comment).bg(t.bg2)),
+        chip_rect,
+    );
+    app.rects.palette_search_chip = Some(chip_rect);
+    x += chip_w;
+
+    // Dropdown chevron — visually glued to the chip's right edge but
+    // dispatches its own command.
+    let dropdown_rect = Rect {
+        x,
+        y,
+        width: dropdown_w,
+        height: 1,
+    };
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(dropdown_str)
+            .style(Style::default().fg(t.comment).bg(t.bg2)),
+        dropdown_rect,
+    );
+    app.rects.palette_dropdown_button = Some(dropdown_rect);
 }
 
 fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir, hover: bool) {

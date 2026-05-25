@@ -214,6 +214,20 @@ pub enum HoverChip {
     /// `0 = Claude`, `1 = Codex`; users can replace / append via
     /// `[[ui.launcher_icon]]` in their config.
     LauncherIcon(usize),
+    /// File-tree toolbar icon row at the top of the rail. The
+    /// `&'static str` is the command id (e.g. `"file.new_folder"`)
+    /// stored alongside the rect in `app.rects.tree_icon_buttons`.
+    TreeIcon(&'static str),
+    /// The primary workspace header (`> WORKSPACE-NAME`) — tooltip
+    /// reveals the absolute path so the user can confirm which
+    /// directory mnml actually opened in.
+    WorkspaceHeader,
+    /// An extra workspace header from `[[workspaces]]` — the `usize`
+    /// indexes `App.extra_workspaces`.
+    ExtraWorkspaceHeader(usize),
+    /// One icon in the rail's INTEGRATIONS section — `usize` indexes
+    /// `App.config.ui.integration_icons`.
+    IntegrationIcon(usize),
 }
 
 /// One row in the F1 click-discovery overlay. Each variant maps to a list

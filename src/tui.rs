@@ -4270,6 +4270,31 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // `+` new tab, per-tabpage chip / close, theme toggle,
             // window close. Order matters (the `⊗` rect sits adjacent
             // to its chip; check close before chip).
+            // Palette top-bar — back / forward / chip / dropdown.
+            if let Some(r) = app.rects.palette_back_button
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                let _ = crate::command::run("buffer.prev", app);
+                return;
+            }
+            if let Some(r) = app.rects.palette_forward_button
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                let _ = crate::command::run("buffer.next", app);
+                return;
+            }
+            if let Some(r) = app.rects.palette_search_chip
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.open_command_palette();
+                return;
+            }
+            if let Some(r) = app.rects.palette_dropdown_button
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                let _ = crate::command::run("picker.recent", app);
+                return;
+            }
             // Launcher-icon strip — click hands off to the configured
             // command (registered command id, or ex-cmdline string).
             if let Some(&(_, icon_idx)) = app
@@ -4416,6 +4441,44 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 && crate::app::dispatch::contains(r, x, y)
             {
                 let _ = crate::command::run("editor.goto_line", app);
+                return;
+            }
+            // File-tree toolbar icons (row 0 of the rail). Check BEFORE
+            // the WORKSPACE-toggle below since the workspace header is row 1
+            // and the icon row sits above it. Each chip dispatches a palette
+            // command by id.
+            if let Some(&(_, cmd_id)) = app
+                .rects
+                .tree_icon_buttons
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                let _ = crate::command::run(cmd_id, app);
+                return;
+            }
+            // INTEGRATIONS icon — hand off to the configured command
+            // (registered command id, or ex-cmdline string). Check
+            // BEFORE the section-toggle below.
+            if let Some(&(_, icon_idx)) = app
+                .rects
+                .integration_icon_rects
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                && let Some(icon) = app.config.ui.integration_icons.get(icon_idx)
+            {
+                let cmd = icon.command.clone();
+                if let Some(rest) = cmd.strip_prefix(':') {
+                    app.run_ex_command(rest);
+                } else {
+                    crate::command::run(&cmd, app);
+                }
+                return;
+            }
+            // `> INTEGRATIONS` section header — click toggles collapse.
+            if let Some(tr) = app.rects.integration_section_toggle
+                && crate::app::dispatch::contains(tr, x, y)
+            {
+                app.integration_section_expanded = !app.integration_section_expanded;
                 return;
             }
             // The `> WORKSPACE-NAME` section header — clicking it toggles the

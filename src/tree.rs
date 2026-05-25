@@ -81,6 +81,34 @@ impl Tree {
         self.expanded.iter().cloned().collect()
     }
 
+    /// Collapse every directory in the tree. Cursor + scroll snap back
+    /// to the top so the user doesn't end up looking at an empty row.
+    pub fn collapse_all(&mut self) {
+        self.expanded.clear();
+        self.cursor = 0;
+        self.scroll = 0;
+    }
+
+    /// Expand every directory under the workspace root — drives the
+    /// "expand all" half of the collapse/expand toggle. Cursor + scroll
+    /// snap back to the top so the user can drill down from row 0.
+    pub fn expand_all_dirs(&mut self) {
+        self.expanded = self
+            .entries
+            .iter()
+            .filter(|e| e.is_dir)
+            .map(|e| e.path.clone())
+            .collect();
+        self.cursor = 0;
+        self.scroll = 0;
+    }
+
+    /// True when no directory in the tree is expanded — used by the
+    /// rail's collapse/expand toggle chip to flip its glyph + behavior.
+    pub fn is_fully_collapsed(&self) -> bool {
+        self.expanded.is_empty()
+    }
+
     /// Replace the auto-expansion set with exactly `paths` (validated against
     /// existing dirs — unknown paths drop silently). Useful when the caller
     /// has a specific notion of what should be open on first launch, e.g.

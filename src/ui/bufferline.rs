@@ -113,7 +113,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // scroll math reserves enough width.
     let n_tabs = app.layouts.len();
     let n_launcher = app.config.ui.launcher_icons.len() as u16;
-    let mut right_w: u16 = 4 * n_launcher + 3 + 6; // launchers + ` + ` + ` TABS `
+    let mut right_w: u16 = 3 * n_launcher + 3 + 6; // launchers + ` + ` + ` TABS `
     for i in 0..n_tabs {
         // Active = ` <n>󰅖 ` (3 cells label + 2 cells close glyph).
         // Inactive = ` <n> ` (3 cells label only). Dirty tab gets a
@@ -434,14 +434,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // Launcher-icon strip — one chip per configured `[[ui.launcher_icon]]`.
     // Claude + Codex are built-in defaults; users can replace / append via
-    // config (see `LauncherIcon` rustdoc). Each chip is 4 cells (` <glyph> `
-    // + trailing space), painted on its theme-slot color. Click hands off
+    // config (see `LauncherIcon` rustdoc). Each chip is 3 cells
+    // (` <glyph> `), painted on its theme-slot color. Click hands off
     // to `dispatch_launcher_icon_click` in dispatch.rs.
     for (i, icon) in app.config.ui.launcher_icons.iter().enumerate() {
         let glyph = if nerd { &icon.glyph } else { &icon.fallback };
         let bg = launcher_color(&t, &icon.color);
         spans.push(Span::styled(
-            format!(" {glyph}  "),
+            format!(" {glyph} "),
             Style::default()
                 .fg(t.bg_darker)
                 .bg(bg)
@@ -451,12 +451,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             ratatui::layout::Rect {
                 x: cluster_x,
                 y: area.y,
-                width: 4,
+                width: 3,
                 height: 1,
             },
             i,
         ));
-        cluster_x += 4;
+        cluster_x += 3;
     }
 
     // New-tab button. `nf-md-plus` (\u{F0415}) — thicker than ASCII `+`,

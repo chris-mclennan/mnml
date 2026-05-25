@@ -184,6 +184,55 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 .unwrap_or_else(|| format!("click: {}", icon.command));
             Some((rect, label, None))
         }
+        HoverChip::IntegrationIcon(idx) => {
+            let icon = app.config.ui.integration_icons.get(idx)?;
+            let &(rect, _) = app
+                .rects
+                .integration_icon_rects
+                .iter()
+                .find(|(_, i)| *i == idx)?;
+            let label = icon
+                .tooltip
+                .clone()
+                .unwrap_or_else(|| format!("click: {}", icon.command));
+            Some((rect, label, None))
+        }
+        HoverChip::WorkspaceHeader => {
+            let rect = app.rects.tree_toggle?;
+            Some((rect, app.workspace.display().to_string(), None))
+        }
+        HoverChip::ExtraWorkspaceHeader(idx) => {
+            let rect = app
+                .rects
+                .extra_workspace_toggles
+                .iter()
+                .find(|(_, i)| *i == idx)
+                .map(|(r, _)| *r)?;
+            let path = app.extra_workspaces.get(idx)?.root.display().to_string();
+            Some((rect, path, None))
+        }
+        HoverChip::TreeIcon(cmd_id) => {
+            let &(rect, _) = app
+                .rects
+                .tree_icon_buttons
+                .iter()
+                .find(|(_, id)| *id == cmd_id)?;
+            let label: std::borrow::Cow<'static, str> = match cmd_id {
+                "view.add_workspace" => "add workspace folder".into(),
+                "file.new" => "new file".into(),
+                "file.new_folder" => "new folder".into(),
+                "tree.refresh" => "refresh tree".into(),
+                "tree.collapse_all" => "collapse all".into(),
+                "tree.toggle_collapse_all" => if app.tree.is_fully_collapsed() {
+                    "expand all".into()
+                } else {
+                    "collapse all".into()
+                },
+                "picker.files" => "search files".into(),
+                other => other.into(),
+            };
+            Some((rect, label.into_owned(), None))
+        }
         HoverChip::RailHeaderChip(action) => {
             let rect = app
                 .rects

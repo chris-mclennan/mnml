@@ -1568,6 +1568,10 @@ pub struct PaneRects {
     /// header row when the tree is expanded, or the whole activity-bar column
     /// when it's collapsed. Click → `App::toggle_tree`.
     pub tree_toggle: Option<Rect>,
+    /// `(rect, command_id)` per icon in the file-tree toolbar strip (row 0
+    /// of the rail when expanded). Click → `crate::command::run(id, app)`.
+    /// Cleared + rebuilt per render.
+    pub tree_icon_buttons: Vec<(Rect, &'static str)>,
     /// The 1-cell-wide draggable "right edge" of the rail. Click+drag adjusts
     /// `App::tree_width` so the rail resizes live.
     pub tree_edge: Option<Rect>,
@@ -1615,6 +1619,25 @@ pub struct PaneRects {
     /// `bufferline_claude_button` / `bufferline_codex_button` fields —
     /// Claude + Codex are now built-in defaults in that config Vec.
     pub launcher_icon_rects: Vec<(Rect, usize)>,
+    /// Centered "search files, run commands…" chip in the palette
+    /// top-bar. Click → `app.open_command_palette()`.
+    pub palette_search_chip: Option<Rect>,
+    /// Back button (`←`) in the palette top-bar — `buffer.prev`.
+    pub palette_back_button: Option<Rect>,
+    /// Forward button (`→`) in the palette top-bar — `buffer.next`.
+    pub palette_forward_button: Option<Rect>,
+    /// Dropdown chevron (`▾`) at the right edge of the palette chip —
+    /// opens the recent-files picker.
+    pub palette_dropdown_button: Option<Rect>,
+    /// Rail INTEGRATIONS section icon rects — `(rect, index into
+    /// `App.config.ui.integration_icons`)`. Click dispatcher in
+    /// `tui.rs` runs the icon's `command`; hover tooltip in
+    /// `ui::tooltip` looks up the entry's label.
+    pub integration_icon_rects: Vec<(Rect, usize)>,
+    /// `> INTEGRATIONS` rail-section header — clickable toggle that
+    /// flips `App.integration_section_expanded` (same pattern as
+    /// `tree_toggle` / `git_section_toggle`).
+    pub integration_section_toggle: Option<Rect>,
     /// Statusline git-branch chip — clickable shortcut to `git.graph`.
     /// Registered by `ui::statusline::draw` per render; absent when the
     /// branch isn't shown (no repo / non-git workspace).
@@ -2292,6 +2315,9 @@ pub struct App {
     /// Is the `> GIT` rail section expanded? Sibling of [`Self::tree_root_expanded`].
     /// Persisted in session.json. Default `true`.
     pub git_section_expanded: bool,
+    /// Is the `> INTEGRATIONS` rail section expanded? Same lifecycle as
+    /// `git_section_expanded`. Default `true`.
+    pub integration_section_expanded: bool,
     /// Which rail section the keyboard is on when `focus == Focus::Tree`.
     /// Switched by ↓ off the end of the workspace list / ↑ off the top of the
     /// git list, or by clicking a row in the other section.
@@ -2970,6 +2996,7 @@ impl App {
             repos,
             active_repo,
             git_section_expanded: true,
+            integration_section_expanded: true,
             rail_section: RailSection::Workspace,
             git,
             toast: None,

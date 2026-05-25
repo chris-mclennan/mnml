@@ -32,6 +32,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.git_rail_rows.clear();
     app.rects.extra_workspace_bodies.clear();
     app.rects.extra_workspace_toggles.clear();
+    app.rects.tree_icon_buttons.clear();
+    app.rects.integration_icon_rects.clear();
+    app.rects.integration_section_toggle = None;
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -42,8 +45,37 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    // ── row 0: blank for breathing room above the first section header.
-    // ── row 1: WORKSPACE header.
+    // The rail's bottom slice hosts (top to bottom): INTEGRATIONS
+    // section + GIT section. Both are pinned to the bottom and grow
+    // upward to fit their content; the workspace tree gets whatever's
+    // left above. Compute each section's needed height, then carve
+    // them out of `area` from the bottom up.
+    let git_needed = compute_git_section_height(app);
+    let integration_needed =
+        compute_integration_section_height(app, area.width as usize);
+    // Keep at least `MIN_TREE_ROWS` for the workspace; anything beyond
+    // that the two bottom sections can claim.
+    const MIN_TREE_ROWS: u16 = 6;
+    let bottom_budget = area.height.saturating_sub(MIN_TREE_ROWS).max(1);
+    // INTEGRATIONS gets first dibs — it's small (1 header + 1-2 icon
+    // rows) and a long GIT branch list would otherwise eat the whole
+    // bottom budget and squeeze it out. GIT then gets what's left and
+    // its branch list scrolls if it can't fit (GIT is the section
+    // designed to grow; INTEGRATIONS is a stable fixed-size strip).
+    let integration_height = integration_needed.min(bottom_budget);
+    let remaining_for_git = bottom_budget.saturating_sub(integration_height);
+    let git_height = git_needed.min(remaining_for_git).max(1);
+    let git_top_y = area.y + area.height - git_height;
+    let integration_top_y = git_top_y.saturating_sub(integration_height + 1); // +1 separator
+    // Workspace section gets everything above the integration section
+    // (with a one-row separator immediately above it).
+    let ws_end_y = if integration_height > 0 {
+        integration_top_y.saturating_sub(1)
+    } else {
+        git_top_y.saturating_sub(1)
+    };
+
+    // ── row 0: WORKSPACE header (with right-aligned action chips).
     let ws_name = app
         .workspace
         .file_name()
@@ -51,62 +83,90 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .unwrap_or("workspace")
         .to_string();
     let chev = section_chev(app.tree_root_expanded, nerd);
-    // Leading space + chevron in muted grey + name in bold fg. The leading
-    // space keeps the chevron off the rail's left border; coloring the
-    // chevron with `comment` matches the row-level chevrons inside the
-    // tree (so all `>` glyphs share one shade).
     let chev_str = format!(" {chev} ");
     let header_used = chev_str.chars().count() + ws_name.chars().count();
-    let header_pad = width.saturating_sub(header_used);
     let header_rect = Rect {
         x: area.x,
-        y: area.y + 1,
+        y: area.y,
         width: area.width,
         height: 1,
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                chev_str,
-                Style::default().fg(theme::cur().comment).bg(rail_bg),
-            ),
-            Span::styled(
-                ws_name.clone(),
-                Style::default()
-                    .fg(theme::cur().fg)
-                    .bg(rail_bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ".repeat(header_pad), Style::default().bg(rail_bg)),
-        ])),
-        header_rect,
-    );
+    let chip_spans = workspace_header_chips(app, header_rect, header_used, nerd, rail_bg);
+    let mut spans = vec![
+        Span::styled(
+            chev_str,
+            Style::default().fg(theme::cur().comment).bg(rail_bg),
+        ),
+        Span::styled(
+            ws_name.clone(),
+            Style::default()
+                .fg(theme::cur().fg)
+                .bg(rail_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    spans.extend(chip_spans);
+    frame.render_widget(Paragraph::new(Line::from(spans)), header_rect);
     app.rects.tree_toggle = Some(header_rect);
 
+    // The clipped rect bounds the workspace-tree / extras / `+ repo`
+    // rows so they never spill into the GIT panel pinned below.
+    let ws_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: ws_end_y.saturating_sub(area.y),
+    };
+
     // ── workspace file list (only when expanded). Returns the row past the
-    //    last one it drew, so the GIT section can render below.
-    let mut next_y = area.y + 2;
-    if app.tree_root_expanded && area.height >= 3 {
-        next_y = draw_workspace_files(frame, app, area, next_y, nerd);
+    //    last one it drew, so the next workspace section / `+ repo` row
+    //    can render below.
+    let mut next_y = area.y + 1;
+    if app.tree_root_expanded && ws_area.height >= 2 {
+        next_y = draw_workspace_files(frame, app, ws_area, next_y, nerd);
     }
 
     // ── extra workspace sections (from `[[workspaces]]` config). Each gets
-    //    a blank separator + collapsible header; expanded sections show a
-    //    bounded file-list slot below the header.
+    //    a blank separator + collapsible header (with action chips); expanded
+    //    sections show a bounded file-list slot below the header.
     for ws_idx in 0..app.extra_workspaces.len() {
-        if next_y + 1 >= area.y + area.height {
-            return;
+        if next_y + 1 >= ws_end_y {
+            break;
         }
-        next_y = draw_extra_workspace_section(frame, app, area, next_y, ws_idx, nerd);
+        next_y = draw_extra_workspace_section(frame, app, ws_area, next_y, ws_idx, nerd);
+        if next_y >= ws_end_y {
+            break;
+        }
     }
 
-    // ── GIT section: blank separator + header. Skip if it'd run off the
-    //    bottom — the rail's never tall enough is unusual but we don't want
-    //    to paint past `area`.
-    if next_y + 1 >= area.y + area.height {
-        return;
+    // ── `+ repo` row — a single right-aligned chip on its own row, sitting
+    //    just below the last workspace section's content and above the GIT
+    //    separator. Only drawn if there's space for it AND the workspace
+    //    section is expanded (otherwise the rail header alone implies "add
+    //    repo" via the [+] chip in the workspace header anyway).
+    if next_y < ws_end_y {
+        draw_add_repo_row(frame, app, area, next_y, nerd, rail_bg);
     }
-    let git_header_y = next_y + 1; // one blank row of breathing room
+
+    // ── INTEGRATIONS section: pinned just above GIT (with a blank
+    //    separator row between). Only rendered if there's space + the
+    //    user has configured at least one integration icon.
+    if integration_height > 0 {
+        draw_integration_section(
+            frame,
+            app,
+            area,
+            integration_top_y,
+            integration_height,
+            nerd,
+            rail_bg,
+        );
+    }
+
+    // ── GIT section: pinned to bottom. Render at git_top_y regardless of
+    //    where the workspace section ended; the separator row above it is
+    //    left blank by the row-0 bg fill at the top of `draw`.
+    let git_header_y = git_top_y;
     if git_header_y >= area.y + area.height {
         return;
     }
@@ -138,11 +198,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ratatui::style::Color,
     );
     let chips_full: [ChipSpec; 6] = [
-        ("\u{F0450}", "↺", crate::GitRailHeaderAction::Fetch, t.cyan),
-        ("\u{F0162}", "↓", crate::GitRailHeaderAction::Pull, t.green),
-        ("\u{F0166}", "↑", crate::GitRailHeaderAction::Push, t.blue),
+        ("\u{EB37}", "↺", crate::GitRailHeaderAction::Fetch, t.cyan),
+        ("\u{EA9A}", "↓", crate::GitRailHeaderAction::Pull, t.green),
+        ("\u{EAA1}", "↑", crate::GitRailHeaderAction::Push, t.blue),
         (
-            "\u{F0419}",
+            "\u{EA60}",
             "+",
             crate::GitRailHeaderAction::StageAll,
             t.green,
@@ -228,6 +288,289 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     draw_git_section(frame, app, area, body_y, nerd);
+}
+
+/// The four per-workspace action chips that hang off the right edge of
+/// every workspace/repo header row. Click dispatches a palette command
+/// by id; the cluster reads `+ file · + folder · ↺ refresh · ↕ collapse`
+/// from left to right.
+/// Per-workspace action chips. The fourth chip is a toggle whose glyph
+/// + dispatch flip with the tree's current expansion state:
+///   - any dir expanded   → ` collapse-all` (EAC5)
+///   - everything closed  → ` expand-all`   (EBD9)
+/// The toggle dispatches `tree.toggle_collapse_all` either way; the
+/// glyph swap is purely visual.
+fn workspace_action_chip_specs(
+    app: &App,
+) -> [(&'static str, &'static str, &'static str, ratatui::style::Color); 4] {
+    let t = theme::cur();
+    let (collapse_glyph, collapse_ascii) = if app.tree.is_fully_collapsed() {
+        ("\u{F0AB4}", "↧") // expand-all
+    } else {
+        ("\u{EAC5}", "↕") // collapse-all
+    };
+    [
+        ("\u{EA80}", "f+", "file.new", t.blue),
+        ("\u{EA7F}", "d+", "file.new_folder", t.yellow),
+        ("\u{EB37}", "↺", "tree.refresh", t.cyan),
+        (
+            collapse_glyph,
+            collapse_ascii,
+            "tree.toggle_collapse_all",
+            t.teal,
+        ),
+    ]
+}
+
+/// Right-aligned action-chip cluster for a workspace header row. Caller
+/// supplies the header's already-painted prefix width (chevron + label)
+/// so this helper can compute the gap-pad span and chip positions.
+/// Returns the spans to append to the header's `Line`; also pushes each
+/// chip's screen-rect + command-id into `app.rects.tree_icon_buttons`.
+///
+/// Drops trailing chips when the header is too narrow to host the full
+/// cluster with at least one space of separation from the label.
+fn workspace_header_chips(
+    app: &mut App,
+    header_rect: Rect,
+    label_used: usize,
+    nerd: bool,
+    rail_bg: ratatui::style::Color,
+) -> Vec<Span<'static>> {
+    let chips = workspace_action_chip_specs(app);
+    let width = header_rect.width as usize;
+    let chip_w = 3usize;
+    let min_separation = 1usize;
+    let chip_count = {
+        let mut n = chips.len();
+        while n > 0 && label_used + min_separation + n * chip_w > width {
+            n -= 1;
+        }
+        n
+    };
+    let chips_used = chip_count * chip_w;
+    let pad = width.saturating_sub(label_used + chips_used);
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(1 + chip_count);
+    spans.push(Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)));
+    let cluster_start_x = header_rect.x + (label_used + pad) as u16;
+    for (i, (glyph_nerd, glyph_ascii, cmd_id, fg)) in chips.iter().take(chip_count).enumerate() {
+        let glyph = if nerd { *glyph_nerd } else { *glyph_ascii };
+        spans.push(Span::styled(
+            format!(" {glyph} "),
+            Style::default().fg(*fg).bg(rail_bg),
+        ));
+        let chip_x = cluster_start_x + (i * chip_w) as u16;
+        app.rects.tree_icon_buttons.push((
+            Rect {
+                x: chip_x,
+                y: header_rect.y,
+                width: chip_w as u16,
+                height: 1,
+            },
+            *cmd_id,
+        ));
+    }
+    spans
+}
+
+/// Single right-aligned `+ repo` chip on its own row — sits below the
+/// last workspace section's content, above the GIT separator. Replaces
+/// the old top-of-rail "add workspace" chip.
+fn draw_add_repo_row(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    y: u16,
+    nerd: bool,
+    rail_bg: ratatui::style::Color,
+) {
+    let width = area.width as usize;
+    let chip_w = 3usize;
+    if width < chip_w + 1 {
+        return;
+    }
+    let glyph = if nerd { "\u{F0419}" } else { "+" };
+    let pad = width.saturating_sub(chip_w);
+    let row_rect = Rect {
+        x: area.x,
+        y,
+        width: area.width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)),
+            Span::styled(
+                format!(" {glyph} "),
+                Style::default().fg(theme::cur().green).bg(rail_bg),
+            ),
+        ])),
+        row_rect,
+    );
+    app.rects.tree_icon_buttons.push((
+        Rect {
+            x: area.x + pad as u16,
+            y,
+            width: chip_w as u16,
+            height: 1,
+        },
+        "view.add_workspace",
+    ));
+}
+
+/// Height the INTEGRATIONS section wants when pinned above GIT. Counts
+/// 1 row for the header + `ceil(N / icons_per_row)` rows for the grid
+/// (where `icons_per_row` is derived from `rail_w / chip_w`). Returns
+/// 0 if the user has no integration icons configured (so the section
+/// doesn't claim any space).
+fn compute_integration_section_height(app: &App, rail_width: usize) -> u16 {
+    let n = app.config.ui.integration_icons.len();
+    if n == 0 {
+        return 0;
+    }
+    if !app.integration_section_expanded {
+        return 1; // just the header
+    }
+    const CHIP_W: usize = 3;
+    let per_row = (rail_width / CHIP_W).max(1);
+    let rows = n.div_ceil(per_row);
+    (1 + rows) as u16
+}
+
+/// Render the INTEGRATIONS section: a `> INTEGRATIONS` header (using
+/// the same chevron + label pattern as GIT) followed by a grid of
+/// plain-glyph icons. Each icon row is `chip_w` cells per slot; no
+/// chip background — just colored glyphs spaced inside the rail.
+fn draw_integration_section(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    start_y: u16,
+    height: u16,
+    nerd: bool,
+    rail_bg: ratatui::style::Color,
+) {
+    if height == 0 {
+        return;
+    }
+    let t = theme::cur();
+    let width = area.width as usize;
+
+    // Header row: `> INTEGRATIONS`
+    let chev = section_chev(app.integration_section_expanded, nerd);
+    let chev_str = format!(" {chev} ");
+    let label = "INTEGRATIONS".to_string();
+    let used = chev_str.chars().count() + label.chars().count();
+    let pad = width.saturating_sub(used);
+    let header_rect = Rect {
+        x: area.x,
+        y: start_y,
+        width: area.width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(chev_str, Style::default().fg(t.comment).bg(rail_bg)),
+            Span::styled(
+                label,
+                Style::default()
+                    .fg(t.fg)
+                    .bg(rail_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)),
+        ])),
+        header_rect,
+    );
+    app.rects.integration_section_toggle = Some(header_rect);
+
+    if !app.integration_section_expanded {
+        return;
+    }
+
+    // Icon grid below the header.
+    const CHIP_W: usize = 3;
+    let per_row = (width / CHIP_W).max(1);
+    let mut row_y = start_y + 1;
+    let max_y = start_y + height;
+
+    let icons: Vec<(usize, String, String, String)> = app
+        .config
+        .ui
+        .integration_icons
+        .iter()
+        .enumerate()
+        .map(|(i, ic)| (i, ic.glyph.clone(), ic.fallback.clone(), ic.color.clone()))
+        .collect();
+
+    for chunk in icons.chunks(per_row) {
+        if row_y >= max_y {
+            break;
+        }
+        let mut spans: Vec<Span<'static>> = Vec::with_capacity(chunk.len() + 1);
+        for (slot_i, (i, glyph, fallback, color)) in chunk.iter().enumerate() {
+            let g = if nerd { glyph.as_str() } else { fallback.as_str() };
+            let fg = match color.as_str() {
+                "orange" => t.orange,
+                "yellow" => t.yellow,
+                "cyan" => t.cyan,
+                "blue" => t.blue,
+                "green" => t.green,
+                "red" => t.red,
+                "purple" => t.purple,
+                "teal" => t.teal,
+                _ => t.fg,
+            };
+            spans.push(Span::styled(
+                format!(" {g} "),
+                Style::default().fg(fg).bg(rail_bg),
+            ));
+            let chip_x = area.x + (slot_i * CHIP_W) as u16;
+            app.rects.integration_icon_rects.push((
+                Rect {
+                    x: chip_x,
+                    y: row_y,
+                    width: CHIP_W as u16,
+                    height: 1,
+                },
+                *i,
+            ));
+        }
+        let used_cells = chunk.len() * CHIP_W;
+        spans.push(Span::styled(
+            " ".repeat(width.saturating_sub(used_cells)),
+            Style::default().bg(rail_bg),
+        ));
+        let row_rect = Rect {
+            x: area.x,
+            y: row_y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(Line::from(spans)), row_rect);
+        row_y += 1;
+    }
+}
+
+/// Rough estimate of the height GIT wants when pinned to the bottom of
+/// the rail. Counts: 1 row for the header, then (if expanded) a
+/// sub-label + the branch rows + a sub-label + the worktree rows.
+/// Caller clamps against a per-rail maximum so a long branch list
+/// can't push the workspace tree out entirely.
+fn compute_git_section_height(app: &App) -> u16 {
+    if !app.git_section_expanded {
+        return 1;
+    }
+    let mut h: u16 = 1; // header
+    if !app.git_rail.branches.is_empty() {
+        h = h.saturating_add(1 + app.git_rail.branches.len() as u16);
+    }
+    if !app.git_rail.worktrees.is_empty() {
+        h = h.saturating_add(1 + app.git_rail.worktrees.len() as u16);
+    }
+    // Clamp at a sane upper bound so a 50-branch repo can't eat the
+    // whole rail — the actual rail-height cap is applied by the caller.
+    h.min(40)
 }
 
 fn section_chev(expanded: bool, nerd: bool) -> &'static str {
@@ -420,7 +763,9 @@ fn draw_workspace_files(
         let prefix_color = if is_repo_row {
             theme::cur().yellow
         } else if row.is_dir {
-            theme::cur().blue
+            // TEMP: yellow folder icons (test); was `theme::cur().blue`.
+            // Restore the blue branch when reverting.
+            theme::cur().yellow
         } else {
             icon_color
         };
@@ -507,33 +852,32 @@ fn draw_extra_workspace_section(
     let chev = section_chev(expanded, nerd);
     let chev_str = format!(" {chev} ");
     let used = chev_str.chars().count() + name.chars().count();
-    let pad = width.saturating_sub(used);
     let header_rect = Rect {
         x: area.x,
         y: header_y,
         width: area.width,
         height: 1,
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                chev_str,
-                Style::default().fg(theme::cur().comment).bg(rail_bg),
-            ),
-            Span::styled(
-                name.clone(),
-                Style::default()
-                    .fg(theme::cur().fg)
-                    .bg(rail_bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)),
-        ])),
-        header_rect,
-    );
+    let chip_spans = workspace_header_chips(app, header_rect, used, nerd, rail_bg);
+    let mut spans = vec![
+        Span::styled(
+            chev_str,
+            Style::default().fg(theme::cur().comment).bg(rail_bg),
+        ),
+        Span::styled(
+            name.clone(),
+            Style::default()
+                .fg(theme::cur().fg)
+                .bg(rail_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    spans.extend(chip_spans);
+    frame.render_widget(Paragraph::new(Line::from(spans)), header_rect);
     app.rects
         .extra_workspace_toggles
         .push((header_rect, ws_idx));
+    let _ = width; // width is now used inside `workspace_header_chips`.
 
     if !expanded {
         return header_y + 1;
@@ -631,7 +975,9 @@ fn draw_extra_workspace_section(
         let prefix_color = if is_repo_row {
             theme::cur().yellow
         } else if row.is_dir {
-            theme::cur().blue
+            // TEMP: yellow folder icons (test); was `theme::cur().blue`.
+            // Restore the blue branch when reverting.
+            theme::cur().yellow
         } else {
             icon_color
         };
