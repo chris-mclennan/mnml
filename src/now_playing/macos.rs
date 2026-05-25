@@ -36,9 +36,7 @@ try
 end try
 return np"#;
 
-/// AppleScript for Spotify — same shape. When Spotify isn't installed
-/// this script won't compile; that's fine — it's its own process and
-/// [`run_script`] just yields an empty string.
+/// AppleScript for Spotify — same shape.
 const SPOTIFY_SCRIPT: &str = r#"set np to ""
 try
     if application "Spotify" is running then
@@ -50,6 +48,26 @@ try
     end if
 end try
 return np"#;
+
+/// True iff a `<name>.app` bundle exists at one of the standard macOS
+/// install locations. Guards the `osascript` shell-out so the system
+/// doesn't pop the "Choose Application" picker dialog when the target
+/// player isn't installed (the dialog appeared even though each
+/// script wraps its `tell` in `if application "…" is running` — the
+/// guard fires too late once AppleScript has decided to *resolve* the
+/// name and can't find a matching app).
+fn app_installed(name: &str) -> bool {
+    let mut paths: Vec<std::path::PathBuf> = vec![
+        std::path::PathBuf::from(format!("/Applications/{name}.app")),
+        std::path::PathBuf::from(format!("/System/Applications/{name}.app")),
+    ];
+    if let Ok(home) = std::env::var("HOME") {
+        paths.push(std::path::PathBuf::from(format!(
+            "{home}/Applications/{name}.app"
+        )));
+    }
+    paths.iter().any(|p| p.exists())
+}
 
 /// Run one AppleScript via `osascript`, returning its trimmed stdout.
 /// Any failure — `osascript` missing, the script not compiling because
@@ -65,12 +83,25 @@ fn run_script(script: &str) -> String {
 }
 
 /// Poll Music, then Spotify. `None` when neither is playing, the
-/// platform isn't macOS, or `osascript` is unavailable.
+/// platform isn't macOS, or `osascript` is unavailable. Each script
+/// only runs when the corresponding `.app` is actually installed —
+/// otherwise macOS pops a "Choose Application" picker dialog at the
+/// user, which is the bug this guard exists to prevent.
 pub fn poll() -> Option<NowPlaying> {
     if !cfg!(target_os = "macos") {
         return None;
     }
-    parse(&run_script(MUSIC_SCRIPT)).or_else(|| parse(&run_script(SPOTIFY_SCRIPT)))
+    if app_installed("Music")
+        && let Some(np) = parse(&run_script(MUSIC_SCRIPT))
+    {
+        return Some(np);
+    }
+    if app_installed("Spotify")
+        && let Some(np) = parse(&run_script(SPOTIFY_SCRIPT))
+    {
+        return Some(np);
+    }
+    None
 }
 
 /// Parse the script's `<app>\t<track>\t<artist>` line into a
