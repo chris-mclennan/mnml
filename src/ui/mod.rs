@@ -763,14 +763,13 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     let fwd_w = fwd_str.chars().count() as u16;
     let dropdown_w = dropdown_str.chars().count() as u16;
     let chip_w = chip_text.chars().count() as u16;
-    // Layout: `[back][fwd][chip][dropdown]` — no explicit strip-bg
-    // gap between the nav cluster and the chip. Each button's
-    // built-in `" glyph "` padding gives 1 cell of BTN_BG on its
-    // outer edge; the chip's leading "  " (2 cells of CHIP_BG)
-    // continues from there. Result: the right side of `→` has the
-    // same visual padding as the left side of `←`, and the whole
-    // group reads as one continuous chrome strip.
-    const NAV_GAP: u16 = 0;
+    // Layout: `[back][fwd] [chip][dropdown]` — a single cell of
+    // strip-bg between the nav cluster and the chip body so the
+    // back/forward buttons read as separate chrome from the chip
+    // (rather than appearing fused). Anything wider felt off-balance
+    // vs the back/forward inter-button spacing; 1 cell is the
+    // narrowest meaningful separator.
+    const NAV_GAP: u16 = 1;
     let total_w = back_w + fwd_w + NAV_GAP + chip_w + dropdown_w;
     if total_w > area.width {
         // Window too narrow for the full layout — fall back to chip only,
