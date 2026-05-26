@@ -23,6 +23,11 @@ use crate::ui::{icons, theme};
 const CHEVRON_OPEN: &str = "\u{f107}"; //  (angle-down)
 const CHEVRON_CLOSED: &str = "\u{f105}"; //  (angle-right)
 
+/// Max branches shown in the GIT section's branches sub-list when
+/// `App.git_branches_expanded` is false (the default). User clicks
+/// the trailing `+ N more` row to flip to "show all".
+const BRANCH_LIST_CAP: usize = 8;
+
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let rail_bg = theme::cur().bg_darker;
     frame.render_widget(Paragraph::new("").style(Style::default().bg(rail_bg)), area);
@@ -563,7 +568,26 @@ fn compute_git_section_height(app: &App) -> u16 {
     }
     let mut h: u16 = 1; // header
     if !app.git_rail.branches.is_empty() {
-        h = h.saturating_add(1 + app.git_rail.branches.len() as u16);
+        let total = app.git_rail.branches.len();
+        // Match the renderer's collapse logic: cap when not expanded,
+        // add 1 for the `+ N more` toggle row when applicable, add 1
+        // for the current-branch force-show (already counted if cap
+        // covers it; +1 max).
+        let shown = if app.git_branches_expanded {
+            total
+        } else {
+            total.min(BRANCH_LIST_CAP)
+        };
+        let toggle_row = if total > BRANCH_LIST_CAP { 1 } else { 0 };
+        let current_outside_cap = if !app.git_branches_expanded && total > BRANCH_LIST_CAP {
+            // +1 for the force-shown current branch, only when it'd
+            // actually be hidden by the cap. Cheap upper-bound: assume
+            // it falls outside and reserve the row.
+            1
+        } else {
+            0
+        };
+        h = h.saturating_add(1 + (shown + toggle_row + current_outside_cap) as u16);
     }
     if !app.git_rail.worktrees.is_empty() {
         h = h.saturating_add(1 + app.git_rail.worktrees.len() as u16);
@@ -1045,9 +1069,27 @@ fn draw_git_section(frame: &mut Frame, app: &mut App, area: Rect, start_y: u16, 
             frame.render_widget(Paragraph::new(lines), git_body_rect(area, start_y));
             return;
         }
+        // Cap to `BRANCH_LIST_CAP` when collapsed so a 100-branch
+        // monorepo doesn't drown the rail; user clicks the trailing
+        // `+ N more` row to expand.
+        let total_branches = app.git_rail.branches.len();
+        let cap = if app.git_branches_expanded {
+            total_branches
+        } else {
+            total_branches.min(BRANCH_LIST_CAP)
+        };
+        let always_show_current = !app.git_branches_expanded && total_branches > BRANCH_LIST_CAP;
         for (i, br) in app.git_rail.branches.iter().enumerate() {
             if (row_y - area.y) as usize >= avail {
                 break;
+            }
+            // When collapsed: render first `cap` branches PLUS the
+            // current branch (if it'd otherwise be hidden) so the
+            // user never loses sight of where they are.
+            let in_cap = i < cap;
+            let force_show = always_show_current && br.is_current && !in_cap;
+            if !in_cap && !force_show {
+                continue;
             }
             let is_cur_row = row_count_drawn == cursor_row;
             let bg = row_bg(is_cur_row, focused, rail_bg);
@@ -1081,6 +1123,36 @@ fn draw_git_section(frame: &mut Frame, app: &mut App, area: Rect, start_y: u16, 
             ));
             row_y += 1;
             row_count_drawn += 1;
+        }
+        // `+ N more` / `show less` toggle row (only when there's
+        // something to toggle).
+        if total_branches > BRANCH_LIST_CAP && (row_y - area.y) as usize <= avail {
+            let toggle_text = if app.git_branches_expanded {
+                "  show less".to_string()
+            } else {
+                format!("  + {} more", total_branches - cap)
+            };
+            let pad = width.saturating_sub(toggle_text.chars().count());
+            lines.push(Line::from(vec![
+                Span::styled(
+                    toggle_text,
+                    Style::default()
+                        .fg(theme::cur().comment)
+                        .bg(rail_bg)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+                Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)),
+            ]));
+            app.rects.git_rail_rows.push((
+                Rect {
+                    x: area.x,
+                    y: row_y,
+                    width: area.width,
+                    height: 1,
+                },
+                GitRailHit::ToggleBranches,
+            ));
+            row_y += 1;
         }
     }
 

@@ -26,6 +26,10 @@ pub enum GitRailHit {
     Worktree(usize),
     /// Index into `GitRail::pulls`.
     Pull(usize),
+    /// The `+ N more` / `show less` toggle row at the end of the
+    /// branches sub-section — flips `App.git_branches_expanded`.
+    /// No payload: it's a singleton row, not a selectable entry.
+    ToggleBranches,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +166,10 @@ impl GitRail {
             GitRailHit::Branch(i) => i.min(nb.saturating_sub(1)),
             GitRailHit::Worktree(i) => nb + i.min(nw.saturating_sub(1)),
             GitRailHit::Pull(i) => nb + nw + i.min(self.pulls.len().saturating_sub(1)),
+            // ToggleBranches isn't a selectable row — caller should
+            // intercept before reaching here, but if it gets through
+            // (e.g. via a future code path), leave cursor untouched.
+            GitRailHit::ToggleBranches => return,
         };
         self.set_cursor(idx);
     }

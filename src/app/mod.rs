@@ -2318,6 +2318,12 @@ pub struct App {
     /// Is the `> INTEGRATIONS` rail section expanded? Same lifecycle as
     /// `git_section_expanded`. Default `true`.
     pub integration_section_expanded: bool,
+    /// Show ALL branches in the GIT section's branches sub-list?
+    /// Default `false`: only the first `BRANCH_LIST_CAP` are shown,
+    /// followed by a clickable `+ N more` row that toggles this flag.
+    /// Long branch lists (e.g. monorepos with hundreds of feature
+    /// branches) would otherwise eat the whole rail.
+    pub git_branches_expanded: bool,
     /// Which rail section the keyboard is on when `focus == Focus::Tree`.
     /// Switched by ↓ off the end of the workspace list / ↑ off the top of the
     /// git list, or by clicking a row in the other section.
@@ -2997,6 +3003,7 @@ impl App {
             active_repo,
             git_section_expanded: true,
             integration_section_expanded: true,
+            git_branches_expanded: false,
             rail_section: RailSection::Workspace,
             git,
             toast: None,

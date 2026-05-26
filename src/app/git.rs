@@ -2223,6 +2223,13 @@ impl App {
     /// Click handler — focus the git section, set the cursor, run the row's
     /// default action.
     pub fn click_git_rail(&mut self, hit: crate::git::rail::GitRailHit) {
+        // The `+ N more` / `show less` toggle row doesn't focus a
+        // selectable entry — it flips a render flag. Handle it before
+        // the normal focus + hit flow.
+        if matches!(hit, crate::git::rail::GitRailHit::ToggleBranches) {
+            self.git_branches_expanded = !self.git_branches_expanded;
+            return;
+        }
         self.focus_tree();
         self.rail_section = RailSection::Git;
         self.git_rail.focus(hit);
@@ -2309,6 +2316,9 @@ impl App {
                 ];
                 ContextMenu::new(title, anchor, items)
             }
+            // Right-clicking the `+ N more` toggle has no useful menu —
+            // bail.
+            crate::git::rail::GitRailHit::ToggleBranches => return,
         };
         self.context_menu = Some(menu);
     }
@@ -2341,6 +2351,13 @@ impl App {
                 let url = p.web_url.clone();
                 open_url_external(&url);
                 self.toast(format!("opened {} in browser", p.number_label));
+            }
+            crate::git::rail::GitRailHit::ToggleBranches => {
+                // Keyboard Enter on the toggle row — same behavior as
+                // mouse click; `click_git_rail` intercepts mouse hits
+                // before reaching here, so this branch fires only for
+                // keyboard activation.
+                self.git_branches_expanded = !self.git_branches_expanded;
             }
         }
     }
