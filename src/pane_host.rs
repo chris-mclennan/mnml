@@ -14,12 +14,20 @@
 //! once it's consolidated to share the same primitives.
 
 use std::io::BufReader;
+// Cross-platform UDS server (mnml hosts blit-children — mixr,
+// internal-app, etc). Unix uses std's `UnixListener`/`UnixStream`;
+// Windows uses the `uds_windows` crate (Win10 17063+ AF_UNIX support).
+// Both wrap the same wire protocol; the file-path-socket UX is
+// identical on every platform.
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::process::Child;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
+#[cfg(windows)]
+use uds_windows::{UnixListener, UnixStream};
 
 use tmnl_protocol::{
     Frame, InputEvent, Message, PROTOCOL_VERSION, Resize, read_message, write_message,

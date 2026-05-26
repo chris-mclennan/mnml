@@ -8,12 +8,17 @@
 //! `src/server.rs`.
 
 use std::io::BufReader;
+// Cross-platform UDS (see `pane_host.rs` for rationale — std on Unix,
+// `uds_windows` on Windows; same wire protocol on both).
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::process::Child;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
+#[cfg(windows)]
+use uds_windows::{UnixListener, UnixStream};
 
 use ratatui::crossterm::event::{
     KeyCode as CtKeyCode, KeyEvent as CtKeyEvent, KeyModifiers as CtKeyMods,

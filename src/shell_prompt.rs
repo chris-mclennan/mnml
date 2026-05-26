@@ -145,7 +145,11 @@ mod tests {
         assert_eq!(ctx.1, "mnml");
         // Script written into the tempdir, not the real ~/.
         let script = v.iter().find(|(k, _)| k == "MNML_PROMPT_SCRIPT").unwrap();
-        assert!(script.1.starts_with(d.path().display().to_string().as_str()));
+        assert!(
+            script
+                .1
+                .starts_with(d.path().display().to_string().as_str())
+        );
         assert!(std::path::Path::new(&script.1).exists());
     }
 }

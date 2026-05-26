@@ -202,8 +202,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(1),
     ])
     .split(area);
-    let (palette_bar_area, upper, statusline_area, cmdline_bar_area) =
-        (v[0], v[1], v[2], v[3]);
+    let (palette_bar_area, upper, statusline_area, cmdline_bar_area) = (v[0], v[1], v[2], v[3]);
 
     if palette_bar_visible {
         draw_palette_bar(frame, app, palette_bar_area);
@@ -706,10 +705,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let t = theme::cur();
     let ascii = app.config.ui.ascii_icons;
-    frame.render_widget(
-        Block::default().style(Style::default().bg(t.bg_dark)),
-        area,
-    );
+    frame.render_widget(Block::default().style(Style::default().bg(t.bg_dark)), area);
 
     let back_glyph = if ascii { "<" } else { "\u{EA9B}" }; // codicon: arrow-left
     let fwd_glyph = if ascii { ">" } else { "\u{EA9C}" }; // codicon: arrow-right
@@ -766,8 +762,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         height: 1,
     };
     frame.render_widget(
-        ratatui::widgets::Paragraph::new(back_str)
-            .style(Style::default().fg(t.fg).bg(t.bg2)),
+        ratatui::widgets::Paragraph::new(back_str).style(Style::default().fg(t.fg).bg(t.bg2)),
         back_rect,
     );
     app.rects.palette_back_button = Some(back_rect);
@@ -781,8 +776,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         height: 1,
     };
     frame.render_widget(
-        ratatui::widgets::Paragraph::new(fwd_str)
-            .style(Style::default().fg(t.fg).bg(t.bg2)),
+        ratatui::widgets::Paragraph::new(fwd_str).style(Style::default().fg(t.fg).bg(t.bg2)),
         fwd_rect,
     );
     app.rects.palette_forward_button = Some(fwd_rect);
@@ -796,8 +790,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         height: 1,
     };
     frame.render_widget(
-        ratatui::widgets::Paragraph::new(chip_text)
-            .style(Style::default().fg(t.comment).bg(t.bg2)),
+        ratatui::widgets::Paragraph::new(chip_text).style(Style::default().fg(t.comment).bg(t.bg2)),
         chip_rect,
     );
     app.rects.palette_search_chip = Some(chip_rect);

@@ -223,11 +223,13 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 "file.new_folder" => "new folder".into(),
                 "tree.refresh" => "refresh tree".into(),
                 "tree.collapse_all" => "collapse all".into(),
-                "tree.toggle_collapse_all" => if app.tree.is_fully_collapsed() {
-                    "expand all".into()
-                } else {
-                    "collapse all".into()
-                },
+                "tree.toggle_collapse_all" => {
+                    if app.tree.is_fully_collapsed() {
+                        "expand all".into()
+                    } else {
+                        "collapse all".into()
+                    }
+                }
                 "picker.files" => "search files".into(),
                 other => other.into(),
             };

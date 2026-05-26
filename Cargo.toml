@@ -134,6 +134,14 @@ tree-sitter-astro-next = "0.1"
 [target.'cfg(target_os = "macos")'.dependencies]
 fim-engine = { path = "../fim-engine", version = "0.1.0", default-features = false, features = ["metal"] }
 
+# Windows AF_UNIX support (Win10 build 17063+) — Rust's std doesn't
+# expose `UnixStream`/`UnixListener` on Windows even though the OS
+# supports them, so `uds_windows` wraps the winapi calls behind a
+# std-shaped API. Matches the same dep in tmnl-rs so file-path UDS
+# sockets work end-to-end on Windows.
+[target.'cfg(windows)'.dependencies]
+uds_windows = "1.1"
+
 [features]
 default = []
 # Generic AWS CodeBuild + CloudWatch panes (`Pane::CodeBuilds` /

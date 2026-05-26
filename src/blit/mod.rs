@@ -9,12 +9,20 @@
 //! identically to running in a real terminal.
 
 use std::io::BufReader;
+// Cross-platform UDS client. Unix uses std's `UnixStream`; Windows
+// uses `uds_windows::UnixStream` (a wrapper around the Windows AF_UNIX
+// support added in Win10 build 17063). Same path-addressed socket on
+// every platform — matches the corresponding switch on tmnl's server
+// side (see tmnl/src/server.rs).
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::mpsc::{TryRecvError, channel};
 use std::thread;
 use std::time::Duration;
+#[cfg(windows)]
+use uds_windows::UnixStream;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

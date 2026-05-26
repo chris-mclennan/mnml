@@ -56,8 +56,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // left above. Compute each section's needed height, then carve
     // them out of `area` from the bottom up.
     let git_needed = compute_git_section_height(app);
-    let integration_needed =
-        compute_integration_section_height(app, area.width as usize);
+    let integration_needed = compute_integration_section_height(app, area.width as usize);
     // Keep at least `MIN_TREE_ROWS` for the workspace; anything beyond
     // that the two bottom sections can claim.
     const MIN_TREE_ROWS: u16 = 6;
@@ -303,11 +302,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 /// + dispatch flip with the tree's current expansion state:
 ///   - any dir expanded   → ` collapse-all` (EAC5)
 ///   - everything closed  → ` expand-all`   (EBD9)
+///
 /// The toggle dispatches `tree.toggle_collapse_all` either way; the
 /// glyph swap is purely visual.
 fn workspace_action_chip_specs(
     app: &App,
-) -> [(&'static str, &'static str, &'static str, ratatui::style::Color); 4] {
+) -> [(
+    &'static str,
+    &'static str,
+    &'static str,
+    ratatui::style::Color,
+); 4] {
     let t = theme::cur();
     let (collapse_glyph, collapse_ascii) = if app.tree.is_fully_collapsed() {
         ("\u{F0AB4}", "↧") // expand-all
@@ -496,7 +501,6 @@ fn draw_integration_section(
     // Icon grid below the header.
     const CHIP_W: usize = 3;
     let per_row = (width / CHIP_W).max(1);
-    let mut row_y = start_y + 1;
     let max_y = start_y + height;
 
     let icons: Vec<(usize, String, String, String)> = app
@@ -508,13 +512,17 @@ fn draw_integration_section(
         .map(|(i, ic)| (i, ic.glyph.clone(), ic.fallback.clone(), ic.color.clone()))
         .collect();
 
-    for chunk in icons.chunks(per_row) {
+    for (row_y, chunk) in (start_y + 1..).zip(icons.chunks(per_row)) {
         if row_y >= max_y {
             break;
         }
         let mut spans: Vec<Span<'static>> = Vec::with_capacity(chunk.len() + 1);
         for (slot_i, (i, glyph, fallback, color)) in chunk.iter().enumerate() {
-            let g = if nerd { glyph.as_str() } else { fallback.as_str() };
+            let g = if nerd {
+                glyph.as_str()
+            } else {
+                fallback.as_str()
+            };
             let fg = match color.as_str() {
                 "orange" => t.orange,
                 "yellow" => t.yellow,
@@ -553,7 +561,6 @@ fn draw_integration_section(
             height: 1,
         };
         frame.render_widget(Paragraph::new(Line::from(spans)), row_rect);
-        row_y += 1;
     }
 }
 
