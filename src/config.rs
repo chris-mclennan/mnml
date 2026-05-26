@@ -702,14 +702,25 @@ impl Default for Config {
                 // Default INTEGRATIONS row — Claude / Codex / Bitbucket /
                 // GitHub. Replace or extend via `[[ui.integration_icon]]`
                 // in user config; empty array there removes the section.
+                // Only Claude + Codex are mnml-patched-only glyphs (PUA
+                // U+F8B0 / U+F8B1) — users on vanilla JetBrainsMono Nerd
+                // Font see blank cells there, so their fallbacks evoke
+                // the brand with basic Unicode. The other entries
+                // (Bitbucket E703, HTTP F1D8B, Playwright F0668,
+                // CodeBuild F0492, GitHub F02A4) all ship with stock
+                // Nerd Fonts; their `fallback` is just `--ascii`-mode
+                // text and stays the boring single-char form.
                 integration_icons: vec![
                     IntegrationIcon {
                         id: "claude_code".to_string(),
                         // Branded Claude Spark glyph patched into the
                         // user's Nerd Font at U+F8B0 by
-                        // `scripts/patch_nerd_font.py`.
+                        // `scripts/patch_nerd_font.py`. Fallback `✻` is
+                        // the heavy-teardrop-spoked asterisk Claude's
+                        // CLI prints while thinking — Claude-recognizable
+                        // shape with no Nerd Font required.
                         glyph: "\u{F8B0}".to_string(),
-                        fallback: "CC".to_string(),
+                        fallback: "\u{273B}".to_string(),
                         command: "ai.claude_code".to_string(),
                         color: "orange".to_string(),
                         tooltip: Some("Claude Code".to_string()),
@@ -717,9 +728,11 @@ impl Default for Config {
                     IntegrationIcon {
                         id: "codex".to_string(),
                         // Branded Codex glyph (cloud + `>_`) patched at
-                        // U+F8B1.
+                        // U+F8B1. Fallback `▶_` evokes a terminal cursor
+                        // — the OpenAI Codex CLI brand has the same
+                        // `>_` motif in its wordmark.
                         glyph: "\u{F8B1}".to_string(),
-                        fallback: "CX".to_string(),
+                        fallback: "\u{25B8}_".to_string(),
                         command: "ai.codex".to_string(),
                         color: "cyan".to_string(),
                         tooltip: Some("Codex".to_string()),
