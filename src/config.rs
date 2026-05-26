@@ -1620,15 +1620,49 @@ slug      = "example-playwright"
     }
 
     #[test]
-    fn default_launcher_icons_has_claude_and_codex() {
+    fn default_integration_icons_has_claude_codex_bitbucket_github() {
+        // Claude + Codex moved from the bufferline `launcher_icons` to
+        // the rail's INTEGRATIONS row (`integration_icons`) so they sit
+        // alongside Bitbucket / HTTP / Playwright / CodeBuild / GitHub
+        // — see commit bf5c874 for the rail reorg. Launcher icons are
+        // now empty by default; integration icons carry the AI + git
+        // host defaults.
         let cfg = Config::default();
-        assert_eq!(cfg.ui.launcher_icons.len(), 2);
-        assert_eq!(cfg.ui.launcher_icons[0].id, "claude_code");
-        assert_eq!(cfg.ui.launcher_icons[0].command, "ai.claude_code");
-        assert_eq!(cfg.ui.launcher_icons[0].color, "orange");
-        assert_eq!(cfg.ui.launcher_icons[1].id, "codex");
-        assert_eq!(cfg.ui.launcher_icons[1].command, "ai.codex");
-        assert_eq!(cfg.ui.launcher_icons[1].color, "cyan");
+        assert!(
+            cfg.ui.launcher_icons.is_empty(),
+            "launcher_icons (bufferline chips) default to empty now"
+        );
+        let ids: Vec<&str> = cfg
+            .ui
+            .integration_icons
+            .iter()
+            .map(|i| i.id.as_str())
+            .collect();
+        assert!(
+            ids.contains(&"claude_code"),
+            "integration_icons must include claude_code"
+        );
+        assert!(
+            ids.contains(&"codex"),
+            "integration_icons must include codex"
+        );
+        assert!(
+            ids.contains(&"bitbucket"),
+            "integration_icons must include bitbucket"
+        );
+        assert!(
+            ids.contains(&"github"),
+            "integration_icons must include github"
+        );
+        // Spot-check the Claude entry to catch glyph/color regressions.
+        let claude = cfg
+            .ui
+            .integration_icons
+            .iter()
+            .find(|i| i.id == "claude_code")
+            .unwrap();
+        assert_eq!(claude.command, "ai.claude_code");
+        assert_eq!(claude.color, "orange");
     }
 
     #[test]
