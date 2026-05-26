@@ -719,12 +719,26 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // when no search is active (rather than placeholder text). Fall
     // back to a generic placeholder if the workspace path has no
     // file-name component (root `/`, or a path that fails UTF-8).
-    let workspace_label: String = app
+    let workspace_label_raw: String = app
         .workspace
         .file_name()
         .and_then(|n| n.to_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| "search files, run commands…".to_string());
+    // Pad the label so the chip has a consistent width (VS Code's chip
+    // is fixed-width regardless of repo name). Truncate long names
+    // with `…` so the chip never overflows.
+    const CHIP_LABEL_W: usize = 24;
+    let workspace_label = if workspace_label_raw.chars().count() > CHIP_LABEL_W {
+        let mut s: String = workspace_label_raw.chars().take(CHIP_LABEL_W - 1).collect();
+        s.push('…');
+        s
+    } else {
+        let need = CHIP_LABEL_W - workspace_label_raw.chars().count();
+        let mut s = workspace_label_raw;
+        s.extend(std::iter::repeat_n(' ', need));
+        s
+    };
 
     // Button strings — each ` glyph ` = 3 cells.
     let back_str = format!(" {back_glyph} ");
@@ -745,9 +759,14 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     let fwd_w = fwd_str.chars().count() as u16;
     let dropdown_w = dropdown_str.chars().count() as u16;
     let chip_w = chip_text.chars().count() as u16;
-    // Layout: `[back][fwd] gap [chip][dropdown]` — gap of 3 cells
-    // separates the navigation cluster from the search cluster.
-    const NAV_GAP: u16 = 3;
+    // Layout: `[back][fwd][chip][dropdown]` — no explicit strip-bg
+    // gap between the nav cluster and the chip. Each button's
+    // built-in `" glyph "` padding gives 1 cell of BTN_BG on its
+    // outer edge; the chip's leading "  " (2 cells of CHIP_BG)
+    // continues from there. Result: the right side of `→` has the
+    // same visual padding as the left side of `←`, and the whole
+    // group reads as one continuous chrome strip.
+    const NAV_GAP: u16 = 0;
     let total_w = back_w + fwd_w + NAV_GAP + chip_w + dropdown_w;
     if total_w > area.width {
         // Window too narrow for the full layout — fall back to chip only,
