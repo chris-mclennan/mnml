@@ -749,17 +749,15 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // Forward / back arrows are "enabled" iff there's somewhere to
     // navigate — i.e. there's more than one open buffer (next_buffer
-    // / prev_buffer cycle, so a single-buffer click is a no-op). Both
-    // states render in a muted gray to match the tmnl chrome chip's
-    // look; the disabled state goes a notch darker still so it reads
-    // as inert.
+    // / prev_buffer cycle, so a single-buffer click is a no-op).
+    // Enabled state uses the bright `fg` slot for max contrast on
+    // every theme; disabled drops to the muted `comment` slot so the
+    // arrows still read as glyphs but visually recede. (Previous
+    // attempt used `comment`/`bg2` to mirror the tmnl chrome chip,
+    // but `bg2` matched the chip background and made the arrows
+    // disappear entirely on some themes — `comment` is the floor.)
     let nav_enabled = app.panes.len() > 1;
-    // `comment` is the muted-gray slot in every theme — already used
-    // for chevrons / sub-labels / inactive bufferline chips, so the
-    // arrows visually join that family. `bg2` is the chip background;
-    // using it for the disabled state makes the arrow glyphs nearly
-    // dissolve into the chip bg without disappearing entirely.
-    let nav_fg = if nav_enabled { t.comment } else { t.bg2 };
+    let nav_fg = if nav_enabled { t.fg } else { t.comment };
 
     let back_w = back_str.chars().count() as u16;
     let fwd_w = fwd_str.chars().count() as u16;
