@@ -6,8 +6,10 @@ open bb.txt
 command view.toggle_tree
 
 # Tree hidden → the bufferline spans from x=0. Two tabs: aa.txt then
-# bb.txt (active). Click the first tab to switch back to aa.txt.
+# bb.txt (active). The palette top-bar takes screen row 0, so the
+# bufferline sits at row 1. Click the first tab to switch back to
+# aa.txt.
 expect pane "bb.txt"
-click 4 0
+click 4 1
 expect pane "aa.txt"
 expect screen contains "aa-content"

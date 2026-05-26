@@ -5,7 +5,8 @@ open doc.txt
 command view.toggle_tree
 expect screen contains "Ln 1"
 
-# The editor body starts at screen row 1 (below the bufferline), so a
-# click at screen y=9 lands on file line 9.
-click 40 9
+# Screen layout: row 0 palette top-bar, row 1 bufferline, rows 2..N
+# editor body. So click at screen y=10 lands on file line 9
+# (10 - 2 + 1 = 9).
+click 40 10
 expect screen contains "Ln 9"

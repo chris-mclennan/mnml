@@ -710,15 +710,36 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     let back_glyph = if ascii { "<" } else { "\u{EA9B}" }; // codicon: arrow-left
     let fwd_glyph = if ascii { ">" } else { "\u{EA9C}" }; // codicon: arrow-right
     let magnify = if ascii { "?" } else { "\u{F0349}" };
-    let dropdown_glyph = if ascii { "v" } else { "\u{EAA1}" }; // codicon: chevron-down
-    let placeholder = "search files, run commands…";
+    // `\u{EAB4}` is the real codicon `chevron-down` in Nerd Fonts.
+    // `\u{EAA1}` (the obvious-looking choice) renders as chevron-UP in
+    // this font — same bug we hit on the tmnl chrome chip; this is the
+    // matching fix for mnml's inline palette bar.
+    let dropdown_glyph = if ascii { "v" } else { "\u{EAB4}" };
+    // VS Code shows the workspace / repo name as the palette label
+    // when no search is active (rather than placeholder text). Fall
+    // back to a generic placeholder if the workspace path has no
+    // file-name component (root `/`, or a path that fails UTF-8).
+    let workspace_label: String = app
+        .workspace
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "search files, run commands…".to_string());
 
     // Button strings — each ` glyph ` = 3 cells.
     let back_str = format!(" {back_glyph} ");
     let fwd_str = format!(" {fwd_glyph} ");
     let dropdown_str = format!(" {dropdown_glyph} ");
     // Chip text without the dropdown — that's a separate clickable cell.
-    let chip_text = format!("  {magnify}  {placeholder}  ");
+    let chip_text = format!("  {magnify}  {workspace_label}  ");
+
+    // Forward / back arrows are "enabled" iff there's somewhere to
+    // navigate — i.e. there's more than one open buffer (next_buffer
+    // / prev_buffer cycle, so a single-buffer click is a no-op). When
+    // disabled, render them in the dim `comment` color instead of the
+    // bright `fg`.
+    let nav_enabled = app.panes.len() > 1;
+    let nav_fg = if nav_enabled { t.fg } else { t.comment };
 
     let back_w = back_str.chars().count() as u16;
     let fwd_w = fwd_str.chars().count() as u16;
@@ -762,7 +783,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         height: 1,
     };
     frame.render_widget(
-        ratatui::widgets::Paragraph::new(back_str).style(Style::default().fg(t.fg).bg(t.bg2)),
+        ratatui::widgets::Paragraph::new(back_str).style(Style::default().fg(nav_fg).bg(t.bg2)),
         back_rect,
     );
     app.rects.palette_back_button = Some(back_rect);
@@ -776,7 +797,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         height: 1,
     };
     frame.render_widget(
-        ratatui::widgets::Paragraph::new(fwd_str).style(Style::default().fg(t.fg).bg(t.bg2)),
+        ratatui::widgets::Paragraph::new(fwd_str).style(Style::default().fg(nav_fg).bg(t.bg2)),
         fwd_rect,
     );
     app.rects.palette_forward_button = Some(fwd_rect);
