@@ -805,8 +805,12 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         width: back_w,
         height: 1,
     };
+    // Buttons sit on a darker bg than the chip so the back/forward
+    // cluster reads as chrome and the chip reads as the focal input.
+    // Mirrors tmnl chrome's BTN_BG (~0.13) vs CHIP_BG (~0.18).
+    let btn_bg = t.bg_dark;
     frame.render_widget(
-        ratatui::widgets::Paragraph::new(back_str).style(Style::default().fg(nav_fg).bg(t.bg2)),
+        ratatui::widgets::Paragraph::new(back_str).style(Style::default().fg(nav_fg).bg(btn_bg)),
         back_rect,
     );
     app.rects.palette_back_button = Some(back_rect);
@@ -820,7 +824,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         height: 1,
     };
     frame.render_widget(
-        ratatui::widgets::Paragraph::new(fwd_str).style(Style::default().fg(nav_fg).bg(t.bg2)),
+        ratatui::widgets::Paragraph::new(fwd_str).style(Style::default().fg(nav_fg).bg(btn_bg)),
         fwd_rect,
     );
     app.rects.palette_forward_button = Some(fwd_rect);
