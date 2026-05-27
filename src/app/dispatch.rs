@@ -1123,6 +1123,10 @@ pub(crate) fn handle_scm_row_click(
                 return;
             };
             let is_header = row.kind == crate::ui::bitbucket_pull_requests_view::RowKind::Header;
+            let is_show_more =
+                row.kind == crate::ui::bitbucket_pull_requests_view::RowKind::ShowMore;
+            let is_show_less =
+                row.kind == crate::ui::bitbucket_pull_requests_view::RowKind::ShowLess;
             let header_label = row.header_label.clone();
             if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(pane_id) {
                 p.selected = flat_idx;
@@ -1133,6 +1137,10 @@ pub(crate) fn handle_scm_row_click(
                 } else {
                     app.bb_prs_collapsed.insert(header_label);
                 }
+            } else if is_show_more {
+                app.bb_prs_expanded.insert(header_label);
+            } else if is_show_less {
+                app.bb_prs_expanded.remove(&header_label);
             } else if is_double_click {
                 app.open_selected_bitbucket_pr_url();
             }

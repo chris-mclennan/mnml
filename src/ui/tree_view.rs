@@ -542,7 +542,11 @@ fn draw_integration_section(
             }
             let mut spans: Vec<Span<'static>> = Vec::with_capacity(chunk.len() + 1);
             for (slot_i, (i, glyph, fallback, color)) in chunk.iter().enumerate() {
-                let g = if nerd { glyph.as_str() } else { fallback.as_str() };
+                let g = if nerd {
+                    glyph.as_str()
+                } else {
+                    fallback.as_str()
+                };
                 let fg = match color.as_str() {
                     "orange" => t.orange,
                     "yellow" => t.yellow,
@@ -564,10 +568,7 @@ fn draw_integration_section(
                 } else {
                     format!(" {g}  ")
                 };
-                spans.push(Span::styled(
-                    chip_text,
-                    Style::default().fg(fg).bg(rail_bg),
-                ));
+                spans.push(Span::styled(chip_text, Style::default().fg(fg).bg(rail_bg)));
                 let chip_x = area.x + (slot_i * CHIP_W) as u16;
                 app.rects.integration_icon_rects.push((
                     Rect {
@@ -610,17 +611,18 @@ fn draw_integration_section(
         .iter()
         .enumerate()
         .map(|(i, ic)| {
-            let label = ic
-                .tooltip
-                .clone()
-                .unwrap_or_else(|| ic.id.clone());
-            (i, ic.glyph.clone(), ic.fallback.clone(), ic.color.clone(), label)
+            let label = ic.tooltip.clone().unwrap_or_else(|| ic.id.clone());
+            (
+                i,
+                ic.glyph.clone(),
+                ic.fallback.clone(),
+                ic.color.clone(),
+                label,
+            )
         })
         .collect();
 
-    for (row_y, (i, glyph, fallback, color, label)) in
-        (start_y + 1..).zip(icons.iter())
-    {
+    for (row_y, (i, glyph, fallback, color, label)) in (start_y + 1..).zip(icons.iter()) {
         if row_y >= max_y {
             break;
         }
@@ -665,10 +667,7 @@ fn draw_integration_section(
         let pad = width.saturating_sub(used);
         let spans = vec![
             Span::styled(icon_part, Style::default().fg(fg).bg(rail_bg)),
-            Span::styled(
-                label_display,
-                Style::default().fg(t.fg).bg(rail_bg),
-            ),
+            Span::styled(label_display, Style::default().fg(t.fg).bg(rail_bg)),
             Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)),
         ];
         let row_rect = Rect {

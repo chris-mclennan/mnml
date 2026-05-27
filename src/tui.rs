@@ -1851,28 +1851,32 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     Some(Pane::BitbucketPullRequests(p)) => p.selected,
                     _ => 0,
                 };
-                let header_label = flat
-                    .get(sel)
-                    .filter(|r| r.kind == crate::ui::bitbucket_pull_requests_view::RowKind::Header)
-                    .map(|r| r.header_label.clone());
-                if let Some(label) = header_label {
-                    let now_collapsed = if app.bb_prs_collapsed.contains(&label) {
-                        app.bb_prs_collapsed.remove(&label);
-                        false
-                    } else {
-                        app.bb_prs_collapsed.insert(label.clone());
-                        true
-                    };
-                    app.toast(format!(
-                        "{label}: {}",
-                        if now_collapsed {
-                            "collapsed"
+                let row_kind_label = flat.get(sel).map(|r| (r.kind, r.header_label.clone()));
+                match row_kind_label {
+                    Some((crate::ui::bitbucket_pull_requests_view::RowKind::Header, label)) => {
+                        let now_collapsed = if app.bb_prs_collapsed.contains(&label) {
+                            app.bb_prs_collapsed.remove(&label);
+                            false
                         } else {
-                            "expanded"
-                        }
-                    ));
-                } else {
-                    app.open_selected_bitbucket_pr_url();
+                            app.bb_prs_collapsed.insert(label.clone());
+                            true
+                        };
+                        app.toast(format!(
+                            "{label}: {}",
+                            if now_collapsed {
+                                "collapsed"
+                            } else {
+                                "expanded"
+                            }
+                        ));
+                    }
+                    Some((crate::ui::bitbucket_pull_requests_view::RowKind::ShowMore, label)) => {
+                        app.bb_prs_expanded.insert(label);
+                    }
+                    Some((crate::ui::bitbucket_pull_requests_view::RowKind::ShowLess, label)) => {
+                        app.bb_prs_expanded.remove(&label);
+                    }
+                    _ => app.open_selected_bitbucket_pr_url(),
                 }
             }
             KeyCode::Char('y') => app.copy_selected_bitbucket_pr_url(),

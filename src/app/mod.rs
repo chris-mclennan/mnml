@@ -2753,6 +2753,12 @@ pub struct App {
     pub(crate) bb_pipelines_collapsed: std::collections::HashSet<String>,
     pub(crate) bb_prs_view_mode: crate::bitbucket::PrViewMode,
     pub(crate) bb_prs_collapsed: std::collections::HashSet<String>,
+    /// Per-repo "show all PRs" flag (key = `"workspace/slug"`). Default
+    /// shows the first `PR_DEFAULT_VISIBLE`; clicking the trailing
+    /// `+ N more` row sets the flag so subsequent flatten passes
+    /// render every PR. Sibling of `bb_prs_collapsed` — the two
+    /// states are independent (a repo can be collapsed AND expanded).
+    pub(crate) bb_prs_expanded: std::collections::HashSet<String>,
     pub(crate) gh_actions_view_mode: crate::github::ActionsViewMode,
     pub(crate) gh_actions_collapsed: std::collections::HashSet<String>,
     pub(crate) gh_prs_view_mode: crate::github::GhPrViewMode,
@@ -3123,6 +3129,7 @@ impl App {
             bb_pipelines_collapsed: std::collections::HashSet::new(),
             bb_prs_view_mode: Default::default(),
             bb_prs_collapsed: std::collections::HashSet::new(),
+            bb_prs_expanded: std::collections::HashSet::new(),
             gh_actions_view_mode: Default::default(),
             gh_actions_collapsed: std::collections::HashSet::new(),
             gh_prs_view_mode: Default::default(),
@@ -7123,10 +7130,7 @@ impl App {
     /// by bufferline drag-reorder to let the user reorder tabs by
     /// click-and-drag.
     pub fn swap_bufferline_tabs(&mut self, a: PaneId, b: PaneId) {
-        if a == b
-            || a >= self.panes.len()
-            || b >= self.panes.len()
-        {
+        if a == b || a >= self.panes.len() || b >= self.panes.len() {
             return;
         }
         self.panes.swap(a, b);
@@ -8769,7 +8773,14 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         fs::write(d.path().join("a.txt"), "alpha").unwrap();
         fs::write(d.path().join("b.txt"), "beta").unwrap();
-        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // vim input_style — these tests exercise pane management
+        // (tab swap / move / reopen), which pre-dates and is
+        // orthogonal to the standard-mode preview-tab UX. Forcing
+        // vim mode keeps `open_path` always-pin so two sequential
+        // opens yield two panes (not one preview-replaced pane).
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let app = App::new(d.path().to_path_buf(), cfg).unwrap();
         (d, app)
     }
 

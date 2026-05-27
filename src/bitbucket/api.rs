@@ -44,12 +44,12 @@ const API_BASE: &str = "https://api.bitbucket.org/2.0";
 /// being expensive.
 const PAGELEN: u32 = 20;
 
-/// Max open PRs to fetch per repo. Smaller than `PAGELEN` because the
-/// PR pane lists every repo's PRs together — without a cap, a repo
-/// with 50 open PRs floods the view + buries newer ones from other
-/// repos. 5 keeps each repo's section short + scannable; a proper
-/// "show more" expander is queued as a follow-up.
-const PR_PAGELEN: u32 = 5;
+/// Max open PRs to fetch per repo. Generous so the in-view "show
+/// more" expander has data to reveal — the renderer caps the
+/// initial display at `PR_DEFAULT_VISIBLE = 5` and the `+ N more`
+/// row toggles a per-repo expand flag (see `ui::bitbucket_pull
+/// _requests_view::flatten_prs`).
+const PR_PAGELEN: u32 = 20;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
 

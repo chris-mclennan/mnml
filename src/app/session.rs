@@ -282,6 +282,11 @@ impl App {
                     active_pane = Some(pid);
                 }
                 if let Some(Pane::Editor(buf)) = self.panes.get_mut(pid) {
+                    // Restored buffers are pinned, not preview — otherwise
+                    // the next open_path() in this loop would replace this
+                    // one (preview-replacement) and we'd lose every buffer
+                    // but the last.
+                    buf.is_preview = false;
                     let (row, col) = byte_to_row_col(buf.editor.text(), b.cursor_byte);
                     buf.editor.place_cursor(row, col);
                     buf.scroll = b.scroll;
@@ -619,7 +624,12 @@ mod session_tests {
         let d = tempfile::tempdir().unwrap();
         fs::write(d.path().join("a.txt"), "alpha").unwrap();
         fs::write(d.path().join("b.txt"), "beta").unwrap();
-        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // vim input_style — these session-round-trip tests exercise
+        // pane management orthogonal to the standard-mode preview-tab
+        // UX. Force vim mode so `open_path` always pins.
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let app = App::new(d.path().to_path_buf(), cfg).unwrap();
         (d, app)
     }
 

@@ -406,7 +406,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.split_dividers.clear();
     app.rects.pty_tabs.clear();
     app.rects.pty_tab_new.clear();
-        app.rects.pty_tab_close.clear();
+    app.rects.pty_tab_close.clear();
     let layout = app.layout().clone();
     let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {
         welcome::draw(frame, app, body_area);

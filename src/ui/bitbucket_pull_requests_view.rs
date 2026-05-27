@@ -304,6 +304,34 @@ pub fn draw(
                 ]);
                 lines.push(Line::from(spans));
             }
+            RowKind::ShowMore => {
+                let selected = i == p.selected;
+                let row_bg = if selected { t.bg2 } else { t.bg_dark };
+                lines.push(Line::from(vec![
+                    Span::styled("    ", Style::default().bg(row_bg)),
+                    Span::styled(
+                        format!("+ {} more", row.repo_count),
+                        Style::default()
+                            .fg(t.comment)
+                            .bg(row_bg)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
+                ]));
+            }
+            RowKind::ShowLess => {
+                let selected = i == p.selected;
+                let row_bg = if selected { t.bg2 } else { t.bg_dark };
+                lines.push(Line::from(vec![
+                    Span::styled("    ", Style::default().bg(row_bg)),
+                    Span::styled(
+                        "show less",
+                        Style::default()
+                            .fg(t.comment)
+                            .bg(row_bg)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
+                ]));
+            }
         }
     }
 
@@ -317,6 +345,13 @@ pub fn draw(
 pub enum RowKind {
     Header,
     Pr,
+    /// `+ N more` expander row at the end of a repo's PR list. Click
+    /// flips `App.bb_prs_expanded` for that repo; the next flatten
+    /// pass emits every PR + a `show less` row instead.
+    ShowMore,
+    /// `show less` collapser row at the end of an expanded repo's PR
+    /// list. Click clears the expand flag.
+    ShowLess,
 }
 
 #[derive(Debug, Clone)]
@@ -326,6 +361,11 @@ pub struct FlatRow {
     pub repo_count: usize,
     pub pr: Option<PullRequestRecord>,
 }
+
+/// Default number of PRs to show per repo before the `+ N more`
+/// expander row kicks in. Tuned to match what fits in a typical
+/// rail-width screen without scrolling past the first repo.
+pub const PR_DEFAULT_VISIBLE: usize = 5;
 
 pub fn flatten_prs(app: &App) -> Vec<FlatRow> {
     let pane_collapsed = active_pr_collapsed(app);
@@ -339,9 +379,10 @@ pub fn flatten_prs(app: &App) -> Vec<FlatRow> {
             .as_ref()
             .map(|c| c.contains(&header_label))
             .unwrap_or(false);
+        let expanded = app.bb_prs_expanded.contains(&header_label);
         out.push(FlatRow {
             kind: RowKind::Header,
-            header_label,
+            header_label: header_label.clone(),
             repo_count: count,
             pr: None,
         });
@@ -349,12 +390,35 @@ pub fn flatten_prs(app: &App) -> Vec<FlatRow> {
             continue;
         }
         if let Some(v) = prs {
-            for rec in v {
+            // Cap to PR_DEFAULT_VISIBLE rows unless this repo is
+            // explicitly expanded — keeps repos with 10+ open PRs
+            // from drowning the view.
+            let total = v.len();
+            let take = if expanded {
+                total
+            } else {
+                total.min(PR_DEFAULT_VISIBLE)
+            };
+            for rec in v.iter().take(take) {
                 out.push(FlatRow {
                     kind: RowKind::Pr,
                     header_label: String::new(),
                     repo_count: 0,
                     pr: Some(rec.clone()),
+                });
+            }
+            // `+ N more` / `show less` toggle row when applicable.
+            if total > PR_DEFAULT_VISIBLE {
+                let kind = if expanded {
+                    RowKind::ShowLess
+                } else {
+                    RowKind::ShowMore
+                };
+                out.push(FlatRow {
+                    kind,
+                    header_label: header_label.clone(),
+                    repo_count: total - take,
+                    pr: None,
                 });
             }
         }

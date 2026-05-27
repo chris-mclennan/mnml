@@ -3167,6 +3167,21 @@ fn builtin_commands() -> Vec<Command> {
         keys: &[],
         run: |app| app.tmnl_open_codex_in_tab(),
     });
+    // Spawn a fresh shell as a tmnl-parented sibling tab — distinct
+    // from `Ctrl+T` which opens a shell *inside* mnml as a Pty pane.
+    // This one's PTY is owned by tmnl, so it survives if mnml exits
+    // and lives in tmnl's chrome tab strip. Only meaningful under
+    // tmnl — toasts when standalone.
+    cmds.push(Command {
+        id: "tmnl.new_shell_tab",
+        title: "tmnl: open a new shell as a sibling tab",
+        group: "tmnl",
+        keys: &["super+shift+t"],
+        run: |app| {
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+            app.tmnl_open_tab(shell, Vec::new());
+        },
+    });
     // Transfer the focused pty pane to tmnl as a new tab (SCM_RIGHTS
     // fd handoff). Toasts when there's no focused pty or when not
     // running under a tmnl that exposes a transfer socket.

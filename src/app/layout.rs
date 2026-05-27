@@ -246,10 +246,16 @@ impl App {
                 // vim users skip this entirely — every file gets its
                 // own buffer regardless.
                 let is_standard = self.config.editor.input_style == "standard";
+                // Preview-replacement is scoped to the *active layout* — a
+                // preview tab in another tab page is not the target. Also
+                // requires the active leaf itself to point at a preview
+                // (so clicking a file from the tree in an empty new tab
+                // opens fresh instead of stealing from another tab).
                 let preview_idx = if is_standard {
-                    self.panes
-                        .iter()
-                        .position(|p| matches!(p, Pane::Editor(b) if b.is_preview))
+                    self.active.filter(|&id| {
+                        self.layout().contains(id)
+                            && matches!(self.panes.get(id), Some(Pane::Editor(b)) if b.is_preview)
+                    })
                 } else {
                     None
                 };
@@ -1266,7 +1272,13 @@ mod layout_tests {
         let d = tempfile::tempdir().unwrap();
         fs::write(d.path().join("a.txt"), "alpha").unwrap();
         fs::write(d.path().join("b.txt"), "beta").unwrap();
-        let app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // vim input_style — these tests exercise layout/split/dedup
+        // semantics that pre-date the standard-mode preview-tab UX
+        // (where open_path replaces an active preview pane). Force
+        // vim mode for unambiguous pane-management behavior.
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let app = App::new(d.path().to_path_buf(), cfg).unwrap();
         (d, app)
     }
 

@@ -699,7 +699,12 @@ mod tests {
         let ws = d.path().to_path_buf();
         fs::write(ws.join("alpha.txt"), "first\n").unwrap();
         fs::write(ws.join("beta.txt"), "second\n").unwrap();
-        let mut app = App::new(ws.clone(), Config::default()).unwrap();
+        // vim input_style so both opens produce pinned tabs — under
+        // standard mode the second open would replace alpha's preview
+        // and the bufferline would only show beta.
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let mut app = App::new(ws.clone(), cfg).unwrap();
         app.open_path(&ws.join("alpha.txt"));
         app.open_path(&ws.join("beta.txt"));
 
