@@ -159,6 +159,14 @@ pub struct Buffer {
     pub scroll: usize,
     pub h_scroll: usize,
     pub dirty: bool,
+    /// VS Code-style "preview" buffer — opened by a tree-click in
+    /// standard-input-style mode. A preview buffer gets *replaced*
+    /// when the user tree-clicks another file (instead of opening a
+    /// new tab next to it). The first edit promotes it to a regular
+    /// pinned buffer (`is_preview = false`); double-clicking the
+    /// file in the tree also pins it. Always false when input style
+    /// is `vim` (where every file gets its own buffer regardless).
+    pub is_preview: bool,
     saved_text: String,
     pub language_ext: Option<String>,
     pub input: Box<dyn InputHandler>,
@@ -320,6 +328,7 @@ impl Buffer {
             scroll: 0,
             h_scroll: 0,
             dirty: false,
+            is_preview: false,
             saved_text: text,
             language_ext: ext,
             input: input::make_handler(cfg),
@@ -398,6 +407,7 @@ impl Buffer {
             scroll: 0,
             h_scroll: 0,
             dirty: false,
+            is_preview: false,
             saved_text: String::new(),
             language_ext: None,
             input: input::make_handler(cfg),
@@ -542,6 +552,14 @@ impl Buffer {
 
     pub fn recompute_dirty(&mut self) {
         self.dirty = self.editor.text() != self.saved_text;
+        // VS Code-style preview promotion: any user edit promotes a
+        // preview tab to a pinned one (no longer replaceable on the
+        // next tree-click). Triggered as soon as the buffer becomes
+        // dirty — that's the cleanest signal that the user is
+        // *working* in this buffer, not just browsing it.
+        if self.dirty && self.is_preview {
+            self.is_preview = false;
+        }
     }
 
     pub fn save_to_disk(&mut self) -> std::io::Result<()> {

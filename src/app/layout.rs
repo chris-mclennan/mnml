@@ -237,8 +237,37 @@ impl App {
                 let undo_path = crate::editor::undo_path_for(&self.workspace, &path);
                 crate::editor::load_history_from(&mut buf.editor, &undo_path);
                 let text = buf.editor.text().to_string();
-                self.panes.push(Pane::Editor(buf));
-                let new_id = self.panes.len() - 1;
+                // VS Code preview-mode: when input_style is `standard`,
+                // a tree-click opens the buffer as `is_preview = true`
+                // and *replaces* any existing preview pane's buffer
+                // instead of opening a new tab next to it. The first
+                // edit will promote it (set is_preview = false), and
+                // a double-click in the tree also pins it immediately.
+                // vim users skip this entirely — every file gets its
+                // own buffer regardless.
+                let is_standard = self.config.editor.input_style == "standard";
+                let preview_idx = if is_standard {
+                    self.panes
+                        .iter()
+                        .position(|p| matches!(p, Pane::Editor(b) if b.is_preview))
+                } else {
+                    None
+                };
+                buf.is_preview = is_standard;
+                let new_id = if let Some(idx) = preview_idx {
+                    // Tell the LSP the old file is closing before we
+                    // replace it.
+                    if let Some(Pane::Editor(old)) = self.panes.get(idx)
+                        && let Some(old_path) = old.path.clone()
+                    {
+                        self.lsp.did_close(&old_path);
+                    }
+                    self.panes[idx] = Pane::Editor(buf);
+                    idx
+                } else {
+                    self.panes.push(Pane::Editor(buf));
+                    self.panes.len() - 1
+                };
                 self.reveal_pane(new_id);
                 self.lsp.did_open(&path, &text);
                 // Initial inlay-hint / code-lens / document-link requests —

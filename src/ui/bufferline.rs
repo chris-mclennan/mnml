@@ -325,6 +325,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         if active {
             name_style = name_style.add_modifier(Modifier::BOLD);
         }
+        // VS Code preview tab: italic name (the visual signal that
+        // this tab is replaceable on the next tree-click, until
+        // promoted by an edit). Only Editor panes carry the flag.
+        if let Pane::Editor(b) = pane
+            && b.is_preview
+        {
+            name_style = name_style.add_modifier(Modifier::ITALIC);
+        }
         spans.push(Span::styled(
             format!(" {glyph} "),
             // Icons keep their natural devicon color on every tab — active

@@ -126,12 +126,27 @@ pub fn draw(
 fn draw_tab_strip(frame: &mut Frame, app: &mut App, active_id: PaneId, strip: Rect) {
     let t = theme::cur();
     // Gather pty panes in pane order: `(id, label, exited)`.
+    // When mnml is running under tmnl, shell pty labels read `tmnl …`
+    // instead of `terminal …` — same shell, but the chrome calls out
+    // that the host doing the rendering is tmnl. Standalone mnml keeps
+    // the plain "terminal" label since there's no parent app to name.
+    let under_tmnl = app.under_tmnl;
     let ptys: Vec<(PaneId, String, bool)> = app
         .panes
         .iter()
         .enumerate()
         .filter_map(|(id, p)| match p {
-            Pane::Pty(s) => Some((id, s.tab_label(), s.is_exited())),
+            Pane::Pty(s) => {
+                let raw = s.tab_label();
+                let label = if under_tmnl
+                    && let Some(rest) = raw.strip_prefix("terminal")
+                {
+                    format!("tmnl{rest}")
+                } else {
+                    raw
+                };
+                Some((id, label, s.is_exited()))
+            }
             _ => None,
         })
         .collect();
