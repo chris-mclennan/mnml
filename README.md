@@ -71,6 +71,13 @@ See **[FEATURES.md](FEATURES.md)** for the complete, organised inventory.
 cargo install mnml-rs        # the crate is mnml-rs; the binary it installs is `mnml`
 ```
 
+On Windows you can also install via [Scoop](https://scoop.sh):
+
+```powershell
+scoop bucket add mnml https://github.com/chris-mclennan/mnml-rs
+scoop install mnml/mnml
+```
+
 Or grab a build from the [releases page](https://github.com/chris-mclennan/mnml-rs/releases).
 
 A [Nerd Font](https://www.nerdfonts.com/) is recommended for devicons and

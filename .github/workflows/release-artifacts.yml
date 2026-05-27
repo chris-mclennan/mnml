@@ -1,0 +1,89 @@
+# Builds platform binaries and uploads them to the GitHub release
+# created by `release-plz.yml`. Triggered when a release is published.
+#
+# Currently ships a single Windows asset:
+#   mnml-x86_64-pc-windows-msvc.zip      (contains mnml.exe)
+#   mnml-x86_64-pc-windows-msvc.zip.sha256
+#
+# The companion `.sha256` is what Scoop's `autoupdate.hash.url`
+# template points at — see `packaging/scoop/mnml.json`.
+#
+# macOS + Linux artifacts can be added as additional matrix entries
+# later (the equivalent on those platforms is `cargo install` from
+# crates.io, which release-plz already publishes).
+
+name: release-artifacts
+
+on:
+  release:
+    types: [published]
+  # Manual dispatch so the workflow can be tested before a real
+  # release exists (the upload step is skipped on dispatch — it
+  # only runs on a real `release` event).
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: windows · build + upload
+    runs-on: windows-latest
+    steps:
+      - name: Checkout mnml
+        uses: actions/checkout@v4
+        with:
+          path: mnml
+      - name: Checkout tmnl-protocol
+        uses: actions/checkout@v4
+        with:
+          repository: chris-mclennan/tmnl-protocol
+          path: tmnl-protocol
+          token: ${{ secrets.SIBLING_CHECKOUT_TOKEN }}
+      - name: Checkout fim-engine
+        uses: actions/checkout@v4
+        with:
+          repository: chris-mclennan/fim-engine
+          path: fim-engine
+          token: ${{ secrets.SIBLING_CHECKOUT_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mnml
+          key: release-windows
+
+      - name: Build release binary
+        working-directory: mnml
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Stage artifact
+        working-directory: mnml
+        shell: pwsh
+        run: |
+          $stage = "stage"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "target/x86_64-pc-windows-msvc/release/mnml.exe" "$stage/mnml.exe"
+          $zip = "mnml-x86_64-pc-windows-msvc.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          # Scoop's hash file format: `<sha256>  <filename>` — but
+          # autoupdate.hash.url only reads the first 64 hex chars, so
+          # the bare hash is also fine. Use the standard format for
+          # portability.
+          "$hash  $zip" | Out-File -Encoding ascii "$zip.sha256"
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            mnml/mnml-x86_64-pc-windows-msvc.zip
+            mnml/mnml-x86_64-pc-windows-msvc.zip.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
