@@ -348,6 +348,29 @@ impl Layout {
         }
     }
 
+    /// Swap any leaf references pointing at `a` with `b` and vice versa.
+    /// Used after `app.panes.swap(a, b)` so layout leaves still point at
+    /// the correct pane after the storage move. Walks the whole tree.
+    pub fn swap_leaf_refs(&mut self, a: PaneId, b: PaneId) {
+        if a == b {
+            return;
+        }
+        match self {
+            Layout::Empty => {}
+            Layout::Leaf(id) => {
+                if *id == a {
+                    *id = b;
+                } else if *id == b {
+                    *id = a;
+                }
+            }
+            Layout::Split { first, second, .. } => {
+                first.swap_leaf_refs(a, b);
+                second.swap_leaf_refs(a, b);
+            }
+        }
+    }
+
     /// After `app.panes.remove(removed)`, every leaf id past `removed` shifts down
     /// by one. Leaves pointing AT `removed` become `Empty` (the pane is gone —
     /// keeping the id would silently re-bind the leaf to whatever pane shifted

@@ -4242,6 +4242,10 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.reveal_pane(id);
+                // Arm a drag — a subsequent Drag event into a
+                // different tab's rect will swap them. The arm is
+                // cleared on Up; harmless on a normal click.
+                app.rects.bufferline_drag_tab = Some(id);
                 return;
             }
             // Pty-pane tab strip — click `+` to add a new Claude session
@@ -4745,6 +4749,27 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
+            // Bufferline (file-tab) drag-to-reorder. Same shape as the
+            // tab-page handler above — find the tab under the cursor,
+            // swap the underlying panes, update the drag-source to the
+            // new id of the moved pane.
+            if let Some(src) = app.rects.bufferline_drag_tab {
+                let dst = app
+                    .rects
+                    .bufferline_tabs
+                    .iter()
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                    .map(|(_, pid)| *pid);
+                if let Some(dst) = dst
+                    && dst != src
+                {
+                    app.swap_bufferline_tabs(src, dst);
+                    // After the swap, the pane WE were dragging now
+                    // lives at `dst`'s old id (i.e. `dst`).
+                    app.rects.bufferline_drag_tab = Some(dst);
+                }
+                return;
+            }
             if app.dragging_scrollbar.is_some() {
                 app.drag_scrollbar_to(x, y);
             } else if app.dragging_tree_edge {
@@ -4805,6 +4830,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 // Released outside tree → cancel any in-flight drag.
                 app.tree_drag = None;
             }
+            // Mouse-up always clears the bufferline-tab drag arm.
+            app.rects.bufferline_drag_tab = None;
         }
         MouseEventKind::ScrollUp => crate::app::dispatch::scroll_under(app, x, y, -3),
         MouseEventKind::ScrollDown => crate::app::dispatch::scroll_under(app, x, y, 3),

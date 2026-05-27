@@ -1694,6 +1694,13 @@ pub struct PaneRects {
     /// kills the pty session + closes the pane. Tested BEFORE the
     /// tab-switch hit so the badge wins over the chip's body.
     pub pty_tab_close: Vec<(Rect, PaneId)>,
+    /// Per-frame: the pane id whose bufferline tab is being dragged.
+    /// Set on Mouse::Down inside a tab rect; cleared on Mouse::Up.
+    /// While set, Mouse::Drag events into a different tab swap the
+    /// two panes (via `App::swap_bufferline_tabs`). Lives on rects
+    /// for parity with other drag-state fields, but it's not a rect
+    /// itself — it's just the pane id to re-find each frame.
+    pub bufferline_drag_tab: Option<PaneId>,
     /// One rect per row in the F1 click-discovery overlay — click a row
     /// to flash the matching on-screen rects. Cleared + repopulated by
     /// `ui::discovery::draw` when the overlay is visible.
@@ -7107,6 +7114,46 @@ impl App {
             Pane::Debug(_) => Some(("Debug".to_string(), false)),
             Pane::DapRepl(_) => Some(("DAP REPL".to_string(), false)),
             Pane::Image(p) => Some((p.tab_title(), false)),
+        }
+    }
+
+    /// Swap two panes' positions in `app.panes`, then walk every tab
+    /// page's layout (plus `app.active`) and rewrite leaf references
+    /// so they still resolve to the same content after the move. Used
+    /// by bufferline drag-reorder to let the user reorder tabs by
+    /// click-and-drag.
+    pub fn swap_bufferline_tabs(&mut self, a: PaneId, b: PaneId) {
+        if a == b
+            || a >= self.panes.len()
+            || b >= self.panes.len()
+        {
+            return;
+        }
+        self.panes.swap(a, b);
+        // Every tab page's layout tree may carry leaf refs to either id.
+        for layout in self.layouts.iter_mut() {
+            layout.swap_leaf_refs(a, b);
+        }
+        // `app.active` is a PaneId — if it's one of the swapped ids,
+        // flip it so focus follows the moved tab.
+        if let Some(active) = self.active {
+            self.active = Some(if active == a {
+                b
+            } else if active == b {
+                a
+            } else {
+                active
+            });
+        }
+        // Per-tab-page actives carry PaneIds too — flip on swap.
+        for slot in self.tab_actives.iter_mut() {
+            if let Some(pid) = slot {
+                if *pid == a {
+                    *slot = Some(b);
+                } else if *pid == b {
+                    *slot = Some(a);
+                }
+            }
         }
     }
 
