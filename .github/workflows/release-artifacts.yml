@@ -78,6 +78,18 @@ jobs:
           # portability.
           "$hash  $zip" | Out-File -Encoding ascii "$zip.sha256"
 
+      # Always upload as a workflow artifact — downloadable from the
+      # run page on the Actions tab. Lets a maintainer grab a build
+      # via workflow_dispatch without needing a real release.
+      - name: Upload as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mnml-windows-x86_64
+          path: |
+            mnml/mnml-x86_64-pc-windows-msvc.zip
+            mnml/mnml-x86_64-pc-windows-msvc.zip.sha256
+          retention-days: 30
+
       - name: Upload to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
