@@ -72,9 +72,11 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
         // Tell the renderer what to call this tab. Mirrors the OSC 0/2
         // terminal-title sequence that `tui::run` would normally emit
         // — under blit there's no real terminal to receive it, so we
-        // send it as a `Title` message instead.
+        // send it as a `Title` message instead. Just the workspace
+        // name (no `mnml — ` prefix) — matches what mnml's standalone
+        // palette bar shows; tmnl's chrome chip pulls this directly.
         let title = match app.workspace.file_name().and_then(|n| n.to_str()) {
-            Some(name) if !name.is_empty() => format!("mnml — {name}"),
+            Some(name) if !name.is_empty() => name.to_string(),
             _ => "mnml".to_string(),
         };
         write_message(&mut *w, &Message::Title(title)).map_err(|e| format!("blit: title: {e}"))?;

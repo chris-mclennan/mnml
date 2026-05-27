@@ -4246,7 +4246,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
             // Pty-pane tab strip — click `+` to add a new Claude session
             // as a TAB of that strip's leaf (no split); click a session
-            // tab to switch the leaf to it.
+            // tab to switch; click the `×` to kill that session. Test
+            // close BEFORE switch so the badge wins over the chip body.
+            if let Some(&(_, pid)) = app
+                .rects
+                .pty_tab_close
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.close_pane(pid);
+                return;
+            }
             if let Some(&(_, owner)) = app
                 .rects
                 .pty_tab_new

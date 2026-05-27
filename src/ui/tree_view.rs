@@ -30,7 +30,17 @@ const BRANCH_LIST_CAP: usize = 8;
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let rail_bg = theme::cur().bg_darker;
-    frame.render_widget(Paragraph::new("").style(Style::default().bg(rail_bg)), area);
+    // `Block` actually fills every cell in `area` with the bg color;
+    // an empty `Paragraph` doesn't (it only writes glyphs where text
+    // exists). Without this, when a section shrinks frame-to-frame
+    // (e.g. INTEGRATIONS toggling expanded → collapsed), leftover
+    // text from the previous render remains visible in the cells the
+    // shrunk section no longer covers. See bug: stale "e" + "x" from
+    // "Claude Code" / "Codex" labels showing above INTEGRATIONS.
+    frame.render_widget(
+        ratatui::widgets::Block::default().style(Style::default().bg(rail_bg)),
+        area,
+    );
     app.rects.tree = None;
     app.rects.tree_toggle = None;
     app.rects.git_section_toggle = None;
@@ -69,7 +79,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let integration_height = integration_needed.min(bottom_budget);
     let remaining_for_git = bottom_budget.saturating_sub(integration_height);
     let git_height = git_needed.min(remaining_for_git).max(1);
-    let git_top_y = area.y + area.height - git_height;
+    // Bottom-pad GIT by 1 row when collapsed so the chevron-only
+    // header doesn't sit flush against the rail's bottom edge —
+    // visually anchors it as a real section header rather than a
+    // stray row. Expanded GIT runs to the bottom edge as before
+    // (the branch list provides its own visual weight there).
+    let git_bottom_pad: u16 = if !app.git_section_expanded { 1 } else { 0 };
+    let git_top_y = area.y + area.height - git_height - git_bottom_pad;
     let integration_top_y = git_top_y.saturating_sub(integration_height + 1); // +1 separator
     // Workspace section gets everything above the integration section
     // (with a one-row separator immediately above it).
@@ -439,12 +455,17 @@ fn compute_integration_section_height(app: &App, rail_width: usize) -> u16 {
         return 0;
     }
     if !app.integration_section_expanded {
-        return 1; // just the header
+        // Compact: header + 1 row of icons packed horizontally. Each
+        // chip is 4 cells (` g  ` or ` g ` for the 2-cell-wide
+        // Claude/Codex variants — see render). Multiple rows if the
+        // icons don't all fit in one rail width.
+        const CHIP_W: usize = 4;
+        let per_row = (rail_width / CHIP_W).max(1);
+        let rows = n.div_ceil(per_row);
+        return (1 + rows) as u16;
     }
-    const CHIP_W: usize = 3;
-    let per_row = (rail_width / CHIP_W).max(1);
-    let rows = n.div_ceil(per_row);
-    (1 + rows) as u16
+    // Expanded: one icon per row (icon + name). Header + N rows.
+    (1 + n) as u16
 }
 
 /// Render the INTEGRATIONS section: a `> INTEGRATIONS` header (using
@@ -494,66 +515,162 @@ fn draw_integration_section(
     );
     app.rects.integration_section_toggle = Some(header_rect);
 
+    let max_y = start_y + height;
+
+    // ── Collapsed: a horizontal row of icon-only chips below the
+    //    header. Each chip is 4 cells wide; the wide-glyph rows
+    //    (Claude / Codex) trim a trailing space to keep the visual
+    //    cell-count consistent with 1-cell glyphs.
     if !app.integration_section_expanded {
+        let n = app.config.ui.integration_icons.len();
+        if n == 0 {
+            return;
+        }
+        const CHIP_W: usize = 4;
+        let per_row = (width / CHIP_W).max(1);
+        let icons: Vec<(usize, String, String, String)> = app
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .enumerate()
+            .map(|(i, ic)| (i, ic.glyph.clone(), ic.fallback.clone(), ic.color.clone()))
+            .collect();
+        for (row_y, chunk) in (start_y + 1..).zip(icons.chunks(per_row)) {
+            if row_y >= max_y {
+                break;
+            }
+            let mut spans: Vec<Span<'static>> = Vec::with_capacity(chunk.len() + 1);
+            for (slot_i, (i, glyph, fallback, color)) in chunk.iter().enumerate() {
+                let g = if nerd { glyph.as_str() } else { fallback.as_str() };
+                let fg = match color.as_str() {
+                    "orange" => t.orange,
+                    "yellow" => t.yellow,
+                    "cyan" => t.cyan,
+                    "blue" => t.blue,
+                    "green" => t.green,
+                    "red" => t.red,
+                    "purple" => t.purple,
+                    "teal" => t.teal,
+                    _ => t.fg,
+                };
+                // Same wide-glyph trick used in the expanded layout:
+                // Claude / Codex glyphs render 2-cell wide, so drop a
+                // trailing space to keep the visual chip width
+                // consistent.
+                let wide_glyph = matches!(glyph.as_str(), "\u{F8B0}" | "\u{F8B1}");
+                let chip_text = if wide_glyph {
+                    format!(" {g} ")
+                } else {
+                    format!(" {g}  ")
+                };
+                spans.push(Span::styled(
+                    chip_text,
+                    Style::default().fg(fg).bg(rail_bg),
+                ));
+                let chip_x = area.x + (slot_i * CHIP_W) as u16;
+                app.rects.integration_icon_rects.push((
+                    Rect {
+                        x: chip_x,
+                        y: row_y,
+                        width: CHIP_W as u16,
+                        height: 1,
+                    },
+                    *i,
+                ));
+            }
+            let used = chunk.len() * CHIP_W;
+            spans.push(Span::styled(
+                " ".repeat(width.saturating_sub(used)),
+                Style::default().bg(rail_bg),
+            ));
+            let row_rect = Rect {
+                x: area.x,
+                y: row_y,
+                width: area.width,
+                height: 1,
+            };
+            frame.render_widget(Paragraph::new(Line::from(spans)), row_rect);
+        }
         return;
     }
 
-    // Icon grid below the header.
-    const CHIP_W: usize = 3;
-    let per_row = (width / CHIP_W).max(1);
-    let max_y = start_y + height;
-
-    let icons: Vec<(usize, String, String, String)> = app
+    // ── Expanded: one icon per row with its label, full width.
+    // The grid layout drifts out of alignment with Nerd-Font icons
+    // that render as 2-cell-wide glyphs (PUA + MDI codepoints in
+    // non-Mono variants), causing tooltips to attach to the wrong
+    // icon — but the vertical layout sidesteps that since each row
+    // only contains one icon. Each row is also wider, so the
+    // human-readable name fits next to the glyph — easier to scan
+    // than a 7-glyph chip grid.
+    let icons: Vec<(usize, String, String, String, String)> = app
         .config
         .ui
         .integration_icons
         .iter()
         .enumerate()
-        .map(|(i, ic)| (i, ic.glyph.clone(), ic.fallback.clone(), ic.color.clone()))
+        .map(|(i, ic)| {
+            let label = ic
+                .tooltip
+                .clone()
+                .unwrap_or_else(|| ic.id.clone());
+            (i, ic.glyph.clone(), ic.fallback.clone(), ic.color.clone(), label)
+        })
         .collect();
 
-    for (row_y, chunk) in (start_y + 1..).zip(icons.chunks(per_row)) {
+    for (row_y, (i, glyph, fallback, color, label)) in
+        (start_y + 1..).zip(icons.iter())
+    {
         if row_y >= max_y {
             break;
         }
-        let mut spans: Vec<Span<'static>> = Vec::with_capacity(chunk.len() + 1);
-        for (slot_i, (i, glyph, fallback, color)) in chunk.iter().enumerate() {
-            let g = if nerd {
-                glyph.as_str()
-            } else {
-                fallback.as_str()
-            };
-            let fg = match color.as_str() {
-                "orange" => t.orange,
-                "yellow" => t.yellow,
-                "cyan" => t.cyan,
-                "blue" => t.blue,
-                "green" => t.green,
-                "red" => t.red,
-                "purple" => t.purple,
-                "teal" => t.teal,
-                _ => t.fg,
-            };
-            spans.push(Span::styled(
-                format!(" {g} "),
-                Style::default().fg(fg).bg(rail_bg),
-            ));
-            let chip_x = area.x + (slot_i * CHIP_W) as u16;
-            app.rects.integration_icon_rects.push((
-                Rect {
-                    x: chip_x,
-                    y: row_y,
-                    width: CHIP_W as u16,
-                    height: 1,
-                },
-                *i,
-            ));
-        }
-        let used_cells = chunk.len() * CHIP_W;
-        spans.push(Span::styled(
-            " ".repeat(width.saturating_sub(used_cells)),
-            Style::default().bg(rail_bg),
-        ));
+        let g = if nerd {
+            glyph.as_str()
+        } else {
+            fallback.as_str()
+        };
+        let fg = match color.as_str() {
+            "orange" => t.orange,
+            "yellow" => t.yellow,
+            "cyan" => t.cyan,
+            "blue" => t.blue,
+            "green" => t.green,
+            "red" => t.red,
+            "purple" => t.purple,
+            "teal" => t.teal,
+            _ => t.fg,
+        };
+        // Claude (U+F8B0) and Codex (U+F8B1) are patched into the
+        // mnml Nerd Font as 2-cell-wide glyphs (most terminals render
+        // PUA codepoints as wide); the rest of the integration icons
+        // are 1-cell. Compensate by trimming a trailing space on the
+        // wide rows so the leading space + glyph + trailing space
+        // sum to the same VISUAL width as ` glyph  ` does on 1-cell
+        // rows. Both columns (icon left-edge + label left-edge) line
+        // up across all rows.
+        //
+        //   1-cell glyph: ` g  ` → cells [_ g _ _] → label at col 4
+        //   2-cell glyph: ` g ` → cells [_ g g _] → label at col 4
+        let wide_glyph = matches!(glyph.as_str(), "\u{F8B0}" | "\u{F8B1}");
+        let icon_part = if wide_glyph {
+            format!(" {g} ")
+        } else {
+            format!(" {g}  ")
+        };
+        // Truncate the label to fit the rail width (icon takes 4
+        // cells, leaving width - 4 for the label).
+        let label_cells = width.saturating_sub(icon_part.chars().count());
+        let label_display: String = label.chars().take(label_cells).collect();
+        let used = icon_part.chars().count() + label_display.chars().count();
+        let pad = width.saturating_sub(used);
+        let spans = vec![
+            Span::styled(icon_part, Style::default().fg(fg).bg(rail_bg)),
+            Span::styled(
+                label_display,
+                Style::default().fg(t.fg).bg(rail_bg),
+            ),
+            Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)),
+        ];
         let row_rect = Rect {
             x: area.x,
             y: row_y,
@@ -561,6 +678,9 @@ fn draw_integration_section(
             height: 1,
         };
         frame.render_widget(Paragraph::new(Line::from(spans)), row_rect);
+        // The hit-rect is the WHOLE row — clicking the label or the
+        // icon fires the integration's command.
+        app.rects.integration_icon_rects.push((row_rect, *i));
     }
 }
 

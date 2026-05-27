@@ -747,10 +747,15 @@ impl Default for Config {
                     },
                     IntegrationIcon {
                         id: "http".to_string(),
-                        glyph: "\u{F1D8B}".to_string(), // nf-md-send (paper plane)
+                        // `\u{F1D8}` (nf-fa-paper_plane) is in every
+                        // Nerd Font variant — was using `\u{F1D8B}`
+                        // (nf-md-send) which is only in newer MDI
+                        // ranges and missing from some standard Nerd
+                        // Font Mono builds (renders as tofu / ?).
+                        glyph: "\u{F1D8}".to_string(),
                         fallback: "→".to_string(),
                         command: "http.send".to_string(),
-                        color: "green".to_string(),
+                        color: "blue".to_string(),
                         tooltip: Some("HTTP: send active request".to_string()),
                     },
                     IntegrationIcon {
@@ -759,7 +764,7 @@ impl Default for Config {
                         fallback: "T".to_string(),
                         command: ":host.launch internal-app".to_string(),
                         color: "purple".to_string(),
-                        tooltip: Some("Playwright runner (via internal-app)".to_string()),
+                        tooltip: Some("Playwright runner".to_string()),
                     },
                     IntegrationIcon {
                         id: "codebuild".to_string(),

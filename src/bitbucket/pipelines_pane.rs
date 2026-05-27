@@ -57,7 +57,9 @@ impl BitbucketPipelinesPane {
     }
 
     pub fn tab_title(&self) -> String {
-        "Bitbucket".to_string()
+        // Distinguish from `Bitbucket PRs` (the sibling pull-requests
+        // pane) so the bufferline tab makes the surface obvious.
+        "Bitbucket Pipelines".to_string()
     }
 
     /// Move the selection by `delta` items, clamped to `[0, max_idx)`.

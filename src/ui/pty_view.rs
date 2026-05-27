@@ -144,37 +144,60 @@ fn draw_tab_strip(frame: &mut Frame, app: &mut App, active_id: PaneId, strip: Re
     let mut x = strip.x;
     let right_limit = strip.x + strip.width;
     for (id, label, exited) in &ptys {
-        // ` <label> ` — truncate long names to keep the strip tidy.
+        // ` <label> × ` — chip body (label) + close badge. Truncate
+        // long names so the strip stays tidy.
         let mut shown: String = label.chars().take(18).collect();
         if *exited {
             shown.push_str(" ✗");
         }
-        let chip = format!(" {shown} ");
-        let w = chip.chars().count() as u16;
-        if x + w + 4 > right_limit {
+        let label_chip = format!(" {shown} ");
+        let close_chip = "× ";
+        let label_w = label_chip.chars().count() as u16;
+        let close_w = close_chip.chars().count() as u16;
+        let total_w = label_w + close_w;
+        if x + total_w + 4 > right_limit {
             break; // out of room — drop the rest (rare; many ptys)
         }
         let is_active = *id == active_id;
-        let style = if is_active {
-            Style::default()
-                .fg(t.bg_darker)
-                .bg(t.orange)
-                .add_modifier(Modifier::BOLD)
+        let (label_style, close_style) = if is_active {
+            (
+                Style::default()
+                    .fg(t.bg_darker)
+                    .bg(t.orange)
+                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(t.bg_darker).bg(t.orange),
+            )
         } else {
-            Style::default().fg(t.comment).bg(t.bg2)
+            (
+                Style::default().fg(t.comment).bg(t.bg2),
+                Style::default().fg(t.fg).bg(t.bg2),
+            )
         };
-        spans.push(Span::styled(chip, style));
+        spans.push(Span::styled(label_chip, label_style));
+        spans.push(Span::styled(close_chip, close_style));
         spans.push(Span::styled(" ", Style::default().bg(t.bg_darker)));
+        // Tab-switch rect covers the label only — the close badge gets
+        // its own rect so a click there kills the pane instead of
+        // switching to it.
         app.rects.pty_tabs.push((
             Rect {
                 x,
                 y: strip.y,
-                width: w,
+                width: label_w,
                 height: 1,
             },
             *id,
         ));
-        x += w + 1;
+        app.rects.pty_tab_close.push((
+            Rect {
+                x: x + label_w,
+                y: strip.y,
+                width: close_w,
+                height: 1,
+            },
+            *id,
+        ));
+        x += total_w + 1;
     }
     // `+` chip — spawn a new Claude session as a TAB of this leaf.
     if x + 3 <= right_limit {

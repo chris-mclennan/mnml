@@ -1690,6 +1690,10 @@ pub struct PaneRects {
     /// Click spawns a new Claude *into the strip-owner's leaf* (a tab,
     /// not a split). One entry per visible pty pane's strip.
     pub pty_tab_new: Vec<(Rect, PaneId)>,
+    /// `×` close-badge on each pty tab — `(rect, pty_pane_id)`. Click
+    /// kills the pty session + closes the pane. Tested BEFORE the
+    /// tab-switch hit so the badge wins over the chip's body.
+    pub pty_tab_close: Vec<(Rect, PaneId)>,
     /// One rect per row in the F1 click-discovery overlay — click a row
     /// to flash the matching on-screen rects. Cleared + repopulated by
     /// `ui::discovery::draw` when the overlay is visible.

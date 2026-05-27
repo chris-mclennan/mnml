@@ -215,11 +215,15 @@ pub fn draw(
                     .map(|ms| humanize_age((now_ms - ms).max(0)))
                     .unwrap_or_default();
 
-                // Review chip: 👀 N total · ✓A — green when approved == reviewers,
-                // ✗C — red when any reviewer requested changes.
+                // Review chip:  N total · ✓A — green when approved == reviewers,
+                // ✗C — red when any reviewer requested changes. Switched
+                // from the 👀 emoji to `\u{F441}` (nf-oct-eye) so the
+                // glyph renders consistently in any Nerd Font (Apple
+                // Terminal's default emoji-fallback misses 👀 on some
+                // setups). Inserted a space between the glyph + count.
                 let mut review_spans: Vec<Span> = Vec::new();
                 review_spans.push(Span::styled(
-                    format!("👀{:<2}", pr.reviewer_count),
+                    format!("\u{F441} {:<2}", pr.reviewer_count),
                     Style::default().fg(t.fg).bg(row_bg),
                 ));
                 if pr.approved_count > 0 {
@@ -283,7 +287,9 @@ pub fn draw(
                 spans.extend(review_spans);
                 spans.extend([
                     Span::styled(
-                        format!(" · 💬{:<3}", pr.comment_count),
+                        // `\u{F086}` (nf-fa-comment) — same Nerd Font
+                        // swap as the eye glyph for consistent rendering.
+                        format!(" · \u{F086} {:<3}", pr.comment_count),
                         Style::default().fg(t.comment).bg(row_bg),
                     ),
                     Span::styled(
