@@ -1,0 +1,56 @@
+---
+title: mnml
+description: A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, and an embedded HTTP client.
+template: splash
+hero:
+  tagline: Vim or standard editing — without `if vim {}` scattered through the codebase. One binary, no plugins required.
+  actions:
+    - text: Install
+      link: /install/
+      icon: right-arrow
+    - text: GitHub
+      link: https://github.com/chris-mclennan/mnml-rs
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What is mnml
+
+mnml is a terminal IDE in the NvChad aesthetic — file-tree rail, tabline, powerline statusline, Nerd-Font devicons, tree-sitter highlighting — built on one design decision that runs through everything: **a pluggable input layer.** Vim modal editing and a modeless VS Code-style keymap are both first-class, both fully remappable, and swappable at runtime. The editor, buffer, and render layers never branch on which one is active.
+
+<CardGrid stagger>
+  <Card title="Two editing modes, one codebase" icon="setting">
+    Modal vim (Normal / Insert / Visual / Visual-Block / Replace + a `:` ex-command line) and a modeless standard keymap. Swap live with `:set input=vim`. Input handlers translate keys into a closed set of edit operations; the rest of the app is mode-agnostic.
+  </Card>
+  <Card title="LSP, batteries included" icon="puzzle">
+    Completion with docs, hover, go-to-definition, references, rename with preview, code actions, inlay hints, semantic tokens, symbol hierarchies, signature help, Problems pane.
+  </Card>
+  <Card title="Rich git" icon="random">
+    Gutter line-signs, diff pane with per-hunk staging, blame, staging view, coloured-lane commit DAG, branch/worktree/PR rail, AI-written commit messages.
+  </Card>
+  <Card title="Fuzzy everything" icon="magnifier">
+    File finder, command palette, buffer switcher, symbol picker, which-key leader popup — all over one fuzzy-match core.
+  </Card>
+  <Card title="Embedded terminal + AI" icon="laptop">
+    Run a shell, `claude` CLI, or Codex as panes. On-selection AI actions (explain / fix / refactor / write tests) and Copilot-style inline suggestions.
+  </Card>
+  <Card title="Baked-in HTTP client" icon="rocket">
+    Send `.http` / `.curl` / `.rest` files, run request chains, generate stubs from an OpenAPI spec — an editable, form-style request pane lives right in the IDE.
+  </Card>
+</CardGrid>
+
+## Headless + scriptable
+
+`mnml --headless` renders to a virtual screen driven over a file-IPC channel; a line-based `.test` format runs end-to-end UI tests against the same `App` the terminal uses. Same architecture powers both — no separate test harness, no mode drift.
+
+## The family
+
+mnml is one of three small Rust tools that work together:
+
+- **mnml** — this IDE
+- **[tmnl](https://tmnl.sh)** — a GPU-rendered terminal that lets mnml run as a native tab instead of nested in some other terminal emulator
+- **[mixr](https://mixr.sh)** — a music app, also tmnl-native
+
+You can run mnml inside any terminal that supports modern escape codes. Inside tmnl specifically, mnml gets native-tab integration via the `tmnl-protocol` cell-streaming layer.
