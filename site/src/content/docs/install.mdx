@@ -6,7 +6,7 @@ description: How to install mnml on macOS, Linux, and Windows.
 import { LinkButton, CardGrid, Card } from '@astrojs/starlight/components';
 
 <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 1.5rem 0 2.5rem;">
-  <LinkButton href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-aarch64-apple-darwin.pkg" icon="apple" iconPlacement="start">
+  <LinkButton href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-aarch64-apple-darwin.dmg" icon="apple" iconPlacement="start">
     Download for macOS
   </LinkButton>
   <LinkButton href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-installer.sh" variant="secondary" icon="linux" iconPlacement="start">
@@ -33,11 +33,11 @@ irm https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-inst
 
 <CardGrid>
   <Card title="macOS" icon="apple">
-    `.pkg` installer drops `mnml` on `PATH`. Per-arch — Apple Silicon or Intel.
+    **DMG** — drag `mnml.app` to Applications, then click the dock icon. The launcher opens mnml inside a tmnl tab if tmnl is installed, otherwise Terminal.app.
 
-    Or grab the `.tar.xz` from the [latest release](https://github.com/chris-mclennan/mnml/releases/latest) for manual install.
+    Or **`.pkg`** for the CLI install (drops `mnml` on `PATH`). Per-arch — pick Apple Silicon or Intel from the [latest release](https://github.com/chris-mclennan/mnml/releases/latest).
 
-    Requires macOS 10.14 (Mojave) or newer. A `.dmg` with a dock-icon install is in the queue.
+    Requires macOS 10.14 (Mojave) or newer.
   </Card>
   <Card title="Linux" icon="linux">
     Shell installer drops `mnml` on `PATH`:
