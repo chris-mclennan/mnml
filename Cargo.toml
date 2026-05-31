@@ -38,6 +38,15 @@ path = "src/lib.rs"
 name = "mnml"
 path = "src/main.rs"
 
+# WiX GUIDs — required by cargo-dist for the Windows MSI installer.
+# Stable for the life of the package; never regenerate (changing
+# them would orphan existing installs on upgrade).
+[package.metadata.wix]
+upgrade-guid = "21DB6B89-F8E6-4078-B123-3A6FEAEECD56"
+path-guid = "F7EB5F6F-2277-4DF2-BC63-8A68BB048777"
+license = false
+eula = false
+
 [dependencies]
 # TUI — use ratatui's re-exported crossterm to avoid version skew.
 ratatui = { version = "0.30", features = ["crossterm"] }
