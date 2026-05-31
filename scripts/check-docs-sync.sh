@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Reports whether commits since the last docs-sync marker have touched
 # user-facing source areas, so the public manual at <site>.sh stays
 # fresh. Runs as a Claude Code Stop hook — silent when clean,
@@ -17,8 +17,9 @@
 # Permissive — never block the hook regardless of internal command exit codes.
 set -u
 
-# Find the repo root (handles being called from anywhere in the tree)
-REPO_ROOT="$(/usr/bin/git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+# Find the repo root containing THIS SCRIPT (not the caller's cwd).
+SCRIPT_DIR="$(/usr/bin/dirname "$(/usr/bin/realpath "$0" 2>/dev/null || echo "$0")")"
+REPO_ROOT="$(/usr/bin/git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 cd "$REPO_ROOT"
 
 MARKER="site/.docs-sync-marker"
@@ -45,7 +46,9 @@ if ! /usr/bin/git cat-file -e "$LAST_SYNCED" 2>/dev/null; then
 fi
 
 # Find commits since marker. Filter out skip-tagged + docs-only commits.
-COMMITS="$(/usr/bin/git log --format='%H %s' "$LAST_SYNCED..HEAD" 2>/dev/null)"
+# Use a record separator (`\037`) between SHA and full body so the body's
+# newlines don't break parsing.
+COMMITS="$(/usr/bin/git log --format=$'%H\037%B\036' "$LAST_SYNCED..HEAD" 2>/dev/null)"
 [ -z "$COMMITS" ] && exit 0
 
 # Count commits that:
@@ -54,12 +57,16 @@ COMMITS="$(/usr/bin/git log --format='%H %s' "$LAST_SYNCED..HEAD" 2>/dev/null)"
 #     CLAUDE.md, .github/, .gitignore, Cargo.lock
 STALE_COUNT=0
 SAMPLE_FILES=""
-while IFS= read -r line; do
-  [ -z "$line" ] && continue
-  SHA="${line%% *}"
-  MSG="${line#* }"
+# Split on the record separator \036 — one record per commit.
+while IFS= read -r -d $'\036' record; do
+  [ -z "$record" ] && continue
+  # Strip whitespace from SHA — `git log` puts a newline between record
+  # boundaries which would otherwise corrupt the next SHA.
+  SHA="$(echo "${record%%$'\037'*}" | /usr/bin/tr -d '[:space:]')"
+  MSG="${record#*$'\037'}"
+  [ -z "$SHA" ] && continue
 
-  # Skip tag check
+  # Skip tag check — searches the full body, not just subject.
   case "$MSG" in
     *"[skip docs]"*|*"[no docs]"*) continue ;;
   esac
@@ -70,7 +77,7 @@ while IFS= read -r line; do
   while IFS= read -r f; do
     [ -z "$f" ] && continue
     case "$f" in
-      site/*|docs/*|README.md|CHANGELOG.md|CONTRIBUTING.md|LICENSE-*|CLAUDE.md|.github/*|.gitignore|Cargo.lock|*.lock)
+      site/*|docs/*|README.md|CHANGELOG.md|CONTRIBUTING.md|LICENSE-*|CLAUDE.md|.github/*|.gitignore|Cargo.lock|*.lock|scripts/check-docs-sync.sh|.claude/*)
         continue ;;
       *)
         HAS_FEATURE_CHANGE=1
