@@ -1,0 +1,39 @@
+[workspace]
+members = ["cargo:."]
+
+# Config for 'dist'
+[dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.32.0"
+# CI backends to support
+ci = "github"
+# The installers to generate for each app
+installers = ["shell", "powershell", "msi"]
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+# Which actions to run on pull requests
+pr-run-mode = "upload"
+# YAML snippet injected into every build job's `steps:` array,
+# *before* the build runs. We use it to check out the sibling repos
+# that mnml's Cargo.toml references by path (`../tmnl-protocol`,
+# `../fim-engine`). Lives at `.github/build-setup.yml` (one dir
+# above `.github/workflows/`) so GitHub doesn't try to interpret
+# it as a standalone workflow. dist resolves the path relative to
+# `.github/workflows/`.
+github-build-setup = "../build-setup.yml"
+# Permit manual edits to the generated CI file — `dist plan` would
+# otherwise refuse to run when release.yml drifts. We hand-add the
+# sibling-clone step to the plan / build-global-artifacts / host
+# jobs (cargo-dist only auto-injects `github-build-setup` into
+# build-local-artifacts), so the file is intentionally out of sync.
+allow-dirty = ["ci"]
+# Path that installers should place binaries in
+install-path = "CARGO_HOME"
+# Whether to install an updater program
+install-updater = false
+
+# macOS .pkg bundle identifier (reverse-DNS, your control). Kept at
+# the end of the file so it doesn't accidentally swallow the other
+# top-level [dist.*] keys.
+[dist.mac-pkg-config]
+identifier = "sh.mnml.app"
