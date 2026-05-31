@@ -57,6 +57,11 @@ COMMITS="$(/usr/bin/git log --format=$'%H\037%B\036' "$LAST_SYNCED..HEAD" 2>/dev
 #     CLAUDE.md, .github/, .gitignore, Cargo.lock
 STALE_COUNT=0
 SAMPLE_FILES=""
+# Tracks whether CHANGELOG.md / FEATURES.md were updated alongside the
+# stale feature commits. The script calls them out separately so a user
+# who's editing the manual but forgot the CHANGELOG sees both reminders.
+CHANGELOG_TOUCHED=0
+FEATURES_TOUCHED=0
 # Split on the record separator \036 — one record per commit.
 while IFS= read -r -d $'\036' record; do
   [ -z "$record" ] && continue
@@ -77,7 +82,9 @@ while IFS= read -r -d $'\036' record; do
   while IFS= read -r f; do
     [ -z "$f" ] && continue
     case "$f" in
-      site/*|docs/*|README.md|CHANGELOG.md|CONTRIBUTING.md|LICENSE-*|CLAUDE.md|.github/*|.gitignore|Cargo.lock|*.lock|scripts/check-docs-sync.sh|.claude/*)
+      CHANGELOG.md) CHANGELOG_TOUCHED=1; continue ;;
+      FEATURES.md)  FEATURES_TOUCHED=1; continue ;;
+      site/*|docs/*|README.md|CONTRIBUTING.md|LICENSE-*|CLAUDE.md|.github/*|.gitignore|Cargo.lock|*.lock|scripts/check-docs-sync.sh|.claude/*)
         continue ;;
       *)
         HAS_FEATURE_CHANGE=1
@@ -95,13 +102,25 @@ done <<< "$COMMITS"
 # Compact sample (first 3 files)
 SAMPLE="$(echo "$SAMPLE_FILES" | /usr/bin/xargs -n1 2>/dev/null | /usr/bin/head -3 | /usr/bin/awk '{printf "    · %s\n", $1}')"
 
+# Extra hints — if CHANGELOG.md / FEATURES.md weren't touched in the stale
+# window AND they exist on disk, suggest updating them too.
+EXTRAS=""
+if [ "$CHANGELOG_TOUCHED" = "0" ] && [ -f CHANGELOG.md ]; then
+  EXTRAS="$EXTRAS
+   · CHANGELOG.md hasn't been updated since the last sync — bump it for the next release."
+fi
+if [ "$FEATURES_TOUCHED" = "0" ] && [ -f FEATURES.md ]; then
+  EXTRAS="$EXTRAS
+   · FEATURES.md hasn't been updated since the last sync — refresh if the surface changed."
+fi
+
 /bin/cat <<EOF
 
 📚 docs-sync: $STALE_COUNT commit(s) since last manual update may need site docs.
    Last synced: ${LAST_SYNCED:0:8}  →  HEAD: ${HEAD_SHA:0:8}
    Affected files (sample):
 $SAMPLE
-   Run \`manual-writer\` for the relevant area, or tag commits \`[skip docs]\` if trivial.
+   Run \`manual-writer\` for the relevant area, or tag commits \`[skip docs]\` if trivial.$EXTRAS
 
 EOF
 
