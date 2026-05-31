@@ -163,3 +163,8 @@ aws-codebuild = []
 lto = true
 codegen-units = 1
 strip = true
+
+# The profile that 'dist' will build with (cargo-dist).
+[profile.dist]
+inherits = "release"
+lto = "thin"
