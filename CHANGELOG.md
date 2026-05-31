@@ -37,20 +37,19 @@ capabilities present in the current `main`.
   via SCM_RIGHTS, turning it into a sibling native tab without killing the child.
   Unix only.
 - **`aws-codebuild` Cargo feature** — `Pane::CodeBuilds` (recent-builds browser)
-  and `Pane::LogTail` (CloudWatch log tail) moved out of the removed `private`
-  feature into a new, generic `aws-codebuild` feature. Shells out to the `aws`
-  CLI; no new crate dependencies. Off by default.
+  and `Pane::LogTail` (CloudWatch log tail) moved out of a private feature into
+  a generic `aws-codebuild` feature. Shells out to the `aws` CLI; no new crate
+  dependencies. Off by default.
 - **`run.sh` family subcommands** — `build`, `release`, `test`, `check`, `watch`,
   `help` (dev wrappers), plus `blit <socket>` (run as tmnl native client) and
   `under-tmnl [WS]` (launch tmnl with mnml as a native tab).
 
 ### Removed (2026-05-24)
 
-- **`private` Cargo feature** — stripped from the public crate (`src/private/`,
-  `src/app/private.rs`, `Pane::TestExecutions`, the four `examples/private_*.rs`).
-  AWS-generic code moved to `src/app/aws.rs` under `aws-codebuild`. The private
-  `internal-app` blit-host binary rebuilds the the private integration functionality as an
-  out-of-process integration.
+- **Private workspace-integration Cargo feature** — stripped from the public
+  crate. AWS-generic code moved to `src/app/aws.rs` under `aws-codebuild`. The
+  removed integration is rebuilt as an out-of-process blit-host binary (see
+  `docs/INTEGRATIONS.md` for the pattern).
 
 ## [0.1.0]
 

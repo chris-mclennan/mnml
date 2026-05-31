@@ -129,19 +129,17 @@ fires the handoff, and asserts the receiver got the
 `OpenPaneTransfer` *with* an attached fd. 786 lib tests pass,
 clippy clean.
 
-**Phase 3b v1: internal-app private blit-host binary scaffold (2026-05-23):**
-Created `~/Projects/internal-app/` (separate sibling, private repo at
-`chris-mclennan/internal-app`). Mnml hosts it via
-`:host.launch /Users/chrismclennan/Projects/internal-app/target/release/internal-app`.
-Ships ~500 lines: `main.rs` (CLI), `blit.rs` (tmnl-protocol transport —
-near-verbatim copy of `mixr-rs/src/tui/blit.rs`), `app.rs` (stub App +
-Env + handle_input), `ui.rs` (ratatui-based 3-env-column placeholder
-UI). The DocumentDB worker / TestExecutionRecord schema / correlation
-logic / Playwright launcher are NOT yet ported — they live in
-`~/Projects/internal-app-snapshot-2026-05-23.tar.gz` and queue up as
-Phase 3b.2 / 3b.3 / 3b.4 / 3b.5. v1 proves the architecture works
-end-to-end: mnml-as-host + separate binary speaking tmnl-protocol over
-UDS. Build + clippy clean.
+**Phase 3b v1: private blit-host binary scaffold (2026-05-23):**
+Built a separate sibling private repo for the workspace integration
+that used to ship as a private Cargo feature inside mnml. Mnml hosts it
+via `:host.launch <binary>`. Ships ~500 lines: `main.rs` (CLI),
+`blit.rs` (tmnl-protocol transport — near-verbatim copy of
+`mixr-rs/src/tui/blit.rs`), `app.rs` (stub App + Env + handle_input),
+`ui.rs` (ratatui-based placeholder UI). The richer logic (DocumentDB
+worker, schema correlation, Playwright launcher) is not yet ported —
+queued as Phase 3b.2 / 3b.3 / 3b.4 / 3b.5. v1 proves the architecture
+works end-to-end: mnml-as-host + separate binary speaking
+tmnl-protocol over UDS. Build + clippy clean.
 
 **Settings overlay — schema-driven, keyboard-first (2026-05-23):** mnml
 now has a proper settings overlay (`:settings` / `view.settings`). Replaces
@@ -189,37 +187,35 @@ has `id` / `glyph` / `fallback` / `command` / `color` / `tooltip`. Claude
 Code + Codex are built-in defaults (no behavior change for existing users).
 The `command` field accepts either a registered command id (e.g.
 `"ai.claude_code"`, `"mixr.show"`) or a colon-prefixed cmdline string
-(`":host.launch private"`) — leading `:` ⇒ dispatched via `run_ex_command`.
+(`":host.launch myapp"`) — leading `:` ⇒ dispatched via `run_ex_command`.
 New `LauncherIcon` struct in config.rs + `App.rects.launcher_icon_rects:
 Vec<(Rect, usize)>` (replaces the named `bufferline_claude_button` /
 `bufferline_codex_button` fields). Hover-tooltip works via
 `HoverChip::LauncherIcon(usize)` indexing into the config Vec. Bufferline
 width math reserves `4 * n_icons` cells dynamically. Drop in
 `[[ui.launcher_icon]]` entries for blit-host integrations
-(`:host.launch private`, `:host.launch psql-viewer`, etc.) without touching
+(`:host.launch myapp`, `:host.launch psql-viewer`, etc.) without touching
 mnml's code. 773 default tests pass (+3 new config tests), clippy clean
 under default + aws-codebuild.
 
-**Phase 3a: the private integration stripped from public mnml (2026-05-23):** Deleted
-`src/private/`, `src/app/private.rs`, `src/ui/test_executions_view.rs`,
-and the four `examples/private_*.rs`. Extracted the AWS-generic App
-methods (`open_codebuilds_pane`, `tail_selected_codebuild_logs*`, etc.)
-into a new `src/app/aws.rs` gated on `aws-codebuild`. Removed the
-`private` Cargo feature + its `mongodb`/`tokio`/`futures-util`/`bson`
-optional deps. Stripped every `#[cfg(feature = "private")]` gate. The
-`Pane::TestExecutions` variant + the `App.docdb_handle` /
-`private_executions` / `test_executions_rows` fields are gone too.
-Hardcoded `exampleorg`/`example-api` test fixtures in `bitbucket.rs`
-renamed to `exampleorg`/`example-api` (neutral placeholder data).
-Snapshot of the deleted code is at
-`~/Projects/internal-app-snapshot-2026-05-23.tar.gz` (25 KB) for the
-future Phase 3b — rebuilding it as a private blit-host binary that
-mnml hosts via Phase 2's `:host.launch`. mnml's git history still
-contains the the private integration code; Phase 3c (later, on explicit go-ahead)
-would scrub it via `git filter-repo` before the repo goes public.
-Verified clean under default + `aws-codebuild`: 772 / 785 tests
-pass, clippy clean on both. Phase 3b (build the `internal-app`
-binary) and Phase 3c (history scrub) are separate later sessions.
+**Phase 3a: private workspace integration stripped from public mnml
+(2026-05-23):** Deleted the private feature's source tree, app methods,
+view module, and example files from the crate. Extracted the AWS-generic
+App methods (`open_codebuilds_pane`, `tail_selected_codebuild_logs*`,
+etc.) into a new `src/app/aws.rs` gated on `aws-codebuild`. Removed the
+private feature's Cargo entry + its `mongodb` / `tokio` / `futures-util`
+/ `bson` optional deps. Stripped every gated `#[cfg(feature = ...)]`
+block. The corresponding `Pane` variant + `App` fields are gone too.
+Hardcoded test fixtures in `bitbucket.rs` renamed to
+`exampleorg`/`example-api` (neutral placeholder data). Snapshot of the
+deleted code archived locally for the Phase 3b rebuild (as a private
+blit-host binary that mnml hosts via Phase 2's `:host.launch`). The
+git history still contains the deleted code; Phase 3c (later, on
+explicit go-ahead) will scrub it via `git filter-repo` before the
+repo goes public. Verified clean under default + `aws-codebuild`:
+772 / 785 tests pass, clippy clean on both. Phase 3b (build the
+private blit-host binary) and Phase 3c (history scrub) are separate
+later sessions.
 
 **blit-host integration class — `pane_host` + `Pane::BlitHost` (2026-05-23):**
 Added the third class of integration (alongside command-only plugins and
@@ -236,20 +232,20 @@ machinery is currently a thin wrapper that re-exports `mixr_host`'s key/mouse
 translators to avoid duplicating the (already correct) implementations.
 Docs: `docs/PLUGINS.md` has a new section describing the integration class
 and its protocol contract. 772 lib tests under default + 813 under
-`--features private` + clippy clean under all three feature configs.
-Phase 3 will move the private integration code out of the public crate to a private
-`internal-app` binary hosted via this facility.
+the private workspace-integration feature + clippy clean under all
+three feature configs. Phase 3 will move the private integration's
+code out of the public crate to a separate private binary hosted via
+this facility.
 
 **Phase 1: AWS CodeBuild + CloudWatch generification (2026-05-23):**
-Split the AWS-generic CodeBuild + CloudWatch panes out of the
-the private integration-specific `private` feature into a new `aws-codebuild` feature.
-Code moved from `src/private/{codebuild,codebuilds_pane,log_tail_pane}.rs`
-to `src/aws/`, the Pane variants + their match arms re-gated, the
-`private` feature now implies `aws-codebuild`. Zero new deps for
-aws-codebuild — both panes shell out to the `aws` CLI. `src/app/private.rs`
-is currently `#[cfg(any(feature = "private", feature = "aws-codebuild"))]`
-with private-only methods inline-gated; Phase 3 will split it to
-`src/app/aws.rs` + `src/app/private.rs` when private leaves entirely.
+Split the AWS-generic CodeBuild + CloudWatch panes out of a
+workspace-specific private Cargo feature into a new `aws-codebuild`
+feature. Code moved into `src/aws/`, the Pane variants + their match
+arms re-gated, the private feature now implies `aws-codebuild`. Zero
+new deps for aws-codebuild — both panes shell out to the `aws` CLI.
+The private workspace-integration module file is currently dual-gated
+with `aws-codebuild`; Phase 3 splits it into `src/app/aws.rs` (public)
++ the private piece (out of the public crate entirely).
 
 **mixr panel redesigned — docked bottom-strip/full cycle (2026-05-21):**
 the in-mnml mixr panel's state model was reworked. `mixr.show` / the

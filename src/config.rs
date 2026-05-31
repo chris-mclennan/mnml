@@ -604,14 +604,14 @@ pub struct IntegrationIcon {
 /// One entry in the bufferline's right-side launcher-icon strip.
 ///
 /// ```toml
-/// # An icon for the (private) `internal-app` blit-host binary:
+/// # An icon for a private blit-host binary you've built locally:
 /// [[ui.launcher_icon]]
-/// id       = "private"
+/// id       = "myapp"
 /// glyph    = "\u{F0668}"        # nf-md-test-tube; nerd-fonts
-/// fallback = "TT"               # when --ascii / [ui] ascii_icons = true
-/// command  = ":host.launch private"  # leading `:` ⇒ ex-cmdline string
+/// fallback = "MA"               # when --ascii / [ui] ascii_icons = true
+/// command  = ":host.launch myapp"  # leading `:` ⇒ ex-cmdline string
 /// color    = "teal"             # theme slot name for the chip bg
-/// tooltip  = "the private integration TestExecutions browser"
+/// tooltip  = "My private blit-host app"
 ///
 /// # Or fire any registered command directly (no leading `:`):
 /// [[ui.launcher_icon]]
@@ -757,14 +757,6 @@ impl Default for Config {
                         command: "http.send".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some("HTTP: send active request".to_string()),
-                    },
-                    IntegrationIcon {
-                        id: "playwright".to_string(),
-                        glyph: "\u{F0668}".to_string(), // nf-md-test-tube
-                        fallback: "T".to_string(),
-                        command: ":host.launch internal-app".to_string(),
-                        color: "purple".to_string(),
-                        tooltip: Some("Playwright runner".to_string()),
                     },
                     IntegrationIcon {
                         id: "codebuild".to_string(),
@@ -1692,11 +1684,11 @@ slug      = "example-playwright"
             f,
             r#"
 [[ui.launcher_icon]]
-glyph    = "T"
-fallback = "TT"
-command  = ":host.launch private"
+glyph    = "M"
+fallback = "MA"
+command  = ":host.launch myapp"
 color    = "teal"
-tooltip  = "the private integration browser"
+tooltip  = "myapp browser"
 
 [[ui.launcher_icon]]
 id       = "db"
@@ -1716,11 +1708,11 @@ color    = "purple"
         // First entry — id auto-derived from the command's first token
         // when omitted (`host.launch` here, leading `:` stripped).
         assert_eq!(cfg.ui.launcher_icons[0].id, "host.launch");
-        assert_eq!(cfg.ui.launcher_icons[0].command, ":host.launch private");
+        assert_eq!(cfg.ui.launcher_icons[0].command, ":host.launch myapp");
         assert_eq!(cfg.ui.launcher_icons[0].color, "teal");
         assert_eq!(
             cfg.ui.launcher_icons[0].tooltip.as_deref(),
-            Some("the private integration browser")
+            Some("myapp browser")
         );
         // Second entry — explicit id, no leading `:` on command.
         assert_eq!(cfg.ui.launcher_icons[1].id, "db");

@@ -14,8 +14,9 @@
 //! once it's consolidated to share the same primitives.
 
 use std::io::BufReader;
-// Cross-platform UDS server (mnml hosts blit-children — mixr,
-// internal-app, etc). Unix uses std's `UnixListener`/`UnixStream`;
+// Cross-platform UDS server (mnml hosts blit-children — mixr and
+// any user-installed blit-host apps). Unix uses std's `UnixListener` /
+// `UnixStream`;
 // Windows uses the `uds_windows` crate (Win10 17063+ AF_UNIX support).
 // Both wrap the same wire protocol; the file-path-socket UX is
 // identical on every platform.

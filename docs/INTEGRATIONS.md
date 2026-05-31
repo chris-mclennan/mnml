@@ -221,8 +221,7 @@ would need a different purpose.
    *across runs* (last 7 days of CI). Connects to CI providers
    (CodeBuild logs, GitHub Actions artifacts, Bitbucket Pipelines)
    and displays trend lines for each test. Useful for spotting flaky
-   tests, regression sources, slowness. Closer to the deleted the private integration
-   `TestExecutions` UI in spirit.
+   tests, regression sources, slowness.
 
 3. **"Trace-viewer overhaul"** — A pane that parses Playwright's
    `trace.zip` into an interactive timeline (network, console,

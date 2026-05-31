@@ -2,7 +2,7 @@
 # mnml wrapper — build (in the repo) + run (in *your* cwd) with a restart-aware
 # loop, plus subcommands for driving the running mnml from another shell.
 # Family convention: subcommands `build`/`release`/`test`/`check`/`watch`/`help`
-# are common across mnml + tmnl + mixr-rs + internal-app. Per-app modes follow.
+# are common across mnml + tmnl + mixr-rs. Per-app modes follow.
 #
 # Usage:
 #   ./run.sh                      Open the directory you ran it from. Builds with
