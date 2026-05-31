@@ -219,11 +219,12 @@ jobs:
           echo "Packaging DMG from $BIN"
           ./scripts/build-dmg.sh --bin-path "$BIN"
           mkdir -p target/distrib/
-          # Rename DMG to include the target triple so aarch64 + x86_64 DMGs
-          # don't collide in the GitHub release's flat asset list.
+          # Rename DMG to match cargo-dist's package-name pattern so the
+          # install page's `releases/latest/download/mnml-rs-<triple>.dmg`
+          # URL resolves. (build-dmg.sh names by binary-version, which would
+          # both not match and force a docs change per release.)
           for dmg in target/*.dmg; do
-            base="$(basename "$dmg" .dmg)"
-            mv "$dmg" "target/distrib/${base}-${TARGET}.dmg"
+            mv "$dmg" "target/distrib/mnml-rs-${TARGET}.dmg"
           done
           ls -la target/distrib/*.dmg
       - name: "Upload artifacts"
