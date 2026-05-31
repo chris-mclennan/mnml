@@ -9,7 +9,7 @@ export default defineConfig({
     starlight({
       title: 'mnml',
       description:
-        'A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, and an embedded HTTP client.',
+        'A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, embedded HTTP/CDP/DAP, AI panes, headless test harness.',
       // Hidden-during-dev: remove this `head` block before public launch.
       head: [
         {
@@ -31,6 +31,14 @@ export default defineConfig({
             { label: 'Overview', slug: 'index' },
             { label: 'Install', slug: 'install' },
             { label: 'First run', slug: 'getting-started' },
+          ],
+        },
+        {
+          // Manual pages added by the `manual-writer` agent over time.
+          // Order here reflects intended reading sequence.
+          label: 'Manual',
+          items: [
+            { label: 'Editing', slug: 'manual/editing' },
           ],
         },
         {
