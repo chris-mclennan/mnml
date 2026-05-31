@@ -44,6 +44,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/scripts/check-docs-sync.sh",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

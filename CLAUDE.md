@@ -333,3 +333,30 @@ a noted follow-up (`Auto` is wired as the default for now).
 - `.mcp.json` — no project MCP servers needed yet.
 - `.claude/agents/` — a `code-reviewer` subagent could be useful once the codebase grows.
 - The repo isn't packaged as a Claude Code plugin (`.claude-plugin/`); not needed for a single repo.
+
+## Docs sync
+
+The public site has a Manual section that's part of the deliverable, not a
+follow-up task. After landing a feature commit, run the `manual-writer` agent
+for the affected area:
+
+```
+Use manual-writer to write the <site> manual for <topic>
+```
+
+The agent reads `FEATURES.md` + source as ground truth, writes a deep manual
+page, updates the Starlight sidebar, builds to verify, and bumps
+`site/.docs-sync-marker` to the current HEAD. Review the diff + push manually.
+
+Tag commits with `[skip docs]` (or `[no docs]`) in the message to silence the
+post-session reminder for trivial work (fmt, typos, comments).
+
+A Stop hook (`.claude/settings.json` → `Stop` event) runs
+`scripts/check-docs-sync.sh` at session end and warns if commits since the
+last sync touched feature surface.
+
+For flows that benefit visually from an animated demo, follow up with:
+
+```
+Use tape-recorder to record <flow-name> for <site>
+```
