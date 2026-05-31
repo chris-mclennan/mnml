@@ -25,8 +25,8 @@ the code *before* and the code *after* — exactly the shape an inline suggestio
 needs.
 
 It is the completion backend shared by
-[`mnml`](https://github.com/chris-mclennan/mnml-rs) (ghost-text suggestions) and
-[`tmnl`](https://github.com/chris-mclennan/tmnl-rs) (`⌘I` command completion), kept
+[`mnml`](https://github.com/chris-mclennan/mnml) (ghost-text suggestions) and
+[`tmnl`](https://github.com/chris-mclennan/tmnl) (`⌘I` command completion), kept
 as its own crate so candle's large dependency tree compiles once and a consuming
 app's incremental rebuilds stay fast.
 
@@ -93,9 +93,9 @@ fim-engine is one of a small family of terminal-native Rust tools:
 
 | Project | What it is | |
 |---------|-----------|--|
-| [**tmnl**](https://github.com/chris-mclennan/tmnl-rs) | A GPU-accelerated terminal | uses fim-engine for `⌘I` completion |
-| [**mnml**](https://github.com/chris-mclennan/mnml-rs) | A terminal IDE | uses fim-engine for ghost-text |
-| [**mixr**](https://github.com/chris-mclennan/mixr-rs) | A terminal DJ app | — |
+| [**tmnl**](https://github.com/chris-mclennan/tmnl) | A GPU-accelerated terminal | uses fim-engine for `⌘I` completion |
+| [**mnml**](https://github.com/chris-mclennan/mnml) | A terminal IDE | uses fim-engine for ghost-text |
+| [**mixr**](https://github.com/chris-mclennan/mixr) | A terminal DJ app | — |
 | [**tmnl-protocol**](https://github.com/chris-mclennan/tmnl-protocol) | The binary wire protocol | — |
 | **fim-engine** | Embedded code completion | ← you are here |
 
