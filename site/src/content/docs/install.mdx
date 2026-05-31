@@ -1,0 +1,86 @@
+---
+title: Install
+description: How to install mnml on macOS, Linux, and Windows.
+---
+
+import { LinkButton, CardGrid, Card } from '@astrojs/starlight/components';
+
+<div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 1.5rem 0 2.5rem;">
+  <LinkButton href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-aarch64-apple-darwin.dmg" icon="apple" iconPlacement="start">
+    Download for macOS
+  </LinkButton>
+  <LinkButton href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-installer.sh" variant="secondary" icon="linux" iconPlacement="start">
+    Download for Linux
+  </LinkButton>
+  <LinkButton href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-installer.ps1" variant="secondary" icon="seti:windows" iconPlacement="start">
+    Download for Windows
+  </LinkButton>
+</div>
+
+Or paste the shell installer for your platform:
+
+```sh
+# macOS / Linux
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-installer.sh | sh
+```
+
+```powershell
+# Windows
+irm https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-installer.ps1 | iex
+```
+
+## Platform details
+
+<CardGrid>
+  <Card title="macOS" icon="apple">
+    **Apple Silicon + Intel** — universal `.dmg` opens, drag `mnml.app` into Applications.
+
+    Or `.pkg` from the [latest release](https://github.com/chris-mclennan/mnml/releases/latest).
+
+    Requires macOS 10.14 (Mojave) or newer.
+  </Card>
+  <Card title="Linux" icon="linux">
+    Shell installer drops `mnml` on `PATH`:
+
+    ```sh
+    curl -LsSf https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-installer.sh | sh
+    ```
+
+    Or grab the `.tar.xz` for your arch from the [latest release](https://github.com/chris-mclennan/mnml/releases/latest).
+  </Card>
+  <Card title="Windows" icon="seti:windows">
+    Double-click the `.msi` from the [latest release](https://github.com/chris-mclennan/mnml/releases/latest), or PowerShell:
+
+    ```powershell
+    irm https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-installer.ps1 | iex
+    ```
+  </Card>
+  <Card title="Cargo" icon="rocket">
+    Build from crates.io (slow — requires the Rust toolchain):
+
+    ```sh
+    cargo install mnml-rs
+    ```
+
+    The crate is `mnml-rs`; the binary it installs is `mnml`.
+  </Card>
+</CardGrid>
+
+## Build from source
+
+```sh
+git clone https://github.com/chris-mclennan/mnml
+cd mnml
+cargo build --release
+./target/release/mnml
+```
+
+## Nerd Font
+
+A [Nerd Font](https://www.nerdfonts.com/) is recommended for devicons and powerline glyphs. JetBrainsMono Nerd Font is a good default. Without a Nerd Font, run `mnml --ascii` (or set `[ui] ascii_icons = true` in your config) for a plain-text fallback.
+
+## Verify
+
+```sh
+mnml --version
+```
