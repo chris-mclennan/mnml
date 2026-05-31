@@ -3503,9 +3503,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         app.show_about = false;
         return;
     }
-    // Settings overlay — keyboard-driven; ignore mouse while open
-    // (click-to-cycle is a v2 polish item).
+    // Settings overlay — keyboard-driven for clicks (click-to-cycle is
+    // a v2 polish item), but route the scroll wheel through to
+    // `settings_move_row` so trackpads work. Everything else gets
+    // swallowed so a stray click on the editor underneath doesn't
+    // bleed through.
     if app.settings_overlay.is_some() {
+        match m.kind {
+            MouseEventKind::ScrollUp => app.settings_move_row(-1),
+            MouseEventKind::ScrollDown => app.settings_move_row(1),
+            _ => {}
+        }
         return;
     }
     // Discovery overlay — intercept clicks on its rows so the user can
