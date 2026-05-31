@@ -156,19 +156,17 @@ jobs:
             git clone --depth=1 https://github.com/chris-mclennan/fim-engine.git
           fi
         shell: "bash"
-      # MANUAL EDIT — winit / wgpu / muda need X11 + GTK headers on Linux.
-      # Mirrors `.github/workflows/build-setup.yml`'s "Install Linux build
-      # deps" step. Will be clobbered if `dist generate` succeeds in the
-      # future; allow-dirty=ci blocks regen so for now this stays.
+      # MANUAL EDIT — mnml is pure TUI (no winit/wgpu/muda), so the deps list
+      # is much shorter than tmnl's. Mirrors `.github/build-setup.yml`.
+      # Will be clobbered if `dist generate` succeeds in the future;
+      # allow-dirty=ci blocks regen so for now this stays.
       - name: Install Linux build deps
         if: runner.os == 'Linux'
         shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libx11-dev libxcursor-dev libxrandr-dev libxi-dev libxkbcommon-dev \
-            libgl1-mesa-dev libwayland-dev libudev-dev libfontconfig1-dev pkg-config \
-            libglib2.0-dev libgtk-3-dev libxdo-dev
+            libfontconfig1-dev libssl-dev pkg-config
       - uses: swatinem/rust-cache@v2
         with:
           key: ${{ join(matrix.targets, '-') }}
