@@ -155,6 +155,15 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_about(),
         },
         Command {
+            id: "view.help",
+            title: "Help overlay (auto-generated keymap reference)",
+            group: "view",
+            // F1 is the universal Help chord; doesn't collide with vim's `?`
+            // (backwards search) or any editing input.
+            keys: &["f1"],
+            run: |app| app.toggle_help_overlay(),
+        },
+        Command {
             id: "view.settings",
             title: "Settings overlay (keyboard-driven schema editor)",
             group: "view",

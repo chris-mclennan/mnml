@@ -70,6 +70,7 @@ pub mod rename_preview_overlay;
 pub mod request_view;
 pub mod scratch_term_view;
 pub mod scrollbar;
+pub mod help_overlay;
 pub mod settings_overlay;
 pub mod signature;
 pub mod statusline;
@@ -520,6 +521,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     about_overlay::draw(frame, app, area);
     // Settings overlay — `:settings` / view.settings.
     settings_overlay::draw(frame, app, area);
+    // Help overlay — `?` / view.help (auto-generated keymap reference).
+    help_overlay::draw(frame, app, area);
     // …and the flash highlight paints last so it can sit on top of even
     // the discovery panel (if the user picks a category whose rect lies
     // beneath the panel, the highlight will still flash through).

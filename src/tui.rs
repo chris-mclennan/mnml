@@ -273,6 +273,11 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         handle_settings_overlay_key(app, key);
         return;
     }
+    // Help overlay — scroll + dismiss. No editing.
+    if app.help_overlay.is_some() {
+        handle_help_overlay_key(app, key);
+        return;
+    }
     // An open picker / palette overlay steals all keys until it's dismissed.
     if app.picker.is_some() {
         handle_picker_key(app, key);
@@ -479,6 +484,19 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     match app.focus {
         Focus::Tree => handle_tree_key(app, key),
         Focus::Pane => handle_pane_key(app, key),
+    }
+}
+
+fn handle_help_overlay_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::F(1) => app.close_help_overlay(),
+        KeyCode::Up | KeyCode::Char('k') => app.help_scroll(-1),
+        KeyCode::Down | KeyCode::Char('j') => app.help_scroll(1),
+        KeyCode::PageUp => app.help_scroll(-10),
+        KeyCode::PageDown => app.help_scroll(10),
+        KeyCode::Home => app.help_scroll(-1_000_000),
+        KeyCode::End => app.help_scroll(1_000_000),
+        _ => {}
     }
 }
 

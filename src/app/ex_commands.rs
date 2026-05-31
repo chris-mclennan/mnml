@@ -734,6 +734,10 @@ impl App {
             "settings" => {
                 self.open_settings_overlay();
             }
+            // `:help` / `:h` — open the keymap-reference overlay.
+            "help" | "h" => {
+                self.toggle_help_overlay();
+            }
             "tmnl.open-tab" | "tmnl.tab" => {
                 if rest.is_empty() {
                     self.toast(":tmnl.open-tab <command> [args...] — command required");

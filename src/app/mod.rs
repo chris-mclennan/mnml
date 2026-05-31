@@ -37,6 +37,7 @@ mod git;
 mod grep;
 mod http;
 mod layout;
+pub(crate) mod help;
 mod lsp;
 mod macros_marks;
 mod mixr;
@@ -2468,6 +2469,9 @@ pub struct App {
     /// otherwise. Carries the `original` Config snapshot for the
     /// Esc/cancel revert path. See `app/settings.rs` for the schema.
     pub settings_overlay: Option<settings::SettingsOverlayState>,
+    /// Help overlay state — `Some` while the in-app help is open.
+    /// Auto-generated from the command registry; see `app/help.rs`.
+    pub help_overlay: Option<help::HelpOverlayState>,
     /// The single-line text-input overlay (commit message, …), when open. Steals
     /// key input like the picker.
     pub prompt: Option<crate::prompt::Prompt>,
@@ -3058,6 +3062,7 @@ impl App {
             dragging: None,
             close_prompt: None,
             settings_overlay: None,
+            help_overlay: None,
             prompt: None,
             context_menu: None,
             hover: None,
