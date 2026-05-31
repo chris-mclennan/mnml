@@ -201,6 +201,31 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
 
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      # MANUAL EDIT — package mnml.app + mnml-<ver>.dmg on macOS targets.
+      # The DMG is the drag-to-install path Mac users expect (puts
+      # mnml.app in /Applications); the .pkg cargo-dist already builds
+      # is the CLI install path. Both ship in each release.
+      - name: Build macOS DMG
+        if: contains(matrix.targets[0], 'apple-darwin')
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="${{ matrix.targets[0] }}"
+          BIN="target/${TARGET}/dist/mnml"
+          if [ ! -f "$BIN" ]; then
+            echo "::warning::binary not at $BIN, searching..."
+            BIN="$(find target -name 'mnml' -type f -path '*/dist/*' | head -1)"
+          fi
+          echo "Packaging DMG from $BIN"
+          ./scripts/build-dmg.sh --bin-path "$BIN"
+          mkdir -p target/distrib/
+          # Rename DMG to include the target triple so aarch64 + x86_64 DMGs
+          # don't collide in the GitHub release's flat asset list.
+          for dmg in target/*.dmg; do
+            base="$(basename "$dmg" .dmg)"
+            mv "$dmg" "target/distrib/${base}-${TARGET}.dmg"
+          done
+          ls -la target/distrib/*.dmg
       - name: "Upload artifacts"
         uses: actions/upload-artifact@v7
         with:
@@ -208,6 +233,7 @@ jobs:
           path: |
             ${{ steps.cargo-dist.outputs.paths }}
             ${{ env.BUILD_MANIFEST_NAME }}
+            target/distrib/*.dmg
 
   # Build and package all the platform-agnostic(ish) things
   build-global-artifacts:
