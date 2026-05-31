@@ -1,0 +1,66 @@
+# git-cliff config — generates CHANGELOG entries from commit history.
+# Run locally to refresh the changelog before tagging:
+#
+#   git cliff -o CHANGELOG.md            # full regenerate
+#   git cliff --unreleased -p CHANGELOG.md   # prepend Unreleased section
+#   git cliff --tag v0.1.5 -o CHANGELOG.md   # treat HEAD as the tag
+#
+# Convention: commits prefixed with `feat:`, `fix:`, `docs:`, etc.
+# (Conventional Commits style) get grouped by type. Anything else
+# lands in "Other".
+
+[changelog]
+header = """
+# Changelog
+
+All notable changes to **mnml** are documented here.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+"""
+body = """
+{% if version %}\
+    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+    ## [Unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+    ### {{ group | upper_first }}
+    {% for commit in commits %}\
+        - {{ commit.message | upper_first | split(pat="\\n") | first }} ({{ commit.id | truncate(length=8, end="") }})
+    {% endfor %}
+{% endfor %}\n
+"""
+footer = ""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+commit_parsers = [
+    { message = "^feat", group = "Features" },
+    { message = "^fix", group = "Fixes" },
+    { message = "^docs", group = "Documentation" },
+    { message = "^perf", group = "Performance" },
+    { message = "^refactor", group = "Refactoring" },
+    { message = "^style", group = "Style" },
+    { message = "^test", group = "Tests" },
+    { message = "^chore\\(release\\): prepare for", skip = true },
+    { message = "^chore\\(deps.*\\)", skip = true },
+    { message = "^chore\\(pr\\)", skip = true },
+    { message = "^chore\\(pull\\)", skip = true },
+    { message = "^chore", group = "Chores" },
+    { message = "^ci", group = "CI" },
+    { message = "^build", group = "Build" },
+    { body = ".*security", group = "Security" },
+    { message = "^revert", group = "Revert" },
+    { message = ".*", group = "Other" },
+]
+protect_breaking_commits = false
+filter_commits = false
+tag_pattern = "v[0-9].*"
+skip_tags = ""
+ignore_tags = ""
+topo_order = false
+sort_commits = "oldest"

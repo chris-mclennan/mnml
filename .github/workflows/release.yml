@@ -208,6 +208,15 @@ jobs:
       - name: Build macOS DMG
         if: contains(matrix.targets[0], 'apple-darwin')
         shell: bash
+        env:
+          # Notarization secrets — see docs/notarization.md for setup.
+          # When unset, the DMG ships unsigned (Gatekeeper will warn the
+          # user). When set, the DMG is code-signed + notarized + stapled.
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           set -euo pipefail
           TARGET="${{ matrix.targets[0] }}"
@@ -225,6 +234,11 @@ jobs:
           # both not match and force a docs change per release.)
           for dmg in target/*.dmg; do
             mv "$dmg" "target/distrib/mnml-rs-${TARGET}.dmg"
+          done
+          # Sign + notarize when secrets are configured (no-op otherwise).
+          # See docs/notarization.md for one-time setup.
+          for dmg in target/distrib/*.dmg; do
+            ./scripts/notarize-dmg.sh "$dmg"
           done
           ls -la target/distrib/*.dmg
       - name: "Upload artifacts"

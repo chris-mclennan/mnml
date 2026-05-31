@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook — runs cargo fmt --check + cargo clippy on the
+# staged Rust changes. Blocks the commit on failure.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# Bypass for a one-off commit (use sparingly):
+#   git commit --no-verify
+#
+# Designed to be fast — skips entirely if no .rs files are staged
+# (commits that only touch docs/config don't pay the price). Clippy
+# runs against the whole crate (incremental), not just staged files,
+# because Rust's borrow-checking is intra-procedural and a clippy
+# warning on a non-staged file may still be your responsibility.
+
+set -e
+
+STAGED_RS=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.rs$' || true)
+if [ -z "$STAGED_RS" ]; then
+    exit 0
+fi
+
+echo "── pre-commit: cargo fmt --check ──"
+if ! cargo fmt --all -- --check; then
+    echo
+    echo "✗ cargo fmt found unformatted code. Run: cargo fmt --all" >&2
+    echo "  (or bypass with --no-verify if you know what you're doing)" >&2
+    exit 1
+fi
+
+echo "── pre-commit: cargo clippy --all-targets ──"
+if ! cargo clippy --all-targets --quiet -- -D warnings; then
+    echo
+    echo "✗ cargo clippy found warnings (treated as errors)." >&2
+    echo "  Fix them, or bypass with --no-verify." >&2
+    exit 1
+fi
+
+echo "✓ pre-commit checks passed"

@@ -1,0 +1,66 @@
+---
+title: Changelog
+description: Release notes + subscribe-to-updates for mnml.
+---
+
+import { LinkButton } from '@astrojs/starlight/components';
+
+## Subscribe to releases
+
+Get an email when a new version of mnml ships — no spam, just release notes.
+
+{/* TODO: replace `USERNAME` with your Buttondown username once registered
+    at https://buttondown.com/signup. Swap providers freely — only this
+    block changes. */}
+
+<div style="margin: 1.5rem 0 2rem; padding: 1.25rem; border: 1px solid var(--sl-color-gray-5); border-radius: 0.5rem;">
+<form
+  action="https://buttondown.com/api/emails/embed-subscribe/USERNAME"
+  method="post"
+  target="popupwindow"
+  onSubmit="window.open('https://buttondown.com/USERNAME', 'popupwindow')"
+  style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;"
+>
+  <input
+    type="email"
+    name="email"
+    placeholder="you@example.com"
+    required
+    style="flex: 1; min-width: 220px; padding: 0.5rem 0.75rem; border: 1px solid var(--sl-color-gray-4); border-radius: 0.375rem; font-size: 1rem;"
+  />
+  <input
+    type="submit"
+    value="Subscribe"
+    style="padding: 0.5rem 1rem; border: none; border-radius: 0.375rem; background: var(--sl-color-accent); color: var(--sl-color-accent-low); cursor: pointer; font-weight: 600;"
+  />
+</form>
+</div>
+
+Or watch the repo on GitHub for a notification on every release:
+
+<LinkButton href="https://github.com/chris-mclennan/mnml/releases" variant="secondary">
+  View all releases on GitHub
+</LinkButton>
+
+---
+
+## Recent releases
+
+Versions auto-tagged at [github.com/chris-mclennan/mnml/releases](https://github.com/chris-mclennan/mnml/releases) — this page summarizes the user-facing changes. For commit-level history, see the GitHub release notes.
+
+### 0.1.2 — 2026-05-31
+
+- macOS `.dmg` artifact now ships with cargo-dist's standard naming (`mnml-rs-<triple>.dmg`)
+- Install page's macOS download button points at the DMG (drag-to-install)
+- Smaller fixes (release pipeline cleanup)
+
+### 0.1.1 — 2026-05-31
+
+- First `.app` bundle + DMG artifacts shipping with releases
+- Refactor: `build-app.sh` / `build-dmg.sh` accept `--bin-path` so CI can package the cargo-dist-built binary directly
+
+### 0.1.0 — 2026-05-31
+
+First tagged release. cargo-dist pipeline goes live (shell installer, PowerShell installer, MSI, per-arch tar.xz / .pkg).
+
+Day-to-day capabilities prior to v0.1.0: see [`CLAUDE.md`](https://github.com/chris-mclennan/mnml/blob/main/CLAUDE.md) and [`FEATURES.md`](https://github.com/chris-mclennan/mnml/blob/main/FEATURES.md) on the repo.

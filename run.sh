@@ -75,6 +75,7 @@ case "${1:-start}" in
   release) shift; exec cargo build --release "$@" ;;
   test)    shift; exec cargo test "$@" ;;
   check)   exec cargo clippy --all-targets ;;
+  dist-check) shift; exec ./scripts/dist-check.sh "$@" ;;
   app)     shift; exec ./scripts/build-app.sh "$@" ;;
   dmg)     shift; exec ./scripts/build-dmg.sh "$@" ;;
   watch)
