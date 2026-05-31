@@ -80,9 +80,13 @@ fi
 
 SUBJECT="${PRODUCT} ${TAG} released"
 
-# Newsletter body — Markdown. Buttondown renders it. Keep it short:
-# preamble + the changelog excerpt + footer links.
+# Newsletter body — Markdown. The `<!-- buttondown-editor-mode: markdown -->`
+# prefix tells Buttondown to treat the body as Markdown source rather than
+# trying to convert it to "Fancy" (rich-text) mode, which mangles headings
+# + bullet lists. Without this, drafts surface a "Some content couldn't be
+# converted to Fancy mode" warning + render markdown source literally.
 BODY=$(/bin/cat <<EOF
+<!-- buttondown-editor-mode: markdown -->
 Hi,
 
 ${PRODUCT} ${TAG} is out.
