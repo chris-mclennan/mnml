@@ -21,7 +21,7 @@ export default defineConfig({
         {
           icon: 'github',
           label: 'GitHub',
-          href: 'https://github.com/chris-mclennan/mnml-rs',
+          href: 'https://github.com/chris-mclennan/mnml',
         },
       ],
       sidebar: [

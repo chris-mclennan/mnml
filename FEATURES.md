@@ -193,7 +193,7 @@ The complete, organised feature inventory. For the front-door overview see
   an integration — drop a `[[ui.launcher_icon]]` entry in config. `Ctrl+E`
   returns focus to the split tree.
 - **`tmnl` integration** — runs standalone in any terminal; gains native-pane
-  hand-off when hosted inside the [`tmnl`](https://github.com/chris-mclennan/tmnl-rs)
+  hand-off when hosted inside the [`tmnl`](https://github.com/chris-mclennan/tmnl)
   terminal. `:tmnl.open-tab <command>` (alias `:tmnl.tab`) asks tmnl to open a
   command in a new native tab. `:tmnl.pop-pty` (alias `:tmnl.pop`) transfers the
   focused terminal pane's pty fd to tmnl via SCM_RIGHTS, making it a sibling tab

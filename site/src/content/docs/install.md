@@ -14,8 +14,8 @@ The crate is `mnml-rs`; the binary it installs is `mnml`.
 ## Or a build from source
 
 ```sh
-git clone https://github.com/chris-mclennan/mnml-rs
-cd mnml-rs
+git clone https://github.com/chris-mclennan/mnml
+cd mnml
 cargo build --release
 ./target/release/mnml
 ```
@@ -26,7 +26,7 @@ A [Nerd Font](https://www.nerdfonts.com/) is recommended for devicons and powerl
 
 ## Releases
 
-Pre-built binaries for each tagged release are on the [releases page](https://github.com/chris-mclennan/mnml-rs/releases). For the modern dev experience, `cargo install` is the recommended path.
+Pre-built binaries for each tagged release are on the [releases page](https://github.com/chris-mclennan/mnml/releases). For the modern dev experience, `cargo install` is the recommended path.
 
 ## Verify
 

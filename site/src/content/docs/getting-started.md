@@ -77,4 +77,4 @@ extensions = ["rs"]
 ## Next
 
 - Skim the project README for the broader feature inventory.
-- File an issue or feature request: https://github.com/chris-mclennan/mnml-rs/issues
+- File an issue or feature request: https://github.com/chris-mclennan/mnml/issues
