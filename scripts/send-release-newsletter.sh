@@ -47,31 +47,29 @@ VERSION="${TAG#v}"
 # Extract the changelog section for this version. Looks for a heading
 # like `## [0.1.2]` (Keep a Changelog format) OR `### 0.1.2` (the format
 # the site's changelog.mdx uses). Captures up to the next heading of
-# the same level OR the file end.
-EXTRACT=$(awk -v v="$VERSION" '
-    /^## \[/ {
-        # Found a Keep-a-Changelog heading. Match version inside brackets.
-        if (match($0, /\[([^]]+)\]/, m) && m[1] == v) { capture=1; print; next }
-        if (capture) { exit }
-    }
-    /^### / {
-        # Site-style "### 0.1.2 — 2026-05-31" heading.
-        if (match($0, /^### ([0-9.]+)/, m) && m[1] == v) { capture=1; print; next }
-        if (capture) { exit }
-    }
-    capture { print }
-' CHANGELOG.md 2>/dev/null || true)
+# the same level OR the file end. Portable across BSD awk (macOS) and
+# GNU awk — uses string-concat regexes, not the 3-arg match().
+extract_changelog() {
+    local file="$1"
+    [ -f "$file" ] || return 0
+    awk -v v="$VERSION" '
+        BEGIN { capture = 0 }
+        # Keep-a-Changelog: ## [0.1.2] - 2026-05-31
+        $0 ~ "^## \\[" v "\\]" { capture = 1; print; next }
+        # Site-style: ### 0.1.2 — 2026-05-31  (or with a trailing space/dash)
+        $0 ~ "^### " v "[^0-9]" { capture = 1; print; next }
+        # End of section: next same-level heading.
+        capture && ($0 ~ "^## " || $0 ~ "^### ") { exit }
+        capture { print }
+    ' "$file"
+}
+
+EXTRACT=$(extract_changelog CHANGELOG.md)
 
 # CHANGELOG.md at repo root might not exist or might not have an entry.
 # Fall back to the site's changelog.mdx if so.
-if [ -z "$EXTRACT" ] && [ -f site/src/content/docs/changelog.mdx ]; then
-    EXTRACT=$(awk -v v="$VERSION" '
-        /^### / {
-            if (match($0, /^### ([0-9.]+)/, m) && m[1] == v) { capture=1; print; next }
-            if (capture) { exit }
-        }
-        capture { print }
-    ' site/src/content/docs/changelog.mdx)
+if [ -z "$EXTRACT" ]; then
+    EXTRACT=$(extract_changelog site/src/content/docs/changelog.mdx)
 fi
 
 if [ -z "$EXTRACT" ]; then
