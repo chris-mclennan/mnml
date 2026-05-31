@@ -378,20 +378,120 @@ impl PtySession {
     /// is a Claude Code instance that's thinking, the current spinner
     /// glyph is appended (`my-session ✽`) — the name stays put so the
     /// tab is still identifiable, the glyph animates frame to frame.
+    ///
+    /// Callers that have access to `[ui] ticket_prefixes` should prefer
+    /// [`PtySession::tab_label_with_prefixes`] — it auto-fills the
+    /// label from the most recent matching ticket token in scrollback
+    /// when no user rename is set.
     pub fn tab_label(&self) -> String {
-        let (osc, glyph) = match self.parser.lock() {
-            Ok(p) => (
-                p.callbacks().title.clone(),
-                detect_spinner_glyph(p.screen()),
-            ),
-            Err(_) => (String::new(), None),
+        self.tab_label_with_prefixes(&[])
+    }
+
+    /// Same as [`tab_label`], but when `display_name` is unset AND
+    /// `prefixes` is non-empty, scans the visible scrollback for the
+    /// most recent `<prefix><digits>` token (e.g. `TE-1234`) and uses
+    /// it as the tab name. Falls through to OSC title / profile label
+    /// when no match is found.
+    pub fn tab_label_with_prefixes(&self, prefixes: &[String]) -> String {
+        let (osc, glyph, screen_text) = match self.parser.lock() {
+            Ok(p) => {
+                let s = p.screen();
+                let osc = p.callbacks().title.clone();
+                let glyph = detect_spinner_glyph(s);
+                let text = if self.display_name.is_none() && !prefixes.is_empty() {
+                    Some(screen_to_text(s))
+                } else {
+                    None
+                };
+                (osc, glyph, text)
+            }
+            Err(_) => (String::new(), None, None),
         };
-        let name = resolve_tab_label(self.display_name.as_deref(), &osc, &self.profile.label);
+
+        // Priority: user rename > ticket scan > OSC title > profile.label.
+        let ticket = screen_text.and_then(|t| scan_for_ticket(&t, prefixes));
+        let name = if let Some(t) = ticket {
+            t
+        } else {
+            resolve_tab_label(self.display_name.as_deref(), &osc, &self.profile.label)
+        };
         match glyph {
             Some(g) => format!("{name} {g}"),
             None => name,
         }
     }
+}
+
+/// Concatenate a vt100 Screen's visible cells into a plain-text string,
+/// row-major with newlines between rows. Wide-cell continuations are
+/// skipped; empty cells become a single space.
+///
+/// Used by [`scan_for_ticket`] to extract searchable text from a pty.
+fn screen_to_text(screen: &vt100::Screen) -> String {
+    let (rows, cols) = screen.size();
+    let mut text = String::with_capacity((rows as usize) * (cols as usize + 1));
+    for r in 0..rows {
+        for c in 0..cols {
+            let Some(cell) = screen.cell(r, c) else {
+                text.push(' ');
+                continue;
+            };
+            if cell.is_wide_continuation() {
+                continue;
+            }
+            if cell.has_contents() {
+                text.push_str(cell.contents());
+            } else {
+                text.push(' ');
+            }
+        }
+        text.push('\n');
+    }
+    text
+}
+
+/// Scan `text` for the last (rightmost) token shaped `<prefix><digits>`
+/// for any prefix in `prefixes`. Returns the matched token (e.g.
+/// `"TE-1234"`) or `None` if no match.
+///
+/// "Last match" is by character position in the input — the visible
+/// pty grid is row-major top-to-bottom, so the last match is the most
+/// recently rendered line (most recent in the user's conversation).
+///
+/// Pure — unit-tested.
+pub(crate) fn scan_for_ticket(text: &str, prefixes: &[String]) -> Option<String> {
+    if prefixes.is_empty() {
+        return None;
+    }
+    let mut best: Option<(usize, String)> = None;
+    for prefix in prefixes {
+        if prefix.is_empty() {
+            continue;
+        }
+        let bytes = text.as_bytes();
+        let pbytes = prefix.as_bytes();
+        let mut i = 0;
+        while i + pbytes.len() <= bytes.len() {
+            if &bytes[i..i + pbytes.len()] == pbytes {
+                // Count contiguous ASCII digits after the prefix.
+                let mut j = i + pbytes.len();
+                let start_digits = j;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j > start_digits {
+                    let token = format!("{prefix}{}", &text[start_digits..j]);
+                    if best.as_ref().map(|(p, _)| i > *p).unwrap_or(true) {
+                        best = Some((i, token));
+                    }
+                    i = j;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+    }
+    best.map(|(_, t)| t)
 }
 
 /// Pick a pty session's tab *name* from the candidate sources, in
@@ -513,6 +613,113 @@ mod tests {
         assert_eq!(resolve_tab_label(None, "   ", "Codex"), "Codex");
         // Blank candidates are skipped.
         assert_eq!(resolve_tab_label(Some(" "), "osc", "Codex"), "osc");
+    }
+
+    fn p(s: &str) -> String {
+        s.to_string()
+    }
+
+    #[test]
+    fn scan_for_ticket_empty_prefixes_returns_none() {
+        assert_eq!(scan_for_ticket("TE-1234 mentioned here", &[]), None);
+    }
+
+    #[test]
+    fn scan_for_ticket_no_match_returns_none() {
+        let prefixes = [p("TE-"), p("MIX-")];
+        assert_eq!(
+            scan_for_ticket("nothing ticket-shaped here", &prefixes),
+            None
+        );
+        // Prefix without trailing digits doesn't match.
+        assert_eq!(scan_for_ticket("we use TE- for tickets", &prefixes), None);
+    }
+
+    #[test]
+    fn scan_for_ticket_single_match() {
+        let prefixes = [p("TE-")];
+        assert_eq!(
+            scan_for_ticket("we just shipped TE-1234 yesterday", &prefixes),
+            Some("TE-1234".to_string())
+        );
+    }
+
+    #[test]
+    fn scan_for_ticket_multiple_matches_returns_last_in_text() {
+        // The screen renders top-to-bottom row-major; the rightmost
+        // match in the joined text is the most recently rendered line.
+        let prefixes = [p("TE-")];
+        let txt =
+            "TE-100 was an early one\nthen later TE-9999 came along\nand most recent TE-12345 wins";
+        assert_eq!(
+            scan_for_ticket(txt, &prefixes),
+            Some("TE-12345".to_string())
+        );
+    }
+
+    #[test]
+    fn scan_for_ticket_multiple_prefixes_returns_globally_rightmost() {
+        // With multiple prefixes configured, the GLOBALLY rightmost
+        // match wins — regardless of which prefix it matched.
+        let prefixes = [p("TE-"), p("MIX-"), p("PROJ-")];
+        let txt = "earlier we discussed PROJ-77 then MIX-123 then TE-5";
+        assert_eq!(scan_for_ticket(txt, &prefixes), Some("TE-5".to_string()));
+    }
+
+    #[test]
+    fn scan_for_ticket_ignores_empty_prefix_strings() {
+        // An empty prefix would match every byte boundary — defensive
+        // skip in scan_for_ticket. Empty prefixes are filtered at
+        // config load time too, but the function shouldn't trip on a
+        // malformed input.
+        let prefixes = [p(""), p("TE-")];
+        assert_eq!(
+            scan_for_ticket("see TE-1 for details", &prefixes),
+            Some("TE-1".to_string())
+        );
+    }
+
+    #[test]
+    fn scan_for_ticket_handles_prefix_at_end_without_digits() {
+        // Don't match `TE-` with nothing after it (the chat ended
+        // mid-thought).
+        let prefixes = [p("TE-")];
+        assert_eq!(scan_for_ticket("incomplete TE-", &prefixes), None);
+    }
+
+    #[test]
+    fn scan_for_ticket_handles_digits_with_non_digit_after() {
+        // Match the digit run, then the trailing characters are
+        // irrelevant.
+        let prefixes = [p("TE-")];
+        assert_eq!(
+            scan_for_ticket("see TE-1234. it's done", &prefixes),
+            Some("TE-1234".to_string())
+        );
+    }
+
+    #[test]
+    fn scan_for_ticket_does_not_include_letters_in_digit_run() {
+        // `TE-1234x` is NOT a valid ticket — the `x` breaks the digit
+        // run. Match is just the digit prefix.
+        let prefixes = [p("TE-")];
+        assert_eq!(
+            scan_for_ticket("misformed TE-1234x reference", &prefixes),
+            Some("TE-1234".to_string())
+        );
+    }
+
+    #[test]
+    fn screen_to_text_round_trip() {
+        // Sanity-check that screen_to_text + scan_for_ticket compose
+        // correctly through a real vt100 grid.
+        let mut parser = vt100::Parser::new(10, 60, 0);
+        parser.process(b"first line\r\n");
+        parser.process(b"mentioned TE-42 in passing\r\n");
+        parser.process(b"then TE-99 came up\r\n");
+        let text = screen_to_text(parser.screen());
+        let prefixes = [p("TE-")];
+        assert_eq!(scan_for_ticket(&text, &prefixes), Some("TE-99".to_string()));
     }
 
     #[test]

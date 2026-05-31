@@ -105,6 +105,34 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Pty tab auto-naming from ticket prefixes (2026-05-31):** Lands #53.
+New `[ui] ticket_prefixes` config knob — when set (e.g. `["TE-",
+"MIX-", "PROJ-"]`), pty session tabs without a user-set name get
+their label auto-filled from the most-recently-mentioned ticket
+token in the session's visible scrollback. Useful primarily for
+Claude Code sessions where the assistant is discussing a specific
+ticket — the tab strip shows `TE-1234` instead of `claude code`
+without manual `:rename`.
+
+Mechanism: `PtySession::tab_label_with_prefixes(&[String])` reads
+the vt100 grid into plain text via `screen_to_text`, then
+`scan_for_ticket` walks each prefix looking for `<prefix><digits>`
+tokens and returns the globally-rightmost match (rightmost in
+row-major text = most-recently-rendered line). Priority chain is
+unchanged at the top — user `:rename` wins; the ticket scan
+inserts between rename and OSC title.
+
+Two callers updated: `ui::pty_view::draw_tab_strip` (the pty pane's
+tab strip) and `App::rename_active_pty` (the toast confirmation).
+Empty `ticket_prefixes` (the default) skips the scan entirely — no
+performance cost for users who don't configure prefixes.
+
+10 new unit tests covering: empty prefixes, no-match, single match,
+multi-match-returns-last, multiple-prefixes-globally-rightmost,
+empty-prefix-string ignored, prefix-without-digits, prefix-with-
+trailing-non-digit, screen_to_text round-trip. 802 lib tests pass,
+clippy clean, fmt clean.
+
 **Pty-fd handoff: mnml sender side (`:tmnl.pop-pty`, 2026-05-24):**
 Lands #49 — the sender half of the SCM_RIGHTS pty-fd handoff
 (receiver was #50, see tmnl). `:tmnl.pop-pty` (alias `:tmnl.pop`)

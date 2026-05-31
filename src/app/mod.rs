@@ -5189,9 +5189,12 @@ impl App {
     pub fn rename_active_pty(&mut self, name: &str) {
         let Some(cur) = self.active else { return };
         let name = name.trim();
+        // Snapshot prefixes upfront so we don't hold a config borrow
+        // while the pane is mutated below.
+        let prefixes: Vec<String> = self.config.ui.ticket_prefixes.clone();
         if let Some(Pane::Pty(s)) = self.panes.get_mut(cur) {
             s.display_name = (!name.is_empty()).then(|| name.to_string());
-            let label = s.tab_label();
+            let label = s.tab_label_with_prefixes(&prefixes);
             self.toast(format!("session: {label}"));
         }
     }

@@ -125,13 +125,16 @@ pub fn draw(
 /// in `ui::draw`) so multiple visible pty panes can each carry a strip.
 fn draw_tab_strip(frame: &mut Frame, app: &mut App, active_id: PaneId, strip: Rect) {
     let t = theme::cur();
-    // Gather pty panes in pane order: `(id, label, exited)`.
+    let prefixes = &app.config.ui.ticket_prefixes;
+    // Gather pty panes in pane order: `(id, label, exited)`. The label
+    // resolves user-rename > ticket-scan > OSC title > profile.label —
+    // see `PtySession::tab_label_with_prefixes`.
     let ptys: Vec<(PaneId, String, bool)> = app
         .panes
         .iter()
         .enumerate()
         .filter_map(|(id, p)| match p {
-            Pane::Pty(s) => Some((id, s.tab_label(), s.is_exited())),
+            Pane::Pty(s) => Some((id, s.tab_label_with_prefixes(prefixes), s.is_exited())),
             _ => None,
         })
         .collect();

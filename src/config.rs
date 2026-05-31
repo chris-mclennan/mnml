@@ -576,6 +576,23 @@ pub struct UiConfig {
     /// for shortcuts to Jira, Bitbucket, GitHub Actions, DB viewers,
     /// etc. See [`IntegrationIcon`].
     pub integration_icons: Vec<IntegrationIcon>,
+    /// Per-project ticket-key prefixes — when set, pty session tabs
+    /// (Claude Code / shell / Codex / etc.) WITHOUT a user-set name get
+    /// their label auto-filled from the most-recently-mentioned ticket
+    /// token in the session's visible scrollback. E.g. with
+    /// `["TE-", "PROJ-"]`, a Claude Code session discussing `TE-1234`
+    /// shows `TE-1234` as its tab label. The user's explicit `:rename`
+    /// always wins.
+    ///
+    /// Empty (default) disables auto-naming entirely. Format: `["PFX-"]`
+    /// — the prefix as it appears in tickets (including the trailing
+    /// hyphen, since the digits follow it).
+    ///
+    /// ```toml
+    /// [ui]
+    /// ticket_prefixes = ["TE-", "MIX-", "PROJ-"]
+    /// ```
+    pub ticket_prefixes: Vec<String>,
 }
 
 /// One entry in the rail's INTEGRATIONS section. Same shape as
@@ -775,6 +792,7 @@ impl Default for Config {
                         tooltip: Some("GitHub Actions".to_string()),
                     },
                 ],
+                ticket_prefixes: Vec::new(),
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -1011,6 +1029,10 @@ struct RawUi {
     /// empty) when present.
     #[serde(default, rename = "integration_icon")]
     integration_icons: Option<Vec<RawLauncherIcon>>,
+    /// Ticket prefixes for pty-tab auto-naming. See
+    /// [`UiConfig::ticket_prefixes`].
+    #[serde(default)]
+    ticket_prefixes: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1239,6 +1261,16 @@ impl Config {
                         tooltip: r.tooltip,
                     })
                 })
+                .collect();
+        }
+        // `ticket_prefixes` — pty-tab auto-naming from scrollback.
+        // Replaces the default (empty list) when set. Blank entries are
+        // stripped at load time so users don't have to worry about it.
+        if let Some(raws) = raw.ui.ticket_prefixes {
+            self.ui.ticket_prefixes = raws
+                .into_iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
                 .collect();
         }
         if let Some(v) = raw.session.restore {
