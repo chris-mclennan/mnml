@@ -8,8 +8,9 @@ Vim *or* standard editing — without `if vim {}` scattered through the codebase
 LSP, rich git, fuzzy everything, embedded terminal & AI panes, a baked-in HTTP
 client, and a headless test harness — one binary.
 
+[![Docs](https://img.shields.io/badge/docs-mnml.sh-purple.svg)](https://mnml.sh)
 [![Crates.io](https://img.shields.io/crates/v/mnml-rs.svg?logo=rust)](https://crates.io/crates/mnml-rs)
-[![Documentation](https://docs.rs/mnml-rs/badge.svg)](https://docs.rs/mnml-rs)
+[![docs.rs](https://docs.rs/mnml-rs/badge.svg)](https://docs.rs/mnml-rs)
 [![CI](https://github.com/chris-mclennan/mnml/actions/workflows/ci.yml/badge.svg)](https://github.com/chris-mclennan/mnml/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
