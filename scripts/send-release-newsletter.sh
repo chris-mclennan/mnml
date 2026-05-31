@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+#
+# Draft a release-announcement newsletter on Buttondown from a tagged
+# release. Reads the matching version's section out of CHANGELOG.md,
+# wraps it in a friendly preamble, creates a DRAFT email via the API.
+# You review + send from buttondown.com — this script never actually
+# fires the send. Editorial control stays with you.
+#
+# Usage:
+#   ./scripts/send-release-newsletter.sh v0.1.2
+#
+# Requires:
+#   BUTTONDOWN_API_KEY in env (already a GitHub secret on each repo;
+#   set locally for one-off use:  export BUTTONDOWN_API_KEY=…).
+#
+# What it does:
+#   1. Pulls the version's section from CHANGELOG.md.
+#   2. POSTs a new email with status="draft" to Buttondown's API.
+#   3. Prints the URL where you review + hit Send.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+# Each repo's send-release-newsletter.sh hard-codes its product name.
+PRODUCT="mnml"
+INSTALL_URL="https://${PRODUCT}.sh/install/"
+CHANGELOG_URL="https://${PRODUCT}.sh/changelog/"
+REPO_URL="https://github.com/chris-mclennan/${PRODUCT}"
+
+TAG="${1:-}"
+if [ -z "$TAG" ]; then
+    echo "usage: $0 <tag>" >&2
+    echo "  e.g. $0 v0.1.2" >&2
+    exit 2
+fi
+
+if [ -z "${BUTTONDOWN_API_KEY:-}" ]; then
+    echo "error: BUTTONDOWN_API_KEY not set in env" >&2
+    echo "  set with: export BUTTONDOWN_API_KEY='your-key'" >&2
+    echo "  or pull from a secret manager / 1Password / etc." >&2
+    exit 1
+fi
+
+VERSION="${TAG#v}"
+
+# Extract the changelog section for this version. Looks for a heading
+# like `## [0.1.2]` (Keep a Changelog format) OR `### 0.1.2` (the format
+# the site's changelog.mdx uses). Captures up to the next heading of
+# the same level OR the file end.
+EXTRACT=$(awk -v v="$VERSION" '
+    /^## \[/ {
+        # Found a Keep-a-Changelog heading. Match version inside brackets.
+        if (match($0, /\[([^]]+)\]/, m) && m[1] == v) { capture=1; print; next }
+        if (capture) { exit }
+    }
+    /^### / {
+        # Site-style "### 0.1.2 — 2026-05-31" heading.
+        if (match($0, /^### ([0-9.]+)/, m) && m[1] == v) { capture=1; print; next }
+        if (capture) { exit }
+    }
+    capture { print }
+' CHANGELOG.md 2>/dev/null || true)
+
+# CHANGELOG.md at repo root might not exist or might not have an entry.
+# Fall back to the site's changelog.mdx if so.
+if [ -z "$EXTRACT" ] && [ -f site/src/content/docs/changelog.mdx ]; then
+    EXTRACT=$(awk -v v="$VERSION" '
+        /^### / {
+            if (match($0, /^### ([0-9.]+)/, m) && m[1] == v) { capture=1; print; next }
+            if (capture) { exit }
+        }
+        capture { print }
+    ' site/src/content/docs/changelog.mdx)
+fi
+
+if [ -z "$EXTRACT" ]; then
+    echo "error: no entry for version $VERSION found in CHANGELOG.md or site/src/content/docs/changelog.mdx" >&2
+    echo "  add the entry first, then re-run." >&2
+    exit 1
+fi
+
+SUBJECT="${PRODUCT} ${TAG} released"
+
+# Newsletter body — Markdown. Buttondown renders it. Keep it short:
+# preamble + the changelog excerpt + footer links.
+BODY=$(/bin/cat <<EOF
+Hi,
+
+${PRODUCT} ${TAG} is out.
+
+${EXTRACT}
+
+—
+
+Install or upgrade: ${INSTALL_URL}
+Full changelog: ${CHANGELOG_URL}
+Source: ${REPO_URL}
+
+Thanks for following along.
+EOF
+)
+
+# POST to Buttondown's API. status="draft" means the email is created
+# but NOT sent — you review at buttondown.com and hit Send manually.
+RESPONSE=$(/usr/bin/curl -sS -X POST 'https://api.buttondown.email/v1/emails' \
+    -H "Authorization: Token ${BUTTONDOWN_API_KEY}" \
+    -H 'Content-Type: application/json' \
+    -d "$(jq -n \
+        --arg subject "$SUBJECT" \
+        --arg body "$BODY" \
+        '{subject: $subject, body: $body, status: "draft"}')")
+
+EMAIL_ID=$(echo "$RESPONSE" | jq -r '.id // empty')
+if [ -z "$EMAIL_ID" ]; then
+    echo "error: Buttondown API didn't return an email id" >&2
+    echo "response: $RESPONSE" >&2
+    exit 1
+fi
+
+echo "✓ draft created: $SUBJECT"
+echo "  review + send at: https://buttondown.com/emails/${EMAIL_ID}"
+echo
+echo "  This script created a DRAFT only. Nothing has been sent."
+echo "  Review the email at the URL above; hit Send when ready."
