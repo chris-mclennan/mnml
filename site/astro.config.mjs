@@ -39,6 +39,7 @@ export default defineConfig({
           label: 'Manual',
           items: [
             { label: 'Editing', slug: 'manual/editing' },
+            { label: 'Git', slug: 'manual/git' },
           ],
         },
         {
