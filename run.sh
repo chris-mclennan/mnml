@@ -19,6 +19,8 @@
 #   ./run.sh test [args]          cargo test [args]
 #   ./run.sh check                cargo clippy --all-targets
 #   ./run.sh watch                cargo watch -x build  (needs cargo-watch)
+#   ./run.sh app [debug|release]  Build mnml.app into target/ (scripts/build-app.sh).
+#   ./run.sh dmg [debug|release]  Build mnml-<version>.dmg into target/.
 #   ./run.sh help                 show this
 #
 # mnml-specific modes:
@@ -73,6 +75,8 @@ case "${1:-start}" in
   release) shift; exec cargo build --release "$@" ;;
   test)    shift; exec cargo test "$@" ;;
   check)   exec cargo clippy --all-targets ;;
+  app)     shift; exec ./scripts/build-app.sh "$@" ;;
+  dmg)     shift; exec ./scripts/build-dmg.sh "$@" ;;
   watch)
     if ! command -v cargo-watch >/dev/null 2>&1; then
       echo "[run.sh] cargo-watch not installed — \`cargo install cargo-watch\`" >&2
