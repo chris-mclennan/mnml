@@ -69,8 +69,10 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
           ARCH: ${{ matrix.arch }}
         run: |
-          .nfpm-bin/nfpm pkg --config nfpm/mnml.yaml --packager deb --target "mnml_${VERSION}_${ARCH}.deb"
-          .nfpm-bin/nfpm pkg --config nfpm/mnml.yaml --packager rpm --target "mnml-${VERSION}-1.${{ matrix.rpm_arch }}.rpm"
+          # Versionless filenames so `releases/latest/download/<name>` is stable
+          # across releases (matches cargo-dist's tarball naming convention).
+          .nfpm-bin/nfpm pkg --config nfpm/mnml.yaml --packager deb --target "mnml-rs-${{ matrix.triple }}.deb"
+          .nfpm-bin/nfpm pkg --config nfpm/mnml.yaml --packager rpm --target "mnml-rs-${{ matrix.triple }}.rpm"
           ls -la *.deb *.rpm
 
       - name: Upload to release
@@ -79,6 +81,6 @@ jobs:
         run: |
           v="${{ steps.ver.outputs.version }}"
           gh release upload "v${v}" \
-            "mnml_${v}_${{ matrix.arch }}.deb" \
-            "mnml-${v}-1.${{ matrix.rpm_arch }}.rpm" \
+            "mnml-rs-${{ matrix.triple }}.deb" \
+            "mnml-rs-${{ matrix.triple }}.rpm" \
             --clobber
