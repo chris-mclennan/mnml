@@ -1,0 +1,120 @@
+.install-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2rem;
+  margin: 2rem 0 3rem;
+}
+
+@media (max-width: 900px) {
+  .install-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.install-column {
+  min-width: 0;
+}
+
+.install-os-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.install-column h3 {
+  margin-top: 0 !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+.install-primary {
+  display: block;
+  background: var(--sl-color-bg-inline-code);
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 0.5rem;
+  padding: 1.25rem 1rem;
+  text-align: center;
+  text-decoration: none;
+  color: inherit;
+  margin: 0.75rem 0 1rem;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.install-primary:hover {
+  border-color: var(--sl-color-accent);
+  transform: translateY(-1px);
+  text-decoration: none;
+}
+
+.install-primary strong {
+  display: block;
+  font-size: 1.1rem;
+  font-family: var(--sl-font-system-mono);
+  margin-bottom: 0.25rem;
+}
+
+.install-primary span {
+  display: block;
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.install-column .expressive-code {
+  margin: 0.5rem 0 1.25rem !important;
+}
+
+.install-formats {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.install-formats li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--sl-color-hairline);
+  font-size: 0.9rem;
+}
+
+.install-formats li:last-child {
+  border-bottom: none;
+}
+
+.install-formats .format-name {
+  font-weight: 500;
+  font-family: var(--sl-font-system-mono);
+}
+
+.install-formats .format-note {
+  margin-left: 0.5rem;
+  font-family: var(--sl-font-system);
+  font-weight: 400;
+  opacity: 0.55;
+  font-size: 0.78rem;
+}
+
+.install-formats .arches {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.install-formats .arches a {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 0.3rem;
+  background: var(--sl-color-bg-nav);
+  text-decoration: none;
+  color: var(--sl-color-text);
+  font-family: var(--sl-font-system-mono);
+  font-size: 0.72rem;
+  border: 1px solid var(--sl-color-hairline);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.install-formats .arches a:hover {
+  border-color: var(--sl-color-accent);
+  background: var(--sl-color-bg-sidebar);
+  text-decoration: none;
+}

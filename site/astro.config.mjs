@@ -8,6 +8,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'mnml',
+      customCss: ['./src/styles/install.css'],
       description:
         'A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, embedded HTTP/CDP/DAP, AI panes, headless test harness.',
       // Hidden-during-dev: drop the noindex entry before public launch.

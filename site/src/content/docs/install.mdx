@@ -3,68 +3,107 @@ title: Install
 description: How to install mnml on macOS, Linux, and Windows.
 ---
 
-import { LinkButton, CardGrid, Card } from '@astrojs/starlight/components';
+import { Icon, Code, Card } from '@astrojs/starlight/components';
 
-<div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 1.5rem 0 2.5rem;">
-  <LinkButton href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-aarch64-apple-darwin.dmg" icon="apple" iconPlacement="start">
-    Download for macOS
-  </LinkButton>
-  <LinkButton href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-installer.sh" variant="secondary" icon="linux" iconPlacement="start">
-    Download for Linux
-  </LinkButton>
-  <LinkButton href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-x86_64-pc-windows-msvc.msi" variant="secondary" icon="seti:windows" iconPlacement="start">
-    Download for Windows
-  </LinkButton>
+mnml ships native binaries for macOS, Linux, and Windows via [`cargo-dist`](https://opensource.dev/dist/).
+
+<div class="install-grid">
+
+<div class="install-column">
+
+### <span class="install-os-heading"><Icon name="apple" size="1.75rem" /> Mac</span>
+
+<a class="install-primary" href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-aarch64-apple-darwin.dmg">
+  <strong>.dmg</strong>
+  <span>macOS 11+</span>
+</a>
+
+<Code code="curl --proto '=https' --tlsv1.2 -LsSf https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-installer.sh | sh" lang="sh" />
+
+<ul class="install-formats">
+  <li>
+    <span class="format-name">.dmg</span>
+    <span class="arches">
+      <a href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-x86_64-apple-darwin.dmg">x64</a>
+      <a href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-aarch64-apple-darwin.dmg">ARM64</a>
+    </span>
+  </li>
+  <li>
+    <span class="format-name">.pkg</span>
+    <span class="arches">
+      <a href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-x86_64-apple-darwin.pkg">x64</a>
+      <a href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-aarch64-apple-darwin.pkg">ARM64</a>
+    </span>
+  </li>
+  <li>
+    <span class="format-name">.tar.xz</span>
+    <span class="arches">
+      <a href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-x86_64-apple-darwin.tar.xz">x64</a>
+      <a href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-aarch64-apple-darwin.tar.xz">ARM64</a>
+    </span>
+  </li>
+</ul>
+
 </div>
 
-Or paste the shell installer for your platform:
+<div class="install-column">
 
-```sh
-# macOS / Linux
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-installer.sh | sh
-```
+### <span class="install-os-heading"><Icon name="linux" size="1.75rem" /> Linux</span>
 
-```powershell
-# Windows
-irm https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-installer.ps1 | iex
-```
+<a class="install-primary" href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-x86_64-unknown-linux-gnu.tar.xz">
+  <strong>.tar.xz</strong>
+  <span>Static binary · x64 / ARM64</span>
+</a>
 
-## Platform details
+<Code code="curl --proto '=https' --tlsv1.2 -LsSf https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-installer.sh | sh" lang="sh" />
 
-<CardGrid>
-  <Card title="macOS" icon="apple">
-    **DMG** — drag `mnml.app` to Applications, then click the dock icon. The launcher opens mnml inside a tmnl tab if tmnl is installed, otherwise Terminal.app.
+<ul class="install-formats">
+  <li>
+    <span class="format-name">.tar.xz</span>
+    <span class="arches">
+      <a href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-x86_64-unknown-linux-gnu.tar.xz">x64</a>
+      <a href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-aarch64-unknown-linux-gnu.tar.xz">ARM64</a>
+    </span>
+  </li>
+  <li>
+    <span class="format-name">installer.sh<span class="format-note">curl | sh</span></span>
+    <span class="arches">
+      <a href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-installer.sh">script</a>
+    </span>
+  </li>
+</ul>
 
-    Or **`.pkg`** for the CLI install (drops `mnml` on `PATH`). Per-arch — pick Apple Silicon or Intel from the [latest release](https://github.com/chris-mclennan/mnml/releases/latest).
+</div>
 
-    Requires macOS 10.14 (Mojave) or newer.
-  </Card>
-  <Card title="Linux" icon="linux">
-    Shell installer drops `mnml` on `PATH`:
+<div class="install-column">
 
-    ```sh
-    curl -LsSf https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-installer.sh | sh
-    ```
+### <span class="install-os-heading"><Icon name="seti:windows" size="1.75rem" /> Windows</span>
 
-    Or grab the `.tar.xz` for your arch from the [latest release](https://github.com/chris-mclennan/mnml/releases/latest).
-  </Card>
-  <Card title="Windows" icon="seti:windows">
-    Double-click the `.msi` from the [latest release](https://github.com/chris-mclennan/mnml/releases/latest), or PowerShell:
+<a class="install-primary" href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-x86_64-pc-windows-msvc.msi">
+  <strong>.msi</strong>
+  <span>Windows 10/11 · x64</span>
+</a>
 
-    ```powershell
-    irm https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-installer.ps1 | iex
-    ```
-  </Card>
-  <Card title="Cargo" icon="rocket">
-    Build from crates.io (slow — requires the Rust toolchain):
+<Code code="irm https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-installer.ps1 | iex" lang="powershell" />
 
-    ```sh
-    cargo install mnml-rs
-    ```
+<ul class="install-formats">
+  <li>
+    <span class="format-name">.msi</span>
+    <span class="arches">
+      <a href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-x86_64-pc-windows-msvc.msi">x64</a>
+    </span>
+  </li>
+  <li>
+    <span class="format-name">.zip<span class="format-note">portable</span></span>
+    <span class="arches">
+      <a href="https://github.com/chris-mclennan/mnml/releases/latest/download/mnml-rs-x86_64-pc-windows-msvc.zip">x64</a>
+    </span>
+  </li>
+</ul>
 
-    The crate is `mnml-rs`; the binary it installs is `mnml`.
-  </Card>
-</CardGrid>
+</div>
+
+</div>
 
 ## Build from source
 
@@ -75,6 +114,14 @@ cargo build --release
 ./target/release/mnml
 ```
 
+Or via crates.io (slow — requires the Rust toolchain):
+
+```sh
+cargo install mnml-rs
+```
+
+The crate is `mnml-rs`; the binary it installs is `mnml`.
+
 ## Nerd Font
 
 A [Nerd Font](https://www.nerdfonts.com/) is recommended for devicons and powerline glyphs. JetBrainsMono Nerd Font is a good default. Without a Nerd Font, run `mnml --ascii` (or set `[ui] ascii_icons = true` in your config) for a plain-text fallback.
@@ -84,3 +131,6 @@ A [Nerd Font](https://www.nerdfonts.com/) is recommended for devicons and powerl
 ```sh
 mnml --version
 ```
+
+If your shell can't find `mnml`, you may need to restart it (the installer puts `mnml` on `PATH` via your shell profile).
+
