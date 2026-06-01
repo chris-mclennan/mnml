@@ -1,0 +1,86 @@
+---
+title: The family
+description: Three small Rust tools that share design language, integrate via the tmnl-protocol, and work as native tabs together — mnml, tmnl, and mixr.
+---
+
+import { Card, CardGrid, LinkButton } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import mnmlIcon from '../../assets/family/mnml.png';
+import tmnlIcon from '../../assets/family/tmnl.png';
+import mixrIcon from '../../assets/family/mixr.png';
+
+mnml is one of three small Rust tools by Chris McLennan. They each
+solve a different problem — an IDE, a terminal, a DJ rig — but they
+ship from the same workshop, share the same design language (the
+charcoal rounded-square icon, the `>` shell-prompt wordmark, the
+monospace identity), and they talk to each other via the
+`tmnl-protocol` cell-streaming layer. Run them standalone in any
+terminal, or run them together: tmnl hosts mnml as a native tab, and
+mnml hosts mixr in a side panel.
+
+<div style="display: grid; grid-template-columns: 1fr; gap: 1.5rem; margin: 2.5rem 0;">
+
+<div style="display: flex; gap: 1.25rem; align-items: flex-start; padding: 1.25rem; border: 1px solid var(--sl-color-gray-5); border-radius: 12px;">
+  <Image src={mnmlIcon} alt="mnml app icon" width={96} height={96} style="flex-shrink: 0; border-radius: 18px;" />
+  <div style="flex: 1;">
+    <h3 style="margin: 0 0 0.25rem;"><a href="/" style="color: var(--sl-color-white); text-decoration: none;">mnml</a></h3>
+    <p style="margin: 0 0 0.5rem; color: var(--sl-color-gray-2);"><strong>A NvChad-style terminal IDE in Rust.</strong></p>
+    <p style="margin: 0 0 0.5rem;">Vim or standard editing — both first-class, both fully remappable, neither buried in <code>if vim {}</code>. LSP, git, an embedded HTTP client, AI panes, a headless test harness, 94 themes, 39+ tree-sitter languages.</p>
+    <p style="margin: 0 0 0.75rem; color: var(--sl-color-gray-3);"><em>What's it good for:</em> daily-driving code in a terminal without giving up an IDE's reach.</p>
+    <LinkButton href="/install/" variant="primary">Install mnml</LinkButton>
+  </div>
+</div>
+
+<div style="display: flex; gap: 1.25rem; align-items: flex-start; padding: 1.25rem; border: 1px solid var(--sl-color-gray-5); border-radius: 12px;">
+  <Image src={tmnlIcon} alt="tmnl app icon" width={96} height={96} style="flex-shrink: 0; border-radius: 18px;" />
+  <div style="flex: 1;">
+    <h3 style="margin: 0 0 0.25rem;"><a href="https://tmnl.sh" style="color: var(--sl-color-white); text-decoration: none;">tmnl</a></h3>
+    <p style="margin: 0 0 0.5rem; color: var(--sl-color-gray-2);"><strong>A GPU terminal with offline AI command completion — and a structured-cell display surface that apps can draw to directly.</strong></p>
+    <p style="margin: 0 0 0.5rem;"><kbd>⌘I</kbd> to complete a half-typed command, <kbd>⌘K</kbd> to turn natural language into one — both via a quantized qwen2.5-coder running in-process, fully offline. Native-mode apps render as structured cells, skipping ANSI entirely.</p>
+    <p style="margin: 0 0 0.75rem; color: var(--sl-color-gray-3);"><em>What's it good for:</em> a daily-driver terminal that hosts mnml and mixr as native tabs.</p>
+    <LinkButton href="https://tmnl.sh/install/" variant="primary">Install tmnl</LinkButton>
+  </div>
+</div>
+
+<div style="display: flex; gap: 1.25rem; align-items: flex-start; padding: 1.25rem; border: 1px solid var(--sl-color-gray-5); border-radius: 12px;">
+  <Image src={mixrIcon} alt="mixr app icon" width={96} height={96} style="flex-shrink: 0; border-radius: 18px;" />
+  <div style="flex: 1;">
+    <h3 style="margin: 0 0 0.25rem;"><a href="https://mixr.sh" style="color: var(--sl-color-white); text-decoration: none;">mixr</a></h3>
+    <p style="margin: 0 0 0.5rem; color: var(--sl-color-gray-2);"><strong>A full DJ rig in one terminal binary.</strong></p>
+    <p style="margin: 0 0 0.5rem;">Beatport streaming, beat-locked crossfades, a Claude DJ that picks the next track, hardware MIDI controller support. Runs standalone, or docks inside mnml as a side panel via <code>:mixr.show</code>.</p>
+    <p style="margin: 0 0 0.75rem; color: var(--sl-color-gray-3);"><em>What's it good for:</em> mixing electronic music from the same terminal you're coding in.</p>
+    <LinkButton href="https://mixr.sh/install/" variant="primary">Install mixr</LinkButton>
+  </div>
+</div>
+
+</div>
+
+## How they fit together
+
+They share more than a coat of paint:
+
+- **Shared design language.** Charcoal rounded-square icons, a
+  `>` prompt accent in each app's color (cool blue for mnml, magenta
+  for tmnl, gold for mixr), monospace wordmarks. Same family settings
+  UI idiom — a sectioned scrollable list with `▸ <label>: [active] /
+  other  *` rows, the same keybindings (`←→` adjust, `↑↓` move, `r`
+  reset row, `R` reset all, `Enter` save, `Esc` cancel).
+- **Shared cell-streaming protocol.** [`tmnl-protocol`](https://github.com/chris-mclennan/tmnl-protocol)
+  is a small wire format for "send me a grid of styled cells." tmnl
+  hosts mnml as a native tab using it; mnml hosts mixr in a side
+  panel using it; mnml's `:host.launch <binary>` opens any
+  `tmnl-protocol`-speaking binary as a `Pane::BlitHost`. One protocol,
+  three integration shapes.
+- **Pty-fd handoff.** Inside tmnl, `:tmnl.pop-pty` in mnml transfers
+  the focused terminal pane's pty file descriptor to tmnl via
+  `SCM_RIGHTS`. The shell keeps running; it just becomes a sibling
+  native tab instead of a nested pane. (Unix only.)
+- **Shared `fim-engine`.** The same in-process FIM (fill-in-the-middle)
+  Rust crate that powers tmnl's `⌘I` completion also powers mnml's
+  optional offline inline suggestions. One quantized model download
+  serves both apps.
+
+You don't need all three. mnml is happy in iTerm2, Alacritty, kitty,
+or Windows Terminal. mixr runs standalone too. tmnl is just `$SHELL`
+in a window if you never open the native tabs. But run them together
+and the seams disappear.

@@ -3,7 +3,7 @@ title: mnml
 description: A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, embedded HTTP/CDP/DAP, AI panes, headless test harness.
 template: splash
 hero:
-  tagline: Vim or standard editing — without `if vim {}` scattered through the codebase. One binary, 39+ languages, 94 themes.
+  tagline: A terminal IDE for the people who do everything in a terminal. Vim or standard editing — neither buried in `if vim {}`. One binary, 39+ languages, 94 themes.
   actions:
     - text: Install
       link: /install/
@@ -14,30 +14,32 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 ## What is mnml
 
 mnml is a terminal IDE in the NvChad aesthetic — file-tree rail, tabline, powerline statusline, Nerd-Font devicons, tree-sitter highlighting — built on one design decision that runs through everything: **a pluggable input layer.** Vim modal editing and a modeless VS Code-style keymap are both first-class, both fully remappable, and swappable at runtime. The editor, buffer, and render layers never branch on which one is active.
+
+Install it as a proper macOS `.app` (DMG, drag to Applications, click the dock icon and a tmnl tab opens for it) or as a CLI on any platform.
 
 <CardGrid stagger>
   <Card title="Two editing modes, one codebase" icon="setting">
     Modal vim (Normal / Insert / Visual / Visual-Block / Replace + a `:` ex-command line with `:%s///`, ranges, `:g/`, `:norm`, `:sort`, `:!cmd`, user-defined `:command`s) and a modeless VS Code-style keymap (multi-cursor with `Ctrl-D`, column cursors). Swap live with `:set input=vim`. Input handlers translate keys into a closed set of edit operations; the rest of the app is mode-agnostic.
   </Card>
   <Card title="LSP, batteries included" icon="puzzle">
-    Completion with docs, hover, go-to-definition / references / rename-with-preview, code actions, inlay hints, semantic tokens, document & call / type hierarchies, signature help, document colors, code lens, document links, format-on-save, external linters (eslint / ruff / shellcheck), Problems pane. A Mason-style tools picker auto-installs servers / formatters / linters.
+    Completion with docs, hover, go-to-definition / references / rename-with-preview, code actions, inlay hints, semantic tokens, document & call / type hierarchies, signature help, document colors, code lens, document links, format-on-save, external linters (eslint / ruff / shellcheck), a Problems pane. A Mason-style tools picker auto-installs servers / formatters / linters.
   </Card>
   <Card title="Rich git" icon="random">
-    Gutter signs, a 3-mode diff pane (Hunk / Inline / Split) with per-hunk staging, intraline highlighting, a staging view, a coloured-lane commit DAG with sortable columns + WIP row, a branch/worktree/PR rail, blame gutter, fetch/pull/push/cherry-pick/revert/tags/stash/reflog, AI-written commit messages.
+    Gutter signs, a 3-mode diff pane (Hunk / Inline / Split) with per-hunk staging, intraline highlighting, a staging view, a coloured-lane commit DAG with sortable columns + WIP row, a branch / worktree / PR rail, blame gutter, fetch / pull / push / cherry-pick / revert / tags / stash / reflog, AI-written commit messages.
   </Card>
   <Card title="Fuzzy everything" icon="magnifier">
-    File finder, command palette, buffer switcher, symbol picker, marks/clipboard/recent-commands pickers, a which-key leader popup — all over one fuzzy-match core. Ripgrep-backed workspace grep with cross-file replace. Multi-root workspaces.
+    File finder, command palette, buffer switcher, symbol picker, marks / clipboard / recent-commands pickers, a which-key leader popup — all over one fuzzy-match core. Ripgrep-backed workspace grep with cross-file replace. Multi-root workspaces.
   </Card>
-  <Card title="AI panes — two backends" icon="laptop">
-    Run the `claude` CLI or Codex as embedded panes. **Or** talk to the Anthropic Messages API directly with an agentic read-only tool loop. On-selection actions: explain / fix / refactor / write-tests, with results streamed and fix/refactor applied as a reviewed diff. Inline suggestions via API **or** a fully local in-process FIM model (`fim-engine`, no API key, offline).
+  <Card title="AI panes — Claude Code & Codex" icon="laptop">
+    Run the `claude` CLI or Codex as embedded panes, with multi-session tab strips and `:rename`. **Or** talk to the Anthropic Messages API directly with an agentic read-only tool loop — backend, model, system prompt, and token cap are all config knobs. On-selection actions (explain / fix / refactor / write-tests) stream into a pane; fix and refactor apply as reviewed diffs. Inline suggestions via API **or** a fully local in-process FIM model (`fim-engine`, no API key, offline after a one-time download).
   </Card>
   <Card title="Baked-in HTTP client" icon="rocket">
-    Send `.http` / `.curl` / `.rest` files with `{{variable}}` templating + environments + pre/post-request scripts. Editable form-style request pane (method / URL / headers / body), re-send, copy-as-curl. Request chains (`.chain.json`). OpenAPI / Swagger → `.curl` stub discovery. CLI mode: `mnml run FILE`, `mnml chain run FILE`, `mnml discover SPEC`.
+    Send `.http` / `.curl` / `.rest` files with `{{variable}}` templating + environments + pre / post-request scripts. Editable form-style request pane (method / URL / headers / body), re-send, copy-as-curl. Request chains (`.chain.json`). OpenAPI / Swagger → `.curl` stub discovery. CLI mode: `mnml run FILE`, `mnml chain run FILE`, `mnml discover SPEC`.
   </Card>
   <Card title="Browser + CDP capture" icon="external">
     Launch Chrome over DevTools Protocol as a `Pane::Browser` — live console, filtered network log, DOM tree with live highlight, cookies, web storage, performance panel. Capture full-page or per-node screenshots, print-to-PDF, snapshot diffs, device emulation, multi-target, headless support.
@@ -46,25 +48,40 @@ mnml is a terminal IDE in the NvChad aesthetic — file-tree rail, tabline, powe
     Debug Adapter Protocol client — launch or attach, breakpoints (conditional, hit-count, exception), step controls, call-stack pane, variables tree with set-variable, watch expressions, REPL pane with lazy-expand. Reverse-debugging where the adapter supports it.
   </Card>
   <Card title="SCM & CI dashboards" icon="document">
-    Pipelines / builds and pull requests across **Bitbucket, GitHub, GitLab, and Azure DevOps**, grouped by repo with per-branch and "mine" views. PR ↔ pipeline cross-navigation. Per-job log tail with severity coloring.
+    Pipelines / builds and pull requests across **Bitbucket, GitHub, GitLab, and Azure DevOps**, grouped by repo with per-branch and "mine" views. PR ↔ pipeline cross-navigation. Per-job log tail with severity colouring.
   </Card>
   <Card title="Testing & quality" icon="approve-check-circle">
-    Playwright runner with a grouped results pane, jump-to-source, trace-timeline viewer, flaky-test dashboard. A line-based `.test` end-to-end format (`open`, `key`, `type`, `command`, `click`, `expect screen ...`) that drives the real `App` against a virtual backend.
+    Playwright runner with a grouped results pane, jump-to-source, trace-timeline viewer, flaky-test dashboard. A line-based `.test` end-to-end format (`open`, `key`, `type`, `command`, `click`, `expect screen ...`) that drives the real `App` against a virtual backend — same code path as the GUI.
   </Card>
   <Card title="UI & polish" icon="star">
-    **94 NvChad base46 themes** (onedark / gruvbox / catppuccin / kanagawa / tokyonight / nord / dracula / ...). Tree-sitter highlighting for **39+ languages** with **language injection** (highlighted fenced code blocks, embedded `<script>` / `<style>`). Markdown preview with inline image rendering via **Kitty / iTerm2 graphics protocols**. Zen mode, sticky scope context, indent guides, hover tooltips, right-click menus.
+    **94 NvChad base46 themes** (onedark / gruvbox / catppuccin / kanagawa / tokyonight / nord / dracula / ...). Tree-sitter highlighting for **39+ languages** with **language injection** (fenced code blocks, embedded `<script>` / `<style>`). Markdown preview with inline image rendering via **Kitty / iTerm2 graphics protocols**. Zen mode, sticky scope context, indent guides, hover tooltips, right-click menus, a keyboard-driven settings overlay.
   </Card>
   <Card title="Headless + scriptable" icon="seti:bash">
-    `mnml --headless` renders to a virtual screen driven over a file-IPC channel (`command` in, `screen.txt` / `status.json` / `events.jsonl` out) — same `App` and draw path as the GUI. Out-of-process plugins over that channel can register commands that appear in the palette and resolve as keybindings.
+    `mnml --headless` renders to a virtual screen driven over a file-IPC channel (`command` in, `screen.txt` / `status.json` / `events.jsonl` out) — same `App` and draw path as the terminal UI. Out-of-process plugins over that channel can register commands that appear in the palette and resolve as keybindings. `:host.launch <binary>` opens any `tmnl-protocol`-speaking binary as a pane.
   </Card>
+</CardGrid>
+
+## Read the manual
+
+The manual goes deep on each surface — what's there, how to drive it, the keymaps, the config knobs.
+
+<CardGrid>
+  <LinkCard title="Workspaces & the file rail" href="/manual/workspaces/" />
+  <LinkCard title="Editing — vim & standard keymaps" href="/manual/editing/" />
+  <LinkCard title="LSP — completion, navigation, diagnostics" href="/manual/lsp/" />
+  <LinkCard title="Git — diff, staging, commit graph, branches" href="/manual/git/" />
+  <LinkCard title="HTTP client — `.http` files, chains, discover" href="/manual/http/" />
+  <LinkCard title="AI panes — Claude Code & Codex" href="/manual/ai-panes/" />
+  <LinkCard title="Headless mode & the `.test` E2E format" href="/manual/headless/" />
+  <LinkCard title="Settings & configuration" href="/manual/settings/" />
 </CardGrid>
 
 ## The family
 
-mnml is one of three small Rust tools by Chris McLennan:
+mnml is one of three small Rust tools by Chris McLennan. They share design language, integrate via the [`tmnl-protocol`](https://github.com/chris-mclennan/tmnl-protocol) cell-streaming layer, and work as native tabs together — but each runs perfectly well standalone.
 
-- **mnml** — this IDE
-- **[tmnl](https://tmnl.sh)** — a GPU-rendered terminal that lets mnml run as a native tab instead of nested in some other terminal emulator
-- **[mixr](https://mixr.sh)** — a terminal DJ app
+- **mnml** — this IDE.
+- **[tmnl](https://tmnl.sh)** — a GPU-rendered terminal with offline AI command completion. Hosts mnml as a native tab instead of nesting it inside another terminal emulator.
+- **[mixr](https://mixr.sh)** — a terminal DJ rig. Docks inside mnml as a side panel via `:mixr.show`.
 
-You can run mnml inside any terminal that supports modern escape codes. Inside tmnl specifically, mnml gets native-tab integration via the `tmnl-protocol` cell-streaming layer — plus a pty-fd handoff (`:tmnl.pop-pty`) that lets you pop a running shell pane out into a sibling native tab without killing the child process.
+[See the family page →](/family/)
