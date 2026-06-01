@@ -1,0 +1,19 @@
+# nfpm package config — used by .github/workflows/package-linux.yml
+# to generate .deb + .rpm packages on release. ARCH / VERSION are
+# substituted from env vars by nfpm at config-parse time.
+name: mnml
+arch: ${ARCH}
+version: ${VERSION}
+maintainer: Chris McLennan <chrismclennan@mac.com>
+description: |
+  A NvChad-style terminal IDE in Rust — vim or standard editing,
+  LSP, git, embedded HTTP/CDP/DAP, AI panes, headless test harness.
+homepage: https://mnml.sh
+license: MIT
+section: editors
+priority: optional
+contents:
+  - src: staging/mnml
+    dst: /usr/bin/mnml
+    file_info:
+      mode: 0755

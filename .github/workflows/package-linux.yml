@@ -1,0 +1,80 @@
+name: Package .deb + .rpm
+
+# Runs after a release is published. Downloads the cargo-dist linux
+# tarballs, extracts the binary, and uses nfpm to build .deb + .rpm
+# for amd64 + arm64. Uploads the packages to the same release.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to package (no leading v)"
+        required: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            triple: x86_64-unknown-linux-gnu
+            rpm_arch: x86_64
+          - arch: arm64
+            triple: aarch64-unknown-linux-gnu
+            rpm_arch: aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            v="${{ github.event.inputs.version }}"
+          else
+            v="${{ github.event.release.tag_name }}"
+            v="${v#v}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Download release tarball
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          triple="${{ matrix.triple }}"
+          url="https://github.com/${{ github.repository }}/releases/download/v${v}/mnml-rs-${triple}.tar.xz"
+          curl -sL --fail -o tarball.tar.xz "$url"
+          tar -xJf tarball.tar.xz
+          mkdir -p staging
+          # tarball contains a dir like mnml-rs-x86_64-unknown-linux-gnu/ with mnml inside
+          find . -name mnml -type f -executable -not -path './staging/*' -not -path './.git/*' | head -1 | xargs -I{} cp {} staging/mnml
+          chmod +x staging/mnml
+          ls -la staging/
+
+      - name: Install nfpm
+        run: |
+          curl -sL --fail -o nfpm.tar.gz "https://github.com/goreleaser/nfpm/releases/download/v2.40.0/nfpm_2.40.0_Linux_x86_64.tar.gz"
+          tar -xzf nfpm.tar.gz nfpm
+          chmod +x nfpm
+          ./nfpm --version
+
+      - name: Build .deb + .rpm
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          ./nfpm pkg --config nfpm/mnml.yaml --packager deb --target "mnml_${VERSION}_${ARCH}.deb"
+          ./nfpm pkg --config nfpm/mnml.yaml --packager rpm --target "mnml-${VERSION}-1.${{ matrix.rpm_arch }}.rpm"
+          ls -la *.deb *.rpm
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          gh release upload "v${v}" \
+            "mnml_${v}_${{ matrix.arch }}.deb" \
+            "mnml-${v}-1.${{ matrix.rpm_arch }}.rpm" \
+            --clobber
