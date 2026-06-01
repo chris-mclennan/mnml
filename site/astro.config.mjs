@@ -38,6 +38,7 @@ export default defineConfig({
           // Order here reflects intended reading sequence.
           label: 'Manual',
           items: [
+            { label: 'Workspaces & the file rail', slug: 'manual/workspaces' },
             { label: 'Editing', slug: 'manual/editing' },
             { label: 'LSP', slug: 'manual/lsp' },
             { label: 'Git', slug: 'manual/git' },
