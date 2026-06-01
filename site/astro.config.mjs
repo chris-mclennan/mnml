@@ -41,6 +41,7 @@ export default defineConfig({
             { label: 'Editing', slug: 'manual/editing' },
             { label: 'Git', slug: 'manual/git' },
             { label: 'HTTP client', slug: 'manual/http' },
+            { label: 'AI panes', slug: 'manual/ai-panes' },
           ],
         },
         {
