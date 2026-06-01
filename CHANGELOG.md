@@ -51,6 +51,23 @@ capabilities present in the current `main`.
   removed integration is rebuilt as an out-of-process blit-host binary (see
   `docs/INTEGRATIONS.md` for the pattern).
 
+## [0.1.2] - 2026-05-31
+
+### Changed
+
+- macOS `.dmg` artifact now ships with cargo-dist's standard naming
+  (`mnml-rs-<triple>.dmg`).
+- Install page's macOS download button points at the DMG (drag-to-install).
+- Smaller fixes (release pipeline cleanup).
+
+## [0.1.1] - 2026-05-31
+
+### Added
+
+- First `.app` bundle + DMG artifacts shipping with releases.
+- Refactor: `build-app.sh` / `build-dmg.sh` accept `--bin-path` so CI can
+  package the cargo-dist-built binary directly.
+
 ## [0.1.0]
 
 ### Added
