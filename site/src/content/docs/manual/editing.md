@@ -3,6 +3,10 @@ title: Editing
 description: mnml's pluggable input layer — vim and standard editing without `if vim {}` scattered through the codebase.
 ---
 
+![mnml quick tour — vim edit, stage + commit via the git status pane, swap to standard mode, edit again](../../../assets/demos/quick-tour.gif)
+
+A ~45-second tour: open a file from the picker, edit in vim mode, save with `:w`, stage + commit through the git status pane, view the commit graph, swap to standard mode with `:set input=standard`, and finish with a `Ctrl+S` save. Both modes are first-class; the editor is the same buffer underneath.
+
 mnml's editing model rests on one decision: **both vim and standard keymaps are first-class**, swappable at runtime, and the editor never branches on which is active. This page covers what each mode offers, how to switch between them, and the edit primitives both modes share.
 
 ## The pluggable input layer
