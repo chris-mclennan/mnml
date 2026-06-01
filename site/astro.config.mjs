@@ -44,6 +44,7 @@ export default defineConfig({
             { label: 'Git', slug: 'manual/git' },
             { label: 'HTTP client', slug: 'manual/http' },
             { label: 'AI panes', slug: 'manual/ai-panes' },
+            { label: 'Headless & .test', slug: 'manual/headless' },
             { label: 'Settings & configuration', slug: 'manual/settings' },
           ],
         },
