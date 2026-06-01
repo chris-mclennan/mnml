@@ -9,13 +9,20 @@
   min-width: 0;
 }
 
-/* Primary card stacked on top of the (full-width) command pill —
-   long curl/irm URLs need horizontal breathing room. */
+/* Primary card on the left as a slim chip, command pill takes the rest.
+   The code block scrolls horizontally for the long curl/irm URLs. */
 .install-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  display: grid;
+  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
   margin: 0.75rem 0 1rem;
+}
+
+@media (max-width: 700px) {
+  .install-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .install-os-heading {
@@ -34,9 +41,6 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  align-self: flex-start;
-  width: 100%;
-  max-width: 22rem;
   background: var(--sl-color-bg-inline-code);
   border: 1px solid var(--sl-color-hairline);
   border-radius: 0.5rem;
