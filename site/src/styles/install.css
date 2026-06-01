@@ -34,10 +34,13 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
+  align-self: flex-start;
+  width: 100%;
+  max-width: 22rem;
   background: var(--sl-color-bg-inline-code);
   border: 1px solid var(--sl-color-hairline);
   border-radius: 0.5rem;
-  padding: 1.25rem 1rem;
+  padding: 1rem 1.25rem;
   text-align: center;
   text-decoration: none;
   color: inherit;
