@@ -56,17 +56,18 @@ jobs:
       - name: Install nfpm
         run: |
           curl -sL --fail -o nfpm.tar.gz "https://github.com/goreleaser/nfpm/releases/download/v2.40.0/nfpm_2.40.0_Linux_x86_64.tar.gz"
-          tar -xzf nfpm.tar.gz nfpm
-          chmod +x nfpm
-          ./nfpm --version
+          mkdir -p .nfpm-bin
+          tar -xzf nfpm.tar.gz -C .nfpm-bin nfpm
+          chmod +x .nfpm-bin/nfpm
+          .nfpm-bin/nfpm --version
 
       - name: Build .deb + .rpm
         env:
           VERSION: ${{ steps.ver.outputs.version }}
           ARCH: ${{ matrix.arch }}
         run: |
-          ./nfpm pkg --config nfpm/mnml.yaml --packager deb --target "mnml_${VERSION}_${ARCH}.deb"
-          ./nfpm pkg --config nfpm/mnml.yaml --packager rpm --target "mnml-${VERSION}-1.${{ matrix.rpm_arch }}.rpm"
+          .nfpm-bin/nfpm pkg --config nfpm/mnml.yaml --packager deb --target "mnml_${VERSION}_${ARCH}.deb"
+          .nfpm-bin/nfpm pkg --config nfpm/mnml.yaml --packager rpm --target "mnml-${VERSION}-1.${{ matrix.rpm_arch }}.rpm"
           ls -la *.deb *.rpm
 
       - name: Upload to release
