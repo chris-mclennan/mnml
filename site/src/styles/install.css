@@ -1,18 +1,29 @@
 .install-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2.5rem;
   margin: 2rem 0 3rem;
-}
-
-@media (max-width: 900px) {
-  .install-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 .install-column {
   min-width: 0;
+}
+
+/* On wide screens lay out primary card + command pill side-by-side
+   so each OS section reads as a single horizontal row. The format
+   list stays full-width below them. */
+.install-row {
+  display: grid;
+  grid-template-columns: minmax(0, 16rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: stretch;
+  margin: 0.75rem 0 1rem;
+}
+
+@media (max-width: 700px) {
+  .install-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .install-os-heading {
@@ -28,7 +39,9 @@
 }
 
 .install-primary {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   background: var(--sl-color-bg-inline-code);
   border: 1px solid var(--sl-color-hairline);
   border-radius: 0.5rem;
@@ -36,7 +49,7 @@
   text-align: center;
   text-decoration: none;
   color: inherit;
-  margin: 0.75rem 0 1rem;
+  margin: 0;
   transition: border-color 0.15s, transform 0.15s;
 }
 
@@ -60,7 +73,15 @@
 }
 
 .install-column .expressive-code {
-  margin: 0.5rem 0 1.25rem !important;
+  margin: 0 !important;
+}
+
+.install-row .expressive-code {
+  height: 100%;
+}
+
+.install-row .expressive-code pre {
+  height: 100%;
 }
 
 .install-formats {
