@@ -1,0 +1,64 @@
+name: Bump Homebrew tap formula
+
+# Triggered when a release is published in this repo.
+# Checks out chris-mclennan/homebrew-tap, runs the bump script, commits + pushes.
+# Requires a secret `HOMEBREW_TAP_TOKEN` — a fine-grained PAT with
+# Contents:write permission on the chris-mclennan/homebrew-tap repo.
+# Without that secret this job no-ops with a clear log message.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to bump to (no leading v)"
+        required: true
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            v="${{ github.event.inputs.version }}"
+          else
+            v="${{ github.event.release.tag_name }}"
+            v="${v#v}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Bumping to version: $v"
+
+      - name: Skip if no tap token
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN == '' }}
+        run: |
+          echo "::warning::HOMEBREW_TAP_TOKEN secret not set — skipping tap bump."
+          echo "Create a fine-grained PAT with Contents:write on chris-mclennan/homebrew-tap"
+          echo "and add it as repo secret HOMEBREW_TAP_TOKEN to enable this workflow."
+          exit 0
+
+      - name: Checkout tap
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: chris-mclennan/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Run bump script
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        run: bash scripts/bump.sh mnml "${{ steps.ver.outputs.version }}"
+
+      - name: Commit + push
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        run: |
+          git config user.email "chrismclennan@mac.com"
+          git config user.name "release-bot"
+          git add Formula/mnml.rb
+          if git diff --staged --quiet; then
+            echo "No changes (already on latest)."
+            exit 0
+          fi
+          git commit -m "bump mnml to v${{ steps.ver.outputs.version }}"
+          git push
