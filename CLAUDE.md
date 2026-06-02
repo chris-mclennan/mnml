@@ -105,6 +105,24 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**mnml-tickets-jira v0.1 — standalone Jira ticket viewer (2026-06-02):**
+Lands #54, the first of the planned multi-view integration class.
+New sibling repo `chris-mclennan/mnml-tickets-jira` ships a
+standalone ratatui TUI (no mnml dependency yet — blit-host mode
+follows once the data layer settles). Configurable tabs are either
+literal JQL (`jql = "..."`) or auto-resolved from the project's
+release list (`mode = "current_release"|"next_release"` with
+`project` + optional `component`). Default scaffold ships 5 tabs:
+Testing, Current/Next/Mobile releases, Mine. Keys: 1-9 / Tab
+switch · ↑↓/jk move · Enter/o open in browser · r refresh · q quit.
+Auto-refresh every `refresh_interval_secs` (default 60s; 0 disables).
+Config at `~/.config/mnml-tickets-jira.toml`, token at
+`~/.config/mnml-tickets-jira/token`. `--check` prints a resolved
+config + auth report. 4 config-validation tests pass, clippy clean.
+Roadmap: blit-host mode so mnml can `:host.launch` it as a pane,
+right-half ticket detail panel, status-transition picker, in-tab
+search/filter, watcher toggle, per-tab column override.
+
 **Pty tab auto-naming from ticket prefixes (2026-05-31):** Lands #53.
 New `[ui] ticket_prefixes` config knob — when set (e.g. `["TE-",
 "MIX-", "PROJ-"]`), pty session tabs without a user-set name get
