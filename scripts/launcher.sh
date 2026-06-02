@@ -11,32 +11,53 @@
 # Pathing: the executable lives at <Bundle>/Contents/MacOS/mnml-launcher;
 # the actual mnml binary ships at <Bundle>/Contents/Resources/bin/mnml.
 # Resolve the bundle root from $0 so the .app is relocatable.
-
-set -eu
+#
+# NOTE: do NOT use `set -eu`. Finder strips PATH; if we then `source
+# ~/.zshrc` to recover it, any unset-variable reference in the
+# user's zshrc trips `set -u` and the launcher exits silently with
+# no window opening. Both bit us before — keep error handling
+# explicit instead.
 
 bundle_root="$(cd "$(dirname "$0")/../.." && pwd)"
 mnml_bin="$bundle_root/Contents/Resources/bin/mnml"
+log_file="${TMPDIR:-/tmp}/mnml-launcher.log"
 
-# Make sure the user's normal PATH is loaded — Finder/LaunchServices
-# strips $PATH down to a system minimum, so a Homebrew-installed
-# `tmnl` won't be visible unless we source the shell profile.
-if [ -f "$HOME/.zshrc" ]; then
-    # shellcheck disable=SC1091
-    source "$HOME/.zshrc" 2>/dev/null || true
-fi
-if [ -f "$HOME/.bash_profile" ]; then
-    # shellcheck disable=SC1091
-    source "$HOME/.bash_profile" 2>/dev/null || true
-fi
-export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin"
+{
+  echo "----"
+  echo "$(date '+%Y-%m-%d %H:%M:%S') mnml-launcher starting"
+  echo "  bundle_root=$bundle_root"
+  echo "  mnml_bin=$mnml_bin"
+} >> "$log_file" 2>&1
 
+# Recover a useful PATH without sourcing user rc files (those are
+# untrusted code from this launcher's perspective). Static set of the
+# common locations covers Homebrew (Apple Silicon + Intel), cargo,
+# and the inherited system PATH.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+echo "  PATH=$PATH" >> "$log_file"
+
+# Prepend the bundled binary's dir so a packaged mnml wins over a
+# globally-installed one.
+export PATH="$bundle_root/Contents/Resources/bin:$PATH"
+
+# Resolve tmnl, in order: $PATH → /Applications/tmnl.app bundle
+# binary (the GUI installer doesn't always create a CLI symlink, so
+# we hard-code that fallback).
+tmnl_bin=""
 if command -v tmnl >/dev/null 2>&1; then
-    # tmnl present — launch mnml as a native pane inside tmnl.
-    exec tmnl --mnml --editor "$mnml_bin"
+    tmnl_bin="$(command -v tmnl)"
+elif [ -x "/Applications/tmnl.app/Contents/MacOS/tmnl" ]; then
+    tmnl_bin="/Applications/tmnl.app/Contents/MacOS/tmnl"
 fi
 
-# Fallback — no tmnl on PATH. Open Terminal.app with mnml running
-# in $HOME. The user can install tmnl later for the richer UX.
+if [ -n "$tmnl_bin" ]; then
+    echo "  found tmnl at $tmnl_bin — exec tmnl --mnml" >> "$log_file"
+    # tmnl resolves mnml via PATH; we prepended our bundled bin
+    # above so the packaged mnml wins.
+    exec "$tmnl_bin" --mnml
+fi
+
+echo "  tmnl not found anywhere — falling back to Terminal.app" >> "$log_file"
 osascript <<EOF
 tell application "Terminal"
     activate

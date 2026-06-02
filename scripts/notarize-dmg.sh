@@ -83,9 +83,26 @@ cp -R "$APP_PATH" "$WORK_DIR/"
 hdiutil detach "$MOUNT_DIR" >/dev/null
 
 SIGNED_APP="$WORK_DIR/$(basename "$APP_PATH")"
-echo "[notarize] codesigning $(basename "$SIGNED_APP") with team $APPLE_TEAM_ID"
+
+# Resolve the signing identity by SHA1 — robust to whatever name format
+# the cert ended up with ("Developer ID Application: Chris McLennan
+# (7RH5JMR8G3)" vs. "Developer ID Application: (7RH5JMR8G3)" etc.). We
+# imported exactly one Developer ID Application cert into the temp
+# keychain, so a single-match grep is safe.
+IDENTITY_SHA=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+    | grep "Developer ID Application" \
+    | head -1 \
+    | awk '{print $2}')
+if [ -z "$IDENTITY_SHA" ]; then
+    echo "[notarize] error: no Developer ID Application identity found in temp keychain" >&2
+    security find-identity -v -p codesigning "$KEYCHAIN" >&2 || true
+    exit 1
+fi
+
+echo "[notarize] codesigning $(basename "$SIGNED_APP") with identity $IDENTITY_SHA"
 codesign --force --options runtime --deep --timestamp \
-    --sign "Developer ID Application: ($APPLE_TEAM_ID)" \
+    --keychain "$KEYCHAIN" \
+    --sign "$IDENTITY_SHA" \
     "$SIGNED_APP"
 
 # Repackage into a new DMG (atomic replace).
@@ -96,12 +113,39 @@ ln -s /Applications "$DMG_STAGE/Applications"
 VOLNAME="$(basename "$SIGNED_APP" .app) $(basename "$DMG" .dmg | sed -E 's/.*-([0-9.]+).*/\1/')"
 hdiutil create -volname "$VOLNAME" -srcfolder "$DMG_STAGE" -ov -format UDZO "$NEW_DMG" >/dev/null
 
-echo "[notarize] submitting to Apple notary service (this may take 1-5 min)"
-xcrun notarytool submit "$NEW_DMG" \
-    --apple-id "$APPLE_ID" \
-    --password "$APPLE_APP_PASSWORD" \
-    --team-id "$APPLE_TEAM_ID" \
-    --wait
+echo "[notarize] submitting to Apple notary service (30 min timeout)"
+# --wait blocks until verdict, but with NO default timeout — a hung
+# Apple endpoint hangs the whole CI run. Bound it at 30 min: typical
+# verdicts after the first one arrive in 5-15 min; first-time
+# Developer ID submissions get deeper scrutiny and can take 30-60 min.
+# 30 covers the common case; if Apple takes longer the script fails
+# fast and the next run inherits the same submission queue position.
+#
+# --output-format json gets a structured response we can inspect on
+# failure (status, message, submission id for follow-up via `dist
+# notarytool log <id>`).
+NOTARY_OUT="$RUNNER_TEMP/notary-out.json"
+if ! xcrun notarytool submit "$NEW_DMG" \
+        --apple-id "$APPLE_ID" \
+        --password "$APPLE_APP_PASSWORD" \
+        --team-id "$APPLE_TEAM_ID" \
+        --wait \
+        --timeout 30m \
+        --output-format json > "$NOTARY_OUT" 2>&1; then
+    echo "[notarize] notarytool submit FAILED — output below" >&2
+    cat "$NOTARY_OUT" >&2
+    exit 1
+fi
+cat "$NOTARY_OUT"
+# Verify the verdict was "Accepted"; "Invalid" / "Rejected" / etc. mean signing
+# passed but Apple's checks failed — still need to abort.
+STATUS=$(jq -r '.status // empty' "$NOTARY_OUT" 2>/dev/null || echo "")
+if [ "$STATUS" != "Accepted" ]; then
+    echo "[notarize] notarytool returned status: $STATUS" >&2
+    echo "[notarize] full output:" >&2
+    cat "$NOTARY_OUT" >&2
+    exit 1
+fi
 
 echo "[notarize] stapling ticket to DMG"
 xcrun stapler staple "$NEW_DMG"

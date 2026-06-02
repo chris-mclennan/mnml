@@ -74,32 +74,26 @@ func render(_ side: Int) -> Data? {
     )
     ctx.restoreGState()
 
-    // Shell-prompt wordmark — bold monospace `>mnml`. The `>` is the
-    // app's accent color (cool blue for mnml), the name is near-white.
+    // Wordmark — bold monospace `mnml` in the app's accent color
+    // (cool blue), centered on the charcoal bezel. Kept deliberately
+    // simple — no prompt prefix, no second color — so the three
+    // family icons read as accent-color variants of the same shape.
     let nsCtx = NSGraphicsContext(cgContext: ctx, flipped: false)
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = nsCtx
 
     let accent = NSColor(red: 0.35, green: 0.60, blue: 0.95, alpha: 1.0) // mnml: cool blue
-    let textColor = NSColor(red: 0.95, green: 0.96, blue: 0.97, alpha: 1.0)
-    let fontSize = s * 0.32
+    let fontSize = s * 0.42
     let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold)
     let para = NSMutableParagraphStyle()
     para.alignment = .center
 
-    let attributed = NSMutableAttributedString()
-    attributed.append(NSAttributedString(string: "> ", attributes: [
+    let attributed = NSAttributedString(string: "mnml", attributes: [
         .font: font,
         .foregroundColor: accent,
         .paragraphStyle: para,
-        .kern: -fontSize * 0.04,
-    ]))
-    attributed.append(NSAttributedString(string: "mnml", attributes: [
-        .font: font,
-        .foregroundColor: textColor,
-        .paragraphStyle: para,
-        .kern: -fontSize * 0.04,
-    ]))
+        .kern: -fontSize * 0.02,
+    ])
 
     let textSize = attributed.size()
     let textRect = CGRect(
