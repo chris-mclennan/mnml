@@ -1,28 +1,27 @@
 .install-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 2.5rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2rem;
   margin: 2rem 0 3rem;
+}
+
+@media (max-width: 900px) {
+  .install-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .install-column {
   min-width: 0;
 }
 
-/* Primary card on the left as a slim chip, command pill takes the rest.
-   The code block scrolls horizontally for the long curl/irm URLs. */
+/* Within each column: card on top, command pill below, format list below.
+   The command pill scrolls horizontally for long curl/irm URLs. */
 .install-row {
-  display: grid;
-  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
-  gap: 1rem;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
   margin: 0.75rem 0 1rem;
-}
-
-@media (max-width: 700px) {
-  .install-row {
-    grid-template-columns: 1fr;
-  }
 }
 
 .install-os-heading {
