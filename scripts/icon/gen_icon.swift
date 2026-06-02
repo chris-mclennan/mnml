@@ -45,14 +45,12 @@ func render(_ side: Int) -> Data? {
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
     ) else { return nil }
 
-    // Transparent outer margin — macOS expects ~6% padding before the
-    // rounded-square art.
-    ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0))
-    ctx.fill(CGRect(x: 0, y: 0, width: s, height: s))
-
-    // Rounded square body — Big-Sur rounding (~22% of side).
-    let inset = s * 0.06
-    let body = CGRect(x: inset, y: inset, width: s - 2*inset, height: s - 2*inset)
+    // macOS 26 (Tahoe) auto-wraps every app icon in its glass
+    // template. If we leave transparent margin around our art the
+    // template's outer rounded-square shows as a weird bezel
+    // around our charcoal square. Paint full-bleed so the system
+    // template is the *only* outer shape; our art fills it.
+    let body = CGRect(x: 0, y: 0, width: s, height: s)
     let radius = body.width * 0.22
     let path = CGMutablePath()
     path.addRoundedRect(in: body, cornerWidth: radius, cornerHeight: radius)

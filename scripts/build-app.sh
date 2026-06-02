@@ -65,6 +65,14 @@ chmod +x "$APP/Contents/MacOS/mnml-launcher"
 cp "$BIN_PATH" "$APP/Contents/Resources/bin/mnml"
 cp scripts/Info.plist "$APP/Contents/Info.plist"
 
+# Stamp the build timestamp into CFBundleVersion so each rebuild is
+# a distinct version from Finder's perspective. Without this,
+# replacing an .app in /Applications often shows the stale icon /
+# stale launcher because Finder's icon cache keys on bundle version
+# + path. The user-facing CFBundleShortVersionString stays clean.
+BUILD_STAMP="$(date +%Y%m%d%H%M%S)"
+/usr/bin/plutil -replace CFBundleVersion -string "$BUILD_STAMP" "$APP/Contents/Info.plist"
+
 # App icon — built on demand if missing (no external image-tool deps;
 # scripts/icon/gen_icon.swift draws from scratch in AppKit).
 if [ ! -f scripts/icon/AppIcon.icns ]; then
