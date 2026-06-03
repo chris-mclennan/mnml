@@ -2435,6 +2435,10 @@ pub struct App {
     /// any click / `view.welcome` toggles. Persists the dismiss across
     /// launches.
     pub show_welcome: bool,
+    /// Background "is there a newer release?" probe. `None` if the
+    /// user opted out via `[ui] check_updates = false`, or we're in
+    /// blit / headless mode. See `src/update_check.rs`.
+    pub update_check: Option<std::sync::Arc<crate::update_check::UpdateCheck>>,
     /// Startup workspace picker — `Some` while the launch-time
     /// chooser overlay is shown. See `src/ui/startup_picker.rs` for
     /// rationale. Set by `App::new` based on the `--startup-picker`
@@ -3053,6 +3057,7 @@ impl App {
             show_discovery_overlay: false,
             discovery_flash: None,
             show_welcome: false,
+            update_check: None,
             startup_picker: None,
             show_about: false,
             scratch_term: None,
@@ -4107,6 +4112,23 @@ impl App {
     /// chosen workspace's tree section (collapses other extras so the rail
     /// reads as "this is the one I'm working in"). Primary workspace just
     /// gets focused.
+    /// Surface a one-shot toast when the background update-check
+    /// has resolved with a newer version than `CARGO_PKG_VERSION`.
+    /// No-op once the toast has fired this session, when the user
+    /// opted out, or when the background fetch hasn't completed.
+    fn maybe_announce_update(&mut self) {
+        let Some(uc) = self.update_check.as_ref() else {
+            return;
+        };
+        let Some(latest) = uc.take_pending_announcement() else {
+            return;
+        };
+        self.toast(format!(
+            "mnml v{latest} available — {}",
+            crate::update_check::UpdateCheck::release_url(&latest),
+        ));
+    }
+
     pub fn switch_workspace(&mut self, idx: usize) {
         // 0 = primary, 1+ = extras (offset by -1 into `extra_workspaces`).
         self.focus_tree();
@@ -8511,6 +8533,7 @@ impl App {
 
     pub fn tick(&mut self) {
         self.git.tick();
+        self.maybe_announce_update();
         self.drain_now_playing();
         self.drain_mixr_panel();
         self.drain_http_jobs();

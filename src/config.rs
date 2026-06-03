@@ -593,6 +593,18 @@ pub struct UiConfig {
     /// ticket_prefixes = ["TE-", "MIX-", "PROJ-"]
     /// ```
     pub ticket_prefixes: Vec<String>,
+
+    /// When true, mnml pings the GitHub releases API in the
+    /// background on launch and shows a one-shot toast if a
+    /// newer tag exists than the running version. Disabled by
+    /// default in dev builds (Cargo.toml version often runs
+    /// ahead of the latest tag).
+    ///
+    /// ```toml
+    /// [ui]
+    /// check_updates = false  # opt out of the network call
+    /// ```
+    pub check_updates: bool,
 }
 
 /// One entry in the rail's INTEGRATIONS section. Same shape as
@@ -793,6 +805,7 @@ impl Default for Config {
                     },
                 ],
                 ticket_prefixes: Vec::new(),
+                check_updates: true,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
