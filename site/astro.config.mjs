@@ -85,6 +85,7 @@ export default defineConfig({
           label: 'Manual',
           items: [
             { label: 'Workspaces & the file rail', slug: 'manual/workspaces' },
+            { label: 'Startup picker', slug: 'manual/startup-picker' },
             { label: 'Editing', slug: 'manual/editing' },
             { label: 'LSP', slug: 'manual/lsp' },
             { label: 'Git', slug: 'manual/git' },
@@ -95,9 +96,16 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Integrations',
+          items: [
+            { label: 'Jira tickets viewer', slug: 'manual/integrations/tickets-jira' },
+          ],
+        },
+        {
           label: 'Releases',
           items: [
             { label: 'Changelog', slug: 'changelog' },
+            { label: 'Troubleshooting', slug: 'troubleshooting' },
           ],
         },
         {

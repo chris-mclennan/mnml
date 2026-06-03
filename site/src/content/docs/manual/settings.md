@@ -162,6 +162,25 @@ tooltip  = "My private blit-host app"    # optional hover text
 
 Setting the array **replaces** the built-in defaults — copy the defaults from the source if you want to extend rather than replace.
 
+#### Update check
+
+```toml
+[ui]
+check_updates = true              # default — opt out by setting to false
+```
+
+On launch, mnml spawns a background thread that does one HTTP GET against `https://api.github.com/repos/chris-mclennan/mnml/releases/latest`. If the response's `tag_name` differs from `CARGO_PKG_VERSION` (the version baked into the running binary), mnml fires a one-shot toast on the next tick — *"v0.1.3 available — github.com/chris-mclennan/mnml/releases/tag/v0.1.3"*.
+
+A few details worth knowing:
+
+- **Background, non-blocking.** The HTTP call runs on a fresh `std::thread`; mnml never waits for it. The editor is usable from the first frame regardless of network state.
+- **One toast per session.** An `AtomicBool` flips on first surface, so the toast can't re-fire after you dismiss it.
+- **String-equality, not semver.** mnml compares the tag verbatim. A dev build whose `Cargo.toml` runs ahead of the latest tag won't trigger the toast; a build whose version *matches* the tag while having unreleased local changes won't either. False-positives are limited to "tag bumped but the dev version still matches the old tag" — rare in practice.
+- **Opt out:** set `[ui] check_updates = false` and the background thread never spawns. No network call, no toast.
+- **Skipped automatically in `--headless` and `--blit` modes.** Both modes have no toast surface and no statusline chip, so the check is a no-op there even when `check_updates` is `true`.
+
+Source: `src/update_check.rs` (the background fetch + the shared `UpdateCheck` handle) and `src/main.rs` (the gate that decides whether to spawn it).
+
 ### `[editor]` — editing behavior
 
 ```toml
