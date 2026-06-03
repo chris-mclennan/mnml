@@ -14,6 +14,7 @@
 Output assets/demo.gif
 
 Set Shell       "bash"
+Set FontFamily  "JetBrainsMono Nerd Font mnml"
 Set FontSize    14
 Set Width       1280
 Set Height      800
@@ -22,17 +23,29 @@ Set TypingSpeed 75ms
 Set Theme       "Catppuccin Mocha"
 
 # ── setup (not recorded) ─────────────────────────────────────────────────
-# Clear any prior session so the demo launches from a clean state instead
-# of replaying whatever buffers were last open.
+# Capture the binary path from the repo root, then drop into a throwaway
+# temp workspace that's a copy of `src/`. Keeps the demo's `.mnml/` state
+# isolated to `/tmp` so re-recording can't disrupt the user's real
+# `~/Projects/mnml/.mnml/` (session restore data, IPC of any running
+# instance, welcome marker). Mirrors the pattern mixr's tape uses for
+# the same reason.
 Hide
-Type "rm -rf .mnml"
+Type `MNML_BIN="$PWD/target/release/mnml"`
 Enter
-Sleep 400ms
+Type `DEMO_DIR=$(mktemp -d -t mnml-demo) && cp -R src "$DEMO_DIR/" && cd "$DEMO_DIR"`
+Enter
+Sleep 200ms
+# Wipe the scrollback so the resumed recording starts on a clean prompt
+# (Hide stops capturing frames, but doesn't clear what the shell echoed).
+Type `clear`
+Enter
+Sleep 100ms
 Show
 
 # ── launch ───────────────────────────────────────────────────────────────
-# mnml opens on its own source tree — a real, rich Rust workspace.
-Type "./target/release/mnml ."
+# mnml opens on the temp copy of its own source tree — a real, rich Rust
+# workspace, but disposable.
+Type `"$MNML_BIN" .`
 Sleep 500ms
 Enter
 Sleep 3.5s
