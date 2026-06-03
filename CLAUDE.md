@@ -105,6 +105,34 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Startup workspace picker + update-available check + nightly bundle (2026-06-03):**
+Lands #76, #77, #78.
+
+#76 — `--startup-picker` CLI flag (also `MNML_STARTUP_PICKER=1`) shows a
+JetBrains-style chooser overlay on launch: [1] New file (current workspace),
+[2] Open file… (`view.discovery`), [3–9] configured `[[workspaces]]` rows.
+Keys: `↑↓`/`jk` move · `Enter` commit · `1`–`9` direct jump · `Esc`/`q`
+skip. New modules `src/app/startup_picker.rs` + `src/ui/startup_picker.rs`.
+Both app launchers export `TMNL_LAUNCH_ARGS="--input standard --startup-picker"`
+so clicking the icon from Finder lands on the chooser instead of `$HOME`.
+
+#77 — background std thread GETs `api.github.com/repos/chris-mclennan/mnml/
+releases/latest` on launch, parses `tag_name`, compares to
+`CARGO_PKG_VERSION`. `App::tick` fires a one-shot toast with the release URL
+when a newer tag is found. Opt-out: `[ui] check_updates = false`. Skipped in
+headless and blit modes. New module `src/update_check.rs`; 3 unit tests.
+
+#78 — `./scripts/build-app.sh --nightly` produces `target/mnml-nightly.app`
+(bundle ID `sh.mnml.app.nightly`). Nightly launcher always execs
+`~/Projects/mnml/target/release/mnml` — no bundled binary. Icon inverted:
+blue background + charcoal wordmark vs. stable's charcoal + blue. Coexists
+with stable in `/Applications`. `build-app.sh` also now stamps a per-build
+`CFBundleVersion` timestamp (fixes stale Finder icon cache), strips icon
+transparent margin (avoids Tahoe glass-template grey bezel), bumps
+`LSMinimumSystemVersion` to `11.0` (removes misleading Tahoe Intel-app
+warning), and hardens `launcher.sh`: no `set -eu`/zshrc sourcing, explicit
+static PATH, `/Applications/tmnl.app` fallback.
+
 **mnml-tickets-jira v0.1 — standalone Jira ticket viewer (2026-06-02):**
 Lands #54, the first of the planned multi-view integration class.
 New sibling repo `chris-mclennan/mnml-tickets-jira` ships a

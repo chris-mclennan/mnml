@@ -13,6 +13,40 @@ block); this file is the curated, user-facing summary.
 mnml has not yet had a tagged release. The `0.1.0` line below summarises the
 capabilities present in the current `main`.
 
+### Added (2026-06-02)
+
+- **Startup workspace picker** (`#76`) — `--startup-picker` CLI flag (or
+  `MNML_STARTUP_PICKER=1` env var) shows a JetBrains-style chooser on launch:
+  [1] New file (current workspace), [2] Open file… (`view.discovery`), [3–9]
+  configured `[[workspaces]]` rows. Keys: `↑↓`/`jk` move, `Enter` commit,
+  `1`–`9` direct jump, `Esc`/`q` skip. The `mnml.app` and `mnml-nightly.app`
+  launchers export `TMNL_LAUNCH_ARGS="--input standard --startup-picker"` so
+  clicking the icon from Finder lands on the chooser instead of `$HOME`.
+  New modules: `src/app/startup_picker.rs`, `src/ui/startup_picker.rs`.
+- **Update-available check** (`#77`) — on launch (skipped in headless/blit
+  modes; opt-out via `[ui] check_updates = false`), a background std thread
+  GETs `api.github.com/repos/chris-mclennan/mnml/releases/latest`, parses
+  `tag_name`, and compares it to `CARGO_PKG_VERSION`. When a newer tag is
+  found, `App::tick` fires a one-shot toast with the release URL. New module:
+  `src/update_check.rs`.
+- **Nightly app bundle** (`#78`) — `./scripts/build-app.sh --nightly` produces
+  `target/mnml-nightly.app` with bundle ID `sh.mnml.app.nightly`. Coexists
+  with the stable bundle in `/Applications`. The nightly launcher always execs
+  `~/Projects/mnml/target/release/mnml` (latest local `cargo build --release`)
+  rather than shipping a bundled binary. Icon: blue background + charcoal
+  wordmark (stable is the inverse).
+
+### Changed (2026-06-02)
+
+- **`build-app.sh` improvements** — stamps `CFBundleVersion` with a per-build
+  timestamp so Finder picks up icon/launcher changes without `killall Dock`.
+  Strips icon transparent margin to avoid macOS Tahoe's glass-template grey
+  bezel. Bumps `LSMinimumSystemVersion` from `10.14` to `11.0` (removes the
+  misleading Tahoe "Support Ending for Intel-based Apps" warning that triggers
+  on any pre-Big-Sur app). Hardens `scripts/launcher.sh`: no `set -eu` + zshrc
+  sourcing; explicit static PATH; falls back to
+  `/Applications/tmnl.app/Contents/MacOS/tmnl` when no CLI symlink is present.
+
 ### Added (2026-05-24)
 
 - **Blit-host integration** (`Pane::BlitHost`) — `:host.launch <binary> [args…]`

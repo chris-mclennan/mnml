@@ -191,7 +191,9 @@ The complete, organised feature inventory. For the front-door overview see
   binary as a `Pane::BlitHost`; the binary renders into the pane over a Unix
   socket using the `tmnl-protocol` wire format. No changes to mnml needed to add
   an integration — drop a `[[ui.launcher_icon]]` entry in config. `Ctrl+E`
-  returns focus to the split tree.
+  returns focus to the split tree. The first integration of this class is
+  `mnml-tickets-jira`, a standalone Jira ticket viewer that can run both
+  independently and hosted inside mnml via `:host.launch mnml-tickets-jira`.
 - **`tmnl` integration** — runs standalone in any terminal; gains native-pane
   hand-off when hosted inside the [`tmnl`](https://github.com/chris-mclennan/tmnl)
   terminal. `:tmnl.open-tab <command>` (alias `:tmnl.tab`) asks tmnl to open a
@@ -208,6 +210,15 @@ The complete, organised feature inventory. For the front-door overview see
   `command`, `color`, `tooltip`). The `command` field accepts a registered
   command id or a colon-prefixed ex-cmdline string (`:host.launch binary`).
   Setting the key replaces the built-in Claude Code + Codex defaults.
+- **Startup workspace picker** — `--startup-picker` (or `MNML_STARTUP_PICKER=1`)
+  shows a chooser overlay on launch: [1] New file, [2] Open file…, [3–9]
+  configured `[[workspaces]]` rows. Keys: `↑↓`/`jk` move, `Enter` commit,
+  `1`–`9` direct jump, `Esc`/`q` skip. The `mnml.app` launcher enables this by
+  default so Finder launches land on the chooser rather than `$HOME`.
+- **Update-available check** — on launch, a background thread queries
+  `api.github.com/repos/chris-mclennan/mnml/releases/latest` and fires a
+  one-shot toast when a newer release tag is found. Opt out with
+  `[ui] check_updates = false`. Skipped in headless and blit modes.
 
 ## Languages
 

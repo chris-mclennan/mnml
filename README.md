@@ -74,6 +74,12 @@ cargo install mnml-rs        # the crate is mnml-rs; the binary it installs is `
 
 Or grab a build from the [releases page](https://github.com/chris-mclennan/mnml/releases).
 
+**macOS app bundles** — `./scripts/build-app.sh release` produces `target/mnml.app`
+(stable); `./scripts/build-app.sh --nightly` produces `target/mnml-nightly.app`
+(always execs your latest `cargo build --release`). Both coexist in `/Applications`.
+The launcher integrates with `tmnl` if present, and shows the startup workspace
+picker by default.
+
 A [Nerd Font](https://www.nerdfonts.com/) is recommended for devicons and
 powerline glyphs. Without one, pass `--ascii` (or set `[ui] ascii_icons = true`)
 for a plain-text fallback.
@@ -85,6 +91,7 @@ mnml                       # open the current directory
 mnml ~/code/project        # open a specific workspace
 mnml --input vim           # start in vim mode (default is standard)
 mnml --ascii               # no Nerd Font? plain-text icons
+mnml --startup-picker      # show a workspace chooser on launch
 ```
 
 Once it's open:
