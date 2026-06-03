@@ -4,3 +4,4 @@
 .claude/cache/
 .DS_Store
 .local/
+.claude/scheduled_tasks.lock
