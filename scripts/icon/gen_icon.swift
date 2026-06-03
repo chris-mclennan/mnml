@@ -17,6 +17,12 @@ let iconsetDir = URL(fileURLWithPath: CommandLine.arguments.count > 1
     ? CommandLine.arguments[1]
     : "scripts/icon/AppIcon.iconset")
 
+// Second arg "nightly" inverts the palette — accent becomes the
+// background, charcoal becomes the wordmark. Same shape so the
+// nightly + stable icons read as inverted variants of one design
+// at a glance in Cmd+Tab / dock.
+let isNightly = CommandLine.arguments.count > 2 && CommandLine.arguments[2] == "nightly"
+
 try? FileManager.default.createDirectory(at: iconsetDir, withIntermediateDirectories: true)
 
 let sizes: [(String, Int)] = [
@@ -55,8 +61,19 @@ func render(_ side: Int) -> Data? {
     let path = CGMutablePath()
     path.addRoundedRect(in: body, cornerWidth: radius, cornerHeight: radius)
     ctx.addPath(path)
-    let topColor = CGColor(red: 0.18, green: 0.20, blue: 0.24, alpha: 1.0)
-    let botColor = CGColor(red: 0.10, green: 0.12, blue: 0.14, alpha: 1.0)
+    // Stable: charcoal gradient bezel. Nightly: accent-color
+    // gradient (slightly brighter top, slightly darker bottom)
+    // so the wordmark sits on a vibrant ground.
+    let topColor: CGColor
+    let botColor: CGColor
+    if isNightly {
+        // Brightened mnml blue at top, darkened at bottom.
+        topColor = CGColor(red: 0.45, green: 0.70, blue: 1.00, alpha: 1.0)
+        botColor = CGColor(red: 0.25, green: 0.50, blue: 0.85, alpha: 1.0)
+    } else {
+        topColor = CGColor(red: 0.18, green: 0.20, blue: 0.24, alpha: 1.0)
+        botColor = CGColor(red: 0.10, green: 0.12, blue: 0.14, alpha: 1.0)
+    }
     let gradient = CGGradient(
         colorsSpace: cs,
         colors: [topColor, botColor] as CFArray,
@@ -80,7 +97,11 @@ func render(_ side: Int) -> Data? {
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = nsCtx
 
-    let accent = NSColor(red: 0.35, green: 0.60, blue: 0.95, alpha: 1.0) // mnml: cool blue
+    // Stable: accent-color wordmark on charcoal. Nightly: charcoal
+    // wordmark on accent ground (inverted).
+    let accent = isNightly
+        ? NSColor(red: 0.10, green: 0.12, blue: 0.16, alpha: 1.0) // near-black
+        : NSColor(red: 0.35, green: 0.60, blue: 0.95, alpha: 1.0) // mnml: cool blue
     let fontSize = s * 0.42
     let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold)
     let para = NSMutableParagraphStyle()
