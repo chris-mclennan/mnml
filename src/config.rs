@@ -614,12 +614,21 @@ pub struct UiConfig {
 /// ```toml
 /// [[ui.integration_icon]]
 /// id       = "jira"
-/// glyph    = "\u{F0411}"             # nf-md-jira
+/// glyph    = "\U000F0411"            # nf-md-jira (TOML 8-digit form)
 /// fallback = "J"
 /// command  = ":host.launch jira-viewer"
 /// color    = "blue"
 /// tooltip  = "Open Jira board"
 /// ```
+///
+/// **TOML escape syntax for nerd-font codepoints**: TOML uses
+/// `"\uXXXX"` (4 hex digits, BMP only) or `"\UXXXXXXXX"` (8 hex
+/// digits, full Unicode, zero-padded). Do NOT use Rust's
+/// `"\u{XXXXX}"` brace form — TOML will reject it as `invalid
+/// unicode 4-digit hex code`. Nerd-Fonts v3 codepoints land in the
+/// supplemental range (U+F0000–U+F1FFF), so they almost always
+/// need the 8-digit form: `nf-md-jira` = `"\U000F0411"`,
+/// `nf-md-music` = `"\U000F1011"`, etc.
 #[derive(Debug, Clone)]
 pub struct IntegrationIcon {
     pub id: String,
@@ -636,7 +645,7 @@ pub struct IntegrationIcon {
 /// # An icon for a private blit-host binary you've built locally:
 /// [[ui.launcher_icon]]
 /// id       = "myapp"
-/// glyph    = "\u{F0668}"        # nf-md-test-tube; nerd-fonts
+/// glyph    = "\U000F0668"       # nf-md-test-tube (TOML 8-digit form)
 /// fallback = "MA"               # when --ascii / [ui] ascii_icons = true
 /// command  = ":host.launch myapp"  # leading `:` ⇒ ex-cmdline string
 /// color    = "teal"             # theme slot name for the chip bg
@@ -645,7 +654,7 @@ pub struct IntegrationIcon {
 /// # Or fire any registered command directly (no leading `:`):
 /// [[ui.launcher_icon]]
 /// id       = "mixr"
-/// glyph    = "\u{F1011}"        # nf-md-music
+/// glyph    = "\U000F1011"       # nf-md-music (TOML 8-digit form)
 /// fallback = "♪"
 /// command  = "mixr.show"
 /// color    = "purple"
