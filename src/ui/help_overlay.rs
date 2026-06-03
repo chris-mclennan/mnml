@@ -52,11 +52,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     frame.render_widget(block, area);
 
     let rows = build_help(&app.keymap);
-    let scroll = app
-        .help_overlay
-        .as_ref()
-        .map(|s| s.scroll)
-        .unwrap_or(0);
+    let scroll = app.help_overlay.as_ref().map(|s| s.scroll).unwrap_or(0);
 
     // Compute key-column width — wide enough for the widest chord
     // string in the visible window, capped so the title column stays

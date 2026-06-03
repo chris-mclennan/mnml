@@ -35,9 +35,9 @@ mod ex_commands;
 mod find;
 mod git;
 mod grep;
+pub(crate) mod help;
 mod http;
 mod layout;
-pub(crate) mod help;
 mod lsp;
 mod macros_marks;
 mod mixr;
@@ -48,7 +48,10 @@ mod playwright;
 mod session;
 pub(crate) mod settings;
 mod snippets;
+mod startup_picker;
 mod tmnl;
+
+pub use startup_picker::{StartupPickerAction, StartupPickerState};
 
 const TOAST_TTL: Duration = Duration::from_secs(4);
 const TOAST_STACK_MAX: usize = 5;
@@ -2432,6 +2435,12 @@ pub struct App {
     /// any click / `view.welcome` toggles. Persists the dismiss across
     /// launches.
     pub show_welcome: bool,
+    /// Startup workspace picker — `Some` while the launch-time
+    /// chooser overlay is shown. See `src/ui/startup_picker.rs` for
+    /// rationale. Set by `App::new` based on the `--startup-picker`
+    /// CLI flag or `MNML_STARTUP_PICKER=1` env var, cleared on the
+    /// user's first selection / Esc.
+    pub startup_picker: Option<StartupPickerState>,
     /// About overlay — `view.about` / `:about` toggle. Shows the build
     /// SHA + workspace metadata (theme, repos, LSP servers, tab/pane
     /// counts). In-memory only, dismisses on Esc / click outside.
@@ -3044,6 +3053,7 @@ impl App {
             show_discovery_overlay: false,
             discovery_flash: None,
             show_welcome: false,
+            startup_picker: None,
             show_about: false,
             scratch_term: None,
             tree_drag: None,

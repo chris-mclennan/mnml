@@ -51,9 +51,12 @@ elif [ -x "/Applications/tmnl.app/Contents/MacOS/tmnl" ]; then
 fi
 
 if [ -n "$tmnl_bin" ]; then
-    echo "  found tmnl at $tmnl_bin — exec tmnl --mnml" >> "$log_file"
+    echo "  found tmnl at $tmnl_bin — exec tmnl --mnml --startup-picker" >> "$log_file"
     # tmnl resolves mnml via PATH; we prepended our bundled bin
-    # above so the packaged mnml wins.
+    # above so the packaged mnml wins. Override tmnl's default
+    # arg list so `--startup-picker` reaches mnml — without this
+    # the user lands directly in $HOME and skips the chooser.
+    export TMNL_LAUNCH_ARGS="--input standard --startup-picker"
     exec "$tmnl_bin" --mnml
 fi
 

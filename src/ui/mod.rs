@@ -53,6 +53,7 @@ pub mod github_pull_requests_view;
 pub mod gitlab_merge_requests_view;
 pub mod gitlab_pipelines_view;
 pub mod grep_view;
+pub mod help_overlay;
 pub mod hover;
 pub mod icons;
 pub mod image_view;
@@ -70,9 +71,9 @@ pub mod rename_preview_overlay;
 pub mod request_view;
 pub mod scratch_term_view;
 pub mod scrollbar;
-pub mod help_overlay;
 pub mod settings_overlay;
 pub mod signature;
+pub mod startup_picker;
 pub mod statusline;
 pub mod tests_view;
 pub mod theme;
@@ -523,6 +524,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     settings_overlay::draw(frame, app, area);
     // Help overlay — `?` / view.help (auto-generated keymap reference).
     help_overlay::draw(frame, app, area);
+    // Startup picker — drawn last among modal overlays so it sits on
+    // top of welcome/about/etc. when launched from the .app.
+    startup_picker::draw(frame, app, area);
     // …and the flash highlight paints last so it can sit on top of even
     // the discovery panel (if the user picks a category whose rect lies
     // beneath the panel, the highlight will still flash through).

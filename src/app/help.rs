@@ -25,10 +25,7 @@ pub struct HelpOverlayState {
 #[derive(Debug, Clone)]
 pub enum HelpRow {
     Section(&'static str),
-    Binding {
-        keys: String,
-        title: &'static str,
-    },
+    Binding { keys: String, title: &'static str },
 }
 
 /// Build the displayed rows by walking the command registry, grouping
@@ -108,10 +105,19 @@ mod tests {
         let km = Keymap::build(&cfg);
         let rows = build_help(&km);
         // At least one section + one binding row.
-        let sections = rows.iter().filter(|r| matches!(r, HelpRow::Section(_))).count();
-        let bindings = rows.iter().filter(|r| matches!(r, HelpRow::Binding { .. })).count();
+        let sections = rows
+            .iter()
+            .filter(|r| matches!(r, HelpRow::Section(_)))
+            .count();
+        let bindings = rows
+            .iter()
+            .filter(|r| matches!(r, HelpRow::Binding { .. }))
+            .count();
         assert!(sections > 0, "expected at least one section header");
-        assert!(bindings > 10, "expected the command registry to be substantial");
+        assert!(
+            bindings > 10,
+            "expected the command registry to be substantial"
+        );
     }
 
     #[test]
@@ -124,6 +130,9 @@ mod tests {
             HelpRow::Binding { keys, .. } => !keys.is_empty(),
             _ => false,
         });
-        assert!(any_with_key, "expected at least one binding row to have a chord");
+        assert!(
+            any_with_key,
+            "expected at least one binding row to have a chord"
+        );
     }
 }

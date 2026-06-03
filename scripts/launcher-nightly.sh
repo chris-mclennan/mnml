@@ -41,7 +41,8 @@ elif [ -x "/Applications/tmnl.app/Contents/MacOS/tmnl" ]; then
 fi
 
 if [ -n "$tmnl_bin" ]; then
-    echo "  found tmnl at $tmnl_bin — exec tmnl --mnml" >> "$log_file"
+    echo "  found tmnl at $tmnl_bin — exec tmnl --mnml --startup-picker" >> "$log_file"
+    export TMNL_LAUNCH_ARGS="--input standard --startup-picker"
     exec "$tmnl_bin" --mnml
 fi
 

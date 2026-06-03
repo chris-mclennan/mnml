@@ -89,6 +89,7 @@ struct TuiArgs {
     input_style: Option<String>,
     ascii: bool,
     config_path: Option<PathBuf>,
+    startup_picker: bool,
 }
 
 fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
@@ -98,6 +99,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
     let mut input_style = None;
     let mut ascii = false;
     let mut config_path = None;
+    let mut startup_picker = false;
 
     let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
@@ -120,12 +122,15 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
                     it.next().ok_or("--config needs a path".to_string())?,
                 ));
             }
+            "--startup-picker" => startup_picker = true,
             "-h" | "--help" => {
                 println!(
                     "mnml — NvChad-style terminal IDE\n\n\
                      usage:\n  \
-                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--blit SOCKET]\n  \
-                       mnml run FILE [--env NAME] [--workspace DIR]\n"
+                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--blit SOCKET] [--startup-picker]\n  \
+                       mnml run FILE [--env NAME] [--workspace DIR]\n\n\
+                     flags:\n  \
+                       --startup-picker    show a JetBrains-style chooser overlay on launch\n                                       (also enabled by MNML_STARTUP_PICKER=1)\n"
                 );
                 std::process::exit(0);
             }
@@ -158,6 +163,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
         input_style,
         ascii,
         config_path,
+        startup_picker,
     })
 }
 
@@ -197,6 +203,12 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // First-launch onboarding overlay. If the user has never dismissed it
     // in this workspace (no `.mnml/.welcomed` marker), open it.
     app.maybe_show_welcome_on_launch();
+    // Startup workspace picker (--startup-picker / MNML_STARTUP_PICKER=1).
+    // Shown by the mnml.app launcher to give a JetBrains-style "what
+    // do you want to open" chooser when launched from Finder.
+    if mnml::app::App::want_startup_picker(args.startup_picker) {
+        app.startup_picker = Some(mnml::app::StartupPickerState::default());
+    }
 
     let result = if let Some(socket) = &args.blit {
         mnml::blit::run(app, socket)

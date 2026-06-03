@@ -171,6 +171,23 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
 
 // ─── key dispatch (shared with headless/IPC) ────────────────────────
 
+/// Translate a startup-picker selection into the corresponding command
+/// or App method. Called from `dispatch_key` after the user commits.
+fn fire_startup_action(action: crate::app::StartupPickerAction, app: &mut App) {
+    use crate::app::StartupPickerAction::*;
+    match action {
+        NewFile => {
+            crate::command::run("file.new", app);
+        }
+        OpenFile => {
+            crate::command::run("view.discovery", app);
+        }
+        SwitchWorkspace(idx) => {
+            app.switch_workspace(idx);
+        }
+    }
+}
+
 pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // Any keystroke cancels a pending hover tooltip / divider highlight —
     // the user moved on to typing, the hover-cue is no longer relevant.
@@ -225,6 +242,35 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         }
         if let Some(ev) = crate::mixr_host::crossterm_key_to_input(&key) {
             p.send_input(ev);
+        }
+        return;
+    }
+    // Startup picker intercept — when the launch-time chooser is up,
+    // it owns the keyboard. Esc / q dismisses; arrows + digits move /
+    // commit; everything else is swallowed so it doesn't leak through
+    // to the underlying editor.
+    if app.startup_picker.is_some() {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.dismiss_startup_picker();
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.startup_picker_move(-1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.startup_picker_move(1);
+            }
+            KeyCode::Enter => {
+                if let Some(action) = app.startup_picker_commit() {
+                    fire_startup_action(action, app);
+                }
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+                if let Some(action) = app.startup_picker_press_digit(c) {
+                    fire_startup_action(action, app);
+                }
+            }
+            _ => {}
         }
         return;
     }
