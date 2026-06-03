@@ -215,6 +215,19 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     if app.config.ui.check_updates && args.blit.is_none() && !args.headless {
         app.update_check = Some(mnml::update_check::UpdateCheck::spawn());
     }
+    // First-launch "have you met the rest of the family?" — fires a
+    // one-shot toast per missing sibling (mixr / tmnl), then marks
+    // `~/.config/mnml/.family-offer-shown` so we don't pester. Skipped
+    // in headless / blit modes (no toast surface that makes sense).
+    if args.blit.is_none()
+        && !args.headless
+        && let Some(offer) = mnml::family_offer::FamilyOffer::maybe_new()
+    {
+        for line in offer.hint_lines() {
+            app.toast(line);
+        }
+        offer.mark_shown();
+    }
 
     let result = if let Some(socket) = &args.blit {
         mnml::blit::run(app, socket)
