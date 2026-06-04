@@ -427,15 +427,12 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
             std::fs::write(&p, content).map_err(|e| format!("write {rel}: {e}"))
         }
         Step::Open(rel) => {
+            // `App::open_path` is the explicit-open path — pinned by
+            // default. (The tree-click preview behavior lives on
+            // `open_path_preview` and is only invoked by the tree
+            // click handler.) So no extra `is_preview = false` cleanup
+            // is needed here.
             app.open_path(&workspace.join(rel));
-            // .test `open` is an explicit pinned-open, not a tree-click —
-            // clear the preview flag the standard-mode input_style sets
-            // so the next `open` doesn't replace this buffer in-place.
-            if let Some(idx) = app.active
-                && let Some(crate::pane::Pane::Editor(b)) = app.panes.get_mut(idx)
-            {
-                b.is_preview = false;
-            }
             Ok(())
         }
         Step::Key(ev) => {

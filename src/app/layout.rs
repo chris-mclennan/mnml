@@ -182,10 +182,37 @@ impl App {
         self.reveal_pane(new_id);
     }
 
-    /// Open `path` in the focused leaf. If it's already an open buffer it's
-    /// revealed/refocused; otherwise a new buffer is opened. The buffer the
-    /// focused leaf was showing stays open as a background tab.
+    /// Open `path` in the focused leaf as a pinned tab. If it's already an
+    /// open buffer it's revealed/refocused; otherwise a new buffer is
+    /// opened. The buffer the focused leaf was showing stays open as a
+    /// background tab.
+    ///
+    /// This is the default — explicit-open semantics. Use
+    /// [`Self::open_path_preview`] from the tree-click handler (and only
+    /// there) when you want VS Code's preview-tab behavior in standard
+    /// input style.
     pub fn open_path(&mut self, path: &Path) {
+        self.open_path_inner(path, false);
+    }
+
+    /// Open `path` from a tree-click. In **standard** input style this
+    /// is the preview-tab gesture: the buffer is marked
+    /// `is_preview = true` and clicking a *different* file in the tree
+    /// replaces the preview slot rather than adding a new tab. First
+    /// edit promotes it to a regular pinned tab.
+    ///
+    /// In **vim** input style this behaves identically to
+    /// [`Self::open_path`] (every file is its own tab).
+    ///
+    /// Only the tree-click handler in `ui::tree_view` (routed via
+    /// `tui.rs`) should call this. Every other caller — `:edit`, picker
+    /// dispatch, grep hits, definition jumps, session restore — wants
+    /// pinned semantics.
+    pub fn open_path_preview(&mut self, path: &Path) {
+        self.open_path_inner(path, true);
+    }
+
+    fn open_path_inner(&mut self, path: &Path, preview: bool) {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         // Image files get their own viewer pane instead of being loaded as
         // a text buffer (the binary contents would render as gibberish).
@@ -237,21 +264,24 @@ impl App {
                 let undo_path = crate::editor::undo_path_for(&self.workspace, &path);
                 crate::editor::load_history_from(&mut buf.editor, &undo_path);
                 let text = buf.editor.text().to_string();
-                // VS Code preview-mode: when input_style is `standard`,
-                // a tree-click opens the buffer as `is_preview = true`
-                // and *replaces* any existing preview pane's buffer
-                // instead of opening a new tab next to it. The first
-                // edit will promote it (set is_preview = false), and
-                // a double-click in the tree also pins it immediately.
-                // vim users skip this entirely — every file gets its
-                // own buffer regardless.
+                // VS Code preview-mode: when this call is a tree-click
+                // (`preview = true`) AND input_style is `standard`, the
+                // buffer opens as `is_preview = true` and *replaces*
+                // any existing preview pane's buffer instead of opening
+                // a new tab next to it. The first edit promotes it (set
+                // is_preview = false); a double-click in the tree also
+                // pins it immediately. Vim users skip the lookup
+                // entirely — every file gets its own buffer regardless.
+                // Explicit opens (`:edit`, picker, grep, etc.) call
+                // `open_path` (preview = false) and never engage this.
                 let is_standard = self.config.editor.input_style == "standard";
+                let preview_active = preview && is_standard;
                 // Preview-replacement is scoped to the *active layout* — a
                 // preview tab in another tab page is not the target. Also
                 // requires the active leaf itself to point at a preview
                 // (so clicking a file from the tree in an empty new tab
                 // opens fresh instead of stealing from another tab).
-                let preview_idx = if is_standard {
+                let preview_idx = if preview_active {
                     self.active.filter(|&id| {
                         self.layout().contains(id)
                             && matches!(self.panes.get(id), Some(Pane::Editor(b)) if b.is_preview)
@@ -259,7 +289,7 @@ impl App {
                 } else {
                     None
                 };
-                buf.is_preview = is_standard;
+                buf.is_preview = preview_active;
                 let new_id = if let Some(idx) = preview_idx {
                     // Tell the LSP the old file is closing before we
                     // replace it.
@@ -1292,6 +1322,79 @@ mod layout_tests {
         assert_eq!(app.panes.len(), 2);
         assert_eq!(app.active, Some(0));
         assert_eq!(app.focus, Focus::Pane);
+    }
+
+    /// Standard-mode fixture for the preview-tab tests below — same as
+    /// `app_with_files` but leaves `input_style = "standard"` (the
+    /// default) so the preview path is active.
+    fn app_with_files_standard() -> (tempfile::TempDir, App) {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("a.txt"), "alpha").unwrap();
+        std::fs::write(d.path().join("b.txt"), "beta").unwrap();
+        std::fs::write(d.path().join("c.txt"), "gamma").unwrap();
+        let cfg = Config::default();
+        assert_eq!(cfg.editor.input_style, "standard");
+        let app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        (d, app)
+    }
+
+    /// `open_path` is the *explicit* open path — pinned in both input
+    /// styles. Consecutive `open_path` calls should always grow the
+    /// pane list, never replace-in-place, regardless of input style.
+    /// Regression coverage for the `:edit foo` then `:edit bar` bug.
+    #[test]
+    fn open_path_is_pinned_under_standard_input_style() {
+        let (d, mut app) = app_with_files_standard();
+        app.open_path(&d.path().join("a.txt"));
+        app.open_path(&d.path().join("b.txt"));
+        app.open_path(&d.path().join("c.txt"));
+        // Three explicit opens ⇒ three panes. (The pre-fix behavior
+        // collapsed all three into one preview slot.)
+        assert_eq!(app.panes.len(), 3);
+        for (i, p) in app.panes.iter().enumerate() {
+            let Pane::Editor(b) = p else {
+                panic!("expected Editor pane at index {i}");
+            };
+            assert!(
+                !b.is_preview,
+                "explicit open must not be preview (pane {i})"
+            );
+        }
+    }
+
+    /// `open_path_preview` is the tree-click gesture. Under standard
+    /// input style it sets `is_preview = true` and replaces the active
+    /// preview slot in place — a single preview pane survives across
+    /// multiple tree-clicks.
+    #[test]
+    fn open_path_preview_replaces_in_place_under_standard() {
+        let (d, mut app) = app_with_files_standard();
+        app.open_path_preview(&d.path().join("a.txt"));
+        app.open_path_preview(&d.path().join("b.txt"));
+        app.open_path_preview(&d.path().join("c.txt"));
+        // Three preview-opens ⇒ one pane, holding c.txt.
+        assert_eq!(app.panes.len(), 1);
+        let Some(Pane::Editor(b)) = app.panes.first() else {
+            panic!("expected an Editor pane");
+        };
+        assert!(b.is_preview);
+        assert!(
+            b.path.as_ref().unwrap().ends_with("c.txt"),
+            "expected c.txt, got {:?}",
+            b.path
+        );
+    }
+
+    /// Mixing `open_path_preview` then `open_path` should not delete
+    /// the preview — explicit pins are additive. (Edge case: a user
+    /// previews a.txt from the tree, then `:edit b.txt`. We want both
+    /// open, not b replacing a.)
+    #[test]
+    fn explicit_open_after_preview_keeps_both() {
+        let (d, mut app) = app_with_files_standard();
+        app.open_path_preview(&d.path().join("a.txt"));
+        app.open_path(&d.path().join("b.txt"));
+        assert_eq!(app.panes.len(), 2);
     }
 
     #[test]

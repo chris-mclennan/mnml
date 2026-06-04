@@ -4677,7 +4677,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                                 }
                                 app.tree.toggle_current();
                             } else {
-                                app.open_path(&row.path);
+                                // Single tree-click on a file = the
+                                // VS Code preview-tab gesture under
+                                // standard input_style. (Vim style
+                                // behaves identically to `open_path`.)
+                                app.open_path_preview(&row.path);
                             }
                         }
                     }
