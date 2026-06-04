@@ -26,6 +26,10 @@
   if: runner.os == 'Linux'
   shell: bash
   run: |
-    sudo apt-get update
-    sudo apt-get install -y \
+    # cross-rs containers run as root without sudo; bare ubuntu runners
+    # need sudo. Detect either.
+    SUDO=
+    if command -v sudo >/dev/null 2>&1; then SUDO=sudo; fi
+    $SUDO apt-get update
+    $SUDO apt-get install -y \
       libfontconfig1-dev libssl-dev pkg-config
