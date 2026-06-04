@@ -236,4 +236,77 @@ mod tests {
             ImageFormat::Other
         );
     }
+
+    /// Build an in-memory image of `format`, then verify
+    /// `ensure_png_bytes` decodes + re-encodes it as a valid PNG.
+    /// Round-trip coverage that the `image` crate features pulled in
+    /// (jpeg / gif / webp / bmp) actually decode at runtime — without
+    /// this, a feature-flag regression in `Cargo.toml` would silently
+    /// strand non-PNG sources.
+    fn round_trip(format: image::ImageFormat, our_format: ImageFormat) {
+        // 2×2 solid-red RGB image — the smallest meaningful payload.
+        let raw = image::RgbImage::from_pixel(2, 2, image::Rgb([255, 0, 0]));
+        let mut encoded = Vec::new();
+        image::DynamicImage::ImageRgb8(raw)
+            .write_to(&mut std::io::Cursor::new(&mut encoded), format)
+            .expect("encode test fixture");
+        let mut data = ImageData {
+            path: PathBuf::from("x"),
+            bytes: encoded,
+            format: our_format,
+            png_bytes: None,
+            pixel_size: None,
+        };
+        let png = data.ensure_png_bytes().expect("decode + reencode");
+        // PNG magic bytes confirm we got real PNG out.
+        assert_eq!(&png[0..8], b"\x89PNG\r\n\x1a\n", "{our_format:?} → PNG");
+        // Pixel size populated.
+        assert_eq!(data.pixel_size, Some((2, 2)));
+    }
+
+    #[test]
+    fn jpeg_decodes_and_reencodes_to_png() {
+        round_trip(image::ImageFormat::Jpeg, ImageFormat::Jpeg);
+    }
+
+    #[test]
+    fn gif_decodes_and_reencodes_to_png() {
+        round_trip(image::ImageFormat::Gif, ImageFormat::Gif);
+    }
+
+    #[test]
+    fn webp_decodes_and_reencodes_to_png() {
+        // image 0.25's WebP encoder is lossless by default; round-trip
+        // is byte-exact.
+        round_trip(image::ImageFormat::WebP, ImageFormat::Webp);
+    }
+
+    #[test]
+    fn bmp_decodes_and_reencodes_to_png() {
+        round_trip(image::ImageFormat::Bmp, ImageFormat::Bmp);
+    }
+
+    #[test]
+    fn png_source_zero_copies_through_ensure_png_bytes() {
+        // PNG sources should hit the fast path that reuses self.bytes
+        // verbatim (no decode → re-encode round trip).
+        let raw = image::RgbImage::from_pixel(2, 2, image::Rgb([0, 255, 0]));
+        let mut encoded = Vec::new();
+        image::DynamicImage::ImageRgb8(raw)
+            .write_to(
+                &mut std::io::Cursor::new(&mut encoded),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        let mut data = ImageData {
+            path: PathBuf::from("x"),
+            bytes: encoded.clone(),
+            format: ImageFormat::Png,
+            png_bytes: None,
+            pixel_size: None,
+        };
+        let png = data.ensure_png_bytes().unwrap();
+        assert_eq!(&*png, &encoded, "PNG source should be reused verbatim");
+        assert_eq!(data.pixel_size, Some((2, 2)));
+    }
 }
