@@ -19,6 +19,7 @@ Maintained by the mnml family. These are the reference implementations for the a
 |---|---|---|
 | `mnml-tickets-jira` | Atlassian Jira | [chris-mclennan/mnml-tickets-jira](https://github.com/chris-mclennan/mnml-tickets-jira) |
 | `mnml-tickets-github` | GitHub Issues + Pulls | [chris-mclennan/mnml-tickets-github](https://github.com/chris-mclennan/mnml-tickets-github) |
+| `mnml-tickets-bitbucket` | Bitbucket Cloud PRs | [chris-mclennan/mnml-tickets-bitbucket](https://github.com/chris-mclennan/mnml-tickets-bitbucket) |
 
 ### Database viewers
 
