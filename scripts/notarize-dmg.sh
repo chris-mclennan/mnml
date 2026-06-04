@@ -144,6 +144,17 @@ if [ "$STATUS" != "Accepted" ]; then
     echo "[notarize] notarytool returned status: $STATUS" >&2
     echo "[notarize] full output:" >&2
     cat "$NOTARY_OUT" >&2
+    # Apple's notary log carries the actual reason for Invalid /
+    # Rejected — fetch + print so the next iteration knows what to
+    # fix. (Without this we just see "Invalid" with no detail.)
+    SUBMISSION_ID=$(jq -r '.id // empty' "$NOTARY_OUT" 2>/dev/null || echo "")
+    if [ -n "$SUBMISSION_ID" ]; then
+        echo "[notarize] fetching Apple notary log for submission $SUBMISSION_ID" >&2
+        xcrun notarytool log "$SUBMISSION_ID" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" >&2 || true
+    fi
     exit 1
 fi
 
