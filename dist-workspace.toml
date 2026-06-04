@@ -10,11 +10,11 @@ ci = "github"
 # The installers to generate for each app
 installers = ["shell", "powershell", "msi"]
 # Target platforms to build apps for (Rust target-triple syntax).
-# `aarch64-pc-windows-msvc` is intentionally OUT — `reqwest` +
-# `rustls-tls` pulls in `ring`, which fails to cross-compile via
-# cargo-xwin (clang's `/imsvc` flag isn't recognised in the xwin
-# SDK path layout). Same issue tmnl hit. Re-add once resolved upstream.
-targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+# `aarch64-pc-windows-msvc` is back — native windows-11-arm runners
+# went GA on 2026-01-29 (free in public repos, 4 vCPU). See
+# `[dist.github-custom-runners]` below for the runner override.
+# Native build → no cargo-xwin → no ring/clang issue.
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "aarch64-pc-windows-msvc", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 # Which actions to run on pull requests
 pr-run-mode = "upload"
 # YAML snippet injected into every build job's `steps:` array,
@@ -35,6 +35,13 @@ allow-dirty = ["ci"]
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
+
+# Build aarch64-pc-windows-msvc on the native `windows-11-arm`
+# runner (GA'd 2026-01-29, free in public repos at 4 vCPU). Without
+# this override, cargo-dist defaults to a Linux container + xwin
+# cross-compile, which fails on ring's clang `/imsvc` invocation.
+[dist.github-custom-runners]
+aarch64-pc-windows-msvc = "windows-11-arm"
 
 # macOS .pkg bundle identifier (reverse-DNS, your control). Kept at
 # the end of the file so it doesn't accidentally swallow the other
