@@ -1,0 +1,51 @@
+name: Auto-PR to winget-pkgs
+
+# Triggered when a release is published in this repo. Files a PR
+# against microsoft/winget-pkgs adding new manifests for the latest
+# version's .msi installers.
+#
+# One-time setup:
+# 1. Fork microsoft/winget-pkgs to chris-mclennan/winget-pkgs (the
+#    action commits to your fork, then files a PR upstream).
+# 2. Create a fine-grained PAT with `public_repo` scope (or
+#    `contents:write` on the fork). Add as repo secret WINGET_TOKEN.
+# 3. Make sure the GitHub release has the .msi artifacts attached.
+#    cargo-dist already does this — both x86_64 and aarch64 MSIs are
+#    in dist-workspace.toml's `installers = [..., "msi"]`.
+#
+# CLA was signed during the first manual submission — Microsoft
+# remembers per-user, so the bot won't re-prompt on auto-PRs.
+
+on:
+  release:
+    types: [published]
+  # Manual fallback — useful if you skip this on a release and need
+  # to retroactively bump winget.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish to winget (e.g. 0.1.3, no leading v)"
+        required: true
+
+jobs:
+  winget:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish to winget-pkgs
+        # Pinned to v2 (current major). The action's repo owns the
+        # release; we trust them with the WINGET_TOKEN. If that
+        # changes, re-pin to a specific SHA — see
+        # https://github.com/vedantmgoyal9/winget-releaser/releases.
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: ChrisMcLennan.mnml
+          # `${{ github.event.release.tag_name }}` is e.g. `v0.1.3`;
+          # winget identifiers are unprefixed, so strip the `v`. The
+          # workflow_dispatch path supplies it directly.
+          version: ${{ inputs.version || github.event.release.tag_name }}
+          # Pick the .msi artifacts off the GitHub release. cargo-dist
+          # names them `mnml-rs-{target}.msi` — both x64 and arm64.
+          installers-regex: '\.msi$'
+          # PAT with `public_repo` scope (or `contents:write` on the
+          # fork). Repo secret, set once.
+          token: ${{ secrets.WINGET_TOKEN }}
