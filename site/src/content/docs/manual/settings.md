@@ -155,12 +155,45 @@ Both share the same shape:
 id       = "myapp"                       # stable identifier
 glyph    = "\u{F0668}"                   # nerd-font glyph
 fallback = "MA"                          # ASCII fallback for --ascii / ascii_icons = true
-command  = ":host.launch myapp"          # leading `:` ⇒ ex-cmdline; no prefix ⇒ command id
+command  = ":host.launch myapp"          # leading `:` ⇒ ex-cmdline;
+                                          # `tmnl:<id>` ⇒ tmnl-host command;
+                                          # no prefix ⇒ mnml command id
 color    = "teal"                        # orange / cyan / blue / green / yellow / purple / red / teal / bg2
 tooltip  = "My private blit-host app"    # optional hover text
 ```
 
 Setting the array **replaces** the built-in defaults — copy the defaults from the source if you want to extend rather than replace.
+
+##### `tmnl:` commands — left-rail chips for tmnl-host capabilities
+
+When mnml is running under [tmnl](/family/tmnl/), `command = "tmnl:<id>"` asks the tmnl renderer to fire one of *its* registered commands by id (rather than a mnml command). The message goes over the blit channel as `Message::RunHostCommand` and tmnl looks the id up in its own registry. Driving use case: tmnl-only capabilities like the Browser pane and the Playwright dashboard — neither lives in mnml, but you may want a one-click chip in mnml's left rail to fire them.
+
+Two ready-made recipes:
+
+```toml
+# Playwright dashboard: tmnl spawns `playwright-cli show` with
+# PLAYWRIGHT_DASHBOARD_DEBUG_PORT=9222, discovers the dashboard's
+# local URL via CDP /json/list, opens it in a Browser pane.
+[[ui.integration_icon]]
+id       = "playwright_dashboard"
+glyph    = "\u{F0668}"                  # nf-md-play_circle
+fallback = "▶"
+command  = "tmnl:browser.attach_dashboard"
+color    = "green"
+tooltip  = "Playwright dashboard"
+
+# Browser pane from clipboard URL: tmnl reads the clipboard, opens
+# the URL in a new Browser pane next to the focused split.
+[[ui.integration_icon]]
+id       = "browser_clipboard"
+glyph    = "\u{F059F}"                  # nf-md-web
+fallback = "B"
+command  = "tmnl:split.browser_clipboard"
+color    = "blue"
+tooltip  = "Browser (clipboard URL)"
+```
+
+When mnml is **not** running under tmnl, clicking a `tmnl:` chip toasts an explanation instead of silently failing — the command would have nowhere to land. The chips themselves are still visible (mnml can't know which commands the host registry has), so opt in only if you're running under tmnl most of the time.
 
 #### Update check
 
