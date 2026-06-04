@@ -1,6 +1,6 @@
 [package]
 name = "mnml-rs"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.87"
 description = "A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, and an embedded HTTP client."
@@ -51,7 +51,7 @@ eula = false
 # TUI — use ratatui's re-exported crossterm to avoid version skew.
 ratatui = { version = "0.30", features = ["crossterm"] }
 # Wire format for the `--blit` BlitBackend — shared with the tmnl renderer.
-tmnl-protocol = { path = "../tmnl-protocol", version = "0.0.2" }
+tmnl-protocol = { path = "../tmnl-protocol", version = "0.0.3" }
 # Embedded local FIM code completion (candle + quantized qwen2.5-coder).
 # Powers `[ai] suggest_backend = "local"`. Its own crate so candle stays
 # out of mnml's incremental rebuilds. Shared with tmnl.
