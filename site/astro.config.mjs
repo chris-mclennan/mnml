@@ -98,6 +98,8 @@ export default defineConfig({
         {
           label: 'Integrations',
           items: [
+            { label: 'Building integrations', slug: 'manual/integrations/building' },
+            { label: 'Community integrations', slug: 'manual/integrations/community' },
             { label: 'Jira tickets viewer', slug: 'manual/integrations/tickets-jira' },
           ],
         },
