@@ -100,10 +100,26 @@ if [ -z "$IDENTITY_SHA" ]; then
 fi
 
 echo "[notarize] codesigning $(basename "$SIGNED_APP") with identity $IDENTITY_SHA"
-codesign --force --options runtime --deep --timestamp \
-    --keychain "$KEYCHAIN" \
-    --sign "$IDENTITY_SHA" \
-    "$SIGNED_APP"
+# Apple's notary requires inside-out signing — every Mach-O in the
+# bundle signed individually first, then the bundle wrapper last.
+# `--deep` (used here previously) is unreliable for this; Apple has
+# been deprecating it. The inner CLI binary at
+# `Contents/Resources/bin/mnml` was tripping notarization with
+# "binary is not signed" + "missing secure timestamp" + "no hardened
+# runtime" because --deep wasn't recursing into the Resources dir.
+SIGN_FLAGS=(--force --options runtime --timestamp
+            --keychain "$KEYCHAIN" --sign "$IDENTITY_SHA")
+# Sign any inner dylibs / frameworks first.
+while IFS= read -r mach_o; do
+    [ -z "$mach_o" ] && continue
+    codesign "${SIGN_FLAGS[@]}" "$mach_o"
+done < <(find "$SIGNED_APP" \( -name '*.dylib' -o -name '*.framework' \) 2>/dev/null || true)
+# Sign the inner executable next.
+if [ -f "$SIGNED_APP/Contents/Resources/bin/mnml" ]; then
+    codesign "${SIGN_FLAGS[@]}" "$SIGNED_APP/Contents/Resources/bin/mnml"
+fi
+# Bundle wrapper last (entitlements + hardened runtime).
+codesign "${SIGN_FLAGS[@]}" "$SIGNED_APP"
 
 # Repackage into a new DMG (atomic replace).
 NEW_DMG="${DMG%.dmg}.signed.dmg"
