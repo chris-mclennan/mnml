@@ -296,8 +296,17 @@ pub struct DapManager {
     pub variables: HashMap<i64, Vec<Variable>>,
     /// Which variable references the UI considers expanded — only
     /// expanded composites have their children walked into the flat
-    /// tree. Cleared on Continued.
+    /// tree. Cleared on Continued (refs are stale across resume).
     pub expanded_vars: std::collections::HashSet<i64>,
+    /// Persisted user-expansion state by name path. Survives
+    /// `Continued` so a step doesn't collapse everything back to
+    /// the scope headers. Paths like
+    /// `["Locals", "self"]` (depth 2) or
+    /// `["Locals", "self", "data"]` (depth 3). On each `Variables`
+    /// event, [`Self::restore_expanded_paths_under`] re-arms
+    /// matching children — fetching their composites' children too
+    /// so the depth-N expansion fans back out naturally.
+    pub expanded_paths: std::collections::HashSet<Vec<String>>,
     /// Threads the adapter is tracking (refreshed by `threads`
     /// request — fired on `Stopped` and on user demand via
     /// `dap.pick_thread`). Empty until the first reply lands.
@@ -324,6 +333,7 @@ impl DapManager {
             scopes: Vec::new(),
             variables: HashMap::new(),
             expanded_vars: std::collections::HashSet::new(),
+            expanded_paths: std::collections::HashSet::new(),
             threads: Vec::new(),
             exception_filters: Vec::new(),
             enabled_exception_filters: std::collections::HashSet::new(),
@@ -339,6 +349,10 @@ pub struct VarRow {
     pub depth: usize,
     pub is_scope: bool,
     pub label: String,
+    /// The bare variable / scope name, without any ` : type` suffix.
+    /// Used by the expanded-paths persistence to identify the row
+    /// across `Stopped` cycles (where references churn).
+    pub name: String,
     pub value: String,
     pub var_ref: i64,
     pub expanded: bool,
@@ -368,6 +382,7 @@ impl DapManager {
                 depth: 0,
                 is_scope: true,
                 label: scope.name.clone(),
+                name: scope.name.clone(),
                 value: if scope.expensive {
                     "(expensive)".to_string()
                 } else {
@@ -398,6 +413,7 @@ impl DapManager {
             depth,
             is_scope: false,
             label,
+            name: v.name.clone(),
             value: v.value.clone(),
             var_ref: v.variables_reference,
             expanded,
@@ -410,6 +426,66 @@ impl DapManager {
             }
         }
     }
+
+    /// Compute the name-path for a row by var_ref against the
+    /// current flattened tree. Thin wrapper around
+    /// [`path_for_var_ref_in`] that snapshots `variable_rows()`.
+    pub fn path_for_var_ref(&self, var_ref: i64) -> Option<Vec<String>> {
+        path_for_var_ref_in(&self.variable_rows(), var_ref)
+    }
+
+    /// Find the var_ref for a row matching `path` (name chain) in
+    /// the current flattened tree. Thin wrapper around
+    /// [`var_ref_for_path_in`].
+    pub fn var_ref_for_path(&self, path: &[String]) -> Option<i64> {
+        var_ref_for_path_in(&self.variable_rows(), path)
+    }
+}
+
+/// Walk `rows`'s `parent_ref` chain from the row with `var_ref` back
+/// to its scope (parent_ref == 0), collecting names top-down.
+/// Returns `None` when `var_ref` isn't in `rows` (the row is hidden
+/// by a parent collapse, or hasn't been materialised yet).
+pub fn path_for_var_ref_in(rows: &[VarRow], var_ref: i64) -> Option<Vec<String>> {
+    use std::collections::HashMap;
+    let by_ref: HashMap<i64, &VarRow> = rows.iter().map(|r| (r.var_ref, r)).collect();
+    let mut current = by_ref.get(&var_ref).copied()?;
+    let mut path = vec![current.name.clone()];
+    while current.parent_ref != 0 {
+        let Some(parent) = by_ref.get(&current.parent_ref).copied() else {
+            break;
+        };
+        path.insert(0, parent.name.clone());
+        current = parent;
+    }
+    Some(path)
+}
+
+/// Top-down path walk: find a scope (depth 0) matching `path[0]`,
+/// then a depth-1 row under it matching `path[1]`, etc. Returns the
+/// last matched row's `var_ref`, or `None` if any segment fails to
+/// match.
+pub fn var_ref_for_path_in(rows: &[VarRow], path: &[String]) -> Option<i64> {
+    let mut current_parent: i64 = 0;
+    let mut target_depth: usize = 0;
+    let mut chosen_ref: Option<i64> = None;
+    for segment in path {
+        chosen_ref = rows.iter().find_map(|r| {
+            if r.depth == target_depth && r.parent_ref == current_parent && r.name == *segment {
+                Some(r.var_ref)
+            } else {
+                None
+            }
+        });
+        match chosen_ref {
+            Some(r) => {
+                current_parent = r;
+                target_depth += 1;
+            }
+            None => return None,
+        }
+    }
+    chosen_ref
 }
 
 /// Parse the `[dap.*]` config sub-table out of mnml's main config.
@@ -498,6 +574,7 @@ mod tests {
                         depth: 0,
                         is_scope: true,
                         label: scope.name.clone(),
+                        name: scope.name.clone(),
                         value: String::new(),
                         var_ref: r,
                         expanded,
@@ -519,6 +596,7 @@ mod tests {
                     depth,
                     is_scope: false,
                     label: v.name.clone(),
+                    name: v.name.clone(),
                     value: v.value.clone(),
                     var_ref: v.variables_reference,
                     expanded,
@@ -584,6 +662,97 @@ mod tests {
         assert_eq!(rows[3].label, "count");
         assert!(!rows[3].expandable);
         assert_eq!(rows[3].parent_ref, 1); // sibling of `list` under Locals
+    }
+
+    fn mk_row(depth: usize, name: &str, var_ref: i64, parent_ref: i64) -> VarRow {
+        VarRow {
+            depth,
+            is_scope: depth == 0,
+            label: name.to_string(),
+            name: name.to_string(),
+            value: String::new(),
+            var_ref,
+            expanded: false,
+            expandable: var_ref > 0,
+            parent_ref,
+        }
+    }
+
+    #[test]
+    fn path_for_var_ref_walks_back_to_scope() {
+        // Locals (ref 1) > self (ref 2) > data (ref 3)
+        let rows = vec![
+            mk_row(0, "Locals", 1, 0),
+            mk_row(1, "self", 2, 1),
+            mk_row(2, "data", 3, 2),
+        ];
+        let p = path_for_var_ref_in(&rows, 3).unwrap();
+        assert_eq!(p, vec!["Locals", "self", "data"]);
+        let p2 = path_for_var_ref_in(&rows, 2).unwrap();
+        assert_eq!(p2, vec!["Locals", "self"]);
+        let p3 = path_for_var_ref_in(&rows, 1).unwrap();
+        assert_eq!(p3, vec!["Locals"]);
+    }
+
+    #[test]
+    fn path_for_var_ref_returns_none_when_ref_missing() {
+        let rows = vec![mk_row(0, "Locals", 1, 0)];
+        assert!(path_for_var_ref_in(&rows, 999).is_none());
+    }
+
+    #[test]
+    fn var_ref_for_path_resolves_top_down() {
+        // Same tree as above, but with new refs (simulates a new
+        // Stopped where refs churned but names persisted).
+        let rows = vec![
+            mk_row(0, "Locals", 10, 0),
+            mk_row(1, "self", 20, 10),
+            mk_row(2, "data", 30, 20),
+        ];
+        assert_eq!(
+            var_ref_for_path_in(&rows, &["Locals".to_string()]),
+            Some(10)
+        );
+        assert_eq!(
+            var_ref_for_path_in(&rows, &["Locals".to_string(), "self".to_string()]),
+            Some(20)
+        );
+        assert_eq!(
+            var_ref_for_path_in(
+                &rows,
+                &["Locals".to_string(), "self".to_string(), "data".to_string()]
+            ),
+            Some(30)
+        );
+    }
+
+    #[test]
+    fn var_ref_for_path_returns_none_when_segment_missing() {
+        let rows = vec![mk_row(0, "Locals", 1, 0), mk_row(1, "self", 2, 1)];
+        // `self` exists but `nope` doesn't.
+        assert_eq!(
+            var_ref_for_path_in(&rows, &["Locals".to_string(), "nope".to_string()]),
+            None
+        );
+    }
+
+    #[test]
+    fn path_round_trips_through_ref_renumbering() {
+        // Old run: refs [1, 2, 3] for Locals > self > data.
+        let old = vec![
+            mk_row(0, "Locals", 1, 0),
+            mk_row(1, "self", 2, 1),
+            mk_row(2, "data", 3, 2),
+        ];
+        let path = path_for_var_ref_in(&old, 3).unwrap();
+        // New run after Stopped: same names, different refs.
+        let new = vec![
+            mk_row(0, "Locals", 100, 0),
+            mk_row(1, "self", 200, 100),
+            mk_row(2, "data", 300, 200),
+        ];
+        let new_ref = var_ref_for_path_in(&new, &path).unwrap();
+        assert_eq!(new_ref, 300);
     }
 
     #[test]

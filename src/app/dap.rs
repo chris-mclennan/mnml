@@ -909,8 +909,11 @@ impl App {
                     if let Some(mgr) = self.dap.as_mut() {
                         mgr.stopped_at = None;
                         // Variable references go stale across resume —
-                        // drop the cached scopes + vars + expansion
-                        // state. The next Stopped event will refetch.
+                        // drop the cached scopes + vars + ref-based
+                        // expansion state. The next Stopped event will
+                        // refetch. `expanded_paths` (name-keyed) is
+                        // intentionally kept so the user's drill-down
+                        // survives the step.
                         mgr.scopes.clear();
                         mgr.variables.clear();
                         mgr.expanded_vars.clear();
@@ -982,8 +985,30 @@ impl App {
                     variables_ref,
                     variables,
                 } => {
+                    // Persist incoming children, then walk
+                    // `expanded_paths` and re-arm any whose name-path
+                    // now resolves in the (newly-richer) flattened
+                    // tree. Each re-armed composite triggers a
+                    // `variables` request for its fresh ref, which
+                    // cascades through nested levels via the next
+                    // Variables event. End result: a depth-N user
+                    // expansion fans back out across a stop without
+                    // any extra clicks.
                     if let Some(mgr) = self.dap.as_mut() {
                         mgr.variables.insert(variables_ref, variables);
+                        // Snapshot to avoid borrow conflicts in the
+                        // for-loop below.
+                        let paths: Vec<Vec<String>> = mgr.expanded_paths.iter().cloned().collect();
+                        for path in &paths {
+                            if let Some(re) = mgr.var_ref_for_path(path)
+                                && !mgr.expanded_vars.contains(&re)
+                            {
+                                mgr.expanded_vars.insert(re);
+                                if !mgr.variables.contains_key(&re) {
+                                    let _ = mgr.client.variables(re);
+                                }
+                            }
+                        }
                     }
                 }
                 crate::dap::DapEvent::SetVariableDone {
@@ -1319,10 +1344,19 @@ impl App {
         }
         let r = row.var_ref;
         let Some(mgr) = self.dap.as_mut() else { return };
+        // Capture the path BEFORE mutating expanded_vars — the path
+        // builder reads `variable_rows()` which observes the set.
+        let path = mgr.path_for_var_ref(r);
         if mgr.expanded_vars.contains(&r) {
             mgr.expanded_vars.remove(&r);
+            if let Some(p) = path {
+                mgr.expanded_paths.remove(&p);
+            }
         } else {
             mgr.expanded_vars.insert(r);
+            if let Some(p) = path {
+                mgr.expanded_paths.insert(p);
+            }
             // Fetch children on first expand only — already-cached
             // refs (re-collapsed, re-opened) don't re-fire.
             if !mgr.variables.contains_key(&r) {
