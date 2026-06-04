@@ -1,21 +1,26 @@
 ---
 title: Jira tickets viewer
-description: mnml-tickets-jira — a standalone Jira ticket viewer (and blit-host integration) for mnml. Configurable tabs from literal JQL or auto-resolved release fixVersions; runs in your terminal or as a hosted mnml pane.
+description: mnml-tickets-jira — a Jira ticket viewer (standalone or hosted as an mnml pane). Configurable tabs from literal JQL or auto-resolved release fixVersions, with detail panel, status transitions, inline assignee/fixVersion editing, bulk ops, comment posting, and watcher toggle.
 ---
 
-[`mnml-tickets-jira`](https://github.com/chris-mclennan/mnml-tickets-jira) is a standalone terminal viewer for Jira tickets, configurable through your normal mnml config conventions. It's the first integration in the planned **multi-view class** — database viewers (`mnml-db-postgres`, …), ticket viewers (`mnml-tickets-{linear,github,gitlab,jira}`), and the Playwright runner all follow this same out-of-process, blit-hosted pattern.
+[`mnml-tickets-jira`](https://github.com/chris-mclennan/mnml-tickets-jira) is a terminal Jira viewer. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol. Configurable through your normal mnml config conventions — see [Building integrations](/manual/integrations/building/) for the model.
 
 ```
 ┌─ tickets ────────────────────────────────────────────────────────┐
 │ ▸1.Testing (12)  2.Current (47)  3.Next (8)  4.Mobile (3)  5.Mine │
-└──────────────────────────────────────────────────────────────────┘
-┌─ Testing ────────────────────────────────────────────────────────┐
-│ KEY      STATUS    ASSIGNEE        UPDATED     SUMMARY           │
-│ TE-1234  Testing   chrismclennan   2026-06-02  Bufferline drops… │
-│ TE-1235  Testing   andrew          2026-06-01  AI panel margin…  │
-│ …                                                                │
-└──────────────────────────────────────────────────────────────────┘
-  refreshing Testing…   1-9 tab · ↑↓/jk move · Enter/o open · r refresh · q quit
+└────────┬─────────────────────────────────────────────────────────┘
+┌─ Testing─┼──────────────┐┌─ TE-1234 ★ watching (4 total) ──────┐
+│ KEY      │ STATUS  …    ││ Bug · Highest · @chrismclennan       │
+│ TE-1234▸│ Testing …    ││ fixVersion: 6.4 · reporter: andrew    │
+│ TE-1235  │ Testing …    ││                                       │
+│ …                       ││ When the bufferline drops a tab on   │
+│                         ││ window resize the next render panic… │
+│                         ││                                       │
+│                         ││ comments (3, most-recent first):     │
+│                         ││  ▸ chrismclennan · 2026-06-02         │
+│                         ││    repro on 0.1.2 too, fix forthcoming│
+└─────────────────────────┘└──────────────────────────────────────┘
+  d toggle detail · t transition · / filter · w watch · c comment · q quit
 ```
 
 ## Install
@@ -108,6 +113,17 @@ The first-run template ships with **5 tabs**:
 
 Edit or replace freely; you're not locked in.
 
+### Per-tab column override
+
+Each `[[tabs]]` entry can override the default column set via `columns = [...]`. Default (when unset) is `["key", "status", "assignee", "updated", "summary"]`. Valid values: `key`, `status`, `assignee`, `reporter`, `priority`, `type`, `updated`, `fix_version`, `summary`. `summary` is the only column that fills remaining width — put it last.
+
+```toml
+[[tabs]]
+name = "Mine"
+jql  = "reporter = currentUser() ORDER BY updated DESC"
+columns = ["key", "priority", "status", "updated", "summary"]
+```
+
 ## Keys
 
 | Chord | Action |
@@ -118,10 +134,34 @@ Edit or replace freely; you're not locked in.
 | `PgUp` / `PgDn` | Jump 10 rows |
 | `g` / `G` | Top / bottom |
 | `Enter` / `o` | Open focused ticket in your browser |
-| `r` | Refresh active tab |
-| `q` / `Esc` / `Ctrl+C` | Quit |
+| `d` | Toggle right-half detail panel |
+| `Ctrl+U` / `Ctrl+D` | Scroll detail panel up / down (when open) |
+| `/` | Open filter editor (substring match against key + summary) |
+| `t` | Open status transition picker (operates on multi-selection if non-empty) |
+| `a` | Open assignee picker (operates on multi-selection if non-empty) |
+| `f` | Open fixVersion picker (operates on multi-selection if non-empty) |
+| `c` | Open inline comment editor (detail panel must be open) — `Ctrl+S` posts, `Esc` cancels |
+| `w` | Toggle watch on focused ticket |
+| `Space` | Toggle focused row in multi-selection set |
+| `r` | Refresh active tab (+ detail if open) |
+| `Esc` | Cascade: clear selection → clear filter → close detail → quit |
+| `q` / `Ctrl+C` | Quit |
 
 Auto-refresh runs every `refresh_interval_secs` seconds (default `60`, set to `0` to disable).
+
+### Detail panel
+
+`d` opens a right-half panel for the focused ticket: header (type / status / priority / assignee / reporter / fixVersion / watcher chip), then description, then the last 10 comments (most-recent first). The narrative content is lazy-loaded on first focus and cached per-issue key — arrow-keying through a long list only fetches once per ticket. `Ctrl+U` / `Ctrl+D` scroll inside the panel. `r` invalidates the cached detail and re-fetches.
+
+Atlassian Document Format (Jira's rich-text JSON) is rendered as plain text: inline marks (bold, italic, links) are stripped; block structure (paragraphs, bullet lists, code blocks) is preserved by newlines.
+
+### Multi-selection + bulk ops
+
+`Space` toggles the focused row into a per-tab selection set, marked visually in the leftmost column. With at least one row selected, `t` / `a` / `f` operate on every selected ticket in parallel (with an error tally if any fail). Selection clears on tab switch and after a successful bulk op.
+
+### Inline comment posting
+
+With the detail panel open, `c` drops a one-block editor at the bottom of the panel. Multi-line via `Enter`. `Ctrl+S` posts via the Jira REST API (`POST /issue/{key}/comment`); `Esc` discards. The posted comment shows up in the detail panel as soon as the request resolves — no manual refresh needed.
 
 ## Two run modes
 
@@ -131,13 +171,11 @@ Just run `mnml-tickets-jira` in any terminal. The TUI takes over until you `q`.
 
 ### Blit-host (hosted by mnml)
 
-When mnml-tickets-jira is invoked as `mnml-tickets-jira --blit <socket>`, it speaks tmnl-protocol over the given Unix-domain socket instead of crossterm. mnml's `:host.launch` ex-command spawns it that way and renders the streamed cells into a regular mnml pane:
-
 ```vim
 :host.launch mnml-tickets-jira
 ```
 
-The pane becomes a normal mnml pane — splittable, focusable, key-routed through the `Pane::BlitHost` dispatch path. `Ctrl+E` releases focus back to the layout tree. See the [Blit-host integration class](/manual/settings/#the-launcher-icon-strips) section for the underlying mechanism.
+mnml spawns it with `--blit <socket>` and renders the streamed cells into a native `Pane::BlitHost`. The pane becomes a normal mnml pane — splittable, focusable, key-routed. `Ctrl+E` releases focus back to the layout tree. See [Building integrations](/manual/integrations/building/) for the protocol mechanism.
 
 ## Wire it into mnml's left rail
 
@@ -155,24 +193,6 @@ tooltip  = "Open Jira tickets"
 
 Setting `[[ui.integration_icon]]` **replaces** the built-in defaults (Claude Code / Codex / Bitbucket / HTTP / CodeBuild / GitHub), so copy the defaults from `src/config.rs` into your config first if you want to extend rather than replace. See [the launcher-icon strips](/manual/settings/#the-launcher-icon-strips) for the field reference and the `\UXXXXXXXX` Nerd-Font escape convention.
 
-## Roadmap
-
-**v0.1 (current):**
-
-- Standalone TUI mode
-- Configurable JQL or auto-resolved release tabs
-- 1-9 tab switching · ↑↓ navigation · open-in-browser · refresh
-- `--check` mode for config + auth verification
-
-**Planned:**
-
-- Blit-host mode (`--blit <socket>`) so mnml can `:host.launch` it as a hosted pane
-- Right-half ticket detail panel (description + comments + transitions)
-- Status transition picker (`t` opens a "move to → " menu)
-- In-tab search/filter overlay (`/`)
-- Watcher / star toggle
-- Per-tab column override
-
 ## Source
 
-The viewer lives in its own sibling repo: [github.com/chris-mclennan/mnml-tickets-jira](https://github.com/chris-mclennan/mnml-tickets-jira). It's MIT-licensed and built around the same `ratatui` substrate mnml uses, so most of its UI patterns will look familiar.
+The viewer lives in its own sibling repo: [github.com/chris-mclennan/mnml-tickets-jira](https://github.com/chris-mclennan/mnml-tickets-jira). MIT-licensed and built around the same `ratatui` substrate mnml uses, so most of its UI patterns will look familiar. See [Building integrations](/manual/integrations/building/) for the anatomy of an integration, or [Community integrations](/manual/integrations/community/) for the directory of siblings.
