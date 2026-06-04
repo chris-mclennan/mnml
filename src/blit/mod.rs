@@ -145,6 +145,14 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
                 let _ = write_message(&mut *w, &Message::OpenPane { command, args });
             }
         }
+        // Same shape for host-command requests — left-rail chips with
+        // `tmnl:<id>` commands queue here, drained into RunHostCommand.
+        if !app.pending_host_commands.is_empty() {
+            let mut w = writer.lock().unwrap();
+            for id in app.pending_host_commands.drain(..) {
+                let _ = write_message(&mut *w, &Message::RunHostCommand(id));
+            }
+        }
 
         let mut new_size: Option<(u16, u16)> = None;
         loop {

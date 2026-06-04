@@ -2388,6 +2388,12 @@ pub struct App {
     /// The blit loop drains these into `Message::OpenPane` each tick.
     /// Always empty when not `under_tmnl`.
     pub pending_open_panes: Vec<(String, Vec<String>)>,
+    /// Host-command requests queued for the tmnl renderer. Each is a
+    /// command id (e.g. `"browser.attach_dashboard"`) — the blit loop
+    /// drains them into `Message::RunHostCommand` each tick. Populated
+    /// by `[[ui.integration_icon]]` chips whose `command` field uses
+    /// the `tmnl:<id>` prefix. Always empty when not `under_tmnl`.
+    pub pending_host_commands: Vec<String>,
     /// Persistent quick-scratch terminal — a ~10-row bottom strip
     /// hosting a shell pty. Sibling to `Pane::Pty` (which is a full pane),
     /// designed for "I want to run one command without rearranging my
@@ -3052,6 +3058,7 @@ impl App {
             mixr_drag: None,
             under_tmnl: false,
             pending_open_panes: Vec::new(),
+            pending_host_commands: Vec::new(),
             hover_chip: None,
             hover_divider_idx: None,
             show_discovery_overlay: false,

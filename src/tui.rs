@@ -4546,9 +4546,15 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 let _ = crate::command::run(cmd_id, app);
                 return;
             }
-            // INTEGRATIONS icon — hand off to the configured command
-            // (registered command id, or ex-cmdline string). Check
-            // BEFORE the section-toggle below.
+            // INTEGRATIONS icon — hand off to the configured command.
+            // Three command forms supported:
+            //   `:<ex>`        → mnml ex command
+            //   `tmnl:<id>`    → ask the tmnl host to fire its own
+            //                    command by id (left-rail chip for a
+            //                    tmnl-side capability like
+            //                    `browser.attach_dashboard`)
+            //   `<id>`         → mnml registered command id
+            // Check BEFORE the section-toggle below.
             if let Some(&(_, icon_idx)) = app
                 .rects
                 .integration_icon_rects
@@ -4559,6 +4565,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 let cmd = icon.command.clone();
                 if let Some(rest) = cmd.strip_prefix(':') {
                     app.run_ex_command(rest);
+                } else if let Some(rest) = cmd.strip_prefix("tmnl:") {
+                    app.tmnl_run_host_command(rest.to_string());
                 } else {
                     crate::command::run(&cmd, app);
                 }

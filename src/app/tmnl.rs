@@ -44,6 +44,26 @@ impl App {
         self.tmnl_open_tab("codex".to_string(), Vec::new());
     }
 
+    /// Ask the tmnl host to fire one of *its* commands by id over the
+    /// blit channel (`Message::RunHostCommand`). Used by
+    /// `[[ui.integration_icon]]` chips whose `command` field uses the
+    /// `tmnl:<id>` prefix — e.g. `tmnl:browser.attach_dashboard` so
+    /// the left-rail Playwright-dashboard chip can ask tmnl to mount
+    /// a Browser pane on the spawned dashboard URL.
+    ///
+    /// Toasts an explanation when mnml isn't a tmnl native client (the
+    /// command would otherwise silently vanish).
+    pub fn tmnl_run_host_command(&mut self, id: String) {
+        if !self.under_tmnl {
+            self.toast(format!(
+                "tmnl:{id} — mnml isn't running under tmnl; \
+                 this command only fires under the tmnl host"
+            ));
+            return;
+        }
+        self.pending_host_commands.push(id);
+    }
+
     /// Pop the focused pty pane out of mnml into a new tmnl tab —
     /// the *hard* handoff. Sends `Message::OpenPaneTransfer` with the
     /// pty master fd attached via SCM_RIGHTS to tmnl's transfer
@@ -162,6 +182,31 @@ mod tests {
         app.tmnl_open_claude_in_tab();
         assert_eq!(app.pending_open_panes[0].0, "claude");
         assert!(app.pending_open_panes[0].1.is_empty());
+    }
+
+    #[test]
+    fn tmnl_run_host_command_no_op_when_not_under_tmnl() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        assert!(!app.under_tmnl);
+        app.tmnl_run_host_command("browser.attach_dashboard".to_string());
+        assert!(app.pending_host_commands.is_empty());
+    }
+
+    #[test]
+    fn tmnl_run_host_command_queues_when_under_tmnl() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.under_tmnl = true;
+        app.tmnl_run_host_command("browser.attach_dashboard".to_string());
+        app.tmnl_run_host_command("split.browser_clipboard".to_string());
+        assert_eq!(
+            app.pending_host_commands,
+            vec![
+                "browser.attach_dashboard".to_string(),
+                "split.browser_clipboard".to_string(),
+            ]
+        );
     }
 
     #[cfg(unix)]
