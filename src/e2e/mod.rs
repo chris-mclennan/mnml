@@ -428,6 +428,14 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
         }
         Step::Open(rel) => {
             app.open_path(&workspace.join(rel));
+            // .test `open` is an explicit pinned-open, not a tree-click —
+            // clear the preview flag the standard-mode input_style sets
+            // so the next `open` doesn't replace this buffer in-place.
+            if let Some(idx) = app.active
+                && let Some(crate::pane::Pane::Editor(b)) = app.panes.get_mut(idx)
+            {
+                b.is_preview = false;
+            }
             Ok(())
         }
         Step::Key(ev) => {
