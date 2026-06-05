@@ -273,6 +273,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             crate::app::ActivitySection::Search => {
                 draw_search_section(frame, app, content_area);
             }
+            crate::app::ActivitySection::Debug => {
+                draw_debug_section(frame, app, content_area);
+            }
             section => {
                 draw_section_placeholder(frame, content_area, section);
             }
@@ -947,6 +950,110 @@ fn draw_section_placeholder(frame: &mut Frame, area: Rect, section: crate::app::
         ),
         body,
     );
+}
+
+/// Activity-bar Debug section — DAP launcher + at-a-glance status.
+/// Shows whether a session is running, the watch + breakpoint counts,
+/// and clickable rows for the run/continue/step family. The actual
+/// Variables / Call-stack / Watches grid lives in the existing
+/// `debug_view.rs` (an editor-body pane); this section is a control
+/// panel, not a replacement. v2 follow-up: inline mini-watches list
+/// so the user can glance without opening the pane.
+fn draw_debug_section(frame: &mut Frame, app: &mut App, area: Rect) {
+    let t = theme::cur();
+    let bg = t.bg_darker;
+    frame.render_widget(Block::default().style(Style::default().bg(bg)), area);
+    if area.height < 2 || area.width < 8 {
+        return;
+    }
+    // Header.
+    frame.render_widget(
+        Paragraph::new(ratatui::text::Line::from(" DEBUG")).style(
+            Style::default()
+                .fg(t.fg)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        },
+    );
+
+    // Session status line.
+    let session_active = app.dap.is_some();
+    let status_label = if session_active {
+        "● session active"
+    } else {
+        "○ no session"
+    };
+    let status_color = if session_active { t.green } else { t.comment };
+    let watch_n = app.dap_watches.len();
+    frame.render_widget(
+        Paragraph::new(ratatui::text::Line::from(format!(
+            "  {status_label}    {watch_n} watch{}",
+            if watch_n == 1 { "" } else { "es" }
+        )))
+        .style(Style::default().fg(status_color).bg(bg)),
+        Rect {
+            x: area.x,
+            y: area.y + 2,
+            width: area.width,
+            height: 1,
+        },
+    );
+
+    let rows: &[(&str, &str, &'static str)] = &[
+        ("▸ Run", "F5", "dap.run"),
+        ("▸ Continue", "F5 (running)", "dap.continue"),
+        ("▸ Step over", "F10", "dap.next"),
+        ("▸ Step into", "F11", "dap.step_in"),
+        ("▸ Step out", "Shift+F11", "dap.step_out"),
+        ("▸ Pause", "F6", "dap.pause"),
+        ("▸ Toggle breakpoint", "F9", "dap.toggle_breakpoint"),
+        ("▸ List breakpoints", "—", "dap.list_breakpoints"),
+        ("▸ Add watch…", "—", "dap.add_watch"),
+        ("▸ Remove watch…", "—", "dap.remove_watch"),
+        ("▸ Clear watches", "—", "dap.clear_watches"),
+    ];
+
+    let mut y = area.y + 4;
+    for (label, chord, cmd_id) in rows {
+        if y + 1 >= area.y + area.height {
+            break;
+        }
+        let label_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(ratatui::text::Line::from(format!("  {label}")))
+                .style(Style::default().fg(t.fg).bg(bg)),
+            label_rect,
+        );
+        let chord_rect = Rect {
+            x: area.x,
+            y: y + 1,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(ratatui::text::Line::from(format!("    {chord}"))).style(
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM),
+            ),
+            chord_rect,
+        );
+        app.rects.tree_icon_buttons.push((label_rect, *cmd_id));
+        app.rects.tree_icon_buttons.push((chord_rect, *cmd_id));
+        y = y.saturating_add(2);
+    }
 }
 
 /// Activity-bar Search section — a launcher panel pointing at mnml's
