@@ -28,7 +28,7 @@ Code-hosting forges — SCM + PRs/MRs + pipelines + reviews + issues, all under 
 | Integration | Backend | Repo |
 |---|---|---|
 | `mnml-forge-bitbucket` | Bitbucket Cloud (PRs; pipelines + reviews + issues planned) | [chris-mclennan/mnml-forge-bitbucket](https://github.com/chris-mclennan/mnml-forge-bitbucket) |
-| `mnml-tickets-github` | GitHub Issues + Pulls (likely renames to `mnml-forge-github` as it grows) | [chris-mclennan/mnml-tickets-github](https://github.com/chris-mclennan/mnml-tickets-github) |
+| `mnml-forge-github` | GitHub Issues + Pulls | [chris-mclennan/mnml-forge-github](https://github.com/chris-mclennan/mnml-forge-github) |
 
 ### Database viewers
 
