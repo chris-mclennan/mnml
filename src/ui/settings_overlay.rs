@@ -71,7 +71,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     let mut row_counter = 0usize;
     let mut focused_item_idx: Option<usize> = None;
     for (i, item) in items.iter().enumerate() {
-        if let SettingItem::Row(_) = item {
+        if item.is_row() {
             if row_counter == selected {
                 focused_item_idx = Some(i);
                 break;
@@ -142,6 +142,40 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                     }
                 }
 
+                lines.push(Line::from(spans));
+            }
+            SettingItem::Number(num) => {
+                let is_focused = Some(i) == focused_item_idx;
+                let marker = if is_focused { "▸ " } else { "  " };
+                let mut spans = vec![
+                    Span::styled(
+                        marker,
+                        Style::default().fg(if is_focused { t.blue } else { t.bg2 }),
+                    ),
+                    Span::styled(
+                        format!("{:30}  ", num.label),
+                        Style::default().fg(if is_focused { t.fg } else { t.comment }),
+                    ),
+                    Span::styled(
+                        format!("[ {}{} ]", num.value, num.unit),
+                        Style::default()
+                            .fg(if is_focused { t.cyan } else { t.fg })
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!(
+                            "  ({}–{} · step {} · default {})",
+                            num.min, num.max, num.step, num.default
+                        ),
+                        Style::default().fg(t.comment).add_modifier(Modifier::DIM),
+                    ),
+                ];
+                if num.modified {
+                    spans.push(Span::styled(
+                        "  *",
+                        Style::default().fg(t.yellow).add_modifier(Modifier::BOLD),
+                    ));
+                }
                 lines.push(Line::from(spans));
             }
         }

@@ -47,8 +47,28 @@ pub enum SettingItem {
     /// Section header — painted as `── <name> ──` on the row above
     /// the first item of that section.
     Section(&'static str),
-    /// An editable setting row.
+    /// An editable discrete-choice row (v1 row kind).
     Row(SettingRow),
+    /// An editable numeric row (v2 row kind) — `←/→` step the value
+    /// within `[min, max]`. Display: `[ <value><unit> ]`.
+    Number(NumberRow),
+}
+
+impl SettingItem {
+    /// Returns the dispatch key for editable rows (`Row`, `Number`),
+    /// or `None` for section headers. Used by the overlay's navigation
+    /// + apply paths.
+    pub fn row_key(&self) -> Option<&'static str> {
+        match self {
+            Self::Section(_) => None,
+            Self::Row(r) => Some(r.key),
+            Self::Number(n) => Some(n.key),
+        }
+    }
+
+    pub fn is_row(&self) -> bool {
+        matches!(self, Self::Row(_) | Self::Number(_))
+    }
 }
 
 /// One editable setting in the overlay.
@@ -66,6 +86,21 @@ pub struct SettingRow {
     /// `true` when the row's current value differs from the
     /// equivalent `Config::default()` slot. Drives the `*` modified
     /// marker.
+    pub modified: bool,
+}
+
+/// Numeric setting row. `←/→` adjusts by `step`, clamped to `[min, max]`.
+/// `unit` is a suffix shown after the value (e.g. `"ms"`, `"px"`, `""`).
+#[derive(Debug, Clone)]
+pub struct NumberRow {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub value: i32,
+    pub min: i32,
+    pub max: i32,
+    pub step: i32,
+    pub default: i32,
+    pub unit: &'static str,
     pub modified: bool,
 }
 
@@ -190,6 +225,45 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         options: vec!["center".into(), "top".into()],
         current_idx: picker_idx,
         modified: picker_idx != picker_default_idx,
+    }));
+
+    // Scrolloff (number row — v2). Range 0..=20; step 1.
+    out.push(SettingItem::Number(NumberRow {
+        key: "ui.scrolloff",
+        label: "Scrolloff (rows of context above/below cursor)",
+        value: cfg.ui.scrolloff as i32,
+        min: 0,
+        max: 20,
+        step: 1,
+        default: d.ui.scrolloff as i32,
+        unit: "",
+        modified: cfg.ui.scrolloff != d.ui.scrolloff,
+    }));
+
+    // Sidescrolloff (number row — v2). Range 0..=20; step 1.
+    out.push(SettingItem::Number(NumberRow {
+        key: "ui.sidescrolloff",
+        label: "Sidescrolloff (cols of context left/right of cursor)",
+        value: cfg.ui.sidescrolloff as i32,
+        min: 0,
+        max: 20,
+        step: 1,
+        default: d.ui.sidescrolloff as i32,
+        unit: "",
+        modified: cfg.ui.sidescrolloff != d.ui.sidescrolloff,
+    }));
+
+    // Tree width (number row — v2). 16..=60; step 2.
+    out.push(SettingItem::Number(NumberRow {
+        key: "ui.tree_width",
+        label: "File tree width",
+        value: cfg.ui.tree_width as i32,
+        min: 16,
+        max: 60,
+        step: 2,
+        default: d.ui.tree_width as i32,
+        unit: " cols",
+        modified: cfg.ui.tree_width != d.ui.tree_width,
     }));
 
     // Now-playing source — auto / mixr / macos.
@@ -411,6 +485,33 @@ fn set_bool(slot: &mut bool, opt_idx: usize) -> bool {
     changed
 }
 
+/// Apply a NumberRow's clamped new value to the live `Config`. Returns
+/// `true` when the value actually changed. Unknown keys are no-op'd.
+/// `value` is already clamped to `[min, max]` by the caller.
+pub fn apply_number_setting(cfg: &mut Config, key: &str, value: i32) -> bool {
+    match key {
+        "ui.scrolloff" => {
+            let new = value.max(0) as usize;
+            let changed = cfg.ui.scrolloff != new;
+            cfg.ui.scrolloff = new;
+            changed
+        }
+        "ui.sidescrolloff" => {
+            let new = value.max(0) as usize;
+            let changed = cfg.ui.sidescrolloff != new;
+            cfg.ui.sidescrolloff = new;
+            changed
+        }
+        "ui.tree_width" => {
+            let new = value.max(0) as u16;
+            let changed = cfg.ui.tree_width != new;
+            cfg.ui.tree_width = new;
+            changed
+        }
+        _ => false,
+    }
+}
+
 impl App {
     /// Open the settings overlay. Snapshots the current config for
     /// revert-on-cancel. Idempotent — re-opening replaces the snapshot
@@ -439,10 +540,7 @@ impl App {
     pub fn settings_move_row(&mut self, delta: isize) {
         if let Some(state) = self.settings_overlay.as_mut() {
             let items = build_settings(&self.config);
-            let row_count = items
-                .iter()
-                .filter(|i| matches!(i, SettingItem::Row(_)))
-                .count();
+            let row_count = items.iter().filter(|i| i.is_row()).count();
             if row_count == 0 {
                 return;
             }
@@ -453,33 +551,38 @@ impl App {
 
     /// Adjust the focused row's value by `delta` (-1 = left, 1 = right).
     /// On the reset-all sentinel row, fires the reset directly.
+    /// Discrete rows cycle through their options; number rows step by
+    /// `step` and clamp to `[min, max]`.
     pub fn settings_adjust_value(&mut self, delta: isize) {
         let Some(state) = self.settings_overlay.as_ref() else {
             return;
         };
         let items = build_settings(&self.config);
-        let rows: Vec<&SettingRow> = items
-            .iter()
-            .filter_map(|i| match i {
-                SettingItem::Row(r) => Some(r),
-                _ => None,
-            })
-            .collect();
+        let rows: Vec<&SettingItem> = items.iter().filter(|i| i.is_row()).collect();
         let Some(row) = rows.get(state.selected_row) else {
             return;
         };
-        // Reset-all sentinel — `←/→` doesn't make sense; ignore. The
-        // user fires it with Enter.
-        if row.key == RESET_ALL_KEY {
-            return;
+        match row {
+            SettingItem::Row(r) => {
+                if r.key == RESET_ALL_KEY {
+                    return;
+                }
+                if r.options.is_empty() {
+                    return;
+                }
+                let n = r.options.len() as isize;
+                let new_idx = (r.current_idx as isize + delta).rem_euclid(n) as usize;
+                let key = r.key;
+                apply_setting(&mut self.config, key, new_idx);
+            }
+            SettingItem::Number(n) => {
+                let new_value = (n.value as isize + (delta * n.step as isize))
+                    .clamp(n.min as isize, n.max as isize) as i32;
+                let key = n.key;
+                apply_number_setting(&mut self.config, key, new_value);
+            }
+            SettingItem::Section(_) => {}
         }
-        if row.options.is_empty() {
-            return;
-        }
-        let n = row.options.len() as isize;
-        let new_idx = (row.current_idx as isize + delta).rem_euclid(n) as usize;
-        let key = row.key;
-        apply_setting(&mut self.config, key, new_idx);
     }
 
     /// `Enter` on the focused row. For the reset-all sentinel, resets
@@ -490,17 +593,11 @@ impl App {
             return;
         };
         let items = build_settings(&self.config);
-        let rows: Vec<&SettingRow> = items
-            .iter()
-            .filter_map(|i| match i {
-                SettingItem::Row(r) => Some(r),
-                _ => None,
-            })
-            .collect();
+        let rows: Vec<&SettingItem> = items.iter().filter(|i| i.is_row()).collect();
         let Some(row) = rows.get(state.selected_row) else {
             return;
         };
-        if row.key == RESET_ALL_KEY {
+        if row.row_key() == Some(RESET_ALL_KEY) {
             // Wipe the live config back to defaults. `original` stays
             // — Esc would still revert to the pre-open snapshot if
             // the user changes their mind.
@@ -519,30 +616,29 @@ impl App {
             return;
         };
         let items = build_settings(&self.config);
-        let rows: Vec<&SettingRow> = items
-            .iter()
-            .filter_map(|i| match i {
-                SettingItem::Row(r) => Some(r),
-                _ => None,
-            })
-            .collect();
+        let rows: Vec<&SettingItem> = items.iter().filter(|i| i.is_row()).collect();
         let Some(row) = rows.get(state.selected_row) else {
             return;
         };
-        if row.key == RESET_ALL_KEY {
+        let Some(key) = row.row_key() else {
+            return;
+        };
+        if key == RESET_ALL_KEY {
             return;
         }
-        // Find the default's current_idx for this key by building a
-        // default settings list and copying out the same row.
+        // Find the default for this key in the default-config settings
+        // list. Dispatch to the right apply function based on row kind.
         let default_cfg = Config::default();
         let default_items = build_settings(&default_cfg);
-        let default_row = default_items.iter().find_map(|i| match i {
-            SettingItem::Row(r) if r.key == row.key => Some(r),
-            _ => None,
-        });
-        if let Some(d) = default_row {
-            let key = row.key;
-            apply_setting(&mut self.config, key, d.current_idx);
+        let default_row = default_items.iter().find(|i| i.row_key() == Some(key));
+        match default_row {
+            Some(SettingItem::Row(d)) => {
+                apply_setting(&mut self.config, key, d.current_idx);
+            }
+            Some(SettingItem::Number(d)) => {
+                apply_number_setting(&mut self.config, key, d.value);
+            }
+            _ => {}
         }
     }
 }
@@ -632,6 +728,55 @@ mod tests {
             _ => None,
         });
         assert!(post.unwrap().modified);
+    }
+
+    #[test]
+    fn build_settings_includes_number_rows() {
+        let cfg = Config::default();
+        let items = build_settings(&cfg);
+        let scrolloff = items.iter().find_map(|i| match i {
+            SettingItem::Number(n) if n.key == "ui.scrolloff" => Some(n),
+            _ => None,
+        });
+        let row = scrolloff.expect("scrolloff number row missing");
+        assert_eq!(row.value, cfg.ui.scrolloff as i32);
+        assert_eq!(row.min, 0);
+        assert_eq!(row.max, 20);
+        assert_eq!(row.step, 1);
+        assert!(!row.modified);
+    }
+
+    #[test]
+    fn apply_number_setting_clamps_and_writes() {
+        let mut cfg = Config::default();
+        cfg.ui.scrolloff = 5;
+        assert!(apply_number_setting(&mut cfg, "ui.scrolloff", 12));
+        assert_eq!(cfg.ui.scrolloff, 12);
+        // Same value ⇒ false.
+        assert!(!apply_number_setting(&mut cfg, "ui.scrolloff", 12));
+        // Negative input is treated as 0 (defensive — the caller
+        // clamps, but apply guards against bad usage).
+        apply_number_setting(&mut cfg, "ui.scrolloff", -3);
+        assert_eq!(cfg.ui.scrolloff, 0);
+    }
+
+    #[test]
+    fn number_row_modified_marker_lights_after_change() {
+        let mut cfg = Config::default();
+        let default_value = cfg.ui.scrolloff;
+        // Pick a value different from default — guaranteed within 0..=20.
+        let new_value: i32 = if default_value == 5 { 6 } else { 5 };
+        apply_number_setting(&mut cfg, "ui.scrolloff", new_value);
+        let items = build_settings(&cfg);
+        let row = items
+            .iter()
+            .find_map(|i| match i {
+                SettingItem::Number(n) if n.key == "ui.scrolloff" => Some(n),
+                _ => None,
+            })
+            .unwrap();
+        assert!(row.modified);
+        assert_eq!(row.value, new_value);
     }
 
     #[test]
