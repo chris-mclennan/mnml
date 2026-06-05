@@ -51,7 +51,7 @@ eula = false
 # TUI — use ratatui's re-exported crossterm to avoid version skew.
 ratatui = { version = "0.30", features = ["crossterm"] }
 # Wire format for the `--blit` BlitBackend — shared with the tmnl renderer.
-tmnl-protocol = { path = "../tmnl-protocol", version = "0.0.3" }
+tmnl-protocol = { path = "../tmnl-protocol", version = "0.0.4" }
 # Embedded local FIM code completion (candle + quantized qwen2.5-coder).
 # Powers `[ai] suggest_backend = "local"`. Its own crate so candle stays
 # out of mnml's incremental rebuilds. Shared with tmnl.

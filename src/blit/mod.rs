@@ -54,6 +54,19 @@ const ATTR_UNDERLINE: u32 = 1 << 3;
 const ATTR_REVERSED: u32 = 1 << 4;
 const ATTR_CROSSED_OUT: u32 = 1 << 5;
 
+/// Cross-thread command events from the tmnl host. The blit reader
+/// thread receives `ListClientCommands` / `RunClientCommand` from the
+/// wire and forwards them through the main loop's drain so the App
+/// can respond + dispatch on the right side of the mutex.
+enum BlitCommandEvent {
+    /// `Message::ListClientCommands` — tmnl wants the command
+    /// registry. Main loop responds with a `ClientCommands` payload.
+    ListRequest,
+    /// `Message::RunClientCommand(id)` — tmnl wants this command
+    /// fired. Main loop runs it via the local command registry.
+    Invoke(String),
+}
+
 pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
     let conn = UnixStream::connect(socket)
         .map_err(|e| format!("blit: connect {}: {e}", socket.display()))?;
@@ -86,6 +99,9 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
     let (input_tx, input_rx) = channel::<InputEvent>();
     let (quit_tx, quit_rx) = channel::<()>();
     let (disc_tx, disc_rx) = channel::<()>();
+    // Host-side command-aggregation events received from tmnl.
+    // Drained on the main loop so the App can respond + run by id.
+    let (cmd_event_tx, cmd_event_rx) = channel::<BlitCommandEvent>();
     thread::spawn(move || {
         let mut r = BufReader::new(reader_stream);
         loop {
@@ -103,6 +119,16 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
                 Ok(Message::Quit) => {
                     let _ = quit_tx.send(());
                     break;
+                }
+                Ok(Message::ListClientCommands) => {
+                    if cmd_event_tx.send(BlitCommandEvent::ListRequest).is_err() {
+                        break;
+                    }
+                }
+                Ok(Message::RunClientCommand(id)) => {
+                    if cmd_event_tx.send(BlitCommandEvent::Invoke(id)).is_err() {
+                        break;
+                    }
                 }
                 Ok(_) => {}
                 Err(_) => {
@@ -151,6 +177,29 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
             let mut w = writer.lock().unwrap();
             for id in app.pending_host_commands.drain(..) {
                 let _ = write_message(&mut *w, &Message::RunHostCommand(id));
+            }
+        }
+        // Drain command-aggregation events from the reader thread.
+        // `ListRequest` ⇒ snapshot the command registry + send back as
+        // `ClientCommands`. `Invoke(id)` ⇒ fire it. We do at most one
+        // ListRequest per tick to keep the response stream sane even
+        // if tmnl re-asks (the palette only needs one fresh list per
+        // open).
+        let mut serviced_list = false;
+        while let Ok(ev) = cmd_event_rx.try_recv() {
+            match ev {
+                BlitCommandEvent::ListRequest => {
+                    if serviced_list {
+                        continue;
+                    }
+                    serviced_list = true;
+                    let items = collect_command_infos();
+                    let mut w = writer.lock().unwrap();
+                    let _ = write_message(&mut *w, &Message::ClientCommands(items));
+                }
+                BlitCommandEvent::Invoke(id) => {
+                    let _ = crate::command::run(&id, &mut app);
+                }
             }
         }
 
@@ -513,4 +562,20 @@ fn compute_runs(prev: &[WireCell], cur: &[WireCell]) -> Vec<DiffRun> {
         }];
     }
     runs
+}
+
+/// Snapshot mnml's command registry into the wire-shaped
+/// `CommandInfo` list. Sent to tmnl in response to
+/// `Message::ListClientCommands` so the tmnl palette can aggregate
+/// remote commands alongside its own.
+fn collect_command_infos() -> Vec<tmnl_protocol::CommandInfo> {
+    crate::command::registry()
+        .all()
+        .iter()
+        .map(|c| tmnl_protocol::CommandInfo {
+            id: c.id.to_string(),
+            title: c.title.to_string(),
+            group: c.group.to_string(),
+        })
+        .collect()
 }
