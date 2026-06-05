@@ -1272,6 +1272,47 @@ fn draw_search_section(frame: &mut Frame, app: &mut App, area: Rect) {
 /// shown dim below. Clicking a row fires the same command path as
 /// the compact icon strip in the Explorer rail (palette command id /
 /// `:ex` / `tmnl:host_id`).
+/// Result of probing whether the binary backing an integration's
+/// command is actually on the user's PATH. Today only the
+/// `:host.launch <binary>` shape is probed; mnml-internal commands
+/// (no prefix) and tmnl host commands (`tmnl:<id>`) are assumed
+/// available because they don't shell out.
+enum IntegrationAvailability {
+    Available,
+    /// Binary name (just the leaf, no path) the user would need to
+    /// install. Surfaced as `(<bin> not installed)` next to the row.
+    Missing(String),
+}
+
+/// Walk the `command` string from an `IntegrationIcon` and decide
+/// whether the underlying tool is installed. Only `:host.launch
+/// <binary>` is probed via `which`; everything else returns
+/// `Available`. Cheap enough to call per-frame for a small fixed
+/// set of icons (~6 by default), but the call site only renders this
+/// section when the Integrations activity-bar icon is active so the
+/// PATH lookups are gated behind a click anyway.
+fn integration_availability(command: &str) -> IntegrationAvailability {
+    let Some(rest) = command.strip_prefix(":host.launch ") else {
+        return IntegrationAvailability::Available;
+    };
+    let bin = rest.split_whitespace().next().unwrap_or("").to_string();
+    if bin.is_empty() {
+        return IntegrationAvailability::Available;
+    }
+    let installed = std::process::Command::new("/usr/bin/which")
+        .arg(&bin)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if installed {
+        IntegrationAvailability::Available
+    } else {
+        IntegrationAvailability::Missing(bin)
+    }
+}
+
 fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let t = theme::cur();
     let bg = t.bg_darker;
@@ -1347,19 +1388,37 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             .filter(|s| !s.is_empty())
             .unwrap_or(icon.id.as_str())
             .to_string();
+        // Probe availability for `:host.launch <binary>` commands —
+        // a stale or missing binary is the only "broken" state worth
+        // surfacing at v1. Internal `mnml` commands (no prefix) and
+        // tmnl host-runs (`tmnl:`) are always assumed available.
+        let availability = integration_availability(&icon.command);
+        let (name_fg, suffix) = match availability {
+            IntegrationAvailability::Available => (t.fg, None),
+            IntegrationAvailability::Missing(bin) => {
+                (t.comment, Some(format!("  ({} not installed)", bin)))
+            }
+        };
         let row1 = Rect {
             x: area.x,
             y,
             width: area.width,
             height: 1,
         };
-        frame.render_widget(
-            Paragraph::new(ratatui::text::Line::from(vec![
-                Span::styled(format!("  {glyph} "), Style::default().fg(fg).bg(bg)),
-                Span::styled(name, Style::default().fg(t.fg).bg(bg)),
-            ])),
-            row1,
-        );
+        let mut name_spans: Vec<Span<'static>> = vec![
+            Span::styled(format!("  {glyph} "), Style::default().fg(fg).bg(bg)),
+            Span::styled(name, Style::default().fg(name_fg).bg(bg)),
+        ];
+        if let Some(suffix) = suffix {
+            name_spans.push(Span::styled(
+                suffix,
+                Style::default()
+                    .fg(t.red)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM),
+            ));
+        }
+        frame.render_widget(Paragraph::new(ratatui::text::Line::from(name_spans)), row1);
         // Register the whole row as a click target. The mouse
         // dispatcher in tui.rs walks the same `integration_icon_rects`
         // list it uses for the compact rail strip, so adding our row
