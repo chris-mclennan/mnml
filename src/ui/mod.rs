@@ -270,6 +270,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             crate::app::ActivitySection::Integrations => {
                 draw_integrations_section(frame, app, content_area);
             }
+            crate::app::ActivitySection::Search => {
+                draw_search_section(frame, app, content_area);
+            }
             section => {
                 draw_section_placeholder(frame, content_area, section);
             }
@@ -944,6 +947,105 @@ fn draw_section_placeholder(frame: &mut Frame, area: Rect, section: crate::app::
         ),
         body,
     );
+}
+
+/// Activity-bar Search section — a launcher panel pointing at mnml's
+/// existing find/grep commands. Each row is clickable and registers
+/// on `tree_icon_buttons` so the mouse path is the same as the rail's
+/// icon toolbar. v1 doesn't render results inline (those live in
+/// the existing `Pane::Grep` and the editor-local `find` modeline);
+/// it just makes the entry points discoverable.
+fn draw_search_section(frame: &mut Frame, app: &mut App, area: Rect) {
+    let t = theme::cur();
+    let bg = t.bg_darker;
+    frame.render_widget(Block::default().style(Style::default().bg(bg)), area);
+    if area.height < 2 || area.width < 8 {
+        return;
+    }
+    // Header.
+    frame.render_widget(
+        Paragraph::new(ratatui::text::Line::from(" SEARCH")).style(
+            Style::default()
+                .fg(t.fg)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        },
+    );
+
+    // Action rows — clickable launchers for the existing find/grep
+    // commands. v2 follow-up: type-here-to-grep inline, with results
+    // streaming below the input.
+    let rows: &[(&str, &str, &'static str)] = &[
+        ("▸ Grep workspace…", "Ctrl+Shift+F", "find.grep"),
+        ("▸ Find in file…", "Ctrl+F", "find.find"),
+        ("▸ Find next match", "Ctrl+G", "find.next"),
+        ("▸ Replace in file…", "Ctrl+H", "find.replace"),
+    ];
+
+    let mut y = area.y + 2;
+    for (label, chord, cmd_id) in rows {
+        if y + 1 >= area.y + area.height {
+            break;
+        }
+        let label_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(ratatui::text::Line::from(format!("  {label}")))
+                .style(Style::default().fg(t.fg).bg(bg)),
+            label_rect,
+        );
+        let chord_rect = Rect {
+            x: area.x,
+            y: y + 1,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(ratatui::text::Line::from(format!("    {chord}"))).style(
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM),
+            ),
+            chord_rect,
+        );
+        // Whole row clickable.
+        app.rects.tree_icon_buttons.push((label_rect, *cmd_id));
+        app.rects.tree_icon_buttons.push((chord_rect, *cmd_id));
+        y = y.saturating_add(3);
+    }
+
+    // Tip footer at the bottom.
+    if area.height >= 4 {
+        let tip_y = area.y + area.height - 1;
+        frame.render_widget(
+            Paragraph::new(ratatui::text::Line::from(
+                " v2: type-to-grep inline, results stream below",
+            ))
+            .style(
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::ITALIC | Modifier::DIM),
+            ),
+            Rect {
+                x: area.x,
+                y: tip_y,
+                width: area.width,
+                height: 1,
+            },
+        );
+    }
 }
 
 /// Activity-bar Integrations section — renders the configured
