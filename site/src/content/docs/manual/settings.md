@@ -76,11 +76,42 @@ The three first-class number rows today:
 | Sidescrolloff | `[ui] sidescrolloff` | 0..=20 | 1 | (none) | 0 |
 | File tree width | `[ui] tree_width` | 16..=60 | 2 | `cols` | 30 |
 
-Text rows (free-form strings) and color rows (a palette picker) are the remaining v2 row kinds — not shipped yet.
+### Text rows (v2)
+
+A third row kind has landed: **text rows** for free-form string settings. v1 of this variant is **display-only** — the row renders the live value bracketed alongside a hint that the value is TOML-edited for now:
+
+```
+▸ Theme:                            [ "tokyonight-night" ]  (text · default "tokyonight-night" · TOML to edit)
+```
+
+- `←` / `→` are no-ops on text rows in v1 — there's nothing to step through. Edit the matching TOML key directly to change the value, then reload.
+- `r` still works: it resets just this row's setting to its built-in default (via `apply_text_setting`).
+- `[ "<value>" ]` is the live value; the `*` modified marker appears when it differs from the default.
+
+The one first-class text row today:
+
+| Row | TOML key | Default |
+|---|---|---|
+| Theme | `[ui] theme` | `tokyonight-night` |
+
+Live editing (printable keys append to a buffer, `Backspace` deletes, `Enter` commits, `Esc` cancels) needs an overlay-side edit-mode state machine and is a planned **v2.x** follow-up.
+
+### Color rows (v2)
+
+The fourth row kind: **color rows** for hex-color settings. Same shape as text rows, but the value is a 6-char `RRGGBB` hex string (no leading `#`). The renderer brackets the value, then paints a `████` swatch in the parsed color:
+
+```
+▸ Accent:                           [ #61afef ]  ████  (color · default #61afef · TOML to edit)
+```
+
+- Invalid hex (wrong length, non-hex chars) falls back to the foreground color for the swatch and appends ` · invalid hex` to the dim hint suffix.
+- Same controls as text rows — display-only in v1; `r` still resets to the row's default; `←` / `→` are no-ops; the `*` modified marker behaves the same way.
+
+No first-class color rows are wired into `build_settings` yet — the `ColorRow` variant is reserved for future overrides (theme accent picker, status-line color override, etc.). Like text rows, live editing is the same **v2.x** follow-up.
 
 ### What's in the overlay vs what's TOML-only
 
-The overlay covers **discrete-choice rows** (booleans, input style `vim`/`standard`, tab width `2`/`4`/`8`, line numbers `relative`/`absolute`/`off`, picker position `center`/`top`, now-playing source `auto`/`mixr`/`macos`) and **number rows** (see above — scrolloff, sidescrolloff, tree width). Text and color inputs are still a planned v2.
+The overlay covers **discrete-choice rows** (booleans, input style `vim`/`standard`, tab width `2`/`4`/`8`, line numbers `relative`/`absolute`/`off`, picker position `center`/`top`, now-playing source `auto`/`mixr`/`macos`), **number rows** (scrolloff, sidescrolloff, tree width), **text rows** (theme — display-only in v1), and **color rows** (display-only in v1, no first-class entries yet — reserved for future overrides). Live editing for text + color rows is a planned v2.x.
 
 Things the overlay does **not** edit:
 
@@ -110,6 +141,7 @@ Each row drives a single `Config` slot. Useful when you want to find the matchin
 | Palette / picker position | `[ui] picker_position` |
 | Scrolloff | `[ui] scrolloff` |
 | Sidescrolloff | `[ui] sidescrolloff` |
+| Theme | `[ui] theme` |
 | File tree width | `[ui] tree_width` |
 | Now-playing source | `[ui] now_playing_source` |
 | Input style | `[editor] input_style` |
