@@ -808,6 +808,16 @@ fn draw_workspace_files(
         return start_y + inner.height + if show_filter { 1 } else { 0 };
     }
 
+    // Empty-workspace state: when mnml is launched without a real
+    // workspace (workspace path == $HOME), show a vscode-style empty
+    // panel with `Open file` / `Open folder` actions instead of the
+    // tree contents. Registers click-rects on tree_icon_buttons so
+    // mouse handling fires the same commands as the keychords.
+    if is_empty_workspace(app) {
+        draw_empty_workspace_state(frame, app, inner);
+        return start_y + inner.height + if show_filter { 1 } else { 0 };
+    }
+
     let rows = app.tree.visible_rows();
     let cursor = app.tree.cursor();
 
@@ -1447,6 +1457,65 @@ fn row_bg(is_cursor: bool, focused: bool, rail_bg: ratatui::style::Color) -> rat
         }
     } else {
         rail_bg
+    }
+}
+
+/// True when mnml was launched without a real workspace — its
+/// workspace path equals the OS home directory. Triggers the
+/// vscode-style empty-state panel in the file tree area so the
+/// rail doesn't show the user's entire $HOME as if it were a
+/// project.
+fn is_empty_workspace(app: &App) -> bool {
+    let Some(home) = std::env::var_os("HOME") else {
+        return false;
+    };
+    let home = std::path::PathBuf::from(home);
+    // Canonicalize both sides — `app.workspace` is already canonical
+    // (set via canonicalize() at launch / add_workspace_runtime), so
+    // we only have to canonicalize $HOME to match.
+    let home_c = std::fs::canonicalize(&home).unwrap_or(home);
+    app.workspace == home_c
+}
+
+/// Paint the vscode-style empty-state panel into `inner`. Lines:
+///   No workspace open
+///   (blank)
+///   ▸ Open file…       (registers a click rect → view.discovery)
+///   ▸ Open folder…     (registers a click rect → view.add_workspace)
+fn draw_empty_workspace_state(frame: &mut Frame, app: &mut App, inner: Rect) {
+    let t = theme::cur();
+    let rail_bg = t.bg_darker;
+
+    let lines: Vec<(&str, Option<&'static str>, ratatui::style::Color)> = vec![
+        ("No workspace open", None, t.comment),
+        ("", None, t.comment),
+        ("▸ Open file…", Some("view.discovery"), t.fg),
+        ("▸ Open folder…", Some("view.add_workspace"), t.fg),
+        ("", None, t.comment),
+        ("Press Esc here to skip.", None, t.comment),
+    ];
+
+    for (i, (text, cmd, color)) in lines.iter().enumerate() {
+        let y = inner.y + i as u16;
+        if y >= inner.y + inner.height {
+            break;
+        }
+        let row = Rect {
+            x: inner.x,
+            y,
+            width: inner.width,
+            height: 1,
+        };
+        let style = Style::default().fg(*color).bg(rail_bg);
+        let para_text = format!(" {text}");
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(para_text, style)))
+                .style(Style::default().bg(rail_bg)),
+            row,
+        );
+        if let Some(cmd_id) = cmd {
+            app.rects.tree_icon_buttons.push((row, *cmd_id));
+        }
     }
 }
 
