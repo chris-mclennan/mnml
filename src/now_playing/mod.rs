@@ -38,16 +38,14 @@ pub struct NowPlaying {
     pub detail: String,
 }
 
-/// Which now-playing source(s) the miniplayer reads.
+/// Which now-playing source(s) the miniplayer reads. Selected via
+/// the `[ui] now_playing_source` config knob — `"auto"` / `"mixr"` /
+/// `"macos"`. Defaults to `Auto`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    /// The sibling mixr DJ app (`~/.mixr/quick.txt`). Reserved for the
-    /// `[ui]`-config source picker — `Source::Auto` is the only variant
-    /// constructed today.
-    #[allow(dead_code)]
+    /// The sibling mixr DJ app (`~/.mixr/quick.txt`).
     Mixr,
-    /// macOS Music / Spotify via AppleScript. Same status as `Mixr`.
-    #[allow(dead_code)]
+    /// macOS Music / Spotify via AppleScript.
     Macos,
     /// Whatever is actually playing — mixr first (a cheap file read),
     /// then macOS. The default.

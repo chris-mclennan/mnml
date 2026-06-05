@@ -192,6 +192,25 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: picker_idx != picker_default_idx,
     }));
 
+    // Now-playing source — auto / mixr / macos.
+    let npsrc_idx = match cfg.ui.now_playing_source.as_str() {
+        "mixr" => 1,
+        "macos" => 2,
+        _ => 0,
+    };
+    let npsrc_default_idx = match d.ui.now_playing_source.as_str() {
+        "mixr" => 1,
+        "macos" => 2,
+        _ => 0,
+    };
+    out.push(SettingItem::Row(SettingRow {
+        key: "ui.now_playing_source",
+        label: "Now-playing source",
+        options: vec!["auto".into(), "mixr".into(), "macos".into()],
+        current_idx: npsrc_idx,
+        modified: npsrc_idx != npsrc_default_idx,
+    }));
+
     // ── Editor ─────────────────────────────────────────────────────
     out.push(SettingItem::Section("Editor"));
 
@@ -341,6 +360,16 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
             let new = if opt_idx == 1 { "top" } else { "center" };
             let changed = cfg.ui.picker_position != new;
             cfg.ui.picker_position = new.to_string();
+            changed
+        }
+        "ui.now_playing_source" => {
+            let new = match opt_idx {
+                1 => "mixr",
+                2 => "macos",
+                _ => "auto",
+            };
+            let changed = cfg.ui.now_playing_source != new;
+            cfg.ui.now_playing_source = new.to_string();
             changed
         }
         "editor.input_style" => {

@@ -15,9 +15,12 @@ impl App {
     /// miniplayer chip just renders its idle form there.
     pub fn start_now_playing_poller(&mut self) {
         if self.now_playing_rx.is_none() {
-            self.now_playing_rx = Some(crate::now_playing::spawn_poller(
-                crate::now_playing::Source::Auto,
-            ));
+            let source = match self.config.ui.now_playing_source.as_str() {
+                "mixr" => crate::now_playing::Source::Mixr,
+                "macos" => crate::now_playing::Source::Macos,
+                _ => crate::now_playing::Source::Auto,
+            };
+            self.now_playing_rx = Some(crate::now_playing::spawn_poller(source));
         }
     }
 

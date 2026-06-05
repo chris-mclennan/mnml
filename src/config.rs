@@ -605,6 +605,21 @@ pub struct UiConfig {
     /// check_updates = false  # opt out of the network call
     /// ```
     pub check_updates: bool,
+
+    /// Which source the statusline `♪` miniplayer reads from.
+    /// `"auto"` (default) — mixr first, then macOS Music / Spotify.
+    /// `"mixr"` — only the sibling mixr DJ app (`~/.mixr/quick.txt`).
+    /// `"macos"` — only macOS Music / Spotify via AppleScript.
+    ///
+    /// Use `"mixr"` or `"macos"` to skip the other source's poll —
+    /// noticeable when the macOS variant is the slow one (`osascript`
+    /// shell-out) and you're not playing through Music / Spotify.
+    ///
+    /// ```toml
+    /// [ui]
+    /// now_playing_source = "mixr"
+    /// ```
+    pub now_playing_source: String,
 }
 
 /// One entry in the rail's INTEGRATIONS section. Same shape as
@@ -784,6 +799,19 @@ impl Default for Config {
                         tooltip: Some("Bitbucket pull requests".to_string()),
                     },
                     IntegrationIcon {
+                        id: "jira".to_string(),
+                        glyph: "\u{F0411}".to_string(), // nf-md-jira
+                        fallback: "J".to_string(),
+                        // Launches the standalone mnml-tracker-jira
+                        // viewer as a blit-host pane. User must have it
+                        // installed (`cargo install --git
+                        // https://github.com/chris-mclennan/mnml-tracker-jira`)
+                        // and a populated `~/.config/mnml-tracker-jira{.toml,/token}`.
+                        command: ":host.launch mnml-tracker-jira".to_string(),
+                        color: "blue".to_string(),
+                        tooltip: Some("Jira tracker".to_string()),
+                    },
+                    IntegrationIcon {
                         id: "http".to_string(),
                         // `\u{F1D8}` (nf-fa-paper_plane) is in every
                         // Nerd Font variant — was using `\u{F1D8B}`
@@ -815,6 +843,7 @@ impl Default for Config {
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,
+                now_playing_source: "auto".to_string(),
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -1055,6 +1084,10 @@ struct RawUi {
     /// [`UiConfig::ticket_prefixes`].
     #[serde(default)]
     ticket_prefixes: Option<Vec<String>>,
+    /// Statusline miniplayer source — `"auto"` / `"mixr"` / `"macos"`.
+    /// See [`UiConfig::now_playing_source`].
+    #[serde(default)]
+    now_playing_source: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1294,6 +1327,15 @@ impl Config {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
+        }
+        // `now_playing_source` — `"auto"` (default) / `"mixr"` / `"macos"`.
+        // Unknown values fall back to the existing setting (so a typo
+        // doesn't silently switch the source).
+        if let Some(s) = raw.ui.now_playing_source {
+            let normalized = s.trim().to_ascii_lowercase();
+            if matches!(normalized.as_str(), "auto" | "mixr" | "macos") {
+                self.ui.now_playing_source = normalized;
+            }
         }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;
