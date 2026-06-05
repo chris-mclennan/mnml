@@ -54,9 +54,33 @@ Each row looks like:
 
 `Enter` (anywhere except the reset row) commits whatever's currently on screen and closes the overlay. The overlay does **not** persist changes to TOML — it writes the in-memory `Config`. If you want a change to survive restarts, also edit the matching TOML key.
 
+### Number rows (v2)
+
+A second row kind has shipped alongside the discrete-choice rows: **number rows**. Where a choice row brackets the active option, a number row brackets the live value with its unit:
+
+```
+▸ Scrolloff (rows of context above/below cursor):  [ 4 ]      (0–20 · step 1 · default 0)
+  Sidescrolloff (cols of context left/right …):    [ 0 ]      (0–20 · step 1 · default 0)
+  File tree width:                                 [ 30 cols ] (16–60 · step 2 · default 30)  *
+```
+
+- `←` / `→` step the value by the row's `step`, clamped to `[min, max]`. The hint in dim text — `(min–max · step N · default D)` — tells you what each press will do.
+- `r` resets just this row to its built-in default.
+- `[ <value><unit> ]` is the live value; the `*` modified marker appears when it differs from the default.
+
+The three first-class number rows today:
+
+| Row | TOML key | Range | Step | Unit | Default |
+|---|---|---|---|---|---|
+| Scrolloff | `[ui] scrolloff` | 0..=20 | 1 | (none) | 0 |
+| Sidescrolloff | `[ui] sidescrolloff` | 0..=20 | 1 | (none) | 0 |
+| File tree width | `[ui] tree_width` | 16..=60 | 2 | `cols` | 30 |
+
+Text rows (free-form strings) and color rows (a palette picker) are the remaining v2 row kinds — not shipped yet.
+
 ### What's in the overlay vs what's TOML-only
 
-The overlay covers **discrete-choice rows only** — booleans (`on` / `off`), input style (`vim` / `standard`), tab width (`2` / `4` / `8`), line numbers (`relative` / `absolute` / `off`), picker position (`center` / `top`). Number / text / color inputs are a planned v2.
+The overlay covers **discrete-choice rows** (booleans, input style `vim`/`standard`, tab width `2`/`4`/`8`, line numbers `relative`/`absolute`/`off`, picker position `center`/`top`, now-playing source `auto`/`mixr`/`macos`) and **number rows** (see above — scrolloff, sidescrolloff, tree width). Text and color inputs are still a planned v2.
 
 Things the overlay does **not** edit:
 
@@ -84,6 +108,10 @@ Each row drives a single `Config` slot. Useful when you want to find the matchin
 | Inline markdown rendering | `[ui] render_markdown` |
 | Auto-open markdown preview | `[ui] auto_md_preview` |
 | Palette / picker position | `[ui] picker_position` |
+| Scrolloff | `[ui] scrolloff` |
+| Sidescrolloff | `[ui] sidescrolloff` |
+| File tree width | `[ui] tree_width` |
+| Now-playing source | `[ui] now_playing_source` |
 | Input style | `[editor] input_style` |
 | Tab width | `[editor] tab_width` |
 | Trim trailing whitespace on save | `[editor] trim_trailing_ws_on_save` |
@@ -128,6 +156,7 @@ render_markdown = false           # inline markdown rendering in the editor pane
 sticky_context = false            # enclosing scope chain at the pane top
 md_image_rows = 12                # rows reserved for markdown image embeds
 picker_position = "center"        # or "top" — where the palette / picker anchors
+now_playing_source = "auto"       # "auto" | "mixr" | "macos" — statusline ♪ miniplayer
 
 # Pty-tab auto-naming
 ticket_prefixes = ["TE-", "MIX-", "PROJ-"]  # see below
@@ -213,6 +242,21 @@ A few details worth knowing:
 - **Skipped automatically in `--headless` and `--blit` modes.** Both modes have no toast surface and no statusline chip, so the check is a no-op there even when `check_updates` is `true`.
 
 Source: `src/update_check.rs` (the background fetch + the shared `UpdateCheck` handle) and `src/main.rs` (the gate that decides whether to spawn it).
+
+#### Now-playing source
+
+```toml
+[ui]
+now_playing_source = "auto"       # "auto" (default) | "mixr" | "macos"
+```
+
+The statusline `♪` miniplayer chip can read from two sources — the sibling [mixr](/family/mixr/) DJ app (via the `~/.mixr/quick.txt` flat file it writes on track changes) and the macOS Music / Spotify apps (via an `osascript` AppleScript poll). `now_playing_source` picks which:
+
+- `"auto"` (default) — try mixr first (a cheap file read), fall back to macOS Music / Spotify when mixr is idle. The "show whatever's actually playing" mode.
+- `"mixr"` — only read mixr. Skips the macOS `osascript` poll entirely, which is useful if you don't use Music or Spotify and want to shave the only non-trivial cost off the now-playing poller.
+- `"macos"` — only read macOS Music / Spotify. Skips the mixr file read. Useful if you don't run mixr.
+
+The matching row is in the settings overlay under `── UI ──` as **Now-playing source** with options `auto` / `mixr` / `macos`. The chip itself is hidden when nothing is playing — switching sources doesn't toggle visibility, just which player gets queried.
 
 ### `[editor]` — editing behavior
 

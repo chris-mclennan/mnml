@@ -13,9 +13,10 @@ The **startup picker** is the overlay that fills that gap. It's a small chooser 
 │  Pick a workspace or action:                      │
 │  ▸ [1] New file (in current workspace)            │
 │    [2] Open file…                                 │
-│    [3] Open: work                                 │
-│    [4] Open: mnml-family                          │
-│    [5] Open: tmnl                                 │
+│    [3] Open folder…                               │
+│    [4] Open: work                                 │
+│    [5] Open: mnml-family                          │
+│    [6] Open: tmnl                                 │
 │                                                   │
 │  ↑↓ move · Enter select · Esc skip                │
 │                                                   │
@@ -45,15 +46,16 @@ The env var trick is necessary because tmnl owns the command line that ends up r
 
 ## Picker rows
 
-The picker assembles its rows from two fixed actions plus your configured workspaces:
+The picker assembles its rows from three fixed actions plus your configured workspaces:
 
 | Row | Source | What it does |
 |---|---|---|
 | `[1] New file (in current workspace)` | Always present | Dismisses the picker — you continue in whatever workspace mnml was launched at (usually `$HOME` from Finder). |
 | `[2] Open file…` | Always present | Dismisses the picker and immediately fires `view.discovery` (the fuzzy file picker) so you can search any file in the current workspace. |
-| `[3]`…`[9]` | First 7 entries from your `[[workspaces]]` config | Switches the file-tree focus to that configured workspace. |
+| `[3] Open folder…` | Always present | Dismisses the picker and fires `view.add_workspace` — the path prompt that canonicalizes a typed path (supports `~/`) and adds it as an extra workspace section in the file rail. |
+| `[4]`…`[9]` | First 6 entries from your `[[workspaces]]` config | Switches the file-tree focus to that configured workspace. |
 
-The picker shows at most **9 rows** (the keys `1`-`9` are the only direct-jump hotkeys), so only the first 7 entries from `[[workspaces]]` make it in. The rest are still reachable later via `view.switch_workspace` and the rail headers — they just don't get a startup-picker row.
+The picker shows at most **9 rows** (the keys `1`-`9` are the only direct-jump hotkeys), so only the first 6 entries from `[[workspaces]]` make it in (rows `1`-`3` are reserved for the fixed actions). The rest are still reachable later via `view.switch_workspace` and the rail headers — they just don't get a startup-picker row.
 
 ### Configuring the workspace rows
 
@@ -91,9 +93,48 @@ When mnml is launched from Finder, the workspace `mnml` was started at is whatev
 
 If you want to switch to a different workspace from there, the file-rail's workspace headers and `view.switch_workspace` work the same as in any other mnml session. The picker is just a faster path to that switch on first launch.
 
+## Empty workspace state
+
+The picker is one half of the no-real-workspace experience. The other half is the **file rail's empty state**, which kicks in whenever mnml's workspace path (canonicalized) equals your `$HOME` — the exact situation you land in when Finder hands the `.app` bundle no folder argument.
+
+Instead of trying to enumerate your entire home directory as if it were a project (which would dump `Documents/`, `Downloads/`, `Library/`, every dotfile, …), the workspace tree section paints a vscode-style panel:
+
+```
+> ~
+
+   No workspace open
+
+  ▸ Open file…
+  ▸ Open folder…
+
+   Press Esc here to skip.
+```
+
+The two `▸` rows are clickable — they're wired to the same commands as their picker counterparts:
+
+| Row | Command | Effect |
+|---|---|---|
+| `▸ Open file…` | `view.discovery` | Opens the fuzzy file picker. |
+| `▸ Open folder…` | `view.add_workspace` | Prompts for a folder path (supports `~/`) and adds it as an extra workspace section. |
+
+### Predicate — when does it trigger?
+
+The empty-state check is exact: mnml canonicalizes both its workspace path and `$HOME`, and compares them. If they match, you get the empty panel; if they differ by even one directory level, you get a normal file tree.
+
+In practice:
+
+- `cd ~ && mnml .` → empty state (workspace == `$HOME`).
+- Clicking the mnml.app icon from Finder → empty state (Finder hands the bundle `$HOME`).
+- `cd ~/Projects/mnml && mnml .` → normal tree (workspace == `~/Projects/mnml`, not `$HOME`).
+- `mnml ~/Projects/mnml` from anywhere → normal tree.
+
+If you ever see the empty state and didn't expect it, the fix is to `cd` into a real project root before launching mnml — or click `▸ Open folder…` to point mnml at one without restarting.
+
+The rest of the rail (GIT section, INTEGRATIONS section, statusline) behaves normally in empty-workspace mode; only the workspace-tree slot swaps its contents.
+
 ## Source
 
-The picker's state and key handling live in `src/app/startup_picker.rs`; the overlay drawing lives in `src/ui/startup_picker.rs`. Both modules are small and independent — adding more action rows (recents, "Open folder…", etc.) is a matter of extending the `StartupPickerAction` enum.
+The picker's state and key handling live in `src/app/startup_picker.rs`; the overlay drawing lives in `src/ui/startup_picker.rs`. The empty-workspace state predicate (`is_empty_workspace`) and panel painter (`draw_empty_workspace_state`) live in `src/ui/tree_view.rs`. All four modules are small and independent — adding more action rows is a matter of extending the `StartupPickerAction` enum or appending to the empty-state row list.
 
 ## Next
 

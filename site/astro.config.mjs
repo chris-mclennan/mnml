@@ -85,6 +85,7 @@ export default defineConfig({
           label: 'Manual',
           items: [
             { label: 'Workspaces & the file rail', slug: 'manual/workspaces' },
+            { label: 'Activity bar', slug: 'manual/activity-bar' },
             { label: 'Startup picker', slug: 'manual/startup-picker' },
             { label: 'Editing', slug: 'manual/editing' },
             { label: 'LSP', slug: 'manual/lsp' },
@@ -99,7 +100,9 @@ export default defineConfig({
           label: 'Integrations',
           items: [
             { label: 'Building integrations', slug: 'manual/integrations/building' },
+            { label: 'Bitbucket forge viewer', slug: 'manual/integrations/forge-bitbucket' },
             { label: 'Community integrations', slug: 'manual/integrations/community' },
+            { label: 'GitHub forge viewer', slug: 'manual/integrations/forge-github' },
             { label: 'Jira tracker viewer', slug: 'manual/integrations/tracker-jira' },
           ],
         },
