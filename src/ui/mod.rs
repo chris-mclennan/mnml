@@ -276,8 +276,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             crate::app::ActivitySection::Debug => {
                 draw_debug_section(frame, app, content_area);
             }
-            section => {
-                draw_section_placeholder(frame, content_area, section);
+            crate::app::ActivitySection::Git => {
+                draw_git_section_content(frame, app, content_area);
             }
         }
         // For non-Explorer sections the tree_view click rects aren't
@@ -909,47 +909,158 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.palette_dropdown_button = Some(dropdown_rect);
 }
 
-/// Stub renderer for a non-Explorer activity section. Paints a centered
-/// "Coming soon" message under the section name; replaced by real
-/// content as each section is built out.
-fn draw_section_placeholder(frame: &mut Frame, area: Rect, section: crate::app::ActivitySection) {
+/// Activity-bar Git section — branch + change-counts header, change
+/// chips (`+N ●N -N` mapped from snapshot's added/changed/removed),
+/// ahead/behind chip, then a launcher list of common git commands.
+/// The existing GIT sub-section inside the Explorer rail stays
+/// untouched (it's the always-visible compact branch list); this
+/// activity section is the dedicated mode with more breathing room.
+/// v2 follow-up: render the file-change list inline + a recent-commits
+/// strip below the actions.
+fn draw_git_section_content(frame: &mut Frame, app: &mut App, area: Rect) {
     let t = theme::cur();
     let bg = t.bg_darker;
     frame.render_widget(Block::default().style(Style::default().bg(bg)), area);
     if area.height < 2 || area.width < 8 {
         return;
     }
-    let (_, _, label, _) = section.meta();
-    let header = Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width,
-        height: 1,
-    };
+    // Header.
     frame.render_widget(
-        Paragraph::new(ratatui::text::Line::from(format!(" {label}"))).style(
+        Paragraph::new(ratatui::text::Line::from(" SOURCE CONTROL")).style(
             Style::default()
                 .fg(t.fg)
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ),
-        header,
+        Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        },
     );
-    let body = Rect {
-        x: area.x,
-        y: area.y + 2,
-        width: area.width,
-        height: area.height.saturating_sub(2),
-    };
+
+    let snap = app.git.snapshot().clone();
+    let branch_label = snap
+        .branch
+        .clone()
+        .unwrap_or_else(|| "(no branch)".to_string());
+    let mut branch_spans: Vec<Span<'static>> = vec![Span::styled(
+        format!("  ⎇ {branch_label}"),
+        Style::default().fg(t.purple).bg(bg),
+    )];
+    if snap.ahead > 0 {
+        branch_spans.push(Span::styled(
+            format!("  ↑{}", snap.ahead),
+            Style::default().fg(t.green).bg(bg),
+        ));
+    }
+    if snap.behind > 0 {
+        branch_spans.push(Span::styled(
+            format!(" ↓{}", snap.behind),
+            Style::default().fg(t.orange).bg(bg),
+        ));
+    }
     frame.render_widget(
-        Paragraph::new(ratatui::text::Line::from(" Coming soon")).style(
-            Style::default()
-                .fg(t.comment)
-                .bg(bg)
-                .add_modifier(Modifier::ITALIC),
-        ),
-        body,
+        Paragraph::new(ratatui::text::Line::from(branch_spans)),
+        Rect {
+            x: area.x,
+            y: area.y + 2,
+            width: area.width,
+            height: 1,
+        },
     );
+
+    // Change-count chips (semantic added/changed/removed counts).
+    let chips_line = ratatui::text::Line::from(vec![
+        Span::styled(
+            format!("  +{}", snap.added),
+            Style::default().fg(t.green).bg(bg),
+        ),
+        Span::styled(
+            format!(" ●{}", snap.changed),
+            Style::default().fg(t.yellow).bg(bg),
+        ),
+        Span::styled(
+            format!(" -{}", snap.removed),
+            Style::default().fg(t.red).bg(bg),
+        ),
+        if snap.conflicts > 0 {
+            Span::styled(
+                format!(
+                    "  ⚠ {} conflict{}",
+                    snap.conflicts,
+                    if snap.conflicts == 1 { "" } else { "s" }
+                ),
+                Style::default()
+                    .fg(t.red)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled("", Style::default().bg(bg))
+        },
+    ]);
+    frame.render_widget(
+        Paragraph::new(chips_line),
+        Rect {
+            x: area.x,
+            y: area.y + 3,
+            width: area.width,
+            height: 1,
+        },
+    );
+
+    // Action rows — the high-frequency git operations.
+    let rows: &[(&str, &str, &'static str)] = &[
+        ("▸ Commit…", "—", "git.commit"),
+        ("▸ Diff workspace", "—", "git.diff_all"),
+        ("▸ Diff file", "—", "git.diff_file"),
+        ("▸ Pull", "—", "git.pull"),
+        ("▸ Push", "—", "git.push"),
+        ("▸ Fetch", "—", "git.fetch"),
+        ("▸ Stash", "—", "git.stash"),
+        ("▸ Pop stash", "—", "git.stash_pop"),
+        ("▸ Toggle blame", "—", "git.blame_toggle"),
+        ("▸ Switch repo", "—", "git.switch_repo"),
+        ("▸ Refresh repos", "—", "git.refresh_repos"),
+    ];
+
+    let mut y = area.y + 5;
+    for (label, chord, cmd_id) in rows {
+        if y + 1 >= area.y + area.height {
+            break;
+        }
+        let label_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(ratatui::text::Line::from(format!("  {label}")))
+                .style(Style::default().fg(t.fg).bg(bg)),
+            label_rect,
+        );
+        let chord_rect = Rect {
+            x: area.x,
+            y: y + 1,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(ratatui::text::Line::from(format!("    {chord}"))).style(
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM),
+            ),
+            chord_rect,
+        );
+        app.rects.tree_icon_buttons.push((label_rect, *cmd_id));
+        app.rects.tree_icon_buttons.push((chord_rect, *cmd_id));
+        y = y.saturating_add(2);
+    }
 }
 
 /// Activity-bar Debug section — DAP launcher + at-a-glance status.
