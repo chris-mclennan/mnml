@@ -909,6 +909,18 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.palette_dropdown_button = Some(dropdown_rect);
 }
 
+/// Sort key for the activity-bar Git section's file-change list.
+/// Groups conflicts at the top (need attention first), then staged,
+/// then modified, then untracked.
+fn file_state_order(s: crate::git::status::FileState) -> u8 {
+    match s {
+        crate::git::status::FileState::Conflicted => 0,
+        crate::git::status::FileState::Staged => 1,
+        crate::git::status::FileState::Modified => 2,
+        crate::git::status::FileState::Untracked => 3,
+    }
+}
+
 /// Activity-bar Git section — branch + change-counts header, change
 /// chips (`+N ●N -N` mapped from snapshot's added/changed/removed),
 /// ahead/behind chip, then a launcher list of common git commands.
@@ -945,6 +957,7 @@ fn draw_git_section_content(frame: &mut Frame, app: &mut App, area: Rect) {
         .branch
         .clone()
         .unwrap_or_else(|| "(no branch)".to_string());
+    let workspace_root = app.workspace.clone();
     let mut branch_spans: Vec<Span<'static>> = vec![Span::styled(
         format!("  ⎇ {branch_label}"),
         Style::default().fg(t.purple).bg(bg),
@@ -1011,6 +1024,95 @@ fn draw_git_section_content(frame: &mut Frame, app: &mut App, area: Rect) {
         },
     );
 
+    // Inline change list (v2). Group files by state, render up to 12
+    // rows total. Click a row → open that file in the editor (the
+    // user can then run `git.diff_file` or save). Future v2.x: click
+    // → open the per-file diff directly.
+    let mut y_after_files = area.y + 5;
+    if !snap.files.is_empty() && area.height > 6 {
+        let header_y = area.y + 5;
+        frame.render_widget(
+            Paragraph::new(ratatui::text::Line::from(" CHANGES")).style(
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD | Modifier::DIM),
+            ),
+            Rect {
+                x: area.x,
+                y: header_y,
+                width: area.width,
+                height: 1,
+            },
+        );
+        // Sort by state group then by path.
+        let mut files: Vec<(std::path::PathBuf, crate::git::status::FileState)> =
+            snap.files.iter().map(|(p, s)| (p.clone(), *s)).collect();
+        files.sort_by(|a, b| (file_state_order(a.1), &a.0).cmp(&(file_state_order(b.1), &b.0)));
+        let mut fy = header_y + 1;
+        let max_y = area.y + area.height;
+        let cap = 12usize;
+        for (path, state) in files.iter().take(cap) {
+            if fy >= max_y {
+                break;
+            }
+            let (glyph, color) = match state {
+                crate::git::status::FileState::Modified => ("●", t.yellow),
+                crate::git::status::FileState::Staged => ("◆", t.green),
+                crate::git::status::FileState::Untracked => ("?", t.cyan),
+                crate::git::status::FileState::Conflicted => ("⚠", t.red),
+            };
+            let rel = path
+                .strip_prefix(&workspace_root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned();
+            let row_rect = Rect {
+                x: area.x,
+                y: fy,
+                width: area.width,
+                height: 1,
+            };
+            let line = ratatui::text::Line::from(vec![
+                Span::styled(format!("  {glyph} "), Style::default().fg(color).bg(bg)),
+                Span::styled(rel, Style::default().fg(t.fg).bg(bg)),
+            ]);
+            frame.render_widget(Paragraph::new(line), row_rect);
+            // Click → open the file (works on the leaf path string, not
+            // an absolute path — `tree_icon_buttons` carries a `&'static
+            // str` command id, so for now we use the existing per-file
+            // git.diff_file command which dispatches against whatever
+            // editor is active. v2.x: a dedicated "open file at path"
+            // click handler with the path embedded.
+            app.rects
+                .tree_icon_buttons
+                .push((row_rect, "git.diff_file"));
+            fy = fy.saturating_add(1);
+        }
+        if files.len() > cap && fy < max_y {
+            frame.render_widget(
+                Paragraph::new(ratatui::text::Line::from(format!(
+                    "  + {} more (use git.diff_all)",
+                    files.len() - cap
+                )))
+                .style(
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(bg)
+                        .add_modifier(Modifier::DIM),
+                ),
+                Rect {
+                    x: area.x,
+                    y: fy,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+            fy = fy.saturating_add(1);
+        }
+        y_after_files = fy.saturating_add(1);
+    }
+
     // Action rows — the high-frequency git operations.
     let rows: &[(&str, &str, &'static str)] = &[
         ("▸ Commit…", "—", "git.commit"),
@@ -1026,7 +1128,7 @@ fn draw_git_section_content(frame: &mut Frame, app: &mut App, area: Rect) {
         ("▸ Refresh repos", "—", "git.refresh_repos"),
     ];
 
-    let mut y = area.y + 5;
+    let mut y = y_after_files;
     for (label, chord, cmd_id) in rows {
         if y + 1 >= area.y + area.height {
             break;
