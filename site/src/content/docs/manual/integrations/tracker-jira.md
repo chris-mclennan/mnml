@@ -1,9 +1,9 @@
 ---
 title: Jira tickets viewer
-description: mnml-tickets-jira — a Jira ticket viewer (standalone or hosted as an mnml pane). Configurable tabs from literal JQL or auto-resolved release fixVersions, with detail panel, status transitions, inline assignee/fixVersion editing, bulk ops, comment posting, and watcher toggle.
+description: mnml-tracker-jira — a Jira ticket viewer (standalone or hosted as an mnml pane). Configurable tabs from literal JQL or auto-resolved release fixVersions, with detail panel, status transitions, inline assignee/fixVersion editing, bulk ops, comment posting, and watcher toggle.
 ---
 
-[`mnml-tickets-jira`](https://github.com/chris-mclennan/mnml-tickets-jira) is a terminal Jira viewer. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol. Configurable through your normal mnml config conventions — see [Building integrations](/manual/integrations/building/) for the model.
+[`mnml-tracker-jira`](https://github.com/chris-mclennan/mnml-tracker-jira) is a terminal Jira viewer. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol. Configurable through your normal mnml config conventions — see [Building integrations](/manual/integrations/building/) for the model.
 
 ```
 ┌─ tickets ────────────────────────────────────────────────────────┐
@@ -26,7 +26,7 @@ description: mnml-tickets-jira — a Jira ticket viewer (standalone or hosted as
 ## Install
 
 ```sh
-cargo install --git https://github.com/chris-mclennan/mnml-tickets-jira mnml-tickets-jira
+cargo install --git https://github.com/chris-mclennan/mnml-tracker-jira mnml-tracker-jira
 ```
 
 Homebrew tap + binary releases will follow once the binary stabilises.
@@ -35,28 +35,28 @@ Homebrew tap + binary releases will follow once the binary stabilises.
 
 1. **Get a Jira API token** from <https://id.atlassian.com/manage-profile/security/api-tokens>.
 
-2. **Save it** to `~/.config/mnml-tickets-jira/token` with `chmod 600`:
+2. **Save it** to `~/.config/mnml-tracker-jira/token` with `chmod 600`:
 
    ```sh
-   mkdir -p ~/.config/mnml-tickets-jira
-   pbpaste > ~/.config/mnml-tickets-jira/token   # or paste it in $EDITOR
-   chmod 600 ~/.config/mnml-tickets-jira/token
+   mkdir -p ~/.config/mnml-tracker-jira
+   pbpaste > ~/.config/mnml-tracker-jira/token   # or paste it in $EDITOR
+   chmod 600 ~/.config/mnml-tracker-jira/token
    ```
 
 3. **Run once** to scaffold the config template:
 
    ```sh
-   mnml-tickets-jira
+   mnml-tracker-jira
    ```
 
-   On first launch with no config, it writes `~/.config/mnml-tickets-jira.toml` and exits with instructions. Edit `jira_url`, `email`, and the `[[tabs]]` list.
+   On first launch with no config, it writes `~/.config/mnml-tracker-jira.toml` and exits with instructions. Edit `jira_url`, `email`, and the `[[tabs]]` list.
 
 4. **Re-run** — the TUI launches with your configured tabs.
 
 5. **Verify** the resolved config + auth state without launching the TUI:
 
    ```sh
-   mnml-tickets-jira --check
+   mnml-tracker-jira --check
    ```
 
 ## Tab modes
@@ -167,12 +167,12 @@ With the detail panel open, `c` drops a one-block editor at the bottom of the pa
 
 ### Standalone
 
-Just run `mnml-tickets-jira` in any terminal. The TUI takes over until you `q`.
+Just run `mnml-tracker-jira` in any terminal. The TUI takes over until you `q`.
 
 ### Blit-host (hosted by mnml)
 
 ```vim
-:host.launch mnml-tickets-jira
+:host.launch mnml-tracker-jira
 ```
 
 mnml spawns it with `--blit <socket>` and renders the streamed cells into a native `Pane::BlitHost`. The pane becomes a normal mnml pane — splittable, focusable, key-routed. `Ctrl+E` releases focus back to the layout tree. See [Building integrations](/manual/integrations/building/) for the protocol mechanism.
@@ -186,7 +186,7 @@ To get a one-click chip in mnml's rail under **INTEGRATIONS** (between Claude Co
 id       = "jira"
 glyph    = "\U000F0411"            # nf-md-jira (TOML 8-digit form)
 fallback = "J"
-command  = ":host.launch mnml-tickets-jira"
+command  = ":host.launch mnml-tracker-jira"
 color    = "blue"
 tooltip  = "Open Jira tickets"
 ```
@@ -195,4 +195,4 @@ Setting `[[ui.integration_icon]]` **replaces** the built-in defaults (Claude Cod
 
 ## Source
 
-The viewer lives in its own sibling repo: [github.com/chris-mclennan/mnml-tickets-jira](https://github.com/chris-mclennan/mnml-tickets-jira). MIT-licensed and built around the same `ratatui` substrate mnml uses, so most of its UI patterns will look familiar. See [Building integrations](/manual/integrations/building/) for the anatomy of an integration, or [Community integrations](/manual/integrations/community/) for the directory of siblings.
+The viewer lives in its own sibling repo: [github.com/chris-mclennan/mnml-tracker-jira](https://github.com/chris-mclennan/mnml-tracker-jira). MIT-licensed and built around the same `ratatui` substrate mnml uses, so most of its UI patterns will look familiar. See [Building integrations](/manual/integrations/building/) for the anatomy of an integration, or [Community integrations](/manual/integrations/community/) for the directory of siblings.

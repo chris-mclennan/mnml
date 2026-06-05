@@ -13,11 +13,13 @@ If you haven't built one yet, see [Building integrations](/manual/integrations/b
 
 Maintained by the mnml family. These are the reference implementations for the architecture — clone any of them to bootstrap your own.
 
-### Ticket viewers
+### Tracker viewers
+
+Issue / work trackers — issues, sprints, roadmaps, releases, dashboards.
 
 | Integration | Backend | Repo |
 |---|---|---|
-| `mnml-tickets-jira` | Atlassian Jira | [chris-mclennan/mnml-tickets-jira](https://github.com/chris-mclennan/mnml-tickets-jira) |
+| `mnml-tracker-jira` | Atlassian Jira | [chris-mclennan/mnml-tracker-jira](https://github.com/chris-mclennan/mnml-tracker-jira) |
 
 ### Forge viewers
 

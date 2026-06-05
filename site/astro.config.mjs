@@ -100,7 +100,7 @@ export default defineConfig({
           items: [
             { label: 'Building integrations', slug: 'manual/integrations/building' },
             { label: 'Community integrations', slug: 'manual/integrations/community' },
-            { label: 'Jira tickets viewer', slug: 'manual/integrations/tickets-jira' },
+            { label: 'Jira tracker viewer', slug: 'manual/integrations/tracker-jira' },
           ],
         },
         {
