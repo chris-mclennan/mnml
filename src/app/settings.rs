@@ -29,6 +29,20 @@ pub struct SettingsOverlayState {
     /// Section headers are not rows for this counter — `selected_row`
     /// only counts `SettingRow`s.
     pub selected_row: usize,
+    /// When `Some`, the focused Text or Color row is in greedy edit
+    /// mode — printable keys append to `buffer`, Backspace removes,
+    /// Enter commits, Esc cancels (restores `pre_edit_value`).
+    pub text_edit: Option<TextEditState>,
+}
+
+/// Captured state for the active text-edit on a Text/Color row.
+/// `key` is the SettingRow key being edited; `pre_edit_value` is the
+/// snapshot the live config gets restored to on Esc.
+#[derive(Debug, Clone)]
+pub struct TextEditState {
+    pub key: &'static str,
+    pub buffer: String,
+    pub pre_edit_value: String,
 }
 
 impl SettingsOverlayState {
@@ -36,6 +50,7 @@ impl SettingsOverlayState {
         Self {
             original: cfg.clone(),
             selected_row: 0,
+            text_edit: None,
         }
     }
 }
@@ -681,8 +696,88 @@ impl App {
             self.toast("settings: all reset to defaults");
             return;
         }
+        // Text + Color rows: Enter starts greedy edit mode. The next
+        // keystrokes go into the buffer until Enter commits or Esc
+        // cancels.
+        let start_edit = match row {
+            SettingItem::Text(r) => Some((r.key, r.value.clone())),
+            SettingItem::Color(r) => Some((r.key, r.value.clone())),
+            _ => None,
+        };
+        if let Some((key, value)) = start_edit {
+            if let Some(state) = self.settings_overlay.as_mut() {
+                state.text_edit = Some(TextEditState {
+                    key,
+                    buffer: value.clone(),
+                    pre_edit_value: value,
+                });
+            }
+            return;
+        }
         // Cycle forward like a `→` press.
         self.settings_adjust_value(1);
+    }
+
+    /// True iff the settings overlay is open AND a Text/Color row is
+    /// in greedy edit mode. The tui dispatcher checks this to route
+    /// printable keys to the buffer instead of the navigation chords.
+    pub fn settings_text_edit_active(&self) -> bool {
+        self.settings_overlay
+            .as_ref()
+            .is_some_and(|s| s.text_edit.is_some())
+    }
+
+    /// Append a printable character to the edit buffer. Live-writes
+    /// the partial value through `apply_text_setting` so the renderer
+    /// reflects the in-progress edit (useful for color preview).
+    pub fn settings_text_edit_insert(&mut self, c: char) {
+        let Some(state) = self.settings_overlay.as_mut() else {
+            return;
+        };
+        let Some(edit) = state.text_edit.as_mut() else {
+            return;
+        };
+        edit.buffer.push(c);
+        let key = edit.key;
+        let value = edit.buffer.clone();
+        apply_text_setting(&mut self.config, key, &value);
+    }
+
+    /// Drop the trailing char from the edit buffer. No-op when empty.
+    pub fn settings_text_edit_backspace(&mut self) {
+        let Some(state) = self.settings_overlay.as_mut() else {
+            return;
+        };
+        let Some(edit) = state.text_edit.as_mut() else {
+            return;
+        };
+        if edit.buffer.is_empty() {
+            return;
+        }
+        edit.buffer.pop();
+        let key = edit.key;
+        let value = edit.buffer.clone();
+        apply_text_setting(&mut self.config, key, &value);
+    }
+
+    /// Commit the edit buffer — leaves the live config as-is (already
+    /// written by every insert/backspace) and just exits edit mode.
+    pub fn settings_text_edit_commit(&mut self) {
+        if let Some(state) = self.settings_overlay.as_mut() {
+            state.text_edit = None;
+        }
+    }
+
+    /// Cancel — restore the live config to `pre_edit_value` and exit
+    /// edit mode. `Esc` flows here while editing.
+    pub fn settings_text_edit_cancel(&mut self) {
+        let Some(state) = self.settings_overlay.as_mut() else {
+            return;
+        };
+        let Some(edit) = state.text_edit.take() else {
+            return;
+        };
+        apply_text_setting(&mut self.config, edit.key, &edit.pre_edit_value);
     }
 
     /// `r` on the focused row — reset just this row's setting to its
@@ -854,6 +949,59 @@ mod tests {
         assert_eq!(cfg.ui.theme, other);
         // Same value ⇒ false.
         assert!(!apply_text_setting(&mut cfg, "ui.theme", &other));
+    }
+
+    #[test]
+    fn text_edit_insert_then_commit_writes_buffer() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_settings_overlay();
+        // Focus the ui.theme row.
+        let items = build_settings(&app.config);
+        let rows: Vec<&SettingItem> = items.iter().filter(|i| i.is_row()).collect();
+        let pos = rows
+            .iter()
+            .position(|r| r.row_key() == Some("ui.theme"))
+            .unwrap();
+        if let Some(state) = app.settings_overlay.as_mut() {
+            state.selected_row = pos;
+        }
+        // Enter edit mode; insert chars; commit.
+        app.settings_enter_row();
+        assert!(app.settings_text_edit_active());
+        // Replace existing text with "z" by backspacing it all + typing.
+        for _ in 0..50 {
+            app.settings_text_edit_backspace();
+        }
+        for c in "rosepine".chars() {
+            app.settings_text_edit_insert(c);
+        }
+        app.settings_text_edit_commit();
+        assert!(!app.settings_text_edit_active());
+        assert_eq!(app.config.ui.theme, "rosepine");
+    }
+
+    #[test]
+    fn text_edit_cancel_restores_pre_edit_value() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let original = app.config.ui.theme.clone();
+        app.open_settings_overlay();
+        let items = build_settings(&app.config);
+        let rows: Vec<&SettingItem> = items.iter().filter(|i| i.is_row()).collect();
+        let pos = rows
+            .iter()
+            .position(|r| r.row_key() == Some("ui.theme"))
+            .unwrap();
+        if let Some(state) = app.settings_overlay.as_mut() {
+            state.selected_row = pos;
+        }
+        app.settings_enter_row();
+        app.settings_text_edit_insert('X');
+        // Half-typed; user cancels.
+        app.settings_text_edit_cancel();
+        assert!(!app.settings_text_edit_active());
+        assert_eq!(app.config.ui.theme, original);
     }
 
     #[test]

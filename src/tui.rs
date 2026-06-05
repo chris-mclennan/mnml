@@ -553,6 +553,22 @@ fn handle_help_overlay_key(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_settings_overlay_key(app: &mut App, key: KeyEvent) {
+    // Text/Color rows enter a greedy edit mode on Enter — every
+    // keystroke goes to the buffer until Enter commits (or Esc
+    // cancels). Other navigation keys are intercepted to avoid the
+    // overlay reacting twice.
+    if app.settings_text_edit_active() {
+        match key.code {
+            KeyCode::Esc => app.settings_text_edit_cancel(),
+            KeyCode::Enter => app.settings_text_edit_commit(),
+            KeyCode::Backspace => app.settings_text_edit_backspace(),
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.settings_text_edit_insert(c);
+            }
+            _ => {}
+        }
+        return;
+    }
     match key.code {
         KeyCode::Esc => app.close_settings_overlay_cancel(),
         KeyCode::Enter => app.settings_enter_row(),

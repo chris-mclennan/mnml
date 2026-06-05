@@ -181,6 +181,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
             SettingItem::Text(row) => {
                 let is_focused = Some(i) == focused_item_idx;
                 let marker = if is_focused { "▸ " } else { "  " };
+                let in_edit = is_focused
+                    && app
+                        .settings_overlay
+                        .as_ref()
+                        .and_then(|s| s.text_edit.as_ref())
+                        .map(|e| e.key == row.key)
+                        .unwrap_or(false);
+                let value_display = if in_edit {
+                    format!("[ \"{}│\" ]", row.value)
+                } else {
+                    format!("[ \"{}\" ]", row.value)
+                };
+                let hint = if in_edit {
+                    "  (editing · Enter commit · Esc cancel)".to_string()
+                } else {
+                    format!("  (text · default \"{}\" · Enter to edit)", row.default)
+                };
                 let mut spans = vec![
                     Span::styled(
                         marker,
@@ -191,13 +208,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                         Style::default().fg(if is_focused { t.fg } else { t.comment }),
                     ),
                     Span::styled(
-                        format!("[ \"{}\" ]", row.value),
+                        value_display,
                         Style::default()
                             .fg(if is_focused { t.cyan } else { t.fg })
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
-                        format!("  (text · default \"{}\" · TOML to edit)", row.default),
+                        hint,
                         Style::default().fg(t.comment).add_modifier(Modifier::DIM),
                     ),
                 ];
