@@ -35,12 +35,13 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
             "New file (in current workspace)".to_string(),
         ),
         ("2".to_string(), "Open file…".to_string()),
+        ("3".to_string(), "Open folder…".to_string()),
     ];
     for (i, w) in app.config.workspaces.iter().enumerate() {
-        if i >= 7 {
-            break; // only 1-9 keys, 2 reserved for actions
+        if i >= 6 {
+            break; // only 1-9 keys, 3 reserved for actions
         }
-        let key = (b'3' + i as u8) as char;
+        let key = (b'4' + i as u8) as char;
         rows.push((key.to_string(), format!("Open: {}", w.name)));
     }
 
@@ -110,8 +111,8 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
 /// How many rows the picker is currently showing — used by key
 /// handling to clamp `selected` on up/down.
 pub fn row_count(app: &App) -> usize {
-    let configured = app.config.workspaces.len().min(7);
-    2 + configured
+    let configured = app.config.workspaces.len().min(6);
+    3 + configured
 }
 
 /// Resolve `selected` index into the action to fire.
@@ -119,8 +120,9 @@ pub fn action_for(app: &App, idx: usize) -> Option<StartupPickerAction> {
     match idx {
         0 => Some(StartupPickerAction::NewFile),
         1 => Some(StartupPickerAction::OpenFile),
+        2 => Some(StartupPickerAction::OpenFolder),
         n => {
-            let ws = n - 2;
+            let ws = n - 3;
             if ws < app.config.workspaces.len() {
                 // The user-facing workspace switcher uses 1-based indices
                 // where 0 = primary / 1+ = extras. The configured rows in

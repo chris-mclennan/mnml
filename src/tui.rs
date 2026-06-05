@@ -182,6 +182,12 @@ fn fire_startup_action(action: crate::app::StartupPickerAction, app: &mut App) {
         OpenFile => {
             crate::command::run("view.discovery", app);
         }
+        OpenFolder => {
+            // Opens the AddWorkspace path prompt (`~/` is supported);
+            // accepting it canonicalizes the path + adds it as an
+            // extra workspace via `App::add_workspace_runtime`.
+            crate::command::run("view.add_workspace", app);
+        }
         SwitchWorkspace(idx) => {
             app.switch_workspace(idx);
         }

@@ -16,6 +16,9 @@ pub enum StartupPickerAction {
     NewFile,
     /// Dismiss + fire `view.discovery` (the fuzzy file picker).
     OpenFile,
+    /// Dismiss + fire `view.add_workspace` (the path prompt that
+    /// canonicalizes a path + adds it as an extra workspace).
+    OpenFolder,
     /// Switch the file-tree focus to a configured `[[workspaces]]`
     /// row. Index matches `App::switch_workspace` (0 = primary,
     /// 1+ = extras).
