@@ -1116,6 +1116,99 @@ fn draw_debug_section(frame: &mut Frame, app: &mut App, area: Rect) {
         },
     );
 
+    // Inline watches list (v2). Each watch gets a row:
+    //   <expr> = <value>     (dim error if eval failed)
+    // Truncated to fit width; only rendered when there are any.
+    let mut y_after_watches = area.y + 4;
+    if !app.dap_watches.is_empty() && area.height > 5 {
+        let header_y = area.y + 4;
+        frame.render_widget(
+            Paragraph::new(ratatui::text::Line::from(" WATCHES")).style(
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD | Modifier::DIM),
+            ),
+            Rect {
+                x: area.x,
+                y: header_y,
+                width: area.width,
+                height: 1,
+            },
+        );
+        let mut wy = header_y + 1;
+        // Cap to ~5 rows so we don't crowd the launcher actions below.
+        for expr in app.dap_watches.iter().take(5) {
+            if wy + 1 >= area.y + area.height {
+                break;
+            }
+            let result = app.dap_watch_results.get(expr);
+            let (value_text, value_style) = match result {
+                Some(r) if r.err.is_some() => (
+                    format!("err: {}", r.err.as_deref().unwrap_or("")),
+                    Style::default()
+                        .fg(t.red)
+                        .bg(bg)
+                        .add_modifier(Modifier::DIM),
+                ),
+                Some(r) => (r.value.clone(), Style::default().fg(t.fg).bg(bg)),
+                None => (
+                    "(not evaluated)".to_string(),
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(bg)
+                        .add_modifier(Modifier::DIM),
+                ),
+            };
+            // Truncate the value column so the row stays one line.
+            let avail = (area.width as usize).saturating_sub(expr.chars().count() + 5);
+            let truncated_value: String = if value_text.chars().count() > avail {
+                let take = avail.saturating_sub(1);
+                let mut s: String = value_text.chars().take(take).collect();
+                s.push('…');
+                s
+            } else {
+                value_text
+            };
+            let line = ratatui::text::Line::from(vec![
+                Span::styled(format!("  {expr} = "), Style::default().fg(t.cyan).bg(bg)),
+                Span::styled(truncated_value, value_style),
+            ]);
+            frame.render_widget(
+                Paragraph::new(line),
+                Rect {
+                    x: area.x,
+                    y: wy,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+            wy = wy.saturating_add(1);
+        }
+        if app.dap_watches.len() > 5 && wy < area.y + area.height {
+            frame.render_widget(
+                Paragraph::new(ratatui::text::Line::from(format!(
+                    "  + {} more (use add/remove)",
+                    app.dap_watches.len() - 5
+                )))
+                .style(
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(bg)
+                        .add_modifier(Modifier::DIM),
+                ),
+                Rect {
+                    x: area.x,
+                    y: wy,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+            wy = wy.saturating_add(1);
+        }
+        y_after_watches = wy.saturating_add(1);
+    }
+
     let rows: &[(&str, &str, &'static str)] = &[
         ("▸ Run", "F5", "dap.run"),
         ("▸ Continue", "F5 (running)", "dap.continue"),
@@ -1130,7 +1223,7 @@ fn draw_debug_section(frame: &mut Frame, app: &mut App, area: Rect) {
         ("▸ Clear watches", "—", "dap.clear_watches"),
     ];
 
-    let mut y = area.y + 4;
+    let mut y = y_after_watches;
     for (label, chord, cmd_id) in rows {
         if y + 1 >= area.y + area.height {
             break;
