@@ -267,6 +267,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             crate::app::ActivitySection::Explorer => {
                 tree_view::draw(frame, app, content_area);
             }
+            crate::app::ActivitySection::Integrations => {
+                draw_integrations_section(frame, app, content_area);
+            }
             section => {
                 draw_section_placeholder(frame, content_area, section);
             }
@@ -941,6 +944,132 @@ fn draw_section_placeholder(frame: &mut Frame, area: Rect, section: crate::app::
         ),
         body,
     );
+}
+
+/// Activity-bar Integrations section — renders the configured
+/// `[[ui.integration_icon]]` entries as a vertical list of clickable
+/// rows. Each row: large glyph + tooltip/id, with the bound command
+/// shown dim below. Clicking a row fires the same command path as
+/// the compact icon strip in the Explorer rail (palette command id /
+/// `:ex` / `tmnl:host_id`).
+fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
+    let t = theme::cur();
+    let bg = t.bg_darker;
+    frame.render_widget(Block::default().style(Style::default().bg(bg)), area);
+    if area.height < 2 || area.width < 8 {
+        return;
+    }
+    let nerd = !app.config.ui.ascii_icons;
+
+    // Header.
+    frame.render_widget(
+        Paragraph::new(ratatui::text::Line::from(" INTEGRATIONS")).style(
+            Style::default()
+                .fg(t.fg)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        },
+    );
+
+    // Empty-state hint when no icons are configured.
+    let icons = app.config.ui.integration_icons.clone();
+    if icons.is_empty() {
+        let msg = " No integrations — add [[ui.integration_icon]] in your config";
+        let body = Rect {
+            x: area.x,
+            y: area.y + 2,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(msg).style(
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+            body,
+        );
+        return;
+    }
+
+    // Each entry takes 3 rows: glyph+name, command dim, blank.
+    let mut y = area.y + 2;
+    for (idx, icon) in icons.iter().enumerate() {
+        if y + 1 >= area.y + area.height {
+            break;
+        }
+        let glyph = if nerd {
+            icon.glyph.as_str()
+        } else {
+            icon.fallback.as_str()
+        };
+        let fg = match icon.color.as_str() {
+            "orange" => t.orange,
+            "yellow" => t.yellow,
+            "cyan" => t.cyan,
+            "blue" => t.blue,
+            "green" => t.green,
+            "red" => t.red,
+            "purple" => t.purple,
+            "teal" => t.teal,
+            _ => t.fg,
+        };
+        let name = icon
+            .tooltip
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(icon.id.as_str())
+            .to_string();
+        let row1 = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(ratatui::text::Line::from(vec![
+                Span::styled(format!("  {glyph} "), Style::default().fg(fg).bg(bg)),
+                Span::styled(name, Style::default().fg(t.fg).bg(bg)),
+            ])),
+            row1,
+        );
+        // Register the whole row as a click target. The mouse
+        // dispatcher in tui.rs walks the same `integration_icon_rects`
+        // list it uses for the compact rail strip, so adding our row
+        // there gives it the existing click semantics for free
+        // (palette command / `:ex` / `tmnl:` prefix handling).
+        app.rects.integration_icon_rects.push((row1, idx));
+
+        if y + 1 >= area.y + area.height {
+            break;
+        }
+        let row2 = Rect {
+            x: area.x,
+            y: y + 1,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(ratatui::text::Line::from(format!("    {}", icon.command))).style(
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM),
+            ),
+            row2,
+        );
+        // The second row should be clickable too — same target.
+        app.rects.integration_icon_rects.push((row2, idx));
+
+        y = y.saturating_add(3);
+    }
 }
 
 fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir, hover: bool) {
