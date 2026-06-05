@@ -325,6 +325,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         handle_settings_overlay_key(app, key);
         return;
     }
+    // Search activity-bar section: input focused → printable keys
+    // append to the query, Backspace deletes, Enter runs the grep,
+    // ↑↓ navigates results, Esc blurs.
+    if app.search_input_focused {
+        handle_search_section_key(app, key);
+        return;
+    }
     // Help overlay — scroll + dismiss. No editing.
     if app.help_overlay.is_some() {
         handle_help_overlay_key(app, key);
@@ -548,6 +555,29 @@ fn handle_help_overlay_key(app: &mut App, key: KeyEvent) {
         KeyCode::PageDown => app.help_scroll(10),
         KeyCode::Home => app.help_scroll(-1_000_000),
         KeyCode::End => app.help_scroll(1_000_000),
+        _ => {}
+    }
+}
+
+fn handle_search_section_key(app: &mut App, key: KeyEvent) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Esc => app.search_section_blur(),
+        KeyCode::Enter => {
+            // If the input has any text, Enter commits — runs the grep.
+            // If there are hits AND the input is empty, Enter jumps to
+            // the highlighted hit instead. Either way, after running
+            // the user can ↑↓ navigate without re-focusing.
+            if app.search_query.trim().is_empty() && !app.search_hits.is_empty() {
+                app.search_section_open_selected();
+            } else {
+                app.search_section_run();
+            }
+        }
+        KeyCode::Backspace => app.search_section_backspace(),
+        KeyCode::Up if !ctrl => app.search_section_select(-1),
+        KeyCode::Down if !ctrl => app.search_section_select(1),
+        KeyCode::Char(c) if !ctrl => app.search_section_insert_char(c),
         _ => {}
     }
 }

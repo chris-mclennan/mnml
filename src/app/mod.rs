@@ -1270,7 +1270,7 @@ fn place_cursor_at_byte(b: &mut Buffer, byte: usize) {
 /// to `git grep -n --column` if `rg` isn't on PATH. Returns parsed hits + which
 /// tool produced them (used for the `Pane::Grep` title's "rg: …" / "git grep: …"
 /// prefix).
-fn grep_workspace(
+pub(crate) fn grep_workspace(
     workspace: &std::path::Path,
     query: &str,
 ) -> (Vec<crate::grep_pane::GrepHit>, &'static str) {
@@ -2140,6 +2140,20 @@ pub struct App {
     /// tree + integrations + git). Toggled via the 4-cell vertical
     /// strip on the far left of the rail.
     pub active_section: ActivitySection,
+    /// Search activity-bar section: input + results state. The input
+    /// captures keystrokes when `search_input_focused == true`; results
+    /// render below the input regardless of focus.
+    pub search_query: String,
+    pub search_cursor: usize,
+    pub search_hits: Vec<crate::grep_pane::GrepHit>,
+    /// Which tool produced `search_hits` — `"rg"` / `"git grep"` / `""`.
+    pub search_used: &'static str,
+    pub search_selected: usize,
+    pub search_scroll: usize,
+    /// When true, the Search section's input box is focused — keyboard
+    /// dispatch in `tui.rs` routes printables into the query buffer
+    /// instead of the editor / overlay.
+    pub search_input_focused: bool,
     /// Current rail width (cells). Initialized from `[ui] tree_width` and
     /// then mutable via mouse-drag on the rail's right edge. Persisted in
     /// `session.json`.
@@ -3046,6 +3060,13 @@ impl App {
             tree,
             tree_visible: true,
             active_section: ActivitySection::Explorer,
+            search_query: String::new(),
+            search_cursor: 0,
+            search_hits: Vec::new(),
+            search_used: "",
+            search_selected: 0,
+            search_scroll: 0,
+            search_input_focused: false,
             tree_width,
             dragging_tree_edge: false,
             dragging_scrollbar: None,

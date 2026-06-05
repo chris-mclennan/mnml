@@ -1260,12 +1260,27 @@ fn draw_debug_section(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-/// Activity-bar Search section — a launcher panel pointing at mnml's
-/// existing find/grep commands. Each row is clickable and registers
-/// on `tree_icon_buttons` so the mouse path is the same as the rail's
-/// icon toolbar. v1 doesn't render results inline (those live in
-/// the existing `Pane::Grep` and the editor-local `find` modeline);
-/// it just makes the entry points discoverable.
+/// Activity-bar Search section — inline grep with results streaming
+/// below the input. Type-then-Enter runs the workspace grep; ↑↓ steps
+/// the selection; Enter on a result row jumps to that file+line.
+///
+/// Layout:
+///   SEARCH
+///
+///    / <query>█
+///    <N hits (rg)>  or hint when not run
+///
+///    src/foo.rs
+///      42:5  let x = 1;
+///      55:5  let y = 2;
+///    src/bar.rs
+///      18:9  let z = 3;
+///
+/// Focus: clicking the Search activity-bar icon auto-focuses the
+/// input (handled in `App::set_activity_section`). `Esc` blurs back
+/// to the editor; while blurred, Enter on a result still jumps via
+/// the editor's normal handling (selection is preserved across the
+/// blur).
 fn draw_search_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let t = theme::cur();
     let bg = t.bg_darker;
@@ -1273,7 +1288,6 @@ fn draw_search_section(frame: &mut Frame, app: &mut App, area: Rect) {
     if area.height < 2 || area.width < 8 {
         return;
     }
-    // Header.
     frame.render_widget(
         Paragraph::new(ratatui::text::Line::from(" SEARCH")).style(
             Style::default()
@@ -1288,74 +1302,135 @@ fn draw_search_section(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         },
     );
-
-    // Action rows — clickable launchers for the existing find/grep
-    // commands. v2 follow-up: type-here-to-grep inline, with results
-    // streaming below the input.
-    let rows: &[(&str, &str, &'static str)] = &[
-        ("▸ Grep workspace…", "Ctrl+Shift+F", "find.grep"),
-        ("▸ Find in file…", "Ctrl+F", "find.find"),
-        ("▸ Find next match", "Ctrl+G", "find.next"),
-        ("▸ Replace in file…", "Ctrl+H", "find.replace"),
-    ];
-
-    let mut y = area.y + 2;
-    for (label, chord, cmd_id) in rows {
-        if y + 1 >= area.y + area.height {
-            break;
-        }
-        let label_rect = Rect {
+    let input_y = area.y + 2;
+    if input_y >= area.y + area.height {
+        return;
+    }
+    let focused = app.search_input_focused;
+    let cursor_glyph = if focused { "█" } else { "" };
+    let input_line = ratatui::text::Line::from(vec![
+        Span::styled(" / ", Style::default().fg(t.yellow).bg(bg)),
+        Span::styled(app.search_query.clone(), Style::default().fg(t.fg).bg(bg)),
+        Span::styled(
+            cursor_glyph.to_string(),
+            Style::default().fg(t.yellow).bg(bg),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(input_line),
+        Rect {
             x: area.x,
-            y,
+            y: input_y,
             width: area.width,
             height: 1,
+        },
+    );
+    let status_y = input_y + 1;
+    if status_y < area.y + area.height {
+        let status_text = if app.search_used.is_empty() {
+            if focused {
+                " type · Enter to run · Esc to blur".to_string()
+            } else {
+                " click 🔍 icon to focus".to_string()
+            }
+        } else {
+            let n = app.search_hits.len();
+            format!(
+                " {} hit{} ({})",
+                n,
+                if n == 1 { "" } else { "s" },
+                app.search_used
+            )
         };
         frame.render_widget(
-            Paragraph::new(ratatui::text::Line::from(format!("  {label}")))
-                .style(Style::default().fg(t.fg).bg(bg)),
-            label_rect,
-        );
-        let chord_rect = Rect {
-            x: area.x,
-            y: y + 1,
-            width: area.width,
-            height: 1,
-        };
-        frame.render_widget(
-            Paragraph::new(ratatui::text::Line::from(format!("    {chord}"))).style(
+            Paragraph::new(ratatui::text::Line::from(status_text)).style(
                 Style::default()
                     .fg(t.comment)
                     .bg(bg)
                     .add_modifier(Modifier::DIM),
             ),
-            chord_rect,
-        );
-        // Whole row clickable.
-        app.rects.tree_icon_buttons.push((label_rect, *cmd_id));
-        app.rects.tree_icon_buttons.push((chord_rect, *cmd_id));
-        y = y.saturating_add(3);
-    }
-
-    // Tip footer at the bottom.
-    if area.height >= 4 {
-        let tip_y = area.y + area.height - 1;
-        frame.render_widget(
-            Paragraph::new(ratatui::text::Line::from(
-                " v2: type-to-grep inline, results stream below",
-            ))
-            .style(
-                Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::ITALIC | Modifier::DIM),
-            ),
             Rect {
                 x: area.x,
-                y: tip_y,
+                y: status_y,
                 width: area.width,
                 height: 1,
             },
         );
+    }
+    if app.search_hits.is_empty() {
+        return;
+    }
+    let body_top = status_y.saturating_add(2);
+    let body_max = area.y + area.height;
+    let mut y = body_top;
+    let selected = app.search_selected;
+    let mut prev_path: Option<String> = None;
+    let visible_rows = (body_max - body_top) as usize;
+    if visible_rows == 0 {
+        return;
+    }
+    let scroll_start = if selected >= visible_rows {
+        selected + 1 - visible_rows
+    } else {
+        0
+    };
+    for (i, hit) in app
+        .search_hits
+        .iter()
+        .enumerate()
+        .skip(scroll_start)
+        .take(visible_rows)
+    {
+        if y >= body_max {
+            break;
+        }
+        if prev_path.as_deref() != Some(hit.rel.as_str()) {
+            if y >= body_max {
+                break;
+            }
+            frame.render_widget(
+                Paragraph::new(ratatui::text::Line::from(format!(" {}", hit.rel)))
+                    .style(Style::default().fg(t.cyan).bg(bg)),
+                Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+            prev_path = Some(hit.rel.clone());
+            y = y.saturating_add(1);
+            if y >= body_max {
+                break;
+            }
+        }
+        let is_sel = i == selected;
+        let line_style = if is_sel {
+            Style::default()
+                .fg(t.fg)
+                .bg(t.bg2)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.fg).bg(bg)
+        };
+        let lineno_color = if is_sel { t.fg } else { t.yellow };
+        let row = ratatui::text::Line::from(vec![
+            Span::styled(
+                format!("   {}:{}  ", hit.line + 1, hit.col + 1),
+                Style::default()
+                    .fg(lineno_color)
+                    .bg(if is_sel { t.bg2 } else { bg }),
+            ),
+            Span::styled(hit.text.trim().to_string(), line_style),
+        ]);
+        let row_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(row), row_rect);
+        y = y.saturating_add(1);
     }
 }
 

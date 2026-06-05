@@ -6,6 +6,92 @@
 use super::*;
 
 impl App {
+    /// Search activity-bar section: focus the inline input box so the
+    /// next keystrokes append to `search_query`. Also switches the
+    /// active section to Search if it wasn't already + ensures the
+    /// rail is visible.
+    pub fn search_section_focus_input(&mut self) {
+        if !self.tree_visible {
+            self.tree_visible = true;
+        }
+        self.active_section = crate::app::ActivitySection::Search;
+        self.search_input_focused = true;
+    }
+
+    /// Release focus on the search input. Other dispatch paths route
+    /// to the editor again.
+    pub fn search_section_blur(&mut self) {
+        self.search_input_focused = false;
+    }
+
+    /// Append `c` to the search query (with simple cursor at end).
+    /// Live-search would re-run on every keystroke; we wait for Enter
+    /// to avoid the user paying for half-typed queries.
+    pub fn search_section_insert_char(&mut self, c: char) {
+        self.search_query.push(c);
+        self.search_cursor = self.search_query.chars().count();
+    }
+
+    /// Drop the trailing char from the search query.
+    pub fn search_section_backspace(&mut self) {
+        if !self.search_query.is_empty() {
+            self.search_query.pop();
+            self.search_cursor = self.search_query.chars().count();
+        }
+    }
+
+    /// Run the workspace grep on the current query — Enter inside the
+    /// search input fires here. Populates `search_hits` + `search_used`.
+    /// Multi-root workspaces are concat'd just like the existing pane
+    /// grep.
+    pub fn search_section_run(&mut self) {
+        let q = self.search_query.trim().to_string();
+        if q.is_empty() {
+            self.search_hits.clear();
+            self.search_used = "";
+            return;
+        }
+        let (mut hits, used) = crate::app::grep_workspace(&self.workspace, &q);
+        let extras: Vec<std::path::PathBuf> = self
+            .extra_workspaces
+            .iter()
+            .map(|w| w.root.clone())
+            .collect();
+        for root in extras {
+            let (mut extra_hits, _) = crate::app::grep_workspace(&root, &q);
+            hits.append(&mut extra_hits);
+        }
+        self.search_hits = hits;
+        self.search_used = used;
+        self.search_selected = 0;
+        self.search_scroll = 0;
+    }
+
+    /// Move selection in the inline results list by `delta` (positive
+    /// = down, negative = up). No-op when there are no hits.
+    pub fn search_section_select(&mut self, delta: isize) {
+        if self.search_hits.is_empty() {
+            return;
+        }
+        let len = self.search_hits.len() as isize;
+        let new = (self.search_selected as isize + delta).clamp(0, len - 1);
+        self.search_selected = new as usize;
+    }
+
+    /// Open the focused hit in the editor (Enter on a result row,
+    /// while focus is NOT on the input box). Falls back gracefully
+    /// when no hit is selected.
+    pub fn search_section_open_selected(&mut self) {
+        let Some(hit) = self.search_hits.get(self.search_selected).cloned() else {
+            return;
+        };
+        let (path, line, col) = (hit.path, hit.line as usize, hit.col as usize);
+        self.open_path(&path);
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(line, col);
+        }
+    }
+
     /// `find.grep` (palette) — prompt for a query and grep the workspace.
     pub fn open_grep_prompt(&mut self) {
         let seed = match self.active.and_then(|i| self.panes.get(i)) {

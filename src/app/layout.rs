@@ -1274,12 +1274,22 @@ impl App {
     /// Set the active activity-bar section. Used by both the activity
     /// bar click handler and the `view.activity_*` commands. Clicking
     /// the *active* icon is treated as "I want to make sure it's
-    /// showing" — idempotent.
+    /// showing" — idempotent. Switching INTO Search also focuses its
+    /// input box so the user can start typing immediately; switching
+    /// OUT of Search blurs the input.
     pub fn set_activity_section(&mut self, section: crate::app::ActivitySection) {
         if !self.tree_visible {
             self.tree_visible = true;
         }
+        let entering_search = section == crate::app::ActivitySection::Search;
+        let leaving_search =
+            self.active_section == crate::app::ActivitySection::Search && !entering_search;
         self.active_section = section;
+        if entering_search {
+            self.search_input_focused = true;
+        } else if leaving_search {
+            self.search_input_focused = false;
+        }
     }
 
     /// Toggle the workspace "section" inside the rail (the click on the
