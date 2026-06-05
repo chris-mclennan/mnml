@@ -1643,6 +1643,46 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.open_remove_workspace_picker(),
         },
+        // ── Activity bar (vscode-style left-rail icon strip) ──
+        // Each command flips `App.active_section` to its matching
+        // value; the rail layout dispatches on it to pick which
+        // content to render. v1 only wires Explorer; the others
+        // paint a placeholder.
+        Command {
+            id: "view.activity_explorer",
+            title: "Activity: show Explorer",
+            group: "view",
+            keys: &[],
+            run: |app| app.set_activity_section(crate::app::ActivitySection::Explorer),
+        },
+        Command {
+            id: "view.activity_search",
+            title: "Activity: show Search",
+            group: "view",
+            keys: &[],
+            run: |app| app.set_activity_section(crate::app::ActivitySection::Search),
+        },
+        Command {
+            id: "view.activity_git",
+            title: "Activity: show Source Control",
+            group: "view",
+            keys: &[],
+            run: |app| app.set_activity_section(crate::app::ActivitySection::Git),
+        },
+        Command {
+            id: "view.activity_debug",
+            title: "Activity: show Debug",
+            group: "view",
+            keys: &[],
+            run: |app| app.set_activity_section(crate::app::ActivitySection::Debug),
+        },
+        Command {
+            id: "view.activity_integrations",
+            title: "Activity: show Integrations",
+            group: "view",
+            keys: &[],
+            run: |app| app.set_activity_section(crate::app::ActivitySection::Integrations),
+        },
         Command {
             id: "git.blame_toggle",
             title: "Git: toggle blame gutter",

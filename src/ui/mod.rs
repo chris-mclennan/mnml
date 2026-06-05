@@ -20,6 +20,7 @@
 //! palette / which-key / popups) draw on top.
 
 pub mod about_overlay;
+pub mod activity_bar;
 pub mod ai_view;
 pub mod azdevops_builds_view;
 pub mod azdevops_pull_requests_view;
@@ -243,10 +244,41 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     };
 
     // ── tree rail (full height of `upper`) ──
-    // (tree_view records `app.rects.tree` itself — it's the inner rect below the
-    // blank top line, so the mouse maths line up.)
+    // The rail is split into two columns: a 4-cell activity-bar
+    // strip on the far left + the larger content pane that hosts
+    // whichever ActivitySection is active. tree_view continues to
+    // render the Explorer mode; other modes paint a stub.
     if let Some(ta) = tree_area {
-        tree_view::draw(frame, app, ta);
+        let bar_w = crate::ui::activity_bar::ACTIVITY_BAR_WIDTH.min(ta.width);
+        let bar_area = Rect {
+            x: ta.x,
+            y: ta.y,
+            width: bar_w,
+            height: ta.height,
+        };
+        let content_area = Rect {
+            x: ta.x + bar_w,
+            y: ta.y,
+            width: ta.width.saturating_sub(bar_w),
+            height: ta.height,
+        };
+        crate::ui::activity_bar::draw(frame, app, bar_area);
+        match app.active_section {
+            crate::app::ActivitySection::Explorer => {
+                tree_view::draw(frame, app, content_area);
+            }
+            section => {
+                draw_section_placeholder(frame, content_area, section);
+            }
+        }
+        // For non-Explorer sections the tree_view click rects aren't
+        // populated; ensure they're at least cleared so a stale click
+        // from a prior frame doesn't fire.
+        if app.active_section != crate::app::ActivitySection::Explorer {
+            app.rects.tree = None;
+            app.rects.tree_toggle = None;
+            app.rects.tree_icon_buttons.clear();
+        }
         // Tiny drag-handle indicator — a 3-row vertical grip centered on
         // the rail's right edge (not a full-height border). Telegraphs
         // "you can drag this column to resize" without painting a visible
@@ -866,6 +898,49 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         dropdown_rect,
     );
     app.rects.palette_dropdown_button = Some(dropdown_rect);
+}
+
+/// Stub renderer for a non-Explorer activity section. Paints a centered
+/// "Coming soon" message under the section name; replaced by real
+/// content as each section is built out.
+fn draw_section_placeholder(frame: &mut Frame, area: Rect, section: crate::app::ActivitySection) {
+    let t = theme::cur();
+    let bg = t.bg_darker;
+    frame.render_widget(Block::default().style(Style::default().bg(bg)), area);
+    if area.height < 2 || area.width < 8 {
+        return;
+    }
+    let (_, _, label, _) = section.meta();
+    let header = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(ratatui::text::Line::from(format!(" {label}"))).style(
+            Style::default()
+                .fg(t.fg)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        header,
+    );
+    let body = Rect {
+        x: area.x,
+        y: area.y + 2,
+        width: area.width,
+        height: area.height.saturating_sub(2),
+    };
+    frame.render_widget(
+        Paragraph::new(ratatui::text::Line::from(" Coming soon")).style(
+            Style::default()
+                .fg(t.comment)
+                .bg(bg)
+                .add_modifier(Modifier::ITALIC),
+        ),
+        body,
+    );
 }
 
 fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir, hover: bool) {

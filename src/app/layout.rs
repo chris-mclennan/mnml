@@ -1271,6 +1271,17 @@ impl App {
         }
     }
 
+    /// Set the active activity-bar section. Used by both the activity
+    /// bar click handler and the `view.activity_*` commands. Clicking
+    /// the *active* icon is treated as "I want to make sure it's
+    /// showing" — idempotent.
+    pub fn set_activity_section(&mut self, section: crate::app::ActivitySection) {
+        if !self.tree_visible {
+            self.tree_visible = true;
+        }
+        self.active_section = section;
+    }
+
     /// Toggle the workspace "section" inside the rail (the click on the
     /// `> WORKSPACE-NAME` header — VS-Code Explorer style). When expanded,
     /// focus moves into the tree so keyboard nav picks up where it should.

@@ -4539,6 +4539,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 let _ = crate::command::run("editor.goto_line", app);
                 return;
             }
+            // Activity bar (the 4-cell vscode-style strip on the far
+            // left of the rail). Click an icon → switch the active
+            // section. Checked before the tree-icon row + workspace
+            // toggle since the strip occupies the same x-range.
+            if let Some(&(_, section)) = app
+                .rects
+                .activity_bar_icons
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.set_activity_section(section);
+                return;
+            }
             // File-tree toolbar icons (row 0 of the rail). Check BEFORE
             // the WORKSPACE-toggle below since the workspace header is row 1
             // and the icon row sits above it. Each chip dispatches a palette

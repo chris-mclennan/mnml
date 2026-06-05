@@ -1497,6 +1497,60 @@ pub enum RailSection {
     Git,
 }
 
+/// Top-level rail mode driven by the far-left vscode-style activity
+/// bar. Each variant maps to a single rail pane filling everything to
+/// the right of the activity-bar strip. v1 only fully wires
+/// `Explorer` — the others render a "Coming soon" placeholder; their
+/// content is staged as follow-ups so the activity-bar shape can
+/// land independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivitySection {
+    /// File tree + integrations + git (the pre-activity-bar default).
+    Explorer,
+    Search,
+    /// Branch + worktree management. The existing GIT sub-section
+    /// inside Explorer stays; this is the dedicated mode that would
+    /// give it more space + a richer log later.
+    Git,
+    Debug,
+    Integrations,
+}
+
+impl ActivitySection {
+    /// `(glyph, fallback, tooltip, command_id)` — used by both the
+    /// activity bar renderer and the click handler.
+    pub fn meta(self) -> (&'static str, &'static str, &'static str, &'static str) {
+        match self {
+            // nf-fa-folder_open
+            Self::Explorer => ("\u{F115}", "E", "Explorer", "view.activity_explorer"),
+            // nf-fa-search
+            Self::Search => ("\u{F002}", "S", "Search", "view.activity_search"),
+            // nf-md-source_branch
+            Self::Git => ("\u{F062C}", "G", "Source control", "view.activity_git"),
+            // nf-fa-bug
+            Self::Debug => ("\u{F188}", "D", "Run and debug", "view.activity_debug"),
+            // nf-md-puzzle
+            Self::Integrations => (
+                "\u{F0431}",
+                "I",
+                "Integrations",
+                "view.activity_integrations",
+            ),
+        }
+    }
+
+    /// Order shown in the activity bar strip — top to bottom.
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::Explorer,
+            Self::Search,
+            Self::Git,
+            Self::Debug,
+            Self::Integrations,
+        ]
+    }
+}
+
 /// Which underlying scroll value a `ScrollbarHit` controls. The dispatcher
 /// (in `tui.rs`) routes a drag-to-scrollbar event into the right pane field
 /// based on this tag.
@@ -1638,6 +1692,10 @@ pub struct PaneRects {
     /// `tui.rs` runs the icon's `command`; hover tooltip in
     /// `ui::tooltip` looks up the entry's label.
     pub integration_icon_rects: Vec<(Rect, usize)>,
+    /// Activity-bar icon rects (the far-left vscode-style strip) —
+    /// `(rect, section)`. Click dispatcher in `tui.rs` flips
+    /// `App.active_section`.
+    pub activity_bar_icons: Vec<(Rect, ActivitySection)>,
     /// `> INTEGRATIONS` rail-section header — clickable toggle that
     /// flips `App.integration_section_expanded` (same pattern as
     /// `tree_toggle` / `git_section_toggle`).
@@ -2077,6 +2135,11 @@ pub struct App {
     /// unchanged.
     pub extra_workspaces: Vec<ExtraWorkspace>,
     pub tree_visible: bool,
+    /// Which activity-bar section currently fills the rail. Default
+    /// `Explorer` reproduces mnml's pre-activity-bar behavior (file
+    /// tree + integrations + git). Toggled via the 4-cell vertical
+    /// strip on the far left of the rail.
+    pub active_section: ActivitySection,
     /// Current rail width (cells). Initialized from `[ui] tree_width` and
     /// then mutable via mouse-drag on the rail's right edge. Persisted in
     /// `session.json`.
@@ -2982,6 +3045,7 @@ impl App {
             focus: Focus::Tree,
             tree,
             tree_visible: true,
+            active_section: ActivitySection::Explorer,
             tree_width,
             dragging_tree_edge: false,
             dragging_scrollbar: None,
