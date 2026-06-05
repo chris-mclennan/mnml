@@ -52,22 +52,41 @@ pub enum SettingItem {
     /// An editable numeric row (v2 row kind) — `←/→` step the value
     /// within `[min, max]`. Display: `[ <value><unit> ]`.
     Number(NumberRow),
+    /// Free-form text row (v2 row kind). v1 of this variant is
+    /// display-only — the value renders bracketed with a "TOML for
+    /// now" hint. Live editing needs an `edit_mode` state machine on
+    /// the overlay (printable keys → buffer append vs the existing
+    /// `←/→` stepping); that's a v2.x follow-up.
+    Text(TextRow),
+    /// Color hex row (v2 row kind). Like `Text`, v1 is display-only:
+    /// renders the value as `#RRGGBB` followed by a small swatch
+    /// using the parsed color. Live editing is the same follow-up
+    /// as `Text`. No `build_settings` callers wire a `ColorRow` yet;
+    /// the variant is reserved for future overrides (e.g. theme
+    /// accent color picker).
+    #[allow(dead_code)]
+    Color(ColorRow),
 }
 
 impl SettingItem {
-    /// Returns the dispatch key for editable rows (`Row`, `Number`),
-    /// or `None` for section headers. Used by the overlay's navigation
-    /// + apply paths.
+    /// Returns the dispatch key for editable rows (any non-Section
+    /// variant), or `None` for section headers. Used by the overlay's
+    /// navigation + apply paths.
     pub fn row_key(&self) -> Option<&'static str> {
         match self {
             Self::Section(_) => None,
             Self::Row(r) => Some(r.key),
             Self::Number(n) => Some(n.key),
+            Self::Text(r) => Some(r.key),
+            Self::Color(r) => Some(r.key),
         }
     }
 
     pub fn is_row(&self) -> bool {
-        matches!(self, Self::Row(_) | Self::Number(_))
+        matches!(
+            self,
+            Self::Row(_) | Self::Number(_) | Self::Text(_) | Self::Color(_)
+        )
     }
 }
 
@@ -101,6 +120,32 @@ pub struct NumberRow {
     pub step: i32,
     pub default: i32,
     pub unit: &'static str,
+    pub modified: bool,
+}
+
+/// Free-form text row. v1 is display-only — value renders bracketed
+/// with a "TOML for now" hint; live editing needs an overlay-side
+/// edit-mode state machine (v2.x follow-up).
+#[derive(Debug, Clone)]
+pub struct TextRow {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub value: String,
+    pub default: String,
+    pub modified: bool,
+}
+
+/// Color hex row — value is a `RRGGBB` string (6-char, no `#`).
+/// Renderer adds the `#` prefix + a `█` swatch in the parsed color.
+/// v1 display-only; live editing is the same follow-up as `Text`.
+#[derive(Debug, Clone)]
+pub struct ColorRow {
+    pub key: &'static str,
+    pub label: &'static str,
+    /// 6-char hex without `#`. Invalid values render the swatch as
+    /// fg-color and append " (invalid)" in dim.
+    pub value: String,
+    pub default: String,
     pub modified: bool,
 }
 
@@ -251,6 +296,17 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         default: d.ui.sidescrolloff as i32,
         unit: "",
         modified: cfg.ui.sidescrolloff != d.ui.sidescrolloff,
+    }));
+
+    // Theme name (text row — v2, display-only in v1 of this variant).
+    // Lives in `~/.config/mnml/config.toml` under `[ui] theme = "..."`.
+    // Edit there directly for now; live edit is a v2.x follow-up.
+    out.push(SettingItem::Text(TextRow {
+        key: "ui.theme",
+        label: "Theme",
+        value: cfg.ui.theme.clone(),
+        default: d.ui.theme.clone(),
+        modified: cfg.ui.theme != d.ui.theme,
     }));
 
     // Tree width (number row — v2). 16..=60; step 2.
@@ -512,6 +568,21 @@ pub fn apply_number_setting(cfg: &mut Config, key: &str, value: i32) -> bool {
     }
 }
 
+/// Apply a Text/Color row's new value to the live `Config`. Returns
+/// `true` when the value actually changed. Unknown keys are no-op'd.
+/// Used primarily by the `r` reset path in v1 (writes the default
+/// back) — live edit support is a v2.x follow-up.
+pub fn apply_text_setting(cfg: &mut Config, key: &str, value: &str) -> bool {
+    match key {
+        "ui.theme" => {
+            let changed = cfg.ui.theme != value;
+            cfg.ui.theme = value.to_string();
+            changed
+        }
+        _ => false,
+    }
+}
+
 impl App {
     /// Open the settings overlay. Snapshots the current config for
     /// revert-on-cancel. Idempotent — re-opening replaces the snapshot
@@ -581,6 +652,11 @@ impl App {
                 let key = n.key;
                 apply_number_setting(&mut self.config, key, new_value);
             }
+            // Text + Color rows are display-only in v1 of v2-row-kinds.
+            // ←/→ is a no-op; the user edits the value in TOML for now.
+            // Live editing requires an overlay-side edit-mode state
+            // machine (v2.x follow-up).
+            SettingItem::Text(_) | SettingItem::Color(_) => {}
             SettingItem::Section(_) => {}
         }
     }
@@ -637,6 +713,12 @@ impl App {
             }
             Some(SettingItem::Number(d)) => {
                 apply_number_setting(&mut self.config, key, d.value);
+            }
+            Some(SettingItem::Text(d)) => {
+                apply_text_setting(&mut self.config, key, &d.value);
+            }
+            Some(SettingItem::Color(d)) => {
+                apply_text_setting(&mut self.config, key, &d.value);
             }
             _ => {}
         }
@@ -744,6 +826,56 @@ mod tests {
         assert_eq!(row.max, 20);
         assert_eq!(row.step, 1);
         assert!(!row.modified);
+    }
+
+    #[test]
+    fn build_settings_includes_text_rows() {
+        let cfg = Config::default();
+        let items = build_settings(&cfg);
+        let theme = items.iter().find_map(|i| match i {
+            SettingItem::Text(t) if t.key == "ui.theme" => Some(t),
+            _ => None,
+        });
+        let row = theme.expect("ui.theme text row missing");
+        assert_eq!(row.value, cfg.ui.theme);
+        assert!(!row.modified);
+    }
+
+    #[test]
+    fn apply_text_setting_writes_and_returns_changed() {
+        let mut cfg = Config::default();
+        let was = cfg.ui.theme.clone();
+        let other = if was == "tokyonight-night" {
+            "tokyonight-storm".to_string()
+        } else {
+            "tokyonight-night".to_string()
+        };
+        assert!(apply_text_setting(&mut cfg, "ui.theme", &other));
+        assert_eq!(cfg.ui.theme, other);
+        // Same value ⇒ false.
+        assert!(!apply_text_setting(&mut cfg, "ui.theme", &other));
+    }
+
+    #[test]
+    fn settings_reset_row_works_for_text() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let default_theme = app.config.ui.theme.clone();
+        // Change the theme directly to mark as modified.
+        app.config.ui.theme = "ratchet-test".to_string();
+        app.open_settings_overlay();
+        // Find the ui.theme row index and focus it.
+        let items = build_settings(&app.config);
+        let rows: Vec<&SettingItem> = items.iter().filter(|i| i.is_row()).collect();
+        let pos = rows
+            .iter()
+            .position(|r| r.row_key() == Some("ui.theme"))
+            .expect("ui.theme row not in build_settings");
+        if let Some(state) = app.settings_overlay.as_mut() {
+            state.selected_row = pos;
+        }
+        app.settings_reset_row();
+        assert_eq!(app.config.ui.theme, default_theme);
     }
 
     #[test]

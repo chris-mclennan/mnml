@@ -10,7 +10,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
@@ -178,6 +178,79 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                 }
                 lines.push(Line::from(spans));
             }
+            SettingItem::Text(row) => {
+                let is_focused = Some(i) == focused_item_idx;
+                let marker = if is_focused { "▸ " } else { "  " };
+                let mut spans = vec![
+                    Span::styled(
+                        marker,
+                        Style::default().fg(if is_focused { t.blue } else { t.bg2 }),
+                    ),
+                    Span::styled(
+                        format!("{:30}  ", row.label),
+                        Style::default().fg(if is_focused { t.fg } else { t.comment }),
+                    ),
+                    Span::styled(
+                        format!("[ \"{}\" ]", row.value),
+                        Style::default()
+                            .fg(if is_focused { t.cyan } else { t.fg })
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("  (text · default \"{}\" · TOML to edit)", row.default),
+                        Style::default().fg(t.comment).add_modifier(Modifier::DIM),
+                    ),
+                ];
+                if row.modified {
+                    spans.push(Span::styled(
+                        "  *",
+                        Style::default().fg(t.yellow).add_modifier(Modifier::BOLD),
+                    ));
+                }
+                lines.push(Line::from(spans));
+            }
+            SettingItem::Color(row) => {
+                let is_focused = Some(i) == focused_item_idx;
+                let marker = if is_focused { "▸ " } else { "  " };
+                let parsed = parse_hex_rgb(&row.value);
+                let swatch_color = parsed.unwrap_or(t.fg);
+                let suffix_text = if parsed.is_some() {
+                    format!("  (color · default #{} · TOML to edit)", row.default)
+                } else {
+                    format!(
+                        "  (color · default #{} · invalid hex · TOML to edit)",
+                        row.default
+                    )
+                };
+                let mut spans = vec![
+                    Span::styled(
+                        marker,
+                        Style::default().fg(if is_focused { t.blue } else { t.bg2 }),
+                    ),
+                    Span::styled(
+                        format!("{:30}  ", row.label),
+                        Style::default().fg(if is_focused { t.fg } else { t.comment }),
+                    ),
+                    Span::styled(
+                        format!("[ #{} ]  ", row.value),
+                        Style::default()
+                            .fg(if is_focused { t.cyan } else { t.fg })
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("████", Style::default().fg(swatch_color)),
+                    Span::styled(
+                        suffix_text,
+                        Style::default().fg(t.comment).add_modifier(Modifier::DIM),
+                    ),
+                ];
+                if row.modified {
+                    spans.push(Span::styled(
+                        "  *",
+                        Style::default().fg(t.yellow).add_modifier(Modifier::BOLD),
+                    ));
+                }
+                lines.push(Line::from(spans));
+            }
         }
     }
 
@@ -214,4 +287,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         )),
         hint_rect,
     );
+}
+
+/// Parse a 6-char `RRGGBB` hex (no `#`) into a `ratatui::Color::Rgb`.
+/// Returns `None` for invalid input. Used to render the color-row
+/// swatch in `ColorRow`'s parsed color.
+fn parse_hex_rgb(hex: &str) -> Option<Color> {
+    let bytes = hex.as_bytes();
+    if bytes.len() != 6 || !bytes.iter().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Color::Rgb(r, g, b))
 }
