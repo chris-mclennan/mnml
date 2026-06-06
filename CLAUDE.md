@@ -105,6 +105,41 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Lambda + EventBridge siblings + first cross-sibling handoff (2026-06-06):**
+Lands `mnml-aws-lambda` and `mnml-aws-eventbridge`, taking the
+AWS family to 5 siblings (codebuild, cloudwatch-logs, amplify,
+dynamodb, lambda, eventbridge). Both shell-out pure `aws` CLI.
+
+`mnml-aws-lambda` is a function browser: tab kinds `all` (every
+function in region, paginated) and `watched` (explicit name list).
+Split body: function list (left 45%) + focused-function detail
+(right 55%) showing runtime, handler, memory, timeout, code size,
+arch, package type, last modified, role, ARN, description. Keys:
+`o`/Enter open console · `y` yank ARN · `l` launch the cloudwatch-
+logs sibling · `r` refresh.
+
+`mnml-aws-eventbridge` is a buses + rules browser: tab kinds
+`buses` (every event bus in region) and `rules` (rules on a
+specified `event_bus_name`). Unified `Item` enum so one renderer
+handles both — buses show name/created/ARN/policy; rules show
+name/state/bus/schedule/role/managed-by/ARN/description/event-
+pattern JSON. Keys: `o` console · `y` yank ARN · `r` refresh.
+
+**First cross-sibling handoff:** Lambda's `l` chord launches
+`mnml-aws-cloudwatch-logs`. v0.1 leaves the user to switch tabs;
+v0.2 will pass `--log-group` so it auto-scopes to
+`/aws/lambda/<focused-fn>`. The family's "siblings composing on
+each other" pitch is now real (Lambda's logs ARE CloudWatch logs).
+
+mnml core changes: 2 IntegrationIcon entries in `config.rs`
+(lambda — nf-md-lambda orange; eventbridge — nf-md-bus pink), 2
+`Command` entries in `command.rs` (`forge.open_lambda` /
+`forge.open_eventbridge`), 2 chord entries under `+integrations`
+in `whichkey.rs`: `L` (capital — lowercase `l` is GitLab) for
+Lambda, `e` for EventBridge. 2 new Manual pages.
+
+Skipped (no evidence of use at Tattle): Step Functions, IAM.
+
 **3 new AWS/DB siblings + chord-conflict fix (2026-06-06):** Lands
 the day's family expansion + a long-standing whichkey bug.
 
