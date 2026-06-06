@@ -18,8 +18,8 @@ use crate::pane::Pane;
 use crate::picker::{Picker, PickerKind};
 use crate::tree::Tree;
 
-#[cfg(feature = "aws-codebuild")]
-mod aws;
+// `mod aws` (CodeBuild + CloudWatch) was split out to
+// mnml-aws-codebuild in 2026-06.
 // `mod azdevops` was split out to mnml-forge-azdevops in 2026-06.
 // `mod github` was split out to mnml-forge-github in 2026-06.
 // `mod gitlab` was split out to mnml-forge-gitlab in 2026-06.
@@ -2780,16 +2780,8 @@ pub struct App {
     // The per-pane CDP receiver lives on `BrowserPane.event_rx` now —
     // `drain_cdp_events` walks every browser pane each tick.
 
-    /// Receiver for the (single) LogTailPane's streaming aws CLI worker.
-    /// `App::tick` drains it into the open `Pane::LogTail`. `None` when
-    /// no tail pane is active.
-    #[cfg(feature = "aws-codebuild")]
-    log_tail_chan: Option<std::sync::mpsc::Receiver<crate::aws::log_tail_pane::LogTailEvent>>,
-    /// Pane id of the currently-streaming LogTailPane (the one that owns
-    /// `log_tail_chan`). Set in `tail_selected_codebuild_logs_classified`,
-    /// cleared on EOF or pane close.
-    #[cfg(feature = "aws-codebuild")]
-    log_tail_pane_id: Option<crate::layout::PaneId>,
+    // AWS CodeBuild + LogTail channels/state removed after the
+    // 2026-06 split — those panes ship in mnml-aws-codebuild now.
     // Pipeline-log channel + state removed after the 2026-06 SCM
     // split — no in-tree host populates Pane::PipelineLog any more.
     // gh_actions_*, gh_prs_*, github_* fields all moved to
@@ -3106,10 +3098,6 @@ impl App {
             dap_watch_results: std::collections::HashMap::new(),
             dap_pending_bp_condition: None,
             dap_pending_set_variable: None,
-            #[cfg(feature = "aws-codebuild")]
-            log_tail_chan: None,
-            #[cfg(feature = "aws-codebuild")]
-            log_tail_pane_id: None,
             pending_commit_msg_job: None,
             pending_amend_msg_job: None,
             pending_wip_commit_msg_pane: None,
@@ -6925,10 +6913,6 @@ impl App {
             Pane::Outline(o) => Some((o.tab_title(), false)),
             Pane::Quickfix(g) => Some((format!("Quickfix · {}", g.hits.len()), false)),
             Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
-            #[cfg(feature = "aws-codebuild")]
-            Pane::CodeBuilds(p) => Some((p.tab_title(), false)),
-            #[cfg(feature = "aws-codebuild")]
-            Pane::LogTail(p) => Some((p.tab_title(), false)),
             Pane::BlitHost(p) => Some((p.tab_title(), false)),
             Pane::Cheatsheet(_) => Some(("Cheatsheet".to_string(), false)),
             Pane::Debug(_) => Some(("Debug".to_string(), false)),
@@ -8318,10 +8302,6 @@ impl App {
         self.drain_dap_events();
         self.drain_lsp_events();
         self.drain_cdp_events();
-        #[cfg(feature = "aws-codebuild")]
-        self.drain_codebuild_events();
-        #[cfg(feature = "aws-codebuild")]
-        self.drain_log_tail_events();
         self.drain_blit_host_events();
         self.refresh_live_ai_panes();
         self.autosave_idle_buffers();

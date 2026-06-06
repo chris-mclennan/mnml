@@ -108,10 +108,11 @@ pub fn default_branches() -> &'static [&'static str] {
 // `[gitlab]` panes + config moved to mnml-forge-gitlab in 2026-06.
 // `[azdevops]` panes + config moved to mnml-forge-azdevops in 2026-06.
 
-/// `[ci]` — Continuous-integration provider settings. Consumed by the
-/// `aws-codebuild` Cargo feature's CodeBuild integration
-/// (`Pane::CodeBuilds`). Unconditional in `Config` so lean builds parse
-/// it cleanly.
+/// `[ci]` — Continuous-integration provider settings. The original
+/// consumer (the in-tree AWS CodeBuild pane) moved to mnml-aws-codebuild
+/// in 2026-06; the struct stays as scaffolding so existing user configs
+/// don't error on the section. Unconditional in `Config` so lean
+/// builds parse it cleanly.
 ///
 /// ```toml
 /// [ci]
@@ -623,9 +624,13 @@ impl Default for Config {
                         id: "codebuild".to_string(),
                         glyph: "\u{F0492}".to_string(), // nf-md-hammer-wrench
                         fallback: "C".to_string(),
-                        command: "aws.codebuilds".to_string(),
+                        // Launches the standalone mnml-aws-codebuild
+                        // viewer as a blit-host pane. User must have
+                        // it installed (`cargo install --git
+                        // https://github.com/chris-mclennan/mnml-aws-codebuild`).
+                        command: ":host.launch mnml-aws-codebuild".to_string(),
                         color: "yellow".to_string(),
-                        tooltip: Some("AWS CodeBuild builds".to_string()),
+                        tooltip: Some("AWS CodeBuild + logs".to_string()),
                     },
                     IntegrationIcon {
                         id: "github".to_string(),

@@ -6,10 +6,7 @@
 use std::path::PathBuf;
 
 use crate::ai::AiPane;
-#[cfg(feature = "aws-codebuild")]
-use crate::aws::codebuilds_pane::CodeBuildsPane;
-#[cfg(feature = "aws-codebuild")]
-use crate::aws::log_tail_pane::LogTailPane;
+// AWS CodeBuild + CloudWatch panes moved to mnml-aws-codebuild in 2026-06.
 // Azure DevOps panes moved to mnml-forge-azdevops in 2026-06.
 use crate::browser_pane::BrowserPane;
 use crate::buffer::Buffer;
@@ -77,15 +74,8 @@ pub enum Pane {
     /// Vim's `q:` — a scrollable list of recent `:` cmdline entries.
     /// Enter re-fires the highlighted entry; Esc closes.
     CmdlineHistory(CmdlineHistoryPane),
-    /// AWS CodeBuild recent-builds browser. Behind the `aws-codebuild`
-    /// Cargo feature; shells out to the `aws` CLI.
-    #[cfg(feature = "aws-codebuild")]
-    CodeBuilds(CodeBuildsPane),
-    /// `aws logs tail --follow ...` streaming view with per-line
-    /// severity coloring. Sibling to the existing pty-based log tail.
-    /// `aws-codebuild` feature only.
-    #[cfg(feature = "aws-codebuild")]
-    LogTail(LogTailPane),
+    // `Pane::CodeBuilds` + `Pane::LogTail` moved to mnml-aws-codebuild
+    // in 2026-06.
     /// NvCheatsheet-style browseable list of every active chord → command,
     /// grouped by `Command::group`. `/`-filterable, scrollable. Opened
     /// via `view.cheatsheet` / `<leader>?`.
@@ -432,10 +422,6 @@ impl Pane {
             Pane::Grep(g) => g.tab_title(),
             Pane::Quickfix(g) => format!("Quickfix · {}", g.hits.len()),
             Pane::CmdlineHistory(_) => "q:".to_string(),
-            #[cfg(feature = "aws-codebuild")]
-            Pane::CodeBuilds(p) => p.tab_title(),
-            #[cfg(feature = "aws-codebuild")]
-            Pane::LogTail(p) => p.tab_title(),
             Pane::BlitHost(p) => p.tab_title(),
             Pane::Cheatsheet(_) => "Cheatsheet".to_string(),
             Pane::Debug(_) => "Debug".to_string(),
@@ -469,10 +455,6 @@ impl Pane {
             | Pane::DapRepl(_)
             | Pane::Image(_)
             | Pane::BlitHost(_) => false,
-            #[cfg(feature = "aws-codebuild")]
-            Pane::CodeBuilds(_) => false,
-            #[cfg(feature = "aws-codebuild")]
-            Pane::LogTail(_) => false,
         }
     }
 

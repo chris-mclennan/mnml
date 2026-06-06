@@ -153,11 +153,9 @@ uds_windows = "1.1"
 
 [features]
 default = []
-# Generic AWS CodeBuild + CloudWatch panes (`Pane::CodeBuilds` /
-# `Pane::LogTail`). Shells out to the `aws` CLI; pulls in no new deps. Off
-# by default — `cargo build --features aws-codebuild` opts in. Anything
-# org-specific lives in plugins / private blit-host binaries, not here.
-aws-codebuild = []
+# `aws-codebuild` feature removed in 2026-06 — the panes moved to the
+# standalone mnml-aws-codebuild binary, hosted via
+# `:host.launch mnml-aws-codebuild`.
 
 [profile.release]
 lto = true

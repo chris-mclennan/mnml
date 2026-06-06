@@ -30,8 +30,7 @@ pub mod cheatsheet_view;
 pub mod close_prompt;
 pub mod cmdline_bar;
 pub mod cmdline_history_view;
-#[cfg(feature = "aws-codebuild")]
-pub mod codebuilds_view;
+// codebuilds_view moved to mnml-aws-codebuild.
 pub mod completion;
 pub mod context_menu;
 pub mod dap_repl_view;
@@ -53,8 +52,7 @@ pub mod help_overlay;
 pub mod hover;
 pub mod icons;
 pub mod image_view;
-#[cfg(feature = "aws-codebuild")]
-pub mod log_tail_view;
+// log_tail_view moved to mnml-aws-codebuild.
 pub mod md_inline_overlay;
 pub mod md_preview;
 pub mod mixr_view;
@@ -621,10 +619,6 @@ fn render_layout(
                 Some(crate::pane::Pane::Outline(_)) => 14,
                 Some(crate::pane::Pane::CmdlineHistory(_)) => 15,
                 Some(crate::pane::Pane::Quickfix(_)) => 16,
-                #[cfg(feature = "aws-codebuild")]
-                Some(crate::pane::Pane::CodeBuilds(_)) => 18,
-                #[cfg(feature = "aws-codebuild")]
-                Some(crate::pane::Pane::LogTail(_)) => 28,
                 Some(crate::pane::Pane::Cheatsheet(_)) => 29,
                 Some(crate::pane::Pane::Debug(_)) => 30,
                 Some(crate::pane::Pane::DapRepl(_)) => 31,
@@ -651,15 +645,6 @@ fn render_layout(
                 // Quickfix shares the Grep view — same shape, different
                 // pane identity so `:grep` results don't clobber it.
                 16 => grep_view::draw(frame, app, *id, area, focused),
-                #[cfg(feature = "aws-codebuild")]
-                18 => codebuilds_view::draw(frame, app, *id, area, focused),
-                #[cfg(feature = "aws-codebuild")]
-                28 => {
-                    if let Some(crate::pane::Pane::LogTail(p)) = app.panes.get_mut(*id) {
-                        log_tail_view::draw(frame, p, area);
-                    }
-                    None
-                }
                 29 => {
                     cheatsheet_view::draw(frame, app, *id, area, focused);
                     None

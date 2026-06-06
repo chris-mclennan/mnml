@@ -2898,23 +2898,7 @@ fn builtin_commands() -> Vec<Command> {
     // GitLab + Azure DevOps commands moved to their mnml-forge-*
     // siblings in 2026-06. The cross-host `pr.picker` was removed
     // too — no in-core caches to aggregate.
-    #[cfg(feature = "aws-codebuild")]
-    {
-        cmds.push(Command {
-            id: "aws.codebuilds",
-            title: "AWS: open CodeBuild builds-list pane",
-            group: "aws",
-            keys: &[],
-            run: |app| app.open_codebuilds_pane(),
-        });
-        cmds.push(Command {
-            id: "aws.tail_codebuild_logs_classified",
-            title: "AWS: tail selected CodeBuild logs (severity-colored, in-app)",
-            group: "aws",
-            keys: &[],
-            run: |app| app.tail_selected_codebuild_logs_classified(),
-        });
-    }
+    // `aws.*` commands moved to mnml-aws-codebuild in 2026-06.
     // tmnl-handoff — only useful when mnml is running as a tmnl
     // `--blit` client. The commands are registered unconditionally; at
     // runtime they toast an explanation if mnml's not under tmnl.

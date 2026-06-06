@@ -617,27 +617,9 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     delta.unsigned_abs() as isize
                 });
             }
-            #[cfg(feature = "aws-codebuild")]
-            Some(Pane::CodeBuilds(p)) => {
-                p.move_selection(delta as i64);
-            }
-            #[cfg(feature = "aws-codebuild")]
-            Some(Pane::LogTail(p)) => {
-                let n = delta.unsigned_abs() as usize;
-                // Wheel-up = scroll up; if we were following (Max), break
-                // out into a fixed position near the bottom so the user
-                // can read older lines without the tail snapping back.
-                if delta < 0 {
-                    if p.scroll == usize::MAX {
-                        p.scroll = p.lines.len().saturating_sub(1);
-                    }
-                    p.scroll = p.scroll.saturating_sub(n);
-                } else {
-                    p.scroll = p.scroll.saturating_add(n);
-                }
-            }
-            // Pipeline-log + SCM pane wheel-scroll moved to the
-            // mnml-forge-* siblings.
+            // AWS CodeBuild + LogTail wheel-scroll moved to
+            // mnml-aws-codebuild; pipeline-log + SCM wheel-scroll
+            // moved to the mnml-forge-* siblings.
             Some(Pane::Cheatsheet(c)) => {
                 if delta < 0 {
                     c.move_up();
@@ -832,18 +814,7 @@ pub(crate) fn handle_scm_row_click(
         }
         return;
     }
-    #[cfg(feature = "aws-codebuild")]
-    if matches!(app.panes.get(pane_id), Some(Pane::CodeBuilds(_))) {
-        if let Some(Pane::CodeBuilds(p)) = app.panes.get_mut(pane_id)
-            && flat_idx < p.items.len()
-        {
-            p.selected = flat_idx;
-        }
-        if is_double_click {
-            app.open_selected_codebuild_url();
-        }
-        return;
-    }
+    // CodeBuilds click handler moved to mnml-aws-codebuild.
     if matches!(app.panes.get(pane_id), Some(Pane::GitGraph(_))) {
         if let Some(Pane::GitGraph(g)) = app.panes.get_mut(pane_id) {
             // `flat_idx` is the *virtual* row index (0 = WIP if present,

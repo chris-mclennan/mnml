@@ -254,10 +254,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Outline(_) => (if nerd { "\u{f01bd}" } else { "⌥" }, theme::cur().purple),
             Pane::Quickfix(_) => (if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().teal),
             Pane::CmdlineHistory(_) => (if nerd { "\u{eb15}" } else { "❯" }, theme::cur().comment),
-            #[cfg(feature = "aws-codebuild")]
-            Pane::CodeBuilds(_) => (if nerd { "\u{f487}" } else { "⚒" }, theme::cur().orange),
-            #[cfg(feature = "aws-codebuild")]
-            Pane::LogTail(_) => (if nerd { "\u{f120}" } else { "≡" }, theme::cur().teal),
             // nf-mdi-application-cog — generic "hosted external app" glyph.
             Pane::BlitHost(_) => (if nerd { "\u{F0EAA}" } else { "▤" }, theme::cur().purple),
             Pane::Cheatsheet(_) => (if nerd { "\u{f128}" } else { "?" }, theme::cur().yellow),

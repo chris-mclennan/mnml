@@ -18,8 +18,8 @@
 
 pub mod ai;
 pub mod app;
-#[cfg(feature = "aws-codebuild")]
-pub mod aws;
+// `mod aws` was split out to the standalone mnml-aws-codebuild
+// binary in 2026-06.
 // `mod azdevops` was split out to the standalone mnml-forge-azdevops
 // binary in 2026-06.
 pub mod blit;
