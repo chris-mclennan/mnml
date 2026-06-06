@@ -695,6 +695,26 @@ fn handle_prompt_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // Path-typed prompts (AddWorkspace) get a live directory listing
+    // alongside the input. ↑↓ navigate the list, Tab autocompletes,
+    // typing keeps working in parallel.
+    if p.is_path_kind() {
+        match key.code {
+            KeyCode::Up => {
+                p.suggestion_prev();
+                return;
+            }
+            KeyCode::Down => {
+                p.suggestion_next();
+                return;
+            }
+            KeyCode::Tab => {
+                p.autocomplete();
+                return;
+            }
+            _ => {}
+        }
+    }
     match key.code {
         KeyCode::Esc => {
             app.prompt_cancel();

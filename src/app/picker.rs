@@ -829,14 +829,22 @@ impl App {
     }
 
     pub fn prompt_accept(&mut self) {
-        let Some(p) = self.prompt.take() else { return };
+        let Some(mut p) = self.prompt.take() else {
+            return;
+        };
         match p.kind {
             crate::prompt::PromptKind::AddWorkspace => {
-                let input = p.input.trim();
+                // If the user picked a row from the live directory
+                // listing (↑↓ then Enter), that path wins over the
+                // typed input — the row's `take_selected_input`
+                // returns the full path with tilde already expanded.
+                let from_selected = p.take_selected_input();
+                let raw = from_selected.unwrap_or_else(|| p.input.trim().to_string());
+                let input = raw.trim();
                 if input.is_empty() {
                     return;
                 }
-                // Tilde-expand `~/...`.
+                // Tilde-expand `~/...` for the typed-input path.
                 let path = if let Some(rest) = input.strip_prefix("~/") {
                     if let Some(home) = std::env::var_os("HOME") {
                         PathBuf::from(home).join(rest)
