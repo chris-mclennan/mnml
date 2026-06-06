@@ -92,6 +92,17 @@ impl App {
         }
     }
 
+    /// Open a specific hit by index — used by the mouse handler when
+    /// a result row is clicked. Sets `search_selected` to the hit
+    /// before opening so the highlight follows the click.
+    pub fn search_section_open_hit(&mut self, idx: usize) {
+        if idx >= self.search_hits.len() {
+            return;
+        }
+        self.search_selected = idx;
+        self.search_section_open_selected();
+    }
+
     /// `find.grep` (palette) — prompt for a query and grep the workspace.
     pub fn open_grep_prompt(&mut self) {
         let seed = match self.active.and_then(|i| self.panes.get(i)) {

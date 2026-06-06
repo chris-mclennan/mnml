@@ -4598,6 +4598,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.set_activity_section(section);
                 return;
             }
+            // Search activity-bar section result rows — click → open
+            // the hit's file at its line:col. Checked before tree
+            // icons since they may overlap (tree_icon_buttons spans
+            // the same width).
+            if let Some(&(_, idx)) = app
+                .rects
+                .search_section_hit_rects
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.search_section_open_hit(idx);
+                return;
+            }
             // File-tree toolbar icons (row 0 of the rail). Check BEFORE
             // the WORKSPACE-toggle below since the workspace header is row 1
             // and the icon row sits above it. Each chip dispatches a palette

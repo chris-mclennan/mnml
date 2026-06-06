@@ -1386,6 +1386,7 @@ fn draw_debug_section(frame: &mut Frame, app: &mut App, area: Rect) {
 fn draw_search_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let t = theme::cur();
     let bg = t.bg_darker;
+    app.rects.search_section_hit_rects.clear();
     frame.render_widget(Block::default().style(Style::default().bg(bg)), area);
     if area.height < 2 || area.width < 8 {
         return;
@@ -1532,6 +1533,7 @@ fn draw_search_section(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         };
         frame.render_widget(Paragraph::new(row), row_rect);
+        app.rects.search_section_hit_rects.push((row_rect, i));
         y = y.saturating_add(1);
     }
 }

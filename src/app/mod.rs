@@ -1696,6 +1696,10 @@ pub struct PaneRects {
     /// `(rect, section)`. Click dispatcher in `tui.rs` flips
     /// `App.active_section`.
     pub activity_bar_icons: Vec<(Rect, ActivitySection)>,
+    /// Search activity-bar section: per-result row rect → hit index.
+    /// Click → opens that file at its line/col via
+    /// `App::search_section_open_hit`. Cleared + rebuilt every draw.
+    pub search_section_hit_rects: Vec<(Rect, usize)>,
     /// `> INTEGRATIONS` rail-section header — clickable toggle that
     /// flips `App.integration_section_expanded` (same pattern as
     /// `tree_toggle` / `git_section_toggle`).
