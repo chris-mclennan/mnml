@@ -44,6 +44,7 @@ mod now_playing;
 mod picker;
 // pipeline_log removed after 2026-06 SCM split.
 mod playwright;
+mod scm;
 mod session;
 pub(crate) mod settings;
 mod snippets;
@@ -2414,6 +2415,18 @@ pub struct App {
     /// `tree_view::draw` reserve a card Rect at the bottom of the rail
     /// for it. Cleared when the cursor leaves the row.
     pub tree_image_preview: Option<TreeImagePreview>,
+    /// Cross-host PR cache — populated by the `pr.picker` palette
+    /// command (which fans out to every installed `mnml-forge-*`
+    /// sibling via their `--list-prs --json` headless mode). Read
+    /// by [`Self::refresh_rail_pulls`] to populate the rail's
+    /// "Open PRs" subsection. `None` until first refresh; stale
+    /// after `ScmPrCache::MAX_AGE` (5 min) and refreshed lazily.
+    pub scm_pr_cache: Option<crate::scm::ScmPrCache>,
+    /// In-flight `aggregate_all` worker — set when `pr.picker` or
+    /// `pr.refresh` kicked off a background fan-out. The TUI's
+    /// `tick` drains this; the picker pops out of the loading
+    /// state when the receiver delivers.
+    pub scm_pr_pending: Option<std::sync::mpsc::Receiver<crate::scm::ScmPrCache>>,
     /// Repos discovered inside the workspace. One entry per `.git/` found.
     /// `[]` when the workspace contains no repo. Always-1-entry for the
     /// single-repo case (workspace IS a repo). Multi-repo workspaces get
@@ -3036,6 +3049,8 @@ impl App {
             image_paint_requests: Vec::new(),
             tree_image_preview: None,
             had_image_pane: false,
+            scm_pr_cache: None,
+            scm_pr_pending: None,
             repos,
             active_repo,
             git_section_expanded: true,
@@ -8344,6 +8359,7 @@ impl App {
         self.drain_blit_host_events();
         self.refresh_live_ai_panes();
         self.maintain_tree_image_preview();
+        self.drain_scm_pr_pending();
         self.autosave_idle_buffers();
         self.check_external_file_changes();
         self.check_format_save_deadline();

@@ -71,6 +71,7 @@ pub(crate) mod prompt;
 pub(crate) mod pty_pane;
 pub(crate) mod regex_outline;
 pub(crate) mod request_pane;
+pub(crate) mod scm;
 pub(crate) mod shell_prompt;
 pub(crate) mod signature;
 pub(crate) mod snippets;

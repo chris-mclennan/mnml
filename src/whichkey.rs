@@ -139,6 +139,25 @@ pub fn root() -> &'static Leader {
                     ),
                 ),
                 (
+                    'P',
+                    group(
+                        "+pr",
+                        vec![
+                            (
+                                'p',
+                                cmd(
+                                    "pr.picker",
+                                    "PRs: cross-host picker (Enter URL / Tab pipeline)",
+                                ),
+                            ),
+                            (
+                                'r',
+                                cmd("pr.refresh", "PRs: refresh cross-host cache (background)"),
+                            ),
+                        ],
+                    ),
+                ),
+                (
                     'a',
                     group(
                         "+ai/term",

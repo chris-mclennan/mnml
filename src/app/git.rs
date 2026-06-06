@@ -1684,25 +1684,56 @@ impl App {
         self.refresh_git_graph_panes();
     }
 
-    /// Project the per-host PR caches into `git_rail.pulls` — best-effort
-    /// match by `remote.origin.url`. Called after SCM workers update + on
-    /// every git change. Empty when there's no recognized remote or no
-    /// open PRs for the matched repo.
+    /// Project the cross-host PR cache into `git_rail.pulls` —
+    /// matches each cached PR's `remote_url_https` / `remote_url_ssh`
+    /// against the active repo's `remote.origin.url`. Empty when no
+    /// remote, no cache, or no matching PRs.
+    ///
+    /// Cache is populated by `pr.picker` / `pr.refresh` — see
+    /// [`App::open_pr_picker`]. This method is a pure projection: it
+    /// never spawns a sibling itself. To get fresh data, the user
+    /// runs `pr.picker` or `pr.refresh`.
     pub fn refresh_rail_pulls(&mut self) {
         use crate::git::rail::PullRow;
         let mut out: Vec<PullRow> = Vec::new();
         let repo_path = self.active_repo_path().to_path_buf();
         let remote = crate::git::browse::git_config(&repo_path, "remote.origin.url");
-        let parsed = remote.as_deref().and_then(crate::git::browse::parse_remote);
         let current_branch = self.git_rail.current_branch.clone();
-        if let Some((host, owner, repo)) = parsed {
-            // All four SCM hosts (BB/GH/GL/AZ) moved to standalone
-            // mnml-forge-* binaries in 2026-06 — no in-mnml PR cache
-            // to surface in the rail any more for any host.
-            let _ = (host, owner, repo, &current_branch);
+        if let Some(cache) = self.scm_pr_cache.as_ref()
+            && let Some(remote) = remote.as_deref()
+        {
+            for pr in cache.prs.iter() {
+                if !crate::scm::pr_matches_remote(pr, remote) {
+                    continue;
+                }
+                let is_current_branch =
+                    match (pr.source_branch.as_deref(), current_branch.as_deref()) {
+                        (Some(src), Some(cur)) => !src.is_empty() && src == cur,
+                        _ => false,
+                    };
+                let host_tag = match pr.host.as_str() {
+                    "bitbucket" => "BB",
+                    "github" => "GH",
+                    "gitlab" => "GL",
+                    "azdevops" => "AZ",
+                    _ => "??",
+                };
+                let number_prefix = match pr.host.as_str() {
+                    "gitlab" => "!",
+                    _ => "#",
+                };
+                out.push(PullRow {
+                    host_tag,
+                    number_label: format!("{number_prefix}{}", pr.id),
+                    title: pr.title.clone(),
+                    source_branch: pr.source_branch.clone(),
+                    is_current_branch,
+                    web_url: pr.url.clone(),
+                });
+            }
         }
-        // Sort: current-branch PR(s) first, then everything else in insertion
-        // order (which is recency from the worker pass).
+        // Sort: current-branch PR(s) first, then everything else in
+        // insertion order (which is recency-from-aggregate_all).
         out.sort_by_key(|p| !p.is_current_branch);
         self.git_rail.pulls = out;
         // Clamp cursor in case the row count shrank.

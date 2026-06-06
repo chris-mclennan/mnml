@@ -307,12 +307,25 @@ impl App {
     }
 
     /// Tab on a picker — picker-kind-specific "secondary accept".
-    /// Used to drive `OpenPullRequests` cross-nav; with the SCM panes
-    /// gone after the 2026-06 split there's currently nothing to
-    /// secondary-accept, so this is a single toast.
+    /// `OpenPullRequests`: cross-nav from a PR to its pipeline/build
+    /// via the matching `mnml-forge-*` sibling's
+    /// `--find-pipeline-for-pr --json` headless mode.
     pub fn picker_accept_secondary(&mut self) {
-        if self.picker.is_some() {
-            self.toast("Tab → no secondary action for this picker");
+        let Some(picker) = self.picker.as_ref() else {
+            return;
+        };
+        let Some(item) = picker.selected_item().cloned() else {
+            return;
+        };
+        match picker.kind {
+            PickerKind::OpenPullRequests => {
+                // Take the picker so we close the overlay before the
+                // (potentially-1s) sibling shellout — keeps the UI
+                // responsive while we look up the pipeline URL.
+                self.picker = None;
+                self.accept_pr_picker_secondary(&item.id);
+            }
+            _ => self.toast("Tab → no secondary action for this picker"),
         }
     }
 
@@ -424,11 +437,12 @@ impl App {
             PickerKind::AiSessions => self.open_ai_session_mirror(&item.id),
             PickerKind::Clipboard => self.paste_register(&item.id),
             PickerKind::OpenPullRequests => {
-                // Vestigial after the 2026-06 SCM split — no code
-                // constructs this kind any more, but the arm stays
-                // for exhaustive-match safety.
-                let url = item.id.split('\x1F').next().unwrap_or(&item.id);
-                open_url_external(url);
+                // Restored 2026-06-06 after the SCM split: dispatched
+                // by `pr.picker` — Enter opens the chosen PR's URL.
+                // The picker's secondary-accept (Tab) is handled
+                // separately by `accept_pr_picker_secondary` invoked
+                // from the picker keymap.
+                self.accept_pr_picker_primary(&item.id);
             }
             PickerKind::Repos => {
                 if let Ok(idx) = item.id.parse::<usize>() {

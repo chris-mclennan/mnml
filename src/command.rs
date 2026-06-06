@@ -1024,6 +1024,26 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.git_jump_to_change(true),
         },
+        // Cross-host PR picker — fans out to every installed
+        // `mnml-forge-*` sibling via its `--list-prs --json`
+        // headless mode and shows the merged result in a single
+        // fuzzy picker. Enter = open URL; Tab = jump to pipeline.
+        // First call (or stale cache) blocks ~1-3s; subsequent
+        // calls within 5 min use the cache (refresh with `pr.refresh`).
+        Command {
+            id: "pr.picker",
+            title: "PRs: cross-host fuzzy picker (Enter ⇒ URL · Tab ⇒ pipeline)",
+            group: "pr",
+            keys: &[],
+            run: |app| app.open_pr_picker(),
+        },
+        Command {
+            id: "pr.refresh",
+            title: "PRs: refresh cross-host cache (background)",
+            group: "pr",
+            keys: &[],
+            run: |app| app.refresh_scm_prs(),
+        },
         Command {
             id: "editor.jump_next_edit",
             title: "Jump to next edit position (vim `g,`)",
