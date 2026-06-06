@@ -210,7 +210,7 @@ When set (e.g. `["TE-", "MIX-"]`), pty session tabs that don't have a user-set n
 mnml has two icon strips driven from `[ui]` arrays:
 
 - `[[ui.launcher_icon]]` — colored chips on the right edge of the bufferline. Defaults to empty.
-- `[[ui.integration_icon]]` — plain glyphs in the rail's INTEGRATIONS row (under GIT). Defaults to Claude Code, Codex, Bitbucket, Jira, HTTP, CodeBuild, GitHub, Azure DevOps, GitLab, S3, CloudWatch Logs, Amplify, DynamoDB — one chip per first-party sibling that ships as a default. Each fires `:host.launch <binary>` so installing the matching sibling is all it takes to make the chip work.
+- `[[ui.integration_icon]]` — plain glyphs in the rail's INTEGRATIONS row (under GIT). Defaults to Claude Code, Codex, Bitbucket, Jira, HTTP, CodeBuild, GitHub, Azure DevOps, GitLab, S3, CloudWatch Logs, Amplify, DynamoDB, Lambda, EventBridge — one chip per first-party sibling that ships as a default. Each fires `:host.launch <binary>` so installing the matching sibling is all it takes to make the chip work.
 
 Both share the same shape:
 

@@ -117,7 +117,7 @@ mnml-<thing> --blit <socket>   # blit-host mode (mode 3); no terminal takeover
 
 ## Shelling out to vendor CLIs (the AWS pattern)
 
-Five first-party siblings now follow a "no SDK; shell out to the vendor CLI" model: [`mnml-aws-codebuild`](/manual/integrations/aws-codebuild/), [`mnml-aws-cloudwatch-logs`](/manual/integrations/aws-cloudwatch-logs/), [`mnml-aws-amplify`](/manual/integrations/aws-amplify/), [`mnml-fs-s3`](/manual/integrations/fs-s3/), and [`mnml-db-dynamodb`](/manual/integrations/db-dynamodb/). The pattern is worth lifting up because it removes a lot of integration code that would otherwise be on you.
+Seven first-party siblings now follow a "no SDK; shell out to the vendor CLI" model: [`mnml-aws-codebuild`](/manual/integrations/aws-codebuild/), [`mnml-aws-cloudwatch-logs`](/manual/integrations/aws-cloudwatch-logs/), [`mnml-aws-amplify`](/manual/integrations/aws-amplify/), [`mnml-aws-lambda`](/manual/integrations/aws-lambda/), [`mnml-aws-eventbridge`](/manual/integrations/aws-eventbridge/), [`mnml-fs-s3`](/manual/integrations/fs-s3/), and [`mnml-db-dynamodb`](/manual/integrations/db-dynamodb/). The pattern is worth lifting up because it removes a lot of integration code that would otherwise be on you.
 
 The deal: every backend call is a `std::process::Command::new("aws").args([...])` subprocess. The CLI's own credential chain — env vars (`AWS_PROFILE`, `AWS_REGION`, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) → shared credentials → SSO → instance role — is what authenticates the call. The viewer's auth code is "did the subprocess exit 0?"
 
@@ -135,6 +135,10 @@ What it costs:
 - **You have to have the CLI installed.** First-run `--check` should verify it (`which aws` or `aws --version`).
 
 If you're building an integration against an AWS, GCP, Azure, or other "the vendor ships a first-class CLI" backend, this is the recommended pattern — clone `mnml-aws-codebuild` or `mnml-fs-s3`, swap the subprocess calls for your service's commands, and you've skipped the auth code entirely. Don't reach for an SDK unless you genuinely need streaming responses, long-lived connections, or sub-100ms latency.
+
+### Cross-sibling handoffs
+
+When one sibling's data points at another sibling's surface — a Lambda function's logs live in CloudWatch, an S3 bucket's events feed an EventBridge rule, a CodeBuild run's artifacts land in S3 — the natural move is a single-key handoff to the relevant sibling. The first instance: [`mnml-aws-lambda`](/manual/integrations/aws-lambda/)'s `l` chord launches [`mnml-aws-cloudwatch-logs`](/manual/integrations/aws-cloudwatch-logs/) on the focused function. The mechanism is a plain `std::process::Command::new("mnml-aws-cloudwatch-logs").spawn()` — no IPC, no shared state, just the sibling binary path on `$PATH`. If you're routing through a context (a focused function, an open bucket), pass it as a CLI flag (`--log-group /aws/lambda/<fn>` is the planned v0.2 of that chord). Treat the sibling like any other vendor CLI — if it's installed it'll resolve; if it isn't, toast that it's missing and move on.
 
 ## Opting into blit-host mode
 

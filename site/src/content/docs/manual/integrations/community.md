@@ -42,6 +42,8 @@ Stand-alone CI / deploy viewers — for build and hosting platforms that aren't 
 | `mnml-aws-codebuild` | AWS CodeBuild + CloudWatch Logs live tail (shells out to `aws` CLI) | [chris-mclennan/mnml-aws-codebuild](https://github.com/chris-mclennan/mnml-aws-codebuild) |
 | `mnml-aws-cloudwatch-logs` | AWS CloudWatch Logs — tabbed log groups, severity coloring, filter patterns | [chris-mclennan/mnml-aws-cloudwatch-logs](https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs) |
 | `mnml-aws-amplify` | AWS Amplify — apps, branches, deploy jobs | [chris-mclennan/mnml-aws-amplify](https://github.com/chris-mclennan/mnml-aws-amplify) |
+| `mnml-aws-lambda` | AWS Lambda — function browser + detail panel, `l` chord launches CloudWatch Logs sibling | [chris-mclennan/mnml-aws-lambda](https://github.com/chris-mclennan/mnml-aws-lambda) |
+| `mnml-aws-eventbridge` | AWS EventBridge — buses, rules, event-pattern + schedule detail | [chris-mclennan/mnml-aws-eventbridge](https://github.com/chris-mclennan/mnml-aws-eventbridge) |
 
 ### Test infrastructure
 
