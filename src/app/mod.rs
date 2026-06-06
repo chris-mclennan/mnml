@@ -1343,6 +1343,19 @@ fn parse_path_with_position(token: &str) -> Option<(&str, usize, usize)> {
 /// test ↔ source pairings: stem suffixed with `_test` / `_spec`, dotted
 /// `.test.` / `.spec.` (TS / JS convention), and a parallel `tests/`
 /// directory sibling. The first candidate that exists on disk wins.
+/// Shorten an image-load error to something that fits in the
+/// preview card's caption row. Mostly strips path prefixes that
+/// `crate::image::load` adds (the caption already names the file).
+fn short_image_error(raw: &str) -> String {
+    // The errors are like "stat: …" / "read: …" / "decode JPEG: …".
+    // Truncate aggressively — the caption is one row of ~12 cells.
+    let mut s = raw.split('\n').next().unwrap_or(raw).to_string();
+    if s.chars().count() > 14 {
+        s = s.chars().take(13).collect::<String>() + "…";
+    }
+    s
+}
+
 fn alternate_paths(path: &std::path::Path) -> Vec<PathBuf> {
     let Some(parent) = path.parent() else {
         return Vec::new();
@@ -1922,6 +1935,27 @@ pub struct UserExCommand {
     pub nargs: ExCommandNargs,
 }
 
+/// File-tree hover-preview state. The renderer paints a small card at
+/// the bottom of the rail showing whichever image file the tree cursor
+/// is over. We track the row's path so re-hovering reuses the cached
+/// PNG bytes, and an `Instant` so a 250 ms debounce filters out
+/// flick-throughs while the user scrolls fast.
+#[derive(Debug, Clone)]
+pub struct TreeImagePreview {
+    /// The image file currently under the tree cursor.
+    pub path: std::path::PathBuf,
+    /// When the cursor first landed on this row (or — after the load
+    /// completed — when the load came back).
+    pub since: std::time::Instant,
+    /// Decoded + transcoded PNG bytes, ready to feed straight into a
+    /// `PaintRequest`. `None` while the debounce is still waiting or
+    /// the file is still being read.
+    pub png_bytes: Option<std::sync::Arc<Vec<u8>>>,
+    /// Set when decode failed — short string the renderer can paint
+    /// as a caption (e.g. "unsupported", "too large").
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExCommandNargs {
     /// `0` — no args; if the user passes any, refuse with a toast.
@@ -2375,6 +2409,11 @@ pub struct App {
     /// escape — needed when the user closes / hides an image pane so the
     /// stale image doesn't linger over the next frame's content.
     pub had_image_pane: bool,
+    /// File-tree image hover-preview state. When the tree cursor lands on
+    /// an image row, after a debounce we decode + cache the PNG and let
+    /// `tree_view::draw` reserve a card Rect at the bottom of the rail
+    /// for it. Cleared when the cursor leaves the row.
+    pub tree_image_preview: Option<TreeImagePreview>,
     /// Repos discovered inside the workspace. One entry per `.git/` found.
     /// `[]` when the workspace contains no repo. Always-1-entry for the
     /// single-repo case (workspace IS a repo). Multi-repo workspaces get
@@ -2995,6 +3034,7 @@ impl App {
             git_rail,
             image_protocol: crate::image::detect_protocol(),
             image_paint_requests: Vec::new(),
+            tree_image_preview: None,
             had_image_pane: false,
             repos,
             active_repo,
@@ -8303,6 +8343,7 @@ impl App {
         self.drain_cdp_events();
         self.drain_blit_host_events();
         self.refresh_live_ai_panes();
+        self.maintain_tree_image_preview();
         self.autosave_idle_buffers();
         self.check_external_file_changes();
         self.check_format_save_deadline();
@@ -8325,6 +8366,99 @@ impl App {
             .is_some_and(|(_, t)| t.elapsed() >= TOAST_TTL)
         {
             self.toast_stack.pop_back();
+        }
+    }
+
+    /// Tick-side maintenance of the file-tree image hover-preview:
+    ///
+    /// - On a non-image cursor row (or with no inline-image protocol
+    ///   available) clear any active preview.
+    /// - On an image row, start tracking with `since = now`. The 250 ms
+    ///   debounce keeps fast `j`/`k` scrolling from triggering a decode
+    ///   for every transient row.
+    /// - Once the debounce elapses, decode + transcode the image to
+    ///   PNG and cache the bytes for the renderer.
+    pub fn maintain_tree_image_preview(&mut self) {
+        const HOVER_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(250);
+        // Opt-out path — `[ui] tree_image_preview = false` skips the
+        // tick + decode entirely.
+        if !self.config.ui.tree_image_preview {
+            self.tree_image_preview = None;
+            return;
+        }
+        // No protocol ⇒ never a preview. Drop any leftover state.
+        if matches!(self.image_protocol, crate::image::ImageProtocol::None) {
+            self.tree_image_preview = None;
+            return;
+        }
+        // Resolve the path the tree cursor's row points at, if any.
+        let rows = self.tree.visible_rows();
+        let cursor_row = rows.get(self.tree.cursor());
+        let cursor_image_path: Option<std::path::PathBuf> = cursor_row.and_then(|r| {
+            if r.is_dir {
+                return None;
+            }
+            let fmt = crate::image::ImageFormat::from_path(&r.path);
+            if matches!(fmt, crate::image::ImageFormat::Other) {
+                None
+            } else {
+                Some(r.path.clone())
+            }
+        });
+        match (cursor_image_path, self.tree_image_preview.take()) {
+            (None, _) => {
+                // Cursor left the image row (or moved to a non-image one).
+                // `take` already cleared the field; nothing to write back.
+            }
+            (Some(path), Some(prev)) if prev.path == path => {
+                // Still on the same row — keep the cached bytes / error /
+                // pending debounce. Run the decode side-effect below if
+                // we hadn't loaded yet and the debounce just elapsed.
+                let need_load = prev.png_bytes.is_none()
+                    && prev.error.is_none()
+                    && prev.since.elapsed() >= HOVER_DEBOUNCE;
+                self.tree_image_preview = Some(prev);
+                if need_load {
+                    self.load_tree_image_preview(&path);
+                }
+            }
+            (Some(path), _) => {
+                // New row — reset the debounce timer.
+                self.tree_image_preview = Some(TreeImagePreview {
+                    path,
+                    since: std::time::Instant::now(),
+                    png_bytes: None,
+                    error: None,
+                });
+            }
+        }
+    }
+
+    /// Decode + transcode an image file for the file-tree preview card.
+    /// Reads up to 50 MB (same cap as `Pane::Image`); on success the
+    /// PNG bytes land in `tree_image_preview.png_bytes`. Errors land as
+    /// a short caption string in `.error`.
+    fn load_tree_image_preview(&mut self, path: &std::path::Path) {
+        let result = (|| -> Result<std::sync::Arc<Vec<u8>>, String> {
+            let mut data = crate::image::load(path)?;
+            data.ensure_png_bytes()
+        })();
+        if let Some(prev) = self.tree_image_preview.as_mut() {
+            // Guard against the cursor having moved while we were reading
+            // (the decode is synchronous + short, but the path equality
+            // check is cheap insurance).
+            if prev.path == path {
+                match result {
+                    Ok(arc) => {
+                        prev.png_bytes = Some(arc);
+                        prev.since = std::time::Instant::now();
+                        prev.error = None;
+                    }
+                    Err(e) => {
+                        prev.error = Some(short_image_error(&e));
+                    }
+                }
+            }
         }
     }
 
@@ -9313,5 +9447,121 @@ mod tests {
             app.flash_state.is_none(),
             "flash with no matches should NOT leave state armed"
         );
+    }
+
+    /// Build a tiny PNG file in a temp workspace, point the tree
+    /// cursor at it, force the image protocol to Kitty (so the
+    /// maintain method doesn't bail early on `ImageProtocol::None`),
+    /// and exercise the hover-preview state machine.
+    fn workspace_with_image() -> (tempfile::TempDir, App, std::path::PathBuf) {
+        let d = tempfile::tempdir().unwrap();
+        let png_path = d.path().join("logo.png");
+        let img = image::RgbImage::from_pixel(2, 2, image::Rgb([10, 20, 30]));
+        image::DynamicImage::ImageRgb8(img)
+            .save_with_format(&png_path, image::ImageFormat::Png)
+            .unwrap();
+        // Also drop a text file so the test can verify the cursor
+        // *not* on an image clears the preview.
+        fs::write(d.path().join("README.md"), "hi").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        // App::new walks the workspace lazily — explicitly refresh so
+        // the test files show up before we set the cursor.
+        app.tree.refresh();
+        app.image_protocol = crate::image::ImageProtocol::Kitty;
+        (d, app, png_path)
+    }
+
+    #[test]
+    fn maintain_tree_image_preview_no_protocol_clears() {
+        let (_d, mut app, _png) = workspace_with_image();
+        app.image_protocol = crate::image::ImageProtocol::None;
+        app.tree_image_preview = Some(TreeImagePreview {
+            path: std::path::PathBuf::from("/tmp/x.png"),
+            since: std::time::Instant::now(),
+            png_bytes: None,
+            error: None,
+        });
+        app.maintain_tree_image_preview();
+        assert!(app.tree_image_preview.is_none(), "no protocol ⇒ no preview");
+    }
+
+    #[test]
+    fn maintain_tree_image_preview_off_flag_clears() {
+        let (_d, mut app, _png) = workspace_with_image();
+        app.config.ui.tree_image_preview = false;
+        app.tree_image_preview = Some(TreeImagePreview {
+            path: std::path::PathBuf::from("/tmp/x.png"),
+            since: std::time::Instant::now(),
+            png_bytes: None,
+            error: None,
+        });
+        app.maintain_tree_image_preview();
+        assert!(app.tree_image_preview.is_none(), "off flag ⇒ no preview");
+    }
+
+    #[test]
+    fn maintain_tree_image_preview_arms_then_loads_after_debounce() {
+        let (_d, mut app, _png_path) = workspace_with_image();
+        // Move the tree cursor to the PNG row. macOS canonicalises
+        // /tmp → /private/tmp on the tree side, so we match by
+        // filename rather than by full path equality.
+        let rows = app.tree.visible_rows();
+        let (img_idx, resolved_png) = rows
+            .iter()
+            .enumerate()
+            .find(|(_, r)| r.path.file_name().and_then(|s| s.to_str()) == Some("logo.png"))
+            .map(|(i, r)| (i, r.path.clone()))
+            .expect("logo.png row missing");
+        app.tree.set_cursor(img_idx);
+        // First tick — arms the preview with a fresh `since`.
+        app.maintain_tree_image_preview();
+        let prev = app.tree_image_preview.as_ref().unwrap();
+        assert_eq!(prev.path, resolved_png);
+        assert!(prev.png_bytes.is_none(), "should not have loaded yet");
+        // Backdate `since` so the debounce elapses on the next tick.
+        app.tree_image_preview.as_mut().unwrap().since =
+            std::time::Instant::now() - std::time::Duration::from_millis(500);
+        app.maintain_tree_image_preview();
+        let prev = app.tree_image_preview.as_ref().unwrap();
+        assert!(prev.png_bytes.is_some(), "should be loaded after debounce");
+        let bytes = prev.png_bytes.as_ref().unwrap();
+        assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n", "PNG magic missing");
+    }
+
+    #[test]
+    fn maintain_tree_image_preview_cleared_when_cursor_off_image() {
+        let (_d, mut app, _png_path) = workspace_with_image();
+        // Resolve the tree-side png path so the test fixture works on
+        // macOS too (where /tmp gets canonicalised).
+        let resolved_png = app
+            .tree
+            .visible_rows()
+            .iter()
+            .find(|r| r.path.file_name().and_then(|s| s.to_str()) == Some("logo.png"))
+            .map(|r| r.path.clone())
+            .expect("logo.png row missing");
+        app.tree_image_preview = Some(TreeImagePreview {
+            path: resolved_png,
+            since: std::time::Instant::now(),
+            png_bytes: Some(std::sync::Arc::new(b"x".to_vec())),
+            error: None,
+        });
+        // Cursor on README.md — non-image row.
+        let rows = app.tree.visible_rows();
+        let md_idx = rows
+            .iter()
+            .position(|r| r.path.extension().and_then(|s| s.to_str()) == Some("md"))
+            .expect("README.md row missing");
+        app.tree.set_cursor(md_idx);
+        app.maintain_tree_image_preview();
+        assert!(app.tree_image_preview.is_none(), "off-image cursor ⇒ clear");
+    }
+
+    #[test]
+    fn short_image_error_truncates_long_messages() {
+        let raw = "decode JPEG: invalid marker at byte 1234";
+        let short = super::short_image_error(raw);
+        assert!(short.chars().count() <= 14, "got {short:?}");
+        assert!(short.ends_with('…'), "got {short:?}");
     }
 }
