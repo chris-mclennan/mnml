@@ -18,11 +18,156 @@
 //! its own permission prompts). `[ai] api_tools` (default on) picks
 //! agent loop vs plain streaming for the API backend.
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::AiMsg;
+
+/// One parsed image attachment, ready to embed in a `content` block.
+#[derive(Debug, Clone)]
+pub struct ImageAttachment {
+    /// `image/png` / `image/jpeg` / `image/gif` / `image/webp`. Anthropic
+    /// accepts these four. Other extensions are rejected by [`load_image`].
+    pub media_type: String,
+    pub base64_data: String,
+}
+
+/// Walk the prompt for leading `\image <path>` (or `\img <path>`)
+/// directives. Each match is stripped from the prompt, the file is
+/// read + base64-encoded, and the result is appended to the returned
+/// vec. Directives are only honored at the start of the prompt
+/// (consecutive lines), so the rest of the text — including a literal
+/// `\image` later in the body — passes through untouched.
+///
+/// Paths starting with `~` are tilde-expanded. Relative paths resolve
+/// against `workspace`. Returns the cleaned prompt plus the parsed
+/// attachments, and a list of per-line errors so the caller can
+/// surface them (a bad path doesn't tank the whole prompt).
+pub fn extract_image_attachments(
+    prompt: &str,
+    workspace: &Path,
+) -> (String, Vec<ImageAttachment>, Vec<String>) {
+    let mut imgs = Vec::new();
+    let mut errs = Vec::new();
+    // Iterate by lines, but only consume `\image` lines while we're
+    // still at the leading block.
+    let mut rest_lines: Vec<&str> = Vec::new();
+    let mut in_directives = true;
+    for line in prompt.lines() {
+        if in_directives {
+            let trimmed = line.trim_start();
+            if let Some(arg) = trimmed
+                .strip_prefix("\\image ")
+                .or_else(|| trimmed.strip_prefix("\\img "))
+            {
+                let path = arg.trim();
+                if path.is_empty() {
+                    errs.push("\\image directive missing path".to_string());
+                    continue;
+                }
+                let resolved = resolve_path(path, workspace);
+                match load_image(&resolved) {
+                    Ok(att) => imgs.push(att),
+                    Err(e) => errs.push(format!("{path}: {e}")),
+                }
+                continue;
+            }
+            // Empty lines between directives are tolerated. Anything
+            // else closes the directive block.
+            if !trimmed.is_empty() {
+                in_directives = false;
+            }
+        }
+        if !in_directives {
+            rest_lines.push(line);
+        }
+    }
+    // Trailing newline handling: `lines()` drops the trailing newline,
+    // so the cleaned prompt is the rest, joined by `\n`.
+    let cleaned = rest_lines.join("\n");
+    (cleaned, imgs, errs)
+}
+
+fn resolve_path(path: &str, workspace: &Path) -> PathBuf {
+    if let Some(stripped) = path.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(stripped);
+        }
+    }
+    let p = PathBuf::from(path);
+    if p.is_absolute() {
+        p
+    } else {
+        workspace.join(p)
+    }
+}
+
+/// Read + base64-encode an image file. Rejects anything that isn't
+/// PNG / JPEG / GIF / WebP (those are the Anthropic-accepted four).
+/// Caps the file size at 5 MB — Anthropic's per-image limit is 5 MB
+/// after base64 expansion, so we cap before the encode.
+pub fn load_image(path: &Path) -> Result<ImageAttachment, String> {
+    const MAX_BYTES: u64 = 5 * 1024 * 1024;
+    let meta = std::fs::metadata(path).map_err(|e| format!("stat: {e}"))?;
+    if meta.len() > MAX_BYTES {
+        return Err(format!(
+            "file too large ({} MB > 5 MB cap)",
+            meta.len() / 1_048_576
+        ));
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("read: {e}"))?;
+    let media_type = match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        other => {
+            return Err(format!(
+                "unsupported extension `{}` — use png / jpg / gif / webp",
+                other.unwrap_or("(none)")
+            ));
+        }
+    };
+    Ok(ImageAttachment {
+        media_type: media_type.to_string(),
+        base64_data: STANDARD.encode(&bytes),
+    })
+}
+
+/// Build the `content` field for a user message. When `images` is
+/// empty we pass through as a plain string (the historical shape).
+/// With images we switch to a content-block array so the API sees
+/// the image source(s) followed by the text.
+fn user_content(prompt: &str, images: &[ImageAttachment]) -> serde_json::Value {
+    if images.is_empty() {
+        return serde_json::Value::String(prompt.to_string());
+    }
+    let mut blocks = Vec::with_capacity(images.len() + 1);
+    for img in images {
+        blocks.push(serde_json::json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": img.media_type,
+                "data": img.base64_data,
+            }
+        }));
+    }
+    if !prompt.is_empty() {
+        blocks.push(serde_json::json!({
+            "type": "text",
+            "text": prompt,
+        }));
+    }
+    serde_json::Value::Array(blocks)
+}
 
 /// Anthropic Messages API endpoint (the only one we hit).
 const ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
@@ -127,8 +272,10 @@ pub fn complete_code(
 /// `system` is an optional system prompt prepended to the request.
 /// `max_tokens` overrides `DEFAULT_MAX_TOKENS` when set (clamped to a
 /// sane 16..=200000 range).
+#[allow(clippy::too_many_arguments)]
 pub fn stream_to_channel(
     prompt: &str,
+    workspace: &Path,
     model: Option<&str>,
     system: Option<&str>,
     max_tokens: Option<u32>,
@@ -149,11 +296,15 @@ pub fn stream_to_channel(
     let mt = max_tokens
         .map(|n| n.clamp(16, 200_000))
         .unwrap_or(DEFAULT_MAX_TOKENS);
+    let (cleaned_prompt, images, image_errs) = extract_image_attachments(prompt, workspace);
+    for err in &image_errs {
+        let _ = sink.send((job_id, AiMsg::Delta(format!("[image: {err}]\n"))));
+    }
     let mut body = serde_json::json!({
         "model": model.unwrap_or(DEFAULT_MODEL),
         "max_tokens": mt,
         "stream": true,
-        "messages": [{ "role": "user", "content": prompt }],
+        "messages": [{ "role": "user", "content": user_content(&cleaned_prompt, &images) }],
     });
     if let Some(sys) = system
         && !sys.trim().is_empty()
@@ -360,8 +511,14 @@ pub fn agent_to_channel(
         .unwrap_or(DEFAULT_MAX_TOKENS);
     let model = model.unwrap_or(DEFAULT_MODEL).to_string();
     let sys = agent_system_prompt(system, write_tools);
-    let mut messages: Vec<serde_json::Value> =
-        vec![serde_json::json!({ "role": "user", "content": prompt })];
+    let (cleaned_prompt, images, image_errs) = extract_image_attachments(prompt, workspace);
+    for err in &image_errs {
+        let _ = sink.send((job_id, AiMsg::Delta(format!("[image: {err}]\n"))));
+    }
+    let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({
+        "role": "user",
+        "content": user_content(&cleaned_prompt, &images),
+    })];
     let mut full_text = String::new();
     // Token usage summed across every turn — each turn is billed for
     // the full context it sends, so summing per-turn is the true total.
@@ -1106,5 +1263,140 @@ mod tests {
         assert!(capped.contains("truncated"));
         // Short input passes through untouched.
         assert_eq!(cap_output("short"), "short");
+    }
+
+    fn write_tiny_png(path: &Path) {
+        // 2×2 solid blue PNG built via the `image` crate (already a
+        // dep). Keeps the test self-contained — no fixture file.
+        let img = image::RgbImage::from_pixel(2, 2, image::Rgb([0, 0, 200]));
+        image::DynamicImage::ImageRgb8(img)
+            .save_with_format(path, image::ImageFormat::Png)
+            .expect("write tiny PNG");
+    }
+
+    #[test]
+    fn extract_no_directives_passes_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let (cleaned, imgs, errs) = extract_image_attachments("Hello\nWorld", dir.path());
+        assert_eq!(cleaned, "Hello\nWorld");
+        assert!(imgs.is_empty());
+        assert!(errs.is_empty());
+    }
+
+    #[test]
+    fn extract_leading_image_directive_strips_and_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("x.png");
+        write_tiny_png(&png);
+        let prompt = format!("\\image {}\nWhat do you see?", png.display());
+        let (cleaned, imgs, errs) = extract_image_attachments(&prompt, dir.path());
+        assert_eq!(cleaned, "What do you see?");
+        assert_eq!(imgs.len(), 1);
+        assert_eq!(imgs[0].media_type, "image/png");
+        assert!(!imgs[0].base64_data.is_empty());
+        assert!(errs.is_empty());
+    }
+
+    #[test]
+    fn extract_image_directive_short_form_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("x.png");
+        write_tiny_png(&png);
+        let prompt = format!("\\img {}\nWhat?", png.display());
+        let (_, imgs, _) = extract_image_attachments(&prompt, dir.path());
+        assert_eq!(imgs.len(), 1);
+    }
+
+    #[test]
+    fn extract_multiple_directives() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.png");
+        let b = dir.path().join("b.png");
+        write_tiny_png(&a);
+        write_tiny_png(&b);
+        let prompt = format!(
+            "\\image {}\n\\image {}\nCompare them",
+            a.display(),
+            b.display()
+        );
+        let (cleaned, imgs, errs) = extract_image_attachments(&prompt, dir.path());
+        assert_eq!(cleaned, "Compare them");
+        assert_eq!(imgs.len(), 2);
+        assert!(errs.is_empty());
+    }
+
+    #[test]
+    fn extract_only_honors_directives_at_the_top() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("x.png");
+        write_tiny_png(&png);
+        // `\image` mid-prompt should NOT be treated as a directive.
+        let prompt = format!("hi\n\\image {}\nbye", png.display());
+        let (cleaned, imgs, _) = extract_image_attachments(&prompt, dir.path());
+        assert_eq!(cleaned, format!("hi\n\\image {}\nbye", png.display()));
+        assert!(imgs.is_empty());
+    }
+
+    #[test]
+    fn extract_relative_path_resolves_against_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("ws.png");
+        write_tiny_png(&png);
+        let prompt = "\\image ws.png\nQ".to_string();
+        let (_, imgs, errs) = extract_image_attachments(&prompt, dir.path());
+        assert_eq!(imgs.len(), 1, "errs: {errs:?}");
+    }
+
+    #[test]
+    fn extract_missing_path_reports_error_without_killing_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let prompt = "\\image nope.png\nstill ok";
+        let (cleaned, imgs, errs) = extract_image_attachments(prompt, dir.path());
+        assert_eq!(cleaned, "still ok");
+        assert!(imgs.is_empty());
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("nope.png"));
+    }
+
+    #[test]
+    fn load_image_rejects_unsupported_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("x.tiff");
+        std::fs::write(&f, b"fake").unwrap();
+        let err = load_image(&f).unwrap_err();
+        assert!(err.contains("unsupported extension"));
+    }
+
+    #[test]
+    fn user_content_string_when_no_images() {
+        let v = user_content("hello", &[]);
+        assert_eq!(v, serde_json::Value::String("hello".to_string()));
+    }
+
+    #[test]
+    fn user_content_array_when_images_present() {
+        let img = ImageAttachment {
+            media_type: "image/png".to_string(),
+            base64_data: "AAA".to_string(),
+        };
+        let v = user_content("look at this", &[img]);
+        let arr = v.as_array().expect("expected array");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["type"], "image");
+        assert_eq!(arr[0]["source"]["media_type"], "image/png");
+        assert_eq!(arr[1]["type"], "text");
+        assert_eq!(arr[1]["text"], "look at this");
+    }
+
+    #[test]
+    fn user_content_image_only_omits_text_block() {
+        let img = ImageAttachment {
+            media_type: "image/png".to_string(),
+            base64_data: "AAA".to_string(),
+        };
+        let v = user_content("", &[img]);
+        let arr = v.as_array().expect("expected array");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["type"], "image");
     }
 }

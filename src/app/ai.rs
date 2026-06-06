@@ -642,6 +642,7 @@ impl App {
                 } else {
                     crate::ai::api_client::stream_to_channel(
                         &prompt,
+                        &workspace,
                         model.as_deref(),
                         system.as_deref(),
                         max_tokens,
