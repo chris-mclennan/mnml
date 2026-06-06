@@ -30,6 +30,23 @@ capabilities present in the current `main`.
 - **Three new which-key chords** under `<leader>i` (`+integrations`): `w` →
   CloudWatch Logs viewer, `a` → AWS Amplify viewer, `d` → DynamoDB browser.
 
+### Added (2026-06-06) — Lambda + EventBridge
+
+- **Two new blit-host integration icons** — `lambda` (nf-md-lambda, orange,
+  `:host.launch mnml-aws-lambda`) and `eventbridge` (nf-md-bus, pink,
+  `:host.launch mnml-aws-eventbridge`) added to the default
+  `integration_icons` list in `src/config.rs`.
+- **Two new palette commands** — `forge.open_lambda` and
+  `forge.open_eventbridge` (group `forge`).
+- **Two new which-key chords** under `<leader>i` (`+integrations`): `L` →
+  AWS Lambda browser (capital, because lowercase `l` is GitLab), `e` →
+  EventBridge buses + rules browser.
+- **Two new Manual pages** — `site/src/content/docs/manual/integrations/
+  aws-lambda.md` and `aws-eventbridge.md`.
+- **First cross-sibling handoff** — Lambda's `L` chord also launches
+  `mnml-aws-cloudwatch-logs`; v0.2 will auto-scope to the function's log
+  group.
+
 ### Fixed (2026-06-06)
 
 - **Which-key `+integrations` was unreachable** — `'i'` was double-registered

@@ -50,7 +50,7 @@ The complete, organised feature inventory. For the front-door overview see
   workspace, `u` UI, `h` http, `d` diff/debug. `<leader>i` opens `+integrations`
   with chords for every forge/AWS/DB sibling: `b` Bitbucket, `g` GitHub, `l`
   GitLab, `z` Azure DevOps, `c` CodeBuild, `s` S3, `w` CloudWatch Logs, `a`
-  Amplify, `d` DynamoDB.
+  Amplify, `d` DynamoDB, `L` Lambda, `e` EventBridge.
 - **Find & replace** — in-buffer find (literal + regex, smart-case,
   incremental), replace, find history.
 - **Workspace grep** — ripgrep-backed project search into a results pane, with
@@ -202,9 +202,12 @@ The complete, organised feature inventory. For the front-door overview see
   `mnml-aws-cloudwatch-logs` (live CloudWatch log-stream tail, per-tab filter
   patterns), `mnml-aws-amplify` (Amplify apps / branches / deploy-jobs viewer),
   `mnml-db-dynamodb` (DynamoDB table browser, PRIMARY key auto-resolved from
-  `describe-table`). The integration-icon rail ships default entries for all of
-  them; palette commands `forge.open_cloudwatch_logs`, `forge.open_amplify`, and
-  `forge.open_dynamodb` are also registered.
+  `describe-table`), `mnml-aws-lambda` (function browser, paginated list +
+  detail panel), `mnml-aws-eventbridge` (buses + rules-per-bus browser). The
+  integration-icon rail ships default entries for all of
+  them; palette commands `forge.open_cloudwatch_logs`, `forge.open_amplify`,
+  `forge.open_dynamodb`, `forge.open_lambda`, and `forge.open_eventbridge` are
+  also registered.
 - **`tmnl` integration** — runs standalone in any terminal; gains native-pane
   hand-off when hosted inside the [`tmnl`](https://github.com/chris-mclennan/tmnl)
   terminal. `:tmnl.open-tab <command>` (alias `:tmnl.tab`) asks tmnl to open a
@@ -221,6 +224,13 @@ The complete, organised feature inventory. For the front-door overview see
   `command`, `color`, `tooltip`). The `command` field accepts a registered
   command id or a colon-prefixed ex-cmdline string (`:host.launch binary`).
   Setting the key replaces the built-in Claude Code + Codex defaults.
+- **Config-driven integration-icon rail** — the file-tree rail's icon strip is
+  driven by `[[ui.integration_icon]]` TOML entries (same fields as
+  `[[ui.launcher_icon]]`). Each icon launches its sibling binary on click.
+  Default entries ship for all eight first-party siblings: `mnml-tickets-jira`,
+  `mnml-aws-cloudwatch-logs`, `mnml-aws-amplify`, `mnml-db-dynamodb`,
+  `mnml-aws-lambda`, `mnml-aws-eventbridge`, plus any extras added in config.
+  Adding a new integration requires only a TOML entry — no code changes to mnml.
 - **Startup workspace picker** — `--startup-picker` (or `MNML_STARTUP_PICKER=1`)
   shows a chooser overlay on launch: [1] New file, [2] Open file…, [3–9]
   configured `[[workspaces]]` rows. Keys: `↑↓`/`jk` move, `Enter` commit,
