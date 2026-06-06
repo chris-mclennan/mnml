@@ -1114,6 +1114,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-db-dynamodb"),
         },
         Command {
+            id: "forge.open_lambda",
+            title: "Forge: open Lambda function browser (mnml-aws-lambda)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-aws-lambda"),
+        },
+        Command {
+            id: "forge.open_eventbridge",
+            title: "Forge: open EventBridge buses + rules (mnml-aws-eventbridge)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-aws-eventbridge"),
+        },
+        Command {
             id: "editor.jump_next_edit",
             title: "Jump to next edit position (vim `g,`)",
             group: "editor",

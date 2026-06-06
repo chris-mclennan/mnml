@@ -174,6 +174,11 @@ pub fn root() -> &'static Leader {
                             ),
                             ('a', cmd("forge.open_amplify", "AWS Amplify viewer")),
                             ('d', cmd("forge.open_dynamodb", "DynamoDB browser")),
+                            ('L', cmd("forge.open_lambda", "Lambda functions")),
+                            (
+                                'e',
+                                cmd("forge.open_eventbridge", "EventBridge buses + rules"),
+                            ),
                         ],
                     ),
                 ),

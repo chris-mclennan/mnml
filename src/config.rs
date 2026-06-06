@@ -713,6 +713,22 @@ impl Default for Config {
                         color: "teal".to_string(),
                         tooltip: Some("DynamoDB table browser".to_string()),
                     },
+                    IntegrationIcon {
+                        id: "lambda".to_string(),
+                        glyph: "\u{F0EBF}".to_string(), // nf-md-lambda
+                        fallback: "La".to_string(),
+                        command: ":host.launch mnml-aws-lambda".to_string(),
+                        color: "orange".to_string(),
+                        tooltip: Some("Lambda function browser".to_string()),
+                    },
+                    IntegrationIcon {
+                        id: "eventbridge".to_string(),
+                        glyph: "\u{F0CE0}".to_string(), // nf-md-bus
+                        fallback: "EB".to_string(),
+                        command: ":host.launch mnml-aws-eventbridge".to_string(),
+                        color: "pink".to_string(),
+                        tooltip: Some("EventBridge buses + rules".to_string()),
+                    },
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,

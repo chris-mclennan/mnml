@@ -109,6 +109,8 @@ export default defineConfig({
             { label: 'AWS CodeBuild viewer', slug: 'manual/integrations/aws-codebuild' },
             { label: 'AWS CloudWatch Logs viewer', slug: 'manual/integrations/aws-cloudwatch-logs' },
             { label: 'AWS Amplify viewer', slug: 'manual/integrations/aws-amplify' },
+            { label: 'AWS Lambda viewer', slug: 'manual/integrations/aws-lambda' },
+            { label: 'AWS EventBridge viewer', slug: 'manual/integrations/aws-eventbridge' },
             { label: 'Amazon S3 browser', slug: 'manual/integrations/fs-s3' },
             { label: 'DynamoDB browser', slug: 'manual/integrations/db-dynamodb' },
             { label: 'Playwright trace viewer', slug: 'manual/integrations/test-playwright' },
