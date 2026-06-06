@@ -1044,6 +1044,47 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.refresh_scm_prs(),
         },
+        // Per-sibling launch shortcuts — equivalent to typing
+        // `:host.launch <binary>` from the cmdline, but discoverable
+        // via the palette and chord-bindable via `[keys.global]`.
+        // Replaces the pre-split `<host>.pull_requests` palette
+        // commands users had bound to keychords. Whichkey wires
+        // these under `<leader>i` (the integrations group).
+        Command {
+            id: "forge.open_bitbucket",
+            title: "Forge: open Bitbucket viewer (mnml-forge-bitbucket)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-forge-bitbucket"),
+        },
+        Command {
+            id: "forge.open_github",
+            title: "Forge: open GitHub viewer (mnml-forge-github)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-forge-github"),
+        },
+        Command {
+            id: "forge.open_gitlab",
+            title: "Forge: open GitLab viewer (mnml-forge-gitlab)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-forge-gitlab"),
+        },
+        Command {
+            id: "forge.open_azdevops",
+            title: "Forge: open Azure DevOps viewer (mnml-forge-azdevops)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-forge-azdevops"),
+        },
+        Command {
+            id: "forge.open_codebuild",
+            title: "Forge: open AWS CodeBuild viewer (mnml-aws-codebuild)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-aws-codebuild"),
+        },
         Command {
             id: "editor.jump_next_edit",
             title: "Jump to next edit position (vim `g,`)",

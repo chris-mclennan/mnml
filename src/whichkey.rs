@@ -158,6 +158,19 @@ pub fn root() -> &'static Leader {
                     ),
                 ),
                 (
+                    'i',
+                    group(
+                        "+integrations",
+                        vec![
+                            ('b', cmd("forge.open_bitbucket", "Bitbucket viewer")),
+                            ('g', cmd("forge.open_github", "GitHub viewer")),
+                            ('l', cmd("forge.open_gitlab", "GitLab viewer")),
+                            ('z', cmd("forge.open_azdevops", "Azure DevOps viewer")),
+                            ('c', cmd("forge.open_codebuild", "AWS CodeBuild viewer")),
+                        ],
+                    ),
+                ),
+                (
                     'a',
                     group(
                         "+ai/term",
