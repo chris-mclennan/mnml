@@ -63,6 +63,7 @@ pub fn draw(
         let proto_label = match protocol {
             ImageProtocol::Kitty => "kitty protocol",
             ImageProtocol::Iterm2 => "iterm2 inline",
+            ImageProtocol::Sixel => "sixel",
             ImageProtocol::None => "no inline protocol — metadata only",
         };
         let rel = p
@@ -107,16 +108,16 @@ pub fn draw(
                 let lines: Vec<Line> = vec![
                     Line::from(""),
                     Line::from(Span::styled(
-                        "  Image preview requires Kitty or iTerm2 inline-image protocol.",
+                        "  Image preview requires Kitty, iTerm2, or sixel inline-image protocol.",
                         dim,
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
-                        "  Supported terminals: Kitty, WezTerm, Ghostty, iTerm2, recent Konsole.",
+                        "  Supported terminals: Kitty, WezTerm, Ghostty, iTerm2, Konsole, foot, mlterm.",
                         dim,
                     )),
                     Line::from(Span::styled(
-                        "  Set $KITTY_WINDOW_ID or $TERM_PROGRAM accordingly when running mnml.",
+                        "  Override detection with MNML_IMAGE_PROTOCOL=kitty|iterm2|sixel.",
                         dim,
                     )),
                 ];

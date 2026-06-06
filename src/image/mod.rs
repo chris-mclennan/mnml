@@ -13,6 +13,7 @@
 pub mod iterm2;
 pub mod kitty;
 pub mod pane;
+pub mod sixel;
 
 pub use pane::ImagePane;
 
@@ -45,17 +46,39 @@ pub enum ImageProtocol {
     /// iTerm2 inline image protocol (`\x1b]1337;File=...`) — iTerm2,
     /// recent WezTerm (via OSC 1337).
     Iterm2,
+    /// DEC sixel protocol (`\x1bP...q...\x1b\\`) — foot, mlterm,
+    /// xterm with sixel support, Black Box, mintty. Lower fidelity
+    /// than Kitty/iTerm2 (216-color web-safe palette) but covers
+    /// every terminal that the modern two miss.
+    Sixel,
     /// No support — the pane shows a metadata-only placeholder.
     None,
 }
 
 /// Detect the active terminal's image protocol support via env vars.
 ///
-/// Order matters: Kitty's env var (`KITTY_WINDOW_ID`) wins over `TERM_PROGRAM`
-/// because some terminals set both. iTerm2 advertises via `TERM_PROGRAM`
-/// alone. WezTerm sets `TERM_PROGRAM=WezTerm` AND implements both protocols
-/// — we prefer Kitty there since it's the more featureful path.
+/// Order matters:
+/// 1. Kitty wins when it's clearly present (`KITTY_WINDOW_ID` or
+///    `TERM` contains kitty). It's the highest-fidelity option.
+/// 2. WezTerm / Ghostty advertise Kitty support via `TERM_PROGRAM`.
+/// 3. iTerm2 takes its own slot via `TERM_PROGRAM`.
+/// 4. Sixel terminals (foot / mlterm) get detected last via
+///    `TERM`. `MNML_IMAGE_PROTOCOL=sixel` is the explicit opt-in
+///    for terminals that support sixel without advertising via env
+///    (notably xterm-with-sixel, where users opt-in by build flag).
 pub fn detect_protocol() -> ImageProtocol {
+    // Explicit user override beats everything — for testing, for
+    // terminals whose env doesn't advertise, and for users who'd
+    // rather force iTerm2 over Kitty (e.g. on WezTerm).
+    if let Ok(forced) = std::env::var("MNML_IMAGE_PROTOCOL") {
+        match forced.to_ascii_lowercase().as_str() {
+            "kitty" => return ImageProtocol::Kitty,
+            "iterm2" | "iterm" => return ImageProtocol::Iterm2,
+            "sixel" => return ImageProtocol::Sixel,
+            "none" | "off" => return ImageProtocol::None,
+            _ => {} // Unknown value — fall through to env detection.
+        }
+    }
     if std::env::var_os("KITTY_WINDOW_ID").is_some() {
         return ImageProtocol::Kitty;
     }
@@ -71,6 +94,19 @@ pub fn detect_protocol() -> ImageProtocol {
         }
         if l.contains("iterm") {
             return ImageProtocol::Iterm2;
+        }
+        if l.contains("black box") || l == "blackbox" {
+            return ImageProtocol::Sixel;
+        }
+    }
+    // Terminals that advertise sixel via `TERM` (the DEC convention).
+    // `foot` and `mlterm` are the common ones; xterm with sixel
+    // typically still reports `xterm-256color`, so users have to set
+    // `MNML_IMAGE_PROTOCOL=sixel` explicitly for it.
+    if let Ok(term) = std::env::var("TERM") {
+        let t = term.to_lowercase();
+        if t == "foot" || t.starts_with("foot-") || t.starts_with("mlterm") {
+            return ImageProtocol::Sixel;
         }
     }
     ImageProtocol::None

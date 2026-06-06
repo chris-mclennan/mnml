@@ -64,6 +64,15 @@ pub(crate) fn emit_image_placements(app: &mut App) {
                 );
                 let _ = out.write_all(esc.as_bytes());
             }
+            ImageProtocol::Sixel => {
+                if let Ok(esc) = crate::image::sixel::encode_placement(
+                    &req.png_bytes,
+                    req.area.width,
+                    req.area.height,
+                ) {
+                    let _ = out.write_all(esc.as_bytes());
+                }
+            }
             ImageProtocol::None => {}
         }
     }
