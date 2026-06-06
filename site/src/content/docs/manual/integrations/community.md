@@ -19,7 +19,8 @@ Issue / work trackers — issues, sprints, roadmaps, releases, dashboards.
 
 | Integration | Backend | Repo |
 |---|---|---|
-| `mnml-tracker-jira` | Atlassian Jira | [chris-mclennan/mnml-tracker-jira](https://github.com/chris-mclennan/mnml-tracker-jira) |
+| `mnml-tracker-jira` | Atlassian Jira — JQL or auto-resolved release `fixVersion`s | [chris-mclennan/mnml-tracker-jira](https://github.com/chris-mclennan/mnml-tracker-jira) |
+| `mnml-tracker-linear` | Linear — GraphQL filter or saved view ids | [chris-mclennan/mnml-tracker-linear](https://github.com/chris-mclennan/mnml-tracker-linear) |
 
 ### Forge viewers
 
