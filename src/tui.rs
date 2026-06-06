@@ -613,11 +613,12 @@ fn handle_discovery_overlay_key(app: &mut App, key: KeyEvent) {
         KeyCode::Up | KeyCode::Char('k') => app.discovery_move_row(-1),
         KeyCode::Down | KeyCode::Char('j') => app.discovery_move_row(1),
         KeyCode::Enter => app.discovery_enter(),
-        // v1: `i` and `y` both yank the install command — v2 will
-        // wire `i` to spawn `cargo install` in a Pty pane. Yanking
-        // gives the user a one-keystroke copy-paste install path
-        // without the complexity of a hosted-pty install action.
-        KeyCode::Char('i') | KeyCode::Char('y') => app.discovery_yank_install(),
+        // `i` spawns `cargo install --git <url> --tag <ver>` in a
+        // pty pane the user can watch live; `y` yanks the command for
+        // out-of-mnml install. Both come back to the rail via
+        // `integrations.refresh` (auto-cleared on next + overlay open).
+        KeyCode::Char('i') => app.discovery_install_selected(),
+        KeyCode::Char('y') => app.discovery_yank_install(),
         _ => {}
     }
 }

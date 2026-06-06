@@ -205,6 +205,44 @@ impl App {
         clip.set(cmd.clone(), false);
         self.toast(format!("copied: {}", cmd));
     }
+
+    /// `i` — spawn a Pty pane running `cargo install --git <url> --tag <ver>`
+    /// for the focused row. The user watches install progress live; once
+    /// `cargo` exits cleanly the binary lands in `~/.cargo/bin` and is
+    /// picked up by the next `open_discovery_overlay` (which clears the
+    /// detection cache).
+    ///
+    /// Closes the discovery overlay — the user wants to *see* the install
+    /// output, not have it bury behind the picker.
+    pub fn discovery_install_selected(&mut self) {
+        let Some((sibling, _)) = self.discovery_focused() else {
+            return;
+        };
+        let profile = crate::pty_pane::BinaryProfile {
+            label: format!("install: {}", sibling.binary),
+            exe: "cargo".to_string(),
+            args: vec![
+                "install".to_string(),
+                "--git".to_string(),
+                sibling.repo_url.to_string(),
+                "--tag".to_string(),
+                sibling.pinned_version.to_string(),
+                sibling.binary.to_string(),
+            ],
+            cwd: None,
+            env: vec![],
+            session_id: None,
+        };
+        // Close overlay first so the new Pty pane has the screen real
+        // estate. The detection cache is cleared on next open of the
+        // overlay (or via `integrations.refresh`).
+        self.close_discovery_overlay();
+        self.open_pty(profile);
+        self.toast(format!(
+            "installing {} — watch the pty pane; re-open + when done",
+            sibling.binary
+        ));
+    }
 }
 
 #[cfg(test)]
