@@ -50,8 +50,10 @@ fn main() {
         None,
         None,
         None,
-        false,
-        false,
+        false, // write_tools
+        false, // write_confirm
+        false, // shell_tools
+        false, // shell_confirm
         &confirm_rx,
         &cancel,
         tx,

@@ -615,8 +615,10 @@ impl App {
         let max_tokens = self.ai_max_tokens();
         let api_tools = self.ai_api_tools();
         let api_write_tools = self.ai_api_write_tools();
-        // Confirm before a write: on unless the user opted out.
+        let api_shell_tools = self.ai_api_shell_tools();
+        // Confirm before a write/shell: on unless the user opted out.
         let write_confirm = api_write_tools && self.ai_api_write_confirm();
+        let shell_confirm = api_shell_tools && self.ai_api_shell_confirm();
         let (confirm_tx, confirm_rx) = std::sync::mpsc::channel::<bool>();
         self.ai_confirm_senders.insert(job_id, confirm_tx);
         let workspace = self.workspace.clone();
@@ -634,6 +636,8 @@ impl App {
                         max_tokens,
                         api_write_tools,
                         write_confirm,
+                        api_shell_tools,
+                        shell_confirm,
                         &confirm_rx,
                         &worker_cancel,
                         tx,
@@ -729,6 +733,28 @@ impl App {
         self.config
             .ai
             .get("api_write_confirm")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    }
+
+    /// `[ai] api_shell_tools` — whether the direct-API agent loop gets
+    /// the `shell_exec` tool (it can run arbitrary `sh -c` commands in
+    /// the workspace). Default **off** — strictly opt-in. Combine with
+    /// `api_shell_confirm` (default on) for the per-call safety net.
+    pub fn ai_api_shell_tools(&self) -> bool {
+        self.config
+            .ai
+            .get("api_shell_tools")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// `[ai] api_shell_confirm` — whether each agent `shell_exec` call
+    /// blocks for the user's approval before it runs. Default **on**.
+    pub fn ai_api_shell_confirm(&self) -> bool {
+        self.config
+            .ai
+            .get("api_shell_confirm")
             .and_then(|v| v.as_bool())
             .unwrap_or(true)
     }

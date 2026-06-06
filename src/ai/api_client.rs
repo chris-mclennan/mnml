@@ -11,12 +11,14 @@
 //! `stream_to_channel` is the plain text-in/text-out streaming path.
 //! `agent_to_channel` adds an agentic loop: the model gets workspace
 //! tools — `read_file` / `list_directory` / `grep` (read-only, always),
-//! plus `write_file` when `[ai] api_write_tools` is opted in — and the
+//! plus `write_file` when `[ai] api_write_tools` is opted in, plus
+//! `shell_exec` when `[ai] api_shell_tools` is opted in — and the
 //! client runs request → tool calls → request until a final answer.
-//! There is deliberately no shell tool: autonomous shell with no
-//! per-action confirmation is the CLI backend's job (`claude -p` has
-//! its own permission prompts). `[ai] api_tools` (default on) picks
-//! agent loop vs plain streaming for the API backend.
+//! Write + shell both default off; when on, each invocation blocks
+//! for the user's per-call approval (set `[ai] api_write_confirm = false`
+//! / `api_shell_confirm = false` to opt out of the prompt).
+//! `[ai] api_tools` (default on) picks agent loop vs plain streaming
+//! for the API backend.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use std::io::{BufRead, BufReader};
@@ -484,6 +486,8 @@ pub fn agent_to_channel(
     max_tokens: Option<u32>,
     write_tools: bool,
     write_confirm: bool,
+    shell_tools: bool,
+    shell_confirm: bool,
     confirm_rx: &std::sync::mpsc::Receiver<bool>,
     cancel: &AtomicBool,
     sink: std::sync::mpsc::Sender<(u64, AiMsg)>,
@@ -510,7 +514,7 @@ pub fn agent_to_channel(
         .map(|n| n.clamp(16, 200_000))
         .unwrap_or(DEFAULT_MAX_TOKENS);
     let model = model.unwrap_or(DEFAULT_MODEL).to_string();
-    let sys = agent_system_prompt(system, write_tools);
+    let sys = agent_system_prompt(system, write_tools, shell_tools);
     let (cleaned_prompt, images, image_errs) = extract_image_attachments(prompt, workspace);
     for err in &image_errs {
         let _ = sink.send((job_id, AiMsg::Delta(format!("[image: {err}]\n"))));
@@ -535,7 +539,7 @@ pub fn agent_to_channel(
             "max_tokens": mt,
             "stream": true,
             "system": sys,
-            "tools": agent_tools(write_tools),
+            "tools": agent_tools(write_tools, shell_tools),
             "messages": messages,
         })
         .to_string();
@@ -613,9 +617,12 @@ pub fn agent_to_channel(
                 job_id,
                 AiMsg::Delta(format!("\n[tool: {}]\n", tool_summary(name, &input))),
             ));
-            // Confirmation gate — a `write_file` blocks on the user's
-            // approval (sent back through `confirm_rx`) when enabled.
-            if write_confirm && name == "write_file" {
+            // Confirmation gate — `write_file` and `shell_exec` both
+            // block on the user's approval (sent back through
+            // `confirm_rx`) when their respective confirm flag is on.
+            let needs_confirm =
+                (write_confirm && name == "write_file") || (shell_confirm && name == "shell_exec");
+            if needs_confirm {
                 let _ = sink.send((
                     job_id,
                     AiMsg::ConfirmTool {
@@ -630,24 +637,34 @@ pub fn agent_to_channel(
                         return;
                     }
                     Some(false) => {
-                        let _ = sink.send((
-                            job_id,
-                            AiMsg::Delta("\n[write declined by user]\n".to_string()),
-                        ));
+                        let (label, hint) = if name == "shell_exec" {
+                            (
+                                "[shell run declined by user]",
+                                "The user declined this shell_exec call. Do not retry the same \
+                                command; describe what you would have run and why instead.",
+                            )
+                        } else {
+                            (
+                                "[write declined by user]",
+                                "The user declined this write_file operation. Do not retry it; \
+                                explain what you would have written instead.",
+                            )
+                        };
+                        let _ = sink.send((job_id, AiMsg::Delta(format!("\n{label}\n"))));
                         results.push(serde_json::json!({
                             "type": "tool_result", "tool_use_id": id,
-                            "content": "The user declined this write_file operation. Do not retry it; \
-                                        explain what you would have written instead.",
+                            "content": hint,
                         }));
                         continue;
                     }
                     Some(true) => {}
                 }
             }
-            let (text, is_error) = match execute_tool(workspace, name, &input, write_tools) {
-                Ok(t) => (t, false),
-                Err(e) => (e, true),
-            };
+            let (text, is_error) =
+                match execute_tool(workspace, name, &input, write_tools, shell_tools) {
+                    Ok(t) => (t, false),
+                    Err(e) => (e, true),
+                };
             let mut r = serde_json::json!({
                 "type": "tool_result", "tool_use_id": id, "content": text,
             });
@@ -860,10 +877,12 @@ fn run_agent_turn(
     Ok((blocks, stop_reason, (input_tokens, output_tokens)))
 }
 
-/// The agent's tool definitions — workspace-scoped. The read-only three
-/// are always offered; `write_file` is included only when `write` is on
-/// (`[ai] api_write_tools`, default off).
-fn agent_tools(write: bool) -> serde_json::Value {
+/// The agent's tool definitions — workspace-scoped. The read-only
+/// three are always offered. `write_file` is included only when
+/// `write` is on (`[ai] api_write_tools`, default off). `shell_exec`
+/// is included only when `shell` is on (`[ai] api_shell_tools`,
+/// default off).
+fn agent_tools(write: bool, shell: bool) -> serde_json::Value {
     let mut tools = vec![
         serde_json::json!({
             "name": "read_file",
@@ -913,43 +932,77 @@ fn agent_tools(write: bool) -> serde_json::Value {
             }
         }));
     }
+    if shell {
+        tools.push(serde_json::json!({
+            "name": "shell_exec",
+            "description": "Run a shell command in the project workspace via `sh -c`. Returns stdout, stderr, and exit code in a `<stdout>...</stdout><stderr>...</stderr><exit>N</exit>` envelope. The 60-second wall-clock timeout, 256 KB combined-output cap, and the user's per-call confirmation prompt are enforced by the editor. Use sparingly and only when read-only tools and write_file can't get the answer.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "The shell command to execute (passed verbatim to `sh -c`)." }
+                },
+                "required": ["command"]
+            }
+        }));
+    }
     serde_json::Value::Array(tools)
 }
 
 /// System prompt for the agent — a base instruction about the tools +
 /// the workspace, with the user's optional `[ai] system_prompt` appended.
-fn agent_system_prompt(user: Option<&str>, write: bool) -> String {
-    let base = if write {
-        "You are an AI assistant embedded in the mnml code editor, working inside \
-        the user's project workspace. You have tools — read_file, list_directory, grep, \
-        and write_file — to explore and edit the codebase. Ground your work in the actual \
-        code (read before you write). Only use write_file when the user asked for an \
-        edit. Keep answers focused and concise."
+fn agent_system_prompt(user: Option<&str>, write: bool, shell: bool) -> String {
+    let mut tools_list = String::from("read_file, list_directory, grep");
+    if write {
+        tools_list.push_str(", write_file");
+    }
+    if shell {
+        tools_list.push_str(", shell_exec");
+    }
+    let read_only_note = if write || shell {
+        "Ground your work in the actual code (read before you write or run anything)."
     } else {
-        "You are an AI assistant embedded in the mnml code editor, working inside \
-        the user's project workspace. You have read-only tools — read_file, list_directory, \
-        and grep — to explore the codebase. Use them to ground your answers in the actual \
-        code rather than guessing. Keep answers focused and concise."
+        "Use them to ground your answers in the actual code rather than guessing."
     };
+    let write_note = if write {
+        " Only use write_file when the user asked for an edit."
+    } else {
+        ""
+    };
+    let shell_note = if shell {
+        " shell_exec runs `sh -c <command>` in the workspace with a 60-second timeout and a per-call user confirmation; prefer the read-only tools and write_file when they suffice."
+    } else {
+        ""
+    };
+    let base = format!(
+        "You are an AI assistant embedded in the mnml code editor, working inside \
+         the user's project workspace. You have tools — {tools_list} — to explore \
+         the codebase.{write_note}{shell_note} {read_only_note} Keep answers focused and concise."
+    );
     match user {
         Some(u) if !u.trim().is_empty() => format!("{base}\n\n{u}"),
-        _ => base.to_string(),
+        _ => base,
     }
 }
 
-/// A short human label for a tool call — shown as a `[tool: …]` status
-/// line while the agent runs.
+/// A short human label for a tool call — shown as a `[tool: …]`
+/// status line and also as the confirm-prompt body. Commands are
+/// truncated to 80 chars so a wall-of-text invocation doesn't bury
+/// the rest of the UI.
 fn tool_summary(name: &str, input: &serde_json::Value) -> String {
     let arg = input
         .get("path")
         .or_else(|| input.get("pattern"))
+        .or_else(|| input.get("command"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if arg.is_empty() {
-        name.to_string()
-    } else {
-        format!("{name} {arg}")
+        return name.to_string();
     }
+    let mut trimmed = arg.replace('\n', " ");
+    if trimmed.chars().count() > 80 {
+        trimmed = trimmed.chars().take(77).collect::<String>() + "…";
+    }
+    format!("{name} {trimmed}")
 }
 
 /// Dispatch + run one tool call. `Ok` is the tool result; `Err` is a
@@ -961,6 +1014,7 @@ fn execute_tool(
     name: &str,
     input: &serde_json::Value,
     write_enabled: bool,
+    shell_enabled: bool,
 ) -> Result<String, String> {
     match name {
         "read_file" => {
@@ -998,8 +1052,99 @@ fn execute_tool(
                 .ok_or("write_file: missing `content`")?;
             tool_write_file(workspace, path, content)
         }
+        "shell_exec" => {
+            if !shell_enabled {
+                return Err(
+                    "shell_exec: disabled (set `[ai] api_shell_tools = true` to enable)"
+                        .to_string(),
+                );
+            }
+            let command = input
+                .get("command")
+                .and_then(|v| v.as_str())
+                .ok_or("shell_exec: missing `command`")?;
+            tool_shell_exec(workspace, command)
+        }
         other => Err(format!("unknown tool: {other}")),
     }
+}
+
+/// Run a shell command via `sh -c <command>` in the workspace. Enforces
+/// a 60-second wall-clock timeout and a 256 KB combined stdout+stderr
+/// cap (anything past is truncated). Returns the result wrapped in a
+/// `<stdout>...</stdout><stderr>...</stderr><exit>N</exit>` envelope so
+/// the model can parse without guessing which is which. Confirmation
+/// is handled upstream by the agent loop (`api_shell_confirm`).
+fn tool_shell_exec(workspace: &Path, command: &str) -> Result<String, String> {
+    use std::io::Read;
+    use std::time::{Duration, Instant};
+
+    const TIMEOUT: Duration = Duration::from_secs(60);
+    const OUTPUT_CAP: usize = 256 * 1024;
+
+    if command.trim().is_empty() {
+        return Err("shell_exec: empty command".to_string());
+    }
+    let mut child = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(workspace)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("shell_exec spawn: {e}"))?;
+    let mut stdout = child.stdout.take();
+    let mut stderr = child.stderr.take();
+    let stdout_join = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut s) = stdout.take() {
+            let _ = s.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let stderr_join = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut s) = stderr.take() {
+            let _ = s.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let deadline = Instant::now() + TIMEOUT;
+    let exit_code = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.code().unwrap_or(-1),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "shell_exec: timed out after {}s",
+                        TIMEOUT.as_secs()
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("shell_exec wait: {e}")),
+        }
+    };
+    let stdout_bytes = stdout_join.join().unwrap_or_default();
+    let stderr_bytes = stderr_join.join().unwrap_or_default();
+
+    let truncate = |bytes: Vec<u8>| -> String {
+        if bytes.len() > OUTPUT_CAP {
+            let mut s = String::from_utf8_lossy(&bytes[..OUTPUT_CAP]).into_owned();
+            s.push_str("\n[truncated]\n");
+            s
+        } else {
+            String::from_utf8_lossy(&bytes).into_owned()
+        }
+    };
+    let out = truncate(stdout_bytes);
+    let err = truncate(stderr_bytes);
+    Ok(format!(
+        "<stdout>{out}</stdout><stderr>{err}</stderr><exit>{exit_code}</exit>"
+    ))
 }
 
 /// Write a workspace file. Refuses absolute paths and any `..`
@@ -1145,6 +1290,7 @@ mod tests {
             "read_file",
             &serde_json::json!({ "path": "hello.txt" }),
             false,
+            false,
         )
         .unwrap();
         assert_eq!(out, "hi there");
@@ -1157,6 +1303,7 @@ mod tests {
             dir.path(),
             "read_file",
             &serde_json::json!({ "path": "../../../../../../etc/passwd" }),
+            false,
             false,
         );
         assert!(r.is_err(), "escape should be refused: {r:?}");
@@ -1172,6 +1319,7 @@ mod tests {
             "list_directory",
             &serde_json::json!({ "path": "." }),
             false,
+            false,
         )
         .unwrap();
         assert!(out.contains("a.txt"), "out: {out:?}");
@@ -1186,6 +1334,7 @@ mod tests {
                 dir.path(),
                 "delete_everything",
                 &serde_json::json!({}),
+                false,
                 false
             )
             .is_err()
@@ -1200,6 +1349,7 @@ mod tests {
             "write_file",
             &serde_json::json!({ "path": "out/note.txt", "content": "hello" }),
             true,
+            false,
         )
         .unwrap();
         assert!(out.contains("wrote"), "out: {out:?}");
@@ -1215,6 +1365,7 @@ mod tests {
             "write_file",
             &serde_json::json!({ "path": "x.txt", "content": "nope" }),
             false,
+            false,
         );
         assert!(r.is_err(), "write should be refused when disabled: {r:?}");
         assert!(!dir.path().join("x.txt").exists());
@@ -1228,8 +1379,103 @@ mod tests {
             "write_file",
             &serde_json::json!({ "path": "../escaped.txt", "content": "x" }),
             true,
+            false,
         );
         assert!(r.is_err(), "`..` escape should be refused: {r:?}");
+    }
+
+    #[test]
+    fn execute_tool_shell_exec_refused_when_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = execute_tool(
+            dir.path(),
+            "shell_exec",
+            &serde_json::json!({ "command": "echo hi" }),
+            false,
+            false,
+        );
+        assert!(r.is_err(), "shell should be refused when disabled: {r:?}");
+    }
+
+    #[test]
+    fn execute_tool_shell_exec_runs_when_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = execute_tool(
+            dir.path(),
+            "shell_exec",
+            &serde_json::json!({ "command": "echo from-shell; echo to-stderr 1>&2" }),
+            false,
+            true,
+        )
+        .unwrap();
+        assert!(out.contains("from-shell"), "stdout missing: {out:?}");
+        assert!(out.contains("to-stderr"), "stderr missing: {out:?}");
+        assert!(out.contains("<exit>0</exit>"), "exit missing: {out:?}");
+    }
+
+    #[test]
+    fn execute_tool_shell_exec_records_nonzero_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = execute_tool(
+            dir.path(),
+            "shell_exec",
+            &serde_json::json!({ "command": "exit 42" }),
+            false,
+            true,
+        )
+        .unwrap();
+        assert!(
+            out.contains("<exit>42</exit>"),
+            "exit code missing: {out:?}"
+        );
+    }
+
+    #[test]
+    fn execute_tool_shell_exec_rejects_empty_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = execute_tool(
+            dir.path(),
+            "shell_exec",
+            &serde_json::json!({ "command": "" }),
+            false,
+            true,
+        );
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn agent_tools_includes_shell_when_shell_flag_set() {
+        let tools = agent_tools(false, true);
+        let arr = tools.as_array().unwrap();
+        let names: Vec<&str> = arr
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        assert!(names.contains(&"shell_exec"));
+        assert!(!names.contains(&"write_file"));
+    }
+
+    #[test]
+    fn agent_tools_excludes_shell_when_shell_flag_off() {
+        let tools = agent_tools(true, false);
+        let arr = tools.as_array().unwrap();
+        let names: Vec<&str> = arr
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        assert!(names.contains(&"write_file"));
+        assert!(!names.contains(&"shell_exec"));
+    }
+
+    #[test]
+    fn tool_summary_truncates_long_commands() {
+        let long = "echo ".repeat(50);
+        let s = tool_summary("shell_exec", &serde_json::json!({ "command": long }));
+        assert!(s.starts_with("shell_exec "));
+        assert!(
+            s.chars().count() <= "shell_exec ".len() + 80,
+            "summary too long: {s}"
+        );
     }
 
     #[test]
