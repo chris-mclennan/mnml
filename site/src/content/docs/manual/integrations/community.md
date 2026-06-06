@@ -33,13 +33,15 @@ Code-hosting forges — SCM + PRs/MRs + pipelines + reviews + issues, all under 
 | `mnml-forge-gitlab` | GitLab (gitlab.com or self-hosted) — Merge Requests + Pipelines | [chris-mclennan/mnml-forge-gitlab](https://github.com/chris-mclennan/mnml-forge-gitlab) |
 | `mnml-forge-azdevops` | Azure DevOps — Pull Requests + Builds | [chris-mclennan/mnml-forge-azdevops](https://github.com/chris-mclennan/mnml-forge-azdevops) |
 
-### CI / build dashboards
+### CI / build / deploy dashboards
 
-Stand-alone CI viewers — for build platforms that aren't bundled with a forge.
+Stand-alone CI / deploy viewers — for build and hosting platforms that aren't bundled with a forge.
 
 | Integration | Backend | Repo |
 |---|---|---|
 | `mnml-aws-codebuild` | AWS CodeBuild + CloudWatch Logs live tail (shells out to `aws` CLI) | [chris-mclennan/mnml-aws-codebuild](https://github.com/chris-mclennan/mnml-aws-codebuild) |
+| `mnml-aws-cloudwatch-logs` | AWS CloudWatch Logs — tabbed log groups, severity coloring, filter patterns | [chris-mclennan/mnml-aws-cloudwatch-logs](https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs) |
+| `mnml-aws-amplify` | AWS Amplify — apps, branches, deploy jobs | [chris-mclennan/mnml-aws-amplify](https://github.com/chris-mclennan/mnml-aws-amplify) |
 
 ### Test infrastructure
 
@@ -68,6 +70,7 @@ Object-store browsers — browse buckets / prefixes / objects as a TUI tree. She
 | `mnml-db-clickhouse` | ClickHouse | [chris-mclennan/mnml-db-clickhouse](https://github.com/chris-mclennan/mnml-db-clickhouse) |
 | `mnml-db-redis` | Redis | [chris-mclennan/mnml-db-redis](https://github.com/chris-mclennan/mnml-db-redis) |
 | `mnml-db-docdb` | Amazon DocumentDB / MongoDB | [chris-mclennan/mnml-db-docdb](https://github.com/chris-mclennan/mnml-db-docdb) |
+| `mnml-db-dynamodb` | Amazon DynamoDB — table browser via `aws dynamodb scan` | [chris-mclennan/mnml-db-dynamodb](https://github.com/chris-mclennan/mnml-db-dynamodb) |
 
 ## Community
 
