@@ -32,6 +32,22 @@ Code-hosting forges — SCM + PRs/MRs + pipelines + reviews + issues, all under 
 | `mnml-forge-gitlab` | GitLab (gitlab.com or self-hosted) — Merge Requests + Pipelines | [chris-mclennan/mnml-forge-gitlab](https://github.com/chris-mclennan/mnml-forge-gitlab) |
 | `mnml-forge-azdevops` | Azure DevOps — Pull Requests + Builds | [chris-mclennan/mnml-forge-azdevops](https://github.com/chris-mclennan/mnml-forge-azdevops) |
 
+### CI / build dashboards
+
+Stand-alone CI viewers — for build platforms that aren't bundled with a forge.
+
+| Integration | Backend | Repo |
+|---|---|---|
+| `mnml-aws-codebuild` | AWS CodeBuild + CloudWatch Logs live tail (shells out to `aws` CLI) | [chris-mclennan/mnml-aws-codebuild](https://github.com/chris-mclennan/mnml-aws-codebuild) |
+
+### Test infrastructure
+
+Test-tooling viewers — runners stay in mnml core (editor-integrated); these are the read-only inspection siblings.
+
+| Integration | Backend | Repo |
+|---|---|---|
+| `mnml-playwright` | Playwright `trace.zip` viewer — per-action timeline + console + errors | [chris-mclennan/mnml-playwright](https://github.com/chris-mclennan/mnml-playwright) |
+
 ### Database viewers
 
 | Integration | Backend | Repo |

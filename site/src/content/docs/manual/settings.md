@@ -144,6 +144,7 @@ Each row drives a single `Config` slot. Useful when you want to find the matchin
 | Sidescrolloff | `[ui] sidescrolloff` |
 | Theme | `[ui] theme` |
 | File tree width | `[ui] tree_width` |
+| File-tree image preview | `[ui] tree_image_preview` |
 | Now-playing source | `[ui] now_playing_source` |
 | Input style | `[editor] input_style` |
 | Tab width | `[editor] tab_width` |
@@ -190,6 +191,7 @@ sticky_context = false            # enclosing scope chain at the pane top
 md_image_rows = 12                # rows reserved for markdown image embeds
 picker_position = "center"        # or "top" — where the palette / picker anchors
 now_playing_source = "auto"       # "auto" | "mixr" | "macos" — statusline ♪ miniplayer
+tree_image_preview = true         # hover-preview card for image files in the rail
 
 # Pty-tab auto-naming
 ticket_prefixes = ["TE-", "MIX-", "PROJ-"]  # see below
@@ -275,6 +277,25 @@ A few details worth knowing:
 - **Skipped automatically in `--headless` and `--blit` modes.** Both modes have no toast surface and no statusline chip, so the check is a no-op there even when `check_updates` is `true`.
 
 Source: `src/update_check.rs` (the background fetch + the shared `UpdateCheck` handle) and `src/main.rs` (the gate that decides whether to spawn it).
+
+#### File-tree image hover-preview
+
+```toml
+[ui]
+tree_image_preview = true         # default — set to false to disable entirely
+```
+
+When the file-tree cursor sits on an image file (PNG / JPEG / GIF / WebP / BMP) for ≥250 ms, mnml paints a small thumbnail card at the bottom of the rail. The card is 14 cols × 5 rows (1 caption + 4 image rows) and renders via whichever inline-image protocol your terminal speaks.
+
+A few details worth knowing:
+
+- **Auto-detected protocol.** mnml probes for Kitty graphics, iTerm2 inline images, and sixel at startup. The first one it finds wins; `none` falls back to a plain "no protocol" placeholder.
+- **Override via env.** Set `MNML_IMAGE_PROTOCOL=kitty|iterm2|sixel|none` to skip detection and force a specific protocol (or disable images entirely). Useful for terminals that report support inaccurately, or for testing the fallback path. See [the environment variables section](#environment-variables) below.
+- **Hover-preview, not inline.** The card paints *over* the bottom of the rail rather than expanding the row of the hovered file. This keeps the tree's `1 logical row = 1 terminal cell` invariant intact — no cursor / scroll / click math to rewrite. The tradeoff: thumbnails for many images at once aren't possible in this design (the rail would have to grow variable-height rows).
+- **Sync decode.** Image bytes are read + decoded on the main thread. Mnml only triggers the preview when a stable cursor has been on the row for ≥250 ms, so flick-scrolling through the tree doesn't fire decodes.
+- **Opt out:** set `[ui] tree_image_preview = false` and the preview machinery is skipped entirely — no decode, no paint, no debounce timer.
+
+Skipped automatically in `--headless` and `--blit` modes (neither has a surface for inline image escape sequences).
 
 #### Now-playing source
 
@@ -377,12 +398,67 @@ Mnml's default config still seeds four launcher chips in the rail's INTEGRATIONS
 
 ### `[ai]` and `[http]`
 
-The `[ai]` and `[http]` tables are **parsed-and-kept** today: mnml will accept whatever shape your file has and won't error, but consumes them on the AI / HTTP tracks rather than from a single global table. The active surfaces:
+The `[ai]` and `[http]` tables are **parsed-and-kept**: mnml accepts whatever shape your file has and won't error. A small fixed set of keys are read directly today (listed below); the rest is held in the table for forward compatibility.
 
 - **AI providers** — keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) read from the environment at request time, not from config. AI pane preferences (which model, default prompt) live in workspace state, not TOML. See the [AI panes manual](/manual/ai-panes/).
 - **HTTP requests** — defined per-file (`.http` / `.curl` / `.rest` / `.chain.json`) under your workspace. Environment selection is a runtime concept (`mnml run FILE --env staging`), not a config key. See the [HTTP client manual](/manual/http/).
 
-A future `[ai] default_model = "..."` / `[http] default_env = "..."` shape is reserved; the current values are tolerated for forward compatibility.
+#### `[ai]` keys actively read
+
+```toml
+[ai]
+# Direct-API agent loop — write tools (str_replace, create_file, …)
+api_write_tools   = true            # default: on
+api_write_confirm = true            # default: on — confirm before each write
+
+# Direct-API agent loop — shell tool (sh -c in workspace cwd)
+api_shell_tools   = false           # default: OFF — strictly opt-in
+api_shell_confirm = true            # default: on — confirm before each call
+```
+
+- `api_shell_tools` enables a `shell_exec` tool on the agent loop. The agent can run arbitrary `sh -c <command>` calls in the workspace directory — 60-second timeout, 256 KB combined stdout/stderr cap, return shape `<stdout>…</stdout><stderr>…</stderr><exit>N</exit>`. **Default off** because this is the most-dangerous tool surface the AI track exposes; turn it on only in workspaces where you trust the prompt-to-shell chain.
+- `api_shell_confirm` blocks each individual `shell_exec` call until you approve it via the standard `pending_tool_confirm` flow. **Default on.** Setting this to `false` while `api_shell_tools = true` gives the agent unattended shell access — fine for sandboxed throwaway workspaces; not a fit for anything you'd commit from.
+- The matching `api_write_tools` / `api_write_confirm` pair work the same way for write tools (str_replace, create_file, …). Defaults: writes on, confirm on.
+
+#### The `\image` directive
+
+Prepend `\image <path>` (or `\img <path>`) lines at the start of an AI prompt to attach images as base64 message content. The directives are stripped from the prompt text before send.
+
+```
+\image screenshots/login-broken.png
+\image docs/wireframe.jpg
+Why does the login button overlap the password field at 320 px?
+```
+
+- Supported formats: PNG / JPEG / GIF / WebP.
+- Per-image cap: 5 MB (after decode, before base64). Larger files surface a per-line error in the response stream rather than blocking the prompt.
+- Paths are resolved relative to the current workspace. Absolute paths work too.
+- Only the **leading block** of `\image` lines is consumed — once the parser hits a non-directive line, the rest of the prompt passes through untouched. So a `\image` inside the question body (or inside a code block) renders literally; that's the escape hatch if you ever want to talk about the directive itself.
+
+Works on both the streaming + agent-loop paths (`stream_to_channel` and `agent_to_channel`).
+
+A future `[ai] default_model = "..."` / `[http] default_env = "..."` shape is reserved; the current values for those keys are tolerated for forward compatibility.
+
+## Environment variables
+
+A small set of runtime knobs live in environment variables rather than the TOML config — useful for one-shot overrides without touching disk.
+
+| Variable | Values | Purpose |
+|---|---|---|
+| `MNML_IMAGE_PROTOCOL` | `kitty` / `iterm2` / `sixel` / `none` | Skip terminal-protocol auto-detection and force a specific inline-image protocol. Affects markdown image embeds, the file-tree hover-preview, and the image-pane viewer. `none` disables image rendering entirely. |
+| `XDG_CONFIG_HOME` | path | When set, mnml reads `$XDG_CONFIG_HOME/mnml/config.toml` instead of `~/.config/mnml/config.toml`. (Standard XDG basedir spec.) |
+| `MNML_STARTUP_PICKER` | `1` | Same as `--startup-picker` — open the JetBrains-style chooser on launch. See the [Startup picker manual](/manual/startup-picker/). |
+| `TMNL_LAUNCH_ARGS` | CLI args | Set by the macOS app launchers (`mnml.app` / `tmnl.app`) — anything in here gets appended to `mnml`'s argv when run from Finder. Used to wire `--input standard --startup-picker` into the Finder launch path. |
+
+`MNML_IMAGE_PROTOCOL` is the most-commonly-useful one in day-to-day use:
+
+```sh
+# Force sixel even on a terminal mnml thinks supports Kitty graphics
+MNML_IMAGE_PROTOCOL=sixel mnml
+
+# Disable all image rendering (no inline images, no hover-preview)
+MNML_IMAGE_PROTOCOL=none mnml
+```
 
 ## Workspaces — `[[workspaces]]`
 

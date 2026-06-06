@@ -105,6 +105,8 @@ export default defineConfig({
             { label: 'GitLab forge viewer', slug: 'manual/integrations/forge-gitlab' },
             { label: 'Azure DevOps forge viewer', slug: 'manual/integrations/forge-azdevops' },
             { label: 'Jira tracker viewer', slug: 'manual/integrations/tracker-jira' },
+            { label: 'AWS CodeBuild viewer', slug: 'manual/integrations/aws-codebuild' },
+            { label: 'Playwright trace viewer', slug: 'manual/integrations/playwright' },
             { label: 'Community integrations', slug: 'manual/integrations/community' },
           ],
         },
