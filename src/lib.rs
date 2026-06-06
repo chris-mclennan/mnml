@@ -54,6 +54,7 @@ pub(crate) mod hover;
 pub mod http;
 pub(crate) mod image;
 pub(crate) mod input;
+pub(crate) mod integration_detect;
 pub mod ipc;
 pub(crate) mod layout;
 pub(crate) mod linter;

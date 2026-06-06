@@ -444,15 +444,47 @@ fn draw_add_repo_row(
     ));
 }
 
+/// Original-config indices of the integration icons that should
+/// render in the sidebar — built-ins always show; `:host.launch X`
+/// entries only show when `X` is detected on PATH or a well-known
+/// install dir. Preserving the original index matters because the
+/// hover/click rect map uses it to look the icon up again.
+fn visible_integration_indices(app: &App) -> Vec<usize> {
+    app.config
+        .ui
+        .integration_icons
+        .iter()
+        .enumerate()
+        .filter_map(|(i, ic)| {
+            match crate::integration_detect::sibling_binary_for_command(&ic.command) {
+                None => Some(i), // built-in palette command — always available
+                Some(bin) if crate::integration_detect::is_binary_installed(bin) => Some(i),
+                Some(_) => None,
+            }
+        })
+        .collect()
+}
+
 /// Height the INTEGRATIONS section wants when pinned above GIT. Counts
 /// 1 row for the header + `ceil(N / icons_per_row)` rows for the grid
 /// (where `icons_per_row` is derived from `rail_w / chip_w`). Returns
-/// 0 if the user has no integration icons configured (so the section
-/// doesn't claim any space).
+/// 1 (just the header) when there are no installed integrations — the
+/// header stays visible so the user can still see the section + the
+/// future `+` button (the misleading "Jira is configured" state when
+/// it's just a default is gone).
 fn compute_integration_section_height(app: &App, rail_width: usize) -> u16 {
-    let n = app.config.ui.integration_icons.len();
+    let n = visible_integration_indices(app).len();
     if n == 0 {
-        return 0;
+        // Header-only — keeps the section's identity visible even when
+        // nothing is installed yet. (Used to return 0, which hid the
+        // section entirely. With detection in place we want users to
+        // see "INTEGRATIONS" so the `+` button discovery flow is
+        // discoverable from an empty rail.)
+        return if app.config.ui.integration_icons.is_empty() {
+            0
+        } else {
+            1
+        };
     }
     if !app.integration_section_expanded {
         // Compact: header + 1 row of icons packed horizontally. Each
@@ -522,19 +554,23 @@ fn draw_integration_section(
     //    (Claude / Codex) trim a trailing space to keep the visual
     //    cell-count consistent with 1-cell glyphs.
     if !app.integration_section_expanded {
-        let n = app.config.ui.integration_icons.len();
+        // Only render icons whose underlying binary is detected on
+        // PATH / well-known dirs (built-ins always pass). The original
+        // config index is preserved so click/hover rect lookups still
+        // resolve to the right `integration_icons[i]` entry.
+        let visible = visible_integration_indices(app);
+        let n = visible.len();
         if n == 0 {
             return;
         }
         const CHIP_W: usize = 4;
         let per_row = (width / CHIP_W).max(1);
-        let icons: Vec<(usize, String, String, String)> = app
-            .config
-            .ui
-            .integration_icons
+        let icons: Vec<(usize, String, String, String)> = visible
             .iter()
-            .enumerate()
-            .map(|(i, ic)| (i, ic.glyph.clone(), ic.fallback.clone(), ic.color.clone()))
+            .map(|&i| {
+                let ic = &app.config.ui.integration_icons[i];
+                (i, ic.glyph.clone(), ic.fallback.clone(), ic.color.clone())
+            })
             .collect();
         for (row_y, chunk) in (start_y + 1..).zip(icons.chunks(per_row)) {
             if row_y >= max_y {
@@ -604,13 +640,15 @@ fn draw_integration_section(
     // only contains one icon. Each row is also wider, so the
     // human-readable name fits next to the glyph — easier to scan
     // than a 7-glyph chip grid.
-    let icons: Vec<(usize, String, String, String, String)> = app
-        .config
-        .ui
-        .integration_icons
+    //
+    // Filtering note: same as the collapsed view, only render rows
+    // whose binary is installed (or built-in palette commands). The
+    // original config index is preserved for the click rect.
+    let visible = visible_integration_indices(app);
+    let icons: Vec<(usize, String, String, String, String)> = visible
         .iter()
-        .enumerate()
-        .map(|(i, ic)| {
+        .map(|&i| {
+            let ic = &app.config.ui.integration_icons[i];
             let label = ic.tooltip.clone().unwrap_or_else(|| ic.id.clone());
             (
                 i,

@@ -1586,30 +1586,19 @@ enum IntegrationAvailability {
 
 /// Walk the `command` string from an `IntegrationIcon` and decide
 /// whether the underlying tool is installed. Only `:host.launch
-/// <binary>` is probed via `which`; everything else returns
-/// `Available`. Cheap enough to call per-frame for a small fixed
-/// set of icons (~6 by default), but the call site only renders this
-/// section when the Integrations activity-bar icon is active so the
-/// PATH lookups are gated behind a click anyway.
+/// <binary>` invocations are probed (built-in palette commands like
+/// `:ai.claude_code` always return `Available`). Detection happens in
+/// `integration_detect`: in-process `$PATH` walk + per-OS well-known
+/// install dirs (`~/.cargo/bin`, Homebrew, etc.), with results cached
+/// per-session so this is cheap to call per-frame.
 fn integration_availability(command: &str) -> IntegrationAvailability {
-    let Some(rest) = command.strip_prefix(":host.launch ") else {
+    let Some(bin) = crate::integration_detect::sibling_binary_for_command(command) else {
         return IntegrationAvailability::Available;
     };
-    let bin = rest.split_whitespace().next().unwrap_or("").to_string();
-    if bin.is_empty() {
-        return IntegrationAvailability::Available;
-    }
-    let installed = std::process::Command::new("/usr/bin/which")
-        .arg(&bin)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if installed {
+    if crate::integration_detect::is_binary_installed(bin) {
         IntegrationAvailability::Available
     } else {
-        IntegrationAvailability::Missing(bin)
+        IntegrationAvailability::Missing(bin.to_string())
     }
 }
 

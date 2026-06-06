@@ -1128,6 +1128,16 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-aws-eventbridge"),
         },
         Command {
+            id: "integrations.refresh",
+            title: "Integrations: refresh installed-binary detection",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                crate::integration_detect::clear_cache();
+                app.toast("integration detection refreshed");
+            },
+        },
+        Command {
             id: "editor.jump_next_edit",
             title: "Jump to next edit position (vim `g,`)",
             group: "editor",
