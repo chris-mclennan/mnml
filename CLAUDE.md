@@ -105,6 +105,47 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**3 new AWS/DB siblings + chord-conflict fix (2026-06-06):** Lands
+the day's family expansion + a long-standing whichkey bug.
+
+Three new siblings shipped end-to-end (own repos, Manual pages,
+rail chips, palette commands, chord entries):
+
+- **`mnml-aws-cloudwatch-logs`** — live log-stream tail. Pure
+  `aws logs` shell-out (same auth chain as `mnml-aws-codebuild` /
+  `-amplify`). Configurable per-tab filter patterns. Rail glyph
+  nf-md-text-box-search (yellow). Chord `<leader>iw`. Palette
+  `forge.open_cloudwatch_logs`.
+- **`mnml-aws-amplify`** — apps + branches + deploy jobs viewer.
+  Two tab kinds: `apps` (all apps in region) and `app` (drills into
+  one app — branches left + recent deploy jobs right). Stage chips:
+  PRODUCTION green / BETA yellow / DEVELOPMENT cyan. Rail glyph
+  nf-md-rocket-launch (purple). Chord `<leader>ia`. Palette
+  `forge.open_amplify`.
+- **`mnml-db-dynamodb`** — first `mnml-db-*` sibling that uses the
+  `aws` CLI for auth instead of a vendor driver (right path for
+  AWS-native NoSQL). Split view: items table (left, smart PRIMARY
+  column auto-resolved from `describe-table` HASH+RANGE keys) +
+  focused-item full JSON detail (right). Rail glyph nf-fa-database
+  (teal). Chord `<leader>id`. Palette `forge.open_dynamodb`.
+
+mnml core changes: 3 `IntegrationIcon` entries in `config.rs`, 3
+`Command` entries in `command.rs`, 3 chord entries under
+`+integrations` in `whichkey.rs`. 3 Manual pages under
+`/manual/integrations/`. Astro sidebar updated.
+
+Also fixed a pre-existing whichkey bug: `'i'` was double-registered
+at root with both `+integrations` and `+insert`. `BTreeMap` dedup
+silently killed `+integrations` (declared first → overwritten by
+`+insert`), so every existing forge chord (`<leader>i b/g/l/z/c/s`)
+had been unreachable for weeks. Moved `+insert` to capital `'I'`
+and added a regression test (`integrations_group_is_reachable`).
+
+Family release verified live: mnml v0.1.3 (2026-06-04) + mixr-rs
+v0.1.3 (2026-05-31) both shipping; `mnml-rs-installer.sh` and
+`mixr-rs-installer.sh` resolve 200. mnml.sh deploy serving the
+new Manual pages.
+
 **Startup workspace picker + update-available check + nightly bundle (2026-06-03):**
 Lands #76, #77, #78.
 

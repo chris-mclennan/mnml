@@ -13,6 +13,30 @@ block); this file is the curated, user-facing summary.
 mnml has not yet had a tagged release. The `0.1.0` line below summarises the
 capabilities present in the current `main`.
 
+### Added (2026-06-06)
+
+- **Three new blit-host integration icons** — `cloudwatch_logs`, `amplify`,
+  and `dynamodb` added to the default `integration_icons` list in `src/config.rs`.
+  Each icon in the file-tree rail launches its sibling binary on click:
+  - `cloudwatch_logs` → `:host.launch mnml-aws-cloudwatch-logs` (live log-stream
+    tail viewer; per-tab filter patterns)
+  - `amplify` → `:host.launch mnml-aws-amplify` (Amplify apps / branches /
+    deploy-jobs; `apps` and `app` tab kinds)
+  - `dynamodb` → `:host.launch mnml-db-dynamodb` (DynamoDB table browser; smart
+    PRIMARY column auto-resolved via `describe-table`)
+- **Three new palette commands** — `forge.open_cloudwatch_logs`,
+  `forge.open_amplify`, `forge.open_dynamodb` (group `forge`); accessible from
+  the command palette and bindable as keychords.
+- **Three new which-key chords** under `<leader>i` (`+integrations`): `w` →
+  CloudWatch Logs viewer, `a` → AWS Amplify viewer, `d` → DynamoDB browser.
+
+### Fixed (2026-06-06)
+
+- **Which-key `+integrations` was unreachable** — `'i'` was double-registered
+  at the root trie with both `+integrations` and `+insert`; `BTreeMap` dedup
+  silently dropped `+integrations`. Fixed by moving `+insert` to capital `'I'`.
+  Regression test added (`integrations_group_is_reachable`).
+
 ### Added (2026-06-02)
 
 - **Startup workspace picker** (`#76`) — `--startup-picker` CLI flag (or

@@ -45,6 +45,12 @@ The complete, organised feature inventory. For the front-door overview see
 - **Fuzzy pickers** — file finder, command palette, buffer switcher, symbol
   picker, marks/clipboard/recent-commands pickers — all over one fuzzy core.
 - **Which-key leader popup** — a discoverable trie of leader-key chords.
+  Root groups: `f` find, `g` git, `b` buffer, `p` picker, `P` PR, `i`
+  integrations, `a` AI/term, `s` split, `l` LSP, `I` insert, `t` tab, `w`
+  workspace, `u` UI, `h` http, `d` diff/debug. `<leader>i` opens `+integrations`
+  with chords for every forge/AWS/DB sibling: `b` Bitbucket, `g` GitHub, `l`
+  GitLab, `z` Azure DevOps, `c` CodeBuild, `s` S3, `w` CloudWatch Logs, `a`
+  Amplify, `d` DynamoDB.
 - **Find & replace** — in-buffer find (literal + regex, smart-case,
   incremental), replace, find history.
 - **Workspace grep** — ripgrep-backed project search into a results pane, with
@@ -191,9 +197,14 @@ The complete, organised feature inventory. For the front-door overview see
   binary as a `Pane::BlitHost`; the binary renders into the pane over a Unix
   socket using the `tmnl-protocol` wire format. No changes to mnml needed to add
   an integration — drop a `[[ui.launcher_icon]]` entry in config. `Ctrl+E`
-  returns focus to the split tree. The first integration of this class is
-  `mnml-tickets-jira`, a standalone Jira ticket viewer that can run both
-  independently and hosted inside mnml via `:host.launch mnml-tickets-jira`.
+  returns focus to the split tree. Shipped integrations (each also runs
+  standalone): `mnml-tickets-jira` (Jira ticket viewer),
+  `mnml-aws-cloudwatch-logs` (live CloudWatch log-stream tail, per-tab filter
+  patterns), `mnml-aws-amplify` (Amplify apps / branches / deploy-jobs viewer),
+  `mnml-db-dynamodb` (DynamoDB table browser, PRIMARY key auto-resolved from
+  `describe-table`). The integration-icon rail ships default entries for all of
+  them; palette commands `forge.open_cloudwatch_logs`, `forge.open_amplify`, and
+  `forge.open_dynamodb` are also registered.
 - **`tmnl` integration** — runs standalone in any terminal; gains native-pane
   hand-off when hosted inside the [`tmnl`](https://github.com/chris-mclennan/tmnl)
   terminal. `:tmnl.open-tab <command>` (alias `:tmnl.tab`) asks tmnl to open a
