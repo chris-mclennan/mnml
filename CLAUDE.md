@@ -105,6 +105,70 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**Integration detection + `+` Add overlay + folder browser (2026-06-06):**
+Lands the user-facing fix for "why is Jira showing in INTEGRATIONS,
+did I set it up?" plus the discoverability flow for adding more
+siblings + a UX polish on the workspace prompt.
+
+Five commits land this stretch:
+
+1. `fe56e6b` — new `src/integration_detect.rs` does cross-platform
+   binary detection: in-process `$PATH` walk (no `which` fork) +
+   per-OS well-known install dirs (`~/.cargo/bin` universally;
+   Homebrew prefixes on macOS / Linux; `%LOCALAPPDATA%\Programs`
+   on Windows). Results cached per-session. Sidebar
+   `> INTEGRATIONS` section in `tree_view.rs` filters to only show
+   integrations whose binary is actually detected (built-in
+   palette commands always pass). The misleading "Jira looks
+   configured" state is gone. New palette command
+   `integrations.refresh` clears the cache.
+
+2. `4471945` — `+ Add integration` overlay. New `+` chip on the
+   INTEGRATIONS sidebar header (mirrors the GIT section's add-repo
+   chip). Click → centered overlay listing 15 known family siblings
+   from a new `src/family_catalog.rs` (AWS / DB / Forge / Tracker
+   / Fs / Test categories). Each row tagged: `✓ in rail` (green) /
+   `✓ installed` (cyan) / `✗ not installed` (red). Keys:
+   `↑↓ jk` move, `Enter` adds to rail, `y` yanks `cargo install`
+   command, `Esc` closes. New modules: `src/app/discovery.rs`
+   (state + handlers) + `src/ui/discovery_overlay.rs` (renderer)
+   + `src/family_catalog.rs` (catalog).
+
+3. `f31a380` — `i` in the overlay now spawns
+   `cargo install --git <url> --tag vN.N.N` in a Pty pane the user
+   watches live. Overlay closes during install; reopening picks up
+   the new install (cache cleared on open). Cross-sibling
+   composition for installation flow.
+
+4. `7de8c9c` — folder browser for the "Open folder…" prompt
+   (`AddWorkspace` kind). Prompt now grows vertically to show a
+   live-filtered directory listing below the input. `↑↓` navigate
+   suggestions, `Tab` autocompletes from focused row (continues
+   typing), `Enter` accepts focused row or typed input. Tilde
+   expansion, case-insensitive prefix match, skip dotfiles unless
+   prefix asks. Caps at 12 suggestions. Other `PromptKind`s
+   (commit message, etc.) unchanged via the new `is_path_kind()`
+   predicate.
+
+5. `a5d40f6` — TOML write-back. `Enter to add` persists the full
+   `integration_icons` list to `~/.config/mnml/config.toml` via a
+   line-based strip-and-rewrite of the `[[ui.integration_icon]]`
+   section. Other sections, comments, whitespace preserved.
+   Idempotent (strip + append twice == once). Best-effort: in-memory
+   add always happens; toast reports the persistence target on
+   success or the error on failure. Chips survive a restart.
+
+The two surfaces are now distinct and truthful:
+- Top-right **bufferline launcher chip strip** — config-driven
+  via `[[ui.launcher_icon]]`, explicit user-pinned quick launchers
+- Sidebar **`> INTEGRATIONS` section** — config-driven via
+  `[[ui.integration_icon]]` AND filtered against install detection,
+  so it shows what's actually installed
+
+Manual page `manual/integrations/installing.md` documents the
+detection logic, the overlay flow, the Pty install action, and the
+TOML persistence semantics.
+
 **Lambda + EventBridge siblings + first cross-sibling handoff (2026-06-06):**
 Lands `mnml-aws-lambda` and `mnml-aws-eventbridge`, taking the
 AWS family to 5 siblings (codebuild, cloudwatch-logs, amplify,
