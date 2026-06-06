@@ -109,6 +109,7 @@ export default defineConfig({
             { label: 'AWS CodeBuild viewer', slug: 'manual/integrations/aws-codebuild' },
             { label: 'Amazon S3 browser', slug: 'manual/integrations/fs-s3' },
             { label: 'Playwright trace viewer', slug: 'manual/integrations/test-playwright' },
+            { label: 'Cypress test results viewer', slug: 'manual/integrations/test-cypress' },
             { label: 'Community integrations', slug: 'manual/integrations/community' },
           ],
         },

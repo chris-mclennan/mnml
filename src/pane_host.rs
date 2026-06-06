@@ -68,6 +68,11 @@ pub struct BlitChannel {
     socket_path: PathBuf,
     child: Child,
     frame_rx: Receiver<Frame>,
+    /// Paths the hosted child has asked mnml to open via
+    /// `Message::OpenFile`. Drained on each tick by
+    /// [`Self::drain_open_files`]; the App-side caller then opens
+    /// each path as an editor buffer. Added in tmnl-protocol v5.
+    open_file_rx: Receiver<String>,
     writer: Arc<Mutex<Option<UnixStream>>>,
     title: Arc<Mutex<Option<String>>>,
     pub cols: u16,
@@ -105,11 +110,21 @@ impl BlitChannel {
             .map_err(|e| format!("pane_host: bind {}: {e}", socket_path.display()))?;
 
         let (frame_tx, frame_rx) = channel::<Frame>();
+        let (open_file_tx, open_file_rx) = channel::<String>();
         let writer: Arc<Mutex<Option<UnixStream>>> = Arc::new(Mutex::new(None));
         let title: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let (writer_c, title_c) = (writer.clone(), title.clone());
         thread::spawn(move || {
-            accept_loop(listener, cols, rows, palette, frame_tx, writer_c, title_c)
+            accept_loop(
+                listener,
+                cols,
+                rows,
+                palette,
+                frame_tx,
+                open_file_tx,
+                writer_c,
+                title_c,
+            )
         });
 
         let mut cmd = std::process::Command::new(binary);
@@ -131,6 +146,7 @@ impl BlitChannel {
             socket_path,
             child,
             frame_rx,
+            open_file_rx,
             writer,
             title,
             cols,
@@ -160,6 +176,18 @@ impl BlitChannel {
     /// The tab title the child advertised over the wire, if any.
     pub fn title(&self) -> Option<String> {
         self.title.lock().ok().and_then(|t| t.clone())
+    }
+
+    /// Drain any `Message::OpenFile { path }` messages the hosted
+    /// child has sent. Caller opens each as an editor buffer. Added
+    /// in tmnl-protocol v5 — used by mnml-fs-s3 to hand off a
+    /// downloaded S3 object to the editor.
+    pub fn drain_open_files(&mut self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        while let Ok(p) = self.open_file_rx.try_recv() {
+            out.push(p);
+        }
+        out
     }
 
     fn send(&self, msg: &Message) {
@@ -218,12 +246,14 @@ fn apply_frame_into(cells: &mut Vec<BlitCell>, cur_cols: &mut u16, cur_rows: &mu
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn accept_loop(
     listener: UnixListener,
     init_cols: u16,
     init_rows: u16,
     palette: HostPalette,
     frame_tx: Sender<Frame>,
+    open_file_tx: Sender<String>,
     writer_slot: Arc<Mutex<Option<UnixStream>>>,
     title_slot: Arc<Mutex<Option<String>>>,
 ) {
@@ -261,15 +291,17 @@ fn accept_loop(
             let _ = write_message(s, &Message::Palette { bg, fg, accent });
         }
         let ftx = frame_tx.clone();
+        let oftx = open_file_tx.clone();
         let tslot = title_slot.clone();
         let wslot = writer_slot.clone();
-        thread::spawn(move || reader_loop(reader_half, ftx, tslot, wslot));
+        thread::spawn(move || reader_loop(reader_half, ftx, oftx, tslot, wslot));
     }
 }
 
 fn reader_loop(
     stream: UnixStream,
     frame_tx: Sender<Frame>,
+    open_file_tx: Sender<String>,
     title_slot: Arc<Mutex<Option<String>>>,
     writer_slot: Arc<Mutex<Option<UnixStream>>>,
 ) {
@@ -284,6 +316,11 @@ fn reader_loop(
             Ok(Message::Title(t)) => {
                 if let Ok(mut slot) = title_slot.lock() {
                     *slot = Some(t);
+                }
+            }
+            Ok(Message::OpenFile { path }) => {
+                if open_file_tx.send(path).is_err() {
+                    break;
                 }
             }
             Ok(_) => {}

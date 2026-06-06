@@ -48,6 +48,7 @@ Test-tooling viewers — runners stay in mnml core (editor-integrated); these ar
 | Integration | Backend | Repo |
 |---|---|---|
 | `mnml-test-playwright` | Playwright `trace.zip` viewer — per-action timeline + console + errors | [chris-mclennan/mnml-test-playwright](https://github.com/chris-mclennan/mnml-test-playwright) |
+| `mnml-test-cypress` | Cypress mochawesome JSON viewer — pass/fail state + failures filter + spec yank | [chris-mclennan/mnml-test-cypress](https://github.com/chris-mclennan/mnml-test-cypress) |
 
 ### Cloud filesystem viewers
 

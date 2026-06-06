@@ -47,11 +47,34 @@ impl App {
     /// Drain pending frames from every open `Pane::BlitHost`. Cheap
     /// when channels are idle. Called from `App::tick`.
     pub(super) fn drain_blit_host_events(&mut self) {
+        // First pass: drain frames + collect any OpenFile messages
+        // the hosted children have sent. We can't open files
+        // mid-iteration because that mutates `self.panes`; collect
+        // the paths, then process them after the loop.
+        let mut pending_open_paths: Vec<String> = Vec::new();
         for pane in self.panes.iter_mut() {
             if let Pane::BlitHost(p) = pane {
                 p.channel.drain_frames();
+                pending_open_paths.extend(p.channel.drain_open_files());
             }
         }
+        for path in pending_open_paths {
+            self.host_open_file(path);
+        }
+    }
+
+    /// Open a file path that a hosted blit-host child sent via
+    /// `Message::OpenFile`. Resolves the path, opens it as an
+    /// editor buffer (existing behaviour from
+    /// [`Self::open_path`]), and toasts the outcome.
+    pub(super) fn host_open_file(&mut self, path: String) {
+        let p = std::path::PathBuf::from(&path);
+        if !p.exists() {
+            self.toast(format!("blit-host OpenFile: {path} does not exist"));
+            return;
+        }
+        self.open_path(&p);
+        self.toast(format!("opened from blit-host: {path}"));
     }
 }
 
