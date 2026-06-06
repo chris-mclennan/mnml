@@ -14,14 +14,14 @@ mnml has two places integration icons appear, and they are driven by two differe
 | Surface | Config | What it means |
 |---|---|---|
 | Top-right **bufferline launcher chip strip** (colored chips) | `[[ui.launcher_icon]]` | Quick-launch chips you've explicitly pinned. Defaults to **empty**. |
-| Left rail **`> INTEGRATIONS` section** (plain glyphs) | `[[ui.integration_icon]]` | The integration menu — defaults to **every first-party sibling**, even uninstalled ones. |
+| Left rail **`> INTEGRATIONS` section** (plain glyphs) | `[[ui.integration_icon]]` | The integration menu — defaults to **every first-party sibling**; uninstalled siblings are filtered out of the collapsed strip until you install them. |
 
 Both arrays share the same shape (`id` / `glyph` / `fallback` / `command` / `color` / `tooltip`); they just paint in different places. See [the launcher-icon strips](/manual/settings/#the-launcher-icon-strips) for the field reference.
 
 The mental model:
 
 - The **bufferline strip** is your dock — small, opinionated, only contains things you've explicitly put there.
-- The **INTEGRATIONS rail** is your start menu — wide, lists everything, fades out the things you haven't installed yet.
+- The **INTEGRATIONS rail** is your start menu — narrow strip of installed siblings on the left, with a `+` chip that opens a discovery overlay listing everything else mnml knows about.
 
 :::note
 Setting either array in your config *replaces* the built-in defaults — it doesn't append. If you want a custom rail integration alongside the defaults, copy the shipped list from `src/config.rs` into your `~/.config/mnml/config.toml` first, then add your entry.
@@ -29,9 +29,9 @@ Setting either array in your config *replaces* the built-in defaults — it does
 
 ## How mnml detects installation
 
-The INTEGRATIONS section paints a dim red `(<bin> not installed)` suffix next to any row whose `command` is `:host.launch <binary>` when the binary isn't found. That probe runs at render time when the Integrations activity-bar section is the active one. It's how the rail stays honest — the chip for `mnml-tracker-jira` is always *present*, but it tells you the truth about whether you've installed the binary.
+When the rail's INTEGRATIONS section is collapsed (a horizontal strip of icons), mnml filters it to only show siblings whose binary actually resolves. Missing siblings disappear entirely from the strip — they don't appear dim. The `+` chip stays put so you can re-add them.
 
-The probe today is a literal `which <binary>` call against your shell's `PATH`. That's the v1 surface; the well-known-locations fallback in the table below is the **intended v0.x detection logic**:
+The probe is in-process (no `which` fork) and walks two location classes in order — `$PATH` first, then a per-OS list of well-known install dirs. Results are cached per session and cleared on a successful install or via the `integrations.refresh` palette command.
 
 | OS | Locations checked (in order) |
 |---|---|
@@ -39,45 +39,96 @@ The probe today is a literal `which <binary>` call against your shell's `PATH`. 
 | Linux | `$PATH` → `~/.cargo/bin` → `/home/linuxbrew/.linuxbrew/bin` → `/usr/local/bin` |
 | Windows | `%PATH%` → `%USERPROFILE%\.cargo\bin` → `%LOCALAPPDATA%\Programs\` |
 
-Why the fallback matters: **macOS .app bundles don't inherit your shell's `PATH`**. If you launch mnml.app from Finder/Spotlight, its environment is the minimal system `PATH` the launcher gives it — your `~/.zshrc` never runs. Without the fallback, you'd `cargo install mnml-forge-bitbucket`, see it appear in any shell, then double-click mnml.app and watch the Bitbucket chip wear `(mnml-forge-bitbucket not installed)` despite the binary sitting one directory over. Checking the standard `cargo install` location (`~/.cargo/bin`) and the standard Homebrew prefix directly sidesteps the entire PATH-inheritance question.
+Why the fallback matters: **macOS .app bundles don't inherit your shell's `PATH`**. If you launch mnml.app from Finder/Spotlight, its environment is the minimal system `PATH` the launcher gives it — your `~/.zshrc` never runs. Without the fallback, you'd `cargo install mnml-forge-bitbucket`, see it appear in any shell, then double-click mnml.app and watch the Bitbucket chip vanish despite the binary sitting one directory over. Checking the standard `cargo install` location (`~/.cargo/bin`) and the standard Homebrew prefix directly sidesteps the entire PATH-inheritance question.
 
-Internal palette commands (no prefix — e.g. `ai.claude_code`, `http.send`) and tmnl host commands (`tmnl:<host_id>`) are always assumed available because they don't shell out. They never wear the missing-binary badge.
+Internal palette commands (no prefix — e.g. `ai.claude_code`, `http.send`) and tmnl host commands (`tmnl:<host_id>`) are always assumed available because they don't shell out. They never get filtered out.
 
 ## Adding a sibling
 
 There are two ways to install a sibling and wire its chip into the rail. Pick the one that matches how you work.
 
-### The `+` button on the rail *(coming soon)*
+### The `+` button on the rail
 
-:::caution
-The `+` overlay below describes the intended flow — mnml v0.x ships with the chip strip + detection, and the install overlay follows shortly. Until then, use the manual `cargo install` flow further down.
-:::
-
-Click the `+` chip at the bottom of the INTEGRATIONS section and an overlay lists every first-party sibling mnml knows about, each with its install status:
+Click the `+` chip at the right edge of the `> INTEGRATIONS` header (or run `:integrations.add` from the palette) and an overlay drops in listing every first-party sibling mnml knows about, grouped by category, each tagged with its install status:
 
 ```
-┌─ Install integrations ───────────────────────────────────────┐
-│ ✓  mnml-forge-bitbucket       Bitbucket pipelines + PRs      │
-│ ✗  mnml-forge-github          GitHub Actions + PRs           │
-│ ✗  mnml-tracker-jira          Jira tracker                   │
-│ ✓  mnml-aws-codebuild         AWS CodeBuild + logs           │
-│ ✗  mnml-aws-cloudwatch-logs   CloudWatch Logs live tail      │
-│ …                                                             │
+┌─ + Add integration ──────────────────────────────────────────┐
+│  ── AWS ────────────────────────────────────────────────────  │
+│ ▸ ✓  mnml-aws-codebuild           installed (in rail)        │
+│   ✗  mnml-aws-cloudwatch-logs     not installed              │
+│   ✓  mnml-aws-lambda              installed                  │
+│   ✗  mnml-aws-eventbridge         not installed              │
+│  ── Databases ──────────────────────────────────────────────  │
+│   ✗  mnml-db-dynamodb             not installed              │
+│  ── Forges (SCM) ───────────────────────────────────────────  │
+│   ✓  mnml-forge-bitbucket         installed                  │
+│   …                                                          │
+│ ↑↓ move · Enter add to rail · i install (cargo) · y yank …   │
 └──────────────────────────────────────────────────────────────┘
-  ↑↓/jk move  ·  y yank install cmd  ·  i install  ·  Enter add to rail  ·  q close
 ```
+
+A row's status is one of three:
+
+| Glyph | State | What `Enter` does |
+|---|---|---|
+| `✓` green | `installed (in rail)` — binary detected AND already in `[[ui.integration_icon]]` | Toasts "already in rail" |
+| `✓` cyan | `installed` — binary detected, not yet a chip | Adds the chip + persists to TOML |
+| `✗` red | `not installed` — binary not on `$PATH` or in any well-known dir | Toasts a hint to press `i` or `y` |
 
 Keys:
 
 | Chord | Action |
 |---|---|
-| `↑↓` / `j k` | Move selection |
-| `y` | Yank the focused sibling's `cargo install --git …` command to the OS clipboard |
-| `i` | Install it now — mnml spawns a Pty pane running the `cargo install` command and watches for completion |
-| `Enter` | On an installed sibling: ensure its `[[ui.integration_icon]]` entry is present in your config (no-op if already there) |
-| `q` / `Esc` | Close the overlay |
+| `↑↓` / `j k` | Move selection (wraps; section headers are skipped) |
+| `Enter` | Status-dependent (see table above) |
+| `i` | Install — spawn a Pty pane running `cargo install --git <url> --tag <pinned> <binary>` |
+| `y` | Yank the same `cargo install …` command to the OS clipboard |
+| `Esc` / `q` | Close the overlay |
+| mouse wheel | Same as `↑↓` |
 
-`i` is the bulk fast path: you don't have to leave mnml, copy a command, switch terminals, run it, and come back. The Pty pane spawned by `i` is a regular pane — when `cargo install` exits, the pane stays open with the output for you to scroll, and the next render of the rail picks up the now-installed binary (the missing-binary badge drops off).
+#### `Enter` — add to rail (and persist)
+
+On an `installed` (cyan) row, `Enter` appends an `[[ui.integration_icon]]` entry to the in-memory config and immediately rewrites `~/.config/mnml/config.toml` so the chip survives a restart. The success toast reports the exact path written:
+
+```
+added mnml-aws-lambda to rail · persisted to /Users/you/.config/mnml/config.toml
+```
+
+The rewrite is line-based and surgical. mnml strips any existing `[[ui.integration_icon]]` blocks (and the managed-section banner, if previously written) and appends a fresh banner + the full current icon list. Everything outside those blocks — other tables, your comments, blank-line spacing — is preserved verbatim. The rewrite is idempotent: a strip-and-append twice produces the same file as once.
+
+The banner mnml writes looks like this; you can recognise it on next inspection:
+
+```toml
+# ── mnml-managed integration icons ──────────────────────────────────
+# Written by the `+ Add integration` overlay. Edit by hand or via the
+# overlay — re-saves replace this section in place.
+
+[[ui.integration_icon]]
+id = "lambda"
+glyph = ""
+fallback = "L"
+command = ":host.launch mnml-aws-lambda"
+color = "orange"
+tooltip = "AWS Lambda"
+```
+
+You can still hand-edit the file. The strip pass only matches the `[[ui.integration_icon]]` header line and the banner comment; a custom integration_icon block you wrote yourself will be picked up by the in-memory config on next launch — and the next overlay-driven add will rewrite it back out alongside the new entry.
+
+If the filesystem write fails (no `$HOME`, no write permission, locked file), `Enter` still succeeds in-memory and the toast tells you the chip is runtime-only:
+
+```
+added mnml-aws-lambda to rail (runtime only — persist failed: write /...: Permission denied)
+```
+
+#### `i` — install in a Pty pane
+
+On a `not installed` (red) row, `i` closes the overlay, opens a fresh Pty pane in the current layout, and runs the resolved `cargo install --git <repo> --tag <pinned> <binary>` for that catalog entry. You watch the build live; once `cargo` exits cleanly the binary lands in `~/.cargo/bin` (which the detector already probes), so the next time you open the overlay the row flips from red `✗ not installed` to cyan `✓ installed`. Press `Enter` then to add the chip + persist.
+
+The overlay closes during install because you want the Pty's output, not the picker. Re-open the overlay (`+` chip, or `:integrations.add`) when the build finishes.
+
+If the Pty pane immediately exits with `cargo: command not found`, you don't have Rust on your `$PATH` from inside mnml — either install Rust via [rustup.rs](https://rustup.rs) and relaunch mnml from a fresh shell, or use `y` and run the install from a terminal that does have `cargo`.
+
+`y` is the same command, copied to the clipboard for use outside mnml — handy if you'd rather review it before running, or pin a different tag than the catalog default.
 
 ### Manual install commands
 
@@ -112,9 +163,9 @@ The default `[[ui.integration_icon]]` set already references every first-party s
 
 Two things can happen depending on what you want:
 
-1. **Stop displaying its chip** — remove or comment out its `[[ui.integration_icon]]` entry in `~/.config/mnml/config.toml`. Because the array replaces (rather than merges with) the defaults, you'll need to have copied the full default list into your config first; from there, just delete the entry you don't want.
+1. **Stop displaying its chip** — remove or comment out its `[[ui.integration_icon]]` entry in `~/.config/mnml/config.toml`. The next `Enter`-driven add via the `+` overlay will rewrite the section without it. If you'd rather edit by hand, the block is plain TOML inside the `# ── mnml-managed integration icons ──` banner.
 
-2. **Uninstall the binary** — `cargo uninstall mnml-<class>-<name>`. The chip will still render (the entry is still in your config), but it'll wear the `(<bin> not installed)` badge until you reinstall or remove the entry.
+2. **Uninstall the binary** — `cargo uninstall mnml-<class>-<name>`. The chip disappears from the collapsed rail on the next render (detection is in-process, cached per session — run `:integrations.refresh` if you want to clear it sooner). The `[[ui.integration_icon]]` entry stays in your config; if you reinstall the binary, the chip comes back.
 
 ## Troubleshooting
 
@@ -122,10 +173,11 @@ Two things can happen depending on what you want:
 
 This is the macOS `PATH`-inheritance problem. Your shell sees `~/.cargo/bin/mnml-tracker-jira` because your `.zshrc` adds `~/.cargo/bin` to `PATH`; the .app bundle launched from Finder doesn't run your `.zshrc`, so it doesn't see that addition.
 
-mnml's well-known-locations fallback covers `~/.cargo/bin` directly — but if you're on a version of mnml that's only doing the `PATH` probe today, the workaround is either:
+mnml's well-known-locations fallback covers `~/.cargo/bin` directly, so the chip *should* resolve. If it doesn't, the binary likely landed somewhere unusual — check `cargo install --list` to see where it went. The fallback list (see table above) doesn't probe arbitrary directories; if your install prefix is non-standard, either:
 
-- Launch mnml from a shell (`mnml` from your terminal) instead of from Finder/Spotlight, or
-- Add `~/.cargo/bin` to the launcher's curated PATH by editing `/Applications/mnml.app/Contents/MacOS/launcher.sh`.
+- Add the target dir to the launcher's curated PATH by editing `/Applications/mnml.app/Contents/MacOS/launcher.sh`, or
+- Move the binary into `~/.cargo/bin` (a symlink works), or
+- Launch mnml from a shell (`mnml` from your terminal) instead of from Finder/Spotlight.
 
 ### "I want `which mnml-aws-X` to work in my shell too"
 
@@ -157,13 +209,13 @@ After a shell restart, `which mnml-aws-codebuild` resolves and any tooling that 
 
 Install Rust via [rustup.rs](https://rustup.rs). The installer adds `%USERPROFILE%\.cargo\bin` to your `PATH` automatically — open a new PowerShell after installing and `cargo --version` should resolve.
 
-### "I installed the sibling but the chip's still red"
+### "I installed the sibling but the chip's not showing"
 
 Three things to check, in order:
 
-1. Run `which mnml-<class>-<name>` in the same shell you launched mnml from. If that resolves, mnml's probe should too — try `Ctrl+B` twice to rerender the rail.
-2. If `which` doesn't resolve, the binary isn't on your shell `PATH`. See "I want `which …` to work in my shell" above.
-3. If `which` resolves *and* the chip still says missing, you're hitting the macOS .app `PATH` case. Launch mnml from your shell to confirm, then fix the launcher's PATH (see the first troubleshooting entry).
+1. Run `:integrations.refresh` to clear the per-session detection cache. The collapsed-rail strip filters to detected binaries only — a stale cache from before your install is the most common cause.
+2. Run `which mnml-<class>-<name>` in the same shell you launched mnml from. If that resolves but the chip's still missing, you're hitting the macOS .app `PATH` case — launch mnml from your shell to confirm, then fix the launcher's PATH (see the first troubleshooting entry).
+3. If `which` doesn't resolve and `cargo install --list` shows it lives somewhere outside `~/.cargo/bin`, see the previous entry — the well-known fallback list is fixed.
 
 The `--check` flag on each sibling is the orthogonal verification — `mnml-tracker-jira --check` prints the resolved config + whether auth works. That's separate from "can mnml see the binary?"; it's "can the binary see *its* backend?".
 
