@@ -23,7 +23,7 @@ Missing files are fine — mnml silently treats them as empty. A malformed file 
 :source ~/.config/mnml/config.toml
 ```
 
-A few sections (`[[bitbucket.repos]]`, `[[github.repos]]`, `[[workspaces]]`, `[[ui.launcher_icon]]`, …) have their own merge rules — repos and workspaces *append* across files; launcher-icon and integration-icon arrays *replace*. Those quirks are called out below.
+A few sections (`[[workspaces]]`, `[[ui.launcher_icon]]`, `[[ui.integration_icon]]`, …) have their own merge rules — workspaces *append* across files; launcher-icon and integration-icon arrays *replace*. Those quirks are called out below.
 
 ## The Settings overlay
 
@@ -116,7 +116,7 @@ The overlay covers **discrete-choice rows** (booleans, input style `vim`/`standa
 
 Things the overlay does **not** edit:
 
-- Arrays of complex things — `[[workspaces]]`, `[[bitbucket.repos]]`, `[[ui.launcher_icon]]`, `[snippets.<scope>]`, `[tasks.<name>]`, `[formatters.<ext>]`, `[linters.<ext>]`. These stay in TOML.
+- Arrays of complex things — `[[workspaces]]`, `[[ui.launcher_icon]]`, `[[ui.integration_icon]]`, `[snippets.<scope>]`, `[tasks.<name>]`, `[formatters.<ext>]`, `[linters.<ext>]`. These stay in TOML.
 - Free-form strings — theme name, ticket prefixes, formatter command templates.
 - `[keys.*]` tables — keybindings are TOML-only (see [Keybindings](#keybindings) below).
 
@@ -367,52 +367,13 @@ root_markers = [".luarc.json", "stylua.toml"]
 
 See the [LSP manual](/manual/lsp/) for the field reference and the list of servers mnml ships defaults for.
 
-### Git-host integrations — `[bitbucket]`, `[github]`, `[gitlab]`, `[azdevops]`
+### Git-host integrations — moved to `mnml-forge-*` siblings
 
-mnml ships per-provider dashboards for pipelines and pull / merge requests. Each follows the same shape: top-level config keys plus an array of `[[<provider>.repos]]` (or `.projects`) entries.
+The in-tree Bitbucket / GitHub / GitLab / Azure DevOps live panes were split out of mnml core in 2026-06 into four standalone sibling binaries — [`mnml-forge-bitbucket`](/manual/integrations/forge-bitbucket/), [`mnml-forge-github`](/manual/integrations/forge-github/), [`mnml-forge-gitlab`](/manual/integrations/forge-gitlab/), [`mnml-forge-azdevops`](/manual/integrations/forge-azdevops/) — each hosted in a regular mnml pane via `:host.launch <binary>`. Each forge sibling reads its own config from `~/.config/mnml-forge-<host>.toml` and its own credentials from `~/.config/mnml-forge-<host>/token`. See the [integration class overview](/manual/integrations/community/) for the model.
 
-```toml
-[bitbucket]
-auth_env  = "BITBUCKET_TOKEN"     # env var to read the API token from
-poll_secs = 60                    # min 5
+Existing `[bitbucket]`, `[github]`, `[gitlab]`, `[azdevops]` sections in your mnml config are **silently ignored** — no error, no warning. You can either delete them or leave them in place; they're noise to mnml now. The new shape lives in each forge sibling's own per-binary config file.
 
-[[bitbucket.repos]]
-workspace = "tattledevs"
-slug      = "tattle-api"
-
-[[bitbucket.repos]]
-workspace = "tattledevs"
-slug      = "tattle-playwright"
-branches  = ["main", "release/2026-Q2"]   # pinned branches for the per-branch view
-
-[github]
-auth_env  = "GITHUB_TOKEN"
-poll_secs = 60
-
-[[github.repos]]
-owner = "myorg"
-repo  = "knowledge-base"
-
-[gitlab]
-auth_env = "GITLAB_TOKEN"
-base_url = "https://gitlab.example.com/api/v4"   # for self-hosted
-
-[[gitlab.projects]]
-project  = "platform/checkout"     # path or numeric ID
-branches = ["main", "production"]
-
-[azdevops]
-auth_env = "AZDO_TOKEN"
-
-[[azdevops.projects]]
-org     = "my-org"
-project = "MyProject"
-repo    = "my-repo"
-```
-
-`[[<provider>.repos]]` / `[[<provider>.projects]]` entries **append** across config files — a workspace-local file can add repos without re-listing the global set. Tokens are read from `$<auth_env>` at worker start; the value never lands in a config file.
-
-When no repos / projects are configured for a provider, that worker stays idle — the panes just show "no repos configured."
+Mnml's default config still seeds four launcher chips in the rail's INTEGRATIONS row (`bitbucket`, `github`, `gitlab`, `azdevops`) that fire `:host.launch mnml-forge-<host>` — install whichever siblings you use and click the chip to open the viewer.
 
 ### `[ai]` and `[http]`
 

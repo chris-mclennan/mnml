@@ -27,8 +27,10 @@ Code-hosting forges — SCM + PRs/MRs + pipelines + reviews + issues, all under 
 
 | Integration | Backend | Repo |
 |---|---|---|
-| `mnml-forge-bitbucket` | Bitbucket Cloud (PRs; pipelines + reviews + issues planned) | [chris-mclennan/mnml-forge-bitbucket](https://github.com/chris-mclennan/mnml-forge-bitbucket) |
-| `mnml-forge-github` | GitHub Issues + Pulls | [chris-mclennan/mnml-forge-github](https://github.com/chris-mclennan/mnml-forge-github) |
+| `mnml-forge-bitbucket` | Bitbucket Cloud — PRs + Pipelines + Branches | [chris-mclennan/mnml-forge-bitbucket](https://github.com/chris-mclennan/mnml-forge-bitbucket) |
+| `mnml-forge-github` | GitHub — Issues / PRs (search) + Actions workflow runs | [chris-mclennan/mnml-forge-github](https://github.com/chris-mclennan/mnml-forge-github) |
+| `mnml-forge-gitlab` | GitLab (gitlab.com or self-hosted) — Merge Requests + Pipelines | [chris-mclennan/mnml-forge-gitlab](https://github.com/chris-mclennan/mnml-forge-gitlab) |
+| `mnml-forge-azdevops` | Azure DevOps — Pull Requests + Builds | [chris-mclennan/mnml-forge-azdevops](https://github.com/chris-mclennan/mnml-forge-azdevops) |
 
 ### Database viewers
 

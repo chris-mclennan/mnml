@@ -1,11 +1,11 @@
 ---
 title: GitHub forge viewer
-description: mnml-forge-github — a GitHub Issues + PRs viewer (standalone or hosted as an mnml pane). Configurable tabs backed by GitHub's unified issue-search API, sibling to mnml-forge-bitbucket in the planned "forge" integration class.
+description: mnml-forge-github — a GitHub Issues + PRs + Actions viewer (standalone or hosted as an mnml pane). Configurable tabs backed by GitHub's issue-search API and the Actions workflow-runs API, sibling to mnml-forge-bitbucket / mnml-forge-gitlab / mnml-forge-azdevops in the "forge" integration class.
 ---
 
 [`mnml-forge-github`](https://github.com/chris-mclennan/mnml-forge-github) is a terminal GitHub viewer. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol. Configurable through your normal mnml config conventions — see [Building integrations](/manual/integrations/building/) for the model.
 
-It's the GitHub side of the planned **forge** integration class — sibling to `mnml-forge-bitbucket` (already wired into mnml's left rail) and a future `mnml-forge-gitlab`. v0.1 ships **issue-search only**, with both Issues and PRs surfaced through GitHub's unified `/search/issues` endpoint (the `pull_request` marker on each result lets the viewer style PRs differently from issues). The eventual direction is a full multi-tab forge view — Issues / PRs / Actions / Releases — mirroring how `mnml-forge-bitbucket` grew.
+It's the GitHub side of the **forge** integration class — sibling to [`mnml-forge-bitbucket`](/manual/integrations/forge-bitbucket/), [`mnml-forge-gitlab`](/manual/integrations/forge-gitlab/), and [`mnml-forge-azdevops`](/manual/integrations/forge-azdevops/). v0.2 ships two tab kinds — Issues / PRs via GitHub's unified `/search/issues` endpoint (the `pull_request` marker on each result lets the viewer style PRs differently from issues), and Actions workflow runs scoped to one repo (with an optional branch filter). The eventual direction is a full multi-tab forge view — Issues / PRs / Actions / Releases — mirroring how `mnml-forge-bitbucket` grew.
 
 ```
 ┌─ github ─────────────────────────────────────────────────────────┐
@@ -56,9 +56,37 @@ Homebrew tap + binary releases will follow once the binary stabilises.
    mnml-forge-github --check
    ```
 
-## Tabs
+## Tab kinds
 
-Each `[[tabs]]` entry is one tab backed by a GitHub issue-search `query` — the same syntax as the search box on github.com. Because GitHub's `/search/issues` endpoint covers **both Issues and PRs**, a single tab can mix them; the viewer surfaces the difference in the `KIND` column and via magenta/cyan row styling. Use `is:issue` or `is:pr` to scope.
+Each `[[tabs]]` entry is one tab. The `kind` field (defaults to `issues`) decides what the tab shows:
+
+| `kind` | What it shows | Required fields |
+|---|---|---|
+| `issues` (default) | Issues / PRs via the `/search/issues` endpoint — covers both | `query` |
+| `actions` | Workflow runs for one `owner/repo`, newest-first | `repo` (`owner/name`); optional `branch` |
+
+`query` is ignored on `actions` tabs; `repo` / `branch` are ignored on `issues` tabs.
+
+```toml
+[[tabs]]
+name = "Mine"
+query = "is:open assignee:@me"      # kind defaults to issues
+
+[[tabs]]
+name = "mnml CI"
+kind = "actions"
+repo = "chris-mclennan/mnml"
+
+[[tabs]]
+name = "main CI"
+kind = "actions"
+repo = "chris-mclennan/mnml"
+branch = "main"
+```
+
+### Issues / PRs tabs
+
+`kind = "issues"` is backed by GitHub's issue-search `query` — the same syntax as the search box on github.com. Because `/search/issues` covers **both Issues and PRs**, a single tab can mix them; the viewer surfaces the difference in the `KIND` column and via magenta/cyan row styling. Use `is:issue` or `is:pr` to scope.
 
 ```toml
 # Across all repos: open issues assigned to you.
@@ -79,19 +107,39 @@ query = "repo:chris-mclennan/mnml is:open is:issue label:bug"
 
 Reference: [GitHub's issue-search syntax docs](https://docs.github.com/en/search-github/searching-on-github/searching-issues-and-pull-requests).
 
+### Actions tabs
+
+`kind = "actions"` lists recent workflow runs for a single `owner/repo`, ordered server-side by `created_at` descending. The `STATUS` column collapses GitHub's two-stage state into one chip via `WorkflowRun::status_chip()` — `queued` / `running` while in flight, then the `conclusion` (`success` / `failure` / `cancelled` / `skipped` / `neutral` / …) once the run completes.
+
+```toml
+# All branches.
+[[tabs]]
+name = "mnml CI"
+kind = "actions"
+repo = "chris-mclennan/mnml"
+
+# Narrowed to one branch.
+[[tabs]]
+name = "main CI"
+kind = "actions"
+repo = "chris-mclennan/mnml"
+branch = "main"
+```
+
+Pagination isn't wired in v0.2 — the viewer fetches the first page only.
+
 ### Default scaffold
 
-The first-run template ships with **3 tabs**:
+The first-run template ships with **4 tabs**, plus two commented-out Actions examples:
 
-| Tab | Query |
-|---|---|
-| Mine | `is:open is:issue assignee:@me` |
-| Reported | `is:open is:issue author:@me` |
-| PRs | `is:open is:pr involves:@me` |
+| Tab | Kind | Notes |
+|---|---|---|
+| Mine | `issues` | `query = "is:open assignee:@me"` |
+| My PRs | `issues` | `query = "is:open is:pr author:@me"` |
+| Reviewing | `issues` | `query = "is:open is:pr review-requested:@me"` |
+| mnml bugs | `issues` | Repo-scoped — swap in a repo you care about |
 
-A commented-out fourth tab (`mnml bugs`, repo-scoped) is included as a template. Edit or replace freely; you're not locked in.
-
-Tabs are switched via `1`-`9` keys (or click) and ordered left → right. Auto-refresh runs every `refresh_interval_secs` seconds (default `60`, set to `0` to disable).
+Edit or replace freely; you're not locked in. Tabs are switched via `1`-`9` keys (or click) and ordered left → right. Auto-refresh runs every `refresh_interval_secs` seconds (default `60`, set to `0` to disable).
 
 ## Keys
 
@@ -102,7 +150,7 @@ Tabs are switched via `1`-`9` keys (or click) and ordered left → right. Auto-r
 | `↑` / `k`, `↓` / `j` | Move selection |
 | `PgUp` / `PgDn` | Jump 10 rows |
 | `g` / `G` | Top / bottom |
-| `Enter` / `o` | Open focused issue/PR in your browser |
+| `Enter` / `o` | Open focused issue / PR / workflow run in your browser |
 | `r` | Refresh active tab |
 | `q` / `Esc` / `Ctrl+C` | Quit |
 
@@ -138,9 +186,11 @@ Setting `[[ui.integration_icon]]` **replaces** the built-in defaults (Claude Cod
 
 ## Status & roadmap
 
-**v0.1 (this release)** — standalone TUI + blit-host mode, configurable tabs via GitHub issue-search queries (Issues and PRs in a single endpoint), `1`-`9` tab switching, arrow navigation, open-in-browser, manual + interval refresh, KIND-column differentiation between issues and PRs.
+**v0.2 (this release)** — adds `kind = "actions"` (workflow runs for one `owner/repo`, optional branch filter). v0.1 Issues / PRs search (now `kind = "issues"`) is unchanged, so existing configs keep working without edits — the kind field defaulted in.
 
-**v0.2 direction** — paralleling `mnml-forge-bitbucket`'s evolution into a full forge view, the next pass adds a right-half detail panel (body + comments + reviews), a filter editor overlay (`/`) on top of the per-tab query, status transitions (close / reopen / merge), watcher (subscribe) toggle, comment posting, bulk operations across selected rows, and inline label / assignee edits. Beyond v0.2, the "forge" framing is meant to grow into dedicated Issues / PRs / Actions / Releases tab dimensions per repo, not just a flat search list.
+**v0.1** — standalone TUI + blit-host mode, configurable tabs via GitHub issue-search queries (Issues and PRs in a single endpoint), `1`-`9` tab switching, arrow navigation, open-in-browser, manual + interval refresh, KIND-column differentiation between issues and PRs.
+
+**v0.3 direction** — paralleling `mnml-forge-bitbucket`'s evolution into a full forge view, the next pass adds a right-half detail panel (body + comments + reviews), a filter editor overlay (`/`) on top of the per-tab query, status transitions (close / reopen / merge), watcher (subscribe) toggle, comment posting, bulk operations across selected rows, and inline label / assignee edits. Beyond v0.3, the "forge" framing is meant to grow into dedicated Issues / PRs / Actions / Releases tab dimensions per repo, not just a flat search list.
 
 ## Source
 

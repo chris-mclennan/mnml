@@ -101,9 +101,11 @@ export default defineConfig({
           items: [
             { label: 'Building integrations', slug: 'manual/integrations/building' },
             { label: 'Bitbucket forge viewer', slug: 'manual/integrations/forge-bitbucket' },
-            { label: 'Community integrations', slug: 'manual/integrations/community' },
             { label: 'GitHub forge viewer', slug: 'manual/integrations/forge-github' },
+            { label: 'GitLab forge viewer', slug: 'manual/integrations/forge-gitlab' },
+            { label: 'Azure DevOps forge viewer', slug: 'manual/integrations/forge-azdevops' },
             { label: 'Jira tracker viewer', slug: 'manual/integrations/tracker-jira' },
+            { label: 'Community integrations', slug: 'manual/integrations/community' },
           ],
         },
         {

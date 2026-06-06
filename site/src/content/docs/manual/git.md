@@ -144,11 +144,11 @@ Click a file in the right detail panel and the commit list area is *replaced* by
 
 ## The branch rail
 
-The left sidebar has two persistent sections: **WORKSPACE** (the file tree) and **GIT**. The GIT section is the branch rail — local branches, linked worktrees, and open PRs/MRs for the current repo, all in one collapsible column. The current branch carries a `●` marker; clicking another branch checks it out.
+The left sidebar has two persistent sections: **WORKSPACE** (the file tree) and **GIT**. The GIT section is the branch rail — local branches and linked worktrees for the current repo, all in one collapsible column. The current branch carries a `●` marker; clicking another branch checks it out.
 
 Worktrees come from `git worktree list --porcelain`. Clicking a worktree row opens a shell in that path (a `Pane::Pty`). Worktree management — create / remove — runs through the same typed-confirm safety net as branch delete.
 
-The pulls sub-section is populated lazily from the SCM caches (`bitbucket_pull_requests` / `github_pull_requests` / `gitlab_merge_requests` / `azdevops_pull_requests`). Best-effort match by remote URL against configured hosts; empty when there's no recognized remote. Selecting a PR opens its web URL.
+The open-PRs-for-this-branch sidecar that earlier mnml builds drew on the gutter is gone — the SCM live dashboards split out of the core in 2026-06 into the standalone [`mnml-forge-*` viewers](/manual/integrations/community/#forge-viewers). To see PRs / MRs / pipelines for the current repo, launch the matching forge viewer (`:host.launch mnml-forge-bitbucket` / `mnml-forge-github` / `mnml-forge-gitlab` / `mnml-forge-azdevops`).
 
 The rail's right-click menu (on a branch row) covers:
 
@@ -261,5 +261,5 @@ While editing, `[c` and `]c` (in vim mode) jump to the previous / next changed h
 - [Editing](/manual/editing/) — the buffer that's diffed and committed
 - [Configuration](/reference/configuration/) — `[keys.global]` / `[keys.vim]` / `[keys.standard]` for remapping every git chord
 - [Keybindings](/reference/keybindings/) — every default key, including the full git palette
-- [SCM & CI dashboards](/manual/scm/) — pipelines + cross-host PR pickers, the layer above the branch rail's `pulls` sub-section
+- [Community integrations](/manual/integrations/community/) — the `mnml-forge-*` viewers (Bitbucket, GitHub, GitLab, Azure DevOps) that replaced the in-tree SCM dashboards
 - [AI panes](/manual/ai/) — the Claude / Codex integration that drives `git.ai_commit` and `git.ai_recompose`
