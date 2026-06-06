@@ -49,8 +49,8 @@ Each row looks like:
 | `←` `→` / `h` `l` | Cycle the focused row's value backward / forward |
 | `r` | Reset just this row to its default |
 | `R` | Reset every setting (also: focus the **Reset all to defaults** row and press `Enter`) |
-| `Enter` | On a normal row, same as `→`. On the reset-all sentinel row, fires the global reset |
-| `Esc` | Cancel — revert the live config to whatever it was when the overlay opened |
+| `Enter` | On a discrete-choice row, same as `→`. On a text or color row, enters greedy edit mode (printable keys → buffer, `Backspace` → delete, `Enter` → commit, `Esc` → cancel). On the reset-all sentinel row, fires the global reset |
+| `Esc` | While editing a text/color row, cancel the in-progress edit (restore the value the row had on edit-mode entry). Otherwise, cancel the overlay — revert the live config to whatever it was when the overlay opened |
 
 `Enter` (anywhere except the reset row) commits whatever's currently on screen and closes the overlay. The overlay does **not** persist changes to TOML — it writes the in-memory `Config`. If you want a change to survive restarts, also edit the matching TOML key.
 
@@ -78,14 +78,18 @@ The three first-class number rows today:
 
 ### Text rows (v2)
 
-A third row kind has landed: **text rows** for free-form string settings. v1 of this variant is **display-only** — the row renders the live value bracketed alongside a hint that the value is TOML-edited for now:
+A third row kind has landed: **text rows** for free-form string settings. Press `Enter` on a focused text row to drop into **greedy edit mode** — the row's value becomes a live edit buffer until you commit or cancel:
 
 ```
-▸ Theme:                            [ "tokyonight-night" ]  (text · default "tokyonight-night" · TOML to edit)
+▸ Theme:                            [ "tokyonight-night│" ]  (editing · Enter commit · Esc cancel)
 ```
 
-- `←` / `→` are no-ops on text rows in v1 — there's nothing to step through. Edit the matching TOML key directly to change the value, then reload.
-- `r` still works: it resets just this row's setting to its built-in default (via `apply_text_setting`).
+- `Enter` on a focused text row enters edit mode (text rows don't cycle on `Enter` the way discrete rows do).
+- While editing: printable keys append to the buffer · `Backspace` drops the trailing character · `Enter` commits + exits · `Esc` restores the value the row had when you started editing and exits.
+- The value is **live-written** to the in-memory `Config` on every keystroke (via `apply_text_setting`), so the rendered `[ "<buffer>│" ]` and any downstream visuals (e.g. a color swatch on a Color row) reflect the in-progress edit. Cancelling restores the snapshot.
+- The `│` is a literal cursor caret painted at the end of the buffer while in edit mode. The bottom-of-overlay hint swaps from the navigation chord list to `(editing · Enter commit · Esc cancel)`.
+- `←` / `→` are no-ops on text rows outside of edit mode — there's nothing to step through.
+- `r` resets just this row's setting to its built-in default (via `apply_text_setting`).
 - `[ "<value>" ]` is the live value; the `*` modified marker appears when it differs from the default.
 
 The one first-class text row today:
@@ -93,8 +97,6 @@ The one first-class text row today:
 | Row | TOML key | Default |
 |---|---|---|
 | Theme | `[ui] theme` | `tokyonight-night` |
-
-Live editing (printable keys append to a buffer, `Backspace` deletes, `Enter` commits, `Esc` cancels) needs an overlay-side edit-mode state machine and is a planned **v2.x** follow-up.
 
 ### Color rows (v2)
 
@@ -105,13 +107,12 @@ The fourth row kind: **color rows** for hex-color settings. Same shape as text r
 ```
 
 - Invalid hex (wrong length, non-hex chars) falls back to the foreground color for the swatch and appends ` · invalid hex` to the dim hint suffix.
-- Same controls as text rows — display-only in v1; `r` still resets to the row's default; `←` / `→` are no-ops; the `*` modified marker behaves the same way.
-
-No first-class color rows are wired into `build_settings` yet — the `ColorRow` variant is reserved for future overrides (theme accent picker, status-line color override, etc.). Like text rows, live editing is the same **v2.x** follow-up.
+- Same edit-mode shape as text rows: `Enter` enters greedy edit mode, printable keys append, `Backspace` deletes, `Enter` commits, `Esc` cancels + restores. Each keystroke live-writes through `apply_text_setting`, so the swatch repaints in the in-progress color as you type (the parsed-color preview is the whole reason live edit matters for color rows). `r` still resets to the row's default; the `*` modified marker behaves the same way.
+- No first-class color rows are wired into `build_settings` yet — the `ColorRow` variant is reserved for future overrides (theme accent picker, status-line color override, etc.). The live-edit machinery is shared with text rows, so adding such a row needs only a `build_settings` entry + an `apply_text_setting` arm — no new overlay code.
 
 ### What's in the overlay vs what's TOML-only
 
-The overlay covers **discrete-choice rows** (booleans, input style `vim`/`standard`, tab width `2`/`4`/`8`, line numbers `relative`/`absolute`/`off`, picker position `center`/`top`, now-playing source `auto`/`mixr`/`macos`), **number rows** (scrolloff, sidescrolloff, tree width), **text rows** (theme — display-only in v1), and **color rows** (display-only in v1, no first-class entries yet — reserved for future overrides). Live editing for text + color rows is a planned v2.x.
+The overlay covers **discrete-choice rows** (booleans, input style `vim`/`standard`, tab width `2`/`4`/`8`, line numbers `relative`/`absolute`/`off`, picker position `center`/`top`, now-playing source `auto`/`mixr`/`macos`), **number rows** (scrolloff, sidescrolloff, tree width), **text rows** (theme — with live edit), and **color rows** (live-edit machinery shared with text rows; no first-class entries yet — reserved for future overrides).
 
 Things the overlay does **not** edit:
 

@@ -32,7 +32,7 @@ The strip is exactly **4 cells** wide (`ACTIVITY_BAR_WIDTH`) — 1 cell of left 
 | Section | Nerd-font glyph | ASCII fallback | Command id | v1 content |
 |---|---|---|---|---|
 | Explorer | `nf-fa-folder_open` | `E` | `view.activity_explorer` | File tree + GIT sub-section + integrations rows |
-| Search | `nf-fa-search` | `S` | `view.activity_search` | Launcher rows for `find.grep` / `find.find` / `find.next` / `find.replace` |
+| Search | `nf-fa-search` | `S` | `view.activity_search` | Inline workspace grep — typed input + grouped per-file results |
 | Source control (Git) | `nf-md-source_branch` | `G` | `view.activity_git` | Live branch + ahead/behind + change-count chips + git command launchers |
 | Run and debug | `nf-fa-bug` | `D` | `view.activity_debug` | Session status + watch count + DAP command launchers |
 | Integrations | `nf-md-puzzle` | `I` | `view.activity_integrations` | Vertical clickable list of `[[ui.integration_icon]]` entries |
@@ -59,22 +59,56 @@ A vertical list of the configured `[[ui.integration_icon]]` entries from your co
 
 Empty state — when no `[[ui.integration_icon]]` entries are configured, the section paints `No integrations — add [[ui.integration_icon]] in your config` in italic.
 
+**Missing-binary badge.** When an entry's `command` is `:host.launch <binary>`, mnml probes the binary against your `PATH` (via `which`) at render time. If it's not installed, the row's name dims to the comment colour and a dim red `(<bin> not installed)` suffix renders next to it — instead of failing silently when you click. Internal palette commands (no prefix) and tmnl host commands (`tmnl:<host_id>`) are always assumed available because they don't shell out, so they never wear the badge. The probe is cheap and only runs while the Integrations section is the active one.
+
 ### Search
 
-A launcher panel for mnml's existing find/grep commands. Each row shows a label and its chord:
+An inline workspace grep — typed input box with grouped per-file results streaming below. Replaces v1's launcher panel of `find.*` commands.
 
-| Row | Chord | Command |
-|---|---|---|
-| Grep workspace… | `Ctrl+Shift+F` | `find.grep` |
-| Find in file… | `Ctrl+F` | `find.find` |
-| Find next match | `Ctrl+G` | `find.next` |
-| Replace in file… | `Ctrl+H` | `find.replace` |
+Click the Search activity-bar icon (`🔍`) to focus the section; `set_activity_section` switches the section *and* focuses the input in one go, so you can start typing immediately. The layout from top to bottom:
 
-A dim italic footer at the bottom flags the v2 follow-up: *type-to-grep inline, results stream below*. v1 doesn't render results inside the section — `Pane::Grep` and the editor-local find modeline still own that — the section just makes the entry points discoverable.
+```
+ SEARCH
+
+  / your query█
+  4 hits (rg)
+
+ src/foo.rs
+   42:5  let x = 1;
+   55:5  let y = 2;
+ src/bar.rs
+   18:9  let z = 3;
+```
+
+- **Input row** — `/ <query>█` in yellow. The cursor `█` only shows while the input is focused.
+- **Status line** — when no query has been run, it reads `type · Enter to run · Esc to blur` (focused) or `click 🔍 icon to focus` (blurred). After a run it shows `<N> hit(s) (<tool>)` where `<tool>` is whichever backend resolved the search (`rg` / `git-grep` / built-in).
+- **Grouped results** — each file path renders once in cyan, then its matching lines as `<line>:<col>  <text>` rows. The selected hit gets a bold reverse style.
+
+Keys while the input is focused:
+- **Type / backspace** — edits the query (no live search; runs on Enter to avoid paying for half-typed queries).
+- **Enter** — runs the grep, populating `search_hits` + `search_used`. If the query is empty, results clear.
+- **↑ / ↓** — moves the selection through the hit list.
+- **Esc** — blurs the input back to the editor (selection is preserved).
+
+When the input is blurred but results remain, **Enter** jumps to the selected hit (`search_section_open_selected` opens the file and places the cursor at the hit's line/col). Mouse: click any result row to jump straight to that file+line — the click also updates the selection.
+
+Multi-root workspaces are concatenated, so hits from `extra_workspaces` show up under their own file paths.
 
 ### Run and debug
 
-A live status line plus a DAP command launcher. The status line shows `● session active` (in green) or `○ no session` (dim), followed by the watch count (`{n} watch` / `watches`). Below that, clickable rows:
+A live status line, an inline **WATCHES** list, plus a DAP command launcher.
+
+The status line shows `● session active` (in green) or `○ no session` (dim), followed by the watch count (`{n} watch` / `watches`).
+
+**Inline WATCHES list.** When `app.dap_watches` is non-empty, a `WATCHES` sub-header renders below the status line, followed by one row per watch expression — `<expr> = <value>` (expression in cyan, value in foreground colour). Per row the value shows:
+
+- the latest evaluation from `app.dap_watch_results` when one exists,
+- `(not evaluated)` in dim comment colour when no result has come back yet,
+- `err: <message>` in dim red when the last evaluation returned an error.
+
+Long values are truncated to fit the rail width with a trailing `…`. The list is capped at **5 rows**; overflow renders `+ N more (use add/remove)` in dim italic and the rest stay reachable via `dap.add_watch` / `dap.remove_watch`. The launcher rows scroll down underneath the watches so adding watches just compresses the trailing actions, it doesn't push them off-screen.
+
+The launcher rows below the watches:
 
 | Row | Chord | Command |
 |---|---|---|
@@ -90,14 +124,27 @@ A live status line plus a DAP command launcher. The status line shows `● sessi
 | Remove watch… | — | `dap.remove_watch` |
 | Clear watches | — | `dap.clear_watches` |
 
-v2 follow-up: inline mini-watches list so you can glance at current values without opening the DAP pane.
+The DAP pane (Variables / Call-stack / full Watches grid) is still where the rich tree lives; the activity-bar list is the at-a-glance miniplayer.
 
 ### Source control (Git)
 
-A live mini-dashboard plus the high-frequency git launchers. Above the rows, three lines render live state straight off `app.git.snapshot()`:
+A live mini-dashboard, an inline **CHANGES** list, then the high-frequency git launchers. State is read off `app.git.snapshot()` so it reflects whatever the file watcher last saw.
 
 - **Branch chip** — `⎇ <branch>` in purple, with `↑<ahead>` (green) and `↓<behind>` (orange) when nonzero. Reads `(no branch)` when detached / no repo.
 - **Change-count chips** — `+<added>` (green), `●<changed>` (yellow), `-<removed>` (red), with a bold red `⚠ <n> conflict(s)` tail when conflicts are nonzero.
+
+**Inline CHANGES list.** When `snap.files` is non-empty, a `CHANGES` sub-header renders below the chips, then up to **12** clickable file rows grouped by state in this order:
+
+| Glyph | State |
+|---|---|
+| `⚠` (red) | Conflicted |
+| `◆` (green) | Staged |
+| `●` (yellow) | Modified |
+| `?` (cyan) | Untracked |
+
+Each row shows the state glyph followed by the workspace-relative path. Clicking a row dispatches `git.diff_file` against the active editor — v2.x will route the click to the row's *specific* path so the per-file diff opens directly instead of running against the currently-focused buffer.
+
+When more than 12 files are dirty, the overflow renders `+ N more (use git.diff_all)` in dim italic — `git.diff_all` opens the whole-workspace diff if you need to see everything.
 
 Then the action rows:
 
@@ -115,15 +162,12 @@ Then the action rows:
 | Switch repo | `git.switch_repo` |
 | Refresh repos | `git.refresh_repos` |
 
-v2 follow-up: inline file-change list + a commit-message textarea so the whole commit flow happens in-rail.
-
 ## Roadmap
 
-v1 lands each section as a working surface with a scoped v2 enhancement:
+The scoped v2 enhancements for Search, Run and debug, and Integrations all shipped. What's left in the section-by-section follow-up list:
 
-- **Search** — type-to-grep inline, results stream below the input (replaces the launcher rows when a query is active).
-- **Source control** — inline file-change list with stage/unstage toggles + an in-rail commit-message textarea.
-- **Run and debug** — inline mini-watches list rendered under the status line, so the DAP pane stays optional.
-- **Integrations** — no scoped v2 work; this section's shape is final. New integrations land by appending `[[ui.integration_icon]]` entries.
+- **Source control** — inline commit-message textarea so the whole commit flow happens in-rail, plus per-row click routing that opens the diff for the row's specific path (today the click dispatches `git.diff_file` against the active editor).
+- **Run and debug** — clickable variables / call-stack mini-tree under the watches list, so the DAP pane stays optional for the common case.
+- **Search** — streaming results so long-running greps surface hits as they come in rather than blocking on completion.
 
 Bind `view.activity_*` to keys whenever you want chord access — the command ids are stable.
