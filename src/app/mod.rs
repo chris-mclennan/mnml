@@ -22,7 +22,7 @@ use crate::tree::Tree;
 mod aws;
 // `mod azdevops` was split out to mnml-forge-azdevops in 2026-06.
 // `mod github` was split out to mnml-forge-github in 2026-06.
-mod gitlab;
+// `mod gitlab` was split out to mnml-forge-gitlab in 2026-06.
 
 mod ai;
 mod blit_host;
@@ -1056,15 +1056,10 @@ struct SavedSession {
     dap_watches: Vec<String>,
     /// View-mode + collapsed-headers state for each SCM/CI pane.
     /// Persisted so flipping `v` or collapsing a repo header sticks
-    /// across `q!` and relaunches. (GH fields removed in 2026-06.)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    gl_pipelines_view_mode: Option<crate::gitlab::GlPipelineViewMode>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    gl_pipelines_collapsed: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    gl_mrs_view_mode: Option<crate::gitlab::GlMrViewMode>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    gl_mrs_collapsed: Vec<String>,
+    /// across `q!` and relaunches. (BB / GH / GL / AZ fields all
+    /// removed in 2026-06 — only the GitLab field placeholders
+    /// remain for serde-compat on old session.json files.)
+    // gl_pipelines_*, gl_mrs_* fields moved to mnml-forge-gitlab.
     // az_builds_*, az_prs_*, azdevops_* fields moved to
     // mnml-forge-azdevops in 2026-06.
     /// Harpoon-style pinned files — fixed 9-slot list, indices 0..9 mapped
@@ -2807,21 +2802,7 @@ pub struct App {
     pipeline_log_next_job: u64,
     // gh_actions_*, gh_prs_*, github_* fields all moved to
     // mnml-forge-github in 2026-06.
-    /// GitLab worker handle + per-project caches.
-    gitlab_handle: Option<crate::gitlab::GitlabHandle>,
-    pub(crate) gitlab_pipelines:
-        std::collections::HashMap<String, Vec<crate::gitlab::PipelineRecord>>,
-    pub(crate) gitlab_branch_pipelines:
-        std::collections::HashMap<String, Vec<crate::gitlab::BranchPipelineSlot>>,
-    pub(crate) gitlab_merge_requests:
-        std::collections::HashMap<String, Vec<crate::gitlab::MergeRequestRecord>>,
-    pub(crate) gitlab_my_merge_requests: Vec<crate::gitlab::MergeRequestRecord>,
-    pub(crate) gitlab_last_error: Option<String>,
-    pub(crate) gitlab_connected: bool,
-    pub(crate) gl_pipelines_view_mode: crate::gitlab::GlPipelineViewMode,
-    pub(crate) gl_pipelines_collapsed: std::collections::HashSet<String>,
-    pub(crate) gl_mrs_view_mode: crate::gitlab::GlMrViewMode,
-    pub(crate) gl_mrs_collapsed: std::collections::HashSet<String>,
+    // GitLab worker + caches moved to mnml-forge-gitlab.
     // Azure DevOps worker + caches moved to mnml-forge-azdevops.
     // GitHub worker + caches moved to mnml-forge-github.
     /// Job id of an in-flight "AI: write me a commit message" run (it shares
@@ -3139,17 +3120,6 @@ impl App {
             log_tail_pane_id: None,
             pipeline_log_chan: None,
             pipeline_log_next_job: 1,
-            gitlab_handle: None,
-            gitlab_pipelines: std::collections::HashMap::new(),
-            gitlab_branch_pipelines: std::collections::HashMap::new(),
-            gitlab_merge_requests: std::collections::HashMap::new(),
-            gitlab_my_merge_requests: Vec::new(),
-            gitlab_last_error: None,
-            gitlab_connected: false,
-            gl_pipelines_view_mode: Default::default(),
-            gl_pipelines_collapsed: std::collections::HashSet::new(),
-            gl_mrs_view_mode: Default::default(),
-            gl_mrs_collapsed: std::collections::HashSet::new(),
             pending_commit_msg_job: None,
             pending_amend_msg_job: None,
             pending_wip_commit_msg_pane: None,
@@ -3807,34 +3777,8 @@ impl App {
                 self.toast("GitHub panes moved to mnml-forge-github");
             }
             "GL" => {
-                // GitLab project key is repo_label as-is.
-                let Some(pipelines) = self.gitlab_pipelines.get(repo_label) else {
-                    self.toast(format!("no pipelines cached for {repo_label}"));
-                    return;
-                };
-                let Some(pipeline) = pipelines
-                    .iter()
-                    .find(|p| p.target_ref.as_deref() == Some(branch))
-                    .cloned()
-                else {
-                    self.toast(format!("no pipeline on branch '{branch}' yet"));
-                    return;
-                };
-                self.gl_pipelines_view_mode = crate::gitlab::GlPipelineViewMode::Recent;
-                self.open_gitlab_pipelines_pane();
-                let flat = crate::ui::gitlab_pipelines_view::flatten_pipelines(self);
-                if let Some(idx) = flat.iter().position(|r| {
-                    r.pipeline
-                        .as_ref()
-                        .map(|p| p.id == pipeline.id)
-                        .unwrap_or(false)
-                }) && let Some(active) = self.active
-                    && let Some(Pane::GitlabPipelines(p)) = self.panes.get_mut(active)
-                {
-                    p.selected = idx;
-                    p.scroll = 0;
-                }
-                self.toast(format!("→ pipeline #{}", pipeline.id));
+                let _ = (repo_label, branch);
+                self.toast("GitLab panes moved to mnml-forge-gitlab");
             }
             "AZ" => {
                 let _ = (repo_label, branch);
@@ -7016,8 +6960,6 @@ impl App {
             Pane::Quickfix(g) => Some((format!("Quickfix · {}", g.hits.len()), false)),
             Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
             Pane::PipelineLog(p) => Some((p.title.clone(), false)),
-            Pane::GitlabPipelines(p) => Some((p.tab_title(), false)),
-            Pane::GitlabMergeRequests(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "aws-codebuild")]
@@ -8413,7 +8355,6 @@ impl App {
         self.drain_cdp_events();
         #[cfg(feature = "aws-codebuild")]
         self.drain_codebuild_events();
-        self.drain_gitlab_events();
         self.drain_pipeline_log_events();
         #[cfg(feature = "aws-codebuild")]
         self.drain_log_tail_events();

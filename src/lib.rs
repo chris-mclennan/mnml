@@ -45,7 +45,8 @@ pub(crate) mod fuzzy;
 pub(crate) mod git;
 // `mod github` was split out to the standalone mnml-forge-github
 // binary in 2026-06.
-pub(crate) mod gitlab;
+// `mod gitlab` was split out to the standalone mnml-forge-gitlab
+// binary in 2026-06.
 pub(crate) mod grep_pane;
 pub mod headless;
 pub mod highlight;

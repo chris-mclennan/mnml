@@ -2895,56 +2895,7 @@ fn builtin_commands() -> Vec<Command> {
 
     // GitHub commands moved to the standalone mnml-forge-github
     // binary in 2026-06.
-    // GitLab — mirror of GH commands.
-    cmds.push(Command {
-        id: "gitlab.pipelines",
-        title: "GitLab: open pipelines dashboard",
-        group: "gitlab",
-        keys: &[],
-        run: |app| app.open_gitlab_pipelines_pane(),
-    });
-    cmds.push(Command {
-        id: "gitlab.merge_requests",
-        title: "GitLab: open merge-requests dashboard",
-        group: "gitlab",
-        keys: &[],
-        run: |app| app.open_gitlab_merge_requests_pane(),
-    });
-    cmds.push(Command {
-        id: "gitlab.refresh_active",
-        title: "GitLab: refresh the active pane",
-        group: "gitlab",
-        keys: &[],
-        run: |app| app.refresh_active_gitlab_pane(),
-    });
-    cmds.push(Command {
-        id: "gitlab.open_selected_pipeline_url",
-        title: "GitLab: open selected pipeline in browser",
-        group: "gitlab",
-        keys: &[],
-        run: |app| app.open_selected_gitlab_pipeline_url(),
-    });
-    cmds.push(Command {
-        id: "gitlab.copy_selected_pipeline_url",
-        title: "GitLab: copy selected pipeline URL",
-        group: "gitlab",
-        keys: &[],
-        run: |app| app.copy_selected_gitlab_pipeline_url(),
-    });
-    cmds.push(Command {
-        id: "gitlab.open_selected_mr_url",
-        title: "GitLab: open selected MR in browser",
-        group: "gitlab",
-        keys: &[],
-        run: |app| app.open_selected_gitlab_mr_url(),
-    });
-    cmds.push(Command {
-        id: "gitlab.copy_selected_mr_url",
-        title: "GitLab: copy selected MR URL",
-        group: "gitlab",
-        keys: &[],
-        run: |app| app.copy_selected_gitlab_mr_url(),
-    });
+    // GitLab commands moved to mnml-forge-gitlab in 2026-06.
     // Azure DevOps commands moved to mnml-forge-azdevops in 2026-06.
     // Cross-host: one fuzzy picker over every open PR across all 4 SCM
     // hosts. Reads from the per-host caches the SCM workers populate;
@@ -2959,27 +2910,6 @@ fn builtin_commands() -> Vec<Command> {
     // Cross-nav between paired PR + pipeline panes (per host). Bound to
     // `c` (on a PR row) and `P` (on a pipeline row) inside each pane —
     // these aliases keep them in the palette too for discovery.
-    cmds.push(Command {
-        id: "gitlab.pipeline_log",
-        title: "GitLab: open log for selected pipeline",
-        group: "gitlab",
-        keys: &[],
-        run: |app| app.open_gitlab_pipeline_log(),
-    });
-    cmds.push(Command {
-        id: "gitlab.jump_mr_to_pipeline",
-        title: "GitLab: MR → pipeline on same branch",
-        group: "gitlab",
-        keys: &[],
-        run: |app| app.jump_from_gl_mr_to_pipeline(),
-    });
-    cmds.push(Command {
-        id: "gitlab.jump_pipeline_to_mr",
-        title: "GitLab: pipeline → MR on same branch",
-        group: "gitlab",
-        keys: &[],
-        run: |app| app.jump_from_gl_pipeline_to_mr(),
-    });
     #[cfg(feature = "aws-codebuild")]
     {
         cmds.push(Command {

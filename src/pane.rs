@@ -19,7 +19,7 @@ use crate::git::graph::GitGraphPane;
 use crate::git::stage::GitStatusPane;
 // GitHub panes were split out into the standalone
 // `mnml-forge-github` binary in 2026-06.
-use crate::gitlab::{GitlabMergeRequestsPane, GitlabPipelinesPane};
+// GitLab panes moved to mnml-forge-gitlab in 2026-06.
 use crate::grep_pane::GrepPane;
 use crate::image::ImagePane;
 use crate::lsp::diagnostics_pane::DiagnosticsPane;
@@ -76,15 +76,11 @@ pub enum Pane {
     /// Vim's `q:` — a scrollable list of recent `:` cmdline entries.
     /// Enter re-fires the highlighted entry; Esc closes.
     CmdlineHistory(CmdlineHistoryPane),
-    /// Pipeline-log viewer — opened by `L` on a pipeline row in any
-    /// host's pipelines pane (gitlab / azdevops). GitHub Actions +
-    /// Bitbucket panes were split out into the standalone
-    /// `mnml-forge-github` and `mnml-forge-bitbucket` binaries.
+    /// Pipeline-log viewer — kept as scaffolding even though all four
+    /// SCM hosts (BB/GH/GL/AZ) moved out to standalone
+    /// `mnml-forge-*` binaries. The blit-host facility lets log
+    /// viewers come back as separate panes if needed.
     PipelineLog(PipelineLogPane),
-    /// GitLab CI pipelines list.
-    GitlabPipelines(GitlabPipelinesPane),
-    /// GitLab open merge requests list.
-    GitlabMergeRequests(GitlabMergeRequestsPane),
     /// AWS CodeBuild recent-builds browser. Behind the `aws-codebuild`
     /// Cargo feature; shells out to the `aws` CLI.
     #[cfg(feature = "aws-codebuild")]
@@ -441,8 +437,6 @@ impl Pane {
             Pane::Quickfix(g) => format!("Quickfix · {}", g.hits.len()),
             Pane::CmdlineHistory(_) => "q:".to_string(),
             Pane::PipelineLog(p) => p.title.clone(),
-            Pane::GitlabPipelines(p) => p.tab_title(),
-            Pane::GitlabMergeRequests(p) => p.tab_title(),
             #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(p) => p.tab_title(),
             #[cfg(feature = "aws-codebuild")]
@@ -476,8 +470,6 @@ impl Pane {
             | Pane::Quickfix(_)
             | Pane::CmdlineHistory(_)
             | Pane::PipelineLog(_)
-            | Pane::GitlabPipelines(_)
-            | Pane::GitlabMergeRequests(_)
             | Pane::Cheatsheet(_)
             | Pane::Debug(_)
             | Pane::DapRepl(_)

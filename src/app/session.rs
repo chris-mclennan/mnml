@@ -206,10 +206,6 @@ impl App {
                 .collect(),
             ex_history: self.ex_history.clone(),
             dap_watches: self.dap_watches.clone(),
-            gl_pipelines_view_mode: Some(self.gl_pipelines_view_mode),
-            gl_pipelines_collapsed: self.gl_pipelines_collapsed.iter().cloned().collect(),
-            gl_mrs_view_mode: Some(self.gl_mrs_view_mode),
-            gl_mrs_collapsed: self.gl_mrs_collapsed.iter().cloned().collect(),
             harpoon: if self.harpoon.iter().all(|s| s.is_none()) {
                 Vec::new()
             } else {
@@ -524,16 +520,8 @@ impl App {
             self.dap_watches = saved.dap_watches;
         }
         // SCM/CI pane view-mode + collapse state.
-        // (GH view-mode + collapsed state moved to mnml-forge-github.)
-        if let Some(m) = saved.gl_pipelines_view_mode {
-            self.gl_pipelines_view_mode = m;
-        }
-        self.gl_pipelines_collapsed = saved.gl_pipelines_collapsed.into_iter().collect();
-        if let Some(m) = saved.gl_mrs_view_mode {
-            self.gl_mrs_view_mode = m;
-        }
-        self.gl_mrs_collapsed = saved.gl_mrs_collapsed.into_iter().collect();
-        // (AZ view-mode + collapsed state moved to mnml-forge-azdevops.)
+        // (GH / GL / AZ view-mode + collapsed state all moved to
+        // mnml-forge-* siblings in 2026-06.)
         // Harpoon slots — restore up to 9 (silently drop any extras a
         // hand-edited session.json might carry).
         for (i, slot) in saved.harpoon.into_iter().take(9).enumerate() {

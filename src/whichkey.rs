@@ -209,11 +209,12 @@ pub fn root() -> &'static Leader {
                     group(
                         "+ci",
                         vec![
-                            // GitLab pipelines only — Bitbucket /
-                            // GitHub Actions / Azure builds moved to
-                            // their standalone mnml-forge-* binaries.
-                            ('l', cmd("gitlab.pipelines", "gitlab pipelines")),
-                            ('L', cmd("gitlab.refresh_active", "refresh gl pane")),
+                            // All four SCM hosts (BB/GH/GL/AZ) moved
+                            // to standalone mnml-forge-* binaries.
+                            // The +C group is intentionally empty —
+                            // use the launcher icons in the
+                            // integrations strip to open the host
+                            // viewers.
                         ],
                     ),
                 ),
@@ -222,10 +223,10 @@ pub fn root() -> &'static Leader {
                     group(
                         "+pr",
                         vec![
-                            // BB / GH / AZ PR panes moved to standalone
-                            // mnml-forge-* binaries; only GL MRs are
-                            // browsed in mnml core.
-                            ('l', cmd("gitlab.merge_requests", "gitlab MRs")),
+                            // All four SCM hosts moved to standalone
+                            // mnml-forge-* binaries. The fuzzy picker
+                            // stays as a hook for the future
+                            // forge-host index file.
                             ('p', cmd("pr.picker", "all-host fuzzy picker")),
                         ],
                     ),

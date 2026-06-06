@@ -71,7 +71,7 @@ pub struct Config {
     pub browser: BrowserConfig,
     pub playwright: PlaywrightConfig,
     pub ci: CiConfig,
-    pub gitlab: GitlabConfig,
+    // [gitlab] config moved to mnml-forge-gitlab.
     // [azdevops] config moved to mnml-forge-azdevops.
     /// `[[workspaces]]` — additional workspaces shown as sibling sections in
     /// the file-tree rail (alongside the launched workspace at the top).
@@ -105,57 +105,7 @@ pub fn default_branches() -> &'static [&'static str] {
     &["main", "master", "develop", "staging"]
 }
 
-/// `[gitlab]` — GitLab CI / Merge Requests integration. Same shape as
-/// `[bitbucket]` and `[github]` — separate module, separate pane, same
-/// mental model (recent/per-branch + per-project/mine view-modes).
-///
-/// ```toml
-/// [gitlab]
-/// auth_env  = "GITLAB_TOKEN"                # optional
-/// poll_secs = 60                             # optional
-/// base_url  = "https://gitlab.com/api/v4"    # optional, override for self-hosted
-///
-/// [[gitlab.projects]]
-/// project = "example-org/example-plugins"  # path OR numeric ID
-///
-/// [[gitlab.projects]]
-/// project  = "12345"
-/// branches = ["main", "production"]             # optional
-/// ```
-#[derive(Debug, Clone, Default)]
-pub struct GitlabConfig {
-    pub auth_env: Option<String>,
-    pub poll_secs: Option<u64>,
-    /// `https://gitlab.com/api/v4` by default; override for self-hosted.
-    pub base_url: Option<String>,
-    pub projects: Vec<GitlabProject>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GitlabProject {
-    /// Path (`"group/project"`) or numeric ID. The worker URL-encodes
-    /// when it builds the request path so either form works.
-    pub project: String,
-    pub branches: Vec<String>,
-}
-
-impl GitlabConfig {
-    pub fn any_configured(&self) -> bool {
-        !self.projects.is_empty()
-    }
-    pub fn auth_env_name(&self) -> &str {
-        self.auth_env.as_deref().unwrap_or("GITLAB_TOKEN")
-    }
-    pub fn poll_secs_or_default(&self) -> u64 {
-        self.poll_secs.unwrap_or(60).max(5)
-    }
-    pub fn base_url_or_default(&self) -> &str {
-        self.base_url
-            .as_deref()
-            .unwrap_or("https://gitlab.com/api/v4")
-    }
-}
-
+// `[gitlab]` panes + config moved to mnml-forge-gitlab in 2026-06.
 // `[azdevops]` panes + config moved to mnml-forge-azdevops in 2026-06.
 
 /// `[ci]` — Continuous-integration provider settings. Consumed by the
@@ -701,6 +651,18 @@ impl Default for Config {
                         color: "blue".to_string(),
                         tooltip: Some("Azure DevOps PRs + builds".to_string()),
                     },
+                    IntegrationIcon {
+                        id: "gitlab".to_string(),
+                        glyph: "\u{F296}".to_string(), // nf-fa-gitlab
+                        fallback: "L".to_string(),
+                        // Launches the standalone mnml-forge-gitlab
+                        // viewer as a blit-host pane. User must have it
+                        // installed (`cargo install --git
+                        // https://github.com/chris-mclennan/mnml-forge-gitlab`).
+                        command: ":host.launch mnml-forge-gitlab".to_string(),
+                        color: "orange".to_string(),
+                        tooltip: Some("GitLab MRs + Pipelines".to_string()),
+                    },
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,
@@ -724,7 +686,6 @@ impl Default for Config {
             },
             playwright: PlaywrightConfig::default(),
             ci: CiConfig::default(),
-            gitlab: GitlabConfig::default(),
             workspaces: Vec::new(),
         }
     }
@@ -765,8 +726,6 @@ struct RawConfig {
     #[serde(default)]
     ci: RawCi,
     #[serde(default)]
-    gitlab: RawGitlab,
-    #[serde(default)]
     workspaces: Vec<RawWorkspace>,
 }
 
@@ -774,22 +733,6 @@ struct RawConfig {
 struct RawWorkspace {
     name: Option<String>,
     path: String,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawGitlab {
-    auth_env: Option<String>,
-    poll_secs: Option<u64>,
-    base_url: Option<String>,
-    #[serde(default)]
-    projects: Vec<RawGitlabProject>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawGitlabProject {
-    project: String,
-    #[serde(default)]
-    branches: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1206,25 +1149,8 @@ impl Config {
         // `[github]` section is silently ignored — GitHub panes
         // moved to the standalone mnml-forge-github binary in
         // 2026-06; existing user configs may still mention it.
-        // GitLab — per-field overlay so workspace files can refine
-        // home defaults. Repos *append* (rather than replace) so a
-        // workspace-local file can add repos without re-listing the
-        // homedir set.
-        if let Some(v) = raw.gitlab.auth_env {
-            self.gitlab.auth_env = Some(v);
-        }
-        if let Some(v) = raw.gitlab.poll_secs {
-            self.gitlab.poll_secs = Some(v);
-        }
-        if let Some(v) = raw.gitlab.base_url {
-            self.gitlab.base_url = Some(v);
-        }
-        for r in raw.gitlab.projects {
-            self.gitlab.projects.push(GitlabProject {
-                project: r.project,
-                branches: r.branches,
-            });
-        }
+        // `[gitlab]` section is silently ignored — GitLab panes
+        // moved to mnml-forge-gitlab in 2026-06.
         // `[azdevops]` section is silently ignored — Azure DevOps
         // panes moved to mnml-forge-azdevops in 2026-06.
         // `[[workspaces]]` — additional sibling workspaces. Append (rather

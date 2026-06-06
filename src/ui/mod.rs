@@ -47,8 +47,7 @@ pub mod ghost_overlay;
 pub mod git_graph_view;
 pub mod git_status_view;
 // GitHub views moved to mnml-forge-github.
-pub mod gitlab_merge_requests_view;
-pub mod gitlab_pipelines_view;
+// GitLab views moved to mnml-forge-gitlab.
 pub mod grep_view;
 pub mod help_overlay;
 pub mod hover;
@@ -624,8 +623,6 @@ fn render_layout(
                 Some(crate::pane::Pane::Quickfix(_)) => 16,
                 #[cfg(feature = "aws-codebuild")]
                 Some(crate::pane::Pane::CodeBuilds(_)) => 18,
-                Some(crate::pane::Pane::GitlabPipelines(_)) => 23,
-                Some(crate::pane::Pane::GitlabMergeRequests(_)) => 24,
                 Some(crate::pane::Pane::PipelineLog(_)) => 27,
                 #[cfg(feature = "aws-codebuild")]
                 Some(crate::pane::Pane::LogTail(_)) => 28,
@@ -657,8 +654,6 @@ fn render_layout(
                 16 => grep_view::draw(frame, app, *id, area, focused),
                 #[cfg(feature = "aws-codebuild")]
                 18 => codebuilds_view::draw(frame, app, *id, area, focused),
-                23 => gitlab_pipelines_view::draw(frame, app, *id, area, focused),
-                24 => gitlab_merge_requests_view::draw(frame, app, *id, area, focused),
                 27 => {
                     if let Some(crate::pane::Pane::PipelineLog(p)) = app.panes.get_mut(*id) {
                         pipeline_log_view::draw(frame, p, area);

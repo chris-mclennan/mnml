@@ -115,122 +115,14 @@ impl App {
     /// most-recent activity (updated_at ⇒ created_at fallback). Accept
     /// opens the chosen PR's web URL in the OS browser.
     pub fn open_pr_picker(&mut self) {
-        use crate::picker::PickerItem;
-        // Unified row shape — collected from all 4 hosts, sorted, then
-        // projected to PickerItem.
-        struct Row {
-            host_tag: &'static str,
-            repo_label: String,
-            number: String,
-            title: String,
-            state_label: &'static str,
-            author: Option<String>,
-            source: Option<String>,
-            dest: Option<String>,
-            reviewers: u32,
-            approved: u32,
-            changes: u32,
-            comments: u32,
-            ts_ms: i64,
-            web_url: String,
-        }
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        let mut rows: Vec<Row> = Vec::new();
-        // Bitbucket + GitHub panes moved to their standalone forge
-        // binaries — no in-mnml PR cache to surface here for those
-        // hosts any more.
-        // GitLab — keyed by project label (numeric ID or "group/path").
-        // `!iid` is the URL-segment shape ("!17"), not "#17".
-        for (project, mrs) in &self.gitlab_merge_requests {
-            for mr in mrs {
-                rows.push(Row {
-                    host_tag: "GL",
-                    repo_label: project.clone(),
-                    number: format!("!{}", mr.iid),
-                    title: mr.title.clone(),
-                    state_label: mr.state.label(),
-                    author: mr.author.clone(),
-                    source: mr.source_branch.clone(),
-                    dest: mr.dest_branch.clone(),
-                    reviewers: mr.reviewer_count,
-                    approved: mr.approved_count,
-                    changes: mr.changes_count,
-                    comments: mr.comment_count,
-                    ts_ms: mr.updated_at_ms.or(mr.created_at_ms).unwrap_or(0),
-                    web_url: mr.web_url.clone(),
-                });
-            }
-        }
-        // Azure DevOps + Bitbucket + GitHub all moved to standalone
-        // mnml-forge-* binaries; only GitLab caches feed the picker now.
-        if rows.is_empty() {
-            self.toast(
-                "no open PRs in cache yet — configure [[gitlab.projects]] and wait one poll cycle",
-            );
-            return;
-        }
-        // Most recent activity first; ties keep insertion order.
-        rows.sort_by_key(|r| std::cmp::Reverse(r.ts_ms));
-        let items: Vec<PickerItem> = rows
-            .into_iter()
-            .map(|r| {
-                // Label is the fuzzy-match target — pack everything a user
-                // might type: host, repo, number, title, state.
-                let label = format!(
-                    "[{}] {} {} {} — {}",
-                    r.host_tag, r.repo_label, r.state_label, r.number, r.title
-                );
-                // Item id encodes the full cross-nav payload so the
-                // secondary accept (Ctrl+Enter → jump-to-pipeline) has
-                // everything it needs without an App-side stash. Fields
-                // separated by `\x1F` (unit separator), which doesn't
-                // appear in URLs / branch names / repo labels.
-                let id = format!(
-                    "{}\x1F{}\x1F{}\x1F{}",
-                    r.web_url,
-                    r.host_tag,
-                    r.repo_label,
-                    r.source.clone().unwrap_or_default(),
-                );
-                let branches = match (r.source.as_deref(), r.dest.as_deref()) {
-                    (Some(s), Some(d)) => format!("{s}→{d}"),
-                    (Some(s), None) => s.to_string(),
-                    (None, Some(d)) => format!("→{d}"),
-                    (None, None) => String::new(),
-                };
-                let counts = format!(
-                    "👀{} ✓{} ✗{} 💬{}",
-                    r.reviewers, r.approved, r.changes, r.comments
-                );
-                let age = if r.ts_ms > 0 {
-                    crate::ui::git_graph_view::humanize_age(now_ms.saturating_sub(r.ts_ms) / 1000)
-                } else {
-                    String::new()
-                };
-                let mut detail_parts: Vec<String> = Vec::new();
-                if let Some(a) = r.author.as_deref()
-                    && !a.is_empty()
-                {
-                    detail_parts.push(a.to_string());
-                }
-                if !branches.is_empty() {
-                    detail_parts.push(branches);
-                }
-                detail_parts.push(counts);
-                if !age.is_empty() {
-                    detail_parts.push(age);
-                }
-                PickerItem::new(id, label, detail_parts.join(" · "))
-            })
-            .collect();
-        self.open_picker(Picker::new(
-            PickerKind::OpenPullRequests,
-            "Pull requests · all hosts",
-            items,
-        ));
+        // All four SCM hosts (BB/GH/GL/AZ) moved to standalone
+        // mnml-forge-* binaries in 2026-06 — the cross-host PR
+        // picker has nothing to aggregate any more. The command is
+        // kept so the keybinding doesn't error, and so a future
+        // forge-host index file can re-light it.
+        self.toast(
+            "PR panes moved to mnml-forge-{bitbucket,github,gitlab,azdevops}; use the per-host launcher icons in the integrations strip",
+        );
     }
 
     /// Open the buffer switcher over the currently-open panes.
@@ -1248,38 +1140,11 @@ impl App {
 mod picker_tests {
     use super::*;
 
-    #[test]
-    fn open_pr_picker_lists_gitlab_only() {
-        // BB / GH / AZ panes moved to standalone forge binaries, so
-        // the picker now only aggregates GitLab MRs in mnml core.
-        let d = tempfile::tempdir().unwrap();
-        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
-        app.gitlab_merge_requests.insert(
-            "group/project".into(),
-            vec![crate::gitlab::MergeRequestRecord {
-                project: "group/project".into(),
-                iid: 17,
-                title: "GL feature".into(),
-                state: crate::gitlab::MergeRequestState::Opened,
-                author: Some("carol".into()),
-                source_branch: Some("feature/gl".into()),
-                dest_branch: Some("main".into()),
-                reviewer_count: 3,
-                approved_count: 2,
-                changes_count: 0,
-                comment_count: 0,
-                created_at_ms: Some(3_000),
-                updated_at_ms: Some(4_000),
-                web_url: "https://gitlab.com/group/project/-/merge_requests/17".into(),
-            }],
-        );
-        app.open_pr_picker();
-        let picker = app.picker.as_ref().expect("picker should have opened");
-        assert_eq!(picker.kind, crate::picker::PickerKind::OpenPullRequests);
-        let labels: Vec<String> = picker.items_view().map(|it| it.label.clone()).collect();
-        assert_eq!(labels.len(), 1, "GL only");
-        assert!(labels[0].contains("[GL]"), "GL row, got {:?}", labels[0]);
-    }
+    // Cross-host PR picker now has no in-mnml caches to aggregate
+    // — every SCM host moved to a standalone mnml-forge-* binary
+    // in 2026-06. The empty-cache toast test below covers the only
+    // remaining behavior; per-host happy-path tests live in each
+    // forge sibling's own repo.
 
     #[test]
     fn open_repo_picker_no_op_when_single() {

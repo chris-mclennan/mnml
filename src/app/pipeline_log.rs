@@ -63,31 +63,11 @@ impl App {
                     Err("GitHub panes are in mnml-forge-github".to_string())
                 }
                 LogHost::Gitlab => {
-                    let auth_header = crate::gitlab::api::auth_header_value(&token);
-                    let client = match crate::gitlab::api::build_client() {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let _ = tx.send(PipelineLogEvent::Failed { job_id, err: e });
-                            return;
-                        }
-                    };
-                    let pipeline_id: u64 = match id2.parse() {
-                        Ok(n) => n,
-                        Err(_) => {
-                            let _ = tx.send(PipelineLogEvent::Failed {
-                                job_id,
-                                err: format!("bad GL pipeline_id: {id2}"),
-                            });
-                            return;
-                        }
-                    };
-                    crate::gitlab::api::fetch_combined_pipeline_log(
-                        &client,
-                        &host_extra,
-                        &auth_header,
-                        &id1,
-                        pipeline_id,
-                    )
+                    // GitLab CI panes moved to mnml-forge-gitlab in
+                    // 2026-06. Arm kept for LogHost exhaustiveness;
+                    // never hit from mnml core after the split.
+                    let _ = (&token, &id1, &id2, &id3, &host_extra);
+                    Err("GitLab panes are in mnml-forge-gitlab".to_string())
                 }
                 LogHost::Azure => {
                     // Azure DevOps panes moved to mnml-forge-azdevops
@@ -199,12 +179,11 @@ impl App {
                 // but is unreachable from mnml core.
                 "GITHUB_TOKEN".to_string()
             }
-            crate::pipeline_log::LogHost::Gitlab => self
-                .config
-                .gitlab
-                .auth_env
-                .clone()
-                .unwrap_or_else(|| "GITLAB_TOKEN".to_string()),
+            crate::pipeline_log::LogHost::Gitlab => {
+                // Config block gone after the mnml-forge-gitlab split;
+                // arm kept for LogHost exhaustiveness.
+                "GITLAB_TOKEN".to_string()
+            }
             crate::pipeline_log::LogHost::Azure => {
                 // Config block is gone after the mnml-forge-azdevops
                 // split; arm kept for LogHost exhaustiveness.

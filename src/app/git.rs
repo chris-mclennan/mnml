@@ -1696,28 +1696,10 @@ impl App {
         let parsed = remote.as_deref().and_then(crate::git::browse::parse_remote);
         let current_branch = self.git_rail.current_branch.clone();
         if let Some((host, owner, repo)) = parsed {
-            // Match the remote to whichever per-host cache shape uses it.
-            // Bitbucket + GitHub panes moved to mnml-forge-bitbucket /
-            // mnml-forge-github; no in-mnml cache to surface in the
-            // rail any more for those hosts.
-            if host.contains("gitlab") {
-                // GitLab project key is either `"owner/repo"` (URL form) or
-                // a numeric ID. Try `"owner/repo"` first.
-                let url_form = format!("{owner}/{repo}");
-                if let Some(mrs) = self.gitlab_merge_requests.get(&url_form) {
-                    for mr in mrs {
-                        out.push(PullRow {
-                            host_tag: "GL",
-                            number_label: format!("!{}", mr.iid),
-                            title: mr.title.clone(),
-                            source_branch: mr.source_branch.clone(),
-                            is_current_branch: mr.source_branch == current_branch,
-                            web_url: mr.web_url.clone(),
-                        });
-                    }
-                }
-            }
-            // (Azure DevOps PR badging moved to mnml-forge-azdevops.)
+            // All four SCM hosts (BB/GH/GL/AZ) moved to standalone
+            // mnml-forge-* binaries in 2026-06 — no in-mnml PR cache
+            // to surface in the rail any more for any host.
+            let _ = (host, owner, repo, &current_branch);
         }
         // Sort: current-branch PR(s) first, then everything else in insertion
         // order (which is recency from the worker pass).
