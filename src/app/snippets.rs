@@ -289,11 +289,57 @@ impl App {
         self.snippet_step_placeholder(-1);
     }
 
-    /// Shared step: `+1` = forward, `-1` = backward. Shifts all stops
-    /// strictly after the current cursor by the text-length delta accrued
-    /// since we last placed at a stop, then jumps to the new index.
-    /// Records the cursor's exit position for the *current* stop so a
-    /// later Backtab to it lands at the end of typed content (vim-ish).
+    /// Apply a batch of buffer-side `TextEdit`s to the live snippet
+    /// session's stops + recorded exit positions. Called from the
+    /// editor-input pipeline after every `BufferEvent::Edited` so the
+    /// session stays aligned with the buffer as the user types — even
+    /// when the cursor wanders away from the current stop and edits
+    /// happen at other positions. No-op when no session is active or
+    /// when the active pane doesn't match the session's pane.
+    pub fn apply_snippet_text_edits(&mut self, pane_id: usize, edits: &[crate::edit_op::TextEdit]) {
+        if edits.is_empty() {
+            return;
+        }
+        let Some(sess) = self.snippet_session.as_mut() else {
+            return;
+        };
+        if sess.pane_id != pane_id {
+            return;
+        }
+        for ed in edits {
+            let delta = ed.new_end_byte as i64 - ed.old_end_byte as i64;
+            for off in sess.stops.iter_mut() {
+                // Strict `>` so a stop sitting at the edit's start
+                // (typical: the active stop the user is typing at)
+                // stays put — the cursor moves with the edit naturally;
+                // we don't want to double-shift.
+                if *off > ed.start_byte {
+                    *off = (*off as i64 + delta).max(ed.start_byte as i64) as usize;
+                }
+            }
+            for c in sess.stop_cursors.iter_mut().flatten() {
+                if *c > ed.start_byte {
+                    *c = (*c as i64 + delta).max(ed.start_byte as i64) as usize;
+                }
+            }
+        }
+        // Track total text length so any future caller that needs it
+        // doesn't go stale. Doesn't drive the shift any more.
+        if let Some(b) = match self.active {
+            Some(p) => self.panes.get(p),
+            None => None,
+        } && let Pane::Editor(buf) = b
+        {
+            self.snippet_session.as_mut().unwrap().last_text_len = buf.editor.text().len();
+        }
+    }
+
+    /// Shared step: `+1` = forward, `-1` = backward. Records the
+    /// cursor's exit position for the *current* stop so a later
+    /// Backtab to it lands at the end of typed content, then jumps to
+    /// the new index. Stop positions are now kept live by
+    /// [`Self::apply_snippet_text_edits`] — this method no longer needs
+    /// to bulk-shift on Tab.
     fn snippet_step_placeholder(&mut self, dir: i32) {
         let Some(mut sess) = self.snippet_session.take() else {
             return;
@@ -311,24 +357,6 @@ impl App {
         let cur_idx = sess.current;
         if cur_idx < sess.stop_cursors.len() {
             sess.stop_cursors[cur_idx] = Some(exit_cursor);
-        }
-        // Net chars added (or removed) since we last placed at a stop —
-        // shifts every position strictly after the active stop. `i64` to
-        // tolerate net deletions.
-        let delta = cur_len as i64 - sess.last_text_len as i64;
-        for (i, off) in sess.stops.iter_mut().enumerate() {
-            if i > cur_idx {
-                *off = (*off as i64 + delta).max(0) as usize;
-            }
-        }
-        // Same shift applied to recorded exit cursors of later stops (so
-        // forward Tab → Backtab → forward chain still lands correctly).
-        for (i, c) in sess.stop_cursors.iter_mut().enumerate() {
-            if i > cur_idx
-                && let Some(pos) = c
-            {
-                *pos = (*pos as i64 + delta).max(0) as usize;
-            }
         }
         // Compute the new index. Forward off the end ⇒ session ends.
         // Backward at index 0 ⇒ stay put (no wrap).
@@ -369,5 +397,226 @@ impl App {
         sess.current = new_idx;
         sess.last_text_len = cur_len;
         self.snippet_session = Some(sess);
+    }
+}
+
+#[cfg(test)]
+mod snippet_position_tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::edit_op::TextEdit;
+    use crate::snippets::SnippetSession;
+
+    fn app_with_session(stops: Vec<usize>, current: usize) -> App {
+        // Use pane_id 0 — `apply_snippet_text_edits` matches against
+        // the session's `pane_id` field and doesn't actually touch the
+        // pane unless the active editor exists; for these tests we
+        // only assert on stop positions, so a synthetic pane id is OK.
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let stop_cursors = vec![None; stops.len()];
+        let default_lens = vec![0; stops.len()];
+        app.snippet_session = Some(SnippetSession {
+            pane_id: 0,
+            stops,
+            current,
+            last_text_len: 0,
+            stop_cursors,
+            default_lens,
+        });
+        app
+    }
+
+    #[test]
+    fn apply_text_edit_shifts_stops_after_edit_position() {
+        // Stops at 50, 70. Insert 5 chars at position 30 (between
+        // start of buffer and stop 0). Both stops should shift by 5.
+        let mut app = app_with_session(vec![50, 70], 0);
+        let pane_id = 0usize;
+        app.apply_snippet_text_edits(
+            pane_id,
+            &[TextEdit {
+                start_byte: 30,
+                old_end_byte: 30,
+                new_end_byte: 35,
+            }],
+        );
+        let s = app.snippet_session.as_ref().unwrap();
+        assert_eq!(s.stops, vec![55, 75]);
+    }
+
+    #[test]
+    fn apply_text_edit_does_not_shift_stops_before_edit_position() {
+        // Stops at 50, 70. Insert 5 chars at position 90 (after both
+        // stops). Neither stop should shift.
+        let mut app = app_with_session(vec![50, 70], 0);
+        let pane_id = 0usize;
+        app.apply_snippet_text_edits(
+            pane_id,
+            &[TextEdit {
+                start_byte: 90,
+                old_end_byte: 90,
+                new_end_byte: 95,
+            }],
+        );
+        let s = app.snippet_session.as_ref().unwrap();
+        assert_eq!(s.stops, vec![50, 70]);
+    }
+
+    #[test]
+    fn apply_text_edit_partial_shift_when_edit_falls_between_stops() {
+        // Stops at 50, 70. Insert 5 chars at position 60 (between).
+        // Only stop[1] shifts.
+        let mut app = app_with_session(vec![50, 70], 0);
+        let pane_id = 0usize;
+        app.apply_snippet_text_edits(
+            pane_id,
+            &[TextEdit {
+                start_byte: 60,
+                old_end_byte: 60,
+                new_end_byte: 65,
+            }],
+        );
+        let s = app.snippet_session.as_ref().unwrap();
+        assert_eq!(s.stops, vec![50, 75]);
+    }
+
+    #[test]
+    fn apply_text_edit_at_exact_stop_position_does_not_shift_that_stop() {
+        // Stop at 50. Insert 5 chars at position 50 (at the stop —
+        // the user typing AT the active stop). Stop stays at 50
+        // because the cursor moves naturally with the insertion;
+        // shifting would double-count.
+        let mut app = app_with_session(vec![50], 0);
+        let pane_id = 0usize;
+        app.apply_snippet_text_edits(
+            pane_id,
+            &[TextEdit {
+                start_byte: 50,
+                old_end_byte: 50,
+                new_end_byte: 55,
+            }],
+        );
+        let s = app.snippet_session.as_ref().unwrap();
+        assert_eq!(s.stops, vec![50]);
+    }
+
+    #[test]
+    fn apply_text_edit_handles_deletion() {
+        // Stops at 50, 70. Delete 10 chars at position 30
+        // (start=30, old_end=40, new_end=30). Both stops shift by -10.
+        let mut app = app_with_session(vec![50, 70], 0);
+        let pane_id = 0usize;
+        app.apply_snippet_text_edits(
+            pane_id,
+            &[TextEdit {
+                start_byte: 30,
+                old_end_byte: 40,
+                new_end_byte: 30,
+            }],
+        );
+        let s = app.snippet_session.as_ref().unwrap();
+        assert_eq!(s.stops, vec![40, 60]);
+    }
+
+    #[test]
+    fn apply_text_edit_deletion_clamps_stops_inside_range() {
+        // Stops at 50, 70. Delete 20 chars at position 40
+        // (start=40, old_end=60, new_end=40). Stop[0] at 50 is INSIDE
+        // the deleted range; clamp to start_byte (40). Stop[1] at 70
+        // shifts by -20 → 50.
+        let mut app = app_with_session(vec![50, 70], 0);
+        let pane_id = 0usize;
+        app.apply_snippet_text_edits(
+            pane_id,
+            &[TextEdit {
+                start_byte: 40,
+                old_end_byte: 60,
+                new_end_byte: 40,
+            }],
+        );
+        let s = app.snippet_session.as_ref().unwrap();
+        assert_eq!(s.stops, vec![40, 50]);
+    }
+
+    #[test]
+    fn apply_text_edit_no_op_when_no_session_active() {
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        assert!(app.snippet_session.is_none());
+        // Should not panic and should not create a session.
+        app.apply_snippet_text_edits(
+            0,
+            &[TextEdit {
+                start_byte: 10,
+                old_end_byte: 10,
+                new_end_byte: 15,
+            }],
+        );
+        assert!(app.snippet_session.is_none());
+    }
+
+    #[test]
+    fn apply_text_edit_no_op_when_pane_mismatch() {
+        // Session was opened in pane 0; edit reports pane 99 — leave
+        // the session untouched.
+        let mut app = app_with_session(vec![50, 70], 0);
+        app.apply_snippet_text_edits(
+            99,
+            &[TextEdit {
+                start_byte: 10,
+                old_end_byte: 10,
+                new_end_byte: 30,
+            }],
+        );
+        let s = app.snippet_session.as_ref().unwrap();
+        assert_eq!(s.stops, vec![50, 70]);
+    }
+
+    #[test]
+    fn apply_text_edit_also_shifts_recorded_exit_cursors() {
+        // Stops at 50, 70 with stop[1] previously visited at exit
+        // cursor 80. Insert 5 chars at position 30. Both stops shift,
+        // and the recorded exit cursor also shifts.
+        let mut app = app_with_session(vec![50, 70], 0);
+        let pane_id = 0usize;
+        app.snippet_session.as_mut().unwrap().stop_cursors[1] = Some(80);
+        app.apply_snippet_text_edits(
+            pane_id,
+            &[TextEdit {
+                start_byte: 30,
+                old_end_byte: 30,
+                new_end_byte: 35,
+            }],
+        );
+        let s = app.snippet_session.as_ref().unwrap();
+        assert_eq!(s.stops, vec![55, 75]);
+        assert_eq!(s.stop_cursors[1], Some(85));
+    }
+
+    #[test]
+    fn apply_text_edit_batch_applies_each_in_order() {
+        // Two edits in sequence: first shifts +5 at position 30,
+        // second shifts +10 at position 80. Stop at 50 → 55 → 55
+        // (second edit is past it). Stop at 70 → 75 → 75.
+        let mut app = app_with_session(vec![50, 70], 0);
+        let pane_id = 0usize;
+        app.apply_snippet_text_edits(
+            pane_id,
+            &[
+                TextEdit {
+                    start_byte: 30,
+                    old_end_byte: 30,
+                    new_end_byte: 35,
+                },
+                TextEdit {
+                    start_byte: 80,
+                    old_end_byte: 80,
+                    new_end_byte: 90,
+                },
+            ],
+        );
+        let s = app.snippet_session.as_ref().unwrap();
+        assert_eq!(s.stops, vec![55, 75]);
     }
 }

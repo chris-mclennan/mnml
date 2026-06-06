@@ -2449,6 +2449,19 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     let edited = matches!(ev, BufferEvent::Edited);
     match ev {
         BufferEvent::Edited => {
+            // Keep the snippet session's stop positions live, even when
+            // the cursor wanders off the active stop and edits land
+            // elsewhere. Read `pending_tree_edits` without consuming
+            // them — `refresh_highlights` will drain them on the next
+            // highlight pass.
+            if app.snippet_session.is_some()
+                && let Some(Pane::Editor(b)) = app.panes.get(i)
+            {
+                let edits: Vec<crate::edit_op::TextEdit> = b.pending_tree_edits.to_vec();
+                if !edits.is_empty() {
+                    app.apply_snippet_text_edits(i, &edits);
+                }
+            }
             // Keep the LSP server's view in sync (full-text didChange).
             let upd = match app.panes.get(i) {
                 Some(Pane::Editor(b)) => b.path.clone().map(|p| (p, b.editor.text().to_string())),
