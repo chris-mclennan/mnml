@@ -689,6 +689,30 @@ impl Default for Config {
                         color: "orange".to_string(),
                         tooltip: Some("Amazon S3 browser".to_string()),
                     },
+                    IntegrationIcon {
+                        id: "cloudwatch_logs".to_string(),
+                        glyph: "\u{F0E5C}".to_string(), // nf-md-text-box-search
+                        fallback: "CW".to_string(),
+                        command: ":host.launch mnml-aws-cloudwatch-logs".to_string(),
+                        color: "yellow".to_string(),
+                        tooltip: Some("CloudWatch Logs live tail".to_string()),
+                    },
+                    IntegrationIcon {
+                        id: "amplify".to_string(),
+                        glyph: "\u{F087D}".to_string(), // nf-md-rocket-launch
+                        fallback: "Am".to_string(),
+                        command: ":host.launch mnml-aws-amplify".to_string(),
+                        color: "purple".to_string(),
+                        tooltip: Some("Amplify apps + deploys".to_string()),
+                    },
+                    IntegrationIcon {
+                        id: "dynamodb".to_string(),
+                        glyph: "\u{F1C0}".to_string(), // nf-fa-database
+                        fallback: "Dy".to_string(),
+                        command: ":host.launch mnml-db-dynamodb".to_string(),
+                        color: "teal".to_string(),
+                        tooltip: Some("DynamoDB table browser".to_string()),
+                    },
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,

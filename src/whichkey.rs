@@ -168,6 +168,12 @@ pub fn root() -> &'static Leader {
                             ('z', cmd("forge.open_azdevops", "Azure DevOps viewer")),
                             ('c', cmd("forge.open_codebuild", "AWS CodeBuild viewer")),
                             ('s', cmd("forge.open_s3", "Amazon S3 browser")),
+                            (
+                                'w',
+                                cmd("forge.open_cloudwatch_logs", "CloudWatch Logs viewer"),
+                            ),
+                            ('a', cmd("forge.open_amplify", "AWS Amplify viewer")),
+                            ('d', cmd("forge.open_dynamodb", "DynamoDB browser")),
                         ],
                     ),
                 ),
@@ -228,7 +234,7 @@ pub fn root() -> &'static Leader {
                     ),
                 ),
                 (
-                    'i',
+                    'I',
                     group(
                         "+insert",
                         vec![
@@ -320,6 +326,38 @@ mod tests {
             lookup("w"),
             Some(Leader::Cmd {
                 id: "file.save",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn integrations_group_is_reachable() {
+        // Regression: 'i' was double-registered with both `+integrations`
+        // and `+insert`; BTreeMap dedup made `+integrations` unreachable.
+        // `+insert` now lives under 'I'.
+        match lookup("i") {
+            Some(Leader::Group { label, .. }) => assert_eq!(*label, "+integrations"),
+            other => panic!("expected +integrations group at 'i', got {other:?}"),
+        }
+        assert!(matches!(
+            lookup("ib"),
+            Some(Leader::Cmd {
+                id: "forge.open_bitbucket",
+                ..
+            })
+        ));
+        assert!(matches!(
+            lookup("iw"),
+            Some(Leader::Cmd {
+                id: "forge.open_cloudwatch_logs",
+                ..
+            })
+        ));
+        assert!(matches!(
+            lookup("Is"),
+            Some(Leader::Cmd {
+                id: "snippet.pick",
                 ..
             })
         ));

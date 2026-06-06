@@ -1,0 +1,146 @@
+---
+title: AWS CloudWatch Logs viewer
+description: mnml-aws-cloudwatch-logs — a terminal viewer for AWS CloudWatch log groups. Tabbed groups, live tail with severity coloring, filter patterns, console link. Same `aws` CLI auth chain as the other AWS siblings.
+---
+
+[`mnml-aws-cloudwatch-logs`](https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs) is a terminal viewer for AWS CloudWatch Logs — tabbed log groups, per-line severity coloring, filter pattern support, and a one-key jump to the AWS Console. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+
+This generalizes the Logs tabs that used to live inside [`mnml-aws-codebuild`](/manual/integrations/aws-codebuild/) — instead of CodeBuild-specific log groups, this viewer handles any CloudWatch log group (Lambda, API Gateway, ECS, EKS, your own service logs).
+
+```
+┌─ cloudwatch logs ────────────────────────────────────────────────┐
+│ ▸1.lambda errors · tailing  2.api gateway · tailing  3.ecs       │
+└──────────────────────────────────────────────────────────────────┘
+┌─ lambda errors · /aws/lambda/my-function ────────────────────────┐
+│ 2026-06-06T15:43:01.234Z START RequestId: abc-123                 │
+│ 2026-06-06T15:43:01.456Z [ERROR] DynamoDB throttled: …            │
+│ 2026-06-06T15:43:01.789Z END RequestId: abc-123                   │
+│ 2026-06-06T15:43:02.012Z REPORT Duration: 245.67 ms               │
+│ …                                                                 │
+└──────────────────────────────────────────────────────────────────┘
+  1-9 tab · ↑↓/jk scroll · y yank line · o console · q quit
+```
+
+## Install
+
+```sh
+cargo install --git https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs mnml-aws-cloudwatch-logs
+```
+
+You'll also need the [AWS CLI](https://aws.amazon.com/cli/) on your `$PATH` with credentials configured (`aws configure` or any of the usual environment variables / shared-credentials files).
+
+## Setup
+
+1. **Verify the AWS CLI works.** `aws logs describe-log-groups` must succeed before this viewer can.
+2. **Run once** to scaffold the config template:
+   ```sh
+   mnml-aws-cloudwatch-logs
+   ```
+   Writes `~/.config/mnml-aws-cloudwatch-logs.toml` and exits.
+3. **Edit the config** — add your log groups as `[[tabs]]` entries.
+4. **Re-run** — the TUI launches with your configured tabs.
+5. **Verify** the resolved config without launching the TUI:
+   ```sh
+   mnml-aws-cloudwatch-logs --check
+   ```
+
+## Auth shape
+
+There is none on this viewer's side. Every operation is a subprocess call to `aws logs tail --follow`. The CLI's credential chain (env vars → shared credentials → SSO → instance role) is what authenticates. Same shape as every other `mnml-aws-*` sibling — if one works, the others will.
+
+## Config
+
+```toml
+# Optional top-level region (defers to AWS CLI when unset):
+# region = "us-east-1"
+
+refresh_interval_secs = 0
+
+[[tabs]]
+name = "lambda errors"
+log_group = "/aws/lambda/my-function"
+# Optional: narrow to one stream
+# log_stream = "2026/06/06/[$LATEST]abc123"
+# Optional: filter pattern (substring or CloudWatch Logs syntax)
+filter = "ERROR"
+
+[[tabs]]
+name = "api gateway"
+log_group = "/aws/apigateway/my-api"
+
+[[tabs]]
+name = "ecs service"
+log_group = "/ecs/my-service"
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `name` | yes | Tab strip label |
+| `log_group` | yes | CloudWatch log group name (`/aws/lambda/my-func`) |
+| `log_stream` | no | Narrow to one stream — useful when a long-running build has its own stream |
+| `region` | no | Per-tab region override; defers to AWS CLI by default |
+| `filter` | no | CloudWatch Logs filter pattern — passed to `--filter-pattern` |
+
+Filter pattern syntax: <https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html>. Examples:
+
+- `filter = "ERROR"` — substring match
+- `filter = '{ $.level = "error" }'` — JSON field match
+- `filter = "[level=ERROR, ...]"` — space-delimited match
+
+## Keys
+
+| Chord | Action |
+|---|---|
+| `1`-`9` | Switch to that tab |
+| `Tab` / `BackTab` | Cycle tabs |
+| `↑` / `k` | Scroll up (pauses auto-scroll until you `G` back to bottom) |
+| `↓` / `j` | Scroll down (jumps to live-tail at bottom) |
+| `PgUp` / `PgDn` | Page up / down |
+| `g` / `G` | Top / bottom |
+| `o` | Open CloudWatch console URL for the active tab in browser |
+| `y` | Yank focused log line to OS clipboard |
+| `r` | No-op (the tail is already live; reserved for future re-spawn) |
+| `q` / `Esc` / `Ctrl+C` | Quit |
+
+Each tab maintains a 5000-line scrollback buffer. Lines are
+classified into 4 severities (`ERROR` red / `WARN` yellow / `INFO`
+cyan / `DEBUG` dim) so scrolling through a long run is much
+easier to scan than uniform output.
+
+## Why this is a sibling, not built into mnml-aws-codebuild
+
+The CodeBuild sibling has Logs tabs because CodeBuild builds emit their own log streams under `/aws/codebuild/<project>`. Those tabs only know about CodeBuild-shaped log groups. The CloudWatch sibling generalizes the same `aws logs tail` machinery to any log group, with per-tab filter patterns and a wider feature set (yank, console jump). If you only care about CodeBuild log groups, the CodeBuild sibling's Logs tabs are fine; for everything else, run this one.
+
+## Two run modes
+
+### Standalone
+
+```sh
+mnml-aws-cloudwatch-logs
+```
+
+### Blit-host (hosted by mnml)
+
+```vim
+:host.launch mnml-aws-cloudwatch-logs
+```
+
+mnml spawns the binary with `--blit <socket>` and renders the cells into a regular `Pane::BlitHost`. `Ctrl+E` returns focus to the layout tree.
+
+## Wire it into mnml's left rail
+
+`mnml-aws-cloudwatch-logs` ships as a default chip in mnml's rail under **INTEGRATIONS**. Bound to `<leader>i w` in the whichkey leader menu (vim mode), or palette-runnable as `forge.open_cloudwatch_logs`.
+
+## Status
+
+**v0.1** — tabbed log groups, live tail with severity coloring, filter patterns, console open, line yank, 5K-line scrollback per tab.
+
+Held back for v0.2+:
+- Multi-stream selection within a tab
+- CloudWatch Logs Insights query mode
+- Saved searches
+- Log-group picker overlay (config-only today)
+
+## Source
+
+[github.com/chris-mclennan/mnml-aws-cloudwatch-logs](https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs). MIT.

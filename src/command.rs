@@ -1093,6 +1093,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-fs-s3"),
         },
         Command {
+            id: "forge.open_cloudwatch_logs",
+            title: "Forge: open CloudWatch Logs viewer (mnml-aws-cloudwatch-logs)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-aws-cloudwatch-logs"),
+        },
+        Command {
+            id: "forge.open_amplify",
+            title: "Forge: open AWS Amplify viewer (mnml-aws-amplify)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-aws-amplify"),
+        },
+        Command {
+            id: "forge.open_dynamodb",
+            title: "Forge: open DynamoDB browser (mnml-db-dynamodb)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-db-dynamodb"),
+        },
+        Command {
             id: "editor.jump_next_edit",
             title: "Jump to next edit position (vim `g,`)",
             group: "editor",
