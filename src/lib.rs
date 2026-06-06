@@ -62,6 +62,7 @@ pub(crate) mod now_playing;
 pub(crate) mod pane;
 pub(crate) mod pane_host;
 pub(crate) mod picker;
+pub mod pipeline_log;
 pub(crate) mod playwright;
 pub(crate) mod prompt;
 pub(crate) mod pty_pane;

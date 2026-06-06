@@ -31,12 +31,14 @@ use std::time::Duration;
 use crate::config::{BitbucketConfig, BitbucketRepo};
 
 pub mod api;
-pub mod log_pane;
 pub mod pipelines_pane;
 pub mod pull_requests_pane;
 
 pub use api::{PipelineRecord, PipelineState, PullRequestRecord, PullRequestState};
-pub use log_pane::{LogHost, PipelineLogEvent, PipelineLogPane, PipelineLogState};
+// Pipeline-log infra moved to `crate::pipeline_log` (shared across
+// hosts). Re-exported here for callers that still expect the old
+// `crate::bitbucket::PipelineLog*` path.
+pub use crate::pipeline_log::{LogHost, PipelineLogEvent, PipelineLogPane, PipelineLogState};
 pub use pipelines_pane::{BitbucketPipelinesPane, PipelineViewMode};
 pub use pull_requests_pane::{BitbucketPullRequestsPane, PrViewMode};
 
