@@ -635,10 +635,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     p.scroll + n
                 };
             }
-            Some(Pane::GitlabPipelines(_))
-            | Some(Pane::GitlabMergeRequests(_))
-            | Some(Pane::AzDevOpsBuilds(_))
-            | Some(Pane::AzDevOpsPullRequests(_)) => {
+            Some(Pane::GitlabPipelines(_)) | Some(Pane::GitlabMergeRequests(_)) => {
                 // Wheel-scroll for the SCM/CI panes is handled below the
                 // match so the borrow on `app.panes` releases first — we
                 // need an immutable read of `app.config` to compute the
@@ -743,32 +740,6 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
             };
             let max_idx = flat.len();
             if let Some(Pane::GitlabMergeRequests(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        } else if matches!(app.panes.get(pid), Some(Pane::AzDevOpsBuilds(_))) {
-            let flat = match app.az_builds_view_mode {
-                crate::azdevops::AzBuildsViewMode::Recent => {
-                    crate::ui::azdevops_builds_view::flatten_builds(app)
-                }
-                crate::azdevops::AzBuildsViewMode::PerBranch => {
-                    crate::ui::azdevops_builds_view::flatten_branch_builds(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::AzDevOpsBuilds(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        } else if matches!(app.panes.get(pid), Some(Pane::AzDevOpsPullRequests(_))) {
-            let flat = match app.az_prs_view_mode {
-                crate::azdevops::AzPrViewMode::PerRepo => {
-                    crate::ui::azdevops_pull_requests_view::flatten_prs(app)
-                }
-                crate::azdevops::AzPrViewMode::Mine => {
-                    crate::ui::azdevops_pull_requests_view::flatten_my_prs(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::AzDevOpsPullRequests(p)) = app.panes.get_mut(pid) {
                 p.move_selection(delta as i64, max_idx);
             }
         }
@@ -1079,60 +1050,6 @@ pub(crate) fn handle_scm_row_click(
                 }
             } else if is_double_click {
                 app.open_selected_gitlab_mr_url();
-            }
-        }
-        Some(Pane::AzDevOpsBuilds(_)) => {
-            let flat = match app.az_builds_view_mode {
-                crate::azdevops::AzBuildsViewMode::Recent => {
-                    crate::ui::azdevops_builds_view::flatten_builds(app)
-                }
-                crate::azdevops::AzBuildsViewMode::PerBranch => {
-                    crate::ui::azdevops_builds_view::flatten_branch_builds(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::azdevops_builds_view::RowKind::Header;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::AzDevOpsBuilds(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.az_builds_collapsed.contains(&header_label) {
-                    app.az_builds_collapsed.remove(&header_label);
-                } else {
-                    app.az_builds_collapsed.insert(header_label);
-                }
-            } else if is_double_click {
-                app.open_selected_azdevops_build_url();
-            }
-        }
-        Some(Pane::AzDevOpsPullRequests(_)) => {
-            let flat = match app.az_prs_view_mode {
-                crate::azdevops::AzPrViewMode::PerRepo => {
-                    crate::ui::azdevops_pull_requests_view::flatten_prs(app)
-                }
-                crate::azdevops::AzPrViewMode::Mine => {
-                    crate::ui::azdevops_pull_requests_view::flatten_my_prs(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::azdevops_pull_requests_view::RowKind::Header;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::AzDevOpsPullRequests(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.az_prs_collapsed.contains(&header_label) {
-                    app.az_prs_collapsed.remove(&header_label);
-                } else {
-                    app.az_prs_collapsed.insert(header_label);
-                }
-            } else if is_double_click {
-                app.open_selected_azdevops_pr_url();
             }
         }
         _ => {}

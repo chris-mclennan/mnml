@@ -259,10 +259,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::GitlabMergeRequests(_) => {
                 (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().orange)
             }
-            Pane::AzDevOpsBuilds(_) => (if nerd { "\u{f171}" } else { "⚡" }, theme::cur().blue),
-            Pane::AzDevOpsPullRequests(_) => {
-                (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().blue)
-            }
             #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(_) => (if nerd { "\u{f487}" } else { "⚒" }, theme::cur().orange),
             #[cfg(feature = "aws-codebuild")]

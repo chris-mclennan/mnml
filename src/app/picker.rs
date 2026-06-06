@@ -164,30 +164,11 @@ impl App {
                 });
             }
         }
-        // Azure DevOps — label already shaped "org/project/repo".
-        for (label, prs) in &self.azdevops_pull_requests {
-            for pr in prs {
-                rows.push(Row {
-                    host_tag: "AZ",
-                    repo_label: label.clone(),
-                    number: format!("#{}", pr.id),
-                    title: pr.title.clone(),
-                    state_label: pr.state.label(),
-                    author: pr.author.clone(),
-                    source: pr.source_branch.clone(),
-                    dest: pr.dest_branch.clone(),
-                    reviewers: pr.reviewer_count,
-                    approved: pr.approved_count,
-                    changes: pr.changes_count,
-                    comments: pr.comment_count,
-                    ts_ms: pr.created_at_ms.unwrap_or(0),
-                    web_url: pr.web_url.clone(),
-                });
-            }
-        }
+        // Azure DevOps + Bitbucket + GitHub all moved to standalone
+        // mnml-forge-* binaries; only GitLab caches feed the picker now.
         if rows.is_empty() {
             self.toast(
-                "no open PRs in cache yet — configure [[bitbucket.repos]] / [[github.repos]] / [[gitlab.projects]] / [[azdevops.projects]] and wait one poll cycle",
+                "no open PRs in cache yet — configure [[gitlab.projects]] and wait one poll cycle",
             );
             return;
         }
@@ -1268,14 +1249,11 @@ mod picker_tests {
     use super::*;
 
     #[test]
-    fn open_pr_picker_aggregates_all_hosts_sorted_by_updated() {
-        // Seed one PR per remaining host in `App`'s per-host caches,
-        // fire the picker, check it lists them all + sorts the
-        // most-recently-updated first. (BB + GH panes were split out
-        // to standalone forge binaries; this picker covers GL + AZ.)
+    fn open_pr_picker_lists_gitlab_only() {
+        // BB / GH / AZ panes moved to standalone forge binaries, so
+        // the picker now only aggregates GitLab MRs in mnml core.
         let d = tempfile::tempdir().unwrap();
         let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
-        // GL — newest update.
         app.gitlab_merge_requests.insert(
             "group/project".into(),
             vec![crate::gitlab::MergeRequestRecord {
@@ -1295,57 +1273,13 @@ mod picker_tests {
                 web_url: "https://gitlab.com/group/project/-/merge_requests/17".into(),
             }],
         );
-        // AZ — second-newest (created-only).
-        app.azdevops_pull_requests.insert(
-            "org/project/repo".into(),
-            vec![crate::azdevops::PullRequestRecord {
-                label: "org/project/repo".into(),
-                id: 99,
-                title: "AZ chore".into(),
-                state: crate::azdevops::PullRequestState::Active,
-                author: Some("dave".into()),
-                source_branch: Some("feature/az".into()),
-                dest_branch: Some("main".into()),
-                reviewer_count: 1,
-                approved_count: 0,
-                changes_count: 0,
-                comment_count: 0,
-                created_at_ms: Some(3_500),
-                web_url: "https://dev.azure.com/org/project/_git/repo/pullrequest/99".into(),
-            }],
-        );
         app.open_pr_picker();
         let picker = app.picker.as_ref().expect("picker should have opened");
         assert_eq!(picker.kind, crate::picker::PickerKind::OpenPullRequests);
         let labels: Vec<String> = picker.items_view().map(|it| it.label.clone()).collect();
-        assert_eq!(labels.len(), 2, "GL + AZ represented");
-        // Most-recently-updated first: GL (4000) > AZ (3500).
-        assert!(labels[0].contains("[GL]"), "GL first, got {:?}", labels[0]);
-        assert!(labels[1].contains("[AZ]"), "AZ second, got {:?}", labels[1]);
-        // The id encodes URL + cross-nav payload (delimited by `\x1F`).
-        // First field is the URL.
-        let ids: Vec<String> = picker.items_view().map(|it| it.id.clone()).collect();
-        let first_url = ids[0].split('\x1F').next().unwrap_or("");
-        assert!(first_url.starts_with("https://gitlab.com/"));
-        // Subsequent fields encode host_tag, repo_label, source_branch
-        // for Tab → cross-nav-to-pipeline.
-        let parts: Vec<&str> = ids[0].split('\x1F').collect();
-        assert_eq!(parts.len(), 4, "id should have 4 \\x1F-delimited fields");
-        assert_eq!(parts[1], "GL");
-        assert_eq!(parts[2], "group/project");
-        assert_eq!(parts[3], "feature/gl");
-        // Fuzzy match shrinks to one host (label contains "AZ" and "chore").
-        let mut picker = app.picker.take().unwrap();
-        for c in "chore".chars() {
-            picker.type_char(c);
-        }
-        assert_eq!(picker.len(), 1, "fuzzy 'chore' narrows to AZ only");
+        assert_eq!(labels.len(), 1, "GL only");
+        assert!(labels[0].contains("[GL]"), "GL row, got {:?}", labels[0]);
     }
-
-    // Removed: picker_accept_secondary_cross_navs_pr_to_pipeline
-    // — that test exercised the BB-PR → BB-pipeline cross-nav, but the
-    // Bitbucket panes were split out into mnml-forge-bitbucket. The
-    // generic cross-nav path is still covered by GH/GL/AZ tests above.
 
     #[test]
     fn open_repo_picker_no_op_when_single() {

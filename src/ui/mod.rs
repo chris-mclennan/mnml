@@ -22,8 +22,7 @@
 pub mod about_overlay;
 pub mod activity_bar;
 pub mod ai_view;
-pub mod azdevops_builds_view;
-pub mod azdevops_pull_requests_view;
+// Azure DevOps views moved to mnml-forge-azdevops.
 pub mod blit_host_view;
 pub mod browser_view;
 pub mod bufferline;
@@ -627,8 +626,6 @@ fn render_layout(
                 Some(crate::pane::Pane::CodeBuilds(_)) => 18,
                 Some(crate::pane::Pane::GitlabPipelines(_)) => 23,
                 Some(crate::pane::Pane::GitlabMergeRequests(_)) => 24,
-                Some(crate::pane::Pane::AzDevOpsBuilds(_)) => 25,
-                Some(crate::pane::Pane::AzDevOpsPullRequests(_)) => 26,
                 Some(crate::pane::Pane::PipelineLog(_)) => 27,
                 #[cfg(feature = "aws-codebuild")]
                 Some(crate::pane::Pane::LogTail(_)) => 28,
@@ -662,8 +659,6 @@ fn render_layout(
                 18 => codebuilds_view::draw(frame, app, *id, area, focused),
                 23 => gitlab_pipelines_view::draw(frame, app, *id, area, focused),
                 24 => gitlab_merge_requests_view::draw(frame, app, *id, area, focused),
-                25 => azdevops_builds_view::draw(frame, app, *id, area, focused),
-                26 => azdevops_pull_requests_view::draw(frame, app, *id, area, focused),
                 27 => {
                     if let Some(crate::pane::Pane::PipelineLog(p)) = app.panes.get_mut(*id) {
                         pipeline_log_view::draw(frame, p, area);

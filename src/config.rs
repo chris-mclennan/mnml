@@ -72,7 +72,7 @@ pub struct Config {
     pub playwright: PlaywrightConfig,
     pub ci: CiConfig,
     pub gitlab: GitlabConfig,
-    pub azdevops: AzDevOpsConfig,
+    // [azdevops] config moved to mnml-forge-azdevops.
     /// `[[workspaces]]` — additional workspaces shown as sibling sections in
     /// the file-tree rail (alongside the launched workspace at the top).
     /// Each entry is a `(name, path)` pair; `~` is expanded.
@@ -156,53 +156,7 @@ impl GitlabConfig {
     }
 }
 
-/// `[azdevops]` — Azure DevOps integration. Builds + Pull Requests.
-/// Each `[[azdevops.projects]]` entry is `{org, project, repo}` since
-/// Azure scopes pipelines to a project and PRs to a repo within a
-/// project. Mine PRs are fetched per-unique-org.
-///
-/// ```toml
-/// [azdevops]
-/// auth_env  = "AZDO_TOKEN"   # PAT (base64-encoded as :PAT in the Basic header)
-/// poll_secs = 60
-///
-/// [[azdevops.projects]]
-/// org     = "my-org"
-/// project = "MyProject"
-/// repo    = "my-repo"
-/// ```
-#[derive(Debug, Clone, Default)]
-pub struct AzDevOpsConfig {
-    pub auth_env: Option<String>,
-    pub poll_secs: Option<u64>,
-    pub projects: Vec<AzDevOpsProject>,
-    /// Override for the `searchCriteria.creatorId=me` literal in the
-    /// cross-org "my PRs" query. Azure DevOps accepts `me` in recent API
-    /// versions, but if your org's tenant rejects it (400/404), set this
-    /// to your account's GUID (visible at User Settings → Personal
-    /// access tokens, or via `https://app.vssps.visualstudio.com/_apis/profile/profiles/me`).
-    pub creator_id: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct AzDevOpsProject {
-    pub org: String,
-    pub project: String,
-    pub repo: String,
-    pub branches: Vec<String>,
-}
-
-impl AzDevOpsConfig {
-    pub fn any_configured(&self) -> bool {
-        !self.projects.is_empty()
-    }
-    pub fn auth_env_name(&self) -> &str {
-        self.auth_env.as_deref().unwrap_or("AZDO_TOKEN")
-    }
-    pub fn poll_secs_or_default(&self) -> u64 {
-        self.poll_secs.unwrap_or(60).max(5)
-    }
-}
+// `[azdevops]` panes + config moved to mnml-forge-azdevops in 2026-06.
 
 /// `[ci]` — Continuous-integration provider settings. Consumed by the
 /// `aws-codebuild` Cargo feature's CodeBuild integration
@@ -735,6 +689,18 @@ impl Default for Config {
                         color: "fg".to_string(),
                         tooltip: Some("GitHub Actions + PRs".to_string()),
                     },
+                    IntegrationIcon {
+                        id: "azdevops".to_string(),
+                        glyph: "\u{EBE8}".to_string(), // nf-cod-azure
+                        fallback: "A".to_string(),
+                        // Launches the standalone mnml-forge-azdevops
+                        // viewer as a blit-host pane. User must have it
+                        // installed (`cargo install --git
+                        // https://github.com/chris-mclennan/mnml-forge-azdevops`).
+                        command: ":host.launch mnml-forge-azdevops".to_string(),
+                        color: "blue".to_string(),
+                        tooltip: Some("Azure DevOps PRs + builds".to_string()),
+                    },
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,
@@ -759,7 +725,6 @@ impl Default for Config {
             playwright: PlaywrightConfig::default(),
             ci: CiConfig::default(),
             gitlab: GitlabConfig::default(),
-            azdevops: AzDevOpsConfig::default(),
             workspaces: Vec::new(),
         }
     }
@@ -802,8 +767,6 @@ struct RawConfig {
     #[serde(default)]
     gitlab: RawGitlab,
     #[serde(default)]
-    azdevops: RawAzDevOps,
-    #[serde(default)]
     workspaces: Vec<RawWorkspace>,
 }
 
@@ -811,24 +774,6 @@ struct RawConfig {
 struct RawWorkspace {
     name: Option<String>,
     path: String,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawAzDevOps {
-    auth_env: Option<String>,
-    poll_secs: Option<u64>,
-    creator_id: Option<String>,
-    #[serde(default)]
-    projects: Vec<RawAzDevOpsProject>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawAzDevOpsProject {
-    org: String,
-    project: String,
-    repo: String,
-    #[serde(default)]
-    branches: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1280,24 +1225,8 @@ impl Config {
                 branches: r.branches,
             });
         }
-        // Azure DevOps
-        if let Some(v) = raw.azdevops.auth_env {
-            self.azdevops.auth_env = Some(v);
-        }
-        if let Some(v) = raw.azdevops.poll_secs {
-            self.azdevops.poll_secs = Some(v);
-        }
-        if let Some(v) = raw.azdevops.creator_id {
-            self.azdevops.creator_id = Some(v);
-        }
-        for r in raw.azdevops.projects {
-            self.azdevops.projects.push(AzDevOpsProject {
-                org: r.org,
-                project: r.project,
-                repo: r.repo,
-                branches: r.branches,
-            });
-        }
+        // `[azdevops]` section is silently ignored — Azure DevOps
+        // panes moved to mnml-forge-azdevops in 2026-06.
         // `[[workspaces]]` — additional sibling workspaces. Append (rather
         // than replace) so a workspace-local file can extend the homedir
         // set. Tilde-expanded so users can write `~/Projects/foo`. Missing
@@ -1430,7 +1359,10 @@ slug      = "example-api"
     }
 
     #[test]
-    fn azdevops_creator_id_override_parses() {
+    fn azdevops_section_silently_ignored() {
+        // Azure DevOps panes moved to mnml-forge-azdevops — parser
+        // should not error on `[azdevops]` sections in existing user
+        // configs.
         let dir = tempfile::tempdir().unwrap();
         let cfg_path = dir.path().join("config.toml");
         let mut f = std::fs::File::create(&cfg_path).unwrap();
@@ -1439,7 +1371,6 @@ slug      = "example-api"
             r#"
 [azdevops]
 auth_env   = "AZDO_TOKEN"
-creator_id = "abcdef12-3456-7890-abcd-ef1234567890"
 
 [[azdevops.projects]]
 org     = "exampleorg"
@@ -1448,21 +1379,9 @@ repo    = "api"
 "#
         )
         .unwrap();
-
         let mut cfg = Config::default();
         cfg.apply_file_pub(&cfg_path);
-        assert_eq!(cfg.azdevops.auth_env_name(), "AZDO_TOKEN");
-        assert_eq!(
-            cfg.azdevops.creator_id.as_deref(),
-            Some("abcdef12-3456-7890-abcd-ef1234567890")
-        );
-        assert_eq!(cfg.azdevops.projects.len(), 1);
-    }
-
-    #[test]
-    fn azdevops_creator_id_defaults_to_none() {
-        let cfg = Config::default();
-        assert!(cfg.azdevops.creator_id.is_none());
+        let _ = cfg;
     }
 
     #[test]

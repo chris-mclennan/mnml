@@ -1716,25 +1716,8 @@ impl App {
                         });
                     }
                 }
-            } else if host.contains("dev.azure.com") || host.contains("visualstudio.com") {
-                // Azure DevOps key shape is `"org/project/repo"`. The remote
-                // URL doesn't carry the project distinct from the repo in
-                // every variant — match by suffix endsWith `/repo`.
-                for (label, prs) in &self.azdevops_pull_requests {
-                    if label.ends_with(&format!("/{repo}")) {
-                        for pr in prs {
-                            out.push(PullRow {
-                                host_tag: "AZ",
-                                number_label: format!("#{}", pr.id),
-                                title: pr.title.clone(),
-                                source_branch: pr.source_branch.clone(),
-                                is_current_branch: pr.source_branch == current_branch,
-                                web_url: pr.web_url.clone(),
-                            });
-                        }
-                    }
-                }
             }
+            // (Azure DevOps PR badging moved to mnml-forge-azdevops.)
         }
         // Sort: current-branch PR(s) first, then everything else in insertion
         // order (which is recency from the worker pass).

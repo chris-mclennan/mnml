@@ -20,7 +20,7 @@ use crate::tree::Tree;
 
 #[cfg(feature = "aws-codebuild")]
 mod aws;
-mod azdevops;
+// `mod azdevops` was split out to mnml-forge-azdevops in 2026-06.
 // `mod github` was split out to mnml-forge-github in 2026-06.
 mod gitlab;
 
@@ -1065,14 +1065,8 @@ struct SavedSession {
     gl_mrs_view_mode: Option<crate::gitlab::GlMrViewMode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     gl_mrs_collapsed: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    az_builds_view_mode: Option<crate::azdevops::AzBuildsViewMode>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    az_builds_collapsed: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    az_prs_view_mode: Option<crate::azdevops::AzPrViewMode>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    az_prs_collapsed: Vec<String>,
+    // az_builds_*, az_prs_*, azdevops_* fields moved to
+    // mnml-forge-azdevops in 2026-06.
     /// Harpoon-style pinned files — fixed 9-slot list, indices 0..9 mapped
     /// to `<leader>1`..`<leader>9`. Each slot is either an absolute path or
     /// empty. Persisted so pins survive relaunch.
@@ -2828,21 +2822,7 @@ pub struct App {
     pub(crate) gl_pipelines_collapsed: std::collections::HashSet<String>,
     pub(crate) gl_mrs_view_mode: crate::gitlab::GlMrViewMode,
     pub(crate) gl_mrs_collapsed: std::collections::HashSet<String>,
-    /// Azure DevOps worker handle + caches.
-    azdevops_handle: Option<crate::azdevops::AzDevOpsHandle>,
-    pub(crate) azdevops_builds:
-        std::collections::HashMap<String, Vec<crate::azdevops::BuildRecord>>,
-    pub(crate) azdevops_branch_builds:
-        std::collections::HashMap<String, Vec<crate::azdevops::BranchBuildSlot>>,
-    pub(crate) azdevops_pull_requests:
-        std::collections::HashMap<String, Vec<crate::azdevops::PullRequestRecord>>,
-    pub(crate) azdevops_my_pull_requests: Vec<crate::azdevops::PullRequestRecord>,
-    pub(crate) azdevops_last_error: Option<String>,
-    pub(crate) azdevops_connected: bool,
-    pub(crate) az_builds_view_mode: crate::azdevops::AzBuildsViewMode,
-    pub(crate) az_builds_collapsed: std::collections::HashSet<String>,
-    pub(crate) az_prs_view_mode: crate::azdevops::AzPrViewMode,
-    pub(crate) az_prs_collapsed: std::collections::HashSet<String>,
+    // Azure DevOps worker + caches moved to mnml-forge-azdevops.
     // GitHub worker + caches moved to mnml-forge-github.
     /// Job id of an in-flight "AI: write me a commit message" run (it shares
     /// `ai_chan`; when it lands, the commit prompt opens pre-seeded instead of an
@@ -3170,17 +3150,6 @@ impl App {
             gl_pipelines_collapsed: std::collections::HashSet::new(),
             gl_mrs_view_mode: Default::default(),
             gl_mrs_collapsed: std::collections::HashSet::new(),
-            azdevops_handle: None,
-            azdevops_builds: std::collections::HashMap::new(),
-            azdevops_branch_builds: std::collections::HashMap::new(),
-            azdevops_pull_requests: std::collections::HashMap::new(),
-            azdevops_my_pull_requests: Vec::new(),
-            azdevops_last_error: None,
-            azdevops_connected: false,
-            az_builds_view_mode: Default::default(),
-            az_builds_collapsed: std::collections::HashSet::new(),
-            az_prs_view_mode: Default::default(),
-            az_prs_collapsed: std::collections::HashSet::new(),
             pending_commit_msg_job: None,
             pending_amend_msg_job: None,
             pending_wip_commit_msg_pane: None,
@@ -3868,42 +3837,8 @@ impl App {
                 self.toast(format!("→ pipeline #{}", pipeline.id));
             }
             "AZ" => {
-                // Azure repo_label is "org/project/repo"; builds are
-                // keyed by "org/project" (no /repo suffix). Match by
-                // prefix.
-                let build_key_prefix = repo_label
-                    .rsplit_once('/')
-                    .map(|(p, _)| p)
-                    .unwrap_or(repo_label);
-                let builds = self
-                    .azdevops_builds
-                    .get(repo_label)
-                    .or_else(|| self.azdevops_builds.get(build_key_prefix));
-                let Some(builds) = builds else {
-                    self.toast(format!("no builds cached for {repo_label}"));
-                    return;
-                };
-                let Some(build) = builds
-                    .iter()
-                    .find(|b| b.target_ref.as_deref() == Some(branch))
-                    .cloned()
-                else {
-                    self.toast(format!("no build on branch '{branch}' yet"));
-                    return;
-                };
-                self.az_builds_view_mode = crate::azdevops::AzBuildsViewMode::Recent;
-                self.open_azdevops_builds_pane();
-                let flat = crate::ui::azdevops_builds_view::flatten_builds(self);
-                if let Some(idx) = flat
-                    .iter()
-                    .position(|r| r.build.as_ref().map(|b| b.id == build.id).unwrap_or(false))
-                    && let Some(active) = self.active
-                    && let Some(Pane::AzDevOpsBuilds(p)) = self.panes.get_mut(active)
-                {
-                    p.selected = idx;
-                    p.scroll = 0;
-                }
-                self.toast(format!("→ build #{}", build.id));
+                let _ = (repo_label, branch);
+                self.toast("Azure DevOps panes moved to mnml-forge-azdevops");
             }
             other => {
                 self.toast(format!("unknown host tag '{other}'"));
@@ -7083,8 +7018,6 @@ impl App {
             Pane::PipelineLog(p) => Some((p.title.clone(), false)),
             Pane::GitlabPipelines(p) => Some((p.tab_title(), false)),
             Pane::GitlabMergeRequests(p) => Some((p.tab_title(), false)),
-            Pane::AzDevOpsBuilds(p) => Some((p.tab_title(), false)),
-            Pane::AzDevOpsPullRequests(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "aws-codebuild")]
@@ -8481,7 +8414,6 @@ impl App {
         #[cfg(feature = "aws-codebuild")]
         self.drain_codebuild_events();
         self.drain_gitlab_events();
-        self.drain_azdevops_events();
         self.drain_pipeline_log_events();
         #[cfg(feature = "aws-codebuild")]
         self.drain_log_tail_events();

@@ -2945,56 +2945,7 @@ fn builtin_commands() -> Vec<Command> {
         keys: &[],
         run: |app| app.copy_selected_gitlab_mr_url(),
     });
-    // Azure DevOps
-    cmds.push(Command {
-        id: "azdevops.builds",
-        title: "Azure DevOps: open builds dashboard",
-        group: "azdevops",
-        keys: &[],
-        run: |app| app.open_azdevops_builds_pane(),
-    });
-    cmds.push(Command {
-        id: "azdevops.pull_requests",
-        title: "Azure DevOps: open pull-requests dashboard",
-        group: "azdevops",
-        keys: &[],
-        run: |app| app.open_azdevops_pull_requests_pane(),
-    });
-    cmds.push(Command {
-        id: "azdevops.refresh_active",
-        title: "Azure DevOps: refresh the active pane",
-        group: "azdevops",
-        keys: &[],
-        run: |app| app.refresh_active_azdevops_pane(),
-    });
-    cmds.push(Command {
-        id: "azdevops.open_selected_build_url",
-        title: "Azure DevOps: open selected build in browser",
-        group: "azdevops",
-        keys: &[],
-        run: |app| app.open_selected_azdevops_build_url(),
-    });
-    cmds.push(Command {
-        id: "azdevops.copy_selected_build_url",
-        title: "Azure DevOps: copy selected build URL",
-        group: "azdevops",
-        keys: &[],
-        run: |app| app.copy_selected_azdevops_build_url(),
-    });
-    cmds.push(Command {
-        id: "azdevops.open_selected_pr_url",
-        title: "Azure DevOps: open selected PR in browser",
-        group: "azdevops",
-        keys: &[],
-        run: |app| app.open_selected_azdevops_pr_url(),
-    });
-    cmds.push(Command {
-        id: "azdevops.copy_selected_pr_url",
-        title: "Azure DevOps: copy selected PR URL",
-        group: "azdevops",
-        keys: &[],
-        run: |app| app.copy_selected_azdevops_pr_url(),
-    });
+    // Azure DevOps commands moved to mnml-forge-azdevops in 2026-06.
     // Cross-host: one fuzzy picker over every open PR across all 4 SCM
     // hosts. Reads from the per-host caches the SCM workers populate;
     // accept opens the chosen PR's web URL.
@@ -3016,13 +2967,6 @@ fn builtin_commands() -> Vec<Command> {
         run: |app| app.open_gitlab_pipeline_log(),
     });
     cmds.push(Command {
-        id: "azdevops.build_log",
-        title: "Azure DevOps: open log for selected build",
-        group: "azdevops",
-        keys: &[],
-        run: |app| app.open_azdevops_build_log(),
-    });
-    cmds.push(Command {
         id: "gitlab.jump_mr_to_pipeline",
         title: "GitLab: MR → pipeline on same branch",
         group: "gitlab",
@@ -3035,20 +2979,6 @@ fn builtin_commands() -> Vec<Command> {
         group: "gitlab",
         keys: &[],
         run: |app| app.jump_from_gl_pipeline_to_mr(),
-    });
-    cmds.push(Command {
-        id: "azdevops.jump_pr_to_build",
-        title: "Azure DevOps: PR → build on same branch",
-        group: "azdevops",
-        keys: &[],
-        run: |app| app.jump_from_az_pr_to_build(),
-    });
-    cmds.push(Command {
-        id: "azdevops.jump_build_to_pr",
-        title: "Azure DevOps: build → PR on same branch",
-        group: "azdevops",
-        keys: &[],
-        run: |app| app.jump_from_az_build_to_pr(),
     });
     #[cfg(feature = "aws-codebuild")]
     {

@@ -20,7 +20,8 @@ pub mod ai;
 pub mod app;
 #[cfg(feature = "aws-codebuild")]
 pub mod aws;
-pub mod azdevops;
+// `mod azdevops` was split out to the standalone mnml-forge-azdevops
+// binary in 2026-06.
 pub mod blit;
 pub(crate) mod browser_pane;
 pub(crate) mod buffer;

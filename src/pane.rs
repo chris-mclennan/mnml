@@ -10,7 +10,7 @@ use crate::ai::AiPane;
 use crate::aws::codebuilds_pane::CodeBuildsPane;
 #[cfg(feature = "aws-codebuild")]
 use crate::aws::log_tail_pane::LogTailPane;
-use crate::azdevops::{AzDevOpsBuildsPane, AzDevOpsPullRequestsPane};
+// Azure DevOps panes moved to mnml-forge-azdevops in 2026-06.
 use crate::browser_pane::BrowserPane;
 use crate::buffer::Buffer;
 use crate::cheatsheet::CheatsheetPane;
@@ -85,10 +85,6 @@ pub enum Pane {
     GitlabPipelines(GitlabPipelinesPane),
     /// GitLab open merge requests list.
     GitlabMergeRequests(GitlabMergeRequestsPane),
-    /// Azure DevOps builds list.
-    AzDevOpsBuilds(AzDevOpsBuildsPane),
-    /// Azure DevOps active pull requests list.
-    AzDevOpsPullRequests(AzDevOpsPullRequestsPane),
     /// AWS CodeBuild recent-builds browser. Behind the `aws-codebuild`
     /// Cargo feature; shells out to the `aws` CLI.
     #[cfg(feature = "aws-codebuild")]
@@ -447,8 +443,6 @@ impl Pane {
             Pane::PipelineLog(p) => p.title.clone(),
             Pane::GitlabPipelines(p) => p.tab_title(),
             Pane::GitlabMergeRequests(p) => p.tab_title(),
-            Pane::AzDevOpsBuilds(p) => p.tab_title(),
-            Pane::AzDevOpsPullRequests(p) => p.tab_title(),
             #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(p) => p.tab_title(),
             #[cfg(feature = "aws-codebuild")]
@@ -484,8 +478,6 @@ impl Pane {
             | Pane::PipelineLog(_)
             | Pane::GitlabPipelines(_)
             | Pane::GitlabMergeRequests(_)
-            | Pane::AzDevOpsBuilds(_)
-            | Pane::AzDevOpsPullRequests(_)
             | Pane::Cheatsheet(_)
             | Pane::Debug(_)
             | Pane::DapRepl(_)

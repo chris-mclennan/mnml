@@ -210,10 +210,6 @@ impl App {
             gl_pipelines_collapsed: self.gl_pipelines_collapsed.iter().cloned().collect(),
             gl_mrs_view_mode: Some(self.gl_mrs_view_mode),
             gl_mrs_collapsed: self.gl_mrs_collapsed.iter().cloned().collect(),
-            az_builds_view_mode: Some(self.az_builds_view_mode),
-            az_builds_collapsed: self.az_builds_collapsed.iter().cloned().collect(),
-            az_prs_view_mode: Some(self.az_prs_view_mode),
-            az_prs_collapsed: self.az_prs_collapsed.iter().cloned().collect(),
             harpoon: if self.harpoon.iter().all(|s| s.is_none()) {
                 Vec::new()
             } else {
@@ -537,14 +533,7 @@ impl App {
             self.gl_mrs_view_mode = m;
         }
         self.gl_mrs_collapsed = saved.gl_mrs_collapsed.into_iter().collect();
-        if let Some(m) = saved.az_builds_view_mode {
-            self.az_builds_view_mode = m;
-        }
-        self.az_builds_collapsed = saved.az_builds_collapsed.into_iter().collect();
-        if let Some(m) = saved.az_prs_view_mode {
-            self.az_prs_view_mode = m;
-        }
-        self.az_prs_collapsed = saved.az_prs_collapsed.into_iter().collect();
+        // (AZ view-mode + collapsed state moved to mnml-forge-azdevops.)
         // Harpoon slots — restore up to 9 (silently drop any extras a
         // hand-edited session.json might carry).
         for (i, slot) in saved.harpoon.into_iter().take(9).enumerate() {

@@ -90,31 +90,12 @@ impl App {
                     )
                 }
                 LogHost::Azure => {
-                    let auth_header = crate::azdevops::api::auth_header_value(&token);
-                    let client = match crate::azdevops::api::build_client() {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let _ = tx.send(PipelineLogEvent::Failed { job_id, err: e });
-                            return;
-                        }
-                    };
-                    let build_id: u64 = match id3.parse() {
-                        Ok(n) => n,
-                        Err(_) => {
-                            let _ = tx.send(PipelineLogEvent::Failed {
-                                job_id,
-                                err: format!("bad AZ build_id: {id3}"),
-                            });
-                            return;
-                        }
-                    };
-                    crate::azdevops::api::fetch_combined_build_log(
-                        &client,
-                        &auth_header,
-                        &id1,
-                        &id2,
-                        build_id,
-                    )
+                    // Azure DevOps panes moved to mnml-forge-azdevops
+                    // in 2026-06. The arm is kept so LogHost stays
+                    // exhaustive; never hit from mnml core after the
+                    // split.
+                    let _ = (&token, &id1, &id2, &id3);
+                    Err("Azure DevOps panes are in mnml-forge-azdevops".to_string())
                 }
             };
             match result {
@@ -224,12 +205,11 @@ impl App {
                 .auth_env
                 .clone()
                 .unwrap_or_else(|| "GITLAB_TOKEN".to_string()),
-            crate::pipeline_log::LogHost::Azure => self
-                .config
-                .azdevops
-                .auth_env
-                .clone()
-                .unwrap_or_else(|| "AZDO_TOKEN".to_string()),
+            crate::pipeline_log::LogHost::Azure => {
+                // Config block is gone after the mnml-forge-azdevops
+                // split; arm kept for LogHost exhaustiveness.
+                "AZDO_TOKEN".to_string()
+            }
         };
         self.spawn_log_fetch_inner(
             new_job, host, auth_env, id1, id2, id3, host_extra, new_cancel,
