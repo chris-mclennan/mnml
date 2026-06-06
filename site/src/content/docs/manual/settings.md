@@ -396,6 +396,22 @@ Existing `[bitbucket]`, `[github]`, `[gitlab]`, `[azdevops]` sections in your mn
 
 Mnml's default config still seeds four launcher chips in the rail's INTEGRATIONS row (`bitbucket`, `github`, `gitlab`, `azdevops`) that fire `:host.launch mnml-forge-<host>` — install whichever siblings you use and click the chip to open the viewer.
 
+#### Cross-host PR workflow
+
+mnml ships palette commands and whichkey chords that fan out across whichever forge siblings you have installed. See the [Cross-host PR workflow page](/manual/cross-host-prs/) for the full picture.
+
+| Command | Chord (vim) | Action |
+|---|---|---|
+| `pr.picker` | `<leader>P p` | Cross-host fuzzy picker — Enter opens URL, Tab cross-navs to the matching pipeline / build |
+| `pr.refresh` | `<leader>P r` | Background re-fetch of the cross-host PR cache (5-min TTL) |
+| `forge.open_bitbucket` | `<leader>i b` | `:host.launch mnml-forge-bitbucket` |
+| `forge.open_github` | `<leader>i g` | `:host.launch mnml-forge-github` |
+| `forge.open_gitlab` | `<leader>i l` | `:host.launch mnml-forge-gitlab` |
+| `forge.open_azdevops` | `<leader>i z` | `:host.launch mnml-forge-azdevops` |
+| `forge.open_codebuild` | `<leader>i c` | `:host.launch mnml-aws-codebuild` |
+
+All commands are chord-bindable via `[keys.global]` / `[keys.vim]` / `[keys.standard]` if you want different bindings than the whichkey defaults.
+
 ### `[ai]` and `[http]`
 
 The `[ai]` and `[http]` tables are **parsed-and-kept**: mnml accepts whatever shape your file has and won't error. A small fixed set of keys are read directly today (listed below); the rest is held in the table for forward compatibility.

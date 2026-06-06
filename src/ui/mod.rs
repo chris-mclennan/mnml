@@ -73,7 +73,7 @@ pub mod tests_view;
 pub mod theme;
 pub mod toast_stack;
 pub mod tooltip;
-// `trace_view` moved to mnml-playwright in 2026-06.
+// `trace_view` moved to mnml-test-playwright in 2026-06.
 pub mod tree_view;
 pub mod welcome;
 pub mod welcome_overlay;

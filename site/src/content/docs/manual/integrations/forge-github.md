@@ -151,6 +151,7 @@ Edit or replace freely; you're not locked in. Tabs are switched via `1`-`9` keys
 | `PgUp` / `PgDn` | Jump 10 rows |
 | `g` / `G` | Top / bottom |
 | `Enter` / `o` | Open focused issue / PR / workflow run in your browser |
+| `y` | Yank focused row's URL to the OS clipboard |
 | `r` | Refresh active tab |
 | `q` / `Esc` / `Ctrl+C` | Quit |
 

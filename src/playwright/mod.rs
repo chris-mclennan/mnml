@@ -8,9 +8,9 @@
 //! not there), like the git track shells out to `git`. CodeBuild integration
 //! (for runs triggered from CI) is behind the `aws-codebuild` feature.
 //!
-//! Trace pane moved to the standalone `mnml-playwright` binary in
+//! Trace pane moved to the standalone `mnml-test-playwright` binary in
 //! 2026-06. mnml's `tests.open_trace` (`t` on a failed test) now
-//! shells out to `:host.launch mnml-playwright <trace.zip>` so the
+//! shells out to `:host.launch mnml-test-playwright <trace.zip>` so the
 //! trace opens in a hosted blit-host pane.
 
 pub mod flaky_pane;

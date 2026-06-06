@@ -559,7 +559,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     delta.unsigned_abs() as isize
                 });
             }
-            // `Pane::Trace` wheel-scroll moved to mnml-playwright.
+            // `Pane::Trace` wheel-scroll moved to mnml-test-playwright.
             Some(Pane::Browser(b)) => {
                 let step = if delta < 0 {
                     -(delta.unsigned_abs() as isize)

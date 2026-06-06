@@ -185,10 +185,37 @@ Edit or replace freely; you're not locked in.
 | `PgUp` / `PgDn` | Jump 10 rows |
 | `g` / `G` | Top / bottom |
 | `Enter` / `o` | Open focused PR or build in your browser |
+| `y` | Yank focused row's URL to the OS clipboard (`pbcopy` / `xclip` / `wl-copy` / `clip.exe`) |
 | `r` | Refresh active tab |
 | `q` / `Esc` / `Ctrl+C` | Quit |
 
 Auto-refresh runs every `refresh_interval_secs` seconds (default `60`, set to `0` to disable).
+
+## Headless JSON modes
+
+Two flags expose the sibling to mnml's cross-host `pr.picker`:
+
+```sh
+# Stdout: { "host": "azdevops", "prs": [SiblingPr, ...] }
+mnml-forge-azdevops --list-prs --json
+
+# Stdout: { "url": "..." | null }
+mnml-forge-azdevops --find-pipeline-for-pr \
+    --owner <org>/<project> --repo <repo> --branch <branch> --json
+```
+
+`SiblingPr` fields: `id, url, owner, repo, title, author,
+source_branch, dest_branch, state, updated_at, remote_url_https,
+remote_url_ssh`. Same shape across all four `mnml-forge-*` siblings
+— see the [cross-host PR workflow page](/manual/cross-host-prs/)
+for how mnml fans out across hosts.
+
+Per-host caveats here:
+- **`owner`** for Azure DevOps is `<org>/<project>` (not just org),
+  since AZ scopes repos under nested project paths.
+- **`--find-pipeline-for-pr`** finds the most-recent **build** for
+  the given branch (AZ uses "build" instead of "pipeline" in its
+  API surface).
 
 ## Two run modes
 

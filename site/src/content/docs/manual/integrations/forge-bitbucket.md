@@ -159,6 +159,7 @@ Edit or replace freely; you're not locked in.
 | `PgUp` / `PgDn` | Jump 10 rows |
 | `g` / `G` | Top / bottom |
 | `Enter` / `o` | Open focused PR (or pipeline / branch) in your browser |
+| `y` | Yank focused row's URL to the OS clipboard |
 | `d` | Toggle right-half PR detail panel |
 | `Ctrl+U` / `Ctrl+D` | Scroll detail panel up / down (when open) |
 | `a` | Toggle your approval on the focused PR (detail panel must be open) |

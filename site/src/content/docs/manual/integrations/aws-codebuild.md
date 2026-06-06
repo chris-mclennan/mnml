@@ -137,9 +137,17 @@ Each line gets severity-classified via the same `LineSeverity::classify` machine
 | `↑` / `k`, `↓` / `j` | Move selection (builds tab) / scroll log (logs tab) |
 | `PgUp` / `PgDn` | Jump 10 rows / one page |
 | `g` / `G` | Top / bottom |
-| `Enter` / `o` | Open focused build in browser |
+| `Enter` / `o` | Open focused build in browser (CodeBuild console page) |
+| `y` | Yank focused build's CodeBuild console URL to the OS clipboard |
+| `L` | Open ephemeral Logs tab tailing the focused build's CloudWatch stream (or switch to an existing one) |
 | `r` | Refresh active tab (builds: re-list; logs: no-op — already live) |
 | `q` / `Esc` / `Ctrl+C` | Quit |
+
+`L` drills from the Builds list into a per-build Logs tab — the
+log group + stream come from CodeBuild's `batch-get-builds`
+response (`logs.groupName` + `logs.streamName`). The new Logs
+tab is named `<short-build-id> logs`; switching back to the same
+build re-uses the existing tab.
 
 ## Two run modes
 

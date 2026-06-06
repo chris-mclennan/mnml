@@ -1,9 +1,9 @@
 ---
 title: Playwright trace viewer
-description: mnml-playwright — a terminal viewer for Playwright trace.zip files. Per-action timeline, console messages, errors, stdio with type-toggle filters. The test runner stays in mnml core; this is just the trace viewer.
+description: mnml-test-playwright — a terminal viewer for Playwright trace.zip files. Per-action timeline, console messages, errors, stdio with type-toggle filters. The test runner stays in mnml core; this is just the trace viewer.
 ---
 
-[`mnml-playwright`](https://github.com/chris-mclennan/mnml-playwright) is a terminal viewer for Playwright `trace.zip` files — the artifact each failing (or `trace: 'on'`) Playwright test drops in `test-results/<test>/`. Browse the per-action timeline, console messages, errors, and stdio with type-toggle filters. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+[`mnml-test-playwright`](https://github.com/chris-mclennan/mnml-test-playwright) is a terminal viewer for Playwright `trace.zip` files — the artifact each failing (or `trace: 'on'`) Playwright test drops in `test-results/<test>/`. Browse the per-action timeline, console messages, errors, and stdio with type-toggle filters. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
 
 ```
 ┌─ trace ──────────────────────────────────────────────────────────┐
@@ -34,17 +34,17 @@ This split landed 2026-06-06; the in-tree `Pane::Trace` was removed.
 ## Install
 
 ```sh
-cargo install --git https://github.com/chris-mclennan/mnml-playwright mnml-playwright
+cargo install --git https://github.com/chris-mclennan/mnml-test-playwright mnml-test-playwright
 ```
 
 ## Usage
 
 ```sh
 # Open a single trace.zip
-mnml-playwright path/to/trace.zip
+mnml-test-playwright path/to/trace.zip
 
 # Print version and exit (no auth or config to validate — trace files are self-contained)
-mnml-playwright --check
+mnml-test-playwright --check
 ```
 
 The path is **positional** — no config file in v0.1. Trace files are self-contained ZIPs (test name, action timeline, console messages, network requests, screenshots, snapshots) so there's nothing to set up.
@@ -99,7 +99,7 @@ Default on open: all four kinds visible.
 ### Standalone
 
 ```sh
-mnml-playwright path/to/trace.zip
+mnml-test-playwright path/to/trace.zip
 ```
 
 The TUI takes over until you `q`.
@@ -107,7 +107,7 @@ The TUI takes over until you `q`.
 ### Blit-host (hosted by mnml)
 
 ```vim
-:host.launch mnml-playwright path/to/trace.zip
+:host.launch mnml-test-playwright path/to/trace.zip
 ```
 
 mnml spawns it with `--blit <socket>` and renders the streamed cells into a native `Pane::BlitHost`. The pane becomes a normal mnml pane — splittable, focusable, key-routed. `Ctrl+E` releases focus back to the layout tree. See [Building integrations](/manual/integrations/building/) for the protocol mechanism.
@@ -123,14 +123,14 @@ If you want a one-click chip in mnml's rail that opens the last failing trace, d
 id       = "playwright_trace"
 glyph    = "\U000F0668"            # nf-md-play_circle (TOML 8-digit form)
 fallback = "P"
-command  = ":host.launch mnml-playwright last-failure-trace.zip"
+command  = ":host.launch mnml-test-playwright last-failure-trace.zip"
 color    = "purple"
 tooltip  = "Open last Playwright trace"
 ```
 
 Setting `[[ui.integration_icon]]` **replaces** the built-in defaults, so copy the defaults from `src/config.rs` into your config first if you want to extend rather than replace. See [the launcher-icon strips](/manual/settings/#the-launcher-icon-strips) for the field reference.
 
-You can also point `command` at a shell-resolved path via `:host.launch mnml-playwright $(find test-results -name trace.zip | head -1)` — though that requires the shell to expand before the ex-cmdline runs, which mnml's parser doesn't do today. For dynamic paths, the easier route is a thin wrapper script that calls `mnml-playwright` with the discovered path.
+You can also point `command` at a shell-resolved path via `:host.launch mnml-test-playwright $(find test-results -name trace.zip | head -1)` — though that requires the shell to expand before the ex-cmdline runs, which mnml's parser doesn't do today. For dynamic paths, the easier route is a thin wrapper script that calls `mnml-test-playwright` with the discovered path.
 
 ## Status
 
@@ -142,4 +142,4 @@ You can also point `command` at a shell-resolved path via `:host.launch mnml-pla
 
 ## Source
 
-The viewer lives in its own sibling repo: [github.com/chris-mclennan/mnml-playwright](https://github.com/chris-mclennan/mnml-playwright). MIT-licensed. See [Building integrations](/manual/integrations/building/) for the anatomy of an integration, or [Community integrations](/manual/integrations/community/) for the directory of siblings.
+The viewer lives in its own sibling repo: [github.com/chris-mclennan/mnml-test-playwright](https://github.com/chris-mclennan/mnml-test-playwright). MIT-licensed. See [Building integrations](/manual/integrations/building/) for the anatomy of an integration, or [Community integrations](/manual/integrations/community/) for the directory of siblings.

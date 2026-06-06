@@ -173,11 +173,11 @@ impl App {
         self.run_playwright(args);
     }
 
-    /// `t` in a tests pane — launch the standalone `mnml-playwright`
+    /// `t` in a tests pane — launch the standalone `mnml-test-playwright`
     /// viewer on the highlighted test's retained `trace.zip` (we run
     /// with `--trace=retain-on-failure`, so failures have one). The
-    /// in-tree `Pane::Trace` viewer moved out to mnml-playwright in
-    /// 2026-06; this method now dispatches `:host.launch mnml-playwright
+    /// in-tree `Pane::Trace` viewer moved out to mnml-test-playwright in
+    /// 2026-06; this method now dispatches `:host.launch mnml-test-playwright
     /// <path>` so the trace opens in a regular blit-host pane.
     pub fn open_selected_test_trace(&mut self) {
         let path = match self.active.and_then(|i| self.panes.get(i)) {
@@ -195,17 +195,17 @@ impl App {
             return;
         };
         self.host_launch(
-            "mnml-playwright".to_string(),
+            "mnml-test-playwright".to_string(),
             vec![path.to_string_lossy().into_owned()],
         );
     }
 
     /// Stub kept after the Trace pane moved out — the standalone
-    /// `mnml-playwright` has its own `r` reload. The mnml command
+    /// `mnml-test-playwright` has its own `r` reload. The mnml command
     /// surface (`tests.refresh_trace`) is preserved as a no-op so
     /// existing keybindings don't error.
     pub fn refresh_active_trace(&mut self) {
-        self.toast("trace viewer moved to mnml-playwright; press `r` inside the hosted pane");
+        self.toast("trace viewer moved to mnml-test-playwright; press `r` inside the hosted pane");
     }
 
     /// `test.heal` (`h` in a tests pane) — hand the highlighted *failing* test (its
@@ -253,11 +253,11 @@ impl App {
 
     /// Stub kept after the Trace pane moved out — `heal_from_active_trace`
     /// used to read the trace events from a `Pane::Trace`, but those
-    /// live in the standalone mnml-playwright now. The command surface
+    /// live in the standalone mnml-test-playwright now. The command surface
     /// is preserved as a no-op toast.
     pub fn heal_from_active_trace(&mut self) {
         self.toast(
-            "trace-driven heal moved with the trace viewer to mnml-playwright; \
+            "trace-driven heal moved with the trace viewer to mnml-test-playwright; \
              use `tests.heal` (`h` on the test row) for the spec-only heal flow",
         );
     }

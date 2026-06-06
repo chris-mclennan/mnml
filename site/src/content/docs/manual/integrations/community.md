@@ -46,7 +46,7 @@ Test-tooling viewers — runners stay in mnml core (editor-integrated); these ar
 
 | Integration | Backend | Repo |
 |---|---|---|
-| `mnml-playwright` | Playwright `trace.zip` viewer — per-action timeline + console + errors | [chris-mclennan/mnml-playwright](https://github.com/chris-mclennan/mnml-playwright) |
+| `mnml-test-playwright` | Playwright `trace.zip` viewer — per-action timeline + console + errors | [chris-mclennan/mnml-test-playwright](https://github.com/chris-mclennan/mnml-test-playwright) |
 
 ### Database viewers
 
