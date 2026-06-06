@@ -130,6 +130,46 @@ If the Pty pane immediately exits with `cargo: command not found`, you don't hav
 
 `y` is the same command, copied to the clipboard for use outside mnml — handy if you'd rather review it before running, or pin a different tag than the catalog default.
 
+## Auto-discovery
+
+The `+` overlay isn't limited to the first-party catalog. Any binary named `mnml-<class>-<name>` that lives on `PATH` (or in one of the well-known install dirs from the [detection table](#how-mnml-detects-installation)) is surfaced automatically — community siblings, forks, and your own `mnml-*-*` scratch tools all appear without a PR to mnml or a config edit.
+
+The sweep runs once per overlay-open session and is cached for that session. Opening the `+` overlay calls `integration_detect::clear_all_caches()` first, so a sibling you `cargo install`-ed in another shell shows up the moment you re-open the overlay — no `:integrations.refresh` needed. The reserved names `mnml` (the editor itself) and `mnml-info` are filtered out.
+
+Discovered rows render in the same category sections as catalog rows, with a `· auto-discovered` chip appended to the status text so you can tell where the entry came from:
+
+```
+── Trackers ──────────────────────────────────────────────
+  ✓  mnml-tracker-jira            installed (in rail)
+  ✓  mnml-tracker-linear          installed · auto-discovered
+```
+
+Category and chip color are derived from the class prefix. New sibling authors targeting one of these classes get a sensible default icon for free; anything outside the table falls through to `Other`:
+
+| `class` prefix | Category | Default chip color |
+|---|---|---|
+| `aws` | AWS | yellow |
+| `db` | Databases | teal |
+| `forge` | Forges (SCM) | blue |
+| `tracker` | Trackers | purple |
+| `fs` | Filesystems | orange |
+| `test` | Test runners | green |
+| anything else | Other | cyan |
+
+The glyph is always a generic nerd-font cog (`nf-fa-cog`, ``). The fallback is the first two characters of `<name>`, uppercased. If you want a richer per-tool glyph or a distinct color, that's exactly what the hardcoded catalog gives you — open a PR adding your sibling to `src/family_catalog.rs`.
+
+Catalog rows and auto-discovered rows differ on two of the overlay keys, because auto-discovered entries are installed by definition and mnml doesn't know their source repo:
+
+| Key | Catalog row | Auto-discovered row |
+|---|---|---|
+| `Enter` | Adds chip + persists to `config.toml` | Same — adds chip + persists |
+| `i` | Spawns a Pty running `cargo install …` | No-op (toasts "already installed — nothing to install") |
+| `y` | Copies the `cargo install …` command | No-op (toasts "install source unknown, no command to yank") |
+
+:::tip[For sibling authors]
+Ship a binary named `mnml-<class>-<name>` and put it on `PATH` (or in `~/.cargo/bin`, which `cargo install` writes to). It appears in every mnml user's `+` overlay the next time they open it — no registry, no manifest, no PR. A catalog entry in mnml itself is still worth it for users who want one-keystroke install via `i`/`y` and a richer per-tool icon, but discoverability is free.
+:::
+
 ### Manual install commands
 
 If you'd rather skip the overlay (or you're on an older mnml), every sibling installs with the same shape:
