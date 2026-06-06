@@ -21,7 +21,6 @@ pub mod app;
 #[cfg(feature = "aws-codebuild")]
 pub mod aws;
 pub mod azdevops;
-pub mod bitbucket;
 pub mod blit;
 pub(crate) mod browser_pane;
 pub(crate) mod buffer;

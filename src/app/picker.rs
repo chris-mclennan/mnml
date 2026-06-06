@@ -139,27 +139,8 @@ impl App {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
         let mut rows: Vec<Row> = Vec::new();
-        // Bitbucket — keyed by (workspace, slug).
-        for ((ws, slug), prs) in &self.bitbucket_pull_requests {
-            for pr in prs {
-                rows.push(Row {
-                    host_tag: "BB",
-                    repo_label: format!("{ws}/{slug}"),
-                    number: format!("#{}", pr.id),
-                    title: pr.title.clone(),
-                    state_label: pr.state.label(),
-                    author: pr.author.clone(),
-                    source: pr.source_branch.clone(),
-                    dest: pr.dest_branch.clone(),
-                    reviewers: pr.reviewer_count,
-                    approved: pr.approved_count,
-                    changes: pr.changes_count,
-                    comments: pr.comment_count,
-                    ts_ms: pr.updated_on_ms.or(pr.created_on_ms).unwrap_or(0),
-                    web_url: pr.web_url.clone(),
-                });
-            }
-        }
+        // Bitbucket panes moved to mnml-forge-bitbucket — no in-mnml
+        // PR cache to surface in the picker any more.
         // GitHub — keyed by (owner, repo). Comments + review comments
         // combined for the unified `comments` count.
         for ((owner, repo), prs) in &self.github_pull_requests {
@@ -1313,28 +1294,8 @@ mod picker_tests {
         // and check it lists all 4 + sorts the most-recently-updated first.
         let d = tempfile::tempdir().unwrap();
         let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
-        // BB — oldest update.
-        app.bitbucket_pull_requests.insert(
-            ("exampleorg".into(), "example-api".into()),
-            vec![crate::bitbucket::PullRequestRecord {
-                workspace: "exampleorg".into(),
-                slug: "example-api".into(),
-                id: 42,
-                title: "BB fix thing".into(),
-                state: crate::bitbucket::PullRequestState::Open,
-                author: Some("alice".into()),
-                source_branch: Some("feature/bb".into()),
-                dest_branch: Some("main".into()),
-                reviewer_count: 2,
-                approved_count: 1,
-                changes_count: 0,
-                comment_count: 3,
-                task_count: 0,
-                created_on_ms: Some(1_000),
-                updated_on_ms: Some(1_000),
-                web_url: "https://bitbucket.org/exampleorg/example-api/pull-requests/42".into(),
-            }],
-        );
+        // BB seed removed — Bitbucket panes split out into
+        // mnml-forge-bitbucket; this picker is now GH / GL / AZ only.
         // GH — middle update.
         app.github_pull_requests.insert(
             ("exampleorg".into(), "repo".into()),
@@ -1400,12 +1361,11 @@ mod picker_tests {
         let picker = app.picker.as_ref().expect("picker should have opened");
         assert_eq!(picker.kind, crate::picker::PickerKind::OpenPullRequests);
         let labels: Vec<String> = picker.items_view().map(|it| it.label.clone()).collect();
-        assert_eq!(labels.len(), 4, "all four hosts represented");
-        // Most-recently-updated first: GL (4000) > AZ (3500) > GH (2000) > BB (1000).
+        assert_eq!(labels.len(), 3, "all three hosts represented");
+        // Most-recently-updated first: GL (4000) > AZ (3500) > GH (2000).
         assert!(labels[0].contains("[GL]"), "GL first, got {:?}", labels[0]);
         assert!(labels[1].contains("[AZ]"), "AZ second, got {:?}", labels[1]);
         assert!(labels[2].contains("[GH]"), "GH third, got {:?}", labels[2]);
-        assert!(labels[3].contains("[BB]"), "BB fourth, got {:?}", labels[3]);
         // The id encodes URL + cross-nav payload (delimited by `\x1F`).
         // First field is the URL.
         let ids: Vec<String> = picker.items_view().map(|it| it.id.clone()).collect();
@@ -1426,73 +1386,10 @@ mod picker_tests {
         assert_eq!(picker.len(), 1, "fuzzy 'refactor' narrows to GH only");
     }
 
-    #[test]
-    fn picker_accept_secondary_cross_navs_pr_to_pipeline() {
-        // Set up: BB repo with a PR + a matching pipeline on the same branch.
-        // Open the cross-host PR picker, Tab on the row → pipelines pane
-        // opens, selection lands on the matching pipeline.
-        let d = tempfile::tempdir().unwrap();
-        let mut cfg = Config::default();
-        cfg.bitbucket.repos = vec![crate::config::BitbucketRepo {
-            workspace: "exampleorg".into(),
-            slug: "example-api".into(),
-            branches: Vec::new(),
-        }];
-        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
-        app.bitbucket_pipelines.insert(
-            ("exampleorg".into(), "example-api".into()),
-            vec![crate::bitbucket::PipelineRecord {
-                workspace: "exampleorg".into(),
-                slug: "example-api".into(),
-                uuid: "uuid-99".into(),
-                build_number: 99,
-                state: crate::bitbucket::PipelineState::Successful,
-                target_ref: Some("feature/cross".into()),
-                target_kind: Some("BRANCH".into()),
-                commit_hash: None,
-                creator: None,
-                trigger: None,
-                created_on_ms: Some(0),
-                completed_on_ms: None,
-                duration_secs: None,
-                running_step: None,
-                web_url: "u".into(),
-            }],
-        );
-        app.bitbucket_pull_requests.insert(
-            ("exampleorg".into(), "example-api".into()),
-            vec![crate::bitbucket::PullRequestRecord {
-                workspace: "exampleorg".into(),
-                slug: "example-api".into(),
-                id: 1,
-                title: "Cross-nav PR".into(),
-                state: crate::bitbucket::PullRequestState::Open,
-                author: None,
-                source_branch: Some("feature/cross".into()),
-                dest_branch: Some("main".into()),
-                reviewer_count: 0,
-                approved_count: 0,
-                changes_count: 0,
-                comment_count: 0,
-                task_count: 0,
-                created_on_ms: Some(0),
-                updated_on_ms: Some(0),
-                web_url: "https://bitbucket.org/...".into(),
-            }],
-        );
-        app.open_pr_picker();
-        assert!(app.picker.is_some(), "picker should be open");
-        // Picker has only the one PR — selection is already at idx 0.
-        app.picker_accept_secondary();
-        // Picker should now be closed.
-        assert!(app.picker.is_none(), "picker should close after Tab");
-        // Active pane should be the BB pipelines pane.
-        let active = app.active.expect("active pane");
-        assert!(
-            matches!(app.panes.get(active), Some(Pane::BitbucketPipelines(_))),
-            "active should be BB pipelines pane after cross-nav"
-        );
-    }
+    // Removed: picker_accept_secondary_cross_navs_pr_to_pipeline
+    // — that test exercised the BB-PR → BB-pipeline cross-nav, but the
+    // Bitbucket panes were split out into mnml-forge-bitbucket. The
+    // generic cross-nav path is still covered by GH/GL/AZ tests above.
 
     #[test]
     fn open_repo_picker_no_op_when_single() {

@@ -1725,171 +1725,37 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // Bitbucket pipelines browser: ↑↓/jk/PgUp/PgDn/g/G navigate every
-    // row (headers selectable too), Enter → toggle collapse on a
-    // header / open in browser on a data row, y → copy URL,
-    // r → refresh, v → flip view-mode, Esc → tree.
-    if matches!(app.panes.get(i), Some(Pane::BitbucketPipelines(_))) {
-        // Flatten with the pane's actual view-mode — otherwise key
-        // handlers look up rows in the wrong layout and Right/Left
-        // mis-target headers in PerBranch mode.
-        let flat = match app.bb_pipelines_view_mode {
-            crate::bitbucket::PipelineViewMode::Recent => {
-                crate::ui::bitbucket_pipelines_view::flatten_pipelines(app)
-            }
-            crate::bitbucket::PipelineViewMode::PerBranch => {
-                crate::ui::bitbucket_pipelines_view::flatten_branch_pipelines(app)
-            }
-        };
-        let max_idx = flat.len();
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
-                    p.move_selection(-1, max_idx);
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
-                    p.move_selection(1, max_idx);
-                }
-            }
-            KeyCode::PageUp => {
-                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
-                    p.move_selection(-(viewport as i64), max_idx);
-                }
-            }
-            KeyCode::PageDown => {
-                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
-                    p.move_selection(viewport as i64, max_idx);
-                }
-            }
-            KeyCode::Home | KeyCode::Char('g') => {
-                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
-                    p.move_selection(i64::MIN / 2, max_idx);
-                }
-            }
-            KeyCode::End | KeyCode::Char('G') => {
-                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
-                    p.move_selection(i64::MAX / 2, max_idx);
-                }
-            }
-            // Right (or `l`): expand a collapsed header.
-            KeyCode::Right | KeyCode::Char('l') => {
-                let sel = match app.panes.get(i) {
-                    Some(Pane::BitbucketPipelines(p)) => p.selected,
-                    _ => 0,
-                };
-                if let Some(row) = flat.get(sel)
-                    && row.kind == crate::ui::bitbucket_pipelines_view::RowKind::Header
-                    && app.bb_pipelines_collapsed.contains(&row.header_label)
-                {
-                    app.bb_pipelines_collapsed.remove(&row.header_label);
-                }
-            }
-            // Left (or `h`): on an expanded header → collapse; on a child
-            // row → jump up to the parent header (tree convention).
-            KeyCode::Left | KeyCode::Char('h') => {
-                let sel = match app.panes.get(i) {
-                    Some(Pane::BitbucketPipelines(p)) => p.selected,
-                    _ => 0,
-                };
-                let header_kind = crate::ui::bitbucket_pipelines_view::RowKind::Header;
-                if let Some(row) = flat.get(sel) {
-                    if row.kind == header_kind {
-                        if !app.bb_pipelines_collapsed.contains(&row.header_label) {
-                            app.bb_pipelines_collapsed.insert(row.header_label.clone());
-                        }
-                    } else {
-                        let parent_idx = (0..sel)
-                            .rev()
-                            .find(|&j| flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false));
-                        if let Some(idx) = parent_idx
-                            && let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i)
-                        {
-                            p.selected = idx;
-                        }
-                    }
-                }
-            }
-            KeyCode::Enter => {
-                // Header row ⇒ toggle collapse. Data row ⇒ open URL.
-                let sel = match app.panes.get(i) {
-                    Some(Pane::BitbucketPipelines(p)) => p.selected,
-                    _ => 0,
-                };
-                let header_label = flat
-                    .get(sel)
-                    .filter(|r| r.kind == crate::ui::bitbucket_pipelines_view::RowKind::Header)
-                    .map(|r| r.header_label.clone());
-                if let Some(label) = header_label {
-                    let now_collapsed = if app.bb_pipelines_collapsed.contains(&label) {
-                        app.bb_pipelines_collapsed.remove(&label);
-                        false
-                    } else {
-                        app.bb_pipelines_collapsed.insert(label.clone());
-                        true
-                    };
-                    app.toast(format!(
-                        "{label}: {}",
-                        if now_collapsed {
-                            "collapsed"
-                        } else {
-                            "expanded"
-                        }
-                    ));
-                } else {
-                    app.open_selected_bitbucket_pipeline_url();
-                }
-            }
-            KeyCode::Char('y') => app.copy_selected_bitbucket_pipeline_url(),
-            KeyCode::Char('r') => app.refresh_active_bitbucket_pane(),
-            KeyCode::Char('P') => app.jump_from_bb_pipeline_to_pr(),
-            KeyCode::Char('L') => app.open_bitbucket_pipeline_log(),
-            KeyCode::Char('v') => {
-                let new_mode = app.bb_pipelines_view_mode.cycle();
-                app.bb_pipelines_view_mode = new_mode;
-                if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(i) {
-                    p.selected = 0;
-                    p.scroll = 0;
-                }
-                app.toast(format!("bitbucket pipelines: view → {}", new_mode.label()));
-            }
-            KeyCode::Esc => app.focus_tree(),
-            _ => {}
-        }
-        return;
-    }
 
     // Bitbucket pipeline-log viewer: scrollable text, no list selection.
-    if matches!(app.panes.get(i), Some(Pane::BitbucketPipelineLog(_))) {
+    if matches!(app.panes.get(i), Some(Pane::PipelineLog(_))) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(i) {
+                if let Some(Pane::PipelineLog(p)) = app.panes.get_mut(i) {
                     p.scroll = p.scroll.saturating_sub(1);
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(i) {
+                if let Some(Pane::PipelineLog(p)) = app.panes.get_mut(i) {
                     p.scroll = p.scroll.saturating_add(1);
                 }
             }
             KeyCode::PageUp => {
-                if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(i) {
+                if let Some(Pane::PipelineLog(p)) = app.panes.get_mut(i) {
                     p.scroll = p.scroll.saturating_sub(10);
                 }
             }
             KeyCode::PageDown => {
-                if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(i) {
+                if let Some(Pane::PipelineLog(p)) = app.panes.get_mut(i) {
                     p.scroll = p.scroll.saturating_add(10);
                 }
             }
             KeyCode::Home | KeyCode::Char('g') => {
-                if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(i) {
+                if let Some(Pane::PipelineLog(p)) = app.panes.get_mut(i) {
                     p.scroll = 0;
                 }
             }
             KeyCode::End | KeyCode::Char('G') => {
-                if let Some(Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(i) {
+                if let Some(Pane::PipelineLog(p)) = app.panes.get_mut(i) {
                     p.scroll = usize::MAX; // clamped on next render
                 }
             }
@@ -1904,132 +1770,6 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
 
     // Bitbucket pull requests browser: same key shape as the pipelines
     // pane; Enter / y act on the row's PR URL.
-    if matches!(app.panes.get(i), Some(Pane::BitbucketPullRequests(_))) {
-        let flat = match app.bb_prs_view_mode {
-            crate::bitbucket::PrViewMode::PerRepo => {
-                crate::ui::bitbucket_pull_requests_view::flatten_prs(app)
-            }
-            crate::bitbucket::PrViewMode::Mine => {
-                crate::ui::bitbucket_pull_requests_view::flatten_my_prs(app)
-            }
-        };
-        let max_idx = flat.len();
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i) {
-                    p.move_selection(-1, max_idx);
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i) {
-                    p.move_selection(1, max_idx);
-                }
-            }
-            KeyCode::PageUp => {
-                if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i) {
-                    p.move_selection(-(viewport as i64), max_idx);
-                }
-            }
-            KeyCode::PageDown => {
-                if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i) {
-                    p.move_selection(viewport as i64, max_idx);
-                }
-            }
-            KeyCode::Home | KeyCode::Char('g') => {
-                if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i) {
-                    p.move_selection(i64::MIN / 2, max_idx);
-                }
-            }
-            KeyCode::End | KeyCode::Char('G') => {
-                if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i) {
-                    p.move_selection(i64::MAX / 2, max_idx);
-                }
-            }
-            KeyCode::Right | KeyCode::Char('l') => {
-                let sel = match app.panes.get(i) {
-                    Some(Pane::BitbucketPullRequests(p)) => p.selected,
-                    _ => 0,
-                };
-                if let Some(row) = flat.get(sel)
-                    && row.kind == crate::ui::bitbucket_pull_requests_view::RowKind::Header
-                    && app.bb_prs_collapsed.contains(&row.header_label)
-                {
-                    app.bb_prs_collapsed.remove(&row.header_label);
-                }
-            }
-            KeyCode::Left | KeyCode::Char('h') => {
-                let sel = match app.panes.get(i) {
-                    Some(Pane::BitbucketPullRequests(p)) => p.selected,
-                    _ => 0,
-                };
-                let header_kind = crate::ui::bitbucket_pull_requests_view::RowKind::Header;
-                if let Some(row) = flat.get(sel) {
-                    if row.kind == header_kind {
-                        if !app.bb_prs_collapsed.contains(&row.header_label) {
-                            app.bb_prs_collapsed.insert(row.header_label.clone());
-                        }
-                    } else {
-                        let parent_idx = (0..sel)
-                            .rev()
-                            .find(|&j| flat.get(j).map(|r| r.kind == header_kind).unwrap_or(false));
-                        if let Some(idx) = parent_idx
-                            && let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i)
-                        {
-                            p.selected = idx;
-                        }
-                    }
-                }
-            }
-            KeyCode::Enter => {
-                let sel = match app.panes.get(i) {
-                    Some(Pane::BitbucketPullRequests(p)) => p.selected,
-                    _ => 0,
-                };
-                let row_kind_label = flat.get(sel).map(|r| (r.kind, r.header_label.clone()));
-                match row_kind_label {
-                    Some((crate::ui::bitbucket_pull_requests_view::RowKind::Header, label)) => {
-                        let now_collapsed = if app.bb_prs_collapsed.contains(&label) {
-                            app.bb_prs_collapsed.remove(&label);
-                            false
-                        } else {
-                            app.bb_prs_collapsed.insert(label.clone());
-                            true
-                        };
-                        app.toast(format!(
-                            "{label}: {}",
-                            if now_collapsed {
-                                "collapsed"
-                            } else {
-                                "expanded"
-                            }
-                        ));
-                    }
-                    Some((crate::ui::bitbucket_pull_requests_view::RowKind::ShowMore, label)) => {
-                        app.bb_prs_expanded.insert(label);
-                    }
-                    Some((crate::ui::bitbucket_pull_requests_view::RowKind::ShowLess, label)) => {
-                        app.bb_prs_expanded.remove(&label);
-                    }
-                    _ => app.open_selected_bitbucket_pr_url(),
-                }
-            }
-            KeyCode::Char('y') => app.copy_selected_bitbucket_pr_url(),
-            KeyCode::Char('r') => app.refresh_active_bitbucket_pane(),
-            KeyCode::Char('c') => app.jump_from_bb_pr_to_pipeline(),
-            KeyCode::Char('v') => {
-                let new_mode = app.bb_prs_view_mode.cycle();
-                app.bb_prs_view_mode = new_mode;
-                if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(i) {
-                    p.selected = 0;
-                    p.scroll = 0;
-                }
-                app.toast(format!("bitbucket prs: view → {}", new_mode.label()));
-            }
-            KeyCode::Esc => app.focus_tree(),
-            _ => {}
-        }
-        return;
-    }
 
     // GitHub pull requests browser — sibling of the BB PR pane above.
     if matches!(app.panes.get(i), Some(Pane::GithubPullRequests(_))) {

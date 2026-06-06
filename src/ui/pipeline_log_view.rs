@@ -1,4 +1,4 @@
-//! Renderer for `Pane::BitbucketPipelineLog` — a scrollable read-only
+//! Renderer for `Pane::PipelineLog` — a scrollable read-only
 //! text view with a header line showing fetch state.
 
 use ratatui::Frame;
@@ -7,7 +7,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::bitbucket::{PipelineLogPane, PipelineLogState};
+use crate::pipeline_log::{PipelineLogPane, PipelineLogState};
 use crate::ui::theme;
 
 pub fn draw(frame: &mut Frame, pane: &mut PipelineLogPane, area: Rect) {

@@ -1697,24 +1697,9 @@ impl App {
         let current_branch = self.git_rail.current_branch.clone();
         if let Some((host, owner, repo)) = parsed {
             // Match the remote to whichever per-host cache shape uses it.
-            // Bitbucket / GitHub keys are `(owner-or-ws, repo-or-slug)`.
-            if host.ends_with("bitbucket.org") {
-                if let Some(prs) = self
-                    .bitbucket_pull_requests
-                    .get(&(owner.clone(), repo.clone()))
-                {
-                    for pr in prs {
-                        out.push(PullRow {
-                            host_tag: "BB",
-                            number_label: format!("#{}", pr.id),
-                            title: pr.title.clone(),
-                            source_branch: pr.source_branch.clone(),
-                            is_current_branch: pr.source_branch == current_branch,
-                            web_url: pr.web_url.clone(),
-                        });
-                    }
-                }
-            } else if host.contains("github.com") {
+            // Bitbucket panes moved to mnml-forge-bitbucket; no in-mnml
+            // cache to surface in the rail any more.
+            if host.contains("github.com") {
                 if let Some(prs) = self
                     .github_pull_requests
                     .get(&(owner.clone(), repo.clone()))
@@ -2800,28 +2785,9 @@ mod git_tests {
                 web_url: "https://github.com/exampleorg/repo/pull/7".into(),
             }],
         );
-        // BB cache (must NOT bleed through; we're on a GH remote).
-        app.bitbucket_pull_requests.insert(
-            ("other".into(), "other".into()),
-            vec![crate::bitbucket::PullRequestRecord {
-                workspace: "other".into(),
-                slug: "other".into(),
-                id: 99,
-                title: "BB should not show".into(),
-                state: crate::bitbucket::PullRequestState::Open,
-                author: None,
-                source_branch: Some("any".into()),
-                dest_branch: Some("main".into()),
-                reviewer_count: 0,
-                approved_count: 0,
-                changes_count: 0,
-                comment_count: 0,
-                task_count: 0,
-                created_on_ms: Some(0),
-                updated_on_ms: Some(0),
-                web_url: "https://bitbucket.org/other/other/pull-requests/99".into(),
-            }],
-        );
+        // Bitbucket cache used to be seeded here too, to assert it
+        // didn't bleed through; BB panes moved to mnml-forge-bitbucket
+        // in 2026-06, so there's no internal cache to seed anymore.
         app.refresh_rail_pulls();
         assert_eq!(app.git_rail.pulls.len(), 1, "only matching host shows");
         assert_eq!(app.git_rail.pulls[0].host_tag, "GH");

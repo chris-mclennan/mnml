@@ -627,7 +627,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     p.scroll = p.scroll.saturating_add(n);
                 }
             }
-            Some(Pane::BitbucketPipelineLog(p)) => {
+            Some(Pane::PipelineLog(p)) => {
                 let n = delta.unsigned_abs() as usize;
                 p.scroll = if delta < 0 {
                     p.scroll.saturating_sub(n)
@@ -635,9 +635,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     p.scroll + n
                 };
             }
-            Some(Pane::BitbucketPipelines(_))
-            | Some(Pane::BitbucketPullRequests(_))
-            | Some(Pane::GithubActions(_))
+            Some(Pane::GithubActions(_))
             | Some(Pane::GithubPullRequests(_))
             | Some(Pane::GitlabPipelines(_))
             | Some(Pane::GitlabMergeRequests(_))
@@ -723,33 +721,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         // Each SCM/CI pane's max_idx depends on which view-mode is
         // active — same trap as the key handlers above (flat must match
         // the rendered layout).
-        if matches!(app.panes.get(pid), Some(Pane::BitbucketPipelines(_))) {
-            let flat = match app.bb_pipelines_view_mode {
-                crate::bitbucket::PipelineViewMode::Recent => {
-                    crate::ui::bitbucket_pipelines_view::flatten_pipelines(app)
-                }
-                crate::bitbucket::PipelineViewMode::PerBranch => {
-                    crate::ui::bitbucket_pipelines_view::flatten_branch_pipelines(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        } else if matches!(app.panes.get(pid), Some(Pane::BitbucketPullRequests(_))) {
-            let flat = match app.bb_prs_view_mode {
-                crate::bitbucket::PrViewMode::PerRepo => {
-                    crate::ui::bitbucket_pull_requests_view::flatten_prs(app)
-                }
-                crate::bitbucket::PrViewMode::Mine => {
-                    crate::ui::bitbucket_pull_requests_view::flatten_my_prs(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        } else if matches!(app.panes.get(pid), Some(Pane::GithubActions(_))) {
+        if matches!(app.panes.get(pid), Some(Pane::GithubActions(_))) {
             let flat = match app.gh_actions_view_mode {
                 crate::github::ActionsViewMode::Recent => {
                     crate::ui::github_actions_view::flatten_runs(app)
@@ -1083,68 +1055,6 @@ pub(crate) fn handle_scm_row_click(
     }
     // SCM/CI panes — header-vs-data dispatch with collapse + URL open.
     match app.panes.get(pane_id) {
-        Some(Pane::BitbucketPipelines(_)) => {
-            let flat = match app.bb_pipelines_view_mode {
-                crate::bitbucket::PipelineViewMode::Recent => {
-                    crate::ui::bitbucket_pipelines_view::flatten_pipelines(app)
-                }
-                crate::bitbucket::PipelineViewMode::PerBranch => {
-                    crate::ui::bitbucket_pipelines_view::flatten_branch_pipelines(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::bitbucket_pipelines_view::RowKind::Header;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::BitbucketPipelines(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.bb_pipelines_collapsed.contains(&header_label) {
-                    app.bb_pipelines_collapsed.remove(&header_label);
-                } else {
-                    app.bb_pipelines_collapsed.insert(header_label);
-                }
-            } else if is_double_click {
-                app.open_selected_bitbucket_pipeline_url();
-            }
-        }
-        Some(Pane::BitbucketPullRequests(_)) => {
-            let flat = match app.bb_prs_view_mode {
-                crate::bitbucket::PrViewMode::PerRepo => {
-                    crate::ui::bitbucket_pull_requests_view::flatten_prs(app)
-                }
-                crate::bitbucket::PrViewMode::Mine => {
-                    crate::ui::bitbucket_pull_requests_view::flatten_my_prs(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::bitbucket_pull_requests_view::RowKind::Header;
-            let is_show_more =
-                row.kind == crate::ui::bitbucket_pull_requests_view::RowKind::ShowMore;
-            let is_show_less =
-                row.kind == crate::ui::bitbucket_pull_requests_view::RowKind::ShowLess;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::BitbucketPullRequests(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.bb_prs_collapsed.contains(&header_label) {
-                    app.bb_prs_collapsed.remove(&header_label);
-                } else {
-                    app.bb_prs_collapsed.insert(header_label);
-                }
-            } else if is_show_more {
-                app.bb_prs_expanded.insert(header_label);
-            } else if is_show_less {
-                app.bb_prs_expanded.remove(&header_label);
-            } else if is_double_click {
-                app.open_selected_bitbucket_pr_url();
-            }
-        }
         Some(Pane::GithubActions(_)) => {
             let flat = match app.gh_actions_view_mode {
                 crate::github::ActionsViewMode::Recent => {

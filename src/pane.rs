@@ -11,7 +11,6 @@ use crate::aws::codebuilds_pane::CodeBuildsPane;
 #[cfg(feature = "aws-codebuild")]
 use crate::aws::log_tail_pane::LogTailPane;
 use crate::azdevops::{AzDevOpsBuildsPane, AzDevOpsPullRequestsPane};
-use crate::bitbucket::{BitbucketPipelinesPane, BitbucketPullRequestsPane, PipelineLogPane};
 use crate::browser_pane::BrowserPane;
 use crate::buffer::Buffer;
 use crate::cheatsheet::CheatsheetPane;
@@ -25,6 +24,7 @@ use crate::image::ImagePane;
 use crate::lsp::diagnostics_pane::DiagnosticsPane;
 use crate::lsp::outline_pane::OutlinePane;
 use crate::pane_host::BlitHostPane;
+use crate::pipeline_log::PipelineLogPane;
 use crate::playwright::TestsPane;
 use crate::playwright::flaky_pane::FlakyPane;
 use crate::playwright::trace_pane::TracePane;
@@ -75,14 +75,11 @@ pub enum Pane {
     /// Vim's `q:` — a scrollable list of recent `:` cmdline entries.
     /// Enter re-fires the highlighted entry; Esc closes.
     CmdlineHistory(CmdlineHistoryPane),
-    /// Bitbucket Cloud pipelines list — recent CI runs across every
-    /// configured `[[bitbucket.repos]]` entry, grouped by repo.
-    BitbucketPipelines(BitbucketPipelinesPane),
-    /// Bitbucket Cloud open pull requests list — sibling of the pipelines pane.
-    BitbucketPullRequests(BitbucketPullRequestsPane),
-    /// Bitbucket pipeline log viewer — opened by `L` on a BB pipeline row.
-    BitbucketPipelineLog(PipelineLogPane),
-    /// GitHub Actions workflow runs list — symmetric to the Bitbucket pane.
+    /// Pipeline-log viewer — opened by `L` on a pipeline row in any
+    /// host's pipelines pane (github / gitlab / azdevops). Bitbucket's
+    /// internal panes were split out into `mnml-forge-bitbucket`.
+    PipelineLog(PipelineLogPane),
+    /// GitHub Actions workflow runs list.
     GithubActions(GithubActionsPane),
     /// GitHub open pull requests list.
     GithubPullRequests(GithubPullRequestsPane),
@@ -449,9 +446,7 @@ impl Pane {
             Pane::Grep(g) => g.tab_title(),
             Pane::Quickfix(g) => format!("Quickfix · {}", g.hits.len()),
             Pane::CmdlineHistory(_) => "q:".to_string(),
-            Pane::BitbucketPipelines(p) => p.tab_title(),
-            Pane::BitbucketPullRequests(p) => p.tab_title(),
-            Pane::BitbucketPipelineLog(p) => p.title.clone(),
+            Pane::PipelineLog(p) => p.title.clone(),
             Pane::GithubActions(p) => p.tab_title(),
             Pane::GithubPullRequests(p) => p.tab_title(),
             Pane::GitlabPipelines(p) => p.tab_title(),
@@ -490,9 +485,7 @@ impl Pane {
             | Pane::Grep(_)
             | Pane::Quickfix(_)
             | Pane::CmdlineHistory(_)
-            | Pane::BitbucketPipelines(_)
-            | Pane::BitbucketPullRequests(_)
-            | Pane::BitbucketPipelineLog(_)
+            | Pane::PipelineLog(_)
             | Pane::GithubActions(_)
             | Pane::GithubPullRequests(_)
             | Pane::GitlabPipelines(_)

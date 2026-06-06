@@ -71,7 +71,6 @@ pub struct Config {
     pub browser: BrowserConfig,
     pub playwright: PlaywrightConfig,
     pub ci: CiConfig,
-    pub bitbucket: BitbucketConfig,
     pub github: GithubConfig,
     pub gitlab: GitlabConfig,
     pub azdevops: AzDevOpsConfig,
@@ -95,58 +94,15 @@ pub struct WorkspaceConfig {
     pub path: PathBuf,
 }
 
-/// `[bitbucket]` — Bitbucket Cloud REST API integration. Powers the
-/// `Pane::BitbucketPipelines` and `Pane::BitbucketPr` live dashboards
-/// (phases 2–3); phase 1 just wires the worker so the API call shape
-/// is verifiable in isolation.
-///
-/// ```toml
-/// [bitbucket]
-/// auth_env  = "BITBUCKET_TOKEN"   # optional, defaults to BITBUCKET_TOKEN
-/// poll_secs = 30                  # optional, defaults to 30
-///
-/// [[bitbucket.repos]]
-/// workspace = "exampleorg"
-/// slug      = "example-api"
-///
-/// [[bitbucket.repos]]
-/// workspace = "exampleorg"
-/// slug      = "example-playwright"
-/// ```
-///
-/// The worker reads the auth token from `$<auth_env>` at spawn time —
-/// the value never lands in config files. With no `[[bitbucket.repos]]`
-/// entries, the worker stays idle.
-#[derive(Debug, Clone, Default)]
-pub struct BitbucketConfig {
-    /// Env var name to read the API token from. `None` ⇒ `"BITBUCKET_TOKEN"`.
-    pub auth_env: Option<String>,
-    /// Seconds between poll cycles per repo. `None` ⇒ 30.
-    pub poll_secs: Option<u64>,
-    /// Repos to watch. Order is meaningful — picker / pane lists render in this order.
-    pub repos: Vec<BitbucketRepo>,
-}
+// Bitbucket panes + config moved out of mnml core in 2026-06.
+// Live dashboards now ship in the standalone mnml-forge-bitbucket
+// binary, hosted via `:host.launch mnml-forge-bitbucket`. The
+// integration icon strip seeds a row pointing at it.
 
-#[derive(Debug, Clone)]
-pub struct BitbucketRepo {
-    pub workspace: String,
-    pub slug: String,
-    /// Branches the per-branch pipelines view should always include for
-    /// this repo. Empty ⇒ use [`default_branches()`] (the long-lived
-    /// `main` / `master` / `develop` / `staging`) plus active release/
-    /// hotfix branches auto-discovered via Bitbucket's refs/branches
-    /// search (`q='name ~ "release"'`).
-    ///
-    /// Set this when a repo has a non-standard long-lived branch you
-    /// want pinned (e.g. `production`, `qa`, a long-running feature
-    /// branch) without relying on auto-discovery.
-    pub branches: Vec<String>,
-}
-
-/// `[github]` — GitHub Actions / Pull Requests integration. Mirrors the
-/// shape of [`BitbucketConfig`] — the worker, panes, and view are parallel
-/// modules so the two hosts can evolve independently without forcing a
-/// premature shared abstraction.
+/// `[github]` — GitHub Actions / Pull Requests integration. Same shape
+/// as the (now-removed) `[bitbucket]` block — worker, panes, and view
+/// are parallel modules so each host can evolve independently without
+/// forcing a premature shared abstraction.
 ///
 /// ```toml
 /// [github]
@@ -295,24 +251,6 @@ impl GithubConfig {
     pub fn poll_secs_or_default(&self) -> u64 {
         // 60s default for GH because it has 5000/hr headroom and the
         // per-branch view doesn't multiply badly with N repos.
-        self.poll_secs.unwrap_or(60).max(5)
-    }
-}
-
-impl BitbucketConfig {
-    /// `true` when at least one repo is configured — the worker can start.
-    pub fn any_configured(&self) -> bool {
-        !self.repos.is_empty()
-    }
-    /// Env var name to source the API token from. Defaults to `BITBUCKET_TOKEN`.
-    pub fn auth_env_name(&self) -> &str {
-        self.auth_env.as_deref().unwrap_or("BITBUCKET_TOKEN")
-    }
-    /// Poll interval in seconds. Defaults to 30.
-    pub fn poll_secs_or_default(&self) -> u64 {
-        // 60s default for BB to stay under the ~1000/hr token rate limit
-        // with multiple repos × per-branch pipeline fetches. Lower at
-        // your own risk via `[bitbucket] poll_secs = N`.
         self.poll_secs.unwrap_or(60).max(5)
     }
 }
@@ -794,9 +732,13 @@ impl Default for Config {
                         id: "bitbucket".to_string(),
                         glyph: "\u{E703}".to_string(), // nf-dev-bitbucket
                         fallback: "B".to_string(),
-                        command: "bitbucket.pull_requests".to_string(),
+                        // Launches the standalone mnml-forge-bitbucket
+                        // viewer as a blit-host pane. User must have it
+                        // installed (`cargo install --git
+                        // https://github.com/chris-mclennan/mnml-forge-bitbucket`).
+                        command: ":host.launch mnml-forge-bitbucket".to_string(),
                         color: "blue".to_string(),
-                        tooltip: Some("Bitbucket pull requests".to_string()),
+                        tooltip: Some("Bitbucket pipelines + PRs".to_string()),
                     },
                     IntegrationIcon {
                         id: "jira".to_string(),
@@ -863,7 +805,6 @@ impl Default for Config {
             },
             playwright: PlaywrightConfig::default(),
             ci: CiConfig::default(),
-            bitbucket: BitbucketConfig::default(),
             github: GithubConfig::default(),
             gitlab: GitlabConfig::default(),
             azdevops: AzDevOpsConfig::default(),
@@ -906,8 +847,6 @@ struct RawConfig {
     browser: RawBrowser,
     #[serde(default)]
     ci: RawCi,
-    #[serde(default)]
-    bitbucket: RawBitbucket,
     #[serde(default)]
     github: RawGithub,
     #[serde(default)]
@@ -954,22 +893,6 @@ struct RawGitlab {
 #[derive(Debug, Default, Deserialize)]
 struct RawGitlabProject {
     project: String,
-    #[serde(default)]
-    branches: Vec<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawBitbucket {
-    auth_env: Option<String>,
-    poll_secs: Option<u64>,
-    #[serde(default)]
-    repos: Vec<RawBitbucketRepo>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawBitbucketRepo {
-    workspace: String,
-    slug: String,
     #[serde(default)]
     branches: Vec<String>,
 }
@@ -1398,23 +1321,12 @@ impl Config {
         if let Some(v) = raw.ci.region {
             self.ci.region = Some(v);
         }
-        // `[bitbucket]` — per-field overlay so workspace files can refine
+        // `[bitbucket]` section is silently ignored — Bitbucket panes
+        // moved to the standalone mnml-forge-bitbucket binary in
+        // 2026-06; existing user configs may still mention it.
+        // `[github]` — per-field overlay so workspace files can refine
         // home defaults. Repos *append* (rather than replace) so a
         // workspace-local file can add repos without re-listing the homedir set.
-        if let Some(v) = raw.bitbucket.auth_env {
-            self.bitbucket.auth_env = Some(v);
-        }
-        if let Some(v) = raw.bitbucket.poll_secs {
-            self.bitbucket.poll_secs = Some(v);
-        }
-        for r in raw.bitbucket.repos {
-            self.bitbucket.repos.push(BitbucketRepo {
-                workspace: r.workspace,
-                slug: r.slug,
-                branches: r.branches,
-            });
-        }
-        // `[github]` — same per-field overlay shape as `[bitbucket]`.
         if let Some(v) = raw.github.auth_env {
             self.github.auth_env = Some(v);
         }
@@ -1565,7 +1477,10 @@ path  = "/tmp/extra"
     }
 
     #[test]
-    fn bitbucket_config_parses_multi_repo() {
+    fn bitbucket_section_silently_ignored() {
+        // Bitbucket panes moved to mnml-forge-bitbucket — existing user
+        // configs may still mention `[bitbucket]`; parser should not
+        // error on the unknown section.
         let dir = tempfile::tempdir().unwrap();
         let cfg_path = dir.path().join("config.toml");
         let mut f = std::fs::File::create(&cfg_path).unwrap();
@@ -1579,23 +1494,15 @@ poll_secs = 60
 [[bitbucket.repos]]
 workspace = "exampleorg"
 slug      = "example-api"
-
-[[bitbucket.repos]]
-workspace = "exampleorg"
-slug      = "example-playwright"
 "#
         )
         .unwrap();
 
         let mut cfg = Config::default();
         cfg.apply_file_pub(&cfg_path);
-        assert_eq!(cfg.bitbucket.auth_env_name(), "BB_TOKEN");
-        assert_eq!(cfg.bitbucket.poll_secs_or_default(), 60);
-        assert_eq!(cfg.bitbucket.repos.len(), 2);
-        assert_eq!(cfg.bitbucket.repos[0].workspace, "exampleorg");
-        assert_eq!(cfg.bitbucket.repos[0].slug, "example-api");
-        assert_eq!(cfg.bitbucket.repos[1].slug, "example-playwright");
-        assert!(cfg.bitbucket.any_configured());
+        // No assertion needed — the test passes if apply_file_pub
+        // didn't panic on the unknown `[bitbucket]` section.
+        let _ = cfg;
     }
 
     #[test]
@@ -1635,29 +1542,6 @@ repo    = "api"
     }
 
     #[test]
-    fn bitbucket_default_is_empty_with_safe_defaults() {
-        let cfg = Config::default();
-        assert!(!cfg.bitbucket.any_configured());
-        // Defaults so the worker has sensible values even without a config.
-        // 60s default keeps us under the ~1000/hr token rate limit when
-        // multiple repos × per-branch fetches multiply API calls.
-        assert_eq!(cfg.bitbucket.auth_env_name(), "BITBUCKET_TOKEN");
-        assert_eq!(cfg.bitbucket.poll_secs_or_default(), 60);
-    }
-
-    #[test]
-    fn bitbucket_poll_secs_floor_5() {
-        // Don't let the user accidentally hammer the API at 1s intervals.
-        let mut cfg = BitbucketConfig {
-            poll_secs: Some(1),
-            ..Default::default()
-        };
-        assert_eq!(cfg.poll_secs_or_default(), 5);
-        cfg.poll_secs = Some(30);
-        assert_eq!(cfg.poll_secs_or_default(), 30);
-    }
-
-    #[test]
     fn github_config_parses_multi_repo() {
         let dir = tempfile::tempdir().unwrap();
         let cfg_path = dir.path().join("config.toml");
@@ -1691,38 +1575,6 @@ repo  = "example-knowledge"
         assert!(!cfg.github.any_configured());
         assert_eq!(cfg.github.auth_env_name(), "GITHUB_TOKEN");
         assert_eq!(cfg.github.poll_secs_or_default(), 60);
-    }
-
-    #[test]
-    fn bitbucket_repos_append_across_files() {
-        // Workspace-local file should add to the homedir list, not replace it.
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home.toml");
-        let mut f = std::fs::File::create(&home).unwrap();
-        writeln!(
-            f,
-            r#"
-[[bitbucket.repos]]
-workspace = "exampleorg"
-slug      = "example-api"
-"#
-        )
-        .unwrap();
-        let ws = dir.path().join("ws.toml");
-        let mut f = std::fs::File::create(&ws).unwrap();
-        writeln!(
-            f,
-            r#"
-[[bitbucket.repos]]
-workspace = "exampleorg"
-slug      = "example-playwright"
-"#
-        )
-        .unwrap();
-        let mut cfg = Config::default();
-        cfg.apply_file_pub(&home);
-        cfg.apply_file_pub(&ws);
-        assert_eq!(cfg.bitbucket.repos.len(), 2);
     }
 
     #[test]

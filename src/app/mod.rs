@@ -21,7 +21,6 @@ use crate::tree::Tree;
 #[cfg(feature = "aws-codebuild")]
 mod aws;
 mod azdevops;
-mod bitbucket;
 mod github;
 mod gitlab;
 
@@ -1058,14 +1057,6 @@ struct SavedSession {
     /// View-mode + collapsed-headers state for each SCM/CI pane.
     /// Persisted so flipping `v` or collapsing a repo header sticks
     /// across `q!` and relaunches.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    bb_pipelines_view_mode: Option<crate::bitbucket::PipelineViewMode>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    bb_pipelines_collapsed: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    bb_prs_view_mode: Option<crate::bitbucket::PrViewMode>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    bb_prs_collapsed: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     gh_actions_view_mode: Option<crate::github::ActionsViewMode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -2820,55 +2811,14 @@ pub struct App {
     log_tail_pane_id: Option<crate::layout::PaneId>,
     /// Channel for background Bitbucket pipeline-log fetches.
     /// Each worker thread fetches one pipeline's combined log; the reply
-    /// (Done/Failed) is matched to the open `Pane::BitbucketPipelineLog`
+    /// (Done/Failed) is matched to the open `Pane::PipelineLog`
     /// by `job_id`. Lazily created when the first log is fetched.
     pipeline_log_chan: Option<(
-        std::sync::mpsc::Sender<crate::bitbucket::PipelineLogEvent>,
-        std::sync::mpsc::Receiver<crate::bitbucket::PipelineLogEvent>,
+        std::sync::mpsc::Sender<crate::pipeline_log::PipelineLogEvent>,
+        std::sync::mpsc::Receiver<crate::pipeline_log::PipelineLogEvent>,
     )>,
     /// Next job-id for a pipeline-log fetch (so re-fetches can drop stale replies).
     pipeline_log_next_job: u64,
-    /// Bitbucket REST worker handle. `Some` while a worker thread is alive
-    /// polling the configured `[[bitbucket.repos]]` for recent pipelines.
-    /// Spawned lazily on first `bitbucket.*` command (phase 2+); phase 1
-    /// leaves this `None` until a pane is opened.
-    bitbucket_handle: Option<crate::bitbucket::BitbucketHandle>,
-    /// Per-repo cache of the latest pipelines fetched by the Bitbucket
-    /// worker. Keyed by `(workspace, slug)`. `Pane::BitbucketPipelines`
-    /// reads from this on every render; the App refreshes it from the
-    /// channel each `tick`. `pub(crate)` so the view module can flatten it.
-    pub(crate) bitbucket_pipelines:
-        std::collections::HashMap<(String, String), Vec<crate::bitbucket::PipelineRecord>>,
-    /// Last error string reported by the Bitbucket worker (auth failed,
-    /// repo 404, …). Cleared on the next successful event. Surfaced as a
-    /// banner by the pane.
-    pub(crate) bitbucket_last_error: Option<String>,
-    /// `true` once the Bitbucket worker has sent at least one successful
-    /// response — the pane drops its "loading…" chip on first receipt.
-    pub(crate) bitbucket_connected: bool,
-    /// Per-repo cache of the latest open pull requests (Bitbucket). Keyed
-    /// by `(workspace, slug)`. Filled alongside `bitbucket_pipelines` by
-    /// the same worker — each pass fetches both surfaces.
-    pub(crate) bitbucket_pull_requests:
-        std::collections::HashMap<(String, String), Vec<crate::bitbucket::PullRequestRecord>>,
-    /// Cross-repo flat list of every non-merged PR the authenticated
-    /// user authored. Populated by the BB worker's
-    /// `/pullrequests/{account_id}` poll — replaces wholesale each pass.
-    /// Powers the "mine" PR view-mode.
-    pub(crate) bitbucket_my_pull_requests: Vec<crate::bitbucket::PullRequestRecord>,
-    /// View-mode the BB pipelines pane should open in / is in. Lives on
-    /// App so the choice survives close-pane and session restore.
-    pub(crate) bb_pipelines_view_mode: crate::bitbucket::PipelineViewMode,
-    /// Header labels currently collapsed in the BB pipelines pane.
-    pub(crate) bb_pipelines_collapsed: std::collections::HashSet<String>,
-    pub(crate) bb_prs_view_mode: crate::bitbucket::PrViewMode,
-    pub(crate) bb_prs_collapsed: std::collections::HashSet<String>,
-    /// Per-repo "show all PRs" flag (key = `"workspace/slug"`). Default
-    /// shows the first `PR_DEFAULT_VISIBLE`; clicking the trailing
-    /// `+ N more` row sets the flag so subsequent flatten passes
-    /// render every PR. Sibling of `bb_prs_collapsed` — the two
-    /// states are independent (a repo can be collapsed AND expanded).
-    pub(crate) bb_prs_expanded: std::collections::HashSet<String>,
     pub(crate) gh_actions_view_mode: crate::github::ActionsViewMode,
     pub(crate) gh_actions_collapsed: std::collections::HashSet<String>,
     pub(crate) gh_prs_view_mode: crate::github::GhPrViewMode,
@@ -2903,13 +2853,7 @@ pub struct App {
     pub(crate) az_builds_collapsed: std::collections::HashSet<String>,
     pub(crate) az_prs_view_mode: crate::azdevops::AzPrViewMode,
     pub(crate) az_prs_collapsed: std::collections::HashSet<String>,
-    /// Per-repo per-branch latest pipeline (the "per-branch" pipelines
-    /// view-mode). Keyed by `(workspace, slug)` → ordered
-    /// `Vec<BranchPipelineSlot>`. Branch order follows the worker's
-    /// `resolve_branches` output.
-    pub(crate) bitbucket_branch_pipelines:
-        std::collections::HashMap<(String, String), Vec<crate::bitbucket::BranchPipelineSlot>>,
-    /// GitHub Actions REST worker handle — sibling of `bitbucket_handle`.
+    /// GitHub Actions REST worker handle.
     github_handle: Option<crate::github::GithubHandle>,
     /// Per-repo cache of the latest workflow runs. Keyed by `(owner, repo)`.
     pub(crate) github_workflow_runs:
@@ -3244,16 +3188,6 @@ impl App {
             log_tail_pane_id: None,
             pipeline_log_chan: None,
             pipeline_log_next_job: 1,
-            bitbucket_handle: None,
-            bitbucket_pipelines: std::collections::HashMap::new(),
-            bitbucket_pull_requests: std::collections::HashMap::new(),
-            bitbucket_my_pull_requests: Vec::new(),
-            bitbucket_branch_pipelines: std::collections::HashMap::new(),
-            bb_pipelines_view_mode: Default::default(),
-            bb_pipelines_collapsed: std::collections::HashSet::new(),
-            bb_prs_view_mode: Default::default(),
-            bb_prs_collapsed: std::collections::HashSet::new(),
-            bb_prs_expanded: std::collections::HashSet::new(),
             gh_actions_view_mode: Default::default(),
             gh_actions_collapsed: std::collections::HashSet::new(),
             gh_prs_view_mode: Default::default(),
@@ -3280,8 +3214,6 @@ impl App {
             az_builds_collapsed: std::collections::HashSet::new(),
             az_prs_view_mode: Default::default(),
             az_prs_collapsed: std::collections::HashSet::new(),
-            bitbucket_last_error: None,
-            bitbucket_connected: false,
             github_handle: None,
             github_workflow_runs: std::collections::HashMap::new(),
             github_pull_requests: std::collections::HashMap::new(),
@@ -3938,39 +3870,8 @@ impl App {
     fn cross_nav_pr_to_pipeline(&mut self, host_tag: &str, repo_label: &str, branch: &str) {
         match host_tag {
             "BB" => {
-                // repo_label = "workspace/slug"
-                let Some((ws, slug)) = repo_label.split_once('/') else {
-                    self.toast(format!("malformed BB repo_label: {repo_label}"));
-                    return;
-                };
-                let key = (ws.to_string(), slug.to_string());
-                let Some(pipelines) = self.bitbucket_pipelines.get(&key) else {
-                    self.toast(format!("no pipelines cached for {repo_label}"));
-                    return;
-                };
-                let Some(pipeline) = pipelines
-                    .iter()
-                    .find(|p| p.target_ref.as_deref() == Some(branch))
-                    .cloned()
-                else {
-                    self.toast(format!("no pipeline on branch '{branch}' yet"));
-                    return;
-                };
-                self.bb_pipelines_view_mode = crate::bitbucket::PipelineViewMode::Recent;
-                self.open_bitbucket_pipelines_pane();
-                let flat = crate::ui::bitbucket_pipelines_view::flatten_pipelines(self);
-                if let Some(idx) = flat.iter().position(|r| {
-                    r.pipeline
-                        .as_ref()
-                        .map(|p| p.uuid == pipeline.uuid)
-                        .unwrap_or(false)
-                }) && let Some(active) = self.active
-                    && let Some(Pane::BitbucketPipelines(p)) = self.panes.get_mut(active)
-                {
-                    p.selected = idx;
-                    p.scroll = 0;
-                }
-                self.toast(format!("→ pipeline #{}", pipeline.build_number));
+                let _ = (repo_label, branch);
+                self.toast("Bitbucket panes moved to mnml-forge-bitbucket");
             }
             "GH" => {
                 let Some((owner, repo)) = repo_label.split_once('/') else {
@@ -7247,9 +7148,7 @@ impl App {
             Pane::Outline(o) => Some((o.tab_title(), false)),
             Pane::Quickfix(g) => Some((format!("Quickfix · {}", g.hits.len()), false)),
             Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
-            Pane::BitbucketPipelines(p) => Some((p.tab_title(), false)),
-            Pane::BitbucketPullRequests(p) => Some((p.tab_title(), false)),
-            Pane::BitbucketPipelineLog(p) => Some((p.title.clone(), false)),
+            Pane::PipelineLog(p) => Some((p.title.clone(), false)),
             Pane::GithubActions(p) => Some((p.tab_title(), false)),
             Pane::GithubPullRequests(p) => Some((p.tab_title(), false)),
             Pane::GitlabPipelines(p) => Some((p.tab_title(), false)),
@@ -8651,7 +8550,6 @@ impl App {
         self.drain_cdp_events();
         #[cfg(feature = "aws-codebuild")]
         self.drain_codebuild_events();
-        self.drain_bitbucket_events();
         self.drain_github_events();
         self.drain_gitlab_events();
         self.drain_azdevops_events();

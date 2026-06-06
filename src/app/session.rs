@@ -206,10 +206,6 @@ impl App {
                 .collect(),
             ex_history: self.ex_history.clone(),
             dap_watches: self.dap_watches.clone(),
-            bb_pipelines_view_mode: Some(self.bb_pipelines_view_mode),
-            bb_pipelines_collapsed: self.bb_pipelines_collapsed.iter().cloned().collect(),
-            bb_prs_view_mode: Some(self.bb_prs_view_mode),
-            bb_prs_collapsed: self.bb_prs_collapsed.iter().cloned().collect(),
             gh_actions_view_mode: Some(self.gh_actions_view_mode),
             gh_actions_collapsed: self.gh_actions_collapsed.iter().cloned().collect(),
             gh_prs_view_mode: Some(self.gh_prs_view_mode),
@@ -536,14 +532,6 @@ impl App {
             self.dap_watches = saved.dap_watches;
         }
         // SCM/CI pane view-mode + collapse state.
-        if let Some(m) = saved.bb_pipelines_view_mode {
-            self.bb_pipelines_view_mode = m;
-        }
-        self.bb_pipelines_collapsed = saved.bb_pipelines_collapsed.into_iter().collect();
-        if let Some(m) = saved.bb_prs_view_mode {
-            self.bb_prs_view_mode = m;
-        }
-        self.bb_prs_collapsed = saved.bb_prs_collapsed.into_iter().collect();
         if let Some(m) = saved.gh_actions_view_mode {
             self.gh_actions_view_mode = m;
         }

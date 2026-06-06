@@ -209,13 +209,12 @@ pub fn root() -> &'static Leader {
                     group(
                         "+ci",
                         vec![
-                            // Bitbucket pipelines, GitHub Actions. GitLab CI
-                            // will join as `l` when its phase lands.
-                            ('p', cmd("bitbucket.pipelines", "bitbucket pipelines")),
+                            // GitHub Actions, GitLab pipelines, Azure builds.
+                            // Bitbucket pipelines moved to the standalone
+                            // mnml-forge-bitbucket binary.
                             ('g', cmd("github.actions", "github actions")),
                             ('l', cmd("gitlab.pipelines", "gitlab pipelines")),
                             ('a', cmd("azdevops.builds", "azure builds")),
-                            ('r', cmd("bitbucket.refresh_active", "refresh bb pane")),
                             ('R', cmd("github.refresh_active", "refresh gh pane")),
                             ('L', cmd("gitlab.refresh_active", "refresh gl pane")),
                             ('A', cmd("azdevops.refresh_active", "refresh az pane")),
@@ -227,7 +226,6 @@ pub fn root() -> &'static Leader {
                     group(
                         "+pr",
                         vec![
-                            ('b', cmd("bitbucket.pull_requests", "bitbucket PRs")),
                             ('g', cmd("github.pull_requests", "github PRs")),
                             ('l', cmd("gitlab.merge_requests", "gitlab MRs")),
                             ('a', cmd("azdevops.pull_requests", "azure PRs")),

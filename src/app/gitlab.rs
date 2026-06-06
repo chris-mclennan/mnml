@@ -33,9 +33,9 @@ impl App {
         let job_id = self.pipeline_log_next_job;
         self.pipeline_log_next_job = self.pipeline_log_next_job.wrapping_add(1);
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let log_pane = crate::bitbucket::PipelineLogPane::new_with_host(
+        let log_pane = crate::pipeline_log::PipelineLogPane::new_with_host(
             title,
-            crate::bitbucket::LogHost::Gitlab,
+            crate::pipeline_log::LogHost::Gitlab,
             pipeline.project.clone(),
             pipeline.id.to_string(),
             String::new(),
@@ -44,7 +44,7 @@ impl App {
             cancel.clone(),
         )
         .with_host_extra(base_url.clone());
-        let pane_v = Pane::BitbucketPipelineLog(log_pane);
+        let pane_v = Pane::PipelineLog(log_pane);
         let new_id = self.split_leaf_with(id, crate::layout::SplitDir::Horizontal, pane_v);
         self.active = Some(new_id);
         self.focus = Focus::Pane;
@@ -56,7 +56,7 @@ impl App {
             .unwrap_or_else(|| "GITLAB_TOKEN".to_string());
         self.spawn_log_fetch_inner(
             job_id,
-            crate::bitbucket::LogHost::Gitlab,
+            crate::pipeline_log::LogHost::Gitlab,
             auth_env,
             pipeline.project,
             pipeline.id.to_string(),

@@ -2887,60 +2887,12 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.close_active_pane(),
         },
     ];
-    // Bitbucket: lean-build-safe — the worker only spins up when
-    // `[[bitbucket.repos]]` is non-empty, so the command is harmless to
-    // surface in every build.
-    cmds.push(Command {
-        id: "bitbucket.pipelines",
-        title: "Bitbucket: open pipelines dashboard",
-        group: "bitbucket",
-        // No global default key — opens via `<leader>B p` (wired in whichkey.rs)
-        // or the palette / `:BB`.
-        keys: &[],
-        run: |app| app.open_bitbucket_pipelines_pane(),
-    });
-    cmds.push(Command {
-        id: "bitbucket.refresh_active",
-        title: "Bitbucket: refresh the active pipelines pane",
-        group: "bitbucket",
-        keys: &[],
-        run: |app| app.refresh_active_bitbucket_pane(),
-    });
-    cmds.push(Command {
-        id: "bitbucket.open_selected_url",
-        title: "Bitbucket: open selected pipeline in browser",
-        group: "bitbucket",
-        keys: &[],
-        run: |app| app.open_selected_bitbucket_pipeline_url(),
-    });
-    cmds.push(Command {
-        id: "bitbucket.copy_selected_url",
-        title: "Bitbucket: copy selected pipeline URL",
-        group: "bitbucket",
-        keys: &[],
-        run: |app| app.copy_selected_bitbucket_pipeline_url(),
-    });
-    cmds.push(Command {
-        id: "bitbucket.pull_requests",
-        title: "Bitbucket: open pull-requests dashboard",
-        group: "bitbucket",
-        keys: &[],
-        run: |app| app.open_bitbucket_pull_requests_pane(),
-    });
-    cmds.push(Command {
-        id: "bitbucket.open_selected_pr_url",
-        title: "Bitbucket: open selected PR in browser",
-        group: "bitbucket",
-        keys: &[],
-        run: |app| app.open_selected_bitbucket_pr_url(),
-    });
-    cmds.push(Command {
-        id: "bitbucket.copy_selected_pr_url",
-        title: "Bitbucket: copy selected PR URL",
-        group: "bitbucket",
-        keys: &[],
-        run: |app| app.copy_selected_bitbucket_pr_url(),
-    });
+    // Bitbucket panes moved to mnml-forge-bitbucket — the entire
+    // bitbucket.* command surface was removed alongside the panes.
+    // Users install mnml-forge-bitbucket and launch it via
+    // `:host.launch mnml-forge-bitbucket` (the default
+    // `[[ui.integration_icon]]` now points at it).
+
     // GitHub: sibling commands. `<leader>C g` chord (in the +ci whichkey
     // group) is the muscle-memory entry point.
     cmds.push(Command {
@@ -3106,13 +3058,6 @@ fn builtin_commands() -> Vec<Command> {
     // `c` (on a PR row) and `P` (on a pipeline row) inside each pane —
     // these aliases keep them in the palette too for discovery.
     cmds.push(Command {
-        id: "bitbucket.pipeline_log",
-        title: "Bitbucket: open log for selected pipeline",
-        group: "bitbucket",
-        keys: &[],
-        run: |app| app.open_bitbucket_pipeline_log(),
-    });
-    cmds.push(Command {
         id: "github.run_log",
         title: "GitHub: open log for selected workflow run",
         group: "github",
@@ -3132,20 +3077,6 @@ fn builtin_commands() -> Vec<Command> {
         group: "azdevops",
         keys: &[],
         run: |app| app.open_azdevops_build_log(),
-    });
-    cmds.push(Command {
-        id: "bitbucket.jump_pr_to_pipeline",
-        title: "Bitbucket: PR → pipeline on same branch",
-        group: "bitbucket",
-        keys: &[],
-        run: |app| app.jump_from_bb_pr_to_pipeline(),
-    });
-    cmds.push(Command {
-        id: "bitbucket.jump_pipeline_to_pr",
-        title: "Bitbucket: pipeline → PR on same branch",
-        group: "bitbucket",
-        keys: &[],
-        run: |app| app.jump_from_bb_pipeline_to_pr(),
     });
     cmds.push(Command {
         id: "github.jump_pr_to_run",

@@ -42,9 +42,9 @@ impl App {
         let job_id = self.pipeline_log_next_job;
         self.pipeline_log_next_job = self.pipeline_log_next_job.wrapping_add(1);
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let log_pane = crate::bitbucket::PipelineLogPane::new_with_host(
+        let log_pane = crate::pipeline_log::PipelineLogPane::new_with_host(
             title,
-            crate::bitbucket::LogHost::Azure,
+            crate::pipeline_log::LogHost::Azure,
             org.clone(),
             project.clone(),
             build.id.to_string(),
@@ -52,7 +52,7 @@ impl App {
             job_id,
             cancel.clone(),
         );
-        let pane_v = Pane::BitbucketPipelineLog(log_pane);
+        let pane_v = Pane::PipelineLog(log_pane);
         let new_id = self.split_leaf_with(id, crate::layout::SplitDir::Horizontal, pane_v);
         self.active = Some(new_id);
         self.focus = Focus::Pane;
@@ -64,7 +64,7 @@ impl App {
             .unwrap_or_else(|| "AZDO_TOKEN".to_string());
         self.spawn_log_fetch_inner(
             job_id,
-            crate::bitbucket::LogHost::Azure,
+            crate::pipeline_log::LogHost::Azure,
             auth_env,
             org,
             project,

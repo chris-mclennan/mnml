@@ -24,8 +24,6 @@ pub mod activity_bar;
 pub mod ai_view;
 pub mod azdevops_builds_view;
 pub mod azdevops_pull_requests_view;
-pub mod bitbucket_pipelines_view;
-pub mod bitbucket_pull_requests_view;
 pub mod blit_host_view;
 pub mod browser_view;
 pub mod bufferline;
@@ -628,15 +626,13 @@ fn render_layout(
                 Some(crate::pane::Pane::Quickfix(_)) => 16,
                 #[cfg(feature = "aws-codebuild")]
                 Some(crate::pane::Pane::CodeBuilds(_)) => 18,
-                Some(crate::pane::Pane::BitbucketPipelines(_)) => 19,
                 Some(crate::pane::Pane::GithubActions(_)) => 20,
-                Some(crate::pane::Pane::BitbucketPullRequests(_)) => 21,
                 Some(crate::pane::Pane::GithubPullRequests(_)) => 22,
                 Some(crate::pane::Pane::GitlabPipelines(_)) => 23,
                 Some(crate::pane::Pane::GitlabMergeRequests(_)) => 24,
                 Some(crate::pane::Pane::AzDevOpsBuilds(_)) => 25,
                 Some(crate::pane::Pane::AzDevOpsPullRequests(_)) => 26,
-                Some(crate::pane::Pane::BitbucketPipelineLog(_)) => 27,
+                Some(crate::pane::Pane::PipelineLog(_)) => 27,
                 #[cfg(feature = "aws-codebuild")]
                 Some(crate::pane::Pane::LogTail(_)) => 28,
                 Some(crate::pane::Pane::Cheatsheet(_)) => 29,
@@ -667,17 +663,14 @@ fn render_layout(
                 16 => grep_view::draw(frame, app, *id, area, focused),
                 #[cfg(feature = "aws-codebuild")]
                 18 => codebuilds_view::draw(frame, app, *id, area, focused),
-                19 => bitbucket_pipelines_view::draw(frame, app, *id, area, focused),
                 20 => github_actions_view::draw(frame, app, *id, area, focused),
-                21 => bitbucket_pull_requests_view::draw(frame, app, *id, area, focused),
                 22 => github_pull_requests_view::draw(frame, app, *id, area, focused),
                 23 => gitlab_pipelines_view::draw(frame, app, *id, area, focused),
                 24 => gitlab_merge_requests_view::draw(frame, app, *id, area, focused),
                 25 => azdevops_builds_view::draw(frame, app, *id, area, focused),
                 26 => azdevops_pull_requests_view::draw(frame, app, *id, area, focused),
                 27 => {
-                    if let Some(crate::pane::Pane::BitbucketPipelineLog(p)) = app.panes.get_mut(*id)
-                    {
+                    if let Some(crate::pane::Pane::PipelineLog(p)) = app.panes.get_mut(*id) {
                         pipeline_log_view::draw(frame, p, area);
                     }
                     None
