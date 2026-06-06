@@ -101,6 +101,7 @@ export default defineConfig({
           label: 'Integrations',
           items: [
             { label: 'Building integrations', slug: 'manual/integrations/building' },
+            { label: 'Installing integrations', slug: 'manual/integrations/installing' },
             { label: 'Bitbucket forge viewer', slug: 'manual/integrations/forge-bitbucket' },
             { label: 'GitHub forge viewer', slug: 'manual/integrations/forge-github' },
             { label: 'GitLab forge viewer', slug: 'manual/integrations/forge-gitlab' },
