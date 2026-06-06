@@ -6905,7 +6905,6 @@ impl App {
             Pane::Pty(s) => Some((s.title(), false)),
             Pane::Ai(a) => Some((a.tab_title(), false)),
             Pane::Tests(t) => Some((t.tab_title(), false)),
-            Pane::Trace(t) => Some((t.tab_title(), false)),
             Pane::Browser(b) => Some((b.tab_title(), false)),
             Pane::Diagnostics(d) => Some((d.tab_title(), false)),
             Pane::Grep(g) => Some((g.tab_title(), false)),

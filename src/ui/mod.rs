@@ -73,7 +73,7 @@ pub mod tests_view;
 pub mod theme;
 pub mod toast_stack;
 pub mod tooltip;
-pub mod trace_view;
+// `trace_view` moved to mnml-playwright in 2026-06.
 pub mod tree_view;
 pub mod welcome;
 pub mod welcome_overlay;
@@ -612,7 +612,6 @@ fn render_layout(
                 Some(crate::pane::Pane::GitGraph(_)) => 7,
                 Some(crate::pane::Pane::GitStatus(_)) => 8,
                 Some(crate::pane::Pane::Diagnostics(_)) => 9,
-                Some(crate::pane::Pane::Trace(_)) => 10,
                 Some(crate::pane::Pane::Browser(_)) => 11,
                 Some(crate::pane::Pane::Grep(_)) => 12,
                 Some(crate::pane::Pane::Flaky(_)) => 13,
@@ -636,7 +635,6 @@ fn render_layout(
                 7 => git_graph_view::draw(frame, app, *id, area, focused),
                 8 => git_status_view::draw(frame, app, *id, area, focused),
                 9 => diagnostics_view::draw(frame, app, *id, area, focused),
-                10 => trace_view::draw(frame, app, *id, area, focused),
                 11 => browser_view::draw(frame, app, *id, area, focused),
                 12 => grep_view::draw(frame, app, *id, area, focused),
                 13 => flaky_view::draw(frame, app, *id, area, focused),

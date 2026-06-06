@@ -26,7 +26,7 @@ use crate::pane_host::BlitHostPane;
 // SCM split but never re-populated; removed once the dust settled.
 use crate::playwright::TestsPane;
 use crate::playwright::flaky_pane::FlakyPane;
-use crate::playwright::trace_pane::TracePane;
+// `TracePane` moved to mnml-playwright in 2026-06.
 use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
 
@@ -54,8 +54,7 @@ pub enum Pane {
     Ai(AiPane),
     /// A Playwright test run + its results tree.
     Tests(TestsPane),
-    /// A parsed Playwright `trace.zip` shown as a text timeline.
-    Trace(TracePane),
+    // `Pane::Trace` moved to mnml-playwright in 2026-06.
     /// The flaky-test dashboard — every wobbly test in the workspace's history.
     Flaky(FlakyPane),
     /// A persistent symbol outline for one editor — the `documentSymbol` reply,
@@ -414,7 +413,6 @@ impl Pane {
             Pane::Pty(s) => s.title(),
             Pane::Ai(a) => a.tab_title(),
             Pane::Tests(t) => t.tab_title(),
-            Pane::Trace(t) => t.tab_title(),
             Pane::Flaky(f) => f.tab_title(),
             Pane::Outline(o) => o.tab_title(),
             Pane::Browser(b) => b.tab_title(),
@@ -442,7 +440,6 @@ impl Pane {
             | Pane::Pty(_)
             | Pane::Ai(_)
             | Pane::Tests(_)
-            | Pane::Trace(_)
             | Pane::Flaky(_)
             | Pane::Outline(_)
             | Pane::Browser(_)

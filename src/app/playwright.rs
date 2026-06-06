@@ -173,17 +173,16 @@ impl App {
         self.run_playwright(args);
     }
 
-    /// `t` in a tests pane — parse the highlighted test's retained `trace.zip` (we
-    /// run with `--trace=retain-on-failure`, so failures have one) and open it as a
-    /// `Pane::Trace` timeline in a split below.
+    /// `t` in a tests pane — launch the standalone `mnml-playwright`
+    /// viewer on the highlighted test's retained `trace.zip` (we run
+    /// with `--trace=retain-on-failure`, so failures have one). The
+    /// in-tree `Pane::Trace` viewer moved out to mnml-playwright in
+    /// 2026-06; this method now dispatches `:host.launch mnml-playwright
+    /// <path>` so the trace opens in a regular blit-host pane.
     pub fn open_selected_test_trace(&mut self) {
-        let info = match self.active.and_then(|i| self.panes.get(i)) {
+        let path = match self.active.and_then(|i| self.panes.get(i)) {
             Some(Pane::Tests(t)) => match t.selected_test() {
-                Some(tc) => tc
-                    .trace_path
-                    .clone()
-                    .map(|p| (tc.title.clone(), p))
-                    .ok_or("no trace for that test (only failed tests retain one)"),
+                Some(tc) => tc.trace_path.clone(),
                 None => return,
             },
             _ => {
@@ -191,46 +190,22 @@ impl App {
                 return;
             }
         };
-        let (title, path) = match info {
-            Ok(v) => v,
-            Err(msg) => {
-                self.toast(msg);
-                return;
-            }
+        let Some(path) = path else {
+            self.toast("no trace for that test (only failed tests retain one)");
+            return;
         };
-        let events = match crate::playwright::trace::parse_trace_zip(&path) {
-            Ok(e) => e,
-            Err(e) => {
-                self.toast(format!("trace: {e}"));
-                return;
-            }
-        };
-        let pane = Pane::Trace(crate::playwright::trace_pane::TracePane::new(
-            title, path, events,
-        ));
-        match self.active {
-            Some(cur) => {
-                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
-                self.active = Some(new_id);
-            }
-            None => {
-                self.panes.push(pane);
-                let id = self.panes.len() - 1;
-                *self.layout_mut() = Layout::Leaf(id);
-                self.active = Some(id);
-            }
-        }
-        self.focus = Focus::Pane;
+        self.host_launch(
+            "mnml-playwright".to_string(),
+            vec![path.to_string_lossy().into_owned()],
+        );
     }
 
-    /// `r` in a trace pane — re-parse the `trace.zip`.
+    /// Stub kept after the Trace pane moved out — the standalone
+    /// `mnml-playwright` has its own `r` reload. The mnml command
+    /// surface (`tests.refresh_trace`) is preserved as a no-op so
+    /// existing keybindings don't error.
     pub fn refresh_active_trace(&mut self) {
-        let Some(cur) = self.active else { return };
-        if let Some(Pane::Trace(tr)) = self.panes.get_mut(cur)
-            && let Err(e) = tr.refresh()
-        {
-            self.toast(format!("trace: {e}"));
-        }
+        self.toast("trace viewer moved to mnml-playwright; press `r` inside the hosted pane");
     }
 
     /// `test.heal` (`h` in a tests pane) — hand the highlighted *failing* test (its
@@ -276,32 +251,15 @@ impl App {
         self.ask_ai(format!("AI: heal {title}"), prompt);
     }
 
-    /// `h` in a `Pane::Trace` — hand the failed test's *execution trace* (the
-    /// timeline of actions / console output / errors) to `claude -p` and ask for a
-    /// fix. Complements [`Self::heal_selected_test`] (which feeds the spec source):
-    /// here Claude sees what actually happened at runtime and uses its tools to read
-    /// the spec / code itself. `c` in the resulting `Pane::Ai` promotes it to an
-    /// interactive Claude Code session.
+    /// Stub kept after the Trace pane moved out — `heal_from_active_trace`
+    /// used to read the trace events from a `Pane::Trace`, but those
+    /// live in the standalone mnml-playwright now. The command surface
+    /// is preserved as a no-op toast.
     pub fn heal_from_active_trace(&mut self) {
-        let (title, timeline) = match self.active.and_then(|i| self.panes.get(i)) {
-            Some(Pane::Trace(tr)) => (tr.test_title.clone(), tr.timeline_text()),
-            _ => {
-                self.toast("open a trace pane first (`t` on a failed test)");
-                return;
-            }
-        };
-        if timeline.trim().is_empty() {
-            self.toast("this trace has no events to heal from");
-            return;
-        }
-        let prompt = format!(
-            "A Playwright test failed. Below is its execution trace — the actions it \
-             ran, console output, and errors, in order. Work out why it failed and \
-             propose a fix; use your tools to read the spec and the code under test as \
-             needed. Be concise: reply with the patch in a fenced block plus a short \
-             note.\n\n## Failed test\n{title}\n\n## Execution trace\n```\n{timeline}\n```"
+        self.toast(
+            "trace-driven heal moved with the trace viewer to mnml-playwright; \
+             use `tests.heal` (`h` on the test row) for the spec-only heal flow",
         );
-        self.ask_ai(format!("AI: heal from trace · {title}"), prompt);
     }
 
     /// Jump the editor to the source of the highlighted test in a `Pane::Tests`.

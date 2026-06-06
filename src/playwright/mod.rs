@@ -8,17 +8,13 @@
 //! not there), like the git track shells out to `git`. CodeBuild integration
 //! (for runs triggered from CI) is behind the `aws-codebuild` feature.
 //!
-//! Trace pane — runs with `--trace=retain-on-failure`; `t` on a failed test opens
-//! its `trace.zip` parsed into a text timeline (see [`trace`] / [`trace_pane`]).
-//!
-//! Follow-ups: stream progress (the `line` reporter on stderr) instead of waiting
-//! for the JSON at the end; clickable stack frames in a failure; heal-from-trace
-//! (feed a failed trace to `claude -p`); a flaky-test dashboard.
+//! Trace pane moved to the standalone `mnml-playwright` binary in
+//! 2026-06. mnml's `tests.open_trace` (`t` on a failed test) now
+//! shells out to `:host.launch mnml-playwright <trace.zip>` so the
+//! trace opens in a hosted blit-host pane.
 
 pub mod flaky_pane;
 pub mod history;
-pub mod trace;
-pub mod trace_pane;
 
 use std::path::PathBuf;
 use std::process::Command;
