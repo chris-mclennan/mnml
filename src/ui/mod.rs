@@ -59,6 +59,7 @@ pub mod mixr_view;
 pub mod outline_view;
 pub mod picker;
 // pipeline_log_view removed after 2026-06 SCM split.
+pub mod discovery_overlay;
 pub mod prompt;
 pub mod pty_view;
 pub mod rename_preview_overlay;
@@ -556,6 +557,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     about_overlay::draw(frame, app, area);
     // Settings overlay — `:settings` / view.settings.
     settings_overlay::draw(frame, app, area);
+    // "+ Add integration" overlay — `:integrations.add` or clicking
+    // the + chip on the sidebar's INTEGRATIONS header.
+    discovery_overlay::draw(frame, app, area);
     // Help overlay — `?` / view.help (auto-generated keymap reference).
     help_overlay::draw(frame, app, area);
     // Startup picker — drawn last among modal overlays so it sits on

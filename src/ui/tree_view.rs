@@ -519,11 +519,16 @@ fn draw_integration_section(
     let t = theme::cur();
     let width = area.width as usize;
 
-    // Header row: `> INTEGRATIONS`
+    // Header row: `> INTEGRATIONS  ……  + `
+    // (the `+` chip on the right mirrors the GIT section's add-repo
+    // chip — clicking it opens the discovery overlay.)
     let chev = section_chev(app.integration_section_expanded, nerd);
     let chev_str = format!(" {chev} ");
     let label = "INTEGRATIONS".to_string();
-    let used = chev_str.chars().count() + label.chars().count();
+    let plus_glyph = if nerd { "\u{F0419}" } else { "+" };
+    let plus_chip = format!(" {plus_glyph} ");
+    let plus_chip_w = plus_chip.chars().count();
+    let used = chev_str.chars().count() + label.chars().count() + plus_chip_w;
     let pad = width.saturating_sub(used);
     let header_rect = Rect {
         x: area.x,
@@ -542,10 +547,30 @@ fn draw_integration_section(
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)),
+            Span::styled(plus_chip, Style::default().fg(t.green).bg(rail_bg)),
         ])),
         header_rect,
     );
-    app.rects.integration_section_toggle = Some(header_rect);
+    // Toggle rect is the chevron+label area only — clicking on the
+    // `+` chip at the right edge fires the discovery overlay instead.
+    let toggle_w = area.width.saturating_sub(plus_chip_w as u16);
+    app.rects.integration_section_toggle = Some(Rect {
+        x: area.x,
+        y: start_y,
+        width: toggle_w,
+        height: 1,
+    });
+    // Register the `+` chip's hit rect — handled by the same dispatch
+    // path the workspace-tree `view.add_workspace` chip uses.
+    app.rects.tree_icon_buttons.push((
+        Rect {
+            x: area.x + toggle_w,
+            y: start_y,
+            width: plus_chip_w as u16,
+            height: 1,
+        },
+        "integrations.add",
+    ));
 
     let max_y = start_y + height;
 

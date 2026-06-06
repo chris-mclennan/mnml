@@ -29,6 +29,7 @@ mod blit_host;
 mod cdp;
 mod context_menus;
 mod dap;
+pub(crate) mod discovery;
 pub(crate) mod dispatch;
 mod ex_commands;
 mod find;
@@ -2599,6 +2600,10 @@ pub struct App {
     /// otherwise. Carries the `original` Config snapshot for the
     /// Esc/cancel revert path. See `app/settings.rs` for the schema.
     pub settings_overlay: Option<settings::SettingsOverlayState>,
+    /// "+ Add integration" discovery overlay state. Opened by the `+`
+    /// chip on the sidebar's INTEGRATIONS header or `integrations.add`.
+    /// See `app/discovery.rs`.
+    pub discovery_overlay: Option<discovery::DiscoveryOverlayState>,
     /// Help overlay state — `Some` while the in-app help is open.
     /// Auto-generated from the command registry; see `app/help.rs`.
     pub help_overlay: Option<help::HelpOverlayState>,
@@ -3096,6 +3101,7 @@ impl App {
             dragging: None,
             close_prompt: None,
             settings_overlay: None,
+            discovery_overlay: None,
             help_overlay: None,
             prompt: None,
             context_menu: None,

@@ -325,6 +325,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         handle_settings_overlay_key(app, key);
         return;
     }
+    // Discovery overlay (+ Add integration) — same all-keys-stolen
+    // pattern; close on Esc, navigate with arrows/jk, Enter dispatches
+    // by status, `y` yanks install command.
+    if app.discovery_overlay.is_some() {
+        handle_discovery_overlay_key(app, key);
+        return;
+    }
     // Search activity-bar section: input focused → printable keys
     // append to the query, Backspace deletes, Enter runs the grep,
     // ↑↓ navigates results, Esc blurs.
@@ -596,6 +603,21 @@ fn handle_search_section_key(app: &mut App, key: KeyEvent) {
         KeyCode::Up if !ctrl => app.search_section_select(-1),
         KeyCode::Down if !ctrl => app.search_section_select(1),
         KeyCode::Char(c) if !ctrl => app.search_section_insert_char(c),
+        _ => {}
+    }
+}
+
+fn handle_discovery_overlay_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => app.close_discovery_overlay(),
+        KeyCode::Up | KeyCode::Char('k') => app.discovery_move_row(-1),
+        KeyCode::Down | KeyCode::Char('j') => app.discovery_move_row(1),
+        KeyCode::Enter => app.discovery_enter(),
+        // v1: `i` and `y` both yank the install command — v2 will
+        // wire `i` to spawn `cargo install` in a Pty pane. Yanking
+        // gives the user a one-keystroke copy-paste install path
+        // without the complexity of a hosted-pty install action.
+        KeyCode::Char('i') | KeyCode::Char('y') => app.discovery_yank_install(),
         _ => {}
     }
 }
@@ -2429,6 +2451,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         match m.kind {
             MouseEventKind::ScrollUp => app.settings_move_row(-1),
             MouseEventKind::ScrollDown => app.settings_move_row(1),
+            _ => {}
+        }
+        return;
+    }
+    // "+ Add integration" overlay — scroll wheel moves the row cursor;
+    // clicks elsewhere are swallowed so they don't bleed through to
+    // the editor.
+    if app.discovery_overlay.is_some() {
+        match m.kind {
+            MouseEventKind::ScrollUp => app.discovery_move_row(-1),
+            MouseEventKind::ScrollDown => app.discovery_move_row(1),
             _ => {}
         }
         return;

@@ -1138,6 +1138,13 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "integrations.add",
+            title: "Integrations: discover + add family siblings (opens overlay)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_discovery_overlay(),
+        },
+        Command {
             id: "editor.jump_next_edit",
             title: "Jump to next edit position (vim `g,`)",
             group: "editor",
