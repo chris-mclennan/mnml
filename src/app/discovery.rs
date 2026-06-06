@@ -19,7 +19,7 @@
 
 use crate::app::App;
 use crate::config::IntegrationIcon;
-use crate::family_catalog::{self, FamilySibling};
+use crate::family_catalog::{self, SiblingRef};
 
 /// `None` on `App.discovery_overlay` ⇒ overlay closed.
 #[derive(Debug)]
@@ -40,11 +40,15 @@ impl DiscoveryOverlayState {
 /// Per-catalog-entry render shape, computed fresh on each frame so
 /// install-state changes (after the user runs `i`) are reflected
 /// without an explicit refresh step.
+///
+/// `Sibling` now holds a `SiblingRef` rather than a static catalog
+/// pointer — so auto-discovered installs surface in the overlay
+/// alongside the hardcoded family.
 #[derive(Debug, Clone)]
 pub enum DiscoveryItem {
     Section(&'static str),
     Sibling {
-        sibling: &'static FamilySibling,
+        sibling: SiblingRef,
         status: SiblingStatus,
     },
 }
@@ -62,28 +66,72 @@ pub enum SiblingStatus {
     NotInstalled,
 }
 
-/// Compute the visible row list. Section headers are emitted between
+/// Compute the visible row list. Section headers emit between
 /// category boundaries; siblings within a category preserve catalog
-/// order.
+/// order, with auto-discovered (community) siblings appended at the
+/// end of each section.
 pub fn build_items(app: &App) -> Vec<DiscoveryItem> {
-    let mut out = Vec::with_capacity(family_catalog::CATALOG.len() + 8);
-    let mut last_category: Option<&'static str> = None;
-    for sibling in family_catalog::CATALOG {
-        let header = sibling.category.header();
-        if last_category != Some(header) {
-            out.push(DiscoveryItem::Section(header));
-            last_category = Some(header);
+    // Hardcoded catalog entries, wrapped as `SiblingRef::Catalog`.
+    let catalog_refs: Vec<SiblingRef> = family_catalog::CATALOG
+        .iter()
+        .map(SiblingRef::Catalog)
+        .collect();
+    // Auto-discovered entries — already filtered to exclude anything
+    // that's also in the catalog (so we don't double-list shipped
+    // siblings the user happens to have installed).
+    let discovered_refs: Vec<SiblingRef> = family_catalog::discover_uncataloged()
+        .into_iter()
+        .map(SiblingRef::Discovered)
+        .collect();
+
+    // Group both into a single Vec keyed by category so the renderer
+    // gets one section per category with catalog rows first, then
+    // auto-discovered rows.
+    let mut by_category: std::collections::BTreeMap<&'static str, Vec<SiblingRef>> =
+        std::collections::BTreeMap::new();
+    for r in catalog_refs.into_iter().chain(discovered_refs) {
+        by_category
+            .entry(r.category().header())
+            .or_default()
+            .push(r);
+    }
+    // Stable section order: the order categories first appear in the
+    // catalog, then any "Other" / community-only categories appended.
+    let mut section_order: Vec<&'static str> = Vec::new();
+    for s in family_catalog::CATALOG {
+        let header = s.category.header();
+        if !section_order.contains(&header) {
+            section_order.push(header);
         }
-        out.push(DiscoveryItem::Sibling {
-            sibling,
-            status: status_for(app, sibling),
-        });
+    }
+    for header in by_category.keys() {
+        if !section_order.contains(header) {
+            section_order.push(header);
+        }
+    }
+
+    let mut out = Vec::with_capacity(family_catalog::CATALOG.len() + 8);
+    for header in section_order {
+        let Some(rows) = by_category.get(header) else {
+            continue;
+        };
+        if rows.is_empty() {
+            continue;
+        }
+        out.push(DiscoveryItem::Section(header));
+        for r in rows {
+            let status = status_for(app, r);
+            out.push(DiscoveryItem::Sibling {
+                sibling: r.clone(),
+                status,
+            });
+        }
     }
     out
 }
 
-fn status_for(app: &App, s: &FamilySibling) -> SiblingStatus {
-    let installed = crate::integration_detect::is_binary_installed(s.binary);
+fn status_for(app: &App, s: &SiblingRef) -> SiblingStatus {
+    let installed = crate::integration_detect::is_binary_installed(s.binary());
     if !installed {
         return SiblingStatus::NotInstalled;
     }
@@ -93,7 +141,7 @@ fn status_for(app: &App, s: &FamilySibling) -> SiblingStatus {
         .ui
         .integration_icons
         .iter()
-        .any(|ic| ic.id == s.id || ic.command == launch);
+        .any(|ic| ic.id == s.id() || ic.command == launch);
     if already_in_rail {
         SiblingStatus::InRail
     } else {
@@ -103,10 +151,12 @@ fn status_for(app: &App, s: &FamilySibling) -> SiblingStatus {
 
 impl App {
     pub fn open_discovery_overlay(&mut self) {
-        // Refresh detection cache on open so a binary the user just
+        // Refresh detection caches on open so a binary the user just
         // installed (outside mnml) shows as installed without needing
-        // a separate `integrations.refresh`.
-        crate::integration_detect::clear_cache();
+        // a separate `integrations.refresh`. `clear_all_caches` also
+        // drops the auto-discovery cache so a newly-installed
+        // community sibling appears immediately.
+        crate::integration_detect::clear_all_caches();
         self.discovery_overlay = Some(DiscoveryOverlayState::open());
     }
 
@@ -126,17 +176,17 @@ impl App {
         }
     }
 
-    /// The catalog entry under the current selection cursor, paired
-    /// with its status — returns `None` if the overlay isn't open or
-    /// the row index is out of range.
-    pub fn discovery_focused(&self) -> Option<(&'static FamilySibling, SiblingStatus)> {
+    /// The sibling under the current selection cursor, paired with its
+    /// status — returns `None` if the overlay isn't open or the row
+    /// index is out of range.
+    pub fn discovery_focused(&self) -> Option<(SiblingRef, SiblingStatus)> {
         let state = self.discovery_overlay.as_ref()?;
         let items = build_items(self);
         let mut row_idx = 0usize;
         for item in &items {
             if let DiscoveryItem::Sibling { sibling, status } = item {
                 if row_idx == state.selected_row {
-                    return Some((sibling, *status));
+                    return Some((sibling.clone(), *status));
                 }
                 row_idx += 1;
             }
@@ -154,40 +204,42 @@ impl App {
         };
         match status {
             SiblingStatus::InRail => {
-                self.toast(format!("{} already in rail", sibling.binary));
+                self.toast(format!("{} already in rail", sibling.binary()));
             }
             SiblingStatus::Installed => {
-                self.discovery_add_to_rail(sibling);
+                self.discovery_add_to_rail(&sibling);
             }
             SiblingStatus::NotInstalled => {
                 self.toast(format!(
                     "{} not installed — press i to install or y to copy command",
-                    sibling.binary
+                    sibling.binary()
                 ));
             }
         }
     }
 
-    fn discovery_add_to_rail(&mut self, s: &FamilySibling) {
+    fn discovery_add_to_rail(&mut self, s: &SiblingRef) {
         // Reject re-adds (defensive — discovery_enter already checks).
         let launch = s.launch_command();
+        let id = s.id().to_string();
+        let binary = s.binary().to_string();
         if self
             .config
             .ui
             .integration_icons
             .iter()
-            .any(|ic| ic.id == s.id || ic.command == launch)
+            .any(|ic| ic.id == id || ic.command == launch)
         {
-            self.toast(format!("{} already in rail", s.binary));
+            self.toast(format!("{} already in rail", binary));
             return;
         }
         self.config.ui.integration_icons.push(IntegrationIcon {
-            id: s.id.to_string(),
-            glyph: s.icon.glyph.to_string(),
-            fallback: s.icon.fallback.to_string(),
+            id,
+            glyph: s.icon_glyph().to_string(),
+            fallback: s.icon_fallback().to_string(),
             command: launch,
-            color: s.icon.color.to_string(),
-            tooltip: Some(s.icon.tooltip.to_string()),
+            color: s.icon_color().to_string(),
+            tooltip: Some(s.icon_tooltip().to_string()),
         });
         // Best-effort TOML persistence so the chip survives a restart.
         // On failure we still report "added" but flag the persistence
@@ -195,62 +247,70 @@ impl App {
         match persist_integration_icons(&self.config.ui.integration_icons) {
             Ok(path) => self.toast(format!(
                 "added {} to rail · persisted to {}",
-                s.binary,
+                binary,
                 path.display()
             )),
             Err(e) => self.toast(format!(
                 "added {} to rail (runtime only — persist failed: {e})",
-                s.binary
+                binary
             )),
         }
     }
 
     /// `y` — copy the `cargo install` command for the focused row.
+    /// No-op for auto-discovered siblings (we don't know the repo URL).
     pub fn discovery_yank_install(&mut self) {
         let Some((sibling, _)) = self.discovery_focused() else {
             return;
         };
-        let cmd = sibling.install_command();
+        let Some(cmd) = sibling.install_command() else {
+            self.toast(format!(
+                "{} is auto-discovered — install source unknown, no command to yank",
+                sibling.binary()
+            ));
+            return;
+        };
         let mut clip = crate::clipboard::Clipboard::new();
         clip.set(cmd.clone(), false);
         self.toast(format!("copied: {}", cmd));
     }
 
     /// `i` — spawn a Pty pane running `cargo install --git <url> --tag <ver>`
-    /// for the focused row. The user watches install progress live; once
-    /// `cargo` exits cleanly the binary lands in `~/.cargo/bin` and is
-    /// picked up by the next `open_discovery_overlay` (which clears the
-    /// detection cache).
-    ///
-    /// Closes the discovery overlay — the user wants to *see* the install
-    /// output, not have it bury behind the picker.
+    /// for the focused row. No-op for auto-discovered siblings (already
+    /// installed by definition — and we wouldn't know the repo URL
+    /// anyway). The catalog path closes the overlay so the Pty pane
+    /// gets the screen real estate.
     pub fn discovery_install_selected(&mut self) {
         let Some((sibling, _)) = self.discovery_focused() else {
             return;
         };
+        let SiblingRef::Catalog(catalog) = sibling else {
+            self.toast(format!(
+                "{} is auto-discovered (already installed) — nothing to install",
+                sibling.binary()
+            ));
+            return;
+        };
         let profile = crate::pty_pane::BinaryProfile {
-            label: format!("install: {}", sibling.binary),
+            label: format!("install: {}", catalog.binary),
             exe: "cargo".to_string(),
             args: vec![
                 "install".to_string(),
                 "--git".to_string(),
-                sibling.repo_url.to_string(),
+                catalog.repo_url.to_string(),
                 "--tag".to_string(),
-                sibling.pinned_version.to_string(),
-                sibling.binary.to_string(),
+                catalog.pinned_version.to_string(),
+                catalog.binary.to_string(),
             ],
             cwd: None,
             env: vec![],
             session_id: None,
         };
-        // Close overlay first so the new Pty pane has the screen real
-        // estate. The detection cache is cleared on next open of the
-        // overlay (or via `integrations.refresh`).
         self.close_discovery_overlay();
         self.open_pty(profile);
         self.toast(format!(
             "installing {} — watch the pty pane; re-open + when done",
-            sibling.binary
+            catalog.binary
         ));
     }
 }
@@ -381,7 +441,7 @@ mod tests {
         assert!(!DiscoveryItem::Section("AWS").is_row());
         let s = family_catalog::CATALOG.first().expect("catalog non-empty");
         let item = DiscoveryItem::Sibling {
-            sibling: s,
+            sibling: SiblingRef::Catalog(s),
             status: SiblingStatus::NotInstalled,
         };
         assert!(item.is_row());

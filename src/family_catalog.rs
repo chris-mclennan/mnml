@@ -306,6 +306,209 @@ pub fn find_by_binary(name: &str) -> Option<&'static FamilySibling> {
     CATALOG.iter().find(|s| s.binary == name)
 }
 
+/// Auto-discovered sibling — found at runtime on `$PATH` or a
+/// well-known dir, but not present in the hardcoded `CATALOG`.
+/// Owns its strings (the catalog uses `&'static str` because every
+/// entry is known at compile time; discovered entries can't be).
+///
+/// Install command is `None` because we don't know the repo URL —
+/// the user already has the binary. The `+` overlay surfaces these
+/// as installed-but-not-yet-in-rail, with `i` and `y` no-ops.
+#[derive(Debug, Clone)]
+pub struct DiscoveredSibling {
+    pub id: String,
+    pub binary: String,
+    pub category: Category,
+    pub one_liner: String,
+    pub icon: OwnedIconTemplate,
+}
+
+#[derive(Debug, Clone)]
+pub struct OwnedIconTemplate {
+    pub glyph: String,
+    pub fallback: String,
+    pub color: String,
+    pub tooltip: String,
+}
+
+impl DiscoveredSibling {
+    /// Stringly `:host.launch <binary>` invocation. Mirrors
+    /// `FamilySibling::launch_command()`.
+    pub fn launch_command(&self) -> String {
+        format!(":host.launch {}", self.binary)
+    }
+}
+
+/// Reference to *some* sibling — either a hardcoded catalog entry
+/// or an auto-discovered one. Lets the discovery overlay render
+/// both kinds with one code path.
+#[derive(Debug, Clone)]
+pub enum SiblingRef {
+    Catalog(&'static FamilySibling),
+    Discovered(DiscoveredSibling),
+}
+
+impl SiblingRef {
+    pub fn id(&self) -> &str {
+        match self {
+            SiblingRef::Catalog(s) => s.id,
+            SiblingRef::Discovered(s) => &s.id,
+        }
+    }
+    pub fn binary(&self) -> &str {
+        match self {
+            SiblingRef::Catalog(s) => s.binary,
+            SiblingRef::Discovered(s) => &s.binary,
+        }
+    }
+    pub fn category(&self) -> Category {
+        match self {
+            SiblingRef::Catalog(s) => s.category,
+            SiblingRef::Discovered(s) => s.category,
+        }
+    }
+    pub fn one_liner(&self) -> &str {
+        match self {
+            SiblingRef::Catalog(s) => s.one_liner,
+            SiblingRef::Discovered(s) => &s.one_liner,
+        }
+    }
+    pub fn icon_glyph(&self) -> &str {
+        match self {
+            SiblingRef::Catalog(s) => s.icon.glyph,
+            SiblingRef::Discovered(s) => &s.icon.glyph,
+        }
+    }
+    pub fn icon_fallback(&self) -> &str {
+        match self {
+            SiblingRef::Catalog(s) => s.icon.fallback,
+            SiblingRef::Discovered(s) => &s.icon.fallback,
+        }
+    }
+    pub fn icon_color(&self) -> &str {
+        match self {
+            SiblingRef::Catalog(s) => s.icon.color,
+            SiblingRef::Discovered(s) => &s.icon.color,
+        }
+    }
+    pub fn icon_tooltip(&self) -> &str {
+        match self {
+            SiblingRef::Catalog(s) => s.icon.tooltip,
+            SiblingRef::Discovered(s) => &s.icon.tooltip,
+        }
+    }
+    pub fn launch_command(&self) -> String {
+        match self {
+            SiblingRef::Catalog(s) => s.launch_command(),
+            SiblingRef::Discovered(s) => s.launch_command(),
+        }
+    }
+    /// Install command — `Some` for catalog entries, `None` for
+    /// discovered ones (we don't know the repo URL). Used to decide
+    /// whether the `i`/`y` actions show an actionable command.
+    pub fn install_command(&self) -> Option<String> {
+        match self {
+            SiblingRef::Catalog(s) => Some(s.install_command()),
+            SiblingRef::Discovered(_) => None,
+        }
+    }
+    pub fn is_discovered(&self) -> bool {
+        matches!(self, SiblingRef::Discovered(_))
+    }
+}
+
+/// Walk `$PATH` + well-known dirs and synthesize a `DiscoveredSibling`
+/// for every `mnml-<class>-<name>` binary that ISN'T already in the
+/// hardcoded `CATALOG`. Categories are derived from the class prefix
+/// (`aws` → `Aws`, `db` → `Db`, etc.); unknown classes land in
+/// `Other`. Icon templates use category-derived defaults so the
+/// rows render with the right family-feel.
+pub fn discover_uncataloged() -> Vec<DiscoveredSibling> {
+    let cataloged: std::collections::HashSet<&str> = CATALOG.iter().map(|s| s.binary).collect();
+    let mut out = Vec::new();
+    for binary in crate::integration_detect::discover_mnml_binaries() {
+        if cataloged.contains(binary.as_str()) {
+            continue;
+        }
+        let (class, name) = split_sibling_name(&binary);
+        let category = class_to_category(class);
+        let icon = synth_icon_for(category, name);
+        let id = name.replace('-', "_");
+        let one_liner = format!("auto-discovered {} sibling", class);
+        out.push(DiscoveredSibling {
+            id,
+            binary,
+            category,
+            one_liner,
+            icon,
+        });
+    }
+    out
+}
+
+/// `mnml-<class>-<name>` → (`class`, `name`). Assumes the binary
+/// already passed [`integration_detect::looks_like_mnml_sibling`].
+fn split_sibling_name(binary: &str) -> (&str, &str) {
+    let rest = binary.strip_prefix("mnml-").unwrap_or(binary);
+    rest.split_once('-').unwrap_or((rest, ""))
+}
+
+fn class_to_category(class: &str) -> Category {
+    match class {
+        "aws" => Category::Aws,
+        "db" => Category::Db,
+        "forge" => Category::Forge,
+        "tracker" => Category::Tracker,
+        "fs" => Category::Fs,
+        "test" => Category::Test,
+        _ => Category::Other,
+    }
+}
+
+/// Synthesize an icon template for a discovered sibling. Each category
+/// gets a distinct color so the rail strip stays scannable; we use a
+/// generic `cog` glyph for the icon since we don't know the right
+/// per-tool one.
+fn synth_icon_for(category: Category, name: &str) -> OwnedIconTemplate {
+    // Generic nerd-font glyph (nf-fa-cog).
+    let glyph = "\u{F013}".to_string();
+    // 2-char fallback derived from the binary name.
+    let fallback = name
+        .chars()
+        .take(2)
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let color = match category {
+        Category::Aws => "yellow",
+        Category::Db => "teal",
+        Category::Forge => "blue",
+        Category::Tracker => "purple",
+        Category::Fs => "orange",
+        Category::Test => "green",
+        Category::Other => "cyan",
+    }
+    .to_string();
+    let tooltip = format!("mnml-{}-{}", category_class(category), name);
+    OwnedIconTemplate {
+        glyph,
+        fallback,
+        color,
+        tooltip,
+    }
+}
+
+fn category_class(category: Category) -> &'static str {
+    match category {
+        Category::Aws => "aws",
+        Category::Db => "db",
+        Category::Forge => "forge",
+        Category::Tracker => "tracker",
+        Category::Fs => "fs",
+        Category::Test => "test",
+        Category::Other => "other",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,5 +549,64 @@ mod tests {
                 s.repo_url
             );
         }
+    }
+
+    #[test]
+    fn split_sibling_name_canonical() {
+        assert_eq!(split_sibling_name("mnml-aws-lambda"), ("aws", "lambda"));
+        assert_eq!(split_sibling_name("mnml-tracker-jira"), ("tracker", "jira"));
+        assert_eq!(
+            split_sibling_name("mnml-aws-cloudwatch-logs"),
+            ("aws", "cloudwatch-logs")
+        );
+    }
+
+    #[test]
+    fn class_to_category_maps_known_classes() {
+        assert_eq!(class_to_category("aws"), Category::Aws);
+        assert_eq!(class_to_category("db"), Category::Db);
+        assert_eq!(class_to_category("forge"), Category::Forge);
+        assert_eq!(class_to_category("tracker"), Category::Tracker);
+        assert_eq!(class_to_category("fs"), Category::Fs);
+        assert_eq!(class_to_category("test"), Category::Test);
+        assert_eq!(class_to_category("unknown"), Category::Other);
+    }
+
+    #[test]
+    fn synth_icon_picks_color_per_category() {
+        assert_eq!(synth_icon_for(Category::Aws, "x").color, "yellow");
+        assert_eq!(synth_icon_for(Category::Db, "x").color, "teal");
+        assert_eq!(synth_icon_for(Category::Other, "x").color, "cyan");
+    }
+
+    #[test]
+    fn sibling_ref_catalog_passthrough_methods() {
+        let s = CATALOG.first().unwrap();
+        let r = SiblingRef::Catalog(s);
+        assert_eq!(r.id(), s.id);
+        assert_eq!(r.binary(), s.binary);
+        assert_eq!(r.category(), s.category);
+        assert!(r.install_command().is_some());
+        assert!(!r.is_discovered());
+    }
+
+    #[test]
+    fn sibling_ref_discovered_has_no_install_command() {
+        let d = DiscoveredSibling {
+            id: "x".into(),
+            binary: "mnml-other-x".into(),
+            category: Category::Other,
+            one_liner: "auto-discovered other sibling".into(),
+            icon: OwnedIconTemplate {
+                glyph: "g".into(),
+                fallback: "Ot".into(),
+                color: "cyan".into(),
+                tooltip: "mnml-other-x".into(),
+            },
+        };
+        let r = SiblingRef::Discovered(d);
+        assert!(r.is_discovered());
+        assert!(r.install_command().is_none());
+        assert_eq!(r.launch_command(), ":host.launch mnml-other-x");
     }
 }

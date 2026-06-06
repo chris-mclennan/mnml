@@ -136,13 +136,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                     SiblingStatus::Installed => ("✓", t.cyan),
                     SiblingStatus::NotInstalled => ("✗", t.red),
                 };
-                let status_text = match status {
-                    SiblingStatus::InRail => "installed (in rail)",
-                    SiblingStatus::Installed => "installed",
-                    SiblingStatus::NotInstalled => "not installed",
+                let mut status_text: String = match status {
+                    SiblingStatus::InRail => "installed (in rail)".to_string(),
+                    SiblingStatus::Installed => "installed".to_string(),
+                    SiblingStatus::NotInstalled => "not installed".to_string(),
                 };
+                if sibling.is_discovered() {
+                    status_text.push_str(" · auto-discovered");
+                }
                 let name_col = 32usize;
-                let name_padded = pad_or_truncate(sibling.binary, name_col);
+                let name_padded = pad_or_truncate(sibling.binary(), name_col);
                 let mut spans: Vec<Span<'static>> = Vec::new();
                 let base_style = if is_focused {
                     Style::default()
@@ -167,6 +170,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                         .bg(base_style.bg.unwrap_or(t.bg_dark)),
                 ));
                 spans.push(Span::styled(name_padded, base_style));
+                let status_len = status_text.chars().count();
                 spans.push(Span::styled(
                     format!("  {status_text}"),
                     Style::default()
@@ -174,7 +178,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                         .bg(base_style.bg.unwrap_or(t.bg_dark)),
                 ));
                 // Trailing pad to fill the row background.
-                let used = 4 + 3 + name_col + 2 + status_text.chars().count();
+                let used = 4 + 3 + name_col + 2 + status_len;
                 let pad = (body.width as usize).saturating_sub(used);
                 spans.push(Span::styled(
                     " ".repeat(pad),
