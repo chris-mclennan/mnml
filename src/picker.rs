@@ -69,10 +69,10 @@ pub enum PickerKind {
     /// register's text at the cursor. Populated by `picker.clipboard`
     /// over `"0`-`"9` (yank + delete history) + lowercase named regs.
     Clipboard,
-    /// `id` = the PR/MR's web URL. Accept ⇒ open it in the OS browser.
-    /// Populated by `pr.picker` — a unified fuzzy picker over every
-    /// open PR across the 4 SCM hosts (Bitbucket, GitHub, GitLab, Azure
-    /// DevOps), reading from the per-host caches the SCM workers populate.
+    /// Vestigial variant kept after the 2026-06 SCM split removed
+    /// `pr.picker`. No code constructs it any more; left in the enum
+    /// so a forge-host index file can re-light cross-host PR
+    /// aggregation without re-introducing the variant.
     OpenPullRequests,
     /// `id` = the index (as a string) into `App::repos`. Accept ⇒
     /// switch the active repo. Populated by `git.switch_repo`.

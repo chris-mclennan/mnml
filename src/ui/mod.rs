@@ -60,7 +60,7 @@ pub mod md_preview;
 pub mod mixr_view;
 pub mod outline_view;
 pub mod picker;
-pub mod pipeline_log_view;
+// pipeline_log_view removed after 2026-06 SCM split.
 pub mod prompt;
 pub mod pty_view;
 pub mod rename_preview_overlay;
@@ -623,7 +623,6 @@ fn render_layout(
                 Some(crate::pane::Pane::Quickfix(_)) => 16,
                 #[cfg(feature = "aws-codebuild")]
                 Some(crate::pane::Pane::CodeBuilds(_)) => 18,
-                Some(crate::pane::Pane::PipelineLog(_)) => 27,
                 #[cfg(feature = "aws-codebuild")]
                 Some(crate::pane::Pane::LogTail(_)) => 28,
                 Some(crate::pane::Pane::Cheatsheet(_)) => 29,
@@ -654,12 +653,6 @@ fn render_layout(
                 16 => grep_view::draw(frame, app, *id, area, focused),
                 #[cfg(feature = "aws-codebuild")]
                 18 => codebuilds_view::draw(frame, app, *id, area, focused),
-                27 => {
-                    if let Some(crate::pane::Pane::PipelineLog(p)) = app.panes.get_mut(*id) {
-                        pipeline_log_view::draw(frame, p, area);
-                    }
-                    None
-                }
                 #[cfg(feature = "aws-codebuild")]
                 28 => {
                     if let Some(crate::pane::Pane::LogTail(p)) = app.panes.get_mut(*id) {

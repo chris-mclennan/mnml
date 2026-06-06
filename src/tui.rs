@@ -642,10 +642,10 @@ fn handle_picker_key(app: &mut App, key: KeyEvent) {
     };
     match key.code {
         KeyCode::Esc => app.close_picker(),
-        // Tab on a picker → "secondary accept" — picker-specific behavior.
-        // For the cross-host PR picker (`PickerKind::OpenPullRequests`)
-        // this jumps to the PR's matching pipeline/build instead of
-        // opening the URL. Other picker kinds ignore Tab.
+        // Tab on a picker → "secondary accept" — picker-specific
+        // behavior. No-op for every kind right now; left as a hook
+        // for future per-kind use (the 2026-06 SCM split removed the
+        // cross-host PR picker that originally drove this).
         KeyCode::Tab => app.picker_accept_secondary(),
         KeyCode::Enter => app.picker_accept(),
         KeyCode::Up => picker.move_up(),
@@ -1720,48 +1720,6 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::End | KeyCode::Char('G') => app.move_flaky_selection(isize::MAX / 2),
             KeyCode::Enter => app.jump_to_selected_flaky(),
             KeyCode::Char('r') => app.refresh_flaky_panes(),
-            KeyCode::Esc => app.focus_tree(),
-            _ => {}
-        }
-        return;
-    }
-
-    // Bitbucket pipeline-log viewer: scrollable text, no list selection.
-    if matches!(app.panes.get(i), Some(Pane::PipelineLog(_))) {
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(Pane::PipelineLog(p)) = app.panes.get_mut(i) {
-                    p.scroll = p.scroll.saturating_sub(1);
-                }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(Pane::PipelineLog(p)) = app.panes.get_mut(i) {
-                    p.scroll = p.scroll.saturating_add(1);
-                }
-            }
-            KeyCode::PageUp => {
-                if let Some(Pane::PipelineLog(p)) = app.panes.get_mut(i) {
-                    p.scroll = p.scroll.saturating_sub(10);
-                }
-            }
-            KeyCode::PageDown => {
-                if let Some(Pane::PipelineLog(p)) = app.panes.get_mut(i) {
-                    p.scroll = p.scroll.saturating_add(10);
-                }
-            }
-            KeyCode::Home | KeyCode::Char('g') => {
-                if let Some(Pane::PipelineLog(p)) = app.panes.get_mut(i) {
-                    p.scroll = 0;
-                }
-            }
-            KeyCode::End | KeyCode::Char('G') => {
-                if let Some(Pane::PipelineLog(p)) = app.panes.get_mut(i) {
-                    p.scroll = usize::MAX; // clamped on next render
-                }
-            }
-            KeyCode::Char('r') => app.refetch_active_pipeline_log(),
-            KeyCode::Char('y') => app.copy_active_pipeline_log_url(),
-            KeyCode::Enter => app.open_active_pipeline_log_url(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }

@@ -204,33 +204,10 @@ pub fn root() -> &'static Leader {
                         ],
                     ),
                 ),
-                (
-                    'C',
-                    group(
-                        "+ci",
-                        vec![
-                            // All four SCM hosts (BB/GH/GL/AZ) moved
-                            // to standalone mnml-forge-* binaries.
-                            // The +C group is intentionally empty —
-                            // use the launcher icons in the
-                            // integrations strip to open the host
-                            // viewers.
-                        ],
-                    ),
-                ),
-                (
-                    'P',
-                    group(
-                        "+pr",
-                        vec![
-                            // All four SCM hosts moved to standalone
-                            // mnml-forge-* binaries. The fuzzy picker
-                            // stays as a hook for the future
-                            // forge-host index file.
-                            ('p', cmd("pr.picker", "all-host fuzzy picker")),
-                        ],
-                    ),
-                ),
+                // `+C` (CI) and `+P` (PR) chord groups removed after
+                // the 2026-06 SCM split — all four hosts ship as
+                // mnml-forge-* siblings, launched via the integration
+                // icons in the rail.
                 (
                     'H',
                     group(

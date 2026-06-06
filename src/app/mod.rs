@@ -42,7 +42,7 @@ mod macros_marks;
 mod mixr;
 mod now_playing;
 mod picker;
-mod pipeline_log;
+// pipeline_log removed after 2026-06 SCM split.
 mod playwright;
 mod session;
 pub(crate) mod settings;
@@ -2790,16 +2790,8 @@ pub struct App {
     /// cleared on EOF or pane close.
     #[cfg(feature = "aws-codebuild")]
     log_tail_pane_id: Option<crate::layout::PaneId>,
-    /// Channel for background Bitbucket pipeline-log fetches.
-    /// Each worker thread fetches one pipeline's combined log; the reply
-    /// (Done/Failed) is matched to the open `Pane::PipelineLog`
-    /// by `job_id`. Lazily created when the first log is fetched.
-    pipeline_log_chan: Option<(
-        std::sync::mpsc::Sender<crate::pipeline_log::PipelineLogEvent>,
-        std::sync::mpsc::Receiver<crate::pipeline_log::PipelineLogEvent>,
-    )>,
-    /// Next job-id for a pipeline-log fetch (so re-fetches can drop stale replies).
-    pipeline_log_next_job: u64,
+    // Pipeline-log channel + state removed after the 2026-06 SCM
+    // split — no in-tree host populates Pane::PipelineLog any more.
     // gh_actions_*, gh_prs_*, github_* fields all moved to
     // mnml-forge-github in 2026-06.
     // GitLab worker + caches moved to mnml-forge-gitlab.
@@ -3118,8 +3110,6 @@ impl App {
             log_tail_chan: None,
             #[cfg(feature = "aws-codebuild")]
             log_tail_pane_id: None,
-            pipeline_log_chan: None,
-            pipeline_log_next_job: 1,
             pending_commit_msg_job: None,
             pending_amend_msg_job: None,
             pending_wip_commit_msg_pane: None,
@@ -3762,33 +3752,9 @@ impl App {
         }
         Some(t.name.to_string())
     }
-    /// Host-agnostic "find the most-recent pipeline/build for `branch` in
-    /// the host's caches and select it." Used by `picker_accept_secondary`
-    /// — the picker doesn't have a pane to read from, so we re-resolve
-    /// by `(host_tag, repo_label, branch)`.
-    fn cross_nav_pr_to_pipeline(&mut self, host_tag: &str, repo_label: &str, branch: &str) {
-        match host_tag {
-            "BB" => {
-                let _ = (repo_label, branch);
-                self.toast("Bitbucket panes moved to mnml-forge-bitbucket");
-            }
-            "GH" => {
-                let _ = (repo_label, branch);
-                self.toast("GitHub panes moved to mnml-forge-github");
-            }
-            "GL" => {
-                let _ = (repo_label, branch);
-                self.toast("GitLab panes moved to mnml-forge-gitlab");
-            }
-            "AZ" => {
-                let _ = (repo_label, branch);
-                self.toast("Azure DevOps panes moved to mnml-forge-azdevops");
-            }
-            other => {
-                self.toast(format!("unknown host tag '{other}'"));
-            }
-        }
-    }
+    // `cross_nav_pr_to_pipeline` removed after the 2026-06 SCM split
+    // — all four SCM hosts moved to mnml-forge-* siblings, and the
+    // cross-host PR picker that called this method is gone too.
 
     /// Re-walk the workspace and rebuild `App.repos`. Useful when a repo was
     /// cloned (or a `.git/` dir created) in another terminal after launch —
@@ -6959,7 +6925,6 @@ impl App {
             Pane::Outline(o) => Some((o.tab_title(), false)),
             Pane::Quickfix(g) => Some((format!("Quickfix · {}", g.hits.len()), false)),
             Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
-            Pane::PipelineLog(p) => Some((p.title.clone(), false)),
             #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(p) => Some((p.tab_title(), false)),
             #[cfg(feature = "aws-codebuild")]
@@ -8355,7 +8320,6 @@ impl App {
         self.drain_cdp_events();
         #[cfg(feature = "aws-codebuild")]
         self.drain_codebuild_events();
-        self.drain_pipeline_log_events();
         #[cfg(feature = "aws-codebuild")]
         self.drain_log_tail_events();
         self.drain_blit_host_events();

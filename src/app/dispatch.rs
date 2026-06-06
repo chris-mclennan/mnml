@@ -627,15 +627,8 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     p.scroll = p.scroll.saturating_add(n);
                 }
             }
-            Some(Pane::PipelineLog(p)) => {
-                let n = delta.unsigned_abs() as usize;
-                p.scroll = if delta < 0 {
-                    p.scroll.saturating_sub(n)
-                } else {
-                    p.scroll + n
-                };
-            }
-            // GitLab pane wheel-scroll moved to mnml-forge-gitlab.
+            // Pipeline-log + SCM pane wheel-scroll moved to the
+            // mnml-forge-* siblings.
             Some(Pane::Cheatsheet(c)) => {
                 if delta < 0 {
                     c.move_up();

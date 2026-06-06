@@ -2895,21 +2895,9 @@ fn builtin_commands() -> Vec<Command> {
 
     // GitHub commands moved to the standalone mnml-forge-github
     // binary in 2026-06.
-    // GitLab commands moved to mnml-forge-gitlab in 2026-06.
-    // Azure DevOps commands moved to mnml-forge-azdevops in 2026-06.
-    // Cross-host: one fuzzy picker over every open PR across all 4 SCM
-    // hosts. Reads from the per-host caches the SCM workers populate;
-    // accept opens the chosen PR's web URL.
-    cmds.push(Command {
-        id: "pr.picker",
-        title: "Pull requests: fuzzy picker over all hosts",
-        group: "pr",
-        keys: &[],
-        run: |app| app.open_pr_picker(),
-    });
-    // Cross-nav between paired PR + pipeline panes (per host). Bound to
-    // `c` (on a PR row) and `P` (on a pipeline row) inside each pane —
-    // these aliases keep them in the palette too for discovery.
+    // GitLab + Azure DevOps commands moved to their mnml-forge-*
+    // siblings in 2026-06. The cross-host `pr.picker` was removed
+    // too — no in-core caches to aggregate.
     #[cfg(feature = "aws-codebuild")]
     {
         cmds.push(Command {

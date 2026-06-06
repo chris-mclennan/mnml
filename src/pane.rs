@@ -25,7 +25,8 @@ use crate::image::ImagePane;
 use crate::lsp::diagnostics_pane::DiagnosticsPane;
 use crate::lsp::outline_pane::OutlinePane;
 use crate::pane_host::BlitHostPane;
-use crate::pipeline_log::PipelineLogPane;
+// `Pane::PipelineLog` was kept as scaffolding through the 2026-06
+// SCM split but never re-populated; removed once the dust settled.
 use crate::playwright::TestsPane;
 use crate::playwright::flaky_pane::FlakyPane;
 use crate::playwright::trace_pane::TracePane;
@@ -76,11 +77,6 @@ pub enum Pane {
     /// Vim's `q:` — a scrollable list of recent `:` cmdline entries.
     /// Enter re-fires the highlighted entry; Esc closes.
     CmdlineHistory(CmdlineHistoryPane),
-    /// Pipeline-log viewer — kept as scaffolding even though all four
-    /// SCM hosts (BB/GH/GL/AZ) moved out to standalone
-    /// `mnml-forge-*` binaries. The blit-host facility lets log
-    /// viewers come back as separate panes if needed.
-    PipelineLog(PipelineLogPane),
     /// AWS CodeBuild recent-builds browser. Behind the `aws-codebuild`
     /// Cargo feature; shells out to the `aws` CLI.
     #[cfg(feature = "aws-codebuild")]
@@ -436,7 +432,6 @@ impl Pane {
             Pane::Grep(g) => g.tab_title(),
             Pane::Quickfix(g) => format!("Quickfix · {}", g.hits.len()),
             Pane::CmdlineHistory(_) => "q:".to_string(),
-            Pane::PipelineLog(p) => p.title.clone(),
             #[cfg(feature = "aws-codebuild")]
             Pane::CodeBuilds(p) => p.tab_title(),
             #[cfg(feature = "aws-codebuild")]
@@ -469,7 +464,6 @@ impl Pane {
             | Pane::Grep(_)
             | Pane::Quickfix(_)
             | Pane::CmdlineHistory(_)
-            | Pane::PipelineLog(_)
             | Pane::Cheatsheet(_)
             | Pane::Debug(_)
             | Pane::DapRepl(_)

@@ -64,7 +64,8 @@ pub(crate) mod now_playing;
 pub(crate) mod pane;
 pub(crate) mod pane_host;
 pub(crate) mod picker;
-pub mod pipeline_log;
+// `mod pipeline_log` was removed after the 2026-06 SCM split — no
+// in-tree host populates it any more.
 pub(crate) mod playwright;
 pub(crate) mod prompt;
 pub(crate) mod pty_pane;

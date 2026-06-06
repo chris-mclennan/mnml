@@ -108,23 +108,6 @@ impl App {
         self.open_picker(Picker::new(PickerKind::Recent, "Recent files", items));
     }
 
-    /// Open a fuzzy picker over every open PR / MR across the configured
-    /// SCM hosts (Bitbucket, GitHub, GitLab, Azure DevOps). Reads from the
-    /// per-host caches the SCM workers populate — no fresh API calls; the
-    /// list is as recent as the last poll cycle. Items are sorted by
-    /// most-recent activity (updated_at ⇒ created_at fallback). Accept
-    /// opens the chosen PR's web URL in the OS browser.
-    pub fn open_pr_picker(&mut self) {
-        // All four SCM hosts (BB/GH/GL/AZ) moved to standalone
-        // mnml-forge-* binaries in 2026-06 — the cross-host PR
-        // picker has nothing to aggregate any more. The command is
-        // kept so the keybinding doesn't error, and so a future
-        // forge-host index file can re-light it.
-        self.toast(
-            "PR panes moved to mnml-forge-{bitbucket,github,gitlab,azdevops}; use the per-host launcher icons in the integrations strip",
-        );
-    }
-
     /// Open the buffer switcher over the currently-open panes.
     pub fn open_buffer_picker(&mut self) {
         use crate::picker::PickerItem;
@@ -323,37 +306,13 @@ impl App {
         self.open_picker(Picker::new(PickerKind::Themes, "Theme", items));
     }
 
-    /// Act on the picker's current selection, then close it.
     /// Tab on a picker — picker-kind-specific "secondary accept".
-    /// For `PickerKind::OpenPullRequests`, jumps to the PR's matching
-    /// pipeline/build (instead of opening the URL). For other kinds,
-    /// no-op + a short hint toast.
+    /// Used to drive `OpenPullRequests` cross-nav; with the SCM panes
+    /// gone after the 2026-06 split there's currently nothing to
+    /// secondary-accept, so this is a single toast.
     pub fn picker_accept_secondary(&mut self) {
-        let Some(picker) = &self.picker else {
-            return;
-        };
-        let kind = picker.kind;
-        let Some(item) = picker.selected_item().cloned() else {
-            return;
-        };
-        match kind {
-            PickerKind::OpenPullRequests => {
-                self.picker = None;
-                let mut parts = item.id.split('\x1F');
-                let _url = parts.next().unwrap_or("");
-                let host_tag = parts.next().unwrap_or("");
-                let repo_label = parts.next().unwrap_or("");
-                let branch = parts.next().unwrap_or("");
-                if branch.is_empty() {
-                    self.toast("no source branch on this PR — can't cross-nav");
-                    return;
-                }
-                self.cross_nav_pr_to_pipeline(host_tag, repo_label, branch);
-            }
-            _ => {
-                // No secondary action; let the user know Tab did something.
-                self.toast("Tab → no secondary action for this picker");
-            }
+        if self.picker.is_some() {
+            self.toast("Tab → no secondary action for this picker");
         }
     }
 
@@ -465,7 +424,9 @@ impl App {
             PickerKind::AiSessions => self.open_ai_session_mirror(&item.id),
             PickerKind::Clipboard => self.paste_register(&item.id),
             PickerKind::OpenPullRequests => {
-                // First field of the `\x1F`-delimited id is the web URL.
+                // Vestigial after the 2026-06 SCM split — no code
+                // constructs this kind any more, but the arm stays
+                // for exhaustive-match safety.
                 let url = item.id.split('\x1F').next().unwrap_or(&item.id);
                 open_url_external(url);
             }
@@ -1140,11 +1101,8 @@ impl App {
 mod picker_tests {
     use super::*;
 
-    // Cross-host PR picker now has no in-mnml caches to aggregate
-    // — every SCM host moved to a standalone mnml-forge-* binary
-    // in 2026-06. The empty-cache toast test below covers the only
-    // remaining behavior; per-host happy-path tests live in each
-    // forge sibling's own repo.
+    // Cross-host PR picker removed after the 2026-06 SCM split —
+    // per-host happy-path tests live in each forge sibling's own repo.
 
     #[test]
     fn open_repo_picker_no_op_when_single() {
@@ -1154,16 +1112,5 @@ mod picker_tests {
         app.open_repo_picker();
         // Only one repo ⇒ no picker.
         assert!(app.picker.is_none());
-    }
-
-    #[test]
-    fn open_pr_picker_empty_toasts_and_does_not_open() {
-        let d = tempfile::tempdir().unwrap();
-        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
-        app.open_pr_picker();
-        assert!(
-            app.picker.is_none(),
-            "picker should NOT open when every cache is empty"
-        );
     }
 }
