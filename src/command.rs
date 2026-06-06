@@ -2893,58 +2893,9 @@ fn builtin_commands() -> Vec<Command> {
     // `:host.launch mnml-forge-bitbucket` (the default
     // `[[ui.integration_icon]]` now points at it).
 
-    // GitHub: sibling commands. `<leader>C g` chord (in the +ci whichkey
-    // group) is the muscle-memory entry point.
-    cmds.push(Command {
-        id: "github.actions",
-        title: "GitHub: open Actions dashboard",
-        group: "github",
-        keys: &[],
-        run: |app| app.open_github_actions_pane(),
-    });
-    cmds.push(Command {
-        id: "github.refresh_active",
-        title: "GitHub: refresh the active Actions pane",
-        group: "github",
-        keys: &[],
-        run: |app| app.refresh_active_github_pane(),
-    });
-    cmds.push(Command {
-        id: "github.open_selected_url",
-        title: "GitHub: open selected run in browser",
-        group: "github",
-        keys: &[],
-        run: |app| app.open_selected_github_run_url(),
-    });
-    cmds.push(Command {
-        id: "github.copy_selected_url",
-        title: "GitHub: copy selected run URL",
-        group: "github",
-        keys: &[],
-        run: |app| app.copy_selected_github_run_url(),
-    });
-    cmds.push(Command {
-        id: "github.pull_requests",
-        title: "GitHub: open pull-requests dashboard",
-        group: "github",
-        keys: &[],
-        run: |app| app.open_github_pull_requests_pane(),
-    });
-    cmds.push(Command {
-        id: "github.open_selected_pr_url",
-        title: "GitHub: open selected PR in browser",
-        group: "github",
-        keys: &[],
-        run: |app| app.open_selected_github_pr_url(),
-    });
-    cmds.push(Command {
-        id: "github.copy_selected_pr_url",
-        title: "GitHub: copy selected PR URL",
-        group: "github",
-        keys: &[],
-        run: |app| app.copy_selected_github_pr_url(),
-    });
-    // GitLab — mirror of BB/GH commands.
+    // GitHub commands moved to the standalone mnml-forge-github
+    // binary in 2026-06.
+    // GitLab — mirror of GH commands.
     cmds.push(Command {
         id: "gitlab.pipelines",
         title: "GitLab: open pipelines dashboard",
@@ -3058,13 +3009,6 @@ fn builtin_commands() -> Vec<Command> {
     // `c` (on a PR row) and `P` (on a pipeline row) inside each pane —
     // these aliases keep them in the palette too for discovery.
     cmds.push(Command {
-        id: "github.run_log",
-        title: "GitHub: open log for selected workflow run",
-        group: "github",
-        keys: &[],
-        run: |app| app.open_github_run_log(),
-    });
-    cmds.push(Command {
         id: "gitlab.pipeline_log",
         title: "GitLab: open log for selected pipeline",
         group: "gitlab",
@@ -3077,20 +3021,6 @@ fn builtin_commands() -> Vec<Command> {
         group: "azdevops",
         keys: &[],
         run: |app| app.open_azdevops_build_log(),
-    });
-    cmds.push(Command {
-        id: "github.jump_pr_to_run",
-        title: "GitHub: PR → workflow run on same branch",
-        group: "github",
-        keys: &[],
-        run: |app| app.jump_from_gh_pr_to_run(),
-    });
-    cmds.push(Command {
-        id: "github.jump_run_to_pr",
-        title: "GitHub: workflow run → PR on same branch",
-        group: "github",
-        keys: &[],
-        run: |app| app.jump_from_gh_run_to_pr(),
     });
     cmds.push(Command {
         id: "gitlab.jump_mr_to_pipeline",

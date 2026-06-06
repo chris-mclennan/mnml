@@ -21,7 +21,7 @@ use crate::tree::Tree;
 #[cfg(feature = "aws-codebuild")]
 mod aws;
 mod azdevops;
-mod github;
+// `mod github` was split out to mnml-forge-github in 2026-06.
 mod gitlab;
 
 mod ai;
@@ -1056,15 +1056,7 @@ struct SavedSession {
     dap_watches: Vec<String>,
     /// View-mode + collapsed-headers state for each SCM/CI pane.
     /// Persisted so flipping `v` or collapsing a repo header sticks
-    /// across `q!` and relaunches.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    gh_actions_view_mode: Option<crate::github::ActionsViewMode>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    gh_actions_collapsed: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    gh_prs_view_mode: Option<crate::github::GhPrViewMode>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    gh_prs_collapsed: Vec<String>,
+    /// across `q!` and relaunches. (GH fields removed in 2026-06.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     gl_pipelines_view_mode: Option<crate::gitlab::GlPipelineViewMode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -2819,10 +2811,8 @@ pub struct App {
     )>,
     /// Next job-id for a pipeline-log fetch (so re-fetches can drop stale replies).
     pipeline_log_next_job: u64,
-    pub(crate) gh_actions_view_mode: crate::github::ActionsViewMode,
-    pub(crate) gh_actions_collapsed: std::collections::HashSet<String>,
-    pub(crate) gh_prs_view_mode: crate::github::GhPrViewMode,
-    pub(crate) gh_prs_collapsed: std::collections::HashSet<String>,
+    // gh_actions_*, gh_prs_*, github_* fields all moved to
+    // mnml-forge-github in 2026-06.
     /// GitLab worker handle + per-project caches.
     gitlab_handle: Option<crate::gitlab::GitlabHandle>,
     pub(crate) gitlab_pipelines:
@@ -2853,26 +2843,7 @@ pub struct App {
     pub(crate) az_builds_collapsed: std::collections::HashSet<String>,
     pub(crate) az_prs_view_mode: crate::azdevops::AzPrViewMode,
     pub(crate) az_prs_collapsed: std::collections::HashSet<String>,
-    /// GitHub Actions REST worker handle.
-    github_handle: Option<crate::github::GithubHandle>,
-    /// Per-repo cache of the latest workflow runs. Keyed by `(owner, repo)`.
-    pub(crate) github_workflow_runs:
-        std::collections::HashMap<(String, String), Vec<crate::github::WorkflowRunRecord>>,
-    /// Per-repo cache of the latest open pull requests (GitHub).
-    pub(crate) github_pull_requests:
-        std::collections::HashMap<(String, String), Vec<crate::github::PullRequestRecord>>,
-    /// Cross-repo flat list of every open PR the authenticated GitHub
-    /// user authored. Powers the GH Mine view-mode.
-    pub(crate) github_my_pull_requests: Vec<crate::github::PullRequestRecord>,
-    /// Per-repo per-branch latest workflow run.
-    pub(crate) github_branch_runs:
-        std::collections::HashMap<(String, String), Vec<crate::github::BranchRunSlot>>,
-    /// Last error string from the GitHub worker. Cleared on the next
-    /// successful event.
-    pub(crate) github_last_error: Option<String>,
-    /// `true` once the GitHub worker has sent at least one successful
-    /// response.
-    pub(crate) github_connected: bool,
+    // GitHub worker + caches moved to mnml-forge-github.
     /// Job id of an in-flight "AI: write me a commit message" run (it shares
     /// `ai_chan`; when it lands, the commit prompt opens pre-seeded instead of an
     /// answer landing in a `Pane::Ai`).
@@ -3188,10 +3159,6 @@ impl App {
             log_tail_pane_id: None,
             pipeline_log_chan: None,
             pipeline_log_next_job: 1,
-            gh_actions_view_mode: Default::default(),
-            gh_actions_collapsed: std::collections::HashSet::new(),
-            gh_prs_view_mode: Default::default(),
-            gh_prs_collapsed: std::collections::HashSet::new(),
             gitlab_handle: None,
             gitlab_pipelines: std::collections::HashMap::new(),
             gitlab_branch_pipelines: std::collections::HashMap::new(),
@@ -3214,13 +3181,6 @@ impl App {
             az_builds_collapsed: std::collections::HashSet::new(),
             az_prs_view_mode: Default::default(),
             az_prs_collapsed: std::collections::HashSet::new(),
-            github_handle: None,
-            github_workflow_runs: std::collections::HashMap::new(),
-            github_pull_requests: std::collections::HashMap::new(),
-            github_my_pull_requests: Vec::new(),
-            github_branch_runs: std::collections::HashMap::new(),
-            github_last_error: None,
-            github_connected: false,
             pending_commit_msg_job: None,
             pending_amend_msg_job: None,
             pending_wip_commit_msg_pane: None,
@@ -3874,36 +3834,8 @@ impl App {
                 self.toast("Bitbucket panes moved to mnml-forge-bitbucket");
             }
             "GH" => {
-                let Some((owner, repo)) = repo_label.split_once('/') else {
-                    self.toast(format!("malformed GH repo_label: {repo_label}"));
-                    return;
-                };
-                let key = (owner.to_string(), repo.to_string());
-                let Some(runs) = self.github_workflow_runs.get(&key) else {
-                    self.toast(format!("no runs cached for {repo_label}"));
-                    return;
-                };
-                let Some(run) = runs
-                    .iter()
-                    .find(|r| r.target_ref.as_deref() == Some(branch))
-                    .cloned()
-                else {
-                    self.toast(format!("no workflow run on branch '{branch}' yet"));
-                    return;
-                };
-                self.gh_actions_view_mode = crate::github::ActionsViewMode::Recent;
-                self.open_github_actions_pane();
-                let flat = crate::ui::github_actions_view::flatten_runs(self);
-                if let Some(idx) = flat
-                    .iter()
-                    .position(|r| r.run.as_ref().map(|w| w.id == run.id).unwrap_or(false))
-                    && let Some(active) = self.active
-                    && let Some(Pane::GithubActions(p)) = self.panes.get_mut(active)
-                {
-                    p.selected = idx;
-                    p.scroll = 0;
-                }
-                self.toast(format!("→ run #{}", run.run_number));
+                let _ = (repo_label, branch);
+                self.toast("GitHub panes moved to mnml-forge-github");
             }
             "GL" => {
                 // GitLab project key is repo_label as-is.
@@ -7149,8 +7081,6 @@ impl App {
             Pane::Quickfix(g) => Some((format!("Quickfix · {}", g.hits.len()), false)),
             Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
             Pane::PipelineLog(p) => Some((p.title.clone(), false)),
-            Pane::GithubActions(p) => Some((p.tab_title(), false)),
-            Pane::GithubPullRequests(p) => Some((p.tab_title(), false)),
             Pane::GitlabPipelines(p) => Some((p.tab_title(), false)),
             Pane::GitlabMergeRequests(p) => Some((p.tab_title(), false)),
             Pane::AzDevOpsBuilds(p) => Some((p.tab_title(), false)),
@@ -8550,7 +8480,6 @@ impl App {
         self.drain_cdp_events();
         #[cfg(feature = "aws-codebuild")]
         self.drain_codebuild_events();
-        self.drain_github_events();
         self.drain_gitlab_events();
         self.drain_azdevops_events();
         self.drain_pipeline_log_events();

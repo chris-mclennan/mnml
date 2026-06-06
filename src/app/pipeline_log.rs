@@ -54,31 +54,13 @@ impl App {
                     Err("Bitbucket panes are in mnml-forge-bitbucket".to_string())
                 }
                 LogHost::Github => {
-                    let auth_header = crate::github::api::auth_header_value(&token);
-                    let client = match crate::github::api::build_client() {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let _ = tx.send(PipelineLogEvent::Failed { job_id, err: e });
-                            return;
-                        }
-                    };
-                    let run_id: u64 = match id3.parse() {
-                        Ok(n) => n,
-                        Err(_) => {
-                            let _ = tx.send(PipelineLogEvent::Failed {
-                                job_id,
-                                err: format!("bad GH run_id: {id3}"),
-                            });
-                            return;
-                        }
-                    };
-                    crate::github::api::fetch_combined_run_log(
-                        &client,
-                        &auth_header,
-                        &id1,
-                        &id2,
-                        run_id,
-                    )
+                    // GitHub Actions panes moved to mnml-forge-github
+                    // in 2026-06; the GH log fetch lives there too.
+                    // This arm is kept so the LogHost enum stays
+                    // exhaustive; never hit from mnml core after the
+                    // split.
+                    let _ = (&token, &id1, &id2, &id3);
+                    Err("GitHub panes are in mnml-forge-github".to_string())
                 }
                 LogHost::Gitlab => {
                     let auth_header = crate::gitlab::api::auth_header_value(&token);
@@ -230,12 +212,12 @@ impl App {
                 // gone `[bitbucket]` config section.
                 "BITBUCKET_TOKEN".to_string()
             }
-            crate::pipeline_log::LogHost::Github => self
-                .config
-                .github
-                .auth_env
-                .clone()
-                .unwrap_or_else(|| "GITHUB_TOKEN".to_string()),
+            crate::pipeline_log::LogHost::Github => {
+                // Same as Bitbucket — config block is gone after the
+                // mnml-forge-github split; the arm stays exhaustive
+                // but is unreachable from mnml core.
+                "GITHUB_TOKEN".to_string()
+            }
             crate::pipeline_log::LogHost::Gitlab => self
                 .config
                 .gitlab

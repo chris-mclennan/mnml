@@ -47,8 +47,7 @@ pub mod flash_overlay;
 pub mod ghost_overlay;
 pub mod git_graph_view;
 pub mod git_status_view;
-pub mod github_actions_view;
-pub mod github_pull_requests_view;
+// GitHub views moved to mnml-forge-github.
 pub mod gitlab_merge_requests_view;
 pub mod gitlab_pipelines_view;
 pub mod grep_view;
@@ -626,8 +625,6 @@ fn render_layout(
                 Some(crate::pane::Pane::Quickfix(_)) => 16,
                 #[cfg(feature = "aws-codebuild")]
                 Some(crate::pane::Pane::CodeBuilds(_)) => 18,
-                Some(crate::pane::Pane::GithubActions(_)) => 20,
-                Some(crate::pane::Pane::GithubPullRequests(_)) => 22,
                 Some(crate::pane::Pane::GitlabPipelines(_)) => 23,
                 Some(crate::pane::Pane::GitlabMergeRequests(_)) => 24,
                 Some(crate::pane::Pane::AzDevOpsBuilds(_)) => 25,
@@ -663,8 +660,6 @@ fn render_layout(
                 16 => grep_view::draw(frame, app, *id, area, focused),
                 #[cfg(feature = "aws-codebuild")]
                 18 => codebuilds_view::draw(frame, app, *id, area, focused),
-                20 => github_actions_view::draw(frame, app, *id, area, focused),
-                22 => github_pull_requests_view::draw(frame, app, *id, area, focused),
                 23 => gitlab_pipelines_view::draw(frame, app, *id, area, focused),
                 24 => gitlab_merge_requests_view::draw(frame, app, *id, area, focused),
                 25 => azdevops_builds_view::draw(frame, app, *id, area, focused),

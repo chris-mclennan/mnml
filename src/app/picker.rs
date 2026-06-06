@@ -139,30 +139,9 @@ impl App {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
         let mut rows: Vec<Row> = Vec::new();
-        // Bitbucket panes moved to mnml-forge-bitbucket — no in-mnml
-        // PR cache to surface in the picker any more.
-        // GitHub — keyed by (owner, repo). Comments + review comments
-        // combined for the unified `comments` count.
-        for ((owner, repo), prs) in &self.github_pull_requests {
-            for pr in prs {
-                rows.push(Row {
-                    host_tag: "GH",
-                    repo_label: format!("{owner}/{repo}"),
-                    number: format!("#{}", pr.number),
-                    title: pr.title.clone(),
-                    state_label: pr.state.label(),
-                    author: pr.author.clone(),
-                    source: pr.source_branch.clone(),
-                    dest: pr.dest_branch.clone(),
-                    reviewers: pr.reviewer_count,
-                    approved: pr.approved_count,
-                    changes: pr.changes_count,
-                    comments: pr.comment_count + pr.review_comment_count,
-                    ts_ms: pr.updated_at_ms.or(pr.created_at_ms).unwrap_or(0),
-                    web_url: pr.web_url.clone(),
-                });
-            }
-        }
+        // Bitbucket + GitHub panes moved to their standalone forge
+        // binaries — no in-mnml PR cache to surface here for those
+        // hosts any more.
         // GitLab — keyed by project label (numeric ID or "group/path").
         // `!iid` is the URL-segment shape ("!17"), not "#17".
         for (project, mrs) in &self.gitlab_merge_requests {
@@ -1290,34 +1269,12 @@ mod picker_tests {
 
     #[test]
     fn open_pr_picker_aggregates_all_hosts_sorted_by_updated() {
-        // Seed one PR per host in `App`'s per-host caches, fire the picker,
-        // and check it lists all 4 + sorts the most-recently-updated first.
+        // Seed one PR per remaining host in `App`'s per-host caches,
+        // fire the picker, check it lists them all + sorts the
+        // most-recently-updated first. (BB + GH panes were split out
+        // to standalone forge binaries; this picker covers GL + AZ.)
         let d = tempfile::tempdir().unwrap();
         let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
-        // BB seed removed — Bitbucket panes split out into
-        // mnml-forge-bitbucket; this picker is now GH / GL / AZ only.
-        // GH — middle update.
-        app.github_pull_requests.insert(
-            ("exampleorg".into(), "repo".into()),
-            vec![crate::github::PullRequestRecord {
-                owner: "exampleorg".into(),
-                repo: "repo".into(),
-                number: 7,
-                title: "GH refactor".into(),
-                state: crate::github::PullRequestState::Open,
-                author: Some("bob".into()),
-                source_branch: Some("feature/gh".into()),
-                dest_branch: Some("main".into()),
-                reviewer_count: 1,
-                approved_count: 0,
-                changes_count: 1,
-                comment_count: 2,
-                review_comment_count: 4,
-                created_at_ms: Some(2_000),
-                updated_at_ms: Some(2_000),
-                web_url: "https://github.com/exampleorg/repo/pull/7".into(),
-            }],
-        );
         // GL — newest update.
         app.gitlab_merge_requests.insert(
             "group/project".into(),
@@ -1361,11 +1318,10 @@ mod picker_tests {
         let picker = app.picker.as_ref().expect("picker should have opened");
         assert_eq!(picker.kind, crate::picker::PickerKind::OpenPullRequests);
         let labels: Vec<String> = picker.items_view().map(|it| it.label.clone()).collect();
-        assert_eq!(labels.len(), 3, "all three hosts represented");
-        // Most-recently-updated first: GL (4000) > AZ (3500) > GH (2000).
+        assert_eq!(labels.len(), 2, "GL + AZ represented");
+        // Most-recently-updated first: GL (4000) > AZ (3500).
         assert!(labels[0].contains("[GL]"), "GL first, got {:?}", labels[0]);
         assert!(labels[1].contains("[AZ]"), "AZ second, got {:?}", labels[1]);
-        assert!(labels[2].contains("[GH]"), "GH third, got {:?}", labels[2]);
         // The id encodes URL + cross-nav payload (delimited by `\x1F`).
         // First field is the URL.
         let ids: Vec<String> = picker.items_view().map(|it| it.id.clone()).collect();
@@ -1378,12 +1334,12 @@ mod picker_tests {
         assert_eq!(parts[1], "GL");
         assert_eq!(parts[2], "group/project");
         assert_eq!(parts[3], "feature/gl");
-        // Fuzzy match shrinks to one host (label contains "exampleorg" and "refactor").
+        // Fuzzy match shrinks to one host (label contains "AZ" and "chore").
         let mut picker = app.picker.take().unwrap();
-        for c in "refactor".chars() {
+        for c in "chore".chars() {
             picker.type_char(c);
         }
-        assert_eq!(picker.len(), 1, "fuzzy 'refactor' narrows to GH only");
+        assert_eq!(picker.len(), 1, "fuzzy 'chore' narrows to AZ only");
     }
 
     // Removed: picker_accept_secondary_cross_navs_pr_to_pipeline

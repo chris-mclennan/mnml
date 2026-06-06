@@ -42,7 +42,8 @@ pub(crate) mod focus;
 pub(crate) mod formatter;
 pub(crate) mod fuzzy;
 pub(crate) mod git;
-pub mod github;
+// `mod github` was split out to the standalone mnml-forge-github
+// binary in 2026-06.
 pub(crate) mod gitlab;
 pub(crate) mod grep_pane;
 pub mod headless;

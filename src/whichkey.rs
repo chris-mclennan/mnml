@@ -209,13 +209,11 @@ pub fn root() -> &'static Leader {
                     group(
                         "+ci",
                         vec![
-                            // GitHub Actions, GitLab pipelines, Azure builds.
-                            // Bitbucket pipelines moved to the standalone
-                            // mnml-forge-bitbucket binary.
-                            ('g', cmd("github.actions", "github actions")),
+                            // GitLab pipelines, Azure builds. Bitbucket
+                            // and GitHub Actions moved to their
+                            // standalone mnml-forge-* binaries.
                             ('l', cmd("gitlab.pipelines", "gitlab pipelines")),
                             ('a', cmd("azdevops.builds", "azure builds")),
-                            ('R', cmd("github.refresh_active", "refresh gh pane")),
                             ('L', cmd("gitlab.refresh_active", "refresh gl pane")),
                             ('A', cmd("azdevops.refresh_active", "refresh az pane")),
                         ],
@@ -226,7 +224,7 @@ pub fn root() -> &'static Leader {
                     group(
                         "+pr",
                         vec![
-                            ('g', cmd("github.pull_requests", "github PRs")),
+                            // GitHub PRs moved to mnml-forge-github.
                             ('l', cmd("gitlab.merge_requests", "gitlab MRs")),
                             ('a', cmd("azdevops.pull_requests", "azure PRs")),
                             ('p', cmd("pr.picker", "all-host fuzzy picker")),

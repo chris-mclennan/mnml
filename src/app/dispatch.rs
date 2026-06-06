@@ -635,9 +635,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     p.scroll + n
                 };
             }
-            Some(Pane::GithubActions(_))
-            | Some(Pane::GithubPullRequests(_))
-            | Some(Pane::GitlabPipelines(_))
+            Some(Pane::GitlabPipelines(_))
             | Some(Pane::GitlabMergeRequests(_))
             | Some(Pane::AzDevOpsBuilds(_))
             | Some(Pane::AzDevOpsPullRequests(_)) => {
@@ -721,33 +719,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         // Each SCM/CI pane's max_idx depends on which view-mode is
         // active — same trap as the key handlers above (flat must match
         // the rendered layout).
-        if matches!(app.panes.get(pid), Some(Pane::GithubActions(_))) {
-            let flat = match app.gh_actions_view_mode {
-                crate::github::ActionsViewMode::Recent => {
-                    crate::ui::github_actions_view::flatten_runs(app)
-                }
-                crate::github::ActionsViewMode::PerBranch => {
-                    crate::ui::github_actions_view::flatten_branch_runs(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::GithubActions(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        } else if matches!(app.panes.get(pid), Some(Pane::GithubPullRequests(_))) {
-            let flat = match app.gh_prs_view_mode {
-                crate::github::GhPrViewMode::PerRepo => {
-                    crate::ui::github_pull_requests_view::flatten_prs(app)
-                }
-                crate::github::GhPrViewMode::Mine => {
-                    crate::ui::github_pull_requests_view::flatten_my_prs(app)
-                }
-            };
-            let max_idx = flat.len();
-            if let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(pid) {
-                p.move_selection(delta as i64, max_idx);
-            }
-        } else if matches!(app.panes.get(pid), Some(Pane::GitlabPipelines(_))) {
+        if matches!(app.panes.get(pid), Some(Pane::GitlabPipelines(_))) {
             let flat = match app.gl_pipelines_view_mode {
                 crate::gitlab::GlPipelineViewMode::Recent => {
                     crate::ui::gitlab_pipelines_view::flatten_pipelines(app)
@@ -1055,60 +1027,6 @@ pub(crate) fn handle_scm_row_click(
     }
     // SCM/CI panes — header-vs-data dispatch with collapse + URL open.
     match app.panes.get(pane_id) {
-        Some(Pane::GithubActions(_)) => {
-            let flat = match app.gh_actions_view_mode {
-                crate::github::ActionsViewMode::Recent => {
-                    crate::ui::github_actions_view::flatten_runs(app)
-                }
-                crate::github::ActionsViewMode::PerBranch => {
-                    crate::ui::github_actions_view::flatten_branch_runs(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::github_actions_view::RowKind::Header;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::GithubActions(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.gh_actions_collapsed.contains(&header_label) {
-                    app.gh_actions_collapsed.remove(&header_label);
-                } else {
-                    app.gh_actions_collapsed.insert(header_label);
-                }
-            } else if is_double_click {
-                app.open_selected_github_run_url();
-            }
-        }
-        Some(Pane::GithubPullRequests(_)) => {
-            let flat = match app.gh_prs_view_mode {
-                crate::github::GhPrViewMode::PerRepo => {
-                    crate::ui::github_pull_requests_view::flatten_prs(app)
-                }
-                crate::github::GhPrViewMode::Mine => {
-                    crate::ui::github_pull_requests_view::flatten_my_prs(app)
-                }
-            };
-            let Some(row) = flat.get(flat_idx) else {
-                return;
-            };
-            let is_header = row.kind == crate::ui::github_pull_requests_view::RowKind::Header;
-            let header_label = row.header_label.clone();
-            if let Some(Pane::GithubPullRequests(p)) = app.panes.get_mut(pane_id) {
-                p.selected = flat_idx;
-            }
-            if is_header {
-                if app.gh_prs_collapsed.contains(&header_label) {
-                    app.gh_prs_collapsed.remove(&header_label);
-                } else {
-                    app.gh_prs_collapsed.insert(header_label);
-                }
-            } else if is_double_click {
-                app.open_selected_github_pr_url();
-            }
-        }
         Some(Pane::GitlabPipelines(_)) => {
             let flat = match app.gl_pipelines_view_mode {
                 crate::gitlab::GlPipelineViewMode::Recent => {

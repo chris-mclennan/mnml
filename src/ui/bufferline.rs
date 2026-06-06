@@ -255,10 +255,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Quickfix(_) => (if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().teal),
             Pane::CmdlineHistory(_) => (if nerd { "\u{eb15}" } else { "❯" }, theme::cur().comment),
             Pane::PipelineLog(_) => (if nerd { "\u{f120}" } else { "≡" }, theme::cur().cyan),
-            Pane::GithubActions(_) => (if nerd { "\u{f09b}" } else { "⚙" }, theme::cur().purple),
-            Pane::GithubPullRequests(_) => {
-                (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().purple)
-            }
             Pane::GitlabPipelines(_) => (if nerd { "\u{f171}" } else { "▴" }, theme::cur().orange),
             Pane::GitlabMergeRequests(_) => {
                 (if nerd { "\u{f407}" } else { "⇄" }, theme::cur().orange)

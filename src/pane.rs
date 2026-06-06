@@ -17,7 +17,8 @@ use crate::cheatsheet::CheatsheetPane;
 use crate::git::diff::Hunk;
 use crate::git::graph::GitGraphPane;
 use crate::git::stage::GitStatusPane;
-use crate::github::{GithubActionsPane, GithubPullRequestsPane};
+// GitHub panes were split out into the standalone
+// `mnml-forge-github` binary in 2026-06.
 use crate::gitlab::{GitlabMergeRequestsPane, GitlabPipelinesPane};
 use crate::grep_pane::GrepPane;
 use crate::image::ImagePane;
@@ -76,13 +77,10 @@ pub enum Pane {
     /// Enter re-fires the highlighted entry; Esc closes.
     CmdlineHistory(CmdlineHistoryPane),
     /// Pipeline-log viewer — opened by `L` on a pipeline row in any
-    /// host's pipelines pane (github / gitlab / azdevops). Bitbucket's
-    /// internal panes were split out into `mnml-forge-bitbucket`.
+    /// host's pipelines pane (gitlab / azdevops). GitHub Actions +
+    /// Bitbucket panes were split out into the standalone
+    /// `mnml-forge-github` and `mnml-forge-bitbucket` binaries.
     PipelineLog(PipelineLogPane),
-    /// GitHub Actions workflow runs list.
-    GithubActions(GithubActionsPane),
-    /// GitHub open pull requests list.
-    GithubPullRequests(GithubPullRequestsPane),
     /// GitLab CI pipelines list.
     GitlabPipelines(GitlabPipelinesPane),
     /// GitLab open merge requests list.
@@ -447,8 +445,6 @@ impl Pane {
             Pane::Quickfix(g) => format!("Quickfix · {}", g.hits.len()),
             Pane::CmdlineHistory(_) => "q:".to_string(),
             Pane::PipelineLog(p) => p.title.clone(),
-            Pane::GithubActions(p) => p.tab_title(),
-            Pane::GithubPullRequests(p) => p.tab_title(),
             Pane::GitlabPipelines(p) => p.tab_title(),
             Pane::GitlabMergeRequests(p) => p.tab_title(),
             Pane::AzDevOpsBuilds(p) => p.tab_title(),
@@ -486,8 +482,6 @@ impl Pane {
             | Pane::Quickfix(_)
             | Pane::CmdlineHistory(_)
             | Pane::PipelineLog(_)
-            | Pane::GithubActions(_)
-            | Pane::GithubPullRequests(_)
             | Pane::GitlabPipelines(_)
             | Pane::GitlabMergeRequests(_)
             | Pane::AzDevOpsBuilds(_)

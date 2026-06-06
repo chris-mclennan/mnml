@@ -206,10 +206,6 @@ impl App {
                 .collect(),
             ex_history: self.ex_history.clone(),
             dap_watches: self.dap_watches.clone(),
-            gh_actions_view_mode: Some(self.gh_actions_view_mode),
-            gh_actions_collapsed: self.gh_actions_collapsed.iter().cloned().collect(),
-            gh_prs_view_mode: Some(self.gh_prs_view_mode),
-            gh_prs_collapsed: self.gh_prs_collapsed.iter().cloned().collect(),
             gl_pipelines_view_mode: Some(self.gl_pipelines_view_mode),
             gl_pipelines_collapsed: self.gl_pipelines_collapsed.iter().cloned().collect(),
             gl_mrs_view_mode: Some(self.gl_mrs_view_mode),
@@ -532,14 +528,7 @@ impl App {
             self.dap_watches = saved.dap_watches;
         }
         // SCM/CI pane view-mode + collapse state.
-        if let Some(m) = saved.gh_actions_view_mode {
-            self.gh_actions_view_mode = m;
-        }
-        self.gh_actions_collapsed = saved.gh_actions_collapsed.into_iter().collect();
-        if let Some(m) = saved.gh_prs_view_mode {
-            self.gh_prs_view_mode = m;
-        }
-        self.gh_prs_collapsed = saved.gh_prs_collapsed.into_iter().collect();
+        // (GH view-mode + collapsed state moved to mnml-forge-github.)
         if let Some(m) = saved.gl_pipelines_view_mode {
             self.gl_pipelines_view_mode = m;
         }

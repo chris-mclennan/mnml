@@ -71,7 +71,6 @@ pub struct Config {
     pub browser: BrowserConfig,
     pub playwright: PlaywrightConfig,
     pub ci: CiConfig,
-    pub github: GithubConfig,
     pub gitlab: GitlabConfig,
     pub azdevops: AzDevOpsConfig,
     /// `[[workspaces]]` — additional workspaces shown as sibling sections in
@@ -94,50 +93,14 @@ pub struct WorkspaceConfig {
     pub path: PathBuf,
 }
 
-// Bitbucket panes + config moved out of mnml core in 2026-06.
-// Live dashboards now ship in the standalone mnml-forge-bitbucket
-// binary, hosted via `:host.launch mnml-forge-bitbucket`. The
-// integration icon strip seeds a row pointing at it.
+// Bitbucket + GitHub panes + config moved out of mnml core in
+// 2026-06. Live dashboards now ship in the standalone
+// mnml-forge-bitbucket / mnml-forge-github binaries, hosted via
+// `:host.launch mnml-forge-bitbucket` / `:host.launch mnml-forge-github`.
+// The integration icon strip seeds rows pointing at them.
 
-/// `[github]` — GitHub Actions / Pull Requests integration. Same shape
-/// as the (now-removed) `[bitbucket]` block — worker, panes, and view
-/// are parallel modules so each host can evolve independently without
-/// forcing a premature shared abstraction.
-///
-/// ```toml
-/// [github]
-/// auth_env  = "GITHUB_TOKEN"   # optional, defaults to GITHUB_TOKEN
-/// poll_secs = 30                # optional, defaults to 30
-///
-/// [[github.repos]]
-/// owner = "exampleorg"
-/// repo  = "example-knowledge"
-/// ```
-#[derive(Debug, Clone, Default)]
-pub struct GithubConfig {
-    /// Env var name to read the API token from. `None` ⇒ `"GITHUB_TOKEN"`.
-    /// Classic PATs (`ghp_*`), fine-grained PATs (`github_pat_*`), app
-    /// tokens (`ghs_*`), and OAuth tokens (`gho_*`) all use the same
-    /// `Authorization: Bearer <token>` shape.
-    pub auth_env: Option<String>,
-    /// Seconds between poll cycles per repo. `None` ⇒ 30.
-    pub poll_secs: Option<u64>,
-    /// Repos to watch. Order is meaningful — picker / pane lists render in this order.
-    pub repos: Vec<GithubRepo>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GithubRepo {
-    pub owner: String,
-    pub repo: String,
-    /// Branches the per-branch Actions view should always include for
-    /// this repo. Same shape + semantics as [`BitbucketRepo::branches`].
-    pub branches: Vec<String>,
-}
-
-/// Long-lived branches the per-branch pipelines/actions views default to
-/// when a repo's `branches` field is empty. Mirrors James's `bbwatch.py`
-/// CANDIDATE_BRANCHES tuple.
+/// Long-lived branches the per-branch pipelines view defaults to
+/// when a repo's `branches` field is empty.
 pub fn default_branches() -> &'static [&'static str] {
     &["main", "master", "develop", "staging"]
 }
@@ -237,20 +200,6 @@ impl AzDevOpsConfig {
         self.auth_env.as_deref().unwrap_or("AZDO_TOKEN")
     }
     pub fn poll_secs_or_default(&self) -> u64 {
-        self.poll_secs.unwrap_or(60).max(5)
-    }
-}
-
-impl GithubConfig {
-    pub fn any_configured(&self) -> bool {
-        !self.repos.is_empty()
-    }
-    pub fn auth_env_name(&self) -> &str {
-        self.auth_env.as_deref().unwrap_or("GITHUB_TOKEN")
-    }
-    pub fn poll_secs_or_default(&self) -> u64 {
-        // 60s default for GH because it has 5000/hr headroom and the
-        // per-branch view doesn't multiply badly with N repos.
         self.poll_secs.unwrap_or(60).max(5)
     }
 }
@@ -778,9 +727,13 @@ impl Default for Config {
                         id: "github".to_string(),
                         glyph: "\u{F02A4}".to_string(), // nf-md-github
                         fallback: "G".to_string(),
-                        command: "github.actions".to_string(),
+                        // Launches the standalone mnml-forge-github
+                        // viewer as a blit-host pane. User must have
+                        // it installed (`cargo install --git
+                        // https://github.com/chris-mclennan/mnml-forge-github`).
+                        command: ":host.launch mnml-forge-github".to_string(),
                         color: "fg".to_string(),
-                        tooltip: Some("GitHub Actions".to_string()),
+                        tooltip: Some("GitHub Actions + PRs".to_string()),
                     },
                 ],
                 ticket_prefixes: Vec::new(),
@@ -805,7 +758,6 @@ impl Default for Config {
             },
             playwright: PlaywrightConfig::default(),
             ci: CiConfig::default(),
-            github: GithubConfig::default(),
             gitlab: GitlabConfig::default(),
             azdevops: AzDevOpsConfig::default(),
             workspaces: Vec::new(),
@@ -847,8 +799,6 @@ struct RawConfig {
     browser: RawBrowser,
     #[serde(default)]
     ci: RawCi,
-    #[serde(default)]
-    github: RawGithub,
     #[serde(default)]
     gitlab: RawGitlab,
     #[serde(default)]
@@ -893,22 +843,6 @@ struct RawGitlab {
 #[derive(Debug, Default, Deserialize)]
 struct RawGitlabProject {
     project: String,
-    #[serde(default)]
-    branches: Vec<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawGithub {
-    auth_env: Option<String>,
-    poll_secs: Option<u64>,
-    #[serde(default)]
-    repos: Vec<RawGithubRepo>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawGithubRepo {
-    owner: String,
-    repo: String,
     #[serde(default)]
     branches: Vec<String>,
 }
@@ -1324,23 +1258,13 @@ impl Config {
         // `[bitbucket]` section is silently ignored — Bitbucket panes
         // moved to the standalone mnml-forge-bitbucket binary in
         // 2026-06; existing user configs may still mention it.
-        // `[github]` — per-field overlay so workspace files can refine
+        // `[github]` section is silently ignored — GitHub panes
+        // moved to the standalone mnml-forge-github binary in
+        // 2026-06; existing user configs may still mention it.
+        // GitLab — per-field overlay so workspace files can refine
         // home defaults. Repos *append* (rather than replace) so a
-        // workspace-local file can add repos without re-listing the homedir set.
-        if let Some(v) = raw.github.auth_env {
-            self.github.auth_env = Some(v);
-        }
-        if let Some(v) = raw.github.poll_secs {
-            self.github.poll_secs = Some(v);
-        }
-        for r in raw.github.repos {
-            self.github.repos.push(GithubRepo {
-                owner: r.owner,
-                repo: r.repo,
-                branches: r.branches,
-            });
-        }
-        // GitLab — same overlay shape.
+        // workspace-local file can add repos without re-listing the
+        // homedir set.
         if let Some(v) = raw.gitlab.auth_env {
             self.gitlab.auth_env = Some(v);
         }
@@ -1542,7 +1466,9 @@ repo    = "api"
     }
 
     #[test]
-    fn github_config_parses_multi_repo() {
+    fn github_section_silently_ignored() {
+        // GitHub panes moved to mnml-forge-github — parser should not
+        // error on `[github]` sections in existing user configs.
         let dir = tempfile::tempdir().unwrap();
         let cfg_path = dir.path().join("config.toml");
         let mut f = std::fs::File::create(&cfg_path).unwrap();
@@ -1561,20 +1487,8 @@ repo  = "example-knowledge"
         .unwrap();
         let mut cfg = Config::default();
         cfg.apply_file_pub(&cfg_path);
-        assert_eq!(cfg.github.auth_env_name(), "GH_TOKEN");
-        assert_eq!(cfg.github.poll_secs_or_default(), 45);
-        assert_eq!(cfg.github.repos.len(), 1);
-        assert_eq!(cfg.github.repos[0].owner, "exampleorg");
-        assert_eq!(cfg.github.repos[0].repo, "example-knowledge");
-        assert!(cfg.github.any_configured());
-    }
-
-    #[test]
-    fn github_default_is_empty_with_safe_defaults() {
-        let cfg = Config::default();
-        assert!(!cfg.github.any_configured());
-        assert_eq!(cfg.github.auth_env_name(), "GITHUB_TOKEN");
-        assert_eq!(cfg.github.poll_secs_or_default(), 60);
+        // No assertion needed — passes if apply_file_pub didn't panic.
+        let _ = cfg;
     }
 
     #[test]
