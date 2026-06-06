@@ -1882,6 +1882,53 @@ impl App {
     }
 
     /// Click on the WIP detail's `Commit` button — commit using the
+    /// Git activity-bar section: focus the inline commit textarea so
+    /// the next keystrokes append to the buffer. Also switches the
+    /// active section to Git + makes the rail visible.
+    pub fn git_section_commit_focus(&mut self) {
+        if !self.tree_visible {
+            self.tree_visible = true;
+        }
+        self.active_section = crate::app::ActivitySection::Git;
+        self.git_section_commit_focused = true;
+    }
+
+    pub fn git_section_commit_blur(&mut self) {
+        self.git_section_commit_focused = false;
+    }
+
+    pub fn git_section_commit_insert_char(&mut self, c: char) {
+        self.git_section_commit_buffer.push(c);
+    }
+
+    pub fn git_section_commit_backspace(&mut self) {
+        self.git_section_commit_buffer.pop();
+    }
+
+    /// Submit the inline commit buffer via `git commit -m`. Refuses
+    /// when the buffer is empty (toasts an explanation); clears the
+    /// buffer + blurs on success.
+    pub fn git_section_commit_submit(&mut self) {
+        let msg = self.git_section_commit_buffer.trim().to_string();
+        if msg.is_empty() {
+            self.toast("commit: message is empty");
+            return;
+        }
+        let repo = self.active_repo_path().to_path_buf();
+        match crate::git::commit::commit(&repo, &msg) {
+            Ok(summary) => {
+                self.git_section_commit_buffer.clear();
+                self.git_section_commit_focused = false;
+                self.toast(summary);
+                self.note_commit_for_undo();
+                self.after_git_change();
+                self.refresh_active_git_graph();
+                self.refresh_active_diff();
+            }
+            Err(e) => self.toast(format!("git commit: {e}")),
+        }
+    }
+
     /// inline textarea's content. When the active pane isn't a
     /// GitGraph with a populated textarea, falls through to opening
     /// the modal commit prompt (the legacy flow).

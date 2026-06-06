@@ -332,6 +332,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         handle_search_section_key(app, key);
         return;
     }
+    // Git activity-bar section: commit textarea focused → printables
+    // append to the buffer, Backspace deletes, Ctrl+Enter commits,
+    // Esc blurs.
+    if app.git_section_commit_focused {
+        handle_git_section_commit_key(app, key);
+        return;
+    }
     // Help overlay — scroll + dismiss. No editing.
     if app.help_overlay.is_some() {
         handle_help_overlay_key(app, key);
@@ -555,6 +562,17 @@ fn handle_help_overlay_key(app: &mut App, key: KeyEvent) {
         KeyCode::PageDown => app.help_scroll(10),
         KeyCode::Home => app.help_scroll(-1_000_000),
         KeyCode::End => app.help_scroll(1_000_000),
+        _ => {}
+    }
+}
+
+fn handle_git_section_commit_key(app: &mut App, key: KeyEvent) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Esc => app.git_section_commit_blur(),
+        KeyCode::Enter if ctrl => app.git_section_commit_submit(),
+        KeyCode::Backspace => app.git_section_commit_backspace(),
+        KeyCode::Char(c) if !ctrl => app.git_section_commit_insert_char(c),
         _ => {}
     }
 }

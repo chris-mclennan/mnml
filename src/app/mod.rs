@@ -2158,6 +2158,12 @@ pub struct App {
     /// dispatch in `tui.rs` routes printables into the query buffer
     /// instead of the editor / overlay.
     pub search_input_focused: bool,
+    /// Git activity-bar section: inline commit-message buffer + focus.
+    /// Submit (Ctrl+Enter or the [ Commit ] button) calls
+    /// `crate::git::commit::commit` against the active repo. Cleared
+    /// after a successful commit.
+    pub git_section_commit_buffer: String,
+    pub git_section_commit_focused: bool,
     /// Current rail width (cells). Initialized from `[ui] tree_width` and
     /// then mutable via mouse-drag on the rail's right edge. Persisted in
     /// `session.json`.
@@ -3071,6 +3077,8 @@ impl App {
             search_selected: 0,
             search_scroll: 0,
             search_input_focused: false,
+            git_section_commit_buffer: String::new(),
+            git_section_commit_focused: false,
             tree_width,
             dragging_tree_edge: false,
             dragging_scrollbar: None,

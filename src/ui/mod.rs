@@ -1113,6 +1113,80 @@ fn draw_git_section_content(frame: &mut Frame, app: &mut App, area: Rect) {
         y_after_files = fy.saturating_add(1);
     }
 
+    // Inline commit textarea (v2.x). One-line input — click to focus,
+    // Ctrl+Enter to submit, Esc to blur. Sits between the file-change
+    // list and the launcher actions.
+    let commit_focused = app.git_section_commit_focused;
+    let mut y_after_commit = y_after_files;
+    if area.height > 3 + (y_after_files - area.y) {
+        let label_y = y_after_files;
+        if label_y < area.y + area.height {
+            frame.render_widget(
+                Paragraph::new(ratatui::text::Line::from(" COMMIT MESSAGE")).style(
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD | Modifier::DIM),
+                ),
+                Rect {
+                    x: area.x,
+                    y: label_y,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+        }
+        let input_y = label_y + 1;
+        if input_y < area.y + area.height {
+            let cursor_glyph = if commit_focused { "█" } else { "" };
+            let input_line = ratatui::text::Line::from(vec![
+                Span::styled(" > ", Style::default().fg(t.yellow).bg(bg)),
+                Span::styled(
+                    app.git_section_commit_buffer.clone(),
+                    Style::default().fg(t.fg).bg(bg),
+                ),
+                Span::styled(
+                    cursor_glyph.to_string(),
+                    Style::default().fg(t.yellow).bg(bg),
+                ),
+            ]);
+            let input_rect = Rect {
+                x: area.x,
+                y: input_y,
+                width: area.width,
+                height: 1,
+            };
+            frame.render_widget(Paragraph::new(input_line), input_rect);
+            // Click anywhere on the input row → focus the textarea.
+            app.rects
+                .tree_icon_buttons
+                .push((input_rect, "view.git_commit_focus"));
+        }
+        let hint_y = input_y + 1;
+        if hint_y < area.y + area.height {
+            let hint_text = if commit_focused {
+                " type · Ctrl+Enter commit · Esc blur"
+            } else {
+                " click to focus · Ctrl+Enter to commit"
+            };
+            frame.render_widget(
+                Paragraph::new(ratatui::text::Line::from(hint_text)).style(
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(bg)
+                        .add_modifier(Modifier::DIM),
+                ),
+                Rect {
+                    x: area.x,
+                    y: hint_y,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+        }
+        y_after_commit = hint_y.saturating_add(2);
+    }
+
     // Action rows — the high-frequency git operations.
     let rows: &[(&str, &str, &'static str)] = &[
         ("▸ Commit…", "—", "git.commit"),
@@ -1128,7 +1202,7 @@ fn draw_git_section_content(frame: &mut Frame, app: &mut App, area: Rect) {
         ("▸ Refresh repos", "—", "git.refresh_repos"),
     ];
 
-    let mut y = y_after_files;
+    let mut y = y_after_commit;
     for (label, chord, cmd_id) in rows {
         if y + 1 >= area.y + area.height {
             break;

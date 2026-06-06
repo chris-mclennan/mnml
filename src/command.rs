@@ -1684,6 +1684,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.set_activity_section(crate::app::ActivitySection::Integrations),
         },
         Command {
+            id: "view.git_commit_focus",
+            title: "Activity: focus the Git section's commit textarea",
+            group: "view",
+            keys: &[],
+            run: |app| app.git_section_commit_focus(),
+        },
+        Command {
             id: "git.blame_toggle",
             title: "Git: toggle blame gutter",
             group: "git",
