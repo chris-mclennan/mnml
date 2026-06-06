@@ -71,11 +71,14 @@ These aren't enforced by any tool, but following them makes your integration fee
 
 `mnml-<class>-<name>` — e.g.:
 
-- `mnml-db-postgres`, `mnml-db-mysql`, `mnml-db-sqlite`, `mnml-db-clickhouse`
-- `mnml-tickets-jira`, `mnml-tickets-github`, `mnml-tickets-shortcut`
-- `mnml-logs-cloudwatch`, `mnml-logs-loki`, `mnml-logs-datadog`
+- `mnml-db-postgres`, `mnml-db-mysql`, `mnml-db-sqlite`, `mnml-db-clickhouse`, `mnml-db-dynamodb`
+- `mnml-tracker-jira`, `mnml-tracker-linear`, `mnml-tracker-shortcut`
+- `mnml-forge-bitbucket`, `mnml-forge-github`, `mnml-forge-gitlab`, `mnml-forge-azdevops`
+- `mnml-aws-codebuild`, `mnml-aws-cloudwatch-logs`, `mnml-aws-amplify`
+- `mnml-fs-s3`, `mnml-fs-gcs`, `mnml-fs-azureblob`
+- `mnml-test-playwright`, `mnml-test-cypress`
 
-Whatever class makes sense. The `mnml-` prefix is the only "rule" — it's how `cargo search mnml-` discovers them.
+Whatever class makes sense. The `mnml-` prefix is the only "rule" — it's how `cargo search mnml-` discovers them. The first-party class names today are `db` (databases), `tracker` (issue trackers), `forge` (code-hosting forges), `aws` (AWS service viewers), `fs` (cloud filesystems), and `test` (test result viewers); coin a new class when nothing fits.
 
 ### Config location
 
@@ -111,6 +114,27 @@ mnml-<thing> --blit <socket>   # blit-host mode (mode 3); no terminal takeover
 ```
 
 `--check` should show: where the config came from, which connections / tabs are configured, whether auth succeeds. This is the "is my setup right?" command.
+
+## Shelling out to vendor CLIs (the AWS pattern)
+
+Five first-party siblings now follow a "no SDK; shell out to the vendor CLI" model: [`mnml-aws-codebuild`](/manual/integrations/aws-codebuild/), [`mnml-aws-cloudwatch-logs`](/manual/integrations/aws-cloudwatch-logs/), [`mnml-aws-amplify`](/manual/integrations/aws-amplify/), [`mnml-fs-s3`](/manual/integrations/fs-s3/), and [`mnml-db-dynamodb`](/manual/integrations/db-dynamodb/). The pattern is worth lifting up because it removes a lot of integration code that would otherwise be on you.
+
+The deal: every backend call is a `std::process::Command::new("aws").args([...])` subprocess. The CLI's own credential chain — env vars (`AWS_PROFILE`, `AWS_REGION`, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) → shared credentials → SSO → instance role — is what authenticates the call. The viewer's auth code is "did the subprocess exit 0?"
+
+What you get for free:
+
+- **No SDK dep.** No `aws-sdk-rust`, no token refresh logic, no region resolution code.
+- **`aws sso login` just works** — the viewer doesn't manage tokens; the CLI does.
+- **Multi-account / multi-profile** — switch `AWS_PROFILE` before launching; the active profile is the one queried. No config knob needed.
+- **Forward compatibility** — when AWS adds a new service flag, the CLI gets it and you inherit it.
+
+What it costs:
+
+- **Subprocess latency.** A cold `aws codebuild list-builds-for-project` is ~300-800ms; subsequent calls are warmer but never free. Fine for human-paced TUI use; not great for tight polling loops.
+- **JSON parsing on every call.** All `aws` invocations use `--output json`; you `serde_json::from_slice` the stdout. Schema drift between CLI versions is a real (but rare) hazard.
+- **You have to have the CLI installed.** First-run `--check` should verify it (`which aws` or `aws --version`).
+
+If you're building an integration against an AWS, GCP, Azure, or other "the vendor ships a first-class CLI" backend, this is the recommended pattern — clone `mnml-aws-codebuild` or `mnml-fs-s3`, swap the subprocess calls for your service's commands, and you've skipped the auth code entirely. Don't reach for an SDK unless you genuinely need streaming responses, long-lived connections, or sub-100ms latency.
 
 ## Opting into blit-host mode
 
@@ -166,8 +190,10 @@ The fastest path is: clone the closest reference repo, replace the backend file,
 | [mnml-db-redis](https://github.com/chris-mclennan/mnml-db-redis) | Same shape but with a command playground + type-aware response rendering |
 | [mnml-db-docdb](https://github.com/chris-mclennan/mnml-db-docdb) | NoSQL shape — find filter as JSON, results render as `_id` + document |
 | [mnml-db-clickhouse](https://github.com/chris-mclennan/mnml-db-clickhouse) | HTTP-based backend instead of a binary driver — uses `reqwest` + `FORMAT JSON` |
-| [mnml-tickets-jira](https://github.com/chris-mclennan/mnml-tickets-jira) | Tab-list shape — configurable JQL tabs, open-in-browser, periodic refresh |
-| [mnml-tickets-github](https://github.com/chris-mclennan/mnml-tickets-github) | Same shape as Jira but talks GitHub Issues / Pulls |
+| [mnml-db-dynamodb](https://github.com/chris-mclennan/mnml-db-dynamodb) | NoSQL shape with vendor-CLI auth — `aws dynamodb scan` + describe-table for the partition-key column |
+| [mnml-tracker-jira](https://github.com/chris-mclennan/mnml-tracker-jira) | Tab-list shape — configurable JQL tabs, open-in-browser, periodic refresh |
+| [mnml-aws-codebuild](https://github.com/chris-mclennan/mnml-aws-codebuild) | Vendor-CLI shell-out reference — Builds + Logs tabs over `aws` subprocesses |
+| [mnml-fs-s3](https://github.com/chris-mclennan/mnml-fs-s3) | Object-store / tree shape — bucket tabs, prefix breadcrumb, download-to-cache |
 
 ## License + ownership
 
