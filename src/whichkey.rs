@@ -167,6 +167,7 @@ pub fn root() -> &'static Leader {
                             ('l', cmd("forge.open_gitlab", "GitLab viewer")),
                             ('z', cmd("forge.open_azdevops", "Azure DevOps viewer")),
                             ('c', cmd("forge.open_codebuild", "AWS CodeBuild viewer")),
+                            ('s', cmd("forge.open_s3", "Amazon S3 browser")),
                         ],
                     ),
                 ),

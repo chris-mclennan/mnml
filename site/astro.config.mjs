@@ -107,6 +107,7 @@ export default defineConfig({
             { label: 'Azure DevOps forge viewer', slug: 'manual/integrations/forge-azdevops' },
             { label: 'Jira tracker viewer', slug: 'manual/integrations/tracker-jira' },
             { label: 'AWS CodeBuild viewer', slug: 'manual/integrations/aws-codebuild' },
+            { label: 'Amazon S3 browser', slug: 'manual/integrations/fs-s3' },
             { label: 'Playwright trace viewer', slug: 'manual/integrations/test-playwright' },
             { label: 'Community integrations', slug: 'manual/integrations/community' },
           ],

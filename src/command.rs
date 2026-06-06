@@ -1086,6 +1086,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-aws-codebuild"),
         },
         Command {
+            id: "forge.open_s3",
+            title: "Forge: open Amazon S3 browser (mnml-fs-s3)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-fs-s3"),
+        },
+        Command {
             id: "editor.jump_next_edit",
             title: "Jump to next edit position (vim `g,`)",
             group: "editor",

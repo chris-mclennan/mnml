@@ -677,6 +677,18 @@ impl Default for Config {
                         color: "orange".to_string(),
                         tooltip: Some("GitLab MRs + Pipelines".to_string()),
                     },
+                    IntegrationIcon {
+                        id: "s3".to_string(),
+                        glyph: "\u{F0EBC}".to_string(), // nf-md-aws
+                        fallback: "S3".to_string(),
+                        // Launches the standalone mnml-fs-s3 viewer
+                        // as a blit-host pane. User must have it
+                        // installed (`cargo install --git
+                        // https://github.com/chris-mclennan/mnml-fs-s3`).
+                        command: ":host.launch mnml-fs-s3".to_string(),
+                        color: "orange".to_string(),
+                        tooltip: Some("Amazon S3 browser".to_string()),
+                    },
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,

@@ -49,6 +49,14 @@ Test-tooling viewers — runners stay in mnml core (editor-integrated); these ar
 |---|---|---|
 | `mnml-test-playwright` | Playwright `trace.zip` viewer — per-action timeline + console + errors | [chris-mclennan/mnml-test-playwright](https://github.com/chris-mclennan/mnml-test-playwright) |
 
+### Cloud filesystem viewers
+
+Object-store browsers — browse buckets / prefixes / objects as a TUI tree. Shells out to vendor CLIs (no SDK deps).
+
+| Integration | Backend | Repo |
+|---|---|---|
+| `mnml-fs-s3` | Amazon S3 — bucket tabs, prefix navigation, download, presigned URLs | [chris-mclennan/mnml-fs-s3](https://github.com/chris-mclennan/mnml-fs-s3) |
+
 ### Database viewers
 
 | Integration | Backend | Repo |
