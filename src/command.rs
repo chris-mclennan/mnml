@@ -1882,6 +1882,27 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.open_remove_workspace_picker(),
         },
+        Command {
+            id: "view.open_default_workspace",
+            title: "Open the configured default workspace",
+            group: "view",
+            keys: &[],
+            // Fires `add_workspace_runtime` against `config.default_workspace`.
+            // From the empty-state ($HOME-as-workspace), the runtime path
+            // promotes the new folder to PRIMARY (see the empty-state
+            // special-case in add_workspace_runtime); from a real
+            // workspace, it adds as an extra.
+            run: |app| {
+                let Some(p) = app.config.default_workspace.clone() else {
+                    app.toast(
+                        "no default_workspace configured \
+                         (set [startup] default_workspace in ~/.config/mnml/config.toml)",
+                    );
+                    return;
+                };
+                app.add_workspace_runtime(p, None);
+            },
+        },
         // ── Activity bar (vscode-style left-rail icon strip) ──
         // Each command flips `App.active_section` to its matching
         // value; the rail layout dispatches on it to pick which

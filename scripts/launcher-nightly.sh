@@ -41,8 +41,11 @@ elif [ -x "/Applications/tmnl.app/Contents/MacOS/tmnl" ]; then
 fi
 
 if [ -n "$tmnl_bin" ]; then
-    echo "  found tmnl at $tmnl_bin — exec tmnl --mnml --startup-picker" >> "$log_file"
-    export TMNL_LAUNCH_ARGS="--input standard --startup-picker"
+    echo "  found tmnl at $tmnl_bin — exec tmnl --mnml --no-workspace" >> "$log_file"
+    # See scripts/launcher.sh for the --no-workspace rationale —
+    # icon launches land on the empty-state landing rather than
+    # auto-opening default_workspace.
+    export TMNL_LAUNCH_ARGS="--input standard --no-workspace"
     exec "$tmnl_bin" --mnml
 fi
 

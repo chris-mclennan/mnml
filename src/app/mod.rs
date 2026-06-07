@@ -272,6 +272,20 @@ fn is_markdown_path(path: &Path) -> bool {
     )
 }
 
+/// True when `path` is the user's home directory (canonicalized). Used
+/// by [`App::add_workspace_runtime`] to detect the empty-state landing
+/// and promote the new folder to primary rather than adding as extra.
+/// Mirrors the predicate in `ui::tree_view::is_empty_workspace` —
+/// keep both in sync.
+fn is_home_workspace(path: &Path) -> bool {
+    let Some(home) = std::env::var_os("HOME") else {
+        return false;
+    };
+    let home = std::path::PathBuf::from(home);
+    let home_c = std::fs::canonicalize(&home).unwrap_or(home);
+    path == home_c
+}
+
 /// Recursively walk `dir` collecting files whose extension matches any
 /// entry in `exts` (lowercase, no leading dot). Skips dot-dirs +
 /// `node_modules` / `target` to keep big repos snappy. Used by
@@ -3888,6 +3902,17 @@ impl App {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| root.to_string_lossy().into_owned())
         });
+        // Empty-state special case: when the primary workspace is
+        // $HOME (the "no workspace open" landing), promote the new
+        // path to primary rather than adding as an extra. Otherwise
+        // the empty-state widget stays visible alongside the new
+        // tree, which is the user-confusing state described in the
+        // bug report. From a real primary workspace, fall through
+        // to the existing add-as-extra path.
+        if is_home_workspace(&self.workspace) {
+            self.promote_to_primary_workspace(root, resolved_name);
+            return;
+        }
         let mut tree = Tree::open(&root);
         let mut found = crate::git::repos::discover_repos(&root);
         if found.len() > 1
@@ -3905,6 +3930,41 @@ impl App {
         self.toast(format!(
             "workspace added: {resolved_name} (also add to `[[workspaces]]` in config.toml to persist)"
         ));
+    }
+
+    /// Replace the PRIMARY workspace root with `path`. Used by
+    /// [`Self::add_workspace_runtime`] when the user picks a folder
+    /// while sitting on the empty-state landing ($HOME-as-workspace);
+    /// promoting-to-primary is what the user expects instead of
+    /// stacking the new folder as an extra.
+    ///
+    /// Side effects:
+    ///   * `self.workspace` swaps to the new canonical root
+    ///   * the primary tree is re-opened on the new root
+    ///   * `self.repos` is replaced with `discover_repos(new root)`
+    ///   * the empty-state predicate now returns false, so the
+    ///     landing widget hides on the next render
+    ///
+    /// Anything keyed to the old workspace path that wants to
+    /// survive ($HOME .mnml/ipc, session.json, git CWD context, etc.)
+    /// would need to be re-initialized here. v0.1 takes the simpler
+    /// path: we toast the user to relaunch if they care about a
+    /// fresh session for the new workspace, and refresh the tree +
+    /// repos. The user's mental model is "I just opened the
+    /// workspace I wanted" — the rest of the side effects can be
+    /// addressed in v0.2 once we see what breaks.
+    fn promote_to_primary_workspace(&mut self, root: PathBuf, name: String) {
+        let mut tree = Tree::open(&root);
+        let found = crate::git::repos::discover_repos(&root);
+        if found.len() > 1
+            && let Some(first) = found.first()
+        {
+            tree.expand_only([first.path.clone()]);
+        }
+        self.workspace = root;
+        self.tree = tree;
+        self.repos = found;
+        self.toast(format!("workspace opened: {name}"));
     }
 
     /// Runtime remove: drop the extra workspace at index `idx` (1-based,

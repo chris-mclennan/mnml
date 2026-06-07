@@ -100,6 +100,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
     let mut ascii = false;
     let mut config_path = None;
     let mut startup_picker = false;
+    let mut no_workspace = false;
 
     let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
@@ -123,14 +124,16 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
                 ));
             }
             "--startup-picker" => startup_picker = true,
+            "--no-workspace" => no_workspace = true,
             "-h" | "--help" => {
                 println!(
                     "mnml — NvChad-style terminal IDE\n\n\
                      usage:\n  \
-                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--blit SOCKET] [--startup-picker]\n  \
+                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--blit SOCKET] [--startup-picker] [--no-workspace]\n  \
                        mnml run FILE [--env NAME] [--workspace DIR]\n\n\
                      flags:\n  \
-                       --startup-picker    show a JetBrains-style chooser overlay on launch\n                                       (also enabled by MNML_STARTUP_PICKER=1)\n"
+                       --startup-picker    show a JetBrains-style chooser overlay on launch\n                                       (also enabled by MNML_STARTUP_PICKER=1)\n  \
+                       --no-workspace      land in the empty-state ($HOME) instead of resolving\n                                       [startup] default_workspace; used by the .app icon\n                                       launcher so clicking the icon doesn't auto-open a folder\n"
                 );
                 std::process::exit(0);
             }
@@ -153,12 +156,22 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
 
     // Workspace resolution order:
     //   1. Positional `[WORKSPACE]` arg (explicit user intent)
-    //   2. `[startup] default_workspace` from `~/.config/mnml/config.toml`
+    //   2. `--no-workspace` flag → $HOME (the empty-state landing).
+    //      Set by the icon launcher so clicking the app icon doesn't
+    //      auto-open the default workspace; user picks from the
+    //      "Open file / Open folder / Open default workspace" panel.
+    //   3. `[startup] default_workspace` from `~/.config/mnml/config.toml`
     //      — scaffold the folder + a starter README if missing so first
     //      launch lands on a usable scratch workspace
-    //   3. `current_dir()` (legacy fallback)
+    //   4. `current_dir()` (legacy fallback)
     let workspace = workspace
         .or_else(|| {
+            if no_workspace {
+                // Force the empty-state landing by resolving to
+                // $HOME. `is_empty_workspace` / `is_home_workspace`
+                // both detect this and render the landing panel.
+                return std::env::var_os("HOME").map(PathBuf::from);
+            }
             let p = mnml::config::resolve_default_workspace()?;
             if !p.exists()
                 && let Err(e) = mnml::config::scaffold_workspace(&p)

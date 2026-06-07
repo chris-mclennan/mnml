@@ -1650,14 +1650,33 @@ fn draw_empty_workspace_state(frame: &mut Frame, app: &mut App, inner: Rect) {
     let t = theme::cur();
     let rail_bg = t.bg_darker;
 
-    let lines: Vec<(&str, Option<&'static str>, ratatui::style::Color)> = vec![
-        ("No workspace open", None, t.comment),
-        ("", None, t.comment),
-        ("▸ Open file…", Some("view.discovery"), t.fg),
-        ("▸ Open folder…", Some("view.add_workspace"), t.fg),
-        ("", None, t.comment),
-        ("Press Esc here to skip.", None, t.comment),
+    // Build the action list. Include "Open default workspace" only
+    // when one is configured and it's a different path than the
+    // current (empty) workspace — otherwise the entry would be a
+    // no-op.
+    let mut lines: Vec<(String, Option<&'static str>, ratatui::style::Color)> = vec![
+        ("No workspace open".to_string(), None, t.comment),
+        (String::new(), None, t.comment),
+        ("▸ Open file…".to_string(), Some("view.discovery"), t.fg),
+        (
+            "▸ Open folder…".to_string(),
+            Some("view.add_workspace"),
+            t.fg,
+        ),
     ];
+    if let Some(dw) = &app.config.default_workspace
+        && dw != &app.workspace
+    {
+        let label = dw
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| dw.to_string_lossy().into_owned());
+        lines.push((
+            format!("▸ Open default workspace ({label})"),
+            Some("view.open_default_workspace"),
+            t.fg,
+        ));
+    }
 
     for (i, (text, cmd, color)) in lines.iter().enumerate() {
         let y = inner.y + i as u16;

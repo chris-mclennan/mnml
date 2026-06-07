@@ -51,12 +51,16 @@ elif [ -x "/Applications/tmnl.app/Contents/MacOS/tmnl" ]; then
 fi
 
 if [ -n "$tmnl_bin" ]; then
-    echo "  found tmnl at $tmnl_bin — exec tmnl --mnml --startup-picker" >> "$log_file"
+    echo "  found tmnl at $tmnl_bin — exec tmnl --mnml --no-workspace" >> "$log_file"
     # tmnl resolves mnml via PATH; we prepended our bundled bin
     # above so the packaged mnml wins. Override tmnl's default
-    # arg list so `--startup-picker` reaches mnml — without this
-    # the user lands directly in $HOME and skips the chooser.
-    export TMNL_LAUNCH_ARGS="--input standard --startup-picker"
+    # arg list so `--no-workspace` reaches mnml. Rationale:
+    # clicking the .app icon should land in the empty-state
+    # landing (no folder auto-opened) so the user picks from
+    # "Open file / Open folder / Open default workspace" rather
+    # than jumping straight into the configured default_workspace.
+    # Bare `mnml` from the CLI still honors default_workspace.
+    export TMNL_LAUNCH_ARGS="--input standard --no-workspace"
     exec "$tmnl_bin" --mnml
 fi
 
