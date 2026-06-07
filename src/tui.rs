@@ -2320,13 +2320,27 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             // the cursor wanders off the active stop and edits land
             // elsewhere. Read `pending_tree_edits` without consuming
             // them — `refresh_highlights` will drain them on the next
-            // highlight pass.
-            if app.snippet_session.is_some()
+            // highlight pass. Only the slice past `edits_consumed`
+            // counts: anything before that index was already folded into
+            // the stops (either by the snippet's own insertion, baked
+            // into the absolute stop positions, or by a previous run of
+            // this branch). When the vec was drained between calls
+            // (`len() < edits_consumed`), reset the baseline and treat
+            // the full vec as new.
+            if let Some(sess) = app.snippet_session.as_ref()
                 && let Some(Pane::Editor(b)) = app.panes.get(i)
             {
-                let edits: Vec<crate::edit_op::TextEdit> = b.pending_tree_edits.to_vec();
+                let len = b.pending_tree_edits.len();
+                let (edits, new_consumed) = if len >= sess.edits_consumed {
+                    (b.pending_tree_edits[sess.edits_consumed..].to_vec(), len)
+                } else {
+                    (b.pending_tree_edits.to_vec(), len)
+                };
                 if !edits.is_empty() {
                     app.apply_snippet_text_edits(i, &edits);
+                }
+                if let Some(sess) = app.snippet_session.as_mut() {
+                    sess.edits_consumed = new_consumed;
                 }
             }
             // Keep the LSP server's view in sync (full-text didChange).

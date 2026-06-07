@@ -79,6 +79,15 @@ pub struct SnippetSession {
     /// parallel to `stops`; populated only by LSP snippets (mnml's
     /// native snippets emit all zeroes).
     pub default_lens: Vec<usize>,
+    /// How many entries of the buffer's `pending_tree_edits` have already
+    /// been folded into `stops`. The session-open path sets this to the
+    /// vec's length at create time so the snippet's *own* insertion edit
+    /// — already baked into the absolute stop positions — is not
+    /// re-applied. Each later `apply_snippet_text_edits` call advances
+    /// this past the edits it processed. When `pending_tree_edits.len()`
+    /// drops below this value (a `refresh_highlights` drain), the caller
+    /// resets it — there's nothing to skip on a drained vec.
+    pub edits_consumed: usize,
 }
 
 /// One snippet entry as it lives on `App` (placeholder markers pre-parsed

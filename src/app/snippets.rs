@@ -257,6 +257,14 @@ impl App {
             while def_lens.len() < n_stops {
                 def_lens.push(0);
             }
+            // The snippet's own insertion is already baked into the
+            // absolute stop positions — skip past every edit currently
+            // sitting in `pending_tree_edits` so we don't re-apply it
+            // when the next `BufferEvent::Edited` arrives.
+            let edits_consumed = match self.panes.get(pane_id) {
+                Some(Pane::Editor(b)) => b.pending_tree_edits.len(),
+                _ => 0,
+            };
             self.snippet_session = Some(crate::snippets::SnippetSession {
                 pane_id,
                 stops,
@@ -264,6 +272,7 @@ impl App {
                 last_text_len,
                 stop_cursors,
                 default_lens: def_lens,
+                edits_consumed,
             });
         } else {
             self.snippet_session = None;
@@ -423,6 +432,7 @@ mod snippet_position_tests {
             last_text_len: 0,
             stop_cursors,
             default_lens,
+            edits_consumed: 0,
         });
         app
     }
@@ -592,6 +602,58 @@ mod snippet_position_tests {
         let s = app.snippet_session.as_ref().unwrap();
         assert_eq!(s.stops, vec![55, 75]);
         assert_eq!(s.stop_cursors[1], Some(85));
+    }
+
+    #[test]
+    fn session_open_sets_edits_consumed_to_skip_baked_in_expansion() {
+        // Regression for the "stops past buffer end" bug: when the
+        // snippet's own ReplaceRange lands in `pending_tree_edits`, the
+        // session must skip past it (it's already folded into the
+        // absolute stop positions). Otherwise the next `Edited` event
+        // re-applies the expansion delta and shifts every stop by the
+        // snippet length.
+        use crate::config::Config;
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        let mut rs = std::collections::BTreeMap::new();
+        rs.insert("forr".to_string(), "for $1 in $2 {\n    $0\n}".to_string());
+        cfg.snippets.insert("rs".to_string(), rs);
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        let path = d.path().join("code.rs");
+        std::fs::write(&path, "").unwrap();
+        app.open_path(&path);
+        // Simulate the user having typed "forr" before triggering expand
+        // — the editor pipeline appends 4 single-char insert edits onto
+        // `pending_tree_edits`, with no highlight refresh in between
+        // (the e2e harness ticks frames fast enough that the 120ms idle
+        // gate keeps the vec from being drained).
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        for c in "forr".chars() {
+            crate::tui::dispatch_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+        }
+        // Now fire `snippet.expand`. The expansion's own ReplaceRange
+        // also lands in `pending_tree_edits`.
+        crate::command::run("snippet.expand", &mut app);
+        let sess = app.snippet_session.as_ref().expect("session opens");
+        let pane_id = sess.pane_id;
+        let Pane::Editor(b) = app.panes.get(pane_id).unwrap() else {
+            panic!("editor expected");
+        };
+        // edits_consumed should equal the current pending-edit count so
+        // none of the existing entries fold back into the stops.
+        assert_eq!(sess.edits_consumed, b.pending_tree_edits.len());
+        // And the stops should still sit inside the buffer (proxy: each
+        // stop must be ≤ the current buffer length).
+        let buf_len = b.editor.text().len();
+        for off in &sess.stops {
+            assert!(
+                *off <= buf_len,
+                "stop {off} past buffer end {buf_len} after open"
+            );
+        }
     }
 
     #[test]
