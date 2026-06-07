@@ -1163,6 +1163,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-aws-sqs"),
         },
         Command {
+            id: "forge.open_sns",
+            title: "Forge: open SNS topic + subscription browser (mnml-aws-sns)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-aws-sns"),
+        },
+        Command {
             id: "integrations.refresh",
             title: "Integrations: refresh installed-binary detection",
             group: "view",

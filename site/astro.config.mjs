@@ -117,6 +117,7 @@ export default defineConfig({
             { label: 'AWS ECR viewer', slug: 'manual/integrations/aws-ecr' },
             { label: 'AWS Cognito viewer', slug: 'manual/integrations/aws-cognito' },
             { label: 'AWS SQS viewer', slug: 'manual/integrations/aws-sqs' },
+            { label: 'AWS SNS viewer', slug: 'manual/integrations/aws-sns' },
             { label: 'Amazon S3 browser', slug: 'manual/integrations/fs-s3' },
             { label: 'DynamoDB browser', slug: 'manual/integrations/db-dynamodb' },
             { label: 'Playwright trace viewer', slug: 'manual/integrations/test-playwright' },

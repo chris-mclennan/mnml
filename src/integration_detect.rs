@@ -229,10 +229,20 @@ fn looks_like_mnml_sibling(name: &str) -> bool {
 }
 
 /// Parse an integration `command` string and return the underlying
-/// sibling binary name, if it's a `:host.launch X` invocation.
-/// Returns `None` for built-in palette commands (`":ai.claude_code"`)
-/// which are always available.
+/// sibling binary name, if it has one.
+///
+/// - `":host.launch X"` → `Some("X")` — the generic blit-host path
+/// - `":mixr.show"` → `Some("mixr")` — special-cased because mixr
+///   launches via its own `mixr_host` code path (not `:host.launch`)
+///   but the rail chip should still hide when the binary isn't on
+///   `$PATH`. Without this, an mnml install without mixr would still
+///   show the rail chip — clicking would silently fail.
+/// - Any other `":foo.bar"` (built-in palette commands) → `None`,
+///   meaning "always available".
 pub fn sibling_binary_for_command(command: &str) -> Option<&str> {
+    if command == ":mixr.show" {
+        return Some("mixr");
+    }
     let rest = command.strip_prefix(":host.launch ")?;
     let bin = rest.split_whitespace().next()?;
     if bin.is_empty() { None } else { Some(bin) }
@@ -259,6 +269,13 @@ mod tests {
         assert_eq!(sibling_binary_for_command(":ai.claude_code"), None);
         assert_eq!(sibling_binary_for_command(":palette"), None);
         assert_eq!(sibling_binary_for_command(""), None);
+    }
+
+    #[test]
+    fn sibling_binary_special_case_for_mixr() {
+        // mixr launches via its own code path, but the rail chip
+        // should still hide when the binary isn't installed.
+        assert_eq!(sibling_binary_for_command(":mixr.show"), Some("mixr"));
     }
 
     #[test]

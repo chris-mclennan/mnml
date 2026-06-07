@@ -21,6 +21,7 @@ pub enum Category {
     Tracker,
     Fs,
     Test,
+    Music,
     Other,
 }
 
@@ -33,6 +34,7 @@ impl Category {
             Category::Tracker => "Trackers",
             Category::Fs => "Filesystems",
             Category::Test => "Test runners",
+            Category::Music => "Music",
             Category::Other => "Other",
         }
     }
@@ -218,6 +220,39 @@ pub const CATALOG: &[FamilySibling] = &[
             fallback: "Sq",
             color: "yellow",
             tooltip: "SQS queues",
+        },
+    },
+    FamilySibling {
+        id: "sns",
+        binary: "mnml-aws-sns",
+        category: Category::Aws,
+        repo_url: "https://github.com/chris-mclennan/mnml-aws-sns",
+        pinned_version: "v0.1.0",
+        one_liner: "SNS topic + per-topic subscription browser",
+        icon: IconTemplate {
+            glyph: "\u{F0A0F}", // nf-md-bullhorn_outline
+            fallback: "Sn",
+            color: "yellow",
+            tooltip: "SNS topics + subscriptions",
+        },
+    },
+    // ── Music ─────────────────────────────────────────────────
+    // mixr is the family's DJ app. The rail chip launches it as a
+    // docked panel inside mnml via the `mixr.show` palette command
+    // (uses the mixr_host module — different code path from the
+    // generic blit-host `:host.launch` siblings).
+    FamilySibling {
+        id: "mixr",
+        binary: "mixr",
+        category: Category::Music,
+        repo_url: "https://github.com/chris-mclennan/mixr-rs",
+        pinned_version: "v0.1.3",
+        one_liner: "Family DJ app — docked panel inside mnml",
+        icon: IconTemplate {
+            glyph: "\u{F075A}", // nf-md-music_note
+            fallback: "♪",
+            color: "pink",
+            tooltip: "mixr DJ panel",
         },
     },
     // ── Filesystem / Storage ──────────────────────────────────
@@ -531,6 +566,7 @@ fn class_to_category(class: &str) -> Category {
         "tracker" => Category::Tracker,
         "fs" => Category::Fs,
         "test" => Category::Test,
+        "music" => Category::Music,
         _ => Category::Other,
     }
 }
@@ -555,6 +591,7 @@ fn synth_icon_for(category: Category, name: &str) -> OwnedIconTemplate {
         Category::Tracker => "purple",
         Category::Fs => "orange",
         Category::Test => "green",
+        Category::Music => "pink",
         Category::Other => "cyan",
     }
     .to_string();
@@ -575,6 +612,7 @@ fn category_class(category: Category) -> &'static str {
         Category::Tracker => "tracker",
         Category::Fs => "fs",
         Category::Test => "test",
+        Category::Music => "music",
         Category::Other => "other",
     }
 }

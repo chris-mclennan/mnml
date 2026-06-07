@@ -769,6 +769,26 @@ impl Default for Config {
                         color: "yellow".to_string(),
                         tooltip: Some("SQS queues".to_string()),
                     },
+                    IntegrationIcon {
+                        id: "sns".to_string(),
+                        glyph: "\u{F0A0F}".to_string(), // nf-md-bullhorn_outline
+                        fallback: "Sn".to_string(),
+                        command: ":host.launch mnml-aws-sns".to_string(),
+                        color: "yellow".to_string(),
+                        tooltip: Some("SNS topics + subscriptions".to_string()),
+                    },
+                    // mixr is family — the rail chip launches it as a
+                    // docked panel via the `mixr.show` palette command
+                    // (uses the mixr_host code path, not the generic
+                    // blit-host `:host.launch`).
+                    IntegrationIcon {
+                        id: "mixr".to_string(),
+                        glyph: "\u{F075A}".to_string(), // nf-md-music_note
+                        fallback: "♪".to_string(),
+                        command: ":mixr.show".to_string(),
+                        color: "pink".to_string(),
+                        tooltip: Some("mixr DJ panel".to_string()),
+                    },
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,
