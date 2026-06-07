@@ -13,6 +13,42 @@ block); this file is the curated, user-facing summary.
 mnml has not yet had a tagged release. The `0.1.0` line below summarises the
 capabilities present in the current `main`.
 
+### Added (2026-06-06) — integration discovery overlay + folder browser
+
+- **`+` "Add integration" discovery overlay** — a `+` chip on the sidebar's
+  INTEGRATIONS header (and the palette command `integrations.add`) opens a
+  centered overlay listing the full family catalog (15 hardcoded siblings,
+  grouped by category: AWS, Databases, Forges, Trackers, Filesystems, Test
+  runners). Per-row status: ✓ in rail (green) / ✓ installed (cyan) / ✗ not
+  installed (red). Keys: `↑↓`/`jk` move, `Enter` adds to rail, `i` spawns
+  a `cargo install` Pty pane live, `y` yanks the install command, `Esc`
+  closes. New modules: `src/family_catalog.rs`, `src/app/discovery.rs`,
+  `src/ui/discovery_overlay.rs`.
+- **Pty install from overlay** — pressing `i` on a not-installed row runs
+  `cargo install --git <repo> --tag <ver> <binary>` in a live Pty pane; the
+  overlay closes so the pane gets the screen. Re-opening the overlay after
+  install picks up the new state (detection cache cleared on open). No-op
+  for auto-discovered entries (repo URL unknown).
+- **TOML write-back persistence** — `Enter` to add a sibling to the rail now
+  also rewrites the `[[ui.integration_icon]]` section of
+  `~/.config/mnml/config.toml` via a line-based strip-and-rewrite. Other
+  sections, comments, and whitespace are preserved. Idempotent across
+  multiple opens/adds. Toast reports the config path on success or an error
+  on failure.
+- **Auto-discovery of community siblings** — the `+` overlay also surfaces
+  any `mnml-<class>-<name>` binary found on `$PATH` or well-known dirs that
+  is not in the hardcoded catalog. Category is derived from the class prefix;
+  icon uses a cog glyph with a category-appropriate color. These rows render
+  with a `· auto-discovered` chip in the status column. `i` and `y` are
+  no-ops (repo URL unknown); `Enter` to add to rail works normally.
+- **Folder browser for "Open folder…" prompt** — the `AddWorkspace` prompt
+  now shows a live-filtered directory listing below the input (capped at 12
+  suggestions). `↑↓` navigate rows, `Tab` autocompletes from the focused row,
+  `Enter` accepts the focused row or the typed input. Tilde expansion, dotfile
+  skip unless prefix asks, case-insensitive prefix match. Other prompt kinds
+  (`GitCommit`, `Find`, etc.) are unchanged — controlled by the new
+  `is_path_kind()` predicate on `Prompt`.
+
 ### Added (2026-06-06)
 
 - **Three new blit-host integration icons** — `cloudwatch_logs`, `amplify`,

@@ -57,7 +57,10 @@ The complete, organised feature inventory. For the front-door overview see
   cross-file replace and a per-hit toggle.
 - **Quickfix & location lists** — vim-style `:cnext`/`:cprev` navigation.
 - **Multi-root workspaces** — several workspace roots and multiple git repos in
-  one session, with a repo switcher.
+  one session, with a repo switcher. The "Open folder…" (`AddWorkspace`) prompt
+  shows a live-filtered directory listing (up to 12 suggestions): `↑↓` navigate,
+  `Tab` autocomplete from focused row, `Enter` accept. Tilde expansion; dotfiles
+  hidden unless the typed prefix asks for them. Other prompt kinds are unaffected.
 
 ## Language intelligence (LSP)
 
@@ -227,10 +230,21 @@ The complete, organised feature inventory. For the front-door overview see
 - **Config-driven integration-icon rail** — the file-tree rail's icon strip is
   driven by `[[ui.integration_icon]]` TOML entries (same fields as
   `[[ui.launcher_icon]]`). Each icon launches its sibling binary on click.
-  Default entries ship for all eight first-party siblings: `mnml-tickets-jira`,
-  `mnml-aws-cloudwatch-logs`, `mnml-aws-amplify`, `mnml-db-dynamodb`,
-  `mnml-aws-lambda`, `mnml-aws-eventbridge`, plus any extras added in config.
-  Adding a new integration requires only a TOML entry — no code changes to mnml.
+  Default entries ship for all first-party siblings; extras can be added via
+  TOML or the `+` overlay — no code changes to mnml required.
+- **`+` "Add integration" discovery overlay** — the `+` chip on the sidebar's
+  INTEGRATIONS header (palette: `integrations.add`) opens a centered overlay
+  listing the full family catalog (15 hardcoded siblings grouped by category:
+  AWS, Databases, Forges, Trackers, Filesystems, Test runners) plus any
+  `mnml-<class>-<name>` binaries auto-discovered on `$PATH` or well-known
+  dirs. Per-row status: ✓ in rail / ✓ installed / ✗ not installed.
+  Keys: `↑↓`/`jk` move, `Enter` add to rail, `i` spawn `cargo install` Pty
+  pane live, `y` yank install command, `Esc` close. `integrations.refresh`
+  clears the detection cache outside the overlay. `Enter` to add also
+  writes the full `[[ui.integration_icon]]` list back to
+  `~/.config/mnml/config.toml` (line-based strip-and-rewrite; other sections
+  and comments preserved). Auto-discovered rows render with a
+  `· auto-discovered` chip; `i`/`y` are no-ops for them (repo URL unknown).
 - **Startup workspace picker** — `--startup-picker` (or `MNML_STARTUP_PICKER=1`)
   shows a chooser overlay on launch: [1] New file, [2] Open file…, [3–9]
   configured `[[workspaces]]` rows. Keys: `↑↓`/`jk` move, `Enter` commit,
