@@ -38,6 +38,25 @@ struct RawCommand {
     /// `type`: literal text to type.
     #[serde(default)]
     text: Option<String>,
+    /// `click` / `scroll` / `hover`: cell coordinates inside the
+    /// virtual screen. Use the column / row visible in `screen.txt`.
+    #[serde(default)]
+    col: Option<u16>,
+    #[serde(default)]
+    row: Option<u16>,
+    /// `click`: which button. `"left"` (default), `"middle"`, or
+    /// `"right"`. Case-insensitive; first character also accepted
+    /// (`"l"` / `"m"` / `"r"`).
+    #[serde(default)]
+    button: Option<String>,
+    /// `scroll`: wheel ticks. Positive ⇒ scroll up (into history),
+    /// negative ⇒ scroll down (toward bottom). Defaults to 1.
+    #[serde(default)]
+    dy: Option<i32>,
+    /// `click`: optional modifiers as a comma-separated list:
+    /// `"ctrl"`, `"alt"`, `"shift"`, `"super"`. Case-insensitive.
+    #[serde(default)]
+    mods: Option<String>,
 }
 
 #[derive(Debug)]
@@ -48,6 +67,25 @@ pub enum IpcCommand {
     Key(String),
     /// Type literal text into the focused pane, char by char (`\n` ⇒ Enter).
     Type(String),
+    /// Synthetic mouse click — fires a Down+Up pair at `(col, row)`
+    /// through the same `dispatch_mouse` the terminal loop uses, so
+    /// every chrome hit-rect (tabs, palette, tree, statusline chips)
+    /// is exercisable from headless. `button` defaults to `Left`.
+    Click {
+        col: u16,
+        row: u16,
+        button: ratatui::crossterm::event::MouseButton,
+        mods: ratatui::crossterm::event::KeyModifiers,
+    },
+    /// Synthetic mouse hover — fires a `Moved` event at `(col, row)`.
+    /// Used to test hover-tooltip routing (integration chips,
+    /// statusline tooltips, divider highlights).
+    Hover { col: u16, row: u16 },
+    /// Synthetic wheel scroll at `(col, row)`. Positive `dy` ⇒
+    /// `ScrollUp` (into history); negative ⇒ `ScrollDown` (toward
+    /// bottom). Fired `|dy|` times so callers can simulate a single
+    /// vs multi-tick wheel motion.
+    Scroll { col: u16, row: u16, dy: i32 },
     /// Run a registered command by id (builtin or plugin-registered).
     RunCommand(String),
     /// Register a plugin command (`id`, `title`, `group`, `keys`).
@@ -192,11 +230,65 @@ fn parse_command(line: &str) -> IpcCommand {
             },
             None => IpcCommand::Unknown(line.to_string()),
         },
+        "click" => match (raw.col, raw.row) {
+            (Some(col), Some(row)) => IpcCommand::Click {
+                col,
+                row,
+                button: parse_mouse_button(raw.button.as_deref()),
+                mods: parse_mods(raw.mods.as_deref()),
+            },
+            _ => IpcCommand::Unknown(line.to_string()),
+        },
+        "hover" => match (raw.col, raw.row) {
+            (Some(col), Some(row)) => IpcCommand::Hover { col, row },
+            _ => IpcCommand::Unknown(line.to_string()),
+        },
+        "scroll" => match (raw.col, raw.row) {
+            (Some(col), Some(row)) => IpcCommand::Scroll {
+                col,
+                row,
+                dy: raw.dy.unwrap_or(1),
+            },
+            _ => IpcCommand::Unknown(line.to_string()),
+        },
         "snapshot" => IpcCommand::Snapshot,
         "quit" => IpcCommand::Quit,
         "restart" => IpcCommand::Restart,
         _ => IpcCommand::Unknown(line.to_string()),
     }
+}
+
+/// Parse the `button` field on a click command. Accepts the full
+/// word (`"left"` / `"middle"` / `"right"`) or the first letter
+/// (`"l"` / `"m"` / `"r"`), case-insensitive. Anything else (and
+/// `None`) ⇒ `Left` — the most common case, makes scripts terser.
+fn parse_mouse_button(s: Option<&str>) -> ratatui::crossterm::event::MouseButton {
+    use ratatui::crossterm::event::MouseButton;
+    match s.map(str::to_ascii_lowercase).as_deref() {
+        Some("middle" | "m") => MouseButton::Middle,
+        Some("right" | "r") => MouseButton::Right,
+        _ => MouseButton::Left,
+    }
+}
+
+/// Parse the `mods` field — comma-separated list of modifier names.
+/// Unknown names are silently dropped.
+fn parse_mods(s: Option<&str>) -> ratatui::crossterm::event::KeyModifiers {
+    use ratatui::crossterm::event::KeyModifiers;
+    let Some(s) = s else {
+        return KeyModifiers::NONE;
+    };
+    let mut out = KeyModifiers::NONE;
+    for token in s.split(',') {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => out |= KeyModifiers::CONTROL,
+            "alt" | "option" => out |= KeyModifiers::ALT,
+            "shift" => out |= KeyModifiers::SHIFT,
+            "super" | "cmd" | "meta" => out |= KeyModifiers::SUPER,
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Apply one IPC command to `app`. Key injection goes through the *same*
@@ -256,6 +348,83 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
                 ("event", "command_registered"),
                 ("id", id),
                 ("title", title),
+            ])
+        }
+        IpcCommand::Click {
+            col,
+            row,
+            button,
+            mods,
+        } => {
+            use ratatui::crossterm::event::{MouseEvent, MouseEventKind};
+            crate::tui::dispatch_mouse(
+                app,
+                MouseEvent {
+                    kind: MouseEventKind::Down(*button),
+                    column: *col,
+                    row: *row,
+                    modifiers: *mods,
+                },
+            );
+            crate::tui::dispatch_mouse(
+                app,
+                MouseEvent {
+                    kind: MouseEventKind::Up(*button),
+                    column: *col,
+                    row: *row,
+                    modifiers: *mods,
+                },
+            );
+            json_event(&[
+                ("event", "click"),
+                ("button", &format!("{button:?}")),
+                ("col", &col.to_string()),
+                ("row", &row.to_string()),
+            ])
+        }
+        IpcCommand::Hover { col, row } => {
+            use ratatui::crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+            crate::tui::dispatch_mouse(
+                app,
+                MouseEvent {
+                    kind: MouseEventKind::Moved,
+                    column: *col,
+                    row: *row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
+            json_event(&[
+                ("event", "hover"),
+                ("col", &col.to_string()),
+                ("row", &row.to_string()),
+            ])
+        }
+        IpcCommand::Scroll { col, row, dy } => {
+            use ratatui::crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+            let kind = if *dy >= 0 {
+                MouseEventKind::ScrollUp
+            } else {
+                MouseEventKind::ScrollDown
+            };
+            // |dy| ticks — terminals usually deliver one per wheel
+            // notch; tests can request multi-tick by passing a
+            // larger value, mirroring a fast spin.
+            for _ in 0..dy.unsigned_abs() {
+                crate::tui::dispatch_mouse(
+                    app,
+                    MouseEvent {
+                        kind,
+                        column: *col,
+                        row: *row,
+                        modifiers: KeyModifiers::NONE,
+                    },
+                );
+            }
+            json_event(&[
+                ("event", "scroll"),
+                ("col", &col.to_string()),
+                ("row", &row.to_string()),
+                ("dy", &dy.to_string()),
             ])
         }
         IpcCommand::Snapshot => json_event(&[("event", "snapshot")]),
@@ -446,6 +615,95 @@ mod tests {
         // Malformed JSON ⇒ Unknown, never a panic.
         assert!(matches!(parse_command("not json at all"), Unknown(_)));
         assert!(matches!(parse_command("{"), Unknown(_)));
+    }
+
+    #[test]
+    fn parses_mouse_commands() {
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton};
+
+        // click defaults to Left + NONE.
+        let cmd = parse_command(r#"{"cmd":"click","col":5,"row":10}"#);
+        match cmd {
+            IpcCommand::Click {
+                col,
+                row,
+                button,
+                mods,
+            } => {
+                assert_eq!(col, 5);
+                assert_eq!(row, 10);
+                assert!(matches!(button, MouseButton::Left));
+                assert_eq!(mods, KeyModifiers::NONE);
+            }
+            other => panic!("expected Click, got {other:?}"),
+        }
+
+        // explicit middle + ctrl
+        let cmd =
+            parse_command(r#"{"cmd":"click","col":1,"row":2,"button":"middle","mods":"ctrl"}"#);
+        match cmd {
+            IpcCommand::Click { button, mods, .. } => {
+                assert!(matches!(button, MouseButton::Middle));
+                assert_eq!(mods, KeyModifiers::CONTROL);
+            }
+            other => panic!("expected Click, got {other:?}"),
+        }
+
+        // 'r' alias
+        let cmd = parse_command(r#"{"cmd":"click","col":1,"row":2,"button":"r"}"#);
+        match cmd {
+            IpcCommand::Click { button, .. } => assert!(matches!(button, MouseButton::Right)),
+            other => panic!("expected Click, got {other:?}"),
+        }
+
+        // hover
+        assert!(matches!(
+            parse_command(r#"{"cmd":"hover","col":0,"row":0}"#),
+            IpcCommand::Hover { col: 0, row: 0 }
+        ));
+
+        // scroll dy defaults to 1
+        match parse_command(r#"{"cmd":"scroll","col":3,"row":4}"#) {
+            IpcCommand::Scroll { col, row, dy } => {
+                assert_eq!(col, 3);
+                assert_eq!(row, 4);
+                assert_eq!(dy, 1);
+            }
+            other => panic!("expected Scroll, got {other:?}"),
+        }
+        // negative dy
+        match parse_command(r#"{"cmd":"scroll","col":0,"row":0,"dy":-3}"#) {
+            IpcCommand::Scroll { dy, .. } => assert_eq!(dy, -3),
+            other => panic!("expected Scroll, got {other:?}"),
+        }
+        // missing required field ⇒ Unknown
+        assert!(matches!(
+            parse_command(r#"{"cmd":"click","col":5}"#),
+            IpcCommand::Unknown(_)
+        ));
+        assert!(matches!(
+            parse_command(r#"{"cmd":"hover","row":5}"#),
+            IpcCommand::Unknown(_)
+        ));
+    }
+
+    #[test]
+    fn parse_mods_handles_aliases_and_combinations() {
+        use ratatui::crossterm::event::KeyModifiers;
+        assert_eq!(
+            parse_mods(Some("ctrl,shift")),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        );
+        assert_eq!(parse_mods(Some("alt")), KeyModifiers::ALT);
+        assert_eq!(parse_mods(Some("option")), KeyModifiers::ALT);
+        assert_eq!(parse_mods(Some("cmd")), KeyModifiers::SUPER);
+        assert_eq!(parse_mods(Some("meta")), KeyModifiers::SUPER);
+        // Case-insensitive, unknown tokens dropped.
+        assert_eq!(
+            parse_mods(Some("Ctrl,Hyper,Alt")),
+            KeyModifiers::CONTROL | KeyModifiers::ALT
+        );
+        assert_eq!(parse_mods(None), KeyModifiers::NONE);
     }
 
     #[test]
