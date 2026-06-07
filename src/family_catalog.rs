@@ -99,7 +99,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-cloudwatch-logs",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs",
-        pinned_version: "v0.1.0",
+        pinned_version: "v0.2.0",
         one_liner: "Live tail CloudWatch log groups",
         icon: IconTemplate {
             glyph: "\u{F0E5C}", // nf-md-text-box-search
@@ -127,7 +127,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-lambda",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-lambda",
-        pinned_version: "v0.1.0",
+        pinned_version: "v0.2.0",
         one_liner: "Lambda function browser + log-tail handoff",
         icon: IconTemplate {
             glyph: "\u{F0EBF}",
