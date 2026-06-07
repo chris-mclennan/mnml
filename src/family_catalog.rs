@@ -129,8 +129,8 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-lambda",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-lambda",
-        pinned_version: "v0.2.0",
-        one_liner: "Lambda function browser + log-tail handoff",
+        pinned_version: "v0.3.0",
+        one_liner: "Lambda functions + env/concurrency/tracing detail + log-tail",
         icon: IconTemplate {
             glyph: "\u{F0EBF}",
             fallback: "La",
@@ -185,8 +185,8 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-ecr",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-ecr",
-        pinned_version: "v0.1.0",
-        one_liner: "ECR repositories + image tags browser",
+        pinned_version: "v0.2.0",
+        one_liner: "ECR images + scan findings + critical/high color cues",
         icon: IconTemplate {
             glyph: "\u{F03D7}", // nf-md-archive
             fallback: "ER",
@@ -227,8 +227,8 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-sns",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-sns",
-        pinned_version: "v0.1.0",
-        one_liner: "SNS topic + per-topic subscription browser",
+        pinned_version: "v0.2.0",
+        one_liner: "SNS topics + subscriptions + L handoff to SQS/Lambda",
         icon: IconTemplate {
             glyph: "\u{F0A0F}", // nf-md-bullhorn_outline
             fallback: "Sn",
