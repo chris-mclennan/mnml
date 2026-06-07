@@ -201,6 +201,7 @@ pub fn root() -> &'static Leader {
                             ('M', cmd("forge.open_mandrill", "Mandrill email")),
                             ('K', cmd("forge.open_docker", "Docker containers")),
                             ('G', cmd("forge.open_gmail", "Gmail browse + send")),
+                            ('j', cmd("forge.open_jira", "Jira ticket viewer")),
                             ('F', cmd("forge.open_cloudflare", "Cloudflare CDN")),
                             (
                                 't',
