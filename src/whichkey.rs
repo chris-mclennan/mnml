@@ -196,6 +196,10 @@ pub fn root() -> &'static Leader {
                             ),
                             ('D', cmd("forge.open_datadog", "Datadog observability")),
                             ('B', cmd("forge.open_buttondown", "Buttondown newsletter")),
+                            ('S', cmd("forge.open_slack", "Slack browse + post")),
+                            ('T', cmd("forge.open_teams", "Microsoft Teams")),
+                            ('M', cmd("forge.open_mandrill", "Mandrill email")),
+                            ('K', cmd("forge.open_docker", "Docker containers")),
                             ('F', cmd("forge.open_cloudflare", "Cloudflare CDN")),
                             (
                                 't',

@@ -746,6 +746,47 @@ impl Default for Config {
                         tooltip: Some("Buttondown — drafts + sent + subscribers".to_string()),
                     },
                     IntegrationIcon {
+                        id: "slack".to_string(),
+                        glyph: "\u{F03EF}".to_string(), // nf-md-slack
+                        fallback: "Sk".to_string(),
+                        command: ":host.launch mnml-msg-slack".to_string(),
+                        color: "magenta".to_string(),
+                        tooltip: Some(
+                            "Slack — channels + DMs + threads + search + post".to_string(),
+                        ),
+                    },
+                    IntegrationIcon {
+                        id: "teams".to_string(),
+                        glyph: "\u{F0FA1}".to_string(), // nf-md-microsoft_teams
+                        fallback: "Tm".to_string(),
+                        command: ":host.launch mnml-msg-teams".to_string(),
+                        color: "blue".to_string(),
+                        tooltip: Some(
+                            "Microsoft Teams — teams + chats + threads + post".to_string(),
+                        ),
+                    },
+                    IntegrationIcon {
+                        id: "mandrill".to_string(),
+                        glyph: "\u{F01EF}".to_string(), // nf-md-email_check_outline
+                        fallback: "Md".to_string(),
+                        command: ":host.launch mnml-msg-mandrill".to_string(),
+                        color: "red".to_string(),
+                        tooltip: Some(
+                            "Mandrill — transactional email messages + templates + tags"
+                                .to_string(),
+                        ),
+                    },
+                    IntegrationIcon {
+                        id: "docker".to_string(),
+                        glyph: "\u{F0868}".to_string(), // nf-md-docker
+                        fallback: "Dk".to_string(),
+                        command: ":host.launch mnml-virt-docker".to_string(),
+                        color: "blue".to_string(),
+                        tooltip: Some(
+                            "Docker — containers + images + volumes + networks".to_string(),
+                        ),
+                    },
+                    IntegrationIcon {
                         id: "cloudflare".to_string(),
                         glyph: "\u{F0E7B}".to_string(), // nf-md-cloud_outline
                         fallback: "Cf".to_string(),

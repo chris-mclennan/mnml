@@ -27,6 +27,7 @@ pub enum Category {
     Msg,
     Cdn,
     Tattle,
+    Virt,
     Other,
 }
 
@@ -45,6 +46,7 @@ impl Category {
             Category::Msg => "Messaging",
             Category::Cdn => "CDN / Edge",
             Category::Tattle => "Tattle (internal)",
+            Category::Virt => "Virtualization & containers",
             Category::Other => "Other",
         }
     }
@@ -499,6 +501,48 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "Buttondown newsletter browser",
         },
     },
+    FamilySibling {
+        id: "slack",
+        binary: "mnml-msg-slack",
+        category: Category::Msg,
+        repo_url: "https://github.com/chris-mclennan/mnml-msg-slack",
+        pinned_version: "v0.1.0",
+        one_liner: "Slack — channels + DMs + threads + search + post",
+        icon: IconTemplate {
+            glyph: "\u{F03EF}", // nf-md-slack
+            fallback: "Sk",
+            color: "magenta",
+            tooltip: "Slack browse + post",
+        },
+    },
+    FamilySibling {
+        id: "teams",
+        binary: "mnml-msg-teams",
+        category: Category::Msg,
+        repo_url: "https://github.com/chris-mclennan/mnml-msg-teams",
+        pinned_version: "v0.1.0",
+        one_liner: "Microsoft Teams — teams + chats + threads + search + post",
+        icon: IconTemplate {
+            glyph: "\u{F0FA1}", // nf-md-microsoft_teams
+            fallback: "Tm",
+            color: "blue",
+            tooltip: "Microsoft Teams browse + post",
+        },
+    },
+    FamilySibling {
+        id: "mandrill",
+        binary: "mnml-msg-mandrill",
+        category: Category::Msg,
+        repo_url: "https://github.com/chris-mclennan/mnml-msg-mandrill",
+        pinned_version: "v0.1.0",
+        one_liner: "Mandrill — transactional email messages + templates + tags",
+        icon: IconTemplate {
+            glyph: "\u{F01EF}", // nf-md-email_check_outline
+            fallback: "Md",
+            color: "red",
+            tooltip: "Mandrill transactional email browser",
+        },
+    },
     // ── CDN / Edge ────────────────────────────────────────────
     FamilySibling {
         id: "cloudflare",
@@ -532,6 +576,21 @@ pub const CATALOG: &[FamilySibling] = &[
             fallback: "Ti",
             color: "magenta",
             tooltip: "Tattle inbox browser (INTERNAL — dev/staging only)",
+        },
+    },
+    // ── Virtualization & containers ───────────────────────────
+    FamilySibling {
+        id: "docker",
+        binary: "mnml-virt-docker",
+        category: Category::Virt,
+        repo_url: "https://github.com/chris-mclennan/mnml-virt-docker",
+        pinned_version: "v0.1.0",
+        one_liner: "Docker — containers + images + volumes + networks + compose",
+        icon: IconTemplate {
+            glyph: "\u{F0868}", // nf-md-docker
+            fallback: "Dk",
+            color: "blue",
+            tooltip: "Docker container browser",
         },
     },
 ];
@@ -715,6 +774,7 @@ fn class_to_category(class: &str) -> Category {
         "msg" => Category::Msg,
         "cdn" => Category::Cdn,
         "tattle" => Category::Tattle,
+        "virt" => Category::Virt,
         _ => Category::Other,
     }
 }
@@ -745,6 +805,7 @@ fn synth_icon_for(category: Category, name: &str) -> OwnedIconTemplate {
         Category::Msg => "green",
         Category::Cdn => "orange",
         Category::Tattle => "magenta",
+        Category::Virt => "blue",
         Category::Other => "cyan",
     }
     .to_string();
@@ -771,6 +832,7 @@ fn category_class(category: Category) -> &'static str {
         Category::Msg => "msg",
         Category::Cdn => "cdn",
         Category::Tattle => "tattle",
+        Category::Virt => "virt",
         Category::Other => "other",
     }
 }
