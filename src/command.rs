@@ -1142,6 +1142,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-virt-docker"),
         },
         Command {
+            id: "forge.open_gmail",
+            title: "Forge: open Gmail browse + send (mnml-msg-gmail)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-msg-gmail"),
+        },
+        Command {
             id: "forge.open_cloudflare",
             title: "Forge: open Cloudflare CDN browser (mnml-cdn-cloudflare)",
             group: "forge",

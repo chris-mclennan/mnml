@@ -777,6 +777,16 @@ impl Default for Config {
                         ),
                     },
                     IntegrationIcon {
+                        id: "gmail".to_string(),
+                        glyph: "\u{F03BC}".to_string(), // nf-md-gmail
+                        fallback: "Gm".to_string(),
+                        command: ":host.launch mnml-msg-gmail".to_string(),
+                        color: "red".to_string(),
+                        tooltip: Some(
+                            "Gmail — inbox + sent + labels + search + compose".to_string(),
+                        ),
+                    },
+                    IntegrationIcon {
                         id: "docker".to_string(),
                         glyph: "\u{F0868}".to_string(), // nf-md-docker
                         fallback: "Dk".to_string(),

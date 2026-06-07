@@ -543,6 +543,20 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "Mandrill transactional email browser",
         },
     },
+    FamilySibling {
+        id: "gmail",
+        binary: "mnml-msg-gmail",
+        category: Category::Msg,
+        repo_url: "https://github.com/chris-mclennan/mnml-msg-gmail",
+        pinned_version: "v0.1.0",
+        one_liner: "Gmail — inbox + sent + labels + search + compose",
+        icon: IconTemplate {
+            glyph: "\u{F03BC}", // nf-md-gmail
+            fallback: "Gm",
+            color: "red",
+            tooltip: "Gmail browse + send (per-user GCP project required)",
+        },
+    },
     // ── CDN / Edge ────────────────────────────────────────────
     FamilySibling {
         id: "cloudflare",
