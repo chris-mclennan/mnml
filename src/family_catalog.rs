@@ -150,6 +150,20 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "EventBridge buses + rules",
         },
     },
+    FamilySibling {
+        id: "rds",
+        binary: "mnml-aws-rds",
+        category: Category::Aws,
+        repo_url: "https://github.com/chris-mclennan/mnml-aws-rds",
+        pinned_version: "v0.1.0",
+        one_liner: "RDS DB instances + Aurora clusters browser",
+        icon: IconTemplate {
+            glyph: "\u{F1C0}", // nf-fa-database
+            fallback: "RD",
+            color: "blue",
+            tooltip: "RDS database browser",
+        },
+    },
     // ── Filesystem / Storage ──────────────────────────────────
     FamilySibling {
         id: "s3",

@@ -729,6 +729,14 @@ impl Default for Config {
                         color: "pink".to_string(),
                         tooltip: Some("EventBridge buses + rules".to_string()),
                     },
+                    IntegrationIcon {
+                        id: "rds".to_string(),
+                        glyph: "\u{F1C0}".to_string(), // nf-fa-database
+                        fallback: "RD".to_string(),
+                        command: ":host.launch mnml-aws-rds".to_string(),
+                        color: "blue".to_string(),
+                        tooltip: Some("RDS database browser".to_string()),
+                    },
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,

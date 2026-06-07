@@ -1128,6 +1128,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-aws-eventbridge"),
         },
         Command {
+            id: "forge.open_rds",
+            title: "Forge: open RDS database browser (mnml-aws-rds)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-aws-rds"),
+        },
+        Command {
             id: "integrations.refresh",
             title: "Integrations: refresh installed-binary detection",
             group: "view",

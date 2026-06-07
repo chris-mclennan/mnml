@@ -179,6 +179,7 @@ pub fn root() -> &'static Leader {
                                 'e',
                                 cmd("forge.open_eventbridge", "EventBridge buses + rules"),
                             ),
+                            ('R', cmd("forge.open_rds", "RDS databases")),
                         ],
                     ),
                 ),
