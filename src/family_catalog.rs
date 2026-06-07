@@ -22,6 +22,7 @@ pub enum Category {
     Fs,
     Test,
     Music,
+    Web,
     Other,
 }
 
@@ -35,6 +36,7 @@ impl Category {
             Category::Fs => "Filesystems",
             Category::Test => "Test runners",
             Category::Music => "Music",
+            Category::Web => "Web",
             Category::Other => "Other",
         }
     }
@@ -63,17 +65,41 @@ pub struct FamilySibling {
 }
 
 impl FamilySibling {
-    /// The full `cargo install` invocation a user would run.
+    /// `true` when this catalog entry isn't a separate cargo-install
+    /// sibling but is built into mnml core (HTTP client today, maybe
+    /// more in future). Marked by `pinned_version == "built-in"` as
+    /// the sentinel.
+    pub fn is_builtin(&self) -> bool {
+        self.pinned_version == "built-in"
+    }
+
+    /// The full `cargo install` invocation a user would run. Returns
+    /// a no-op note for built-in entries (they ship with mnml core).
     pub fn install_command(&self) -> String {
+        if self.is_builtin() {
+            return format!(
+                "({} is built into mnml core — no install needed)",
+                self.binary
+            );
+        }
         format!(
             "cargo install --git {} --tag {} {}",
             self.repo_url, self.pinned_version, self.binary
         )
     }
 
-    /// The `:host.launch <binary>` shape that the rail chip should
-    /// invoke when clicked.
+    /// The launch command to invoke when the rail chip is clicked.
+    /// Built-in entries use a per-id command like `:http.send` rather
+    /// than `:host.launch <binary>`.
     pub fn launch_command(&self) -> String {
+        if self.is_builtin() {
+            // Today: HTTP uses `:http.send`. Add more mappings here if
+            // we ever surface other built-ins in the catalog.
+            return match self.id {
+                "http" => ":http.send".to_string(),
+                _ => format!(":host.launch {}", self.binary),
+            };
+        }
         format!(":host.launch {}", self.binary)
     }
 }
@@ -400,6 +426,27 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "Cypress results",
         },
     },
+    // ── Web ───────────────────────────────────────────────────
+    // The HTTP client is built into mnml core, not a standalone
+    // sibling — opening a .http / .curl / .rest file gives you the
+    // editor + send-via-<leader>h workflow. We surface it in the
+    // catalog so it shows up in the `+` Add integration overlay
+    // as a built-in. The `install_command` rendered to users is
+    // a no-op note since you can't `cargo install` a built-in.
+    FamilySibling {
+        id: "http",
+        binary: "http",
+        category: Category::Web,
+        repo_url: "https://github.com/chris-mclennan/mnml",
+        pinned_version: "built-in",
+        one_liner: "HTTP client — .http/.curl/.rest files (built into mnml)",
+        icon: IconTemplate {
+            glyph: "\u{F0590}", // nf-md-web
+            fallback: "ht",
+            color: "blue",
+            tooltip: "HTTP client (built-in)",
+        },
+    },
 ];
 
 pub fn catalog() -> &'static [FamilySibling] {
@@ -508,14 +555,23 @@ impl SiblingRef {
             SiblingRef::Discovered(s) => s.launch_command(),
         }
     }
-    /// Install command — `Some` for catalog entries, `None` for
-    /// discovered ones (we don't know the repo URL). Used to decide
-    /// whether the `i`/`y` actions show an actionable command.
+    /// Install command — `Some(cargo cmd)` for cargo-install catalog
+    /// entries, `None` for discovered entries (we don't know the repo
+    /// URL) AND for built-in catalog entries (they're already part of
+    /// mnml core). Drives the `i`/`y` actions in the discovery overlay.
     pub fn install_command(&self) -> Option<String> {
         match self {
+            SiblingRef::Catalog(s) if s.is_builtin() => None,
             SiblingRef::Catalog(s) => Some(s.install_command()),
             SiblingRef::Discovered(_) => None,
         }
+    }
+
+    /// `true` when this sibling is built into mnml core (HTTP) rather
+    /// than a standalone install. Built-ins always count as installed
+    /// by the discovery overlay.
+    pub fn is_builtin(&self) -> bool {
+        matches!(self, SiblingRef::Catalog(s) if s.is_builtin())
     }
     pub fn is_discovered(&self) -> bool {
         matches!(self, SiblingRef::Discovered(_))
@@ -567,6 +623,7 @@ fn class_to_category(class: &str) -> Category {
         "fs" => Category::Fs,
         "test" => Category::Test,
         "music" => Category::Music,
+        "web" => Category::Web,
         _ => Category::Other,
     }
 }
@@ -592,6 +649,7 @@ fn synth_icon_for(category: Category, name: &str) -> OwnedIconTemplate {
         Category::Fs => "orange",
         Category::Test => "green",
         Category::Music => "pink",
+        Category::Web => "blue",
         Category::Other => "cyan",
     }
     .to_string();
@@ -613,6 +671,7 @@ fn category_class(category: Category) -> &'static str {
         Category::Fs => "fs",
         Category::Test => "test",
         Category::Music => "music",
+        Category::Web => "web",
         Category::Other => "other",
     }
 }
@@ -696,6 +755,18 @@ mod tests {
         assert_eq!(r.category(), s.category);
         assert!(r.install_command().is_some());
         assert!(!r.is_discovered());
+    }
+
+    #[test]
+    fn builtin_catalog_entry_has_no_install_command() {
+        let http = find_by_binary("http").expect("http entry present");
+        assert!(http.is_builtin());
+        let r = SiblingRef::Catalog(http);
+        assert!(r.is_builtin());
+        assert!(r.install_command().is_none());
+        // Launch command for built-in is the per-id palette command,
+        // not `:host.launch`.
+        assert_eq!(r.launch_command(), ":http.send");
     }
 
     #[test]

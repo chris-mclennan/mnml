@@ -789,6 +789,19 @@ impl Default for Config {
                         color: "pink".to_string(),
                         tooltip: Some("mixr DJ panel".to_string()),
                     },
+                    // HTTP client is built into mnml core. The rail
+                    // chip fires `:http.send` which targets the
+                    // focused buffer (open a .http / .curl / .rest
+                    // file first); the user's muscle memory is the
+                    // existing `<leader>h` chord set.
+                    IntegrationIcon {
+                        id: "http".to_string(),
+                        glyph: "\u{F0590}".to_string(), // nf-md-web
+                        fallback: "ht".to_string(),
+                        command: ":http.send".to_string(),
+                        color: "blue".to_string(),
+                        tooltip: Some("HTTP client (built-in)".to_string()),
+                    },
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,

@@ -131,7 +131,13 @@ pub fn build_items(app: &App) -> Vec<DiscoveryItem> {
 }
 
 fn status_for(app: &App, s: &SiblingRef) -> SiblingStatus {
-    let installed = crate::integration_detect::is_binary_installed(s.binary());
+    // Built-in catalog entries (e.g. the HTTP client) are always
+    // installed — they ship with mnml core, no PATH probe needed.
+    let installed = if s.is_builtin() {
+        true
+    } else {
+        crate::integration_detect::is_binary_installed(s.binary())
+    };
     if !installed {
         return SiblingStatus::NotInstalled;
     }
