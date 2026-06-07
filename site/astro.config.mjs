@@ -114,6 +114,7 @@ export default defineConfig({
             { label: 'AWS EventBridge viewer', slug: 'manual/integrations/aws-eventbridge' },
             { label: 'AWS RDS viewer', slug: 'manual/integrations/aws-rds' },
             { label: 'AWS ECS viewer', slug: 'manual/integrations/aws-ecs' },
+            { label: 'AWS ECR viewer', slug: 'manual/integrations/aws-ecr' },
             { label: 'Amazon S3 browser', slug: 'manual/integrations/fs-s3' },
             { label: 'DynamoDB browser', slug: 'manual/integrations/db-dynamodb' },
             { label: 'Playwright trace viewer', slug: 'manual/integrations/test-playwright' },

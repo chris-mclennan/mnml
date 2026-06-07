@@ -178,6 +178,20 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "ECS clusters + services",
         },
     },
+    FamilySibling {
+        id: "ecr",
+        binary: "mnml-aws-ecr",
+        category: Category::Aws,
+        repo_url: "https://github.com/chris-mclennan/mnml-aws-ecr",
+        pinned_version: "v0.1.0",
+        one_liner: "ECR repositories + image tags browser",
+        icon: IconTemplate {
+            glyph: "\u{F03D7}", // nf-md-archive
+            fallback: "ER",
+            color: "purple",
+            tooltip: "ECR container registry",
+        },
+    },
     // ── Filesystem / Storage ──────────────────────────────────
     FamilySibling {
         id: "s3",

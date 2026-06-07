@@ -745,6 +745,14 @@ impl Default for Config {
                         color: "green".to_string(),
                         tooltip: Some("ECS clusters + services".to_string()),
                     },
+                    IntegrationIcon {
+                        id: "ecr".to_string(),
+                        glyph: "\u{F03D7}".to_string(), // nf-md-archive
+                        fallback: "ER".to_string(),
+                        command: ":host.launch mnml-aws-ecr".to_string(),
+                        color: "purple".to_string(),
+                        tooltip: Some("ECR container registry".to_string()),
+                    },
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,

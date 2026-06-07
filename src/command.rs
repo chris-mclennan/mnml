@@ -1142,6 +1142,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-aws-ecs"),
         },
         Command {
+            id: "forge.open_ecr",
+            title: "Forge: open ECR container registry browser (mnml-aws-ecr)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-aws-ecr"),
+        },
+        Command {
             id: "integrations.refresh",
             title: "Integrations: refresh installed-binary detection",
             group: "view",
