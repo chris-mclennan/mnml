@@ -47,21 +47,26 @@ impl App {
     /// Smart launcher for terminal-native tools (`htop`, `iftop`, …):
     /// under tmnl, opens the binary as a sibling native tab so it
     /// survives mnml's exit and gets its own chrome tab; standalone,
-    /// opens it as a Pty pane inside mnml's layout. Both paths use
-    /// the same binary lookup (`PATH`), so a missing binary fails
-    /// loudly on first I/O — caller doesn't have to pre-check.
+    /// opens it as a Pty pane inside mnml's layout.
     ///
-    /// `args` is split by whitespace from `extra_args` so config-side
-    /// `command = ":tools.launch iftop -i en0"` Just Works.
+    /// Pre-checks installation. If the binary isn't on PATH, yanks an
+    /// OS-appropriate install command (`brew install …` on macOS,
+    /// `apt install …` / `dnf install …` / `pacman -S …` on Linux)
+    /// to the clipboard and toasts it. Auto-install is intentionally
+    /// not the default — it would need sudo on Linux and writes to
+    /// brew's prefix on macOS, which is the kind of side-effect that
+    /// belongs behind a confirmation, not a click.
     pub fn launch_tool(&mut self, binary: &str, args: Vec<String>) {
+        if !crate::integration_detect::is_binary_installed(binary) {
+            self.tool_not_installed(binary);
+            return;
+        }
         if self.under_tmnl {
             self.tmnl_open_tab(binary.to_string(), args);
             return;
         }
         // Standalone — spawn as a Pty pane. `BinaryProfile::task` runs
-        // via `$SHELL -c "<binary> <args…>"` which handles missing
-        // binaries gracefully (the shell prints "command not found" in
-        // the pane and exits — visible feedback, no app crash).
+        // via `$SHELL -c "<binary> <args…>"`.
         let cwd = self.workspace.clone();
         let cmdline = if args.is_empty() {
             binary.to_string()
@@ -69,6 +74,17 @@ impl App {
             format!("{binary} {}", args.join(" "))
         };
         self.open_pty(crate::pty_pane::BinaryProfile::task(binary, &cmdline, cwd));
+    }
+
+    /// Build an OS-appropriate install hint for a missing tool, yank
+    /// it to the clipboard, and toast. Caller is [`Self::launch_tool`]
+    /// when `is_binary_installed` returns false.
+    fn tool_not_installed(&mut self, binary: &str) {
+        let install_cmd = install_command_for(binary);
+        self.clipboard.set(install_cmd.clone(), false);
+        self.toast(format!(
+            "{binary} not installed — `{install_cmd}` copied to clipboard"
+        ));
     }
 
     /// Ask the tmnl host to fire one of *its* commands by id over the
@@ -160,6 +176,63 @@ impl App {
     }
 }
 
+/// Build an OS-appropriate install command for a missing terminal
+/// tool. Used by [`App::launch_tool`] to surface a copy-pasteable
+/// hint when the binary isn't on PATH.
+///
+/// macOS → `brew install <pkg>` (assumes Homebrew is in use; Mac
+/// users without brew get the toast and copy the literal string).
+/// Linux → tries to pick a package manager that exists on PATH, in
+/// preference order: `apt-get` (Debian/Ubuntu — most common in our
+/// sphere), `dnf` (Fedora/RHEL 8+), `pacman` (Arch). Falls back to
+/// `apt-get` when nothing is detected. Linux commands are prefixed
+/// with `sudo -A` so a configured `SUDO_ASKPASS` surfaces a GUI
+/// prompt; without one the user sees the usual terminal prompt.
+fn install_command_for(binary: &str) -> String {
+    let pkg = package_name_for(binary);
+    if cfg!(target_os = "macos") {
+        return format!("brew install {pkg}");
+    }
+    if cfg!(target_os = "linux") {
+        if which("apt-get") {
+            return format!("sudo -A apt-get install -y {pkg}");
+        }
+        if which("dnf") {
+            return format!("sudo -A dnf install -y {pkg}");
+        }
+        if which("pacman") {
+            return format!("sudo -A pacman -S --noconfirm {pkg}");
+        }
+        // No detected package manager — best-effort default.
+        return format!("sudo -A apt-get install -y {pkg}");
+    }
+    // Windows / BSDs etc. — surface the binary name and let the user
+    // pick their installer.
+    format!("install {pkg}")
+}
+
+/// Tiny `which`-style PATH probe. The `integration_detect` module has
+/// one too, but it's tuned for sibling-binary lookups (per-OS
+/// well-known install dirs); for `install_command_for` we only need
+/// the cheap PATH walk.
+fn which(name: &str) -> bool {
+    let Ok(path) = std::env::var("PATH") else {
+        return false;
+    };
+    path.split(':').any(|dir| {
+        let p = std::path::Path::new(dir).join(name);
+        p.is_file()
+    })
+}
+
+/// Map a binary name to a package name for the target OS. Most are
+/// 1:1; the few exceptions live here.
+fn package_name_for(binary: &str) -> &str {
+    // Today everything we surface is 1:1. Future entries (e.g.
+    // `btm` → `bottom`, `kubectl` → varies) go here.
+    binary
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +246,29 @@ mod tests {
     fn env_lock() -> &'static std::sync::Mutex<()> {
         static M: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
         M.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    #[test]
+    fn install_command_for_macos_uses_brew() {
+        if cfg!(target_os = "macos") {
+            assert_eq!(install_command_for("htop"), "brew install htop");
+            assert_eq!(install_command_for("iftop"), "brew install iftop");
+        }
+    }
+
+    #[test]
+    fn install_command_for_linux_prefers_a_real_package_manager() {
+        // On Linux this should yield something starting with `sudo -A`
+        // since the helper always offers GUI/CLI prompt support. We
+        // don't pin the specific PM since CI may have any combination.
+        if cfg!(target_os = "linux") {
+            let cmd = install_command_for("htop");
+            assert!(
+                cmd.starts_with("sudo -A "),
+                "expected sudo-prefixed install command, got `{cmd}`"
+            );
+            assert!(cmd.contains("htop"));
+        }
     }
 
     #[test]
