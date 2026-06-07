@@ -16,9 +16,11 @@
 //! Avoiding the "kill the process that's running the install" circle
 //! keeps the implementation simple.
 //!
-//! Windows v0.1: prints a message pointing at the release URL. Full
-//! `.msi` invocation via `msiexec` is a follow-up — UAC handling +
-//! restart logic warrant a separate pass.
+//! Windows: downloads the platform `.msi`, SHA256-verifies, then
+//! invokes `msiexec` via `Start-Process -Verb RunAs` so the UAC
+//! elevation prompt pops automatically. The Pty pane stays open
+//! during the elevated install so the user sees the progress bar
+//! + can read the post-install relaunch hint.
 //!
 //! Verified-by-design via the SHA256 check against `sha256.sum`,
 //! which is signed implicitly by the GitHub Release upload chain
@@ -90,6 +92,8 @@ fn build_script(version: &str) -> String {
         build_macos_script(&base, version)
     } else if cfg!(target_os = "linux") {
         build_linux_script(&base, version)
+    } else if cfg!(target_os = "windows") {
+        build_windows_script(&base, version)
     } else {
         build_unsupported_script(&base, version)
     }
@@ -213,15 +217,110 @@ echo "────────────────────────�
     )
 }
 
+fn build_windows_script(base: &str, version: &str) -> String {
+    // cargo-dist publishes `mnml-rs-<target>.msi` for Windows.
+    // ARM64 Windows ships as `aarch64-pc-windows-msvc` if/when we
+    // add it; for now x86_64 is the only target.
+    let target = if cfg!(target_arch = "aarch64") {
+        "aarch64-pc-windows-msvc"
+    } else {
+        "x86_64-pc-windows-msvc"
+    };
+    let artifact = format!("mnml-rs-{target}.msi");
+    // PowerShell flow:
+    //   1) Download sha256.sum + the .msi to a temp dir.
+    //   2) Get-FileHash + compare to the published sum. Refuse to
+    //      install on mismatch (same as macOS / Linux paths).
+    //   3) Start-Process -Verb RunAs msiexec /i <file> /qb!
+    //      — `-Verb RunAs` triggers UAC; `/qb!` is "basic UI, no
+    //      modal at end" so the install runs to completion without
+    //      a final dialog the user has to click through.
+    //   4) -Wait so we don't relinquish the pty until the elevated
+    //      msiexec finishes (otherwise the pane closes before the
+    //      user knows whether the install succeeded).
+    format!(
+        r#"$ErrorActionPreference = 'Stop'
+Write-Host "── mnml in-app update ──"
+Write-Host "  version: v{version}"
+Write-Host "  target:  {target}"
+Write-Host ""
+
+$artifact = "{artifact}"
+$base     = "{base}"
+$shaUrl   = "$base/sha256.sum"
+$msiUrl   = "$base/$artifact"
+
+Write-Host "1/4  downloading sha256.sum…"
+$shaFile = New-TemporaryFile
+Invoke-WebRequest -Uri $shaUrl -OutFile $shaFile.FullName -UseBasicParsing | Out-Null
+Write-Host "     ok"
+
+Write-Host "2/4  downloading $artifact…"
+$tmpDir  = New-Item -ItemType Directory -Path ([System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.Guid]::NewGuid().ToString()))
+$msiPath = Join-Path $tmpDir.FullName $artifact
+Invoke-WebRequest -Uri $msiUrl -OutFile $msiPath -UseBasicParsing | Out-Null
+$size = (Get-Item $msiPath).Length
+Write-Host "     ok ($([math]::Round($size/1MB, 1)) MB)"
+
+Write-Host "3/4  verifying SHA256…"
+$expected = (Get-Content $shaFile.FullName |
+    ForEach-Object {{ $_ -split '\s+' }} |
+    Select-Object -First 2 |
+    Where-Object {{ $_ -match '^[0-9a-f]{{64}}$' }} |
+    Select-Object -First 1)
+# Format above is `<hash>  *<artifact>` — we split on whitespace and
+# pick the first hex64 token. Fall back to a per-line search if the
+# sums file lists multiple artifacts (one per platform).
+if (-not $expected) {{
+    $line = Select-String -Path $shaFile.FullName -Pattern $artifact -SimpleMatch | Select-Object -First 1
+    if ($line) {{
+        $expected = ($line.Line -split '\s+' | Where-Object {{ $_ -match '^[0-9a-f]{{64}}$' }} | Select-Object -First 1)
+    }}
+}}
+if (-not $expected) {{
+    Write-Host "     ✗ no SHA256 entry for $artifact in sha256.sum — refusing to install"
+    exit 1
+}}
+$actual = (Get-FileHash -Path $msiPath -Algorithm SHA256).Hash.ToLower()
+Write-Host "     expected: $($expected.Substring(0, 24))…"
+Write-Host "     actual:   $($actual.Substring(0, 24))…"
+if ($expected -ne $actual) {{
+    Write-Host "     ✗ SHA256 mismatch — refusing to install"
+    exit 1
+}}
+Write-Host "     ✓ verified"
+
+Write-Host "4/4  installing — Windows will show a UAC elevation prompt"
+$proc = Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i', "`"$msiPath`"", '/qb!' -Verb RunAs -Wait -PassThru
+if ($proc.ExitCode -ne 0) {{
+    Write-Host "     ✗ msiexec exited with code $($proc.ExitCode)"
+    exit $proc.ExitCode
+}}
+Write-Host "     ✓ install complete"
+
+Remove-Item -Recurse -Force $tmpDir.FullName -ErrorAction SilentlyContinue
+Remove-Item -Force $shaFile.FullName -ErrorAction SilentlyContinue
+
+Write-Host ""
+Write-Host "──────────────────────────────────────────────────────"
+Write-Host "  Quit mnml (Ctrl+Q) and relaunch to use v{version}."
+Write-Host "  Your current session is still running the old binary."
+Write-Host "──────────────────────────────────────────────────────"
+Write-Host ""
+Write-Host "Press Enter to close this pane."
+$null = Read-Host
+"#
+    )
+}
+
 fn build_unsupported_script(base: &str, version: &str) -> String {
-    // Windows + BSDs fall here — in-app install is a v0.x follow-up.
-    // Surface a clear message + the release URL so the user can
-    // download manually.
+    // BSDs / unknown OSes fall here. Surface a clear message + the
+    // release URL so the user can download manually.
     format!(
         r#"Write-Host "── mnml in-app update ──"
 Write-Host "  version: v{version}"
 Write-Host ""
-Write-Host "In-app install on this platform is a v0.x follow-up."
+Write-Host "In-app install isn't wired for this platform."
 Write-Host "Download the installer manually:"
 Write-Host "  {base}/"
 Write-Host ""
@@ -262,9 +361,28 @@ mod tests {
             assert!(s.contains("sudo installer -pkg"));
         } else if cfg!(target_os = "linux") {
             assert!(s.contains(".cargo/bin/mnml"));
+        } else if cfg!(target_os = "windows") {
+            assert!(s.contains("msiexec"));
         } else {
             assert!(s.contains("manually"));
         }
+    }
+
+    #[test]
+    fn windows_script_uses_msiexec_with_elevation_and_sha_verify() {
+        let s = build_windows_script("https://x.test/v0.99.0", "0.99.0");
+        // SHA256 verify before install.
+        assert!(s.contains("Get-FileHash"));
+        assert!(s.contains("SHA256 mismatch"));
+        // msiexec with UAC elevation + wait.
+        assert!(s.contains("msiexec"));
+        assert!(s.contains("-Verb RunAs"));
+        assert!(s.contains("-Wait"));
+        // Artifact name follows the cargo-dist convention.
+        assert!(s.contains("mnml-rs-"));
+        assert!(s.contains("pc-windows-msvc.msi"));
+        // Version is templated.
+        assert!(s.contains("v0.99.0"));
     }
 
     #[test]

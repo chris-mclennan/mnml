@@ -105,6 +105,82 @@ user might be mid-edit *inside mnml* on something untouched.
 
 ## Status
 
+**mnml ↔ tmnl deep integration: chrome, mouse, auto-promote (2026-06-07):**
+A 15-commit stretch makes "open mnml from inside tmnl" feel like
+one app instead of two stacked terminals.
+
+Chrome alignment (4 commits, tmnl): mnml-eyedropped strip colors
+(#1A1D22 strip / #1E2228 arrow pill / #24272D active tab /
+#292D35 search chip / #9FA7B4 tab fg) replaced the source-hex
+guesses (which were off-by-display-transform). 3-tier gradient
+inside the bufferline cluster (arrows < active tab < search chip).
+Then a `theme.rs` module adopts mnml's installed theme at startup
+— reads `~/.config/mnml/config.toml`'s `ui.theme`, loads the
+named TOML from `~/.config/mnml/themes/<name>.toml`, projects
+mnml's `base_30` field names onto tmnl's chrome roles. Switching
+mnml to catppuccin/gruvbox/kanagawa retints tmnl chrome
+automatically. ~70 const sites refactored to `palette().X`
+accessors; OnceLock-backed runtime storage; per-glyph hot paths
+hoist into local `let` bindings to avoid lock contention.
+
+Live reload (1 commit, tmnl): converted PALETTE from
+`OnceLock<Palette>` to `OnceLock<RwLock<Palette>>`; once-per-tick
+mtime poll on mnml's config file; `theme.refresh` palette command
+as a manual escape hatch. User picks a new theme in mnml → tmnl
+chrome retints within one tick.
+
+Bar-hide on mnml side (1 commit, mnml): new
+`App.inside_tmnl_pty: bool` detected from the `TMNL_TRANSFER_SOCKET`
+env var; new `App::is_inside_tmnl()` helper combining
+blit-mode + pty-mode signals; `palette_bar_visible` check uses
+the helper. Mnml hides its inline palette bar in BOTH native-blit
+and standard-pty modes — no more doubled chrome. IPC routing
+(`tmnl_open_tab`, `mixr.show`, etc.) still gates on the narrower
+`under_tmnl` (blit-only) since their message queues only drain in
+the blit loop.
+
+Mouse + wheel forwarding to ptys (2 commits, tmnl):
+`ShellSession::write_mouse` encodes click/release as SGR-1006 (or
+X10 fallback) per the pty's current vt100 mouse-protocol mode.
+Returns false + drops the event when the child hasn't enabled
+mouse capture (no garbage on stdin from a bare shell prompt).
+`write_mouse_motion` covers DECSET ?1002h (drag) and ?1003h
+(hover+drag) per-mode. Wired into `handle_mouse_input`,
+`handle_mouse_wheel`, `handle_cursor_moved`. Mnml's tooltips,
+file-tab clicks, palette clicks, tree-rail navigation all work
+when running as a pty child of tmnl.
+
+Auto-promote at startup (3 commits, mnml + tmnl + tmnl-protocol):
+when mnml detects `TMNL_TRANSFER_SOCKET` + stdin-is-tty + no
+`--blit` + no `--no-native-promote`, it connects to the transfer
+socket, sends `Message::OpenPane { command: "mnml", args: [...] }`,
+exits. Tmnl's `transfer.rs` accept_loop maps this (an OpenPane
+with no attached fd) to a new `TransferEvent::PromoteToNative`
+which `App::spawn_native_in_new_tab` handles by minting a fresh
+blit socket and launching `mnml --blit <socket> [args]` as a new
+top-level tab. Two follow-up fixes were needed: peel `args[0]`
+into `cfg.workspace` (Launcher prepends workspace as the first
+positional, so the extra-args list would otherwise duplicate
+it), and gate the env-backfill on `stdin().is_terminal()` rather
+than `current_exe().contains(".app/")` so the `tmnl-nightly`
+launcher script (which `exec`s into `target/release/tmnl`) still
+gets `~/.cargo/bin` on PATH.
+
+Vertical sidebar tab layout (1 commit, tmnl — closes #227): when
+`tab_layout = "vertical"` in `~/.config/tmnl/config.toml`, tab
+chips stack down a left-edge sidebar. Body grid shifts right by
+the computed sidebar width (widest chip + 1-cell pad). New
+`Gpu.tab_layout`/`Gpu.sidebar_w_px` fields; `chip_layout` /
+`required_strip_h` / `strip_chip_instances` all branch on
+layout; per-axis inset on CellPipeline globals
+(`inset_x = inset_px + sidebar_w_px`, `inset_y = inset_px + strip_h`);
+click/hover/wheel chrome gates widened to include the sidebar
+region. Settings UI toggle + chip-overflow scrolling are v2.
+
+Distinct sidebar background paint, settings UI enum-row support
++ tab_layout toggle, and chip-overflow scrolling shipped in
+follow-up commits the same day.
+
 **Integration detection + `+` Add overlay + folder browser (2026-06-06):**
 Lands the user-facing fix for "why is Jira showing in INTEGRATIONS,
 did I set it up?" plus the discoverability flow for adding more

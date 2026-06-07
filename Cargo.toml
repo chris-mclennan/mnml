@@ -1,6 +1,6 @@
 [package]
 name = "mnml-rs"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 rust-version = "1.87"
 description = "A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, and an embedded HTTP client."
