@@ -206,6 +206,20 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "Cognito User Pools + users",
         },
     },
+    FamilySibling {
+        id: "sqs",
+        binary: "mnml-aws-sqs",
+        category: Category::Aws,
+        repo_url: "https://github.com/chris-mclennan/mnml-aws-sqs",
+        pinned_version: "v0.1.0",
+        one_liner: "SQS queue browser with lazy per-queue attributes",
+        icon: IconTemplate {
+            glyph: "\u{F09FE}", // nf-md-mailbox_outline
+            fallback: "Sq",
+            color: "yellow",
+            tooltip: "SQS queues",
+        },
+    },
     // ── Filesystem / Storage ──────────────────────────────────
     FamilySibling {
         id: "s3",

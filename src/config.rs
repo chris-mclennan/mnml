@@ -761,6 +761,14 @@ impl Default for Config {
                         color: "cyan".to_string(),
                         tooltip: Some("Cognito User Pools + users".to_string()),
                     },
+                    IntegrationIcon {
+                        id: "sqs".to_string(),
+                        glyph: "\u{F09FE}".to_string(), // nf-md-mailbox_outline
+                        fallback: "Sq".to_string(),
+                        command: ":host.launch mnml-aws-sqs".to_string(),
+                        color: "yellow".to_string(),
+                        tooltip: Some("SQS queues".to_string()),
+                    },
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,

@@ -1156,6 +1156,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-aws-cognito"),
         },
         Command {
+            id: "forge.open_sqs",
+            title: "Forge: open SQS queue browser (mnml-aws-sqs)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-aws-sqs"),
+        },
+        Command {
             id: "integrations.refresh",
             title: "Integrations: refresh installed-binary detection",
             group: "view",
