@@ -187,11 +187,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // statusline shows steady state, the cmdline below it shows the live `:`
     // line + transient echo messages). The top row is a 1-row palette bar
     // (VS Code-style centered "search files, run commands…" chip) — visible
-    // when the window is wide enough AND we're not under tmnl. Under tmnl,
-    // the host renders the palette chip directly in its native chrome
-    // strip (next to the macOS traffic lights), so the inline bar would
-    // be duplicate chrome.
-    let palette_bar_visible = area.width >= 80 && !app.under_tmnl;
+    // when the window is wide enough AND we're not inside tmnl. Under tmnl
+    // (native blit *or* standard pty child), the host renders the palette
+    // chip directly in its native chrome strip (next to the macOS traffic
+    // lights), so the inline bar would be duplicate chrome.
+    let palette_bar_visible = area.width >= 80 && !app.is_inside_tmnl();
     let palette_bar_h: u16 = if palette_bar_visible { 1 } else { 0 };
     let v = RLayout::vertical([
         Constraint::Length(palette_bar_h),

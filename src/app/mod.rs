@@ -2508,8 +2508,21 @@ pub struct App {
     pub mixr_drag: Option<crate::mixr_host::MixrDrag>,
     /// True when mnml is running as a tmnl native client (`--blit`).
     /// `mixr.show` reads it to route mixr to a sibling tmnl pane (via
-    /// `OpenPane`) rather than nesting it as a pty pane.
+    /// `OpenPane`) rather than nesting it as a pty pane. **Only set
+    /// in blit mode** — does NOT cover the standard-pty case where
+    /// mnml is just a shell child of tmnl. IPC-routing code paths
+    /// (`tmnl_open_tab`, `tmnl_run_host_command`) gate on this flag
+    /// because they queue messages drained by the blit loop, which
+    /// only runs in native mode.
     pub under_tmnl: bool,
+    /// True when mnml is running as a regular pty child of tmnl
+    /// (standard mode — no blit protocol). Detected at startup from
+    /// the `TMNL_TRANSFER_SOCKET` env var that tmnl exports to all
+    /// spawned children. Used for **UI** decisions only — e.g.
+    /// hiding the inline palette bar because tmnl already renders
+    /// the palette chip in its native chrome strip. IPC routing
+    /// must still use [`Self::under_tmnl`] (no blit loop here).
+    pub inside_tmnl_pty: bool,
     /// Open-pane requests queued for the tmnl host — `(command, args)`.
     /// The blit loop drains these into `Message::OpenPane` each tick.
     /// Always empty when not `under_tmnl`.
@@ -2913,6 +2926,16 @@ impl App {
     pub fn layout(&self) -> &Layout {
         &self.layouts[self.active_layout]
     }
+
+    /// Whether mnml is inside a tmnl host in **any** mode (native
+    /// blit or standard pty child). Use for UI decisions like
+    /// "hide chrome that tmnl already renders". For IPC routing —
+    /// `tmnl_open_tab`, `tmnl_run_host_command`, `mixr.show` —
+    /// check [`Self::under_tmnl`] directly, because only blit mode
+    /// has a message-draining loop.
+    pub fn is_inside_tmnl(&self) -> bool {
+        self.under_tmnl || self.inside_tmnl_pty
+    }
     pub fn new(workspace: PathBuf, config: Config) -> Result<App, String> {
         let workspace = workspace
             .canonicalize()
@@ -3088,6 +3111,11 @@ impl App {
             mixr_panel: None,
             mixr_drag: None,
             under_tmnl: false,
+            // Detect a standard-pty parent tmnl via the env var
+            // `TMNL_TRANSFER_SOCKET` (tmnl exports it to every
+            // spawned child). Lets the inline palette bar hide so
+            // tmnl's native palette chip isn't duplicate chrome.
+            inside_tmnl_pty: std::env::var_os("TMNL_TRANSFER_SOCKET").is_some(),
             pending_open_panes: Vec::new(),
             pending_host_commands: Vec::new(),
             hover_chip: None,
