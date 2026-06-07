@@ -4014,8 +4014,12 @@ impl App {
         let Some(latest) = uc.take_pending_announcement() else {
             return;
         };
+        // Toast hints at `:update.install_latest` (the palette
+        // command) — that command spawns a Pty pane that runs the
+        // download + sha256-verify + install script, after which
+        // the user quits + relaunches to use the new binary.
         self.toast(format!(
-            "mnml v{latest} available — {}",
+            "mnml v{latest} available — :update.install_latest  ·  {}",
             crate::update_check::UpdateCheck::release_url(&latest),
         ));
     }

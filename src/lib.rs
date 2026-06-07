@@ -81,6 +81,7 @@ pub(crate) mod tools;
 pub(crate) mod tree;
 pub mod tui;
 pub mod ui;
+pub mod update_apply;
 pub mod update_check;
 pub(crate) mod whichkey;
 
