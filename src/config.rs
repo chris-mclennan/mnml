@@ -732,6 +732,14 @@ impl Default for Config {
                         ),
                     },
                     IntegrationIcon {
+                        id: "buttondown".to_string(),
+                        glyph: "\u{F0EB1}".to_string(), // nf-md-email_newsletter
+                        fallback: "Bd".to_string(),
+                        command: ":host.launch mnml-msg-buttondown".to_string(),
+                        color: "green".to_string(),
+                        tooltip: Some("Buttondown — drafts + sent + subscribers".to_string()),
+                    },
+                    IntegrationIcon {
                         id: "cloudwatch_logs".to_string(),
                         glyph: "\u{F0E5C}".to_string(), // nf-md-text-box-search
                         fallback: "CW".to_string(),

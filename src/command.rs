@@ -1107,6 +1107,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-obs-datadog"),
         },
         Command {
+            id: "forge.open_buttondown",
+            title: "Forge: open Buttondown newsletter browser (mnml-msg-buttondown)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-msg-buttondown"),
+        },
+        Command {
             id: "forge.open_cloudwatch_logs",
             title: "Forge: open CloudWatch Logs viewer (mnml-aws-cloudwatch-logs)",
             group: "forge",

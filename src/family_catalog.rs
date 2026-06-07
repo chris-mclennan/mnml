@@ -24,6 +24,7 @@ pub enum Category {
     Music,
     Web,
     Obs,
+    Msg,
     Other,
 }
 
@@ -39,6 +40,7 @@ impl Category {
             Category::Music => "Music",
             Category::Web => "Web",
             Category::Obs => "Observability",
+            Category::Msg => "Messaging",
             Category::Other => "Other",
         }
     }
@@ -478,6 +480,21 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "Datadog observability browser",
         },
     },
+    // ── Messaging ─────────────────────────────────────────────
+    FamilySibling {
+        id: "buttondown",
+        binary: "mnml-msg-buttondown",
+        category: Category::Msg,
+        repo_url: "https://github.com/chris-mclennan/mnml-msg-buttondown",
+        pinned_version: "v0.1.0",
+        one_liner: "Buttondown newsletter — drafts + sent + subscribers",
+        icon: IconTemplate {
+            glyph: "\u{F0EB1}", // nf-md-email_newsletter
+            fallback: "Bd",
+            color: "green",
+            tooltip: "Buttondown newsletter browser",
+        },
+    },
 ];
 
 pub fn catalog() -> &'static [FamilySibling] {
@@ -656,6 +673,7 @@ fn class_to_category(class: &str) -> Category {
         "music" => Category::Music,
         "web" => Category::Web,
         "obs" => Category::Obs,
+        "msg" => Category::Msg,
         _ => Category::Other,
     }
 }
@@ -683,6 +701,7 @@ fn synth_icon_for(category: Category, name: &str) -> OwnedIconTemplate {
         Category::Music => "pink",
         Category::Web => "blue",
         Category::Obs => "purple",
+        Category::Msg => "green",
         Category::Other => "cyan",
     }
     .to_string();
@@ -706,6 +725,7 @@ fn category_class(category: Category) -> &'static str {
         Category::Music => "music",
         Category::Web => "web",
         Category::Obs => "obs",
+        Category::Msg => "msg",
         Category::Other => "other",
     }
 }
