@@ -37,6 +37,12 @@ pub struct Config {
     pub tasks: BTreeMap<String, TaskDef>,
     /// `[startup] tasks = [...]` — task names auto-run in pty panes on workspace open.
     pub startup_tasks: Vec<String>,
+    /// `[startup] default_workspace = "<path>"` — folder mnml opens when
+    /// launched with no positional workspace arg. Falls back to
+    /// `current_dir()` when unset. `~` is expanded. The folder is
+    /// scaffolded (mkdir + a starter README) on first open if missing
+    /// so the user gets a usable scratch/test workspace out of the box.
+    pub default_workspace: Option<PathBuf>,
     /// `[snippets.<scope>]` — `<scope>` is a file extension (`"rs"`, `"py"`, …)
     /// or the literal `"global"`. Each entry is `<trigger> = "<expansion>"`;
     /// a single `$0` in the expansion picks the cursor landing spot. Resolved
@@ -883,6 +889,7 @@ impl Default for Config {
             tools: toml::Value::Table(Default::default()),
             tasks: BTreeMap::new(),
             startup_tasks: Vec::new(),
+            default_workspace: None,
             snippets: BTreeMap::new(),
             abbreviations: BTreeMap::new(),
             formatters: BTreeMap::new(),
@@ -971,6 +978,8 @@ struct RawTask {
 struct RawStartup {
     #[serde(default)]
     tasks: Vec<String>,
+    #[serde(default)]
+    default_workspace: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1315,6 +1324,11 @@ impl Config {
             );
         }
         self.startup_tasks.extend(raw.startup.tasks);
+        if let Some(s) = raw.startup.default_workspace
+            && !s.trim().is_empty()
+        {
+            self.default_workspace = Some(expand_tilde(&s));
+        }
         for (scope, map) in raw.snippets {
             self.snippets.entry(scope).or_default().extend(map);
         }
@@ -1397,6 +1411,58 @@ pub fn user_config_path() -> Option<PathBuf> {
     home_config_path()
 }
 
+/// Peek `~/.config/mnml/config.toml` for `[startup] default_workspace`
+/// without doing a full `Config::load`. Used by the CLI to resolve the
+/// no-positional-arg workspace BEFORE the rest of config loads (which
+/// itself takes the workspace as a parameter — chicken/egg).
+///
+/// Returns `None` when the config file is missing, the key is unset,
+/// the value is empty, or the file fails to parse. (Errors are silent
+/// here because `Config::load` will surface them later; this is just
+/// an early peek.)
+pub fn resolve_default_workspace() -> Option<PathBuf> {
+    let path = home_config_path()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    let raw: RawConfig = toml::from_str(&text).ok()?;
+    let s = raw.startup.default_workspace?;
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    Some(expand_tilde(s))
+}
+
+/// Scaffold a workspace folder + a starter `README.md` if absent.
+/// Idempotent — running twice on an existing folder is a no-op. Called
+/// from the CLI when `resolve_default_workspace()` returns a path that
+/// doesn't exist yet, so the user gets a usable scratch workspace on
+/// first launch.
+///
+/// Returns `Ok(())` even when the README already exists (we don't
+/// overwrite user content). The only error path is `std::fs::create_dir_all`
+/// failing — e.g. permission-denied on the parent. The caller logs the
+/// error to stderr and falls back to `cwd`.
+pub fn scaffold_workspace(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(path)?;
+    let readme = path.join("README.md");
+    if !readme.exists() {
+        let body = "# mnml workspace\n\
+                    \n\
+                    This is your default workspace — the folder mnml opens when\n\
+                    launched with no positional argument. Configured under\n\
+                    `[startup] default_workspace` in `~/.config/mnml/config.toml`.\n\
+                    \n\
+                    Use it as scratch space, a test sandbox, or a quick place to\n\
+                    drop notes / `.http` files / snippets. Open siblings (S3,\n\
+                    Datadog, etc.) here to verify integration behavior in a\n\
+                    known-clean state.\n";
+        // Best-effort — if the README already vanished between exists()
+        // and write(), we shrug.
+        let _ = std::fs::write(&readme, body);
+    }
+    Ok(())
+}
+
 fn home_config_path() -> Option<PathBuf> {
     // Respect $XDG_CONFIG_HOME, else ~/.config.
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
@@ -1461,6 +1527,71 @@ path  = "/tmp/extra"
         cfg.apply_file_pub(&cfg_path2);
         assert_eq!(cfg.workspaces.len(), 3);
         assert_eq!(cfg.workspaces[2].name, "extra");
+    }
+
+    #[test]
+    fn default_workspace_parses_and_expands_tilde() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        std::fs::write(&cfg_path, "[startup]\ndefault_workspace = \"~/my-mnml\"\n").unwrap();
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&cfg_path);
+        let expected = std::env::var_os("HOME")
+            .map(|h| std::path::PathBuf::from(h).join("my-mnml"))
+            .unwrap_or_else(|| std::path::PathBuf::from("my-mnml"));
+        assert_eq!(cfg.default_workspace, Some(expected));
+    }
+
+    #[test]
+    fn default_workspace_unset_stays_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        std::fs::write(&cfg_path, "[startup]\ntasks = []\n").unwrap();
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&cfg_path);
+        assert!(cfg.default_workspace.is_none());
+    }
+
+    #[test]
+    fn default_workspace_empty_string_treated_as_unset() {
+        // An empty value shouldn't promote to `Some("")` — that would
+        // canonicalize to whatever cwd resolves and surprise the user.
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        std::fs::write(&cfg_path, "[startup]\ndefault_workspace = \"   \"\n").unwrap();
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&cfg_path);
+        assert!(cfg.default_workspace.is_none());
+    }
+
+    #[test]
+    fn scaffold_workspace_creates_dir_and_readme() {
+        let parent = tempfile::tempdir().unwrap();
+        let ws = parent.path().join("mnml-workspace");
+        assert!(!ws.exists());
+        scaffold_workspace(&ws).unwrap();
+        assert!(ws.is_dir());
+        let readme = ws.join("README.md");
+        assert!(readme.is_file());
+        let body = std::fs::read_to_string(&readme).unwrap();
+        assert!(body.contains("mnml workspace"));
+        assert!(body.contains("default_workspace"));
+    }
+
+    #[test]
+    fn scaffold_workspace_is_idempotent_and_preserves_existing_readme() {
+        let parent = tempfile::tempdir().unwrap();
+        let ws = parent.path().join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        // User-written README — must NOT be overwritten.
+        std::fs::write(ws.join("README.md"), "# my notes\n").unwrap();
+        scaffold_workspace(&ws).unwrap();
+        let body = std::fs::read_to_string(ws.join("README.md")).unwrap();
+        assert_eq!(body, "# my notes\n");
+        // Running again still doesn't touch it.
+        scaffold_workspace(&ws).unwrap();
+        let body = std::fs::read_to_string(ws.join("README.md")).unwrap();
+        assert_eq!(body, "# my notes\n");
     }
 
     #[test]

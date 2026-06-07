@@ -151,8 +151,27 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
         blit = Some(PathBuf::from(v));
     }
 
-    let workspace =
-        workspace.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    // Workspace resolution order:
+    //   1. Positional `[WORKSPACE]` arg (explicit user intent)
+    //   2. `[startup] default_workspace` from `~/.config/mnml/config.toml`
+    //      — scaffold the folder + a starter README if missing so first
+    //      launch lands on a usable scratch workspace
+    //   3. `current_dir()` (legacy fallback)
+    let workspace = workspace
+        .or_else(|| {
+            let p = mnml::config::resolve_default_workspace()?;
+            if !p.exists()
+                && let Err(e) = mnml::config::scaffold_workspace(&p)
+            {
+                eprintln!(
+                    "mnml: default_workspace {} couldn't be scaffolded ({e}); falling back to cwd",
+                    p.display()
+                );
+                return None;
+            }
+            Some(p)
+        })
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let workspace = workspace
         .canonicalize()
         .map_err(|e| format!("cannot open workspace {}: {e}", workspace.display()))?;
