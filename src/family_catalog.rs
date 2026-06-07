@@ -253,8 +253,8 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-sns",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-sns",
-        pinned_version: "v0.2.0",
-        one_liner: "SNS topics + subscriptions + L handoff to SQS/Lambda",
+        pinned_version: "v0.3.0",
+        one_liner: "SNS topics + subs · L handoff to SQS/Lambda · P publish test",
         icon: IconTemplate {
             glyph: "\u{F0A0F}", // nf-md-bullhorn_outline
             fallback: "Sn",
