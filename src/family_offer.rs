@@ -31,6 +31,16 @@ pub struct FamilyOffer {
 impl FamilyOffer {
     /// Detect missing siblings unless this user has already seen
     /// the offer once.
+    ///
+    /// IMPORTANT: writes the "shown" marker even when nothing is
+    /// missing. The `is_installed()` probe stat's `/Applications/<app>.app`
+    /// on macOS, which Sequoia (15.x) gates behind the "App
+    /// Management / Files and Folders" privacy prompt. Re-running
+    /// it every launch re-fires the prompt every launch (the OS
+    /// only persists the Allow/Deny per binary hash; cargo builds
+    /// change the hash each time). The marker short-circuits the
+    /// whole function on subsequent runs so the prompt only fires
+    /// once per user, not once per build.
     pub fn maybe_new() -> Option<Self> {
         if marker_path().exists() {
             return None;
@@ -40,6 +50,11 @@ impl FamilyOffer {
             .copied()
             .filter(|name| *name != SELF && !is_installed(name))
             .collect();
+        // Persist the marker BEFORE the empty-check return — see the
+        // doc comment above for why this can't move to the "shown"
+        // path. Best-effort: a write failure means the prompt fires
+        // again next launch, which is annoying but not fatal.
+        write_marker();
         if missing.is_empty() {
             return None;
         }
@@ -47,13 +62,11 @@ impl FamilyOffer {
     }
 
     /// Persist the "shown" marker so the toast doesn't re-fire next
-    /// launch. Best-effort — a write failure isn't fatal.
+    /// launch. Best-effort — a write failure isn't fatal. Mostly a
+    /// no-op now that `maybe_new` always writes the marker; kept
+    /// because callers may still call `mark_shown()` defensively.
     pub fn mark_shown(&self) {
-        let path = marker_path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(&path, b"shown\n");
+        write_marker();
     }
 
     /// Human-readable single-line install hint per missing sibling.
@@ -137,6 +150,18 @@ fn marker_path() -> PathBuf {
     home.join(".config")
         .join("mnml")
         .join(".family-offer-shown")
+}
+
+/// Shared marker-write helper. Best-effort — directory creation or
+/// the file write itself may fail (read-only $HOME, full disk, etc.);
+/// those failures are silent because the worst-case is the prompt
+/// fires again next launch, which is annoying but not breaking.
+fn write_marker() {
+    let path = marker_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, b"shown\n");
 }
 
 #[cfg(test)]
