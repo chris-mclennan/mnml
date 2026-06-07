@@ -157,8 +157,8 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-rds",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-rds",
-        pinned_version: "v0.1.0",
-        one_liner: "RDS DB instances + Aurora clusters browser",
+        pinned_version: "v0.2.0",
+        one_liner: "RDS DB instances + Aurora clusters + log-tail handoff",
         icon: IconTemplate {
             glyph: "\u{F1C0}", // nf-fa-database
             fallback: "RD",
@@ -171,8 +171,8 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-ecs",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-ecs",
-        pinned_version: "v0.1.0",
-        one_liner: "ECS clusters + services with deployment + events",
+        pinned_version: "v0.2.0",
+        one_liner: "ECS clusters + services + log-tail handoff to cloudwatch-logs",
         icon: IconTemplate {
             glyph: "\u{F0F12}", // nf-md-server
             fallback: "EC",
@@ -199,8 +199,8 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-cognito",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-cognito",
-        pinned_version: "v0.1.0",
-        one_liner: "Cognito User Pool + recent users browser",
+        pinned_version: "v0.2.0",
+        one_liner: "Cognito User Pool + users with `/` search/filter",
         icon: IconTemplate {
             glyph: "\u{F0004}", // nf-md-account_circle
             fallback: "Co",
@@ -213,8 +213,8 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-sqs",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-sqs",
-        pinned_version: "v0.1.0",
-        one_liner: "SQS queue browser with lazy per-queue attributes",
+        pinned_version: "v0.2.0",
+        one_liner: "SQS queues + DLQ correlation (↑/↓ chips)",
         icon: IconTemplate {
             glyph: "\u{F09FE}", // nf-md-mailbox_outline
             fallback: "Sq",
