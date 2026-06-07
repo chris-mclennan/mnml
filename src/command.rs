@@ -1100,6 +1100,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-fs-azure-blob"),
         },
         Command {
+            id: "forge.open_datadog",
+            title: "Forge: open Datadog observability browser (mnml-obs-datadog)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-obs-datadog"),
+        },
+        Command {
             id: "forge.open_cloudwatch_logs",
             title: "Forge: open CloudWatch Logs viewer (mnml-aws-cloudwatch-logs)",
             group: "forge",

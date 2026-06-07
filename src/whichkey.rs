@@ -194,6 +194,7 @@ pub fn root() -> &'static Leader {
                                 'I',
                                 cmd("tools.iftop", "iftop — interactive bandwidth monitor"),
                             ),
+                            ('D', cmd("forge.open_datadog", "Datadog observability")),
                         ],
                     ),
                 ),

@@ -23,6 +23,7 @@ pub enum Category {
     Test,
     Music,
     Web,
+    Obs,
     Other,
 }
 
@@ -37,6 +38,7 @@ impl Category {
             Category::Test => "Test runners",
             Category::Music => "Music",
             Category::Web => "Web",
+            Category::Obs => "Observability",
             Category::Other => "Other",
         }
     }
@@ -461,6 +463,21 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "HTTP client (built-in)",
         },
     },
+    // ── Observability ─────────────────────────────────────────
+    FamilySibling {
+        id: "datadog",
+        binary: "mnml-obs-datadog",
+        category: Category::Obs,
+        repo_url: "https://github.com/chris-mclennan/mnml-obs-datadog",
+        pinned_version: "v0.1.0",
+        one_liner: "Datadog monitors + dashboards + logs + incidents",
+        icon: IconTemplate {
+            glyph: "\u{F1A0F}", // nf-md-dog
+            fallback: "Dd",
+            color: "purple",
+            tooltip: "Datadog observability browser",
+        },
+    },
 ];
 
 pub fn catalog() -> &'static [FamilySibling] {
@@ -638,6 +655,7 @@ fn class_to_category(class: &str) -> Category {
         "test" => Category::Test,
         "music" => Category::Music,
         "web" => Category::Web,
+        "obs" => Category::Obs,
         _ => Category::Other,
     }
 }
@@ -664,6 +682,7 @@ fn synth_icon_for(category: Category, name: &str) -> OwnedIconTemplate {
         Category::Test => "green",
         Category::Music => "pink",
         Category::Web => "blue",
+        Category::Obs => "purple",
         Category::Other => "cyan",
     }
     .to_string();
@@ -686,6 +705,7 @@ fn category_class(category: Category) -> &'static str {
         Category::Test => "test",
         Category::Music => "music",
         Category::Web => "web",
+        Category::Obs => "obs",
         Category::Other => "other",
     }
 }

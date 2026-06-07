@@ -722,6 +722,16 @@ impl Default for Config {
                         ),
                     },
                     IntegrationIcon {
+                        id: "datadog".to_string(),
+                        glyph: "\u{F1A0F}".to_string(), // nf-md-dog
+                        fallback: "Dd".to_string(),
+                        command: ":host.launch mnml-obs-datadog".to_string(),
+                        color: "purple".to_string(),
+                        tooltip: Some(
+                            "Datadog — monitors + dashboards + logs + incidents".to_string(),
+                        ),
+                    },
+                    IntegrationIcon {
                         id: "cloudwatch_logs".to_string(),
                         glyph: "\u{F0E5C}".to_string(), // nf-md-text-box-search
                         fallback: "CW".to_string(),
