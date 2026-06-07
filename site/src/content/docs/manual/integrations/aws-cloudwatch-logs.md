@@ -24,7 +24,7 @@ This generalizes the Logs tabs that used to live inside [`mnml-aws-codebuild`](/
 ## Install
 
 ```sh
-cargo install --git https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs mnml-aws-cloudwatch-logs
+cargo install --git https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs --tag v0.2.0 mnml-aws-cloudwatch-logs
 ```
 
 You'll also need the [AWS CLI](https://aws.amazon.com/cli/) on your `$PATH` with credentials configured (`aws configure` or any of the usual environment variables / shared-credentials files).
@@ -87,6 +87,48 @@ Filter pattern syntax: <https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs
 - `filter = '{ $.level = "error" }'` — JSON field match
 - `filter = "[level=ERROR, ...]"` — space-delimited match
 
+## One-off tab via CLI flags
+
+v0.2 adds a set of CLI flags that let another program (or you, from a
+shell prompt) launch the viewer scoped to **one specific log group**
+without touching the user's regular `~/.config/mnml-aws-cloudwatch-logs.toml`.
+
+```sh
+mnml-aws-cloudwatch-logs --log-group /aws/lambda/api-handler
+```
+
+That opens a single-tab session tailing `/aws/lambda/api-handler` and
+exits cleanly with `q`. The on-disk config is not read or modified.
+
+| Flag | Purpose |
+|---|---|
+| `--log-group <GROUP>` | The CloudWatch log group to tail. Triggers one-off mode — the config file is bypassed. |
+| `--log-group-name <NAME>` | Tab label. Defaults to the last path segment of `--log-group` (e.g. `api-handler` for `/aws/lambda/api-handler`). |
+| `--filter <PATTERN>` | Filter pattern, same syntax as the `filter` config field. |
+| `--region <REGION>` | AWS region override for this one-off tab. |
+
+Internally, a `Config::one_off_tab()` constructor synthesises a single-tab
+`Config` on the fly. Everything downstream — the tail loop, severity
+colouring, console open, yank — behaves exactly as it would for a
+config-defined tab.
+
+### Cross-sibling handoff
+
+This is what powers the **`l` chord in `mnml-aws-lambda`**: pressing `l`
+on a focused Lambda function spawns
+
+```sh
+mnml-aws-cloudwatch-logs \
+  --log-group /aws/lambda/<focused-fn> \
+  --log-group-name <focused-fn> \
+  [--region <r>]
+```
+
+so the user lands in a logs viewer already pointed at the right group.
+The same pattern is the planned hook for any future sibling that needs
+to drill into the logs of a specific resource. See the
+[Lambda viewer](/manual/integrations/aws-lambda/) for the call site.
+
 ## Keys
 
 | Chord | Action |
@@ -133,9 +175,15 @@ mnml spawns the binary with `--blit <socket>` and renders the cells into a regul
 
 ## Status
 
+**v0.2** — adds one-off-tab CLI flags (`--log-group`, `--log-group-name`,
+`--filter`, `--region`) so other siblings can spawn the viewer scoped to
+a single log group. New `Config::one_off_tab()` constructor synthesises
+a single-tab config on the fly, bypassing `~/.config/mnml-aws-cloudwatch-logs.toml`
+entirely. Powers the `l` cross-sibling handoff from `mnml-aws-lambda`.
+
 **v0.1** — tabbed log groups, live tail with severity coloring, filter patterns, console open, line yank, 5K-line scrollback per tab.
 
-Held back for v0.2+:
+Held back for v0.3+:
 - Multi-stream selection within a tab
 - CloudWatch Logs Insights query mode
 - Saved searches

@@ -17,8 +17,10 @@ description: mnml-aws-eventbridge — a terminal browser for AWS EventBridge bus
 │   payment-completed       │ │                                         │
 │   ENABLED                 │ │  ARN                                    │
 │   …                       │ │  arn:aws:events:us-east-1:…             │
-│                           │ │  Description                            │
-│                           │ │  Nightly cleanup job                    │
+│                           │ │                                         │
+│                           │ │  Targets (2)                            │
+│                           │ │  lambda  …:function:cleanup-fn          │
+│                           │ │  sqs     …:queue:cleanup-dlq            │
 └───────────────────────────┘ └─────────────────────────────────────────┘
   1-9 tab · ↑↓/jk move · o console · y yank ARN · r refresh · q quit
 ```
@@ -26,7 +28,7 @@ description: mnml-aws-eventbridge — a terminal browser for AWS EventBridge bus
 ## Install
 
 ```sh
-cargo install --git https://github.com/chris-mclennan/mnml-aws-eventbridge mnml-aws-eventbridge
+cargo install --git https://github.com/chris-mclennan/mnml-aws-eventbridge --tag v0.2.0 mnml-aws-eventbridge
 ```
 
 You'll also need the [AWS CLI](https://aws.amazon.com/cli/) on your `$PATH` with credentials configured.
@@ -78,7 +80,7 @@ event_bus_name = "orders-events"
 - **Items table (left, 45%):** name + state / schedule (rules) or "event bus" (buses)
 - **Detail panel (right, 55%):** focused item's full detail
   - **Bus:** name, created, last-modified, ARN, optional resource policy JSON
-  - **Rule:** name, state, bus, schedule expression, role, managed-by, ARN, description, event pattern JSON
+  - **Rule:** name, state, bus, schedule expression, role, managed-by, ARN, description, event pattern JSON, followed by a **`Targets (N)` section** (v0.2) — one row per target as `<service>  <arn-tail>` with an optional `input:` snippet underneath. `<service>` is extracted from the target ARN (`arn:aws:lambda:…` → `lambda`, `arn:aws:sqs:…` → `sqs`, etc.). Display caps at 8 rows with `… N more` overflow when a rule fans out wider than that. Targets are fetched lazily via `list-targets-by-rule` keyed by `<bus>::<rule>` and refreshed when the cursor lands on a new rule.
 - **Status:** active count, key hints
 
 ## Keys
@@ -115,10 +117,18 @@ mnml-aws-eventbridge
 
 ## Status
 
+**v0.2** — per-rule targets list. New backend functions
+`list_targets_by_rule` + a `Target` struct (Id / Arn / Input / InputPath / RoleArn).
+`Target::service()` extracts the AWS service from a target ARN
+(`arn:aws:lambda:…` → `lambda`). The detail panel for a focused rule now
+grows a `Targets (N)` section showing each target as
+`<service>  <arn-tail>` with an optional `input:` snippet. Lazily fetched
+via `App.focused_targets` keyed by `<bus>::<rule>`, refreshed on cursor
+move. Caps display at 8 with `… N more` overflow.
+
 **v0.1** — buses list, rules-per-bus list (paginated), focused-item detail panel, console open, ARN yank.
 
-Held back for v0.2+:
-- Targets list per rule (`list-targets-by-rule` per focused rule)
+Held back for v0.3+:
 - Schedules tab (EventBridge Scheduler — separate service)
 - Archives + replays tab
 - Test event sender (`put-events`)

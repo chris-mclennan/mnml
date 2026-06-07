@@ -27,7 +27,7 @@ description: mnml-aws-lambda — a terminal browser for AWS Lambda functions. Li
 ## Install
 
 ```sh
-cargo install --git https://github.com/chris-mclennan/mnml-aws-lambda mnml-aws-lambda
+cargo install --git https://github.com/chris-mclennan/mnml-aws-lambda --tag v0.2.0 mnml-aws-lambda
 ```
 
 You'll also need the [AWS CLI](https://aws.amazon.com/cli/) on your `$PATH` with credentials configured.
@@ -89,15 +89,24 @@ watched = [
 | `g` / `G` | Top / bottom |
 | `Enter` / `o` | Open Lambda console for the focused function |
 | `y` | Yank focused function's ARN to clipboard |
-| `l` | Launch `mnml-aws-cloudwatch-logs` |
+| `l` | Tail logs — spawns `mnml-aws-cloudwatch-logs` scoped to `/aws/lambda/<focused-fn>` |
 | `r` | Refresh active tab |
 | `q` / `Esc` / `Ctrl+C` | Quit |
 
 ### `l` — the cross-sibling log handoff
 
-A Lambda function's logs live in CloudWatch under `/aws/lambda/<function-name>`. Pressing `l` on a focused function launches the [`mnml-aws-cloudwatch-logs`](/manual/integrations/aws-cloudwatch-logs/) sibling so you can drill into the logs without leaving the terminal.
+A Lambda function's logs live in CloudWatch under `/aws/lambda/<function-name>`. Pressing `l` on a focused function spawns the [`mnml-aws-cloudwatch-logs`](/manual/integrations/aws-cloudwatch-logs/) sibling already scoped to that group:
 
-v0.1 launches the sibling without scoping it — you'll need to switch tabs in the launched view to the function's log group. v0.2 will pass a `--log-group` flag through so it auto-scopes to `/aws/lambda/<focused-fn>`. This is the first cross-sibling handoff in the family — Lambda's data model points at CloudWatch's, so they compose.
+```sh
+mnml-aws-cloudwatch-logs \
+  --log-group /aws/lambda/<focused-fn> \
+  --log-group-name <focused-fn> \
+  [--region <r>]
+```
+
+The launched viewer lands in a one-off single-tab session tailing exactly that log group — no need to switch tabs, no need to touch the CloudWatch viewer's config. The status text on the Lambda viewer shortens to `tailing /aws/lambda/<fn>` while the sibling is running.
+
+This is the first cross-sibling handoff in the family — Lambda's data model points at CloudWatch's, so they compose cleanly. The same pattern (parent sibling synthesising a one-off CloudWatch tab) is the planned hook for any future sibling whose resources emit CloudWatch logs.
 
 ## Two run modes
 
@@ -119,10 +128,17 @@ mnml-aws-lambda
 
 ## Status
 
-**v0.1** — list (paginated) + watched filter, focused-function detail panel, console open, ARN yank, log-tail launch.
+**v0.2** — `l` now auto-scopes the launched `mnml-aws-cloudwatch-logs`
+sibling to `/aws/lambda/<focused-fn>` via the new
+`--log-group` / `--log-group-name` / `--region` CLI flags (added in
+CloudWatch viewer v0.2.0). The cross-sibling handoff is now real — the
+user lands directly in a one-off log tail for the focused function,
+without having to switch tabs in the launched viewer. Status text on
+the Lambda viewer shortens to `tailing /aws/lambda/<fn>`.
 
-Held back for v0.2+:
-- `l` auto-scopes to `/aws/lambda/<fn>` log group (needs sibling CLI flag in `mnml-aws-cloudwatch-logs`)
+**v0.1** — list (paginated) + watched filter, focused-function detail panel, console open, ARN yank, log-tail launch (sibling spawned bare; user had to switch tabs).
+
+Held back for v0.3+:
 - Invoke with test payload picker (`i` chord)
 - Errors-24h tab kind (CloudWatch Metrics integration)
 - Per-function env-var count + concurrent-execution stats

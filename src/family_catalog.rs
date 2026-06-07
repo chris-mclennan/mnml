@@ -141,8 +141,8 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-eventbridge",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-eventbridge",
-        pinned_version: "v0.1.0",
-        one_liner: "EventBridge buses + rules-per-bus browser",
+        pinned_version: "v0.2.0",
+        one_liner: "EventBridge buses + rules + per-rule targets",
         icon: IconTemplate {
             glyph: "\u{F0CE0}",
             fallback: "EB",
