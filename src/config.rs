@@ -753,6 +753,14 @@ impl Default for Config {
                         color: "purple".to_string(),
                         tooltip: Some("ECR container registry".to_string()),
                     },
+                    IntegrationIcon {
+                        id: "cognito".to_string(),
+                        glyph: "\u{F0004}".to_string(), // nf-md-account_circle
+                        fallback: "Co".to_string(),
+                        command: ":host.launch mnml-aws-cognito".to_string(),
+                        color: "cyan".to_string(),
+                        tooltip: Some("Cognito User Pools + users".to_string()),
+                    },
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,

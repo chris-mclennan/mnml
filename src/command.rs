@@ -1149,6 +1149,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-aws-ecr"),
         },
         Command {
+            id: "forge.open_cognito",
+            title: "Forge: open Cognito User Pool browser (mnml-aws-cognito)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-aws-cognito"),
+        },
+        Command {
             id: "integrations.refresh",
             title: "Integrations: refresh installed-binary detection",
             group: "view",

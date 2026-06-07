@@ -182,6 +182,7 @@ pub fn root() -> &'static Leader {
                             ('R', cmd("forge.open_rds", "RDS databases")),
                             ('C', cmd("forge.open_ecs", "ECS clusters + services")),
                             ('E', cmd("forge.open_ecr", "ECR container registry")),
+                            ('o', cmd("forge.open_cognito", "Cognito User Pools + users")),
                         ],
                     ),
                 ),

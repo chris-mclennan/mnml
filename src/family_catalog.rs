@@ -192,6 +192,20 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "ECR container registry",
         },
     },
+    FamilySibling {
+        id: "cognito",
+        binary: "mnml-aws-cognito",
+        category: Category::Aws,
+        repo_url: "https://github.com/chris-mclennan/mnml-aws-cognito",
+        pinned_version: "v0.1.0",
+        one_liner: "Cognito User Pool + recent users browser",
+        icon: IconTemplate {
+            glyph: "\u{F0004}", // nf-md-account_circle
+            fallback: "Co",
+            color: "cyan",
+            tooltip: "Cognito User Pools + users",
+        },
+    },
     // ── Filesystem / Storage ──────────────────────────────────
     FamilySibling {
         id: "s3",
