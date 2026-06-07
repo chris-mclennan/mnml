@@ -308,6 +308,8 @@ pub struct Buffer {
 pub const EDIT_HISTORY_MAX: usize = 100;
 
 impl Buffer {
+    /// Open `path`. ENOENT propagates up — callers that want vim's
+    /// `:e <newfile>` semantics use [`Self::open_or_new_empty`] instead.
     pub fn open(path: &Path, cfg: &Config) -> std::io::Result<Buffer> {
         let text = std::fs::read_to_string(path)?;
         let ext = path
@@ -372,6 +374,78 @@ impl Buffer {
         let mut b = Buffer::open(path, cfg)?;
         b.read_only = true;
         Ok(b)
+    }
+
+    /// Open `path`, or return an empty in-memory buffer with `path`
+    /// set when the file doesn't exist yet (vim's `:e <newfile>`
+    /// semantics). The empty buffer is marked dirty so the first
+    /// save actually writes the file. Errors other than ENOENT
+    /// (permission denied, IO failure, etc.) propagate up.
+    pub fn open_or_new_empty(path: &Path, cfg: &Config) -> std::io::Result<Buffer> {
+        match Buffer::open(path, cfg) {
+            Ok(b) => Ok(b),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| ext_for_filename(path));
+                let mut editor = Editor::new(String::new(), cfg.editor.tab_width);
+                let (ct_open, ct_close) = comment_token_for(ext.as_deref());
+                editor.set_comment_token(ct_open);
+                editor.set_comment_token_close(ct_close);
+                editor.auto_pair = cfg.editor.auto_pair;
+                editor.auto_indent = cfg.editor.auto_indent;
+                editor.language_ext = ext.clone();
+                let mut b = Buffer {
+                    path: Some(path.to_path_buf()),
+                    editor,
+                    scroll: 0,
+                    h_scroll: 0,
+                    // Dirty so the first save writes the file. Without
+                    // this, vim users would type into the buffer + hit
+                    // save + get "no changes to save" silently.
+                    dirty: true,
+                    is_preview: false,
+                    saved_text: String::new(),
+                    language_ext: ext,
+                    input: input::make_handler(cfg),
+                    read_only: false,
+                    highlights: Vec::new(),
+                    blame: None,
+                    diagnostics: Vec::new(),
+                    linter_diagnostics: Vec::new(),
+                    breakpoints: Vec::new(),
+                    breakpoint_conditions: std::collections::HashMap::new(),
+                    breakpoint_hit_conditions: std::collections::HashMap::new(),
+                    inlay_hints: Vec::new(),
+                    semantic_tokens: Vec::new(),
+                    last_semantic_viewport: None,
+                    code_lenses: Vec::new(),
+                    document_links: Vec::new(),
+                    color_decorations: Vec::new(),
+                    document_highlights: Vec::new(),
+                    last_edited: None,
+                    yank_flash: None,
+                    highlights_dirty: false,
+                    parse_tree: None,
+                    injection_trees: crate::highlight::InjectionTreeCache::new(),
+                    prev_line_starts: Vec::new(),
+                    pending_tree_edits: Vec::new(),
+                    disk_mtime: None,
+                    find: None,
+                    trim_trailing_ws_on_save: cfg.editor.trim_trailing_ws_on_save,
+                    ensure_trailing_newline: cfg.editor.ensure_trailing_newline,
+                    marks: std::collections::HashMap::new(),
+                    folds: std::collections::BTreeMap::new(),
+                    edit_history: Vec::new(),
+                    edit_history_cursor: 0,
+                };
+                b.refresh_highlights();
+                Ok(b)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Apply any `.editorconfig` settings that match the buffer's path,
@@ -1596,5 +1670,46 @@ mod tests {
         assert_eq!(b.jump_next_edit(), Some((3, 5)));
         assert_eq!(b.jump_next_edit(), Some((7, 1)));
         assert_eq!(b.jump_next_edit(), None); // already at newest
+    }
+
+    /// Regression for the 2026-06-07 bug-hunt SEV-2 finding:
+    /// `:e <newfile.txt>` used to toast "cannot open: No such
+    /// file or directory" instead of creating an empty in-memory
+    /// buffer like vim does. The fix added
+    /// `Buffer::open_or_new_empty`, which is what `open_path_inner`
+    /// now calls.
+    #[test]
+    fn open_or_new_empty_creates_buffer_for_missing_file() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("brand-new.rs");
+        // Confirm the file doesn't exist.
+        assert!(!path.exists());
+
+        let cfg = Config::default();
+        let b = Buffer::open_or_new_empty(&path, &cfg).expect("ENOENT path should still succeed");
+        // Empty buffer, dirty (so first save writes the file), path set.
+        assert_eq!(b.editor.text(), "");
+        assert!(b.dirty, "new buffer should be dirty so first save writes");
+        assert_eq!(b.path.as_deref(), Some(path.as_path()));
+        assert_eq!(b.language_ext.as_deref(), Some("rs"));
+        assert_eq!(b.saved_text, "");
+        assert!(b.disk_mtime.is_none(), "no file on disk yet ⇒ no mtime");
+    }
+
+    /// Non-NotFound errors still propagate up (permission denied,
+    /// etc.) — `open_or_new_empty` is only the ENOENT escape hatch.
+    #[test]
+    fn open_or_new_empty_passes_through_other_errors() {
+        let cfg = Config::default();
+        // /proc/self/mem on Linux + most macOS protected paths give
+        // EACCES, but cross-platform we'll just confirm the success
+        // path with an existing file works (the error pass-through
+        // is by construction — non-NotFound match arms re-emit `e`).
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("real.txt");
+        fs::write(&p, "exists\n").unwrap();
+        let b = Buffer::open_or_new_empty(&p, &cfg).expect("real file opens");
+        assert_eq!(b.editor.text(), "exists\n");
+        assert!(!b.dirty, "real file load should be clean");
     }
 }

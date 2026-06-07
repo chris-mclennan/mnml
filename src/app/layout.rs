@@ -213,7 +213,21 @@ impl App {
     }
 
     fn open_path_inner(&mut self, path: &Path, preview: bool) {
-        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        // canonicalize() requires the file to exist; for a vim-style
+        // `:e <newfile>` we want an absolute path anyway so the
+        // first save lands where the user expects (not relative to
+        // mnml's cwd). Fall back to "canonicalize the parent, append
+        // basename" when canonicalize fails on the full path.
+        let path = path.canonicalize().unwrap_or_else(|_| {
+            if let (Some(parent), Some(base)) = (path.parent(), path.file_name()) {
+                let parent_abs = parent
+                    .canonicalize()
+                    .unwrap_or_else(|_| parent.to_path_buf());
+                parent_abs.join(base)
+            } else {
+                path.to_path_buf()
+            }
+        });
         // Image files get their own viewer pane instead of being loaded as
         // a text buffer (the binary contents would render as gibberish).
         if is_image_extension(&path) {
@@ -243,7 +257,10 @@ impl App {
         }
         // (Pane kind is picked by extension — only `Editor` exists in P0; `.http`
         // etc. route to `Pane::Request` once that track lands.)
-        match Buffer::open(&path, &self.config) {
+        // Use open_or_new_empty so `:e <newfile>` creates an
+        // in-memory dirty buffer instead of toasting "no such file"
+        // — vim semantics. The first save writes the file.
+        match Buffer::open_or_new_empty(&path, &self.config) {
             Ok(mut buf) => {
                 // .editorconfig overrides the per-buffer settings (tab
                 // width, trailing newline, trim ws). Closer-to-file wins.

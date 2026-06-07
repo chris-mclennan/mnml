@@ -56,7 +56,7 @@ impl InputHandler for StandardInputHandler {
         };
 
         match key.code {
-            KeyCode::Char(c) if ctrl => match c.to_ascii_lowercase() {
+            KeyCode::Char(c) if ctrl && !alt => match c.to_ascii_lowercase() {
                 'a' => InputResult::Ops(vec![SelectAll]),
                 'c' => InputResult::Ops(vec![if ctx.has_selection {
                     YankSelection
@@ -85,10 +85,10 @@ impl InputHandler for StandardInputHandler {
             // the new line, indented to match the current line). VS Code
             // muscle memory. `Ctrl+Shift+Enter` opens above. Plain Enter is
             // the standard newline-at-cursor.
-            KeyCode::Enter if ctrl && key.modifiers.contains(KeyModifiers::SHIFT) => {
+            KeyCode::Enter if ctrl && !alt && key.modifiers.contains(KeyModifiers::SHIFT) => {
                 InputResult::Ops(vec![MoveLineStart, InsertNewline, MoveUp])
             }
-            KeyCode::Enter if ctrl => InputResult::Ops(vec![MoveLineEnd, InsertNewline]),
+            KeyCode::Enter if ctrl && !alt => InputResult::Ops(vec![MoveLineEnd, InsertNewline]),
             KeyCode::Enter => InputResult::Ops(vec![InsertNewline]),
             KeyCode::Tab => {
                 if ctx.has_selection {
@@ -99,13 +99,13 @@ impl InputHandler for StandardInputHandler {
             }
             KeyCode::BackTab => InputResult::Ops(vec![Outdent]),
 
-            KeyCode::Backspace if ctrl => InputResult::Ops(vec![DeleteWordLeft]),
+            KeyCode::Backspace if ctrl && !alt => InputResult::Ops(vec![DeleteWordLeft]),
             KeyCode::Backspace => InputResult::Ops(vec![Backspace]),
-            KeyCode::Delete if ctrl => InputResult::Ops(vec![DeleteWordRight]),
+            KeyCode::Delete if ctrl && !alt => InputResult::Ops(vec![DeleteWordRight]),
             KeyCode::Delete => InputResult::Ops(vec![DeleteForward]),
 
-            KeyCode::Left if ctrl => mv(MoveWordLeft),
-            KeyCode::Right if ctrl => mv(MoveWordRight),
+            KeyCode::Left if ctrl && !alt => mv(MoveWordLeft),
+            KeyCode::Right if ctrl && !alt => mv(MoveWordRight),
             KeyCode::Left => mv(MoveLeft),
             KeyCode::Right => mv(MoveRight),
             KeyCode::Up if alt => InputResult::Ops(vec![MoveLineUp]),
@@ -116,8 +116,8 @@ impl InputHandler for StandardInputHandler {
             KeyCode::Up => mv(MoveUp),
             KeyCode::Down => mv(MoveDown),
 
-            KeyCode::Home if ctrl => mv(MoveBufferStart),
-            KeyCode::End if ctrl => mv(MoveBufferEnd),
+            KeyCode::Home if ctrl && !alt => mv(MoveBufferStart),
+            KeyCode::End if ctrl && !alt => mv(MoveBufferEnd),
             KeyCode::Home => mv(MoveLineStart),
             KeyCode::End => mv(MoveLineEnd),
             KeyCode::PageUp => mv(PageUp),
@@ -316,5 +316,73 @@ mod tests {
     #[test]
     fn mode_is_none() {
         assert_eq!(h().mode(), EditingMode::None);
+    }
+
+    /// Regression for the 2026-06-07 bug-hunt SEV-2 finding: any
+    /// extra modifier (Alt, Super) on top of Ctrl+<char> used to
+    /// silently fall into the Ctrl+<char> arm — e.g. Ctrl+Alt+X cut
+    /// the current line, Ctrl+Alt+A selected all, Ctrl+Alt+S saved.
+    /// macOS keyboards emit Ctrl+Alt+* for OS-level shortcuts; the
+    /// leak was easy to hit accidentally.
+    #[test]
+    fn ctrl_plus_alt_is_not_treated_as_plain_ctrl() {
+        let cases = ['a', 'c', 'x', 'v', 'z', 'y', 's', 'd', 'l', '/'];
+        for c in cases {
+            let r = h().handle_key(
+                key(KeyCode::Char(c), KeyModifiers::CONTROL | KeyModifiers::ALT),
+                &ctx(false),
+            );
+            assert!(
+                matches!(r, InputResult::Ignored),
+                "Ctrl+Alt+{c} should be Ignored, was not"
+            );
+        }
+        // Named keys (Enter, Backspace, Delete, arrows, Home, End)
+        // also have ctrl arms — those now require `!alt` too, so
+        // Ctrl+Alt+<key> doesn't execute the ctrl version. The named
+        // keys fall through to their no-modifier handlers (e.g.
+        // Ctrl+Alt+Enter ⇒ plain InsertNewline) instead of doing the
+        // word-jump / line-end action. Tested separately:
+        let r = h().handle_key(
+            key(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            &ctx(false),
+        );
+        // Ctrl+Left = MoveWordLeft; Ctrl+Alt+Left should NOT word-jump.
+        // It falls through to plain MoveLeft (cursor-left-one).
+        let want_one_cell_left = vec![EditOp::SelectClear, EditOp::MoveLeft];
+        assert_eq!(
+            ops(r),
+            want_one_cell_left,
+            "Ctrl+Alt+Left should be a plain MoveLeft, not MoveWordLeft"
+        );
+    }
+
+    /// Ctrl+Shift+<char> still works for the arms that explicitly
+    /// opt into shift (Ctrl+Shift+Z = Redo, Ctrl+Shift+D =
+    /// DuplicateLine) — the modifier-leak fix only blocks Alt.
+    #[test]
+    fn ctrl_plus_shift_still_dispatches() {
+        // Ctrl+Shift+Z → Redo
+        assert_eq!(
+            ops(h().handle_key(
+                key(
+                    KeyCode::Char('z'),
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT
+                ),
+                &ctx(false)
+            )),
+            vec![EditOp::Redo]
+        );
+        // Ctrl+Shift+D → DuplicateLine
+        assert_eq!(
+            ops(h().handle_key(
+                key(
+                    KeyCode::Char('d'),
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT
+                ),
+                &ctx(false)
+            )),
+            vec![EditOp::DuplicateLine]
+        );
     }
 }
