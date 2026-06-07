@@ -737,6 +737,14 @@ impl Default for Config {
                         color: "blue".to_string(),
                         tooltip: Some("RDS database browser".to_string()),
                     },
+                    IntegrationIcon {
+                        id: "ecs".to_string(),
+                        glyph: "\u{F0F12}".to_string(), // nf-md-server
+                        fallback: "EC".to_string(),
+                        command: ":host.launch mnml-aws-ecs".to_string(),
+                        color: "green".to_string(),
+                        tooltip: Some("ECS clusters + services".to_string()),
+                    },
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,

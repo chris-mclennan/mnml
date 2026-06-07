@@ -164,6 +164,20 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "RDS database browser",
         },
     },
+    FamilySibling {
+        id: "ecs",
+        binary: "mnml-aws-ecs",
+        category: Category::Aws,
+        repo_url: "https://github.com/chris-mclennan/mnml-aws-ecs",
+        pinned_version: "v0.1.0",
+        one_liner: "ECS clusters + services with deployment + events",
+        icon: IconTemplate {
+            glyph: "\u{F0F12}", // nf-md-server
+            fallback: "EC",
+            color: "green",
+            tooltip: "ECS clusters + services",
+        },
+    },
     // ── Filesystem / Storage ──────────────────────────────────
     FamilySibling {
         id: "s3",

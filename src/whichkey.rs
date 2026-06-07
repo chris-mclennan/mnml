@@ -180,6 +180,7 @@ pub fn root() -> &'static Leader {
                                 cmd("forge.open_eventbridge", "EventBridge buses + rules"),
                             ),
                             ('R', cmd("forge.open_rds", "RDS databases")),
+                            ('C', cmd("forge.open_ecs", "ECS clusters + services")),
                         ],
                     ),
                 ),

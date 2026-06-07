@@ -1135,6 +1135,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-aws-rds"),
         },
         Command {
+            id: "forge.open_ecs",
+            title: "Forge: open ECS clusters + services browser (mnml-aws-ecs)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-aws-ecs"),
+        },
+        Command {
             id: "integrations.refresh",
             title: "Integrations: refresh installed-binary detection",
             group: "view",
