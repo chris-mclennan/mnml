@@ -1093,6 +1093,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-fs-s3"),
         },
         Command {
+            id: "forge.open_azure_blob",
+            title: "Forge: open Azure Blob Storage browser (mnml-fs-azure-blob)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-fs-azure-blob"),
+        },
+        Command {
             id: "forge.open_cloudwatch_logs",
             title: "Forge: open CloudWatch Logs viewer (mnml-aws-cloudwatch-logs)",
             group: "forge",

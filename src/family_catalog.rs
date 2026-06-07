@@ -287,13 +287,27 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-fs-s3",
         category: Category::Fs,
         repo_url: "https://github.com/chris-mclennan/mnml-fs-s3",
-        pinned_version: "v0.2.0",
+        pinned_version: "v0.2.3",
         one_liner: "Amazon S3 bucket + object browser",
         icon: IconTemplate {
             glyph: "\u{F0162}", // nf-md-bucket_outline
             fallback: "S3",
             color: "orange",
             tooltip: "Amazon S3 browser",
+        },
+    },
+    FamilySibling {
+        id: "azure_blob",
+        binary: "mnml-fs-azure-blob",
+        category: Category::Fs,
+        repo_url: "https://github.com/chris-mclennan/mnml-fs-azure-blob",
+        pinned_version: "v0.1.0",
+        one_liner: "Azure Blob Storage accounts + containers + blobs",
+        icon: IconTemplate {
+            glyph: "\u{F0805}", // nf-md-microsoft_azure
+            fallback: "Az",
+            color: "blue",
+            tooltip: "Azure Blob Storage browser",
         },
     },
     // ── Databases ─────────────────────────────────────────────

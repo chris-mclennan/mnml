@@ -690,6 +690,14 @@ impl Default for Config {
                         tooltip: Some("Amazon S3 browser".to_string()),
                     },
                     IntegrationIcon {
+                        id: "azure_blob".to_string(),
+                        glyph: "\u{F0805}".to_string(), // nf-md-microsoft_azure
+                        fallback: "Az".to_string(),
+                        command: ":host.launch mnml-fs-azure-blob".to_string(),
+                        color: "blue".to_string(),
+                        tooltip: Some("Azure Blob Storage browser".to_string()),
+                    },
+                    IntegrationIcon {
                         id: "cloudwatch_logs".to_string(),
                         glyph: "\u{F0E5C}".to_string(), // nf-md-text-box-search
                         fallback: "CW".to_string(),

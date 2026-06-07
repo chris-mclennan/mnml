@@ -169,6 +169,10 @@ pub fn root() -> &'static Leader {
                             ('c', cmd("forge.open_codebuild", "AWS CodeBuild viewer")),
                             ('s', cmd("forge.open_s3", "Amazon S3 browser")),
                             (
+                                'A',
+                                cmd("forge.open_azure_blob", "Azure Blob Storage browser"),
+                            ),
+                            (
                                 'w',
                                 cmd("forge.open_cloudwatch_logs", "CloudWatch Logs viewer"),
                             ),
