@@ -740,6 +740,24 @@ impl Default for Config {
                         tooltip: Some("Buttondown — drafts + sent + subscribers".to_string()),
                     },
                     IntegrationIcon {
+                        id: "cloudflare".to_string(),
+                        glyph: "\u{F0E7B}".to_string(), // nf-md-cloud_outline
+                        fallback: "Cf".to_string(),
+                        command: ":host.launch mnml-cdn-cloudflare".to_string(),
+                        color: "orange".to_string(),
+                        tooltip: Some("Cloudflare — zones + DNS + Workers + Pages".to_string()),
+                    },
+                    IntegrationIcon {
+                        id: "tattle_inbox".to_string(),
+                        glyph: "\u{F01F0}".to_string(), // nf-md-email_search_outline
+                        fallback: "Ti".to_string(),
+                        command: ":host.launch mnml-tattle-inbox".to_string(),
+                        color: "magenta".to_string(),
+                        tooltip: Some(
+                            "Tattle inbox (INTERNAL — dev/staging email/SMS sink)".to_string(),
+                        ),
+                    },
+                    IntegrationIcon {
                         id: "cloudwatch_logs".to_string(),
                         glyph: "\u{F0E5C}".to_string(), // nf-md-text-box-search
                         fallback: "CW".to_string(),

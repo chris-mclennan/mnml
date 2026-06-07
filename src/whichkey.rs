@@ -196,6 +196,11 @@ pub fn root() -> &'static Leader {
                             ),
                             ('D', cmd("forge.open_datadog", "Datadog observability")),
                             ('B', cmd("forge.open_buttondown", "Buttondown newsletter")),
+                            ('F', cmd("forge.open_cloudflare", "Cloudflare CDN")),
+                            (
+                                't',
+                                cmd("forge.open_tattle_inbox", "Tattle inbox (internal)"),
+                            ),
                         ],
                     ),
                 ),

@@ -25,6 +25,8 @@ pub enum Category {
     Web,
     Obs,
     Msg,
+    Cdn,
+    Tattle,
     Other,
 }
 
@@ -41,6 +43,8 @@ impl Category {
             Category::Web => "Web",
             Category::Obs => "Observability",
             Category::Msg => "Messaging",
+            Category::Cdn => "CDN / Edge",
+            Category::Tattle => "Tattle (internal)",
             Category::Other => "Other",
         }
     }
@@ -495,6 +499,41 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "Buttondown newsletter browser",
         },
     },
+    // ── CDN / Edge ────────────────────────────────────────────
+    FamilySibling {
+        id: "cloudflare",
+        binary: "mnml-cdn-cloudflare",
+        category: Category::Cdn,
+        repo_url: "https://github.com/chris-mclennan/mnml-cdn-cloudflare",
+        pinned_version: "v0.1.0",
+        one_liner: "Cloudflare — zones + DNS + Workers + Pages + security events",
+        icon: IconTemplate {
+            glyph: "\u{F0E7B}", // nf-md-cloud_outline (Cloudflare's brand glyph isn't in nerd fonts)
+            fallback: "Cf",
+            color: "orange",
+            tooltip: "Cloudflare CDN browser",
+        },
+    },
+    // ── Tattle (internal) ─────────────────────────────────────
+    // INTERNAL tooling. Hidden from public docs / install scripts.
+    // Repo URL points to a placeholder until the private repo is
+    // created — the `+` overlay's install path won't work for
+    // these (private SSH clone), but the catalog entry surfaces
+    // the binary so detection + chip-filter Just Work.
+    FamilySibling {
+        id: "tattle_inbox",
+        binary: "mnml-tattle-inbox",
+        category: Category::Tattle,
+        repo_url: "https://github.com/chris-mclennan/mnml-tattle-inbox",
+        pinned_version: "v0.1.0",
+        one_liner: "Tattle email + SMS test inbox (dev/staging — INTERNAL)",
+        icon: IconTemplate {
+            glyph: "\u{F01F0}", // nf-md-email_search_outline
+            fallback: "Ti",
+            color: "magenta",
+            tooltip: "Tattle inbox browser (INTERNAL — dev/staging only)",
+        },
+    },
 ];
 
 pub fn catalog() -> &'static [FamilySibling] {
@@ -674,6 +713,8 @@ fn class_to_category(class: &str) -> Category {
         "web" => Category::Web,
         "obs" => Category::Obs,
         "msg" => Category::Msg,
+        "cdn" => Category::Cdn,
+        "tattle" => Category::Tattle,
         _ => Category::Other,
     }
 }
@@ -702,6 +743,8 @@ fn synth_icon_for(category: Category, name: &str) -> OwnedIconTemplate {
         Category::Web => "blue",
         Category::Obs => "purple",
         Category::Msg => "green",
+        Category::Cdn => "orange",
+        Category::Tattle => "magenta",
         Category::Other => "cyan",
     }
     .to_string();
@@ -726,6 +769,8 @@ fn category_class(category: Category) -> &'static str {
         Category::Web => "web",
         Category::Obs => "obs",
         Category::Msg => "msg",
+        Category::Cdn => "cdn",
+        Category::Tattle => "tattle",
         Category::Other => "other",
     }
 }

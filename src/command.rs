@@ -1114,6 +1114,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("host.launch mnml-msg-buttondown"),
         },
         Command {
+            id: "forge.open_cloudflare",
+            title: "Forge: open Cloudflare CDN browser (mnml-cdn-cloudflare)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-cdn-cloudflare"),
+        },
+        Command {
+            id: "forge.open_tattle_inbox",
+            title: "Forge: open Tattle inbox (mnml-tattle-inbox)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("host.launch mnml-tattle-inbox"),
+        },
+        Command {
             id: "forge.open_cloudwatch_logs",
             title: "Forge: open CloudWatch Logs viewer (mnml-aws-cloudwatch-logs)",
             group: "forge",
