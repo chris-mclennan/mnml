@@ -95,6 +95,7 @@ export default defineConfig({
             { label: 'Cross-host PR workflow', slug: 'manual/cross-host-prs' },
             { label: 'Headless & .test', slug: 'manual/headless' },
             { label: 'Settings & configuration', slug: 'manual/settings' },
+            { label: 'In-app updater', slug: 'manual/updates' },
           ],
         },
         {
