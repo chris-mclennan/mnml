@@ -17,6 +17,12 @@ name: Auto-PR to winget-pkgs
 # remembers per-user, so the bot won't re-prompt on auto-PRs.
 
 on:
+  # See bump-homebrew-tap.yml for the workflow_run rationale —
+  # `release: published` doesn't fire when GITHUB_TOKEN creates the
+  # release (cargo-dist's path). workflow_run does.
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
   release:
     types: [published]
   # Manual fallback — useful if you skip this on a release and need
@@ -29,6 +35,7 @@ on:
 
 jobs:
   winget:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Publish to winget-pkgs
@@ -39,10 +46,13 @@ jobs:
         uses: vedantmgoyal9/winget-releaser@v2
         with:
           identifier: ChrisMcLennan.mnml
-          # `${{ github.event.release.tag_name }}` is e.g. `v0.1.3`;
-          # winget identifiers are unprefixed, so strip the `v`. The
-          # workflow_dispatch path supplies it directly.
-          version: ${{ inputs.version || github.event.release.tag_name }}
+          # Version source varies by trigger:
+          #   - workflow_dispatch: user-supplied input (no `v`)
+          #   - release: github.event.release.tag_name (`v0.1.3`)
+          #   - workflow_run: head_branch is the pushed tag (`v0.1.3`)
+          # winget identifiers are unprefixed; the action strips the
+          # leading `v` automatically.
+          version: ${{ inputs.version || github.event.release.tag_name || github.event.workflow_run.head_branch }}
           # Pick the .msi artifacts off the GitHub release. cargo-dist
           # names them `mnml-rs-{target}.msi` — both x64 and arm64.
           installers-regex: '\.msi$'

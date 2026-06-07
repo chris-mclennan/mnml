@@ -5,6 +5,11 @@ name: Package .deb + .rpm
 # for amd64 + arm64. Uploads the packages to the same release.
 
 on:
+  # See bump-homebrew-tap.yml for the workflow_run rationale —
+  # GITHUB_TOKEN-initiated releases don't fire `release: published`.
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
   release:
     types: [published]
   workflow_dispatch:
@@ -18,6 +23,7 @@ permissions:
 
 jobs:
   package:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -37,6 +43,9 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             v="${{ github.event.inputs.version }}"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            v="${{ github.event.workflow_run.head_branch }}"
+            v="${v#v}"
           else
             v="${{ github.event.release.tag_name }}"
             v="${v#v}"

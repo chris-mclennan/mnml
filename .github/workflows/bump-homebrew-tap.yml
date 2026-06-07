@@ -6,6 +6,19 @@ name: Bump Homebrew tap formula
 # Contents:Read-and-write on chris-mclennan/homebrew-tap.
 
 on:
+  # `release: published` is the obvious trigger, but it doesn't fire
+  # when the release is created by GITHUB_TOKEN inside another
+  # workflow (anti-loop protection). cargo-dist's release.yml uses
+  # GITHUB_TOKEN, so the auto-trigger here misses every release.
+  # workflow_run fires whenever the Release workflow completes
+  # (success path only via the `if:` below), which IS triggered
+  # by GITHUB_TOKEN-initiated workflows.
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  # Kept as a fallback in case the user pushes a release outside of
+  # cargo-dist (manual `gh release create`, or a maintainer creating
+  # one through the GitHub UI).
   release:
     types: [published]
   workflow_dispatch:
@@ -16,6 +29,11 @@ on:
 
 jobs:
   bump:
+    # workflow_run carries the upstream conclusion in
+    # github.event.workflow_run.conclusion; skip when it failed.
+    # release/workflow_dispatch paths don't have that field, so the
+    # `||` short-circuits them to true (always run).
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Resolve version
@@ -23,6 +41,11 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             v="${{ github.event.inputs.version }}"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # workflow_run fires from the Release workflow's tag-push
+            # trigger; the tag is on the head_branch.
+            v="${{ github.event.workflow_run.head_branch }}"
+            v="${v#v}"
           else
             v="${{ github.event.release.tag_name }}"
             v="${v#v}"
