@@ -697,6 +697,30 @@ impl Default for Config {
                         color: "blue".to_string(),
                         tooltip: Some("Azure Blob Storage browser".to_string()),
                     },
+                    // Terminal-native diagnostic tools. Under tmnl
+                    // they spawn as sibling tabs; standalone they
+                    // open as Pty panes inside mnml's layout. The
+                    // sidebar filter shows them only when the binary
+                    // is on PATH (`integration_detect`).
+                    IntegrationIcon {
+                        id: "htop".to_string(),
+                        glyph: "\u{F085A}".to_string(), // nf-md-monitor_dashboard
+                        fallback: "ht".to_string(),
+                        command: ":tools.htop".to_string(),
+                        color: "green".to_string(),
+                        tooltip: Some("htop — interactive process viewer".to_string()),
+                    },
+                    IntegrationIcon {
+                        id: "iftop".to_string(),
+                        glyph: "\u{F048D}".to_string(), // nf-md-network
+                        fallback: "if".to_string(),
+                        command: ":tools.iftop".to_string(),
+                        color: "blue".to_string(),
+                        tooltip: Some(
+                            "iftop — interactive bandwidth monitor (needs raw-socket privs)"
+                                .to_string(),
+                        ),
+                    },
                     IntegrationIcon {
                         id: "cloudwatch_logs".to_string(),
                         glyph: "\u{F0E5C}".to_string(), // nf-md-text-box-search

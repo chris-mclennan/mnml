@@ -3100,6 +3100,27 @@ fn builtin_commands() -> Vec<Command> {
             app.tmnl_open_tab(shell, Vec::new());
         },
     });
+    // Quick-launch chips for ubiquitous terminal-native diagnostic
+    // tools. Under tmnl they spawn as sibling tabs; standalone they
+    // open as Pty panes inside mnml's layout.
+    cmds.push(Command {
+        id: "tools.htop",
+        title: "Tools: open htop (interactive process viewer)",
+        group: "tools",
+        keys: &[],
+        run: |app| app.launch_tool("htop", Vec::new()),
+    });
+    cmds.push(Command {
+        id: "tools.iftop",
+        title: "Tools: open iftop (interactive bandwidth monitor)",
+        group: "tools",
+        keys: &[],
+        // iftop needs raw-socket privs on most systems. The chip
+        // assumes the user has either set the cap bit (`setcap
+        // cap_net_raw=eip $(which iftop)`) or wrapped it via a
+        // privileged alias; we don't sudo for them.
+        run: |app| app.launch_tool("iftop", Vec::new()),
+    });
     // Transfer the focused pty pane to tmnl as a new tab (SCM_RIGHTS
     // fd handoff). Toasts when there's no focused pty or when not
     // running under a tmnl that exposes a transfer socket.

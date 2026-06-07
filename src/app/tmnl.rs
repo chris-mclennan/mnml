@@ -44,6 +44,33 @@ impl App {
         self.tmnl_open_tab("codex".to_string(), Vec::new());
     }
 
+    /// Smart launcher for terminal-native tools (`htop`, `iftop`, …):
+    /// under tmnl, opens the binary as a sibling native tab so it
+    /// survives mnml's exit and gets its own chrome tab; standalone,
+    /// opens it as a Pty pane inside mnml's layout. Both paths use
+    /// the same binary lookup (`PATH`), so a missing binary fails
+    /// loudly on first I/O — caller doesn't have to pre-check.
+    ///
+    /// `args` is split by whitespace from `extra_args` so config-side
+    /// `command = ":tools.launch iftop -i en0"` Just Works.
+    pub fn launch_tool(&mut self, binary: &str, args: Vec<String>) {
+        if self.under_tmnl {
+            self.tmnl_open_tab(binary.to_string(), args);
+            return;
+        }
+        // Standalone — spawn as a Pty pane. `BinaryProfile::task` runs
+        // via `$SHELL -c "<binary> <args…>"` which handles missing
+        // binaries gracefully (the shell prints "command not found" in
+        // the pane and exits — visible feedback, no app crash).
+        let cwd = self.workspace.clone();
+        let cmdline = if args.is_empty() {
+            binary.to_string()
+        } else {
+            format!("{binary} {}", args.join(" "))
+        };
+        self.open_pty(crate::pty_pane::BinaryProfile::task(binary, &cmdline, cwd));
+    }
+
     /// Ask the tmnl host to fire one of *its* commands by id over the
     /// blit channel (`Message::RunHostCommand`). Used by
     /// `[[ui.integration_icon]]` chips whose `command` field uses the

@@ -237,11 +237,22 @@ fn looks_like_mnml_sibling(name: &str) -> bool {
 ///   but the rail chip should still hide when the binary isn't on
 ///   `$PATH`. Without this, an mnml install without mixr would still
 ///   show the rail chip — clicking would silently fail.
+/// - `":tools.X"` → `Some("X")` — the terminal-native tool launcher
+///   (`htop`, `iftop`, …). Same reasoning as `:mixr.show`: clicking
+///   the chip would just produce a "command not found" pty pane if
+///   the binary isn't there; better to hide it.
 /// - Any other `":foo.bar"` (built-in palette commands) → `None`,
 ///   meaning "always available".
 pub fn sibling_binary_for_command(command: &str) -> Option<&str> {
     if command == ":mixr.show" {
         return Some("mixr");
+    }
+    if let Some(bin) = command.strip_prefix(":tools.") {
+        // `:tools.<binary>` — the palette command id IS the binary
+        // name. Trim anything after a space (no args today, but
+        // future-proof against `:tools.htop -d 5` style configs).
+        let bin = bin.split_whitespace().next().unwrap_or("");
+        return if bin.is_empty() { None } else { Some(bin) };
     }
     let rest = command.strip_prefix(":host.launch ")?;
     let bin = rest.split_whitespace().next()?;
@@ -276,6 +287,16 @@ mod tests {
         // mixr launches via its own code path, but the rail chip
         // should still hide when the binary isn't installed.
         assert_eq!(sibling_binary_for_command(":mixr.show"), Some("mixr"));
+    }
+
+    #[test]
+    fn sibling_binary_extracted_from_tools_launcher() {
+        // `:tools.<bin>` palette commands launch a terminal-native
+        // tool by name. Filter the rail chip on whether that binary
+        // is on PATH.
+        assert_eq!(sibling_binary_for_command(":tools.htop"), Some("htop"));
+        assert_eq!(sibling_binary_for_command(":tools.iftop"), Some("iftop"));
+        assert_eq!(sibling_binary_for_command(":tools."), None);
     }
 
     #[test]

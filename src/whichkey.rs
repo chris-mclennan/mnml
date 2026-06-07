@@ -189,6 +189,11 @@ pub fn root() -> &'static Leader {
                             ('o', cmd("forge.open_cognito", "Cognito User Pools + users")),
                             ('q', cmd("forge.open_sqs", "SQS queues")),
                             ('N', cmd("forge.open_sns", "SNS topics + subscriptions")),
+                            ('h', cmd("tools.htop", "htop — interactive process viewer")),
+                            (
+                                'I',
+                                cmd("tools.iftop", "iftop — interactive bandwidth monitor"),
+                            ),
                         ],
                     ),
                 ),
