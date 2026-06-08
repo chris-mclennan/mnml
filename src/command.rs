@@ -173,7 +173,13 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.settings",
             title: "Settings overlay (keyboard-driven schema editor)",
             group: "view",
-            keys: &[],
+            // Ctrl+, is the universal "open settings" chord (VS Code,
+            // Sublime, JetBrains all bind it). It used to point at
+            // file.open_settings which loaded the raw TOML — that
+            // leaked secrets (DocumentDB creds in one bug-hunt agent's
+            // run on 2026-06-07). Schema-driven overlay is the
+            // privacy-safe answer.
+            keys: &["ctrl+,"],
             run: |app| app.open_settings_overlay(),
         },
         Command {
@@ -1312,9 +1318,15 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "file.open_settings",
-            title: "Open mnml config (creates the file if missing)",
+            title: "Open mnml config TOML in an editor pane (escape hatch — schema overlay is Ctrl+,)",
             group: "file",
-            keys: &["ctrl+,"],
+            // No keybinding — Ctrl+, used to live here but it routed
+            // an "open settings" intent into raw-TOML editing, leaking
+            // any secrets the config interpolates (DocumentDB creds,
+            // API tokens, etc.) onto the screen. The palette command
+            // still works for users who specifically want to hand-edit
+            // the file.
+            keys: &[],
             run: |app| app.open_settings(),
         },
         Command {

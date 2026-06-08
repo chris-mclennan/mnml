@@ -90,6 +90,8 @@ export default defineConfig({
             { label: 'Editing', slug: 'manual/editing' },
             { label: 'Coming from NvChad', slug: 'manual/coming-from-nvchad' },
             { label: 'Coming from VS Code', slug: 'manual/coming-from-vscode' },
+            { label: 'Cheatsheet — NvChad chord map', slug: 'manual/cheatsheet-nvchad' },
+            { label: 'Cheatsheet — VS Code chord map', slug: 'manual/cheatsheet-vscode' },
             { label: 'LSP', slug: 'manual/lsp' },
             { label: 'Git', slug: 'manual/git' },
             { label: 'HTTP client', slug: 'manual/http' },

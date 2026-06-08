@@ -2491,12 +2491,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
     // "+ Add integration" overlay — scroll wheel moves the row cursor;
-    // clicks elsewhere are swallowed so they don't bleed through to
-    // the editor.
+    // left-click anywhere dismisses (no mouse trap). 2026-06-07 SEV-2
+    // bug-hunt fix. Future v2 could add per-row click rects to flash
+    // the matching on-screen target the way the sibling
+    // show_discovery_overlay does — for now click-to-dismiss matches
+    // VS Code's modal idiom.
     if app.discovery_overlay.is_some() {
         match m.kind {
             MouseEventKind::ScrollUp => app.discovery_move_row(-1),
             MouseEventKind::ScrollDown => app.discovery_move_row(1),
+            MouseEventKind::Down(MouseButton::Left) => {
+                app.discovery_overlay = None;
+            }
             _ => {}
         }
         return;

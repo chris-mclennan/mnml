@@ -10,7 +10,6 @@
 
 use super::*;
 use crate::command;
-use crate::edit_op::EditOp;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use std::io;
@@ -462,17 +461,27 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         .iter()
         .find(|(r, _)| contains(*r, x, y))
     {
-        let vp = (tr.height as usize).max(1);
+        // (was: viewport-height var for the old editor MoveUp/MoveDown
+        // op — no longer needed since wheel scrolls the viewport now.)
         match app.panes.get_mut(pid) {
             Some(Pane::Editor(b)) => {
-                let op = if delta < 0 {
-                    EditOp::MoveUp
+                // Wheel scrolls the viewport, NOT the cursor — every
+                // other pane arm here adjusts `scroll` directly; the
+                // editor used to apply MoveUp/MoveDown ops which moved
+                // the cursor on every wheel tick. 2026-06-07 SEV-3
+                // bug-hunt fix. VS Code / Sublime / every IDE
+                // convention.
+                let n = delta.unsigned_abs() as usize;
+                b.scroll = if delta < 0 {
+                    b.scroll.saturating_sub(n)
                 } else {
-                    EditOp::MoveDown
+                    // Cap so we don't scroll past EOF. Line count
+                    // approximates max scroll; viewport height tracked
+                    // for the "leave the last line on screen" guard
+                    // already lives in the renderer.
+                    let max = b.editor.line_count().saturating_sub(1);
+                    (b.scroll + n).min(max)
                 };
-                for _ in 0..delta.unsigned_abs() {
-                    b.editor.apply(op.clone(), vp, &mut app.clipboard);
-                }
             }
             Some(Pane::MdPreview(p)) => {
                 let n = delta.unsigned_abs() as usize;
