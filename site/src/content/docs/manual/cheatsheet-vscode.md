@@ -47,14 +47,14 @@ This is the **reference**. VS Code chord / menu path on the left, mnml chord on 
 | `Ctrl+Shift+K` Delete Line | `Ctrl+Shift+K` | `editor.delete_line` | |
 | `Ctrl+Shift+D` Duplicate Line | `Ctrl+Shift+D` | `edit_op::DuplicateLine` | |
 | `Alt+Up` / `Alt+Down` Move Line | same | `editor.move_line_{up,down}` | Aliases: `Alt+K` / `Alt+J` |
-| `Shift+Alt+Up` / `Shift+Alt+Down` Copy Line Up/Down | (not bound) | — | Use `Ctrl+Shift+D` (duplicate stays in place) |
+| `Shift+Alt+Up` / `Shift+Alt+Down` Copy Line Up/Down | `Shift+Alt+Up` / `Shift+Alt+Down` | `edit_op::DuplicateLine` | Same VS-Code semantic — cursor lands on the new copy. `Ctrl+Shift+D` still works and stays in place. |
 | `Ctrl+]` Indent | `Tab` (with selection) | `edit_op::Indent` | mnml indents the selection range |
 | `Ctrl+[` Outdent | `Shift+Tab` | `edit_op::Outdent` | |
 | `Ctrl+/` Toggle Line Comment | `Ctrl+/` | `edit_op::ToggleLineComment` | |
 | `Shift+Alt+A` Block Comment | (not bound) | — | Filetype-aware toggle still in flight |
 | `Ctrl+Enter` Insert Line Below | `Ctrl+Enter` | (custom) | Open line below |
 | `Ctrl+Shift+Enter` Insert Line Above | `Ctrl+Shift+Enter` | (custom) | Open line above |
-| `Alt+Click` Add Cursor | (not bound — no mouse multi-cursor) | — | SEV-3 mouse-pathway gap |
+| `Alt+Click` Add Cursor | `Alt+Click` | (in-handler) | Wired. macOS Terminal swallows Option by default — enable "Use Option as Meta" in your terminal, or use iTerm2 / Alacritty / Kitty where Alt arrives intact. |
 | `Ctrl+Alt+Up` / `Ctrl+Alt+Down` Add Cursor Above/Below | same (also `Ctrl+Alt+K` / `Ctrl+Alt+J`) | `editor.add_cursor_{above,below}` | |
 | `Escape` Clear Multi-Cursor | (rebinds `Esc` to drop selection only) | `editor.clear_extra_cursors` | Palette-only; SEV-3 gap |
 | `Ctrl+Space` Trigger Suggest | `Ctrl+Space` | `lsp.completion` | |
@@ -104,6 +104,7 @@ This is the **reference**. VS Code chord / menu path on the left, mnml chord on 
 | `F12` Go to Definition | `F12` | `lsp.goto_definition` | |
 | `Ctrl+F12` Go to Implementation | (not bound under chord) | `lsp.goto_implementation` | Palette |
 | `Shift+F12` Go to References | (not bound under chord) | `lsp.references` | Palette / `Ctrl+K Ctrl+L` chord |
+| `F2` Rename Symbol | `F2` | `lsp.rename` | Added 2026-06-08 — also surfaced in the editor-body right-click menu |
 | `Ctrl+Click` Go to Definition | (not bound — `Ctrl+Click` not wired) | — | SEV-3 mouse-pathway gap |
 | `Ctrl+T` Workspace Symbol | (not bound under chord) | `lsp.workspace_symbols` | Palette |
 | `Ctrl+Shift+O` Go to Symbol in File | `Ctrl+Shift+O` | `lsp.symbols` | Note: also bound to `editor.open_at_cursor` — chord conflict (file symbols wins in vim mode, open_at_cursor in standard mode behavior unverified; SEV-3) |
@@ -132,7 +133,7 @@ mnml's "tab" can mean two things: a buffer (file open in a pane) and a tab page 
 
 | VS Code | mnml | Command id | Notes |
 |---|---|---|---|
-| `Ctrl+\` Split Editor Right | (not bound — `Ctrl+\` is scratch toggle) | `view.split_right` | Use `Ctrl+K Sv` (leader → split → vertical) |
+| `Ctrl+\` Split Editor Right | `Ctrl+\` | `view.split_right` | Same VS Code chord. (`term.scratch_toggle` is now `` Ctrl+` `` only — the chords were colliding before 2026-06-08.) |
 | `Ctrl+K Ctrl+\` Split Editor Down | (not bound) | `view.split_down` | Use `Ctrl+K Ss` |
 | `Ctrl+1` `Ctrl+2` `Ctrl+3` Focus Group N | (not bound) | — | Use `Ctrl+K Sh/Sj/Sk/Sl` directional focus |
 | `Ctrl+K Left/Right/Up/Down` Move Editor | (not bound under chord) | `view.move_split_*` | Palette |
@@ -171,7 +172,7 @@ mnml's "tab" can mean two things: a buffer (file open in a pane) and a tab page 
 
 | VS Code | mnml | Command id | Notes |
 |---|---|---|---|
-| `` Ctrl+` `` Toggle Terminal | `` Ctrl+` `` / `Ctrl+\` | `term.scratch_toggle` | Quick scratch strip at bottom |
+| `` Ctrl+` `` Toggle Terminal | `` Ctrl+` `` | `term.scratch_toggle` | Quick scratch strip at bottom. (`Ctrl+\` used to also fire this; that binding was dropped in #273 so VS-Code parity could land it on `view.split_right`.) |
 | `Ctrl+T` New Terminal | `Ctrl+T` | `term.focus_or_open_shell` | Focus existing or open new |
 | Terminal: New | (palette) | `term.shell` | New shell, splits below |
 | Terminal: Rename | (palette) | `term.rename` | |

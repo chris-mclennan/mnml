@@ -142,7 +142,7 @@ NvChad picks `<space>` as the leader. mnml does too. The chord trie is in `src/w
 | `<leader>ff` files | same | `picker.files` | |
 | `<leader>fb` buffers | same | `picker.buffers` | |
 | `<leader>fo` recents | (not bound under `<leader>f`) | `picker.recent` | Use `Ctrl+R` |
-| `<leader>fg` grep | (not bound under `<leader>f`) | `find.grep` | Use `Ctrl+Shift+F` or `:Rg` |
+| `<leader>fg` grep | `<leader>fg` | `find.grep` | NvChad parity — added 2026-06-08. `Ctrl+Shift+F` / `:Rg` also work. |
 | `<leader>fh` help | (not bound) | — | mnml has no `:help` system; use this docs site |
 | `<leader>fm` formatter | (not bound) | `editor.format` | Use `Ctrl+Shift+I` |
 | `<leader>fz` find in buffer | (not bound under `<leader>f`) | `find.find` | Use `Ctrl+F` or `/` |
@@ -417,7 +417,7 @@ Honest gaps. These are either intentional (mnml is not Neovim) or backlogged.
 | `<leader>n` line numbers toggle | (not bound) | Toggle relative numbers exists as `view.toggle_relative_numbers` (palette only) |
 | `<leader>rn` LSP rename | use `<leader>lR` | |
 | `<leader>cm` Comment.nvim | (not bound under leader) | Use `Ctrl+/` or `gc` |
-| `<leader>fa` find all (project-wide) | use `<leader>fg`? — actually use `Ctrl+Shift+F` | `find.grep` |
+| `<leader>fa` find all (project-wide) | use `<leader>fg` (2026-06-08) or `Ctrl+Shift+F` | `find.grep` |
 | `<leader>x` close buffer | use `<leader>q` or `Ctrl+W` | |
 | `gcc` `gc<motion>` Comment.nvim | (toggle line comment is `Ctrl+/`) | Vim handler has no operator-pending `gc`; SEV-3 finding |
 | `:help <topic>` | (no `:help`) | This docs site is the substitute |

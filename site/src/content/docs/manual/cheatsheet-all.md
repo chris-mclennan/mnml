@@ -63,7 +63,7 @@ Two chords always work regardless of which input handler is loaded — keep thes
 
 | Action | vim | standard | Command id |
 |---|---|---|---|
-| Split right (vertical) | `<leader>sv` / `:vsp` / `Ctrl+W v` | `Ctrl+K Sv` | `view.split_right` |
+| Split right (vertical) | `<leader>sv` / `:vsp` / `Ctrl+W v` | `Ctrl+\` / `Ctrl+K Sv` | `view.split_right` |
 | Split down (horizontal) | `<leader>ss` / `:sp` / `Ctrl+W s` | `Ctrl+K Ss` | `view.split_down` |
 | Focus left | `Ctrl+W h` / `<leader>sh` | `Ctrl+K Sh` | `view.focus_left` |
 | Focus down | `Ctrl+W j` / `<leader>sj` | `Ctrl+K Sj` | `view.focus_down` |
@@ -133,7 +133,7 @@ These are the chords most likely to differ between handlers. The vim handler int
 | Add cursor at next word match | (operator-pending) | `Ctrl+D` | `editor.add_cursor_at_next_word` |
 | Select all occurrences | (palette) | `Ctrl+Shift+L` | `editor.select_all_occurrences` |
 | Delete line | `dd` | `Ctrl+Shift+K` | `editor.delete_line` |
-| Duplicate line | `yyp` | `Ctrl+Shift+D` | `edit_op::DuplicateLine` |
+| Duplicate line | `yyp` | `Ctrl+Shift+D` / `Shift+Alt+Down` (down) / `Shift+Alt+Up` (up) | `edit_op::DuplicateLine` |
 | Move line up / down | (palette) | `Alt+↑` / `Alt+↓` (also `Alt+K` / `Alt+J`) | `editor.move_line_{up,down}` |
 | Indent / outdent | `>>` / `<<` / `>` / `<` (operators) | `Tab` / `Shift+Tab` | `edit_op::Indent` / `Outdent` |
 | Toggle line comment | `Ctrl+/` | `Ctrl+/` | `edit_op::ToggleLineComment` |
@@ -183,7 +183,7 @@ These are operator-pending objects — type them after `d`, `c`, `y`, `v`, etc.
 | Clear find highlight | `:noh` / `:nohlsearch` | (palette) | `find.clear` |
 | Toggle regex (in find prompt) | `Alt+R` | `Alt+R` | `find.toggle_regex` |
 | Replace (in current buffer) | `:%s/old/new/g` / `:%s/old/new/gc` | `Ctrl+H` | `find.replace` |
-| Workspace grep | `:Rg <pat>` / `:Ag` / `:grep` / `:vimgrep` | `Ctrl+Shift+F` | `find.grep` |
+| Workspace grep | `<leader>fg` / `:Rg <pat>` / `:Ag` / `:grep` / `:vimgrep` | `Ctrl+Shift+F` | `find.grep` |
 | Replace across workspace | (results pane) | (results pane) | `find.grep_replace` |
 | Quickfix next / prev | `:cn` / `:cp` | (palette) | `qf.next` / `qf.prev` |
 | Quickfix first / last | `:cfirst` / `:clast` | (palette) | `qf.first` / `qf.last` |
@@ -204,7 +204,7 @@ These are operator-pending objects — type them after `d`, `c`, `y`, `v`, etc.
 | Go to implementation | (palette) | (palette) | `lsp.goto_implementation` |
 | Hover docs | `K` / `<leader>lh` | (palette) | `lsp.hover` |
 | Find references | `gr` / `<leader>lr` | (palette) | `lsp.references` |
-| Rename symbol | `<leader>lR` | (palette) | `lsp.rename` |
+| Rename symbol | `<leader>lR` / `F2` | `F2` | `lsp.rename` |
 | Diagnostics list | `<leader>le` | (palette) | `lsp.diagnostics` |
 | Next / prev diagnostic | `<leader>ln` / `<leader>lp` | (palette / Ctrl+K leader) | `lsp.next_diagnostic` / `lsp.prev_diagnostic` |
 | Format document | `Ctrl+Shift+I` | `Ctrl+Shift+I` | `lsp.format` (falls back to `editor.format`) |
@@ -277,7 +277,7 @@ These are operator-pending objects — type them after `d`, `c`, `y`, `v`, etc.
 
 | Action | vim | standard | Command id |
 |---|---|---|---|
-| Scratch terminal toggle (bottom strip) | `` Ctrl+` `` / `Ctrl+\` | `` Ctrl+` `` / `Ctrl+\` | `term.scratch_toggle` |
+| Scratch terminal toggle (bottom strip) | `` Ctrl+` `` | `` Ctrl+` `` | `term.scratch_toggle` |
 | Focus existing or open new shell | `Ctrl+T` | `Ctrl+T` | `term.focus_or_open_shell` |
 | Shell as a pane | `<leader>at` / `:term` / `:terminal` | (palette) | `term.shell` |
 | Rename pty tab | (palette) | (palette) | `term.rename` |
