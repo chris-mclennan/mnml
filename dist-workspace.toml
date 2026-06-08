@@ -10,11 +10,20 @@ ci = "github"
 # The installers to generate for each app
 installers = ["shell", "powershell", "msi"]
 # Target platforms to build apps for (Rust target-triple syntax).
-# `aarch64-pc-windows-msvc` is back — native windows-11-arm runners
-# went GA on 2026-01-29 (free in public repos, 4 vCPU). See
-# `[dist.github-custom-runners]` below for the runner override.
-# Native build → no cargo-xwin → no ring/clang issue.
-targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "aarch64-pc-windows-msvc", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+# `aarch64-pc-windows-msvc` is OUT again. Two attempts so far:
+#   v0.1.3 — Linux container + cargo-xwin: ring's clang `/imsvc`
+#            invocation fails. Dropped.
+#   v0.1.4 — re-added on native `windows-11-arm` runner (GA 2026-01-29).
+#            Rust compile succeeds, but the MSI step fails: WiX
+#            (`candle`) is NOT pre-installed on windows-11-arm runners
+#            (whereas `windows-2022` has it). Dropped again.
+# ARM Windows users have two paths today: install the x86_64 MSI (runs
+# on ARM Windows under Microsoft's emulation), or grab the raw
+# x86_64-pc-windows-msvc.zip. Native arm64 returns whenever either
+# (a) cargo-dist exposes a per-target installer override (no MSI on
+# arm64-windows, keep .zip) or (b) windows-11-arm runners get WiX
+# bundled, whichever happens first.
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 # Which actions to run on pull requests
 pr-run-mode = "upload"
 # YAML snippet injected into every build job's `steps:` array,
@@ -35,13 +44,6 @@ allow-dirty = ["ci"]
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
-
-# Build aarch64-pc-windows-msvc on the native `windows-11-arm`
-# runner (GA'd 2026-01-29, free in public repos at 4 vCPU). Without
-# this override, cargo-dist defaults to a Linux container + xwin
-# cross-compile, which fails on ring's clang `/imsvc` invocation.
-[dist.github-custom-runners]
-aarch64-pc-windows-msvc = "windows-11-arm"
 
 # macOS .pkg bundle identifier (reverse-DNS, your control). Kept at
 # the end of the file so it doesn't accidentally swallow the other
