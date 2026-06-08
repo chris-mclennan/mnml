@@ -35,10 +35,15 @@ fn overlay_rect(parent: Rect) -> Rect {
 
 /// Paint the settings overlay. No-op when the overlay is closed.
 pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
+    // Clear stale hit-test rects every frame whether or not the
+    // overlay is open — they'd otherwise survive between opens.
+    app.rects.settings_overlay_rect = None;
+    app.rects.settings_rows.clear();
     if app.settings_overlay.is_none() {
         return;
     }
     let area = overlay_rect(parent);
+    app.rects.settings_overlay_rect = Some(area);
     let t = theme::cur();
 
     // Solid background — Clear wipes whatever the editor painted underneath.
@@ -80,8 +85,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         }
     }
 
-    // Build rendered lines.
+    // Build rendered lines. We keep a parallel `line_row_counter`
+    // vector so the windowing loop below can map a visible line back
+    // to its 0-based row index — what `settings_move_row` /
+    // `apply_setting` use. Section headers get `None`.
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(items.len());
+    let mut line_row_counter: Vec<Option<usize>> = Vec::with_capacity(items.len());
+    let mut rc = 0usize;
     for (i, item) in items.iter().enumerate() {
         match item {
             SettingItem::Section(name) => {
@@ -91,6 +101,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                         .fg(t.comment)
                         .add_modifier(Modifier::BOLD | Modifier::DIM),
                 )));
+                line_row_counter.push(None);
             }
             SettingItem::Row(row) => {
                 let is_focused = Some(i) == focused_item_idx;
@@ -143,6 +154,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                 }
 
                 lines.push(Line::from(spans));
+                line_row_counter.push(Some(rc));
+                rc += 1;
             }
             SettingItem::Number(num) => {
                 let is_focused = Some(i) == focused_item_idx;
@@ -177,6 +190,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                     ));
                 }
                 lines.push(Line::from(spans));
+                line_row_counter.push(Some(rc));
+                rc += 1;
             }
             SettingItem::Text(row) => {
                 let is_focused = Some(i) == focused_item_idx;
@@ -225,6 +240,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                     ));
                 }
                 lines.push(Line::from(spans));
+                line_row_counter.push(Some(rc));
+                rc += 1;
             }
             SettingItem::Color(row) => {
                 let is_focused = Some(i) == focused_item_idx;
@@ -267,6 +284,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                     ));
                 }
                 lines.push(Line::from(spans));
+                line_row_counter.push(Some(rc));
+                rc += 1;
             }
         }
     }
@@ -295,6 +314,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         width: inner.width,
         height: body_h as u16,
     };
+    // Hit-test rects: one per visible Row line, mapped to the
+    // row_counter index `settings_move_row` / `apply_setting` use.
+    // Section-header lines are excluded (None in line_row_counter).
+    for (visible_y, line_idx) in (scroll..scroll + window.len()).enumerate() {
+        if let Some(Some(rc_idx)) = line_row_counter.get(line_idx).copied() {
+            app.rects.settings_rows.push((
+                Rect {
+                    x: body_rect.x,
+                    y: body_rect.y + visible_y as u16,
+                    width: body_rect.width,
+                    height: 1,
+                },
+                rc_idx,
+            ));
+        }
+    }
     frame.render_widget(Paragraph::new(window), body_rect);
 
     // 1-line hint bar at the bottom.

@@ -2464,6 +2464,37 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         if new_div != app.hover_divider_idx {
             app.hover_divider_idx = new_div;
         }
+        // Editor body hover → schedule an LSP hover request after a
+        // debounce. The actual fire happens in `tick`; we just record
+        // (pane, file_row, file_col, when) here. Moving to a new cell
+        // resets the timer and clears the "already fired" marker so
+        // a fresh request can go out. SEV-2 VS-Code-mouse hunt fix
+        // 2026-06-08 ("Hover over editor text doesn't show LSP info").
+        let body_target = app
+            .rects
+            .editor_panes
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .map(|&(tr, pid)| {
+                let wrap = app.config.ui.wrap;
+                let (row, col) = if let Some(Pane::Editor(b)) = app.panes.get(pid) {
+                    crate::app::dispatch::click_to_file_pos(b, tr, wrap, x, y)
+                } else {
+                    (0, 0)
+                };
+                (pid, row, col)
+            });
+        let cur_target = app.mouse_hover_at.map(|(p, r, c, _)| (p, r, c));
+        if body_target != cur_target {
+            app.mouse_hover_at = body_target.map(|(p, r, c)| (p, r, c, now));
+            app.mouse_hover_fired = None;
+            // Pointer moved off (or to a new cell) → close any popup
+            // we put up. Avoids the popup hanging when the mouse has
+            // already moved past the symbol.
+            if body_target.is_none() {
+                app.hover = None;
+            }
+        }
         return;
     }
 
@@ -2477,15 +2508,43 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         app.show_about = false;
         return;
     }
-    // Settings overlay — keyboard-driven for clicks (click-to-cycle is
-    // a v2 polish item), but route the scroll wheel through to
-    // `settings_move_row` so trackpads work. Everything else gets
-    // swallowed so a stray click on the editor underneath doesn't
-    // bleed through.
+    // Settings overlay — wheel scrolls the focused row; left-click
+    // on a row focuses it (then `←/→` to adjust the value); left-
+    // click outside the panel saves + closes (matches Enter). Other
+    // events swallowed so a stray click on the editor underneath
+    // doesn't bleed through. 2026-06-07 SEV-2 VS-Code-mouse hunt fix
+    // ("Settings overlay accepts no mouse input — swallows clicks").
     if app.settings_overlay.is_some() {
         match m.kind {
             MouseEventKind::ScrollUp => app.settings_move_row(-1),
             MouseEventKind::ScrollDown => app.settings_move_row(1),
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(&(_, rc_idx)) = app
+                    .rects
+                    .settings_rows
+                    .iter()
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                {
+                    // Move focus to the clicked row. Use absolute
+                    // delta from current to target since
+                    // settings_move_row takes a relative step.
+                    let cur = app
+                        .settings_overlay
+                        .as_ref()
+                        .map(|s| s.selected_row)
+                        .unwrap_or(0);
+                    let delta = rc_idx as isize - cur as isize;
+                    if delta != 0 {
+                        app.settings_move_row(delta);
+                    }
+                } else if let Some(area) = app.rects.settings_overlay_rect
+                    && !crate::app::dispatch::contains(area, x, y)
+                {
+                    // Click outside the panel — save + close (matches
+                    // Enter / VS Code's modal click-out semantic).
+                    app.close_settings_overlay_save();
+                }
+            }
             _ => {}
         }
         return;

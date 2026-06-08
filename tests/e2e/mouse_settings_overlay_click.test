@@ -1,0 +1,24 @@
+# Settings overlay accepts mouse input: click a row to focus it,
+# `←/→` to adjust, click outside to save+close. SEV-2 VS-Code-mouse
+# hunt finding (2026-06-07): "Settings overlay swallows every click
+# except scroll-wheel."
+write a.txt hello
+open a.txt
+command view.toggle_tree
+command view.settings
+expect screen contains "Settings"
+
+# The overlay default has Input style at the first row of the
+# `── Editor ──` section. The marker `▸` shows where focus is. Click
+# on the Tab width row (row 2 in Editor, well past first screen
+# rows). Use row 14 — comfortable middle of the visible Editor section
+# on the e2e 40-row screen.
+click 30 14
+# The settings overlay should still be open + something is focused.
+expect screen contains "Settings"
+expect screen contains "▸"
+
+# Click well outside the panel (cell 1,1 is the top-left corner of
+# the screen, always outside the centered panel) — saves + closes.
+click 1 1
+expect screen lacks "Settings"

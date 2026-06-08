@@ -413,6 +413,53 @@ impl App {
                 *id -= 1;
             }
         }
+        // Defensive: every other field that carries a PaneId across
+        // events MUST get the same shift, or a follow-up event reads
+        // a stale id and indexes into `panes` at a wrong (or now-
+        // missing) slot. The 2026-06-07 SEV-1 hunt finding "silent
+        // exit on multi-tab + split + middle-click" reproduces here:
+        // user starts a drag-reorder (bufferline_drag_tab = Some(N)),
+        // middle-clicks another tab to close, the close shifts panes,
+        // and the next render reads bufferline_drag_tab and panics on
+        // a stale id. Same hazard for drag_select, close_prompt, and
+        // dragging_scrollbar.
+        let shift_opt = |slot: &mut Option<PaneId>| match *slot {
+            Some(a) if a == removed => *slot = None,
+            Some(a) if a > removed => *slot = Some(a - 1),
+            _ => {}
+        };
+        shift_opt(&mut self.rects.bufferline_drag_tab);
+        shift_opt(&mut self.close_prompt);
+        match self.drag_select {
+            Some((a, _, _, _)) if a == removed => self.drag_select = None,
+            Some((a, r, c, armed)) if a > removed => self.drag_select = Some((a - 1, r, c, armed)),
+            _ => {}
+        }
+        if let Some(mut hit) = self.dragging_scrollbar {
+            if hit.pane_id == removed {
+                self.dragging_scrollbar = None;
+            } else if hit.pane_id > removed {
+                hit.pane_id -= 1;
+                self.dragging_scrollbar = Some(hit);
+            }
+        }
+        // Mouse-hover-fired marker: stale (pane_id, row, col) tuple
+        // would prevent the next hover request for the re-indexed
+        // pane. Cheaper to wipe than shift.
+        if self
+            .mouse_hover_at
+            .map(|(a, _, _, _)| a >= removed)
+            .unwrap_or(false)
+        {
+            self.mouse_hover_at = None;
+        }
+        if self
+            .mouse_hover_fired
+            .map(|(a, _, _)| a >= removed)
+            .unwrap_or(false)
+        {
+            self.mouse_hover_fired = None;
+        }
     }
 
     /// Split the focused leaf, opening a fresh buffer (a re-open of the same file,

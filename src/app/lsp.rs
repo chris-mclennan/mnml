@@ -307,6 +307,41 @@ impl App {
         self.lsp_request_at_cursor(|lsp, p, l, c| lsp.hover(p, l, c), "hover");
     }
 
+    /// Mouse-driven variant of `lsp_hover` — fires a
+    /// `textDocument/hover` for `(row, col)` in `pane_id`'s buffer
+    /// WITHOUT moving the cursor (a cursor jump on every hover would
+    /// be jarring). The reply lands via the normal `LspEvent::Hover`
+    /// path and populates `app.hover`. Silent on no-LSP / no-path —
+    /// hover-over-text shouldn't toast.
+    pub fn lsp_hover_at_pane(&mut self, pane_id: PaneId, row: usize, col: usize) {
+        let Some(Pane::Editor(b)) = self.panes.get(pane_id) else {
+            return;
+        };
+        let Some(path) = b.path.clone() else { return };
+        let text = b.editor.text().to_string();
+        self.lsp.did_change(&path, &text);
+        let _ = self.lsp.hover(&path, row as u32, col as u32);
+    }
+
+    /// Called from `tick` — if the mouse has been steady over an
+    /// editor cell for ≥`HOVER_DEBOUNCE_MS` AND we haven't already
+    /// fired for this exact cell, send a `textDocument/hover` request.
+    /// 2026-06-08 SEV-2 fix.
+    pub fn maybe_fire_mouse_hover(&mut self) {
+        const HOVER_DEBOUNCE_MS: u128 = 600;
+        let Some((pid, row, col, when)) = self.mouse_hover_at else {
+            return;
+        };
+        if when.elapsed().as_millis() < HOVER_DEBOUNCE_MS {
+            return;
+        }
+        if self.mouse_hover_fired == Some((pid, row, col)) {
+            return;
+        }
+        self.mouse_hover_fired = Some((pid, row, col));
+        self.lsp_hover_at_pane(pid, row, col);
+    }
+
     /// `lsp.references` — find references to the symbol at the cursor (→ picker).
     pub fn lsp_references(&mut self) {
         self.lsp_request_at_cursor(|lsp, p, l, c| lsp.references(p, l, c), "references");

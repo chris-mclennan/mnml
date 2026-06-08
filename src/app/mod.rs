@@ -1772,6 +1772,17 @@ pub struct PaneRects {
     /// to flash the matching on-screen rects. Cleared + repopulated by
     /// `ui::discovery::draw` when the overlay is visible.
     pub discovery_rows: Vec<(Rect, crate::DiscoveryCategory)>,
+    /// The outer settings-overlay rect — used by the dispatcher to
+    /// detect click-outside-to-close. `None` when the overlay isn't
+    /// open. Repopulated by `ui::settings_overlay::draw`.
+    pub settings_overlay_rect: Option<Rect>,
+    /// `(rect, row_counter_idx)` per visible Row in the settings
+    /// overlay — left-click moves the focus to that row (so the user
+    /// can drive settings entirely by mouse: click row to focus +
+    /// `←/→` to adjust, or click outside the overlay to save+close).
+    /// `row_counter_idx` is the same 0-based index `settings_move_row`
+    /// uses (skips section headers). Repopulated per render.
+    pub settings_rows: Vec<(Rect, usize)>,
     /// GitGraph column header rects (Author / Date / SHA) — click to
     /// cycle that column's sort (asc / desc / none).
     pub git_graph_column_headers: Vec<(Rect, crate::git::graph::SortColumn)>,
@@ -2654,6 +2665,20 @@ pub struct App {
     /// The LSP hover popup, when open (set when a `textDocument/hover` reply
     /// arrives). The next key dismisses it (j/k/arrows scroll it first).
     pub hover: Option<crate::hover::HoverPopup>,
+    /// Mouse-driven hover request — the editor cell under the pointer
+    /// and when the mouse arrived there. `tick` fires a
+    /// `textDocument/hover` request once the mouse has been steady
+    /// for the debounce window (~600ms). Updated by the
+    /// `MouseEventKind::Moved` handler. Cleared when the pointer
+    /// leaves any editor body. The 4-tuple is
+    /// `(pane_id, file_row, file_col, arrived_at)`.
+    /// 2026-06-08 SEV-2 VS-Code-mouse hunt fix.
+    pub mouse_hover_at: Option<(PaneId, usize, usize, std::time::Instant)>,
+    /// `(pane_id, file_row, file_col)` of the most recent fired
+    /// hover request — prevents re-firing for the same cell every
+    /// tick once the debounce elapses. Cleared whenever
+    /// `mouse_hover_at` changes target.
+    pub mouse_hover_fired: Option<(PaneId, usize, usize)>,
     /// LSP `textDocument/signatureHelp` popup — function prototype + active
     /// parameter highlight. Auto-triggered when the user types `(` or `,` in
     /// insert mode; replaced when a fresh reply arrives; dismissed on Esc
@@ -3161,6 +3186,8 @@ impl App {
             prompt: None,
             context_menu: None,
             hover: None,
+            mouse_hover_at: None,
+            mouse_hover_fired: None,
             signature: None,
             pending_rename: None,
             pending_code_actions: Vec::new(),
@@ -8512,6 +8539,7 @@ impl App {
         self.expire_yank_flashes();
         self.refresh_stale_highlights();
         self.refresh_scroll_semantic_tokens();
+        self.maybe_fire_mouse_hover();
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL
         {
@@ -8881,6 +8909,88 @@ mod tests {
     fn editing_mode_is_none_without_editor() {
         let (_d, app) = app_with_files();
         assert_eq!(app.editing_mode(), EditingMode::None);
+    }
+
+    #[test]
+    fn close_pane_shifts_drag_state_pane_ids() {
+        // SEV-1 regression lock for the 2026-06-07 hunt finding
+        // "silent exit on multi-tab + split + middle-click sequence."
+        // Mid-drag close used to leave `bufferline_drag_tab` /
+        // `drag_select` / `close_prompt` / `dragging_scrollbar`
+        // pointing at stale PaneIds; the next event panicked
+        // indexing past `panes.len()`.
+        let (d, mut app) = app_with_files();
+        fs::write(d.path().join("c.txt"), "charlie").unwrap();
+        app.open_path(&d.path().join("a.txt"));
+        app.open_path(&d.path().join("b.txt"));
+        app.open_path(&d.path().join("c.txt"));
+        assert_eq!(app.panes.len(), 3);
+
+        // Plant a drag-reorder on pane 1 (b.txt), a drag-select on
+        // pane 2 (c.txt), a close prompt on pane 1, and a scrollbar
+        // drag on pane 2. Then close pane 0 — every PaneId above
+        // should decrement, and the drag tied to the closed pane
+        // (none in this case) would drop entirely.
+        app.rects.bufferline_drag_tab = Some(1);
+        app.drag_select = Some((2, 0, 0, false));
+        app.close_prompt = Some(1);
+        app.dragging_scrollbar = Some(ScrollbarHit {
+            area: ratatui::layout::Rect::new(0, 0, 1, 1),
+            pane_id: 2,
+            total: 1,
+            viewport: 1,
+            kind: ScrollbarKind::Editor,
+        });
+
+        app.force_close_pane(0); // close a.txt (the lowest id)
+
+        assert_eq!(app.panes.len(), 2);
+        assert_eq!(
+            app.rects.bufferline_drag_tab,
+            Some(0),
+            "drag tab id shifted"
+        );
+        assert_eq!(
+            app.drag_select.map(|(p, _, _, _)| p),
+            Some(1),
+            "drag_select id shifted"
+        );
+        assert_eq!(app.close_prompt, Some(0), "close_prompt id shifted");
+        assert_eq!(
+            app.dragging_scrollbar.map(|h| h.pane_id),
+            Some(1),
+            "scrollbar pane_id shifted"
+        );
+    }
+
+    #[test]
+    fn close_pane_drops_drag_state_when_pointed_at_closed_pane() {
+        // Same SEV-1 — the OTHER direction: if the drag state points
+        // *at* the pane being closed, it must drop to None (not just
+        // decrement, which would underflow or alias the next pane).
+        let (d, mut app) = app_with_files();
+        app.open_path(&d.path().join("a.txt"));
+        app.open_path(&d.path().join("b.txt"));
+        assert_eq!(app.panes.len(), 2);
+
+        app.rects.bufferline_drag_tab = Some(1);
+        app.drag_select = Some((1, 0, 0, false));
+        app.close_prompt = Some(1);
+        app.dragging_scrollbar = Some(ScrollbarHit {
+            area: ratatui::layout::Rect::new(0, 0, 1, 1),
+            pane_id: 1,
+            total: 1,
+            viewport: 1,
+            kind: ScrollbarKind::Editor,
+        });
+
+        app.force_close_pane(1); // close the pane the drag references
+
+        assert_eq!(app.panes.len(), 1);
+        assert_eq!(app.rects.bufferline_drag_tab, None);
+        assert_eq!(app.drag_select, None);
+        assert_eq!(app.close_prompt, None);
+        assert_eq!(app.dragging_scrollbar.map(|h| h.pane_id), None);
     }
 
     #[test]
