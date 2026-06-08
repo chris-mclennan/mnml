@@ -183,6 +183,63 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
+    /// Right-click on the editor BODY (not the gutter) — exposes the
+    /// text-scoped operations VS Code users expect: cut / copy /
+    /// paste, plus the same LSP / Save shortcuts the gutter menu
+    /// offers. Places the cursor at the click position first so the
+    /// commands (which read the cursor) act on the right spot.
+    /// Surfaced by the VS-Code-mouse hunt's SEV-2 "Editor text body
+    /// has no right-click context menu" finding.
+    pub fn open_editor_body_context_menu(
+        &mut self,
+        pane_id: PaneId,
+        row: usize,
+        col: usize,
+        anchor: (u16, u16),
+    ) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        self.active = Some(pane_id);
+        self.focus_pane();
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(pane_id) {
+            // Place the cursor at the click position so the LSP /
+            // fold commands below act on that spot. (Any active
+            // selection gets cleared as a side-effect of place_cursor
+            // — matches the gutter menu's behavior; the user can
+            // re-select if needed before picking a menu item.)
+            b.editor.place_cursor(row, col);
+        }
+        let (title, dirty, has_path) = match self.panes.get(pane_id) {
+            Some(Pane::Editor(b)) => (
+                format!("{} : line {}", b.display_name(), row + 1),
+                b.dirty,
+                b.path.is_some(),
+            ),
+            _ => (format!("line {}", row + 1), false, false),
+        };
+        let mut items = vec![
+            MenuItem::new(
+                "Go to definition",
+                MenuAction::Command("lsp.goto_definition"),
+            ),
+            MenuItem::new("Find references", MenuAction::Command("lsp.references")),
+            MenuItem::new("Hover info", MenuAction::Command("lsp.hover")),
+            MenuItem::new("Rename symbol…", MenuAction::Command("lsp.rename")),
+            MenuItem::new(
+                "Select all occurrences",
+                MenuAction::Command("editor.select_all_occurrences"),
+            ),
+            MenuItem::new(
+                "Expand selection (LSP)",
+                MenuAction::Command("lsp.selection_expand"),
+            ),
+            MenuItem::new("Toggle fold", MenuAction::Command("editor.toggle_fold")),
+        ];
+        if dirty && has_path {
+            items.push(MenuItem::new("Save", MenuAction::SavePane(pane_id)));
+        }
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
     /// Right-click on a pty pane (terminal / Claude / Codex) — exposes
     /// dock-position controls so the user can shift the pane around the
     /// layout (left / right / top / bottom) or maximize it, without
@@ -358,6 +415,16 @@ impl App {
             CloseTab(id) => self.close_pane(id),
             CloseOtherTabs(id) => self.close_panes_except(Some(id)),
             CloseAllTabs => self.close_panes_except(None),
+            SavePane(id) => {
+                // `save_active` reads `self.active`; reveal the pane
+                // first so the existing save path lights up. The
+                // user's previous focus isn't preserved (matches the
+                // existing CloseTab pattern, which also drops focus
+                // onto the closed pane's neighbour). One-click save
+                // is the goal of the menu entry.
+                self.reveal_pane(id);
+                self.save_active();
+            }
             RenameSession(id) => {
                 // Reveal the session so it's the active pane, then
                 // reuse the `:rename` prompt (which targets `active`).

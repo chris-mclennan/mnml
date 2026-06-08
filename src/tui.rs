@@ -2900,6 +2900,25 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.open_editor_gutter_context_menu(pid, line as u32, (x, y));
                 return;
             }
+            // Right-click on the editor BODY → text-scoped menu
+            // (LSP goto / refs / hover / rename, select-all-
+            // occurrences, expand-selection, toggle-fold, Save).
+            // Translate the click to (file_row, file_col) via the
+            // pane's scroll. Surfaces the SEV-2 VS-Code-mouse hunt
+            // finding "Editor text body has no right-click menu."
+            if let Some(&(tr, pid)) = app
+                .rects
+                .editor_panes
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                let wrap = app.config.ui.wrap;
+                if let Some(Pane::Editor(b)) = app.panes.get(pid) {
+                    let (row, col) = crate::app::dispatch::click_to_file_pos(b, tr, wrap, x, y);
+                    app.open_editor_body_context_menu(pid, row, col, (x, y));
+                    return;
+                }
+            }
             // Right-click a pty pane's tab strip (Claude / Codex / shell) →
             // rename / close that session.
             if let Some(&(_, pid)) = app

@@ -8884,6 +8884,61 @@ mod tests {
     }
 
     #[test]
+    fn alt_click_in_editor_body_adds_an_extra_cursor() {
+        // Regression lock for the VS-Code-mouse hunt SEV-2 finding:
+        // Alt+click should drop a *second* cursor rather than moving
+        // the primary. The wire-in lives in `tui::dispatch_mouse`'s
+        // Down(Left) handler; the bug-hunt agent's terminal swallowed
+        // the ALT modifier so the code path never fired — this test
+        // proves the code path is correct when ALT is delivered.
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("doc.txt");
+        std::fs::write(&p, "ED01\nED02\nED03\nED04").unwrap();
+        let cfg = Config::default();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.open_path(&p);
+        // Toggle the tree off so the editor body starts at x=0
+        // (matches the e2e harness layout).
+        app.config.ui.tree_width = 0;
+
+        // Force a render so `rects.editor_panes` is populated — the
+        // Alt+click handler hit-tests against it. We render to a
+        // discardable backend at the e2e size (120x40).
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut term = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        term.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+
+        // Plant the primary cursor at (row=1, col=2). We'll then
+        // Alt+click well to the right of it.
+        if let Some(Pane::Editor(b)) = app.active.and_then(|i| app.panes.get_mut(i)) {
+            b.editor.place_cursor(1, 2);
+        }
+        let extras_before = match app.active.and_then(|i| app.panes.get(i)) {
+            Some(Pane::Editor(b)) => b.editor.extra_cursors.len(),
+            _ => 0,
+        };
+        assert_eq!(extras_before, 0, "fresh buffer has no extra cursors");
+
+        // Alt + left-click in the editor body at (col=40, row=4).
+        crate::tui::dispatch_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 40,
+                row: 4,
+                modifiers: KeyModifiers::ALT,
+            },
+        );
+        let extras_after = match app.active.and_then(|i| app.panes.get(i)) {
+            Some(Pane::Editor(b)) => b.editor.extra_cursors.len(),
+            _ => 0,
+        };
+        assert_eq!(extras_after, 1, "Alt+click adds one extra cursor");
+    }
+
+    #[test]
     fn cursor_follows_wheel_resolves_per_policy_and_mode() {
         let d = tempfile::tempdir().unwrap();
         let mut cfg = Config::default();

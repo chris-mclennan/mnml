@@ -25,6 +25,10 @@ pub enum MenuAction {
     CloseTab(PaneId),
     CloseOtherTabs(PaneId),
     CloseAllTabs,
+    /// Save the specific pane (an editor) without changing focus.
+    /// Surfaced from the bufferline tab right-click menu — the
+    /// VS-Code-mouse hunt's SEV-2 "no Save button anywhere" finding.
+    SavePane(PaneId),
     /// Rename a pty session (Claude / Codex / shell) — reveals the
     /// pane, then opens the session-name prompt.
     RenameSession(PaneId),

@@ -19,11 +19,24 @@ impl App {
     pub fn open_tab_context_menu(&mut self, id: PaneId, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let title = self.panes.get(id).map(Pane::title).unwrap_or_default();
-        let mut items = vec![
-            MenuItem::new("Close", MenuAction::CloseTab(id)),
-            MenuItem::new("Close others", MenuAction::CloseOtherTabs(id)),
-            MenuItem::new("Close all", MenuAction::CloseAllTabs),
-        ];
+        let mut items = Vec::new();
+        // Save: only for editor panes with a path AND only when dirty.
+        // Surfaces the SEV-2 fix from the VS-Code-mouse hunt 2026-06-07
+        // ("no Save button anywhere" — the menu had Close × 3 + Copy
+        // path, no Save). Placed at the top because saving is the
+        // most-common, lowest-cost action.
+        if let Some(Pane::Editor(b)) = self.panes.get(id)
+            && b.path.is_some()
+            && b.dirty
+        {
+            items.push(MenuItem::new("Save", MenuAction::SavePane(id)));
+        }
+        items.push(MenuItem::new("Close", MenuAction::CloseTab(id)));
+        items.push(MenuItem::new(
+            "Close others",
+            MenuAction::CloseOtherTabs(id),
+        ));
+        items.push(MenuItem::new("Close all", MenuAction::CloseAllTabs));
         if let Some(Pane::Editor(b)) = self.panes.get(id)
             && let Some(p) = &b.path
         {
