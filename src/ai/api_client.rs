@@ -1077,9 +1077,18 @@ fn execute_tool(
 /// is handled upstream by the agent loop (`api_shell_confirm`).
 fn tool_shell_exec(workspace: &Path, command: &str) -> Result<String, String> {
     use std::io::Read;
+    use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
     const TIMEOUT: Duration = Duration::from_secs(60);
+    // After the child exits, give the reader threads this long to
+    // flush. If a backgrounded grandchild kept the pipe end open
+    // (e.g. `cmd &`, `nohup`, `disown`), `read_to_end` would block
+    // forever — bailing here returns whatever we have. SEV-1 from
+    // the 2026-06-08 untouched-surfaces hunt: an AI shell_exec call
+    // with `&` froze the AI agent thread for the rest of the
+    // session.
+    const READ_DRAIN_DEADLINE: Duration = Duration::from_secs(2);
     const OUTPUT_CAP: usize = 256 * 1024;
 
     if command.trim().is_empty() {
@@ -1096,19 +1105,26 @@ fn tool_shell_exec(workspace: &Path, command: &str) -> Result<String, String> {
         .map_err(|e| format!("shell_exec spawn: {e}"))?;
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
-    let stdout_join = std::thread::spawn(move || {
+    // Channel pattern (not join) so we can bound the wait on the
+    // reader threads — see READ_DRAIN_DEADLINE comment above. The
+    // reader threads stay alive in the background if they're blocked
+    // on a stuck pipe; harmless and unavoidable until the grandchild
+    // releases the FD.
+    let (tx_out, rx_out) = mpsc::channel();
+    let (tx_err, rx_err) = mpsc::channel();
+    std::thread::spawn(move || {
         let mut buf = Vec::new();
         if let Some(mut s) = stdout.take() {
             let _ = s.read_to_end(&mut buf);
         }
-        buf
+        let _ = tx_out.send(buf);
     });
-    let stderr_join = std::thread::spawn(move || {
+    std::thread::spawn(move || {
         let mut buf = Vec::new();
         if let Some(mut s) = stderr.take() {
             let _ = s.read_to_end(&mut buf);
         }
-        buf
+        let _ = tx_err.send(buf);
     });
     let deadline = Instant::now() + TIMEOUT;
     let exit_code = loop {
@@ -1128,8 +1144,8 @@ fn tool_shell_exec(workspace: &Path, command: &str) -> Result<String, String> {
             Err(e) => return Err(format!("shell_exec wait: {e}")),
         }
     };
-    let stdout_bytes = stdout_join.join().unwrap_or_default();
-    let stderr_bytes = stderr_join.join().unwrap_or_default();
+    let stdout_bytes = rx_out.recv_timeout(READ_DRAIN_DEADLINE).unwrap_or_default();
+    let stderr_bytes = rx_err.recv_timeout(READ_DRAIN_DEADLINE).unwrap_or_default();
 
     let truncate = |bytes: Vec<u8>| -> String {
         if bytes.len() > OUTPUT_CAP {
@@ -1171,6 +1187,20 @@ fn tool_write_file(workspace: &Path, rel: &str, content: &str) -> Result<String,
         if !cp.starts_with(&ws) {
             return Err(format!("{rel}: path escapes the workspace"));
         }
+    }
+    // Refuse to write through a symlink — the parent-canonicalize
+    // check above catches `subdir-symlink/foo.txt` (parent escapes
+    // workspace) but a leaf symlink `foo.txt -> /tmp/sentinel` is in
+    // the workspace's parent dir, so it slipped through. Untouched-
+    // surfaces hunt SEV-2 (2026-06-08). Unix-only check via
+    // `symlink_metadata`; falls open on Windows where junctions/
+    // symlinks are rarer and require elevated privileges to create.
+    if let Ok(meta) = std::fs::symlink_metadata(&target)
+        && meta.file_type().is_symlink()
+    {
+        return Err(format!(
+            "{rel}: refusing to write through a symlink (would escape the workspace)"
+        ));
     }
     std::fs::write(&target, content).map_err(|e| format!("{rel}: {e}"))?;
     Ok(format!("wrote {} bytes to {rel}", content.len()))

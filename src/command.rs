@@ -139,9 +139,13 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.discovery",
-            title: "Click discovery overlay (F1 toggles)",
+            title: "Click discovery overlay (palette: 'view: discovery')",
             group: "view",
-            keys: &["f1"],
+            // F1 used to live here too — collided with `view.help` and
+            // `palette` (both claim F1). Kept on `view.help` only; the
+            // discovery overlay is palette-only now. Untouched-surfaces
+            // hunt SEV-3 (2026-06-08).
+            keys: &[],
             run: |app| {
                 app.show_discovery_overlay = !app.show_discovery_overlay;
             },
@@ -1284,9 +1288,14 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "editor.open_at_cursor",
-            title: "Open path under cursor (supports `:line:col`)",
+            title: "Open path under cursor (supports `:line:col`) — palette / vim `gf`",
             group: "editor",
-            keys: &["ctrl+shift+o"],
+            // Ctrl+Shift+O used to live here too — collides with
+            // `lsp.symbols` (which is the VS Code convention "Go to
+            // Symbol in File"). Kept on lsp.symbols only; this
+            // command stays palette-only + vim `gf`. Untouched-
+            // surfaces hunt SEV-3 (2026-06-08).
+            keys: &[],
             run: |app| app.open_path_at_cursor(),
         },
         Command {
@@ -1401,8 +1410,11 @@ fn builtin_commands() -> Vec<Command> {
             title: "Command palette",
             group: "go",
             // `ctrl+shift+p` only arrives distinct under the kitty keyboard
-            // protocol; `f1` is the terminal-proof fallback (also a VSCode binding).
-            keys: &["ctrl+shift+p", "f1"],
+            // protocol. Used to also bind `f1` as a fallback, but f1
+            // also belongs to `view.help` (universal Help convention).
+            // F1 stays on Help — palette users have Ctrl+Shift+P /
+            // the `:` cmdline / `Ctrl+K p` leader chord as backups.
+            keys: &["ctrl+shift+p"],
             run: |app| app.open_command_palette(),
         },
         Command {

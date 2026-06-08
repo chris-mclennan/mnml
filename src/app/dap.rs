@@ -48,7 +48,12 @@ impl App {
     }
 
     /// `dap.clear_all_breakpoints` — clear every breakpoint in the
-    /// active buffer.
+    /// active buffer. Also clears the matching conditions / hit-counts
+    /// AND pushes the now-empty list to the live adapter — the UI
+    /// otherwise stops painting the gutter dots but the adapter
+    /// still stops execution at the remembered lines. Untouched-
+    /// surfaces hunt SEV-2 (2026-06-08); `dap_toggle_breakpoint`
+    /// already does the sync, this path was the inconsistent one.
     pub fn dap_clear_all_breakpoints(&mut self) {
         let Some(b) = self.active_editor_mut() else {
             self.toast("no active editor");
@@ -56,10 +61,24 @@ impl App {
         };
         let n = b.breakpoints.len();
         b.breakpoints.clear();
+        b.breakpoint_conditions.clear();
+        b.breakpoint_hit_conditions.clear();
+        let path = b.path.clone();
+        let lines = b.breakpoints.clone();
+        let conds = b.breakpoint_conditions.clone();
+        let hits = b.breakpoint_hit_conditions.clone();
         self.toast(format!(
             "cleared {n} breakpoint{}",
             if n == 1 { "" } else { "s" }
         ));
+        if let (Some(mgr), Some(p)) = (self.dap.as_mut(), path)
+            && mgr.initialized
+            && let Err(e) = mgr
+                .client
+                .set_breakpoints_with_conditions(&p, &lines, &conds, &hits)
+        {
+            self.toast(format!("dap setBreakpoints: {e}"));
+        }
     }
 
     /// `dap.list_breakpoints` — toast a summary of all breakpoints

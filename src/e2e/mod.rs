@@ -440,8 +440,28 @@ pub fn run_test(path: &Path) -> TestOutcome {
 }
 
 fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> {
+    // `.test` script paths must be workspace-relative. Without this
+    // guard, `write /etc/passwd "..."` would land verbatim because
+    // `Path::join` short-circuits on absolute input. Same hazard for
+    // `open` and any other future fs-touching step. Untouched-
+    // surfaces hunt SEV-2 (2026-06-08).
+    let reject_unsafe_path = |rel: &str, kw: &str| -> Result<(), String> {
+        let p = std::path::Path::new(rel);
+        if p.is_absolute() {
+            return Err(format!("{kw} {rel}: absolute paths are not allowed"));
+        }
+        if p.components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(format!(
+                "{kw} {rel}: `..` components are not allowed (would escape workspace)"
+            ));
+        }
+        Ok(())
+    };
     match step {
         Step::Write { rel, content } => {
+            reject_unsafe_path(rel, "write")?;
             let p = workspace.join(rel);
             if let Some(parent) = p.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
@@ -449,6 +469,7 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
             std::fs::write(&p, content).map_err(|e| format!("write {rel}: {e}"))
         }
         Step::Open(rel) => {
+            reject_unsafe_path(rel, "open")?;
             // `App::open_path` is the explicit-open path — pinned by
             // default. (The tree-click preview behavior lives on
             // `open_path_preview` and is only invoked by the tree

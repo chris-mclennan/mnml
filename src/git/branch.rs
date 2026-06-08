@@ -126,31 +126,39 @@ fn run(workspace: &Path, args: &[&str]) -> Result<(), String> {
     }
 }
 
-/// `git checkout <branch>` — switch to an existing local branch.
+// All branch-name args go through `--` so a user-supplied name starting
+// with `-` is treated as a positional arg, not a flag. Untouched-
+// surfaces hunt SEV-2 (2026-06-08). Mostly mitigated by git's own
+// ref-name validation (a leading `-` isn't a valid branch name
+// anyway), but the explicit separator is a one-token defense and
+// matches every git-ref-handling helper's recommended idiom.
+
+/// `git checkout -- <branch>` — switch to an existing local branch.
 pub fn checkout(workspace: &Path, branch: &str) -> Result<(), String> {
-    run(workspace, &["checkout", branch])
+    run(workspace, &["checkout", "--", branch])
 }
 /// `git checkout --track <remote>` — create + switch to a local branch tracking
-/// a remote one (git derives the local name).
+/// a remote one (git derives the local name). `--track` is positional after
+/// `--`, so we keep it before.
 pub fn checkout_track(workspace: &Path, remote: &str) -> Result<(), String> {
-    run(workspace, &["checkout", "--track", remote])
+    run(workspace, &["checkout", "--track", "--", remote])
 }
 /// `git checkout -b <name>` — create + switch to a new branch off the current HEAD.
 pub fn create(workspace: &Path, name: &str) -> Result<(), String> {
-    run(workspace, &["checkout", "-b", name])
+    run(workspace, &["checkout", "-b", name, "--"])
 }
 /// `git checkout -b <name> <source>` — create + switch to a new branch off the
 /// named source ref (a branch, tag, or commit). Used by the git-rail's
 /// "New branch from here…" so the user can pick a base without first checking
 /// it out.
 pub fn create_from(workspace: &Path, name: &str, source: &str) -> Result<(), String> {
-    run(workspace, &["checkout", "-b", name, source])
+    run(workspace, &["checkout", "-b", name, source, "--"])
 }
-/// `git branch -D <name>` — force-delete a local branch (the rail's confirm
+/// `git branch -D -- <name>` — force-delete a local branch (the rail's confirm
 /// prompt already gated this on a name match; soft-delete would refuse
 /// unmerged branches and surface as a generic git error).
 pub fn delete_branch(workspace: &Path, name: &str) -> Result<(), String> {
-    run(workspace, &["branch", "-D", name])
+    run(workspace, &["branch", "-D", "--", name])
 }
 /// `git worktree remove <path>` — drop a linked worktree. Same confirm-gating
 /// principle as branch delete.

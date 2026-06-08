@@ -298,7 +298,11 @@ mod tests {
         let ev = |s: &str| parse_key_spec(s).unwrap();
         assert_eq!(km.resolve(&ev("ctrl+q")), Some("app.quit"));
         assert_eq!(km.resolve(&ev("ctrl+p")), Some("picker.files"));
-        assert_eq!(km.resolve(&ev("f1")), Some("palette"));
+        // F1 used to also bind palette; the 2026-06-08 collision
+        // cleanup kept F1 on view.help only (universal Help
+        // convention). Palette is Ctrl+Shift+P / `Ctrl+K p` / the
+        // `:` cmdline.
+        assert_eq!(km.resolve(&ev("f1")), Some("view.help"));
         assert_eq!(km.resolve(&ev("ctrl+shift+p")), Some("palette"));
         assert_eq!(km.resolve(&ev("ctrl+b")), Some("view.toggle_tree"));
         assert_eq!(km.resolve(&ev("ctrl+z")), None);
@@ -318,7 +322,7 @@ mod tests {
         assert_eq!(km.resolve(&ev("ctrl+p")), None);
         assert_eq!(km.resolve(&ev("ctrl+b")), Some("tree.refresh"));
         // a default that wasn't touched still resolves
-        assert_eq!(km.resolve(&ev("f1")), Some("palette"));
+        assert_eq!(km.resolve(&ev("f1")), Some("view.help"));
     }
 
     #[test]
