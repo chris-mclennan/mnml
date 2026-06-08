@@ -350,6 +350,18 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::RailHeaderChip(action));
     }
+    // Test the close badge FIRST so its tooltip wins over the
+    // generic tab tooltip when the pointer is over the trailing
+    // `×`/`●` cells (the badge rect is a 2-cell strip inside the
+    // tab rect, so the generic tab arm would otherwise shadow it).
+    if let Some(&(_, pid)) = app
+        .rects
+        .bufferline_tab_close
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::BufferlineTabClose(pid));
+    }
     if let Some(&(_, pid)) = app
         .rects
         .bufferline_tabs
@@ -357,6 +369,21 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
         .find(|(r, _)| contains(*r, x, y))
     {
         return Some(crate::HoverChip::BufferlineTab(pid));
+    }
+    if let Some(r) = app.rects.bufferline_new_tab_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::BufferlineNewTab);
+    }
+    if let Some(r) = app.rects.bufferline_theme_toggle
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::BufferlineThemeToggle);
+    }
+    if let Some(r) = app.rects.bufferline_window_close
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::BufferlineWindowClose);
     }
     if let Some(&(_, _, action)) = app
         .rects

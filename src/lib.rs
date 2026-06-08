@@ -238,6 +238,23 @@ pub enum HoverChip {
     /// One icon in the rail's INTEGRATIONS section — `usize` indexes
     /// `App.config.ui.integration_icons`.
     IntegrationIcon(usize),
+    /// The bufferline `+` chip that opens a new tab. Discovered via
+    /// the mouse-hunt finding "bufferline + new-tab has no tooltip"
+    /// (2026-06-07 chrome hunt #288).
+    BufferlineNewTab,
+    /// The bufferline `●━` theme-toggle pill (handle-left / handle-
+    /// right depending on whether `theme_toggle` is at the primary
+    /// or secondary theme).
+    BufferlineThemeToggle,
+    /// The `×` / `●` close badge inside a bufferline tab. Carries
+    /// the same PaneId as the tab — the tooltip mentions whether a
+    /// click would save (dirty) or close (clean), matching the
+    /// dirty-dot-doubles-as-save semantic that landed on the right-
+    /// click menu in this batch.
+    BufferlineTabClose(crate::layout::PaneId),
+    /// The window-level close (top-right of the bufferline strip).
+    /// Closes the whole mnml process via `app.quit`.
+    BufferlineWindowClose,
 }
 
 /// One row in the F1 click-discovery overlay. Each variant maps to a list

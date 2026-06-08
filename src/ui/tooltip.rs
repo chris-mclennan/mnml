@@ -252,6 +252,55 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             };
             Some((rect, label.into(), None))
         }
+        HoverChip::BufferlineNewTab => {
+            let rect = app.rects.bufferline_new_tab_button?;
+            Some((
+                rect,
+                "new tab".into(),
+                Some("click: open a new scratch buffer".into()),
+            ))
+        }
+        HoverChip::BufferlineThemeToggle => {
+            let rect = app.rects.bufferline_theme_toggle?;
+            let cur = app.config.ui.theme.as_str();
+            Some((
+                rect,
+                format!("theme: {cur}"),
+                Some("click: toggle between configured themes".into()),
+            ))
+        }
+        HoverChip::BufferlineWindowClose => {
+            let rect = app.rects.bufferline_window_close?;
+            Some((rect, "quit mnml".into(), Some("click: app.quit".into())))
+        }
+        HoverChip::BufferlineTabClose(pid) => {
+            let rect = app
+                .rects
+                .bufferline_tab_close
+                .iter()
+                .find(|(_, p)| *p == pid)
+                .map(|(r, _)| *r)?;
+            // Dirty editors show `●` instead of `×`. Mention what a
+            // click would actually do — the close behavior is the
+            // same in both cases today (dirty triggers an unsaved-
+            // changes confirmation), so the tooltip is informational
+            // either way.
+            use crate::pane::Pane;
+            let is_dirty = matches!(app.panes.get(pid), Some(Pane::Editor(b)) if b.dirty);
+            let label = if is_dirty {
+                "unsaved changes"
+            } else {
+                "close tab"
+            };
+            Some((
+                rect,
+                label.into(),
+                Some(
+                    "click: close (prompts on unsaved) · use the tab right-click menu to Save"
+                        .into(),
+                ),
+            ))
+        }
         HoverChip::BufferlineTab(pid) => {
             let rect = app
                 .rects
