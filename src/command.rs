@@ -1330,6 +1330,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_settings(),
         },
         Command {
+            // Bug-hunt seed #276 (2026-06-08): the chord-customization
+            // infra existed but was undiscoverable. This palette
+            // command opens config.toml jumped to `[keys.standard]`,
+            // appending a documented stub when the section is missing.
+            id: "keys.edit",
+            title: "Customize keybindings (opens [keys.standard] in config.toml)",
+            group: "file",
+            keys: &[],
+            run: |app| app.open_keys_config(),
+        },
+        Command {
             id: "nav.back",
             title: "Go back (previous cursor / file)",
             group: "go",

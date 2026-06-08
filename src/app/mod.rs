@@ -59,6 +59,36 @@ const TOAST_STACK_MAX: usize = 5;
 /// How long the mouse must rest on a clickable chip before its tooltip
 /// appears. 500ms matches VS Code / browser hover-tooltip convention.
 pub const HOVER_TOOLTIP_DELAY_MS: u64 = 500;
+
+/// Stub appended to `config.toml` by `App::open_keys_config` when
+/// no `[keys.standard]` section exists yet. The body documents the
+/// schema + shows 3 examples (rebind, add, unbind) so the user has
+/// concrete patterns to copy.
+const KEYS_STANDARD_STUB: &str = r#"
+# ─── keybindings ───────────────────────────────────────────────
+# mnml resolves every chord through one table. To override a
+# default binding (or remove one, or add a new one), add a row
+# under one of these three TOML sections:
+#
+#   [keys.global]     — applies in both vim and standard input styles
+#   [keys.standard]   — overlays on top of global, standard only
+#   [keys.vim]        — overlays on top of global, vim only
+#
+# The key is a chord spec (`ctrl+s`, `f5`, `alt+shift+down`,
+# `space`, `enter`). The value is a command id from the registry
+# — run `:Maps` (or `:Keys`) inside mnml to see every chord the
+# default keymap has bound, and `Ctrl+Shift+P` to browse every
+# registered command. `"none"` / `"unbound"` removes a default.
+
+[keys.standard]
+# example: rebind Save to also fire format-on-save
+# "ctrl+s" = "file.save"
+# example: add F5 → run the build task
+# "f5" = "task.build"
+# example: remove the default Ctrl+, binding
+# "ctrl+," = "unbound"
+"#;
+
 /// How long the F1 overlay's "flash these rects" highlight stays painted
 /// after the user clicks a row in the panel.
 pub const DISCOVERY_FLASH_MS: u64 = 2000;
@@ -7337,6 +7367,58 @@ impl App {
         self.open_path(&path);
     }
 
+    /// `keys.edit` — open `config.toml` and jump the cursor to the
+    /// `[keys.standard]` section. If the section doesn't exist yet,
+    /// append a commented stub explaining the schema first so the
+    /// user has a starting point. The infrastructure to override
+    /// chords via `[keys.global]` / `[keys.vim]` / `[keys.standard]`
+    /// has existed since the keymap was config-driven; this command
+    /// closes the *discoverability* gap (bug-hunt seed #276 from the
+    /// VS-Code-keyboard hunt 2026-06-07).
+    pub fn open_keys_config(&mut self) {
+        let Some(path) = crate::config::user_config_path() else {
+            self.toast("can't resolve config path (no HOME / XDG_CONFIG_HOME)");
+            return;
+        };
+        if !path.exists() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = std::fs::write(&path, "# mnml config\n") {
+                self.toast(format!("can't create settings file: {e}"));
+                return;
+            }
+        }
+        // Read the current contents. If `[keys.standard]` is absent,
+        // append a commented stub so the user lands on something
+        // they can immediately edit (rather than an empty file).
+        let mut contents = std::fs::read_to_string(&path).unwrap_or_default();
+        let header_missing = !contents.contains("[keys.standard]");
+        if header_missing {
+            if !contents.is_empty() && !contents.ends_with('\n') {
+                contents.push('\n');
+            }
+            contents.push_str(KEYS_STANDARD_STUB);
+            if let Err(e) = std::fs::write(&path, &contents) {
+                self.toast(format!("can't append [keys.standard] stub: {e}"));
+                return;
+            }
+        }
+        self.open_path(&path);
+        // Find the `[keys.standard]` line and place the cursor on
+        // the row below the header so the user lands inside the
+        // section, ready to type a new binding.
+        let target_row = contents
+            .lines()
+            .position(|l| l.trim() == "[keys.standard]")
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(target_row, 0);
+            b.scroll = target_row.saturating_sub(3);
+        }
+    }
+
     /// Re-read the active buffer from disk, preserving cursor + scroll. Refuses
     /// when the buffer is dirty unless `force=true` (`:e!` / a "discard then
     /// reload" prompt). Notifies LSP with the new text.
@@ -8909,6 +8991,57 @@ mod tests {
     fn editing_mode_is_none_without_editor() {
         let (_d, app) = app_with_files();
         assert_eq!(app.editing_mode(), EditingMode::None);
+    }
+
+    #[test]
+    fn open_keys_config_appends_stub_when_missing() {
+        // `keys.edit` should land users INSIDE a [keys.standard]
+        // section — when the config file is missing the section,
+        // append the documented stub so the editor opens to a
+        // ready-to-copy template instead of "find a place yourself."
+        let d = tempfile::tempdir().unwrap();
+        // Force config to land in the temp dir via XDG_CONFIG_HOME.
+        // SAFETY: tests run sequentially, so the env var doesn't
+        // leak into other tests' resolution paths.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", d.path()) };
+        let cfg_path = d.path().join("mnml").join("config.toml");
+        // Pre-create with no [keys.standard] section.
+        std::fs::create_dir_all(d.path().join("mnml")).unwrap();
+        std::fs::write(&cfg_path, "[ui]\ntheme = \"onedark\"\n").unwrap();
+
+        let ws = tempfile::tempdir().unwrap();
+        let cfg = Config::default();
+        let mut app = App::new(ws.path().to_path_buf(), cfg).unwrap();
+        app.open_keys_config();
+        let contents = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(
+            contents.contains("[keys.standard]"),
+            "stub appended to config:\n{contents}"
+        );
+        // Cursor should be inside the section — at the line below
+        // the header — so the user can immediately type a new
+        // binding without navigating.
+        let (row, _) = app.active_editor().unwrap().editor.row_col();
+        let target_row = contents
+            .lines()
+            .position(|l| l.trim() == "[keys.standard]")
+            .unwrap()
+            + 1;
+        assert_eq!(
+            row, target_row,
+            "cursor landed on line below [keys.standard]"
+        );
+
+        // Idempotent: a second call should NOT append a second stub.
+        let before = std::fs::read_to_string(&cfg_path).unwrap();
+        app.open_keys_config();
+        let after = std::fs::read_to_string(&cfg_path).unwrap();
+        assert_eq!(
+            before, after,
+            "second open_keys_config didn't duplicate stub"
+        );
+
+        unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
     }
 
     #[test]
