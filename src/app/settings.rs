@@ -374,6 +374,25 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: input_idx != input_default_idx,
     }));
 
+    // wheel_moves_cursor — auto / always / never.
+    let wmc_idx = match cfg.editor.wheel_moves_cursor.as_str() {
+        "always" => 1,
+        "never" => 2,
+        _ => 0, // "auto" / anything else
+    };
+    let wmc_default_idx = match d.editor.wheel_moves_cursor.as_str() {
+        "always" => 1,
+        "never" => 2,
+        _ => 0,
+    };
+    out.push(SettingItem::Row(SettingRow {
+        key: "editor.wheel_moves_cursor",
+        label: "Mouse wheel drags cursor",
+        options: vec!["auto".into(), "always".into(), "never".into()],
+        current_idx: wmc_idx,
+        modified: wmc_idx != wmc_default_idx,
+    }));
+
     // Tab width — 2 / 4 / 8.
     let tab_idx = match cfg.editor.tab_width {
         2 => 0,
@@ -521,6 +540,16 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
             let new = if opt_idx == 0 { "vim" } else { "standard" };
             let changed = cfg.editor.input_style != new;
             cfg.editor.input_style = new.to_string();
+            changed
+        }
+        "editor.wheel_moves_cursor" => {
+            let new = match opt_idx {
+                1 => "always",
+                2 => "never",
+                _ => "auto",
+            };
+            let changed = cfg.editor.wheel_moves_cursor != new;
+            cfg.editor.wheel_moves_cursor = new.to_string();
             changed
         }
         "editor.tab_width" => {

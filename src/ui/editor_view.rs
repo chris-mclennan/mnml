@@ -144,6 +144,21 @@ pub fn draw_pane(
     }
     let (cur_row, cur_col) = buf.editor.row_col();
 
+    // `scroll_pinned` is set by mouse wheel / scrollbar drag in viewport-
+    // only mode (see `App::cursor_follows_wheel`). It bypasses the keep-
+    // cursor-in-view clamps below — the user explicitly chose this
+    // scroll. The flag self-clears the moment the cursor moves, because
+    // moving the cursor is the unambiguous "I'm taking ownership back"
+    // signal. We detect that by comparing this frame's cursor against
+    // the snapshot we stored last frame.
+    if buf.scroll_pinned {
+        match buf.last_render_cursor {
+            Some(prev) if prev == (cur_row, cur_col) => {} // unchanged — stay pinned
+            _ => buf.scroll_pinned = false,
+        }
+    }
+    buf.last_render_cursor = Some((cur_row, cur_col));
+
     // Vertical scroll — keep the cursor row in view. With folds, "row" is a
     // file-line index but visible distance is what matters. Snap `scroll` to
     // a visible line first (a fold body would render nothing as the top row).
@@ -155,25 +170,30 @@ pub fn draw_pane(
     // `[ui] scrolloff = N` ⇒ keep the cursor at least N lines from the
     // top / bottom of the viewport (vim canonical). Default 0.
     let scrolloff = app.config.ui.scrolloff.min(text_h.saturating_sub(1) / 2);
-    if cur_row < buf.scroll + scrolloff {
-        buf.scroll = cur_row.saturating_sub(scrolloff);
-    } else {
-        let vis_offset = buf.file_to_visible_row(buf.scroll, cur_row);
-        let max_offset = text_h.saturating_sub(scrolloff + 1);
-        if vis_offset >= max_offset.max(1) {
-            // Walk back `text_h - 1 - scrolloff` visible lines from cur_row.
-            let target = text_h.saturating_sub(1).saturating_sub(scrolloff);
-            let mut walk_back = target;
-            let mut line = cur_row;
-            while walk_back > 0 && line > 0 {
-                line -= 1;
-                if !buf.is_line_folded_body(line) {
-                    walk_back -= 1;
+    if !buf.scroll_pinned {
+        if cur_row < buf.scroll + scrolloff {
+            buf.scroll = cur_row.saturating_sub(scrolloff);
+        } else {
+            let vis_offset = buf.file_to_visible_row(buf.scroll, cur_row);
+            let max_offset = text_h.saturating_sub(scrolloff + 1);
+            if vis_offset >= max_offset.max(1) {
+                // Walk back `text_h - 1 - scrolloff` visible lines from cur_row.
+                let target = text_h.saturating_sub(1).saturating_sub(scrolloff);
+                let mut walk_back = target;
+                let mut line = cur_row;
+                while walk_back > 0 && line > 0 {
+                    line -= 1;
+                    if !buf.is_line_folded_body(line) {
+                        walk_back -= 1;
+                    }
                 }
+                buf.scroll = line;
             }
-            buf.scroll = line;
         }
     }
+    // Tail clamp — runs even when pinned: never let `scroll` go past the
+    // point where the last lines fit on screen. Pure document-bounds
+    // guard, not a cursor-related clamp.
     buf.scroll = buf
         .scroll
         .min(line_count.saturating_sub(text_h.min(line_count)));
@@ -183,8 +203,8 @@ pub fn draw_pane(
     // take multiple visual rows. Walk the visual rows from `buf.scroll`
     // and bump `buf.scroll` forward until the cursor's visual offset
     // fits in `text_h`. Pure correction — never moves scroll above
-    // what the file-line logic computed.
-    if app.config.ui.wrap && tw > 0 && text_h > 0 {
+    // what the file-line logic computed. Skipped when pinned.
+    if !buf.scroll_pinned && app.config.ui.wrap && tw > 0 && text_h > 0 {
         loop {
             let mut vy: usize = 0;
             let mut line = buf.scroll;

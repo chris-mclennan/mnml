@@ -235,6 +235,14 @@ pub struct EditorConfig {
     /// `[editor] ensure_trailing_newline = false` for files that need a
     /// strictly-no-trailing-newline format.
     pub ensure_trailing_newline: bool,
+    /// Whether the mouse wheel + scrollbar drag also drag the cursor along.
+    /// `"auto"` (default) picks per `input_style`: vim ⇒ cursor follows the
+    /// viewport (matches `Ctrl+E`/`Ctrl+Y` vim canon); standard ⇒ viewport
+    /// moves independently of the cursor (matches VS Code / Sublime — the
+    /// cursor can leave the viewport and the scrollbar thumb anchors
+    /// position). `"always"` and `"never"` force the policy regardless of
+    /// input style.
+    pub wheel_moves_cursor: String,
 }
 
 #[derive(Debug, Clone)]
@@ -525,6 +533,7 @@ impl Default for Config {
                 code_lens: true,
                 text_width: 80,
                 ensure_trailing_newline: true,
+                wheel_moves_cursor: "auto".to_string(),
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),
@@ -1051,6 +1060,7 @@ struct RawEditor {
     code_lens: Option<bool>,
     text_width: Option<usize>,
     ensure_trailing_newline: Option<bool>,
+    wheel_moves_cursor: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1193,6 +1203,14 @@ impl Config {
         }
         if let Some(v) = raw.editor.ensure_trailing_newline {
             self.editor.ensure_trailing_newline = v;
+        }
+        if let Some(v) = raw.editor.wheel_moves_cursor {
+            // Validate at merge time so a typo doesn't silently behave
+            // as "never". Unknown values fall back to "auto".
+            self.editor.wheel_moves_cursor = match v.as_str() {
+                "auto" | "always" | "never" => v,
+                _ => "auto".to_string(),
+            };
         }
         if let Some(v) = raw.ui.theme {
             self.ui.theme = v;

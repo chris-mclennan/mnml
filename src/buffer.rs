@@ -301,6 +301,22 @@ pub struct Buffer {
     /// `edit_history.len()` ⇒ "past the newest entry" (the next `g;` jumps
     /// to the most recent edit, then walks back).
     pub edit_history_cursor: usize,
+    /// When `true`, the editor renderer's "snap viewport to keep cursor in
+    /// view" clamp is bypassed — `[Self::scroll]` was last set explicitly
+    /// (mouse wheel or scrollbar drag in a mode where the cursor doesn't
+    /// follow the viewport, see `[editor] wheel_moves_cursor`). The flag
+    /// self-clears the moment the cursor moves (the renderer compares
+    /// `cur_row` to `[Self::last_render_cursor_row]` each frame and
+    /// resets when they differ). This lets a standard-mode user wheel
+    /// past their cursor without the next render yanking the viewport
+    /// back; the moment they type, the keep-in-view clamp re-engages.
+    pub scroll_pinned: bool,
+    /// `(row, col)` snapshot taken at the end of the previous editor
+    /// render. Used solely to detect cursor movement frame-to-frame so
+    /// `[Self::scroll_pinned]` can self-clear. `None` until the first
+    /// render. Not load-bearing for anything else — safe to wipe on
+    /// session restore.
+    pub last_render_cursor: Option<(usize, usize)>,
 }
 
 /// Cap for [`Buffer::edit_history`] — keeps the most recent N change
@@ -364,6 +380,8 @@ impl Buffer {
             folds: std::collections::BTreeMap::new(),
             edit_history: Vec::new(),
             edit_history_cursor: 0,
+            scroll_pinned: false,
+            last_render_cursor: None,
         };
         b.refresh_highlights();
         Ok(b)
@@ -440,6 +458,8 @@ impl Buffer {
                     folds: std::collections::BTreeMap::new(),
                     edit_history: Vec::new(),
                     edit_history_cursor: 0,
+                    scroll_pinned: false,
+                    last_render_cursor: None,
                 };
                 b.refresh_highlights();
                 Ok(b)
@@ -515,6 +535,8 @@ impl Buffer {
             folds: std::collections::BTreeMap::new(),
             edit_history: Vec::new(),
             edit_history_cursor: 0,
+            scroll_pinned: false,
+            last_render_cursor: None,
         }
     }
 

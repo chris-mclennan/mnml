@@ -6959,9 +6959,22 @@ impl App {
     /// (the rect was painted last frame; the user could have closed
     /// the pane in between).
     pub fn set_pane_scroll(&mut self, pane_id: PaneId, kind: ScrollbarKind, scroll: usize) {
+        // Resolved up-front: a scrollbar drag follows the same policy
+        // as the mouse wheel (see `Self::cursor_follows_wheel`). Read
+        // before the &mut borrow on `self.panes` below.
+        let follows_cursor = matches!(kind, ScrollbarKind::Editor | ScrollbarKind::EditorHScroll)
+            && self.cursor_follows_wheel();
         match (kind, self.panes.get_mut(pane_id)) {
             (ScrollbarKind::Editor, Some(Pane::Editor(b))) => {
-                b.scroll = scroll;
+                if follows_cursor {
+                    // Drag cursor along — same as the editor wheel in
+                    // cursor-follows mode. Renderer's keep-cursor-in-
+                    // view will hold the scroll where the cursor is.
+                    b.editor.place_cursor(scroll, 0);
+                } else {
+                    b.scroll = scroll;
+                    b.scroll_pinned = true;
+                }
             }
             (ScrollbarKind::EditorHScroll, Some(Pane::Editor(b))) => {
                 b.h_scroll = scroll;
@@ -7380,6 +7393,26 @@ impl App {
                 .map(Buffer::editing_mode)
                 .unwrap_or(EditingMode::None),
             _ => EditingMode::None,
+        }
+    }
+
+    /// Whether the editor mouse wheel + scrollbar drag should drag the
+    /// cursor along with the viewport. Resolves the
+    /// `[editor] wheel_moves_cursor` policy:
+    ///   - `"always"` ⇒ true (cursor + viewport move together)
+    ///   - `"never"` ⇒ false (viewport-only, cursor stays put — may
+    ///     scroll off-screen; the scrollbar thumb is the position cue)
+    ///   - `"auto"` (default) ⇒ true under vim input style (matches
+    ///     `Ctrl+E` / `Ctrl+Y` canon), false under standard (matches
+    ///     VS Code / Sublime).
+    ///
+    /// Called from `scroll_under` (wheel) and `set_pane_scroll`
+    /// (scrollbar drag), so both surfaces agree.
+    pub fn cursor_follows_wheel(&self) -> bool {
+        match self.config.editor.wheel_moves_cursor.as_str() {
+            "always" => true,
+            "never" => false,
+            _ => self.config.editor.input_style == "vim",
         }
     }
 
@@ -8848,6 +8881,39 @@ mod tests {
     fn editing_mode_is_none_without_editor() {
         let (_d, app) = app_with_files();
         assert_eq!(app.editing_mode(), EditingMode::None);
+    }
+
+    #[test]
+    fn cursor_follows_wheel_resolves_per_policy_and_mode() {
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        // Default config: input_style = "standard", wheel_moves_cursor = "auto"
+        // ⇒ cursor pinned (VS Code canon).
+        let app = App::new(d.path().to_path_buf(), cfg.clone()).unwrap();
+        assert!(
+            !app.cursor_follows_wheel(),
+            "standard + auto ⇒ cursor pinned"
+        );
+
+        // vim + auto ⇒ cursor follows (Ctrl+E / Ctrl+Y canon).
+        cfg.editor.input_style = "vim".to_string();
+        let app = App::new(d.path().to_path_buf(), cfg.clone()).unwrap();
+        assert!(app.cursor_follows_wheel(), "vim + auto ⇒ cursor follows");
+
+        // "always" overrides standard mode.
+        cfg.editor.input_style = "standard".to_string();
+        cfg.editor.wheel_moves_cursor = "always".to_string();
+        let app = App::new(d.path().to_path_buf(), cfg.clone()).unwrap();
+        assert!(
+            app.cursor_follows_wheel(),
+            "standard + always ⇒ cursor follows"
+        );
+
+        // "never" overrides vim mode.
+        cfg.editor.input_style = "vim".to_string();
+        cfg.editor.wheel_moves_cursor = "never".to_string();
+        let app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        assert!(!app.cursor_follows_wheel(), "vim + never ⇒ cursor pinned");
     }
 
     #[test]
