@@ -108,6 +108,13 @@ impl InputHandler for StandardInputHandler {
             KeyCode::Right if ctrl && !alt => mv(MoveWordRight),
             KeyCode::Left => mv(MoveLeft),
             KeyCode::Right => mv(MoveRight),
+            // VS Code parity (bug-hunt seed #274 from 2026-06-07):
+            // Shift+Alt+↓ / ↑ duplicates the current line down / up.
+            // Plain Alt+↓ / ↑ stays "move line" — distinct from
+            // Ctrl+Shift+D (which also duplicates but doesn't choose
+            // direction).
+            KeyCode::Up if alt && shift => InputResult::Ops(vec![DuplicateLine, MoveUp]),
+            KeyCode::Down if alt && shift => InputResult::Ops(vec![DuplicateLine]),
             KeyCode::Up if alt => InputResult::Ops(vec![MoveLineUp]),
             KeyCode::Down if alt => InputResult::Ops(vec![MoveLineDown]),
             // Vim-aligned aliases for line shift in standard mode too.
@@ -354,6 +361,30 @@ mod tests {
             ops(r),
             want_one_cell_left,
             "Ctrl+Alt+Left should be a plain MoveLeft, not MoveWordLeft"
+        );
+    }
+
+    /// Shift+Alt+↓ / ↑ duplicate the current line (VS Code parity,
+    /// bug-hunt seed #274). Plain Alt+↓ / ↑ still moves the line —
+    /// the Shift modifier is what distinguishes "duplicate" from
+    /// "move."
+    #[test]
+    fn shift_alt_down_duplicates_line() {
+        let mods = KeyModifiers::SHIFT | KeyModifiers::ALT;
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Down, mods), &ctx(false))),
+            vec![EditOp::DuplicateLine]
+        );
+        // Shift+Alt+Up: duplicate, then move up to land cursor on
+        // the new copy above (matches VS Code's "duplicate up").
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Up, mods), &ctx(false))),
+            vec![EditOp::DuplicateLine, EditOp::MoveUp]
+        );
+        // Plain Alt+Down still moves the line (didn't regress).
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Down, KeyModifiers::ALT), &ctx(false))),
+            vec![EditOp::MoveLineDown]
         );
     }
 

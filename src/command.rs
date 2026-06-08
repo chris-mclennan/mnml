@@ -2426,7 +2426,9 @@ fn builtin_commands() -> Vec<Command> {
             id: "lsp.rename",
             title: "LSP: rename symbol",
             group: "lsp",
-            keys: &[],
+            // VS Code parity (F2). Bug-hunt seed #275 from the
+            // VS-Code-keyboard hunt 2026-06-07 — chord was unbound.
+            keys: &["f2"],
             run: |app| app.lsp_rename(),
         },
         Command {
@@ -3135,7 +3137,10 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.split_right",
             title: "Split editor right (side by side)",
             group: "view",
-            keys: &[],
+            // VS Code parity (Ctrl+\\). Bug-hunt seed #273 from the
+            // VS-Code-keyboard hunt 2026-06-07 — chord was unbound.
+            // (Ctrl+T is the scratch-terminal toggle, NOT split.)
+            keys: &["ctrl+\\"],
             run: |app| app.split_active(crate::layout::SplitDir::Horizontal),
         },
         Command {

@@ -61,6 +61,10 @@ pub fn root() -> &'static Leader {
                         vec![
                             ('f', cmd("picker.files", "files")),
                             ('b', cmd("picker.buffers", "buffers")),
+                            // NvChad parity: `<leader>fg` = workspace
+                            // grep. Bug-hunt seed #272 from 2026-06-07
+                            // nvchad-user hunt — chord was missing.
+                            ('g', cmd("find.grep", "grep")),
                         ],
                     ),
                 ),
