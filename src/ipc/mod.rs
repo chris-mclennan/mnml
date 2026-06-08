@@ -131,19 +131,34 @@ impl Ipc {
         let screen_path = dir.join("screen.txt");
         let status_path = dir.join("status.json");
         let events_path = dir.join("events.jsonl");
+        // Snapshot any bytes the host pre-queued before our launch
+        // and log them as a discrete event — `Ipc::init` then
+        // truncates the channel so the live loop starts clean.
+        // Without this, hosts that wrote commands then launched
+        // mnml would silently lose those commands and hang waiting
+        // for state changes that never came. 2026-06-07 bug-hunt SEV-3.
+        let pre_queued = std::fs::read_to_string(&cmd_path).unwrap_or_default();
         // Truncate the command channel + events log so we start clean.
         std::fs::write(&cmd_path, b"")?;
         std::fs::write(&events_path, b"")?;
         std::fs::write(&screen_path, b"")?;
         std::fs::write(&status_path, b"{}")?;
-        Ok(Ipc {
+        let ipc = Ipc {
             dir,
             cmd_path,
             screen_path,
             status_path,
             events_path,
             cmd_offset: 0,
-        })
+        };
+        if !pre_queued.is_empty() {
+            let lines = pre_queued.lines().count();
+            ipc.append_event(&format!(
+                "{{\"event\":\"ipc_init_truncated\",\"bytes\":{bytes},\"lines\":{lines}}}",
+                bytes = pre_queued.len(),
+            ));
+        }
+        Ok(ipc)
     }
 
     pub fn dir(&self) -> &Path {

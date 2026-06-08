@@ -24,6 +24,11 @@ impl App {
             Ok(c) => c,
             Err(e) => {
                 self.toast(format!("host.launch: {e}"));
+                // Signal upward so command::run reports ok=false to
+                // the events log — interactive users see the toast,
+                // but headless callers + plugin authors otherwise
+                // get a misleading ok=true. 2026-06-07 bug-hunt SEV-3.
+                self.last_command_failed = true;
                 return;
             }
         };

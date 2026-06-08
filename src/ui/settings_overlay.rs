@@ -280,7 +280,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     } else {
         0
     };
-    let window: Vec<Line<'static>> = lines.iter().skip(scroll).take(body_h).cloned().collect();
+    // Truncate each line to fit inner.width — without this, long
+    // descriptions used to cut mid-word at the right border with no
+    // indicator (looked broken). 2026-06-07 bug-hunt SEV-3.
+    let window: Vec<Line<'static>> = lines
+        .iter()
+        .skip(scroll)
+        .take(body_h)
+        .map(|l| truncate_line_to_width(l, inner.width as usize))
+        .collect();
     let body_rect = Rect {
         x: inner.x,
         y: inner.y,
@@ -318,4 +326,37 @@ fn parse_hex_rgb(hex: &str) -> Option<Color> {
     let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
     let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
     Some(Color::Rgb(r, g, b))
+}
+
+/// Truncate a `Line<'static>` (span-by-span) so its total char count
+/// doesn't exceed `max_width`. If truncation happens, append `…` as
+/// a final span to surface that something was cut (without it, the
+/// row reads as broken mid-word at the right border). Width is char
+/// count, not display width — sufficient for the settings overlay
+/// where labels + values are ASCII/Latin.
+fn truncate_line_to_width(line: &Line<'static>, max_width: usize) -> Line<'static> {
+    let total: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+    if total <= max_width {
+        return line.clone();
+    }
+    // Reserve 1 char for the trailing `…` marker.
+    let budget = max_width.saturating_sub(1);
+    let mut used = 0usize;
+    let mut out_spans: Vec<Span<'static>> = Vec::with_capacity(line.spans.len() + 1);
+    for span in &line.spans {
+        let span_len = span.content.chars().count();
+        if used + span_len <= budget {
+            out_spans.push(span.clone());
+            used += span_len;
+        } else {
+            let take = budget.saturating_sub(used);
+            if take > 0 {
+                let s: String = span.content.chars().take(take).collect();
+                out_spans.push(Span::styled(s, span.style));
+            }
+            break;
+        }
+    }
+    out_spans.push(Span::styled("…", Style::default().fg(Color::DarkGray)));
+    Line::from(out_spans)
 }

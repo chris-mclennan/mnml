@@ -2485,6 +2485,18 @@ pub struct App {
     /// next paint so a scrambled terminal repaints cleanly. The crossterm loop
     /// checks + clears this flag at the top of each iteration.
     pub redraw_requested: bool,
+    /// Set by command handlers that fail in a way the user already
+    /// saw via a toast — `command::run` checks this after invoking
+    /// the closure to report `ok=false` in the events log. Reset to
+    /// `false` before each `run` call so commands signal failure
+    /// without needing to thread Result types through every handler
+    /// closure.
+    ///
+    /// Bug-hunt SEV-3 fix 2026-06-07: `forge.open_lambda` + siblings
+    /// used to report `ok=true` even when the underlying `host.launch`
+    /// failed (binary not on PATH); headless callers + plugin
+    /// authors couldn't tell.
+    pub last_command_failed: bool,
     /// Statusline clock chip flips to UTC when true. Toggled by clicking
     /// the chip; persisted across launches via `SavedSession.clock_show_utc`.
     pub clock_show_utc: bool,
@@ -3105,6 +3117,7 @@ impl App {
             should_quit: false,
             restart_requested: false,
             redraw_requested: false,
+            last_command_failed: false,
             clock_show_utc: false,
             now_playing: None,
             now_playing_rx: None,

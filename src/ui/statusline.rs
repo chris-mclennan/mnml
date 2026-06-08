@@ -94,6 +94,21 @@ impl Seg {
     }
 }
 
+/// Shorten `s` so its char count is at most `target_cols`. Appends
+/// `…` as a marker that truncation happened. Tries to preserve the
+/// leading single-space padding many segs have (better visual fit).
+fn ellipsize(s: &str, target_cols: usize) -> String {
+    let cur = s.chars().count();
+    if cur <= target_cols {
+        return s.to_string();
+    }
+    // Reserve 1 char for the trailing `…`.
+    let take = target_cols.saturating_sub(1);
+    let mut out: String = s.chars().take(take).collect();
+    out.push('…');
+    out
+}
+
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(
         Paragraph::new("").style(Style::default().bg(theme::cur().statusline)),
@@ -484,6 +499,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // a future settings/about pane will own the long-form display.)
 
     // ── render: left segments + spacer + right segments, with `` / `` transitions ──
+    // First measure the right lane so we know how much room left has;
+    // then trim the longest left seg with `…` if left + right would
+    // overflow. Without this, a long filename pushed every right-side
+    // chip (mixr, line/col, clock, workspace, ext) off-screen — the
+    // 2026-06-07 bug-hunt SEV-3 finding.
+    let (_, projected_right_used, _) = render_right(&right, arrows, theme::cur().statusline);
+    let projected_left_used: usize = left.iter().map(|s| s.cols()).sum();
+    // Reserve at least 4 cells between left and right when they'd otherwise touch.
+    let min_gap = 4_usize;
+    let avail_for_left = width.saturating_sub(projected_right_used + min_gap);
+    if projected_left_used > avail_for_left
+        && let Some((longest_idx, _)) = left.iter().enumerate().max_by_key(|(_, s)| s.cols())
+    {
+        let overshoot = projected_left_used - avail_for_left;
+        let cur_cols = left[longest_idx].cols();
+        let target_cols = cur_cols.saturating_sub(overshoot).max(3);
+        if target_cols < cur_cols {
+            left[longest_idx].text = ellipsize(&left[longest_idx].text, target_cols);
+        }
+    }
     let (mut spans, used, left_rects) = render_left(&left, arrows, theme::cur().statusline);
     let (right_spans, right_used, right_rects) =
         render_right(&right, arrows, theme::cur().statusline);

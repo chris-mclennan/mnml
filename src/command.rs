@@ -83,11 +83,17 @@ pub fn registry() -> &'static Registry {
 /// plugin-registered (`DynCommand`) id is queued for the IPC layer to report.
 /// Returns false if the id matches neither.
 pub fn run(id: &str, app: &mut App) -> bool {
+    // Reset the per-call failure flag — handlers that fail in a way
+    // the user already saw via a toast (host.launch missing binary,
+    // etc.) set it before returning, and we honor that below.
+    // 2026-06-07 bug-hunt SEV-3: forge.open_* + sibling launchers
+    // used to report ok=true even when the binary wasn't on PATH.
+    app.last_command_failed = false;
     let ok = if let Some(cmd) = registry().get(id) {
         (cmd.run)(app);
-        true
+        !app.last_command_failed
     } else if app.run_dynamic_command(id) {
-        true
+        !app.last_command_failed
     } else {
         app.toast(format!("no such command: {id}"));
         false
