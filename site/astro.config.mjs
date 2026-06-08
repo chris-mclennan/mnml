@@ -88,6 +88,8 @@ export default defineConfig({
             { label: 'Activity bar', slug: 'manual/activity-bar' },
             { label: 'Startup picker', slug: 'manual/startup-picker' },
             { label: 'Editing', slug: 'manual/editing' },
+            { label: 'Coming from NvChad', slug: 'manual/coming-from-nvchad' },
+            { label: 'Coming from VS Code', slug: 'manual/coming-from-vscode' },
             { label: 'LSP', slug: 'manual/lsp' },
             { label: 'Git', slug: 'manual/git' },
             { label: 'HTTP client', slug: 'manual/http' },
