@@ -1,0 +1,15 @@
+# Vim-mode counterpart to mouse_editor_cursor.test. A left-click in
+# the editor body places the cursor on that line AND must NOT
+# inadvertently change mode (NORMAL stays NORMAL — only the chip
+# click on the statusline mode-segment toggles input style).
+command editor.use_vim
+write doc.txt "ED01\nED02\nED03\nED04\nED05\nED06\nED07\nED08\nED09\nED10\nED11\nED12\nED13\nED14\nED15\nED16\nED17\nED18\nED19\nED20"
+open doc.txt
+command view.toggle_tree
+expect screen contains "NORMAL"
+expect screen contains "Ln 1"
+
+# Same coords as the standard-mode test: y=10 ⇒ file line 9.
+click 40 10
+expect screen contains "Ln 9"
+expect screen contains "NORMAL"

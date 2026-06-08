@@ -1,0 +1,21 @@
+# Editor vertical scrollbar — drag the thumb to scroll the viewport.
+# Standard mode default ⇒ cursor pinned: the `Ln` chip should NOT
+# change, but the visible file lines should jump (scroll_pinned
+# semantic). Regression lock for both the SEV-3 "scrollbar isn't
+# draggable" finding AND the mode-aware drag path landed in 98b2b41.
+write long.txt "S01\nS02\nS03\nS04\nS05\nS06\nS07\nS08\nS09\nS10\nS11\nS12\nS13\nS14\nS15\nS16\nS17\nS18\nS19\nS20\nS21\nS22\nS23\nS24\nS25\nS26\nS27\nS28\nS29\nS30\nS31\nS32\nS33\nS34\nS35\nS36\nS37\nS38\nS39\nS40\nS41\nS42\nS43\nS44\nS45\nS46\nS47\nS48\nS49\nS50"
+open long.txt
+command view.toggle_tree
+expect screen contains "S01"
+expect screen contains "Ln 1/50"
+
+# Vertical scrollbar lives at col 119 (area.x + area.width - 1) when
+# the tree is hidden on the 120-wide e2e screen. Drag the thumb from
+# the top of the bar (~row 2) to roughly two-thirds down (~row 25).
+# That maps proportionally onto the 50-line document. Anywhere
+# meaningfully below the top should push S01 off-screen.
+drag 119 2 119 25
+expect screen lacks "S01"
+# Cursor stayed put — standard-mode scroll is viewport-only by
+# default. The Ln chip is the proof.
+expect screen contains "Ln 1/50"

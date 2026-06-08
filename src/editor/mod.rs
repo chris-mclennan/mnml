@@ -1226,6 +1226,19 @@ impl Editor {
         self.goal_col = self.col_at_byte(self.cursor);
         self.in_insert_run = false;
     }
+    /// Like [`Self::place_cursor`] but preserves the active selection
+    /// anchor — moving the cursor extends the selection instead of
+    /// clearing it. Used by mouse drag-select (after `SelectStart`
+    /// has dropped the anchor at the click origin); each Drag event
+    /// then extends the cursor to the current pointer cell without
+    /// the per-event place_cursor wiping the anchor — the chrome-hunt
+    /// SEV-2 "drag-select moves cursor but doesn't create selection."
+    pub fn extend_cursor_to(&mut self, row: usize, col: usize) {
+        let row = row.min(self.line_count().saturating_sub(1));
+        self.cursor = self.byte_at_col(row, col);
+        self.goal_col = self.col_at_byte(self.cursor);
+        self.in_insert_run = false;
+    }
     /// `(row, col)` of the cursor, 0-based, col in chars.
     pub fn row_col(&self) -> (usize, usize) {
         let row = self.current_line();

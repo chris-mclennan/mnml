@@ -81,6 +81,17 @@ enum Step {
         y: u16,
         action: MouseAction,
     },
+    /// A left-button drag: `Down` at `(from_x, from_y)`, then a
+    /// Bresenham-style sequence of intermediate `Drag` events to
+    /// `(to_x, to_y)`, then `Up`. Mirrors the IPC `drag` command's
+    /// path so .test scripts can exercise drag-select / scrollbar
+    /// drag / tab reorder.
+    Drag {
+        from_x: u16,
+        from_y: u16,
+        to_x: u16,
+        to_y: u16,
+    },
 }
 
 /// What a `Step::Mouse` does at its `(x, y)`.
@@ -233,6 +244,17 @@ fn parse(text: &str) -> Result<Vec<Line>, String> {
                     },
                 };
                 Stmt::Step(Step::Mouse { x, y, action })
+            }
+            "drag" => {
+                // Form: `drag FROM_X FROM_Y TO_X TO_Y`.
+                let (from_x, from_y, r1) = parse_xy(ln, "drag", rest)?;
+                let (to_x, to_y, _r2) = parse_xy(ln, "drag", &r1)?;
+                Stmt::Step(Step::Drag {
+                    from_x,
+                    from_y,
+                    to_x,
+                    to_y,
+                })
             }
             "expect" => parse_expect(ln, rest)?,
             other => return Err(format!("line {ln}: unknown statement `{other}`")),
@@ -542,6 +564,41 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
                     crate::tui::dispatch_mouse(app, ev(MouseEventKind::ScrollDown));
                 }
             }
+            Ok(())
+        }
+        Step::Drag {
+            from_x,
+            from_y,
+            to_x,
+            to_y,
+        } => {
+            // Same path as the IPC `drag` command in `src/ipc/mod.rs`:
+            // Down at source, Bresenham-style interpolated `Drag`
+            // events ~1 per cell, Up at destination.
+            let ev = |kind, col, row| MouseEvent {
+                kind,
+                column: col,
+                row,
+                modifiers: KeyModifiers::NONE,
+            };
+            crate::tui::dispatch_mouse(
+                app,
+                ev(MouseEventKind::Down(MouseButton::Left), *from_x, *from_y),
+            );
+            let steps = (to_x.abs_diff(*from_x)).max(to_y.abs_diff(*from_y)) as usize;
+            for s in 1..=steps {
+                let t = s as f32 / steps as f32;
+                let cx = (*from_x as f32 + (*to_x as f32 - *from_x as f32) * t).round() as u16;
+                let cy = (*from_y as f32 + (*to_y as f32 - *from_y as f32) * t).round() as u16;
+                crate::tui::dispatch_mouse(
+                    app,
+                    ev(MouseEventKind::Drag(MouseButton::Left), cx, cy),
+                );
+            }
+            crate::tui::dispatch_mouse(
+                app,
+                ev(MouseEventKind::Up(MouseButton::Left), *to_x, *to_y),
+            );
             Ok(())
         }
     }

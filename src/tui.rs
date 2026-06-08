@@ -3827,7 +3827,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             } else if let Some((pid, ox, oy, armed)) = app.drag_select {
                 // Editor drag-select: drop the anchor at the click origin
                 // (first drag only), then extend the cursor to the current
-                // mouse position.
+                // mouse position WITHOUT wiping the anchor on each tick —
+                // `place_cursor` would clear it, so we use
+                // `extend_cursor_to` here. This fixes the SEV-2 chrome-
+                // hunt finding "drag-select moves cursor but doesn't
+                // create selection." Vim mode: ditto, plus VISUAL chip
+                // turns on because anchor != None ⇒ `has_selection`.
                 let wrap = app.config.ui.wrap;
                 if let Some(&(tr, p2)) = app
                     .rects
@@ -3845,9 +3850,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                             tr.height as usize,
                             &mut app.clipboard,
                         );
+                        // Vim ⇒ flip to VISUAL so the mode chip + the
+                        // motion semantics agree the user is selecting.
+                        // Standard ⇒ no-op (selection is editor-driven,
+                        // see `InputHandler::request_visual_mode` docs).
+                        b.input.request_visual_mode();
                         app.drag_select = Some((pid, ox, oy, true));
                     }
-                    b.editor.place_cursor(row, col);
+                    b.editor.extend_cursor_to(row, col);
                 }
             } else {
                 app.drag_divider_to(x, y);

@@ -1,0 +1,15 @@
+# Standard-mode drag-select on the editor body produces a real
+# selection. SEV-2 chrome-hunt finding (2026-06-07) was "drag-select
+# moves cursor but doesn't create selection — `Sel N` indicator
+# absent." This test is the regression lock.
+write doc.txt "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+open doc.txt
+command view.toggle_tree
+expect screen contains "Ln 1"
+
+# Drag from column 10 to column 20 on screen row 2 (the first editor
+# body row, since palette = row 0, bufferline = row 1). The cursor
+# anchor lands at col 10 (file col 10 with no gutter offset assumed),
+# then extends to col 20 — 10 chars selected.
+drag 10 2 20 2
+expect screen contains "Sel "

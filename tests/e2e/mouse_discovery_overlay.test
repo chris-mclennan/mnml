@@ -1,0 +1,16 @@
+# `+ Add integration` overlay opens via `integrations.add`, and any
+# left-click dismisses it (2026-06-07 fix: previously trapped the
+# mouse). Regression lock for the click-outside-to-dismiss flow.
+write a.txt hello
+open a.txt
+command view.toggle_tree
+
+command integrations.add
+expect screen contains "+ Add integration"
+
+# Click anywhere — the dispatch matches *any* MouseEventKind::Down at
+# the overlay level and unconditionally clears it. (1, 1) is well
+# outside the centered panel so this is unambiguously a "click
+# outside" gesture.
+click 1 1
+expect screen lacks "+ Add integration"
