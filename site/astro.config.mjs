@@ -92,6 +92,7 @@ export default defineConfig({
             { label: 'Coming from VS Code', slug: 'manual/coming-from-vscode' },
             { label: 'Cheatsheet — NvChad chord map', slug: 'manual/cheatsheet-nvchad' },
             { label: 'Cheatsheet — VS Code chord map', slug: 'manual/cheatsheet-vscode' },
+            { label: 'Cheatsheet — all chords', slug: 'manual/cheatsheet-all' },
             { label: 'LSP', slug: 'manual/lsp' },
             { label: 'Git', slug: 'manual/git' },
             { label: 'HTTP client', slug: 'manual/http' },
