@@ -57,6 +57,24 @@ struct RawCommand {
     /// `"ctrl"`, `"alt"`, `"shift"`, `"super"`. Case-insensitive.
     #[serde(default)]
     mods: Option<String>,
+    /// `expect_screen` / `expect_status`: assertion mode.
+    /// `"contains"` (default) or `"lacks"`. (The substring itself
+    /// reuses the `text` field above — same as `type`.)
+    #[serde(default)]
+    expect: Option<String>,
+    /// `wait_ms`: milliseconds to sleep before processing the next
+    /// command. Lets async work (LSP, git, AI) settle before
+    /// snapshot / assertion.
+    #[serde(default)]
+    ms: Option<u64>,
+    /// `drag`: source + destination cell coords. `from_col, from_row`
+    /// hold the press point; `col, row` (re-used from click) hold
+    /// the release point. Synthesizes Down(left) → Drag(left)
+    /// per-step → Up(left).
+    #[serde(default)]
+    from_col: Option<u16>,
+    #[serde(default)]
+    from_row: Option<u16>,
 }
 
 #[derive(Debug)]
@@ -86,6 +104,26 @@ pub enum IpcCommand {
     /// bottom). Fired `|dy|` times so callers can simulate a single
     /// vs multi-tick wheel motion.
     Scroll { col: u16, row: u16, dy: i32 },
+    /// Synthetic mouse drag from `(from_col, from_row)` to `(col, row)`.
+    /// Synthesizes Down(left) at the source, a sequence of Drag events
+    /// along a Bresenham-style path to the destination (one event per
+    /// cell traversed, so a 10-cell drag fires ~10 events), and Up(left)
+    /// at the destination. Tests splitter resize + tab drag-reorder.
+    Drag {
+        from_col: u16,
+        from_row: u16,
+        col: u16,
+        row: u16,
+    },
+    /// Sleep for `ms` milliseconds. Lets async work (LSP responses,
+    /// git refreshes, AI completions, IO) settle before the next
+    /// `snapshot` / `expect_screen`.
+    Wait { ms: u64 },
+    /// Assert that `screen.txt` contains (or lacks) `text`. Writes
+    /// an event with `ok=true|false` to `events.jsonl` so a host
+    /// script can assert pre/post-condition without round-tripping
+    /// through file reads.
+    ExpectScreen { text: String, contains: bool },
     /// Run a registered command by id (builtin or plugin-registered).
     RunCommand(String),
     /// Register a plugin command (`id`, `title`, `group`, `keys`).
@@ -273,6 +311,29 @@ fn parse_command(line: &str) -> IpcCommand {
             },
             _ => IpcCommand::Unknown(line.to_string()),
         },
+        "drag" => match (raw.from_col, raw.from_row, raw.col, raw.row) {
+            (Some(fc), Some(fr), Some(tc), Some(tr)) => IpcCommand::Drag {
+                from_col: fc,
+                from_row: fr,
+                col: tc,
+                row: tr,
+            },
+            _ => IpcCommand::Unknown(line.to_string()),
+        },
+        "wait_ms" => match raw.ms {
+            Some(ms) => IpcCommand::Wait { ms },
+            None => IpcCommand::Unknown(line.to_string()),
+        },
+        "expect_screen" => match raw.text {
+            Some(t) => {
+                let contains = match raw.expect.as_deref() {
+                    Some("lacks") => false,
+                    _ => true, // default: contains
+                };
+                IpcCommand::ExpectScreen { text: t, contains }
+            }
+            None => IpcCommand::Unknown(line.to_string()),
+        },
         "snapshot" => IpcCommand::Snapshot,
         "quit" => IpcCommand::Quit,
         "restart" => IpcCommand::Restart,
@@ -458,6 +519,79 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
                 ("event", "hover"),
                 ("col", &col.to_string()),
                 ("row", &row.to_string()),
+            ])
+        }
+        IpcCommand::Drag {
+            from_col,
+            from_row,
+            col,
+            row,
+        } => {
+            use ratatui::crossterm::event::{
+                KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+            };
+            // Press at source.
+            crate::tui::dispatch_mouse(
+                app,
+                MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: *from_col,
+                    row: *from_row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
+            // Bresenham-style linear-interpolated path, ~1 event per
+            // cell. Avoids spamming hundreds of events for long drags
+            // + keeps short drags responsive.
+            let steps = (col.abs_diff(*from_col)).max(row.abs_diff(*from_row)) as usize;
+            for s in 1..=steps {
+                let t = s as f32 / steps as f32;
+                let cx = (*from_col as f32 + (*col as f32 - *from_col as f32) * t).round() as u16;
+                let cy = (*from_row as f32 + (*row as f32 - *from_row as f32) * t).round() as u16;
+                crate::tui::dispatch_mouse(
+                    app,
+                    MouseEvent {
+                        kind: MouseEventKind::Drag(MouseButton::Left),
+                        column: cx,
+                        row: cy,
+                        modifiers: KeyModifiers::NONE,
+                    },
+                );
+            }
+            // Release at destination.
+            crate::tui::dispatch_mouse(
+                app,
+                MouseEvent {
+                    kind: MouseEventKind::Up(MouseButton::Left),
+                    column: *col,
+                    row: *row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
+            json_event(&[
+                ("event", "drag"),
+                ("from", &format!("{from_col},{from_row}")),
+                ("to", &format!("{col},{row}")),
+                ("steps", &steps.to_string()),
+            ])
+        }
+        IpcCommand::Wait { ms } => {
+            std::thread::sleep(std::time::Duration::from_millis(*ms));
+            json_event(&[("event", "wait_ms"), ("ms", &ms.to_string())])
+        }
+        IpcCommand::ExpectScreen { text, contains } => {
+            // Read the most recent screen.txt the headless loop wrote.
+            // Caller should `snapshot` first if they need post-command
+            // state — this only reads what's on disk now.
+            let screen_path = app.workspace.join(".mnml/ipc/screen.txt");
+            let screen = std::fs::read_to_string(&screen_path).unwrap_or_default();
+            let found = screen.contains(text.as_str());
+            let ok = if *contains { found } else { !found };
+            json_event(&[
+                ("event", "expect_screen"),
+                ("mode", if *contains { "contains" } else { "lacks" }),
+                ("text", text),
+                ("ok", if ok { "true" } else { "false" }),
             ])
         }
         IpcCommand::Scroll { col, row, dy } => {
