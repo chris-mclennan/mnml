@@ -3902,7 +3902,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.drag_tree_edge_to(x, screen_w);
             } else if app.dragging_git_graph_detail.is_some() {
                 app.drag_git_graph_detail_to(x);
-            } else if let Some((pid, ox, oy, armed)) = app.drag_select {
+            } else if let Some((pid, orow, ocol, armed)) = app.drag_select {
                 // Editor drag-select: drop the anchor at the click origin
                 // (first drag only), then extend the cursor to the current
                 // mouse position WITHOUT wiping the anchor on each tick —
@@ -3911,6 +3911,15 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 // hunt finding "drag-select moves cursor but doesn't
                 // create selection." Vim mode: ditto, plus VISUAL chip
                 // turns on because anchor != None ⇒ `has_selection`.
+                //
+                // The stored tuple is `(pid, row, col, armed)` — the
+                // prior variable names `ox`/`oy` were misleading
+                // (sounded like screen X/Y but actually carried file
+                // row/col), and the place_cursor call below had the
+                // args silently swapped. 2026-06-08 post-fix hunt
+                // SEV-2: a single-line 10-cell drag produced `Sel 94`
+                // instead of `Sel 10` because the anchor landed at
+                // (file row=originalCol, col=originalRow).
                 let wrap = app.config.ui.wrap;
                 if let Some(&(tr, p2)) = app
                     .rects
@@ -3922,7 +3931,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 {
                     let (row, col) = crate::app::dispatch::click_to_file_pos(b, tr, wrap, x, y);
                     if !armed {
-                        b.editor.place_cursor(oy, ox);
+                        b.editor.place_cursor(orow, ocol);
                         b.editor.apply(
                             crate::edit_op::EditOp::SelectStart,
                             tr.height as usize,
@@ -3933,7 +3942,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         // Standard ⇒ no-op (selection is editor-driven,
                         // see `InputHandler::request_visual_mode` docs).
                         b.input.request_visual_mode();
-                        app.drag_select = Some((pid, ox, oy, true));
+                        app.drag_select = Some((pid, orow, ocol, true));
                     }
                     b.editor.extend_cursor_to(row, col);
                 }

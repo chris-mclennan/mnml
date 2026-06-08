@@ -96,10 +96,29 @@ impl Keymap {
     /// value of `""` / `"none"` / `"unbound"` removes whatever was bound there.
     pub fn build(cfg: &Config) -> Keymap {
         let mut km = Keymap::default();
+        // Track which command first claimed each chord — when a later
+        // command in the registry order declares the same chord, the
+        // HashMap silently overwrites and the earlier binding stops
+        // firing. This bit us twice (forge chords masked by `+insert`,
+        // then `ctrl+\` masked between `term.scratch_toggle` and
+        // `view.split_right`) — post-fix hunt 2026-06-08. Surface
+        // collisions to stderr at startup so the next one shows up
+        // immediately instead of weeks later.
+        let mut prior_owner: HashMap<Chord, &'static str> = HashMap::new();
         for cmd in crate::command::registry().all() {
             for spec in cmd.keys {
                 if let Some(ev) = parse_key_spec(spec) {
-                    km.map.insert(Chord::of(&ev), cmd.id.to_string());
+                    let chord = Chord::of(&ev);
+                    if let Some(prev) = prior_owner.get(&chord)
+                        && *prev != cmd.id
+                    {
+                        eprintln!(
+                            "mnml: keymap collision on `{spec}` — `{prev}` overridden by `{}` (drop one default to silence)",
+                            cmd.id
+                        );
+                    }
+                    prior_owner.insert(chord, cmd.id);
+                    km.map.insert(chord, cmd.id.to_string());
                 }
             }
         }

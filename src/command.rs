@@ -2803,7 +2803,13 @@ fn builtin_commands() -> Vec<Command> {
             id: "term.scratch_toggle",
             title: "Terminal: quick scratch strip at the bottom (Ctrl+`)",
             group: "ai",
-            keys: &["ctrl+`", "ctrl+\\"],
+            // `ctrl+\\` used to be a second binding here but it collides
+            // with `view.split_right` (added via #273 for VS Code parity)
+            // — the keymap's HashMap insert order makes the later command
+            // silently win, killing whichever binding loses. Post-fix
+            // hunt 2026-06-08 SEV-3. Now scratch_toggle is `Ctrl+`` only;
+            // VS Code's split chord lands on view.split_right unambiguously.
+            keys: &["ctrl+`"],
             run: |app| app.toggle_scratch_term(),
         },
         Command {

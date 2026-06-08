@@ -9,7 +9,10 @@ expect screen contains "Ln 1"
 
 # Drag from column 10 to column 20 on screen row 2 (the first editor
 # body row, since palette = row 0, bufferline = row 1). The cursor
-# anchor lands at col 10 (file col 10 with no gutter offset assumed),
-# then extends to col 20 — 10 chars selected.
+# anchor lands at one file col, then extends 10 cells to the right,
+# so the selection is exactly 10 chars wide. The original assertion
+# was `Sel ` (any non-zero count) which let a SEV-2 row/col swap
+# bug ship — the swap produced `Sel 94` on a 4-line file. Hard
+# assertion catches that. Post-fix hunt 2026-06-08.
 drag 10 2 20 2
-expect screen contains "Sel "
+expect screen contains "Sel 10 "
