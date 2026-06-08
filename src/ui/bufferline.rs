@@ -266,7 +266,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // Material-Design glyph NvChad uses for buffer close, renders
         // substantially larger than the ASCII `×` (which JetBrainsMono
         // Nerd Font draws as a tiny multiplication sign).
-        let badge = if pane.is_dirty() { "●" } else { "\u{F0156}" };
+        // ASCII mode (`[ui] ascii_icons = true` / `--ascii`) substitutes
+        // a `*`/`x` so terminals without a Nerd Font don't render tofu.
+        // 2026-06-07 bug-hunt SEV-3 — bufferline was the last holdout.
+        let badge = if pane.is_dirty() {
+            if nerd { "●" } else { "*" }
+        } else if nerd {
+            "\u{F0156}"
+        } else {
+            "x"
+        };
         let diag = &diag_chips[i];
         // ` <icon> <name>[ <diag>] <badge> `
         let label = if diag.is_empty() {
@@ -512,9 +521,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         if active {
             // Close glyph + trailing space (2 cells). `nf-md-close`
             // (\u{F0156}) — the standard Material Design close X, same
-            // glyph NvChad uses.
+            // glyph NvChad uses. ASCII mode substitutes `x` for
+            // terminals without a Nerd Font (bug-hunt SEV-3
+            // 2026-06-07 — bufferline was bypassing `--ascii`).
+            let close = if nerd { "\u{F0156} " } else { "x " };
             spans.push(Span::styled(
-                "\u{F0156} ",
+                close,
                 Style::default().fg(chip_fg).bg(chip_bg),
             ));
             app.rects.bufferline_tab_page_close.push((

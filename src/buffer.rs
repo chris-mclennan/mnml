@@ -1340,13 +1340,18 @@ mod tests {
         assert!(b.is_line_folded_body(3));
         assert!(b.is_line_folded_body(4));
         assert!(!b.is_line_folded_body(5));
-        // visible_to_file_row should skip the body. File has 8 logical
-        // lines (final "\n" produces a trailing empty line 7).
+        // visible_to_file_row should skip the body. File has 7
+        // logical lines (0..=6) — the trailing `\n` is the line
+        // *terminator* for line 6, not an extra empty line 7
+        // (matches `wc -l` + every other editor; line_count fix
+        // 2026-06-07 bug-hunt SEV-3).
         assert_eq!(b.visible_to_file_row(0, 0), Some(0));
         assert_eq!(b.visible_to_file_row(0, 2), Some(2));
         assert_eq!(b.visible_to_file_row(0, 3), Some(5));
         assert_eq!(b.visible_to_file_row(0, 4), Some(6));
-        assert_eq!(b.visible_to_file_row(0, 5), Some(7));
+        // Visible rows past the last real line return None now (was
+        // Some(7) — phantom trailing line).
+        assert_eq!(b.visible_to_file_row(0, 5), None);
         assert_eq!(b.visible_to_file_row(0, 6), None);
         // file_to_visible_row
         assert_eq!(b.file_to_visible_row(0, 5), 3);

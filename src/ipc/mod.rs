@@ -120,6 +120,13 @@ impl Ipc {
     pub fn init(workspace: &Path) -> io::Result<Ipc> {
         let dir = workspace.join(".mnml").join("ipc");
         std::fs::create_dir_all(&dir)?;
+        // 2026-06-07 bug-hunt SEV-3: open any git repo, run mnml,
+        // and `.mnml/` shows up as untracked clutter (plus
+        // git.status_pane / git.diff inside mnml then recursively
+        // diffs its own IPC files). Best-effort append a `.mnml/`
+        // line to the workspace's `.gitignore` on first creation.
+        // Idempotent — checks the file content before appending.
+        let _ = ensure_gitignore_excludes_mnml(workspace);
         let cmd_path = dir.join("command");
         let screen_path = dir.join("screen.txt");
         let status_path = dir.join("status.json");
@@ -262,6 +269,45 @@ fn parse_command(line: &str) -> IpcCommand {
 /// word (`"left"` / `"middle"` / `"right"`) or the first letter
 /// (`"l"` / `"m"` / `"r"`), case-insensitive. Anything else (and
 /// `None`) ⇒ `Left` — the most common case, makes scripts terser.
+/// On first `.mnml/` creation in a git repo, make sure the repo
+/// gitignores it. Best-effort: any IO error is swallowed (the
+/// `.mnml/` clutter is mild compared to crashing on a borderline
+/// filesystem). Idempotent — only appends when the line is absent.
+/// Skips when:
+///   * `workspace/.git` doesn't exist (not a git repo, no point)
+///   * `.gitignore` already has a literal `.mnml/` or `.mnml` line
+///
+/// Creates the gitignore if absent.
+fn ensure_gitignore_excludes_mnml(workspace: &Path) -> io::Result<()> {
+    if !workspace.join(".git").exists() {
+        return Ok(());
+    }
+    let gi = workspace.join(".gitignore");
+    let existing = std::fs::read_to_string(&gi).unwrap_or_default();
+    // Match `.mnml`, `.mnml/`, `/.mnml`, `/.mnml/` as anchored or
+    // non-anchored lines. Comments + indentation tolerated.
+    let already = existing.lines().any(|line| {
+        let t = line
+            .split('#')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_start_matches('/')
+            .trim_end_matches('/');
+        t == ".mnml"
+    });
+    if already {
+        return Ok(());
+    }
+    let mut out = existing;
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("# Added by mnml on first launch — workspace IPC + session state\n");
+    out.push_str(".mnml/\n");
+    std::fs::write(&gi, out)
+}
+
 fn parse_mouse_button(s: Option<&str>) -> ratatui::crossterm::event::MouseButton {
     use ratatui::crossterm::event::MouseButton;
     match s.map(str::to_ascii_lowercase).as_deref() {
@@ -704,6 +750,58 @@ mod tests {
             KeyModifiers::CONTROL | KeyModifiers::ALT
         );
         assert_eq!(parse_mods(None), KeyModifiers::NONE);
+    }
+
+    #[test]
+    fn ipc_init_skips_gitignore_outside_git_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        // No .git dir ⇒ no gitignore touch.
+        let _ipc = Ipc::init(dir.path()).unwrap();
+        assert!(!dir.path().join(".gitignore").exists());
+    }
+
+    #[test]
+    fn ipc_init_creates_gitignore_in_git_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        let _ipc = Ipc::init(dir.path()).unwrap();
+        let gi = std::fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(
+            gi.contains(".mnml/"),
+            "gitignore should mention .mnml/: {gi}"
+        );
+        assert!(
+            gi.contains("Added by mnml"),
+            "should include header comment"
+        );
+    }
+
+    #[test]
+    fn ipc_init_appends_to_existing_gitignore() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        let gi = dir.path().join(".gitignore");
+        std::fs::write(&gi, "target/\n").unwrap();
+        let _ipc = Ipc::init(dir.path()).unwrap();
+        let content = std::fs::read_to_string(&gi).unwrap();
+        assert!(content.contains("target/"), "existing entries preserved");
+        assert!(content.contains(".mnml/"), "new entry added");
+    }
+
+    #[test]
+    fn ipc_init_is_idempotent_on_gitignore() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        // .mnml already present — should NOT double-append.
+        let gi = dir.path().join(".gitignore");
+        std::fs::write(&gi, "target/\n.mnml/\n").unwrap();
+        let _ipc = Ipc::init(dir.path()).unwrap();
+        let content = std::fs::read_to_string(&gi).unwrap();
+        assert_eq!(
+            content.matches(".mnml/").count(),
+            1,
+            "second init should not append duplicate; content:\n{content}"
+        );
     }
 
     #[test]

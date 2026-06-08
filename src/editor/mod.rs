@@ -1233,7 +1233,22 @@ impl Editor {
         (row, col)
     }
     pub fn line_count(&self) -> usize {
-        self.text.bytes().filter(|&b| b == b'\n').count() + 1
+        // Count newlines; +1 catches the partial-trailing-line case
+        // (`"foo\nbar"` is 2 lines). Subtract 1 when the buffer ends
+        // in a newline (`"foo\nbar\n"` is also 2 lines, matching
+        // `wc -l` + every other editor — the trailing newline is the
+        // line *terminator*, not an extra empty line). Bug-hunt
+        // SEV-3 from 2026-06-07: the chip used to say `Ln 1/4` for
+        // a 3-line file with the Unix-correct trailing newline.
+        let nl_count = self.text.bytes().filter(|&b| b == b'\n').count();
+        if nl_count == 0 {
+            // Empty buffer ⇒ 1 visual line; non-empty no-newline ⇒ 1.
+            1
+        } else if self.text.ends_with('\n') {
+            nl_count
+        } else {
+            nl_count + 1
+        }
     }
     pub fn line_str(&self, line: usize) -> &str {
         let s = self.line_start(line);
@@ -4640,6 +4655,25 @@ mod tests {
         for op in ops {
             e.apply(op.clone(), 10, c);
         }
+    }
+
+    /// Regression for the 2026-06-07 bug-hunt SEV-3 finding:
+    /// `wc -l` semantics. The trailing newline is the terminator
+    /// for the last line, not an extra empty line.
+    #[test]
+    fn line_count_matches_wc_l() {
+        // Empty.
+        assert_eq!(ed("").0.line_count(), 1);
+        // No trailing newline.
+        assert_eq!(ed("a").0.line_count(), 1);
+        assert_eq!(ed("a\nb").0.line_count(), 2);
+        // Trailing newline — Unix-correct, line_count == wc -l.
+        assert_eq!(ed("a\n").0.line_count(), 1);
+        assert_eq!(ed("a\nb\n").0.line_count(), 2);
+        assert_eq!(ed("a\nb\nc\n").0.line_count(), 3);
+        // Multiple trailing newlines = empty trailing lines.
+        assert_eq!(ed("a\n\n").0.line_count(), 2);
+        assert_eq!(ed("a\n\n\n").0.line_count(), 3);
     }
 
     #[test]
