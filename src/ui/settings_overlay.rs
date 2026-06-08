@@ -332,21 +332,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     }
     frame.render_widget(Paragraph::new(window), body_rect);
 
-    // 1-line hint bar at the bottom.
+    // 1-line hint bar at the bottom. Truncated to the inner panel
+    // width so a narrow terminal doesn't punch through the right
+    // border — the content `window` above already gets the same
+    // treatment via `truncate_line_to_width`. 2026-06-08 follow-up
+    // to the tmnl settings-help-overflow fix.
     let hint = "←→ adjust · ↑↓ move · r reset row · R reset all · Enter save · Esc cancel";
+    let hint_line = truncate_line_to_width(
+        &Line::from(Span::styled(
+            hint.to_string(),
+            Style::default().fg(t.comment).add_modifier(Modifier::DIM),
+        )),
+        inner.width as usize,
+    );
     let hint_rect = Rect {
         x: inner.x,
         y: inner.y + inner.height.saturating_sub(1),
         width: inner.width,
         height: 1,
     };
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            hint,
-            Style::default().fg(t.comment).add_modifier(Modifier::DIM),
-        )),
-        hint_rect,
-    );
+    frame.render_widget(Paragraph::new(hint_line), hint_rect);
 }
 
 /// Parse a 6-char `RRGGBB` hex (no `#`) into a `ratatui::Color::Rgb`.
