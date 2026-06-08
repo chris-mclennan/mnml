@@ -364,9 +364,11 @@ Keymaps are **key spec → command id** (the same shape as VSCode's `keybindings
 - `[keys.global]` applies always.
 - `[keys.vim]` and `[keys.standard]` overlay it for that input style — so you can give the same chord different meanings in each mode.
 - Unknown command ids are tolerated — they just never fire (handy when sharing a config across mnml versions).
-- **Unbinding**: set the value to `""` or `"none"` to drop a default binding.
+- **Unbinding**: set the value to `""`, `"none"`, or `"unbound"` to drop a default binding.
 
 The full command-id catalog lives in the command palette (`Ctrl+Shift+P` or `:`) — every command shows its id alongside its label. Defaults are documented in the [Keybindings reference](/reference/keybindings/).
+
+**Shortcut to get started:** run `:keys.edit` (or pick *Customize keybindings…* from the palette) — opens `config.toml`, jumps the cursor into `[keys.standard]`, and appends a documented stub with three worked examples (rebind / add / unbind) if the section doesn't exist yet. Use `:Maps` (or `:Keys`) at any time to dump the resolved chord → command table, optionally filtered: `:Maps git` shows every chord whose bound command id starts with `git`.
 
 ### `[lsp.<server>]` — language servers
 
