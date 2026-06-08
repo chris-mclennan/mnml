@@ -125,8 +125,9 @@ What follows is every chord the built-in trie ships with. Source of truth: `src/
 |---|---|---|
 | `<leader>ff` | `picker.files` | Fuzzy file picker (NvChad parity) |
 | `<leader>fb` | `picker.buffers` | Open-buffer picker |
+| `<leader>fg` | `find.grep` | Workspace live-grep (NvChad parity — added 2026-06-08) |
 
-NvChad's `<leader>fg` (grep) isn't in the trie — use `:Rg <pattern>` / `:vimgrep` directly, or `Ctrl-Shift-F` for the workspace-grep pane.
+`:Rg <pattern>` / `:vimgrep` and `Ctrl-Shift-F` also work for the workspace-grep pane.
 
 ### `<leader>b` — buffer
 
@@ -320,14 +321,6 @@ The [ThePrimeagen Harpoon](https://github.com/ThePrimeagen/harpoon) idiom — pi
 ## Differences worth knowing
 
 Honest list of places where NvChad muscle memory doesn't translate cleanly.
-
-### `<leader>fg` grep — not bound
-
-NvChad maps `<leader>fg` to live-grep. mnml's `<leader>f` group has `ff` (files) and `fb` (buffers) only. To grep:
-
-- `:Rg <pattern>` — opens a quickfix-style pane with results
-- `:vimgrep /pattern/ **/*.rs` — vim canonical, fills the quicklist
-- `Ctrl-Shift-F` — graphical workspace-grep pane (standard-mode chord, but works under vim too)
 
 ### `<leader>i` is integrations, not insert
 

@@ -443,22 +443,21 @@ impl App {
                 self.dragging_scrollbar = Some(hit);
             }
         }
-        // Mouse-hover-fired marker: stale (pane_id, row, col) tuple
-        // would prevent the next hover request for the re-indexed
-        // pane. Cheaper to wipe than shift.
-        if self
-            .mouse_hover_at
-            .map(|(a, _, _, _)| a >= removed)
-            .unwrap_or(false)
-        {
-            self.mouse_hover_at = None;
+        // Mouse-hover state: same shift-or-drop pattern as drag_select
+        // above. The previous version wiped on `>= removed` which also
+        // cancelled an in-progress hover timer on an UNRELATED open
+        // pane (e.g. hovering pane 3, closing pane 1, hover state on
+        // pane 3 evaporated and LSP-hover had to restart its 600ms
+        // debounce). Code-review SEV-2 W-1, 2026-06-08.
+        match self.mouse_hover_at {
+            Some((a, _, _, _)) if a == removed => self.mouse_hover_at = None,
+            Some((a, r, c, t)) if a > removed => self.mouse_hover_at = Some((a - 1, r, c, t)),
+            _ => {}
         }
-        if self
-            .mouse_hover_fired
-            .map(|(a, _, _)| a >= removed)
-            .unwrap_or(false)
-        {
-            self.mouse_hover_fired = None;
+        match self.mouse_hover_fired {
+            Some((a, _, _)) if a == removed => self.mouse_hover_fired = None,
+            Some((a, r, c)) if a > removed => self.mouse_hover_fired = Some((a - 1, r, c)),
+            _ => {}
         }
     }
 

@@ -103,7 +103,7 @@ mnml's LSP surface mirrors VS Code closely. See [LSP](/manual/lsp/) for the full
 | `Ctrl+Shift+I` format document | `Ctrl+Shift+I` |
 | `Ctrl+Shift+O` symbols in file | `Ctrl+Shift+O` |
 | Hover popup (mouse) | Hover with mouse, or `:Hover` ex command |
-| `F2` rename symbol | Palette: **lsp: rename symbol** |
+| `F2` rename symbol | `F2` |
 
 `Ctrl+click` for goto-definition works — mouse-over a symbol with Ctrl/Cmd held, click, mnml fires `lsp.goto_definition` on the symbol under the cursor. `Alt+←` / `Alt+→` walk the jump history.
 
@@ -126,14 +126,12 @@ Keyboard equivalents are all in the file-ops table above.
 
 | VS Code | mnml |
 |---|---|
-| `Ctrl+\` split editor | `Ctrl+\` toggles a scratch terminal (note: differs from VS Code) |
+| `Ctrl+\` split editor | `Ctrl+\` |
 | Drag split divider | Click + drag the divider |
 | Click in a pane to focus | Click in the pane |
 | Close active editor group | Palette: **view: close split** |
 
 mnml's split chord story is in vim's `Ctrl-W` prefix — `Ctrl-W v` / `Ctrl-W s`, then `Ctrl-W h/j/k/l` to navigate. Even in standard mode, those work (the `Ctrl-W` prefix is global). The leader equivalents (`<leader>sv` / `<leader>ss` / `<leader>sh`/`sj`/`sk`/`sl`) need the leader chord (`Ctrl+K` in standard mode) — see the leader section below.
-
-**Heads up — `Ctrl+\` opens a scratch terminal**, not a split. The chord matches `Ctrl+`backtick`` for the integrated terminal. If you want to split, use `Ctrl-W v` or the palette.
 
 ### Tree + sidebar (mouse-friendly)
 
@@ -192,7 +190,7 @@ Standard VS Code keys all work; see [LSP](/manual/lsp/) for the language-server 
 
 | VS Code | mnml |
 |---|---|
-| `Ctrl+`backtick`` open terminal | `Ctrl+`backtick`` (also `Ctrl+\`) — scratch terminal toggle |
+| `Ctrl+`backtick`` open terminal | `Ctrl+`backtick`` — scratch terminal toggle. (`Ctrl+\` used to also fire this; today it's `view.split_right` for VS Code parity.) |
 | `Ctrl+T` (not bound by default) | `Ctrl+T` opens / focuses a shell pane |
 
 `Ctrl+J` expands a snippet at the cursor (the snippet-expand chord; VS Code uses `Tab` after typing a snippet trigger, mnml also accepts `Tab` from the completion popup but `Ctrl+J` is the explicit chord).
@@ -228,13 +226,9 @@ The full leader map is documented on [Coming from NvChad](/manual/coming-from-nv
 
 Honest list of places where VS Code muscle memory doesn't translate cleanly.
 
-### `Ctrl+\` opens a terminal, not a split
+### `Shift+Alt+↓ / ↑` duplicate line
 
-VS Code uses `Ctrl+\` to split the active editor. mnml uses it (alongside ``Ctrl+`backtick``) to toggle a scratch terminal pane. If you want to split: `Ctrl-W v` (vertical) or `Ctrl-W s` (horizontal); both work from standard mode. The terminal split chord may be remappable in a future config refinement.
-
-### `Shift+Alt+↓` duplicate line — use `Ctrl+Shift+D`
-
-`Shift+Alt+↓` isn't currently bound; `Ctrl+Shift+D` is mnml's duplicate-line. The legacy `Alt+Down` is move-line-down (the more-common VS Code chord).
+Wired today — both chords land. `Ctrl+Shift+D` still works and keeps the cursor on the original line; the Shift+Alt variant matches VS Code by landing the cursor on the new copy.
 
 ### No JSON settings — TOML instead
 
