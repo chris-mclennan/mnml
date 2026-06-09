@@ -71,6 +71,20 @@ pub fn draw(frame: &mut Frame, app: &App) {
         // the text rect. Overlay up to max(orig_len, new_chars) cells so a
         // shorter replacement clears the trailing chars of the old word too
         // (paint a space over those cells).
+        //
+        // 2026-06-08 nvchad hunt SEV-2: when `new_chars > orig_len` the
+        // preview used to bulldoze the cells AFTER the identifier — a
+        // rename like `x → xfoo` rendered `let xfoo42;` instead of
+        // `let xfoo = 42;`, making users think the actual rename would
+        // mangle their code (the real rename is correct, only the
+        // preview lied). Cheapest "correct enough" fix: skip the
+        // preview overlay when the replacement is longer than the
+        // original. Better-looking fix (shift the rest of the line
+        // right by the delta) is a v2 — needs cooperation from the
+        // editor renderer that's beyond the scope of this pass.
+        if new_text.chars().count() > orig_len {
+            continue;
+        }
         let new_chars: Vec<char> = new_text.chars().collect();
         let span = new_chars.len().max(orig_len);
         for k in 0..span {
