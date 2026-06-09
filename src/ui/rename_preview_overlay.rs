@@ -56,52 +56,86 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     let buffer = frame.buffer_mut();
     let area = text_rect;
-    for &(row, col_chars, orig_len) in &state.occurrences {
-        // Bridge to flash's screen-mapper by faking a FlashTarget — the cell
-        // (row, col_chars) maps the same way regardless of which feature owns it.
-        let target = crate::flash::FlashTarget {
-            row,
-            col_chars,
-            label: ' ',
-        };
-        let Some((x_start, y)) = target_to_screen(&target, area, scroll, h_scroll, wrap_w) else {
-            continue;
-        };
-        // Paint the new identifier char-by-char. Stop at the right edge of
-        // the text rect. Overlay up to max(orig_len, new_chars) cells so a
-        // shorter replacement clears the trailing chars of the old word too
-        // (paint a space over those cells).
-        //
-        // 2026-06-08 nvchad hunt SEV-2: when `new_chars > orig_len` the
-        // preview used to bulldoze the cells AFTER the identifier — a
-        // rename like `x → xfoo` rendered `let xfoo42;` instead of
-        // `let xfoo = 42;`, making users think the actual rename would
-        // mangle their code (the real rename is correct, only the
-        // preview lied). Cheapest "correct enough" fix: skip the
-        // preview overlay when the replacement is longer than the
-        // original. Better-looking fix (shift the rest of the line
-        // right by the delta) is a v2 — needs cooperation from the
-        // editor renderer that's beyond the scope of this pass.
-        if new_text.chars().count() > orig_len {
+    let new_chars: Vec<char> = new_text.chars().collect();
+    let new_len = new_chars.len();
+
+    // Resolve every occurrence to screen coords up front, then sort
+    // right-to-left so each paint operates on an unmodified region of
+    // the buffer. This matters when the same identifier appears more
+    // than once on a single visible line — the rightmost occurrence
+    // shifts its trailing region (untouched) first; the next one to
+    // its left then shifts a region that already includes the
+    // rightmost paint, so the cumulative line-stretch lands
+    // correctly. Without right-to-left order, the second paint would
+    // bulldoze the first one's shifted content.
+    let mut targets: Vec<(u16, u16, usize)> = state
+        .occurrences
+        .iter()
+        .filter_map(|&(row, col_chars, orig_len)| {
+            let target = crate::flash::FlashTarget {
+                row,
+                col_chars,
+                label: ' ',
+            };
+            let (x, y) = target_to_screen(&target, area, scroll, h_scroll, wrap_w)?;
+            Some((y, x, orig_len))
+        })
+        .collect();
+    targets.sort_by_key(|t| std::cmp::Reverse((t.0, t.1)));
+
+    for (y, x_start, orig_len) in targets {
+        if y < area.y || y >= area.y.saturating_add(area.height) {
             continue;
         }
-        let new_chars: Vec<char> = new_text.chars().collect();
-        let span = new_chars.len().max(orig_len);
-        for k in 0..span {
+        let line_end = area.x.saturating_add(area.width);
+
+        // 2026-06-08 nvchad hunt SEV-2 fix: when the replacement is
+        // longer than the original, slide the trailing line content
+        // right by the delta so the new identifier doesn't bulldoze
+        // the chars after it. Walk right-to-left so each source cell
+        // is read before being overwritten by an incoming shift.
+        // Cells that would land past the viewport edge are dropped —
+        // matches how the original line clips at the viewport.
+        if new_len > orig_len {
+            let delta = (new_len - orig_len) as u16;
+            let trailing_start = x_start.saturating_add(orig_len as u16);
+            for x in (trailing_start..line_end).rev() {
+                let dst_x = x.saturating_add(delta);
+                if dst_x >= line_end {
+                    continue;
+                }
+                let src = buffer.cell((x, y)).cloned();
+                if let Some(src) = src
+                    && let Some(dst) = buffer.cell_mut((dst_x, y))
+                {
+                    *dst = src;
+                }
+            }
+        }
+
+        // Paint the new identifier.
+        for (k, ch) in new_chars.iter().enumerate() {
             let px = x_start.saturating_add(k as u16);
-            if px >= area.x + area.width {
+            if px >= line_end {
                 break;
             }
-            if y >= area.y + area.height {
-                break;
-            }
-            let ch = if k < new_chars.len() {
-                new_chars[k]
-            } else {
-                ' '
-            };
             if let Some(dst) = buffer.cell_mut((px, y)) {
-                dst.set_char(ch);
+                dst.set_char(*ch);
+                dst.set_style(new_style);
+            }
+        }
+        // Shorter replacement: paint spaces over the trailing chars
+        // of the OLD identifier so they don't leak through. (The
+        // proper visual — collapsing the line — would need a leftward
+        // shift; deferred. The space-fill matches the original
+        // behavior and is still strictly better than "no preview".)
+        for k in new_len..orig_len {
+            let px = x_start.saturating_add(k as u16);
+            if px >= line_end {
+                break;
+            }
+            if let Some(dst) = buffer.cell_mut((px, y)) {
+                dst.set_char(' ');
                 dst.set_style(new_style);
             }
         }
