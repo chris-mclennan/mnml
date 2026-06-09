@@ -47,7 +47,7 @@ _mnml_bg() {
     local h="${1#\#}"
     printf '\033[48;2;%d;%d;%dm' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}"
 }
-_mnml_reset='\033[0m'
+_mnml_reset=$'\033[0m'
 
 # Powerline + nerd-font glyphs.
 _mnml_sep=$''      #  — right-pointing solid arrow (segment end)
