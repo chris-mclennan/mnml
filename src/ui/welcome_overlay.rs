@@ -22,9 +22,9 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     // their way around.
     type Tip = (&'static str, &'static str);
     let tips: [Tip; 9] = [
-        ("F1", "click discovery overlay (this overlay is similar)"),
+        ("F1", "help overlay (this is similar — keymap reference)"),
         ("Ctrl+P", "fuzzy file picker"),
-        ("Ctrl+Shift+P / F1 in vim", "command palette"),
+        ("Ctrl+Shift+P", "command palette"),
         ("Ctrl+B", "toggle the file tree (rail)"),
         ("Ctrl+T", "open a shell pane"),
         ("<leader>g l", "commit graph (or click branch chip)"),

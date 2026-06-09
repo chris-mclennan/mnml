@@ -125,12 +125,13 @@ impl Keymap {
         // Vim mode reserves several chords the global keymap would otherwise
         // swallow before the buffer's input handler ever sees them:
         // `Ctrl+W` (window/split prefix), `Ctrl+G` (file info), `Ctrl+D` /
-        // `Ctrl+U` (half-page motions). Standard mode keeps them as
-        // `buffer.close` / `editor.goto_line` / `editor.add_cursor_at_next_word`.
-        // We remove here BEFORE user `[keys.*]` overlays so a user can still
-        // bind them in `[keys.vim]` if desired.
+        // `Ctrl+U` (half-page motions), `Ctrl+E` / `Ctrl+Y` (line scroll —
+        // 2026-06-08 nvchad hunt). Standard mode keeps them as
+        // `buffer.close` / `editor.goto_line` / `editor.add_cursor_at_next_word`
+        // / `focus.cycle` / (unbound).  We remove here BEFORE user `[keys.*]`
+        // overlays so a user can still bind them in `[keys.vim]` if desired.
         if cfg.editor.input_style == "vim" {
-            for spec in ["ctrl+w", "ctrl+g", "ctrl+d", "ctrl+u"] {
+            for spec in ["ctrl+w", "ctrl+g", "ctrl+d", "ctrl+u", "ctrl+e", "ctrl+y"] {
                 if let Some(ev) = parse_key_spec(spec) {
                     km.map.remove(&Chord::of(&ev));
                 }

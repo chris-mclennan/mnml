@@ -278,11 +278,37 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            // Zen mode is palette-only — `Ctrl+Shift+Z` is the
+            // universal Redo chord in VS Code (and every other modern
+            // editor). Three independent persona hunts on 2026-06-08
+            // flagged the prior `Ctrl+Shift+Z → Zen` binding as their
+            // #1 muscle-memory trap (silently nukes redo and reshuffles
+            // chrome). Zen lives in the palette as `view.zen`.
             id: "view.zen",
             title: "Zen mode (hide tree + bufferline + statusline)",
             group: "view",
-            keys: &["ctrl+shift+z"],
+            keys: &[],
             run: |app| app.toggle_zen_mode(),
+        },
+        Command {
+            // 2026-06-08 hunt fix — registered Redo so the keymap
+            // routes `Ctrl+Shift+Z` to it BEFORE the standard input
+            // handler's `'z' if shift => Redo` fallback (the keymap is
+            // consulted first, so the fallback was dead code when
+            // another command claimed the chord).
+            id: "editor.redo",
+            title: "Redo (Ctrl+Shift+Z / Ctrl+Y)",
+            group: "editor",
+            keys: &["ctrl+shift+z"],
+            run: |app| {
+                if let Some(b) = app.active_editor_mut() {
+                    let _ = b.apply_edit_ops(
+                        vec![crate::edit_op::EditOp::Redo],
+                        &mut crate::clipboard::Clipboard::new(),
+                        0,
+                    );
+                }
+            },
         },
         Command {
             id: "view.redraw",

@@ -2410,10 +2410,25 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         BufferEvent::App(cmd) => crate::app::dispatch::apply_app_command(app, cmd),
         BufferEvent::Unhandled(k) => {
-            // Not text-editing. Esc releases focus to the tree; the rest (config-
-            // driven keymap → command resolver) lands with the keymap work in P3.
+            // Not text-editing. Esc has three escalating jobs (VS Code
+            // semantics, 2026-06-08 hunts caught the missing step):
+            //   1. clear extra cursors if multi-cursor mode is active
+            //   2. (selection-clear already happened inside the handler)
+            //   3. release focus to the tree
+            // Without step 1, the only keyboard exit from multi-cursor
+            // was the palette — Esc would silently focus the tree
+            // instead, and typing afterwards would still hit every
+            // cursor position once focus returned.
             if k.code == KeyCode::Esc {
-                app.focus_tree();
+                let has_extras = matches!(
+                    app.panes.get(i),
+                    Some(Pane::Editor(b)) if !b.editor.extra_cursors.is_empty()
+                );
+                if has_extras {
+                    app.run_editor_op(crate::edit_op::EditOp::ClearExtraCursors);
+                } else {
+                    app.focus_tree();
+                }
             }
         }
     }

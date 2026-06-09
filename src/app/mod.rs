@@ -6663,6 +6663,13 @@ impl App {
         };
         b.scroll = ((b.scroll as i32 + delta).max(0) as usize)
             .min(b.editor.line_count().saturating_sub(1));
+        // 2026-06-08 nvchad hunt fix: without this flag, the editor's
+        // render path snaps `scroll` back to the cursor's line on the
+        // next paint — so `Ctrl+E` / `Ctrl+Y` were silent no-ops.
+        // The mouse-wheel path in `dispatch.rs` already sets this;
+        // the keyboard path forgot. Cleared automatically when the
+        // cursor next moves.
+        b.scroll_pinned = true;
     }
 
     /// vim `zh` / `zl` / `zH` / `zL` — adjust horizontal scroll without
