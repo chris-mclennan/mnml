@@ -218,6 +218,30 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         }
         app.clear_ghost_suggestion();
     }
+    // 2026-06-08 vscode hunt SEV-2: `Ctrl+S` (Save) is a global
+    // muscle-memory reflex — VS Code fires it from any focus. mnml
+    // used to swallow it inside every overlay (palette, prompts,
+    // settings) which led to silent data loss: "find something,
+    // hit Ctrl+S to checkpoint, keep going" left the file dirty
+    // with no toast, no error. Intercept here before any
+    // overlay-consuming branch runs. Overlay state is untouched —
+    // save fires, the user keeps doing whatever they were doing.
+    // Skip when a pty pane has the focus (the shell legitimately
+    // wants `Ctrl+S` for XOFF flow control); the keymap below
+    // handles the not-in-overlay case the same way it did before.
+    if key.code == KeyCode::Char('s')
+        && key.modifiers == KeyModifiers::CONTROL
+        && !matches!(
+            app.active.and_then(|i| app.panes.get(i)),
+            Some(Pane::Pty(_))
+        )
+    {
+        // Anything in flight that would have consumed the chord
+        // (palette / prompt / settings) is still alive afterwards;
+        // we just don't let it eat the save.
+        app.save_active();
+        return;
+    }
     // Scratch terminal — when focused, route keystrokes to the pty
     // (with Esc as the way out). The chord that toggles it (`term.
     // scratch_toggle`) still works as the close gesture because the
