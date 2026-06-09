@@ -50,6 +50,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     frame.render_widget(Clear, area);
 
     // Outer block — title "Settings", blue bg / dark fg accent chip.
+    // Version chip on the title bar's right edge so the user can
+    // match what they're running against the release tag /
+    // changelog. 2026-06-08 family-wide ask.
+    let version_title = concat!(" v", env!("CARGO_PKG_VERSION"), " ");
     let block = Block::default()
         .borders(Borders::ALL)
         .title(Span::styled(
@@ -59,6 +63,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                 .bg(t.blue)
                 .add_modifier(Modifier::BOLD),
         ))
+        .title_top(
+            ratatui::text::Line::from(Span::styled(
+                version_title,
+                Style::default().fg(t.comment).add_modifier(Modifier::DIM),
+            ))
+            .right_aligned(),
+        )
         .style(Style::default().fg(t.fg).bg(t.bg_dark));
     let inner = block.inner(area);
     frame.render_widget(block, area);
