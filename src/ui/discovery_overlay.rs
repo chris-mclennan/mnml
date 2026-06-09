@@ -99,6 +99,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         lo.min(total_lines.saturating_sub(body_rows))
     };
 
+    // 2026-06-08 vscode-mouse hunt fix: clear the per-row rect list
+    // so the mouse dispatcher can hit-test left-clicks against rows
+    // instead of treating every click inside the overlay as a
+    // dismiss.
+    app.rects.discovery_integration_rows.clear();
     let mut row_visual_idx = 0usize;
     for (slot, abs_idx) in (0..body_rows).zip(start..total_lines) {
         let item = &items[abs_idx];
@@ -126,9 +131,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
             DiscoveryItem::Sibling { sibling, status } => {
                 // Figure out which non-Section row this is (so we can
                 // compare against selected_row).
-                let is_focused = row_visual_idx_for_sibling(&items, abs_idx) == selected_row;
+                let visual_idx = row_visual_idx_for_sibling(&items, abs_idx);
+                let is_focused = visual_idx == selected_row;
                 row_visual_idx += 1;
                 let _ = row_visual_idx;
+                // Stash the hit-rect for the mouse dispatcher.
+                app.rects
+                    .discovery_integration_rows
+                    .push((row_rect, visual_idx));
 
                 let cursor = if is_focused { "▸" } else { " " };
                 let (status_glyph, status_color) = match status {

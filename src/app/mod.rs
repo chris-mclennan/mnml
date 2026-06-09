@@ -1802,6 +1802,13 @@ pub struct PaneRects {
     /// to flash the matching on-screen rects. Cleared + repopulated by
     /// `ui::discovery::draw` when the overlay is visible.
     pub discovery_rows: Vec<(Rect, crate::DiscoveryCategory)>,
+    /// One rect per Sibling row in the `+ Add integration` overlay —
+    /// `usize` is the row index `discovery_move_row` operates on (skips
+    /// section headers). Repopulated by `ui::discovery_overlay::draw`.
+    /// Used by the mouse dispatcher to focus + Enter a clicked row
+    /// instead of dismissing the overlay (2026-06-08 vscode-mouse hunt
+    /// fix: row-clicks were swallowed as outside-overlay clicks).
+    pub discovery_integration_rows: Vec<(Rect, usize)>,
     /// The outer settings-overlay rect — used by the dispatcher to
     /// detect click-outside-to-close. `None` when the overlay isn't
     /// open. Repopulated by `ui::settings_overlay::draw`.

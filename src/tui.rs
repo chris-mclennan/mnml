@@ -2564,18 +2564,37 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         }
         return;
     }
-    // "+ Add integration" overlay — scroll wheel moves the row cursor;
-    // left-click anywhere dismisses (no mouse trap). 2026-06-07 SEV-2
-    // bug-hunt fix. Future v2 could add per-row click rects to flash
-    // the matching on-screen target the way the sibling
-    // show_discovery_overlay does — for now click-to-dismiss matches
-    // VS Code's modal idiom.
+    // "+ Add integration" overlay — scroll wheel moves the row cursor.
+    // Left-click on a sibling row focuses + Enters that row (matches
+    // the keyboard `↑↓ Enter` flow). Left-click outside any row
+    // dismisses the overlay — preserves the no-mouse-trap semantic
+    // from the 2026-06-07 fix without the row-swallow regression the
+    // 2026-06-08 vscode-mouse hunt caught.
     if app.discovery_overlay.is_some() {
         match m.kind {
             MouseEventKind::ScrollUp => app.discovery_move_row(-1),
             MouseEventKind::ScrollDown => app.discovery_move_row(1),
             MouseEventKind::Down(MouseButton::Left) => {
-                app.discovery_overlay = None;
+                let row_hit = app
+                    .rects
+                    .discovery_integration_rows
+                    .iter()
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                    .map(|(_, idx)| *idx);
+                if let Some(idx) = row_hit {
+                    let cur = app
+                        .discovery_overlay
+                        .as_ref()
+                        .map(|s| s.selected_row)
+                        .unwrap_or(0);
+                    let delta = idx as isize - cur as isize;
+                    if delta != 0 {
+                        app.discovery_move_row(delta);
+                    }
+                    app.discovery_enter();
+                } else {
+                    app.discovery_overlay = None;
+                }
             }
             _ => {}
         }
