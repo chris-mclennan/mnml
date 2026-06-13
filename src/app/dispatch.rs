@@ -346,6 +346,34 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::IntegrationIcon(icon_idx));
     }
+    if let Some(&(_, section)) = app
+        .rects
+        .activity_bar_icons
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::ActivityBarIcon(section));
+    }
+    if let Some(r) = app.rects.statusline_mixr_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineNowPlaying);
+    }
+    if let Some(r) = app.rects.palette_back_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::PaletteBackButton);
+    }
+    if let Some(r) = app.rects.palette_forward_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::PaletteForwardButton);
+    }
+    if let Some(r) = app.rects.palette_dropdown_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::PaletteDropdownButton);
+    }
     if let Some(&(_, action)) = app
         .rects
         .rail_git_header_buttons

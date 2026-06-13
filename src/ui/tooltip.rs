@@ -238,6 +238,42 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             };
             Some((rect, label.into_owned(), None))
         }
+        HoverChip::ActivityBarIcon(section) => {
+            let &(rect, _) = app
+                .rects
+                .activity_bar_icons
+                .iter()
+                .find(|(_, s)| *s == section)?;
+            let (_, _, label, _) = section.meta();
+            Some((rect, label.to_string(), None))
+        }
+        HoverChip::StatuslineNowPlaying => {
+            let rect = app.rects.statusline_mixr_chip?;
+            let np = app.now_playing.as_ref()?;
+            let track = if np.track.is_empty() {
+                "(no track)".to_string()
+            } else {
+                np.track.clone()
+            };
+            let source = if np.source.is_empty() {
+                "now playing".to_string()
+            } else {
+                np.source.clone()
+            };
+            Some((rect, format!("{source}: {track}"), None))
+        }
+        HoverChip::PaletteBackButton => {
+            let rect = app.rects.palette_back_button?;
+            Some((rect, "previous buffer".to_string(), None))
+        }
+        HoverChip::PaletteForwardButton => {
+            let rect = app.rects.palette_forward_button?;
+            Some((rect, "next buffer".to_string(), None))
+        }
+        HoverChip::PaletteDropdownButton => {
+            let rect = app.rects.palette_dropdown_button?;
+            Some((rect, "recent files".to_string(), None))
+        }
         HoverChip::RailHeaderChip(action) => {
             let rect = app
                 .rects

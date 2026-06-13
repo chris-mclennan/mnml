@@ -255,6 +255,21 @@ pub enum HoverChip {
     /// The window-level close (top-right of the bufferline strip).
     /// Closes the whole mnml process via `app.quit`.
     BufferlineWindowClose,
+    /// Activity bar icon (left rail). Tooltip names the section.
+    /// vscode-mouse-2026-06-10 SEV-3 #2.
+    ActivityBarIcon(crate::app::ActivitySection),
+    /// `♪ <track>` statusline now-playing chip. Tooltip names the
+    /// source (mixr file / macOS Music / Spotify) + full track when
+    /// the chip text is truncated.
+    /// vscode-mouse-2026-06-10 SEV-3 #3.
+    StatuslineNowPlaying,
+    /// Palette-bar back-arrow chip (previous buffer in MRU order).
+    /// vscode-mouse-2026-06-10 SEV-3 #4.
+    PaletteBackButton,
+    /// Palette-bar forward-arrow chip (next buffer in MRU order).
+    PaletteForwardButton,
+    /// Palette-bar dropdown chevron (opens the recents picker).
+    PaletteDropdownButton,
 }
 
 /// One row in the F1 click-discovery overlay. Each variant maps to a list

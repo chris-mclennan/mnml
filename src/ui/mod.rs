@@ -216,10 +216,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let w = app.tree_width.min(upper.width.saturating_sub(20)).max(8);
         let cols = RLayout::horizontal([Constraint::Length(w), Constraint::Min(1)]).split(upper);
         // The rail's rightmost cell column is the resize handle.
+        // Widen the hit-rect to 3 cells (1 inside the rail + 2
+        // outside) so a trackpad user can actually find it without
+        // pixel-perfect aim. vscode-mouse-2026-06-10 SEV-3 #6.
+        // The render of the column visually stays on the rail's last
+        // cell; this widening only affects hit-testing.
+        let resize_x = cols[0].x + cols[0].width.saturating_sub(1);
         app.rects.tree_edge = Some(Rect {
-            x: cols[0].x + cols[0].width.saturating_sub(1),
+            x: resize_x.saturating_sub(1),
             y: cols[0].y,
-            width: 1,
+            width: 3,
             height: cols[0].height,
         });
         (Some(cols[0]), cols[1])

@@ -17,14 +17,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     };
     app.rects.close_prompt_buttons.clear();
 
-    // Buttons: Save (only if the buffer has a path), Discard, Cancel. The label
-    // capitalises the hotkey letter (s/d/c).
+    // Buttons: Save (only if the buffer has a path), Discard, Cancel.
+    // Use plain labels — the bg-color box treatment below already
+    // signals "clickable button", and the bracket-mnemonic look
+    // (` [S]ave `) was reading as text instead.
+    // vscode-mouse-2026-06-10 SEV-3 #5. The keyboard hotkey is
+    // surfaced as an underline on the first letter (drawn below).
     let mut buttons: Vec<(&str, u8)> = Vec::new();
     if has_path {
-        buttons.push((" [S]ave ", 0));
+        buttons.push(("  Save  ", 0));
     }
-    buttons.push((" [D]iscard ", 1));
-    buttons.push((" [C]ancel ", 2));
+    buttons.push(("  Discard  ", 1));
+    buttons.push(("  Cancel  ", 2));
 
     let msg = format!("  {name} has unsaved changes.");
     let buttons_w: usize = buttons.iter().map(|(t, _)| t.chars().count() + 2).sum();
@@ -88,10 +92,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         if bx + bw > inner.x + inner.width {
             break;
         }
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(label.to_string(), style))),
-            Rect::new(bx, by, bw, 1),
-        );
+        // Underline the hotkey letter (capital S/D/C — index 2 in the
+        // padded label) so the user can find the keyboard shortcut
+        // without having to read the bracket-mnemonic that the
+        // pre-2026-06-13 version surfaced.
+        let mut spans: Vec<Span> = Vec::new();
+        let chars: Vec<char> = label.chars().collect();
+        // Padding before the hotkey letter.
+        spans.push(Span::styled(chars[..2].iter().collect::<String>(), style));
+        // The hotkey letter, underlined.
+        if let Some(&hk) = chars.get(2) {
+            spans.push(Span::styled(
+                hk.to_string(),
+                style.add_modifier(Modifier::UNDERLINED),
+            ));
+        }
+        // Rest of the label.
+        spans.push(Span::styled(chars[3..].iter().collect::<String>(), style));
+        frame.render_widget(Paragraph::new(Line::from(spans)), Rect::new(bx, by, bw, 1));
         app.rects
             .close_prompt_buttons
             .push((Rect::new(bx, by, bw, 1), *choice));
