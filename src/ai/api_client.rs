@@ -1414,6 +1414,36 @@ mod tests {
         assert!(r.is_err(), "`..` escape should be refused: {r:?}");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn execute_tool_write_file_refuses_leaf_symlink_escape() {
+        // untouched-surfaces-hunt-2026-06-08 SEV-2: a pre-existing
+        // leaf symlink in the workspace (e.g. `foo.txt -> /tmp/x`)
+        // shouldn't let write_file punch through to the link target.
+        // The parent-canonicalize check upstream catches symlinked
+        // SUBDIRS; the leaf check covers symlinked FILES.
+        use std::os::unix::fs::symlink;
+        let ws = tempfile::tempdir().unwrap();
+        let escape_target = tempfile::NamedTempFile::new().unwrap();
+        let link_path = ws.path().join("foo.txt");
+        symlink(escape_target.path(), &link_path).unwrap();
+        let r = execute_tool(
+            ws.path(),
+            "write_file",
+            &serde_json::json!({ "path": "foo.txt", "content": "ESCAPE" }),
+            true,
+            false,
+        );
+        assert!(r.is_err(), "leaf symlink should be refused: {r:?}");
+        // Confirm the link target wasn't clobbered. The temp file
+        // was empty at construction; verify it still is.
+        let after = std::fs::read_to_string(escape_target.path()).unwrap();
+        assert!(
+            !after.contains("ESCAPE"),
+            "leaf-symlink target was written! contents = {after:?}"
+        );
+    }
+
     #[test]
     fn execute_tool_shell_exec_refused_when_disabled() {
         let dir = tempfile::tempdir().unwrap();
