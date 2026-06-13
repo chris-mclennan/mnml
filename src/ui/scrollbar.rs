@@ -14,10 +14,17 @@ use ratatui::widgets::Paragraph;
 
 use crate::ui::theme::Theme;
 
-/// Paint a 1-cell scrollbar (track in `bg2`, solid `comment` thumb)
-/// over `area`. `total` is the underlying row count, `viewport` is
-/// the visible row count, `scroll` is the top-row offset. No-op when
-/// `area` is empty.
+/// Paint a 1-cell scrollbar over `area`. Track is a dim `│` glyph on
+/// `bg2`; thumb is a solid `█` block glyph in `comment` fg. `total`
+/// is the underlying row count, `viewport` is the visible row count,
+/// `scroll` is the top-row offset. No-op when `area` is empty.
+///
+/// vscode-mouse-2026-06-10 SEV-3 #7: the previous version painted
+/// solid-color background blocks only — `comment` thumb on the
+/// editor's `bg2` background was nearly indistinguishable on
+/// onedark / catppuccin / kanagawa themes (the colors are
+/// intentionally close). Switching to a glyph-on-bg model makes
+/// the thumb visible without changing the palette.
 pub fn paint_simple_scrollbar(
     frame: &mut Frame,
     area: Rect,
@@ -30,14 +37,20 @@ pub fn paint_simple_scrollbar(
         return;
     }
     let cells = area.height as usize;
-    // Track.
+    let track_glyph = "│".repeat(area.width as usize);
+    let thumb_glyph = "█".repeat(area.width as usize);
+    // Track — a dim `│` over `bg2`. Visible enough that the column
+    // edge reads as a scrollbar gutter even when the thumb isn't
+    // present (file fits in the viewport).
     for cy in 0..cells {
         frame.render_widget(
-            Paragraph::new(" ".repeat(area.width as usize)).style(Style::default().bg(t.bg2)),
+            Paragraph::new(track_glyph.clone()).style(Style::default().fg(t.grey).bg(t.bg2)),
             Rect::new(area.x, area.y + cy as u16, area.width, 1),
         );
     }
-    // Thumb — only when content overflows the viewport.
+    // Thumb — `█` block in `comment` (mid-grey) on `bg2`. The block
+    // glyph + the contrast of fg vs the surrounding track make the
+    // thumb obviously visible.
     if total > viewport && viewport > 0 {
         let thumb_h = ((cells * viewport) / total).max(1);
         let max_scroll = total - viewport;
@@ -47,8 +60,7 @@ pub fn paint_simple_scrollbar(
             .unwrap_or(0);
         for cy in thumb_top..(thumb_top + thumb_h).min(cells) {
             frame.render_widget(
-                Paragraph::new(" ".repeat(area.width as usize))
-                    .style(Style::default().bg(t.comment)),
+                Paragraph::new(thumb_glyph.clone()).style(Style::default().fg(t.comment).bg(t.bg2)),
                 Rect::new(area.x, area.y + cy as u16, area.width, 1),
             );
         }
@@ -124,8 +136,10 @@ mod tests {
         assert_eq!(row(10, 20, 0), "─".repeat(20));
     }
 
-    /// The vertical scrollbar paints a `comment`-bg thumb over a
-    /// `bg2`-bg track; the thumb height tracks the visible fraction.
+    /// The vertical scrollbar paints `█` block-glyph thumb cells (fg
+    /// `comment`) over a `│` track (fg `grey`), both on `bg2`.
+    /// Detect thumb by the `█` symbol — that distinguishes thumb
+    /// cells from track cells regardless of bg.
     #[test]
     fn simple_scrollbar_sizes_and_places_the_thumb() {
         let t = theme::onedark();
@@ -135,7 +149,7 @@ mod tests {
                 .unwrap();
             let buf = term.backend().buffer();
             (0..10u16)
-                .filter(|&y| buf[(0, y)].bg == t.comment)
+                .filter(|&y| buf[(0, y)].symbol() == "█")
                 .map(|y| y as usize)
                 .collect()
         };
