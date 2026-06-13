@@ -1223,20 +1223,25 @@ impl App {
     /// Run the stash push directly (called from the prompt's accept arm or
     /// from a future "stash without message" chord).
     pub fn run_git_stash_push(&mut self, message: Option<&str>) {
+        // untouched-surfaces-hunt-2026-06-08 SEV-2 #7: refuse rather
+        // than warn. `git stash push` shells `git diff` against the
+        // working tree on disk — in-memory unsaved edits aren't
+        // captured, so a later `stash pop` + save would silently
+        // overwrite them with the disk version. Symmetric with the
+        // pull-with-dirty refusal in `run_git_pull`.
+        let dirty_open = self
+            .panes
+            .iter()
+            .any(|p| matches!(p, Pane::Editor(b) if b.dirty));
+        if dirty_open {
+            self.toast("git stash: refuse — unsaved edits in open buffers");
+            return;
+        }
         match crate::git::stash::push(self.active_repo_path(), message) {
             Ok(summary) => {
                 self.after_git_change();
                 self.tree.refresh();
-                let dirty_open = self
-                    .panes
-                    .iter()
-                    .any(|p| matches!(p, Pane::Editor(b) if b.dirty));
-                let warn = if dirty_open {
-                    " — heads up: unsaved edits in open buffers"
-                } else {
-                    ""
-                };
-                self.toast(format!("{summary}{warn}"));
+                self.toast(summary);
             }
             Err(e) => self.toast(format!("git stash: {e}")),
         }

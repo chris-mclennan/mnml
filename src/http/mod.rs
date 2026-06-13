@@ -148,9 +148,32 @@ pub fn send(req: &Request) -> Result<Response, String> {
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
-    let body = resp
-        .text()
-        .map_err(|e| format!("reading body failed: {e}"))?;
+    // Cap response body to 16 MiB. Without this, `resp.text()`
+    // slurps the full body — a 10 GiB malicious response could
+    // OOM-kill the process. 16 MiB is comfortably larger than any
+    // JSON / HTML / text response we'd want to inspect via the
+    // HTTP pane; anything past gets truncated with a marker.
+    // untouched-surfaces-hunt-2026-06-08 SEV-2 #11.
+    const MAX_BODY: usize = 16 * 1024 * 1024;
+    let body = {
+        use std::io::Read;
+        let mut buf = Vec::with_capacity(64 * 1024);
+        let mut reader = resp.take(MAX_BODY as u64 + 1);
+        reader
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("reading body failed: {e}"))?;
+        let truncated = buf.len() > MAX_BODY;
+        if truncated {
+            buf.truncate(MAX_BODY);
+        }
+        let mut s = String::from_utf8_lossy(&buf).into_owned();
+        if truncated {
+            s.push_str(
+                "\n\n[mnml: response body truncated at 16 MiB — drop to curl for the full payload]",
+            );
+        }
+        s
+    };
     let elapsed = start.elapsed();
 
     Ok(Response {

@@ -160,11 +160,18 @@ fn probe(workspace: &Path) -> Snapshot {
             let (x, y) = (bytes[0] as char, bytes[1] as char);
             let path_part = line[3..].trim();
             // handle "old -> new" for renames; take the new path
-            let rel = path_part
+            let rel_raw = path_part
                 .rsplit(" -> ")
                 .next()
                 .unwrap_or(path_part)
                 .trim_matches('"');
+            // Without `-z`, `git status --porcelain` octal-escapes
+            // non-ASCII / quoteable bytes inside double-quotes:
+            // `weird-😀.txt` arrives as `"weird-\360\237\230\200.txt"`.
+            // Unescape so the rail / commit pane shows the actual
+            // glyphs. untouched-surfaces-hunt-2026-06-08 SEV-3 #13.
+            let rel_decoded = decode_git_path(rel_raw);
+            let rel = rel_decoded.as_str();
             let abs = workspace.join(rel);
             let state = if x == 'U' || y == 'U' || (x == 'D' && y == 'D') || (x == 'A' && y == 'A')
             {
@@ -205,6 +212,59 @@ fn probe(workspace: &Path) -> Snapshot {
     snap
 }
 
+/// Decode `git status --porcelain` path output. Without `-z`, git
+/// quote-wraps + octal-escapes any path with non-printable / non-
+/// ASCII bytes: `weird-😀.txt` → `"weird-\360\237\230\200.txt"`.
+///
+/// Strips the quote wrapping (if present), walks the string
+/// interpreting `\<3 octal digits>` as one byte + `\\` / `\"` /
+/// `\t` / `\n` / `\r` as their literal C-escape equivalent.
+/// Anything else (`\x`, `\u`) is left literal — git only emits the
+/// classic C-style octal form.
+fn decode_git_path(s: &str) -> String {
+    let inner = s
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(s);
+    let bytes = inner.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            let n = bytes[i + 1];
+            // Three-octal-digit escape: `\NNN`.
+            if (b'0'..=b'7').contains(&n)
+                && i + 3 < bytes.len()
+                && (b'0'..=b'7').contains(&bytes[i + 2])
+                && (b'0'..=b'7').contains(&bytes[i + 3])
+            {
+                let v =
+                    (bytes[i + 1] - b'0') * 64 + (bytes[i + 2] - b'0') * 8 + (bytes[i + 3] - b'0');
+                out.push(v);
+                i += 4;
+                continue;
+            }
+            // Common C-style escapes git emits.
+            let mapped = match n {
+                b'\\' => Some(b'\\'),
+                b'"' => Some(b'"'),
+                b't' => Some(b'\t'),
+                b'n' => Some(b'\n'),
+                b'r' => Some(b'\r'),
+                _ => None,
+            };
+            if let Some(m) = mapped {
+                out.push(m);
+                i += 2;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,5 +275,28 @@ mod tests {
         let g = GitStatus::new(d.path());
         assert!(g.snapshot().branch.is_none());
         assert_eq!(g.snapshot().change_count(), 0);
+    }
+
+    #[test]
+    fn decode_git_path_reverses_octal_escapes() {
+        // 😀 = U+1F600 = UTF-8 bytes 0xF0 0x9F 0x98 0x80
+        //              = octal       360  237  230  200
+        let escaped = r#""weird-\360\237\230\200.txt""#;
+        let decoded = decode_git_path(escaped);
+        assert_eq!(decoded, "weird-😀.txt");
+    }
+
+    #[test]
+    fn decode_git_path_passes_ascii_through_unchanged() {
+        assert_eq!(decode_git_path("foo/bar.txt"), "foo/bar.txt");
+        assert_eq!(decode_git_path("\"quoted/ascii.txt\""), "quoted/ascii.txt");
+    }
+
+    #[test]
+    fn decode_git_path_handles_c_style_escapes() {
+        // git status escapes embedded tab/newline/backslash too.
+        assert_eq!(decode_git_path(r#""a\tb""#), "a\tb");
+        assert_eq!(decode_git_path(r#""a\\b""#), "a\\b");
+        assert_eq!(decode_git_path(r#""a\"b""#), "a\"b");
     }
 }
