@@ -34,6 +34,7 @@ pub(crate) mod dispatch;
 mod ex_commands;
 mod find;
 mod git;
+mod git_async;
 mod grep;
 pub(crate) mod help;
 mod http;
@@ -2684,6 +2685,13 @@ pub struct App {
     /// Resolved key→command table (registry defaults + `[keys.*]` config).
     /// Rebuilt when the input style changes (a mode section may rebind a chord).
     pub keymap: crate::input::keymap::Keymap,
+    /// Background git-loader thread channel. Sends jobs (push, pull,
+    /// fetch, cherry-pick) so the UI thread never blocks on a slow
+    /// remote / credential-helper prompt. Drained in `App::tick` →
+    /// `drain_git_results`. Wired by `App::new`.
+    /// untouched-surfaces-hunt-2026-06-08 SEV-1.
+    pub git_loader_tx: std::sync::mpsc::Sender<git_async::GitJob>,
+    pub git_loader_rx: std::sync::mpsc::Receiver<git_async::GitResult>,
     /// In-flight chord-chain prefix. Pushed-to whenever a key matches as
     /// `Pending` / `PendingWithFallback`; cleared on Run / on a non-extending
     /// key / on the timeout tick. Empty when no chain is in flight (the
@@ -3043,6 +3051,7 @@ impl App {
         let lsp = crate::lsp::LspManager::new(&workspace, &config);
         let test_history = crate::playwright::history::TestHistory::load(&workspace);
         let keymap = crate::input::keymap::Keymap::build(&config);
+        let (git_loader_tx, git_loader_rx) = git_async::spawn_git_loader();
         // Discover repos in the workspace. The rail's `refresh` should run
         // against the active repo (which is `workspace` itself in the
         // single-repo case, but may be a sub-dir in the multi-repo case).
@@ -3238,6 +3247,8 @@ impl App {
             clipboard: Clipboard::new(),
             picker: None,
             keymap,
+            git_loader_tx,
+            git_loader_rx,
             pending_chord_seq: Vec::new(),
             pending_chord_deadline: None,
             pending_chord_fallback: None,
@@ -8638,6 +8649,7 @@ impl App {
 
     pub fn tick(&mut self) {
         self.git.tick();
+        self.drain_git_results();
         self.maybe_announce_update();
         self.drain_now_playing();
         self.drain_mixr_panel();

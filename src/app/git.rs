@@ -1259,13 +1259,11 @@ impl App {
     /// (read-only). Refreshes the status snapshot so the statusline's
     /// ahead/behind counts update right away.
     pub fn run_git_fetch(&mut self) {
-        match crate::git::sync::fetch_all(self.active_repo_path()) {
-            Ok(summary) => {
-                self.after_git_change();
-                self.toast(format!("fetched: {summary}"));
-            }
-            Err(e) => self.toast(format!("git fetch: {e}")),
-        }
+        let repo = self.active_repo_path().to_path_buf();
+        let _ = self
+            .git_loader_tx
+            .send(crate::app::git_async::GitJob::Fetch { repo });
+        self.toast("fetching…");
     }
 
     /// `git.pull` — `git pull --ff-only`. Refuses on divergent histories
@@ -1282,16 +1280,11 @@ impl App {
             self.toast("git pull: refuse — unsaved edits in open buffers");
             return;
         }
-        match crate::git::sync::pull_ff_only(self.active_repo_path()) {
-            Ok(summary) => {
-                self.after_git_change();
-                self.tree.refresh();
-                // Mtime check on the next tick auto-reloads any open buffer
-                // whose underlying file changed — no manual reload needed.
-                self.toast(format!("pulled: {summary}"));
-            }
-            Err(e) => self.toast(format!("git pull: {e}")),
-        }
+        let repo = self.active_repo_path().to_path_buf();
+        let _ = self
+            .git_loader_tx
+            .send(crate::app::git_async::GitJob::Pull { repo });
+        self.toast("pulling…");
     }
 
     /// `git.push` — `git push`. Falls back to `--set-upstream origin
@@ -1299,35 +1292,14 @@ impl App {
     /// common "first push of a new branch" case). No `--force`.
     pub fn run_git_push(&mut self) {
         let repo = self.active_repo_path().to_path_buf();
-        match crate::git::sync::push(&repo) {
-            Ok(summary) => {
-                self.after_git_change();
-                self.toast(format!("pushed: {summary}"));
-                return;
-            }
-            Err(e) if e.contains("has no upstream branch") || e.contains("--set-upstream") => {
-                // Fall through to the first-push path below.
-            }
-            Err(e) => {
-                self.toast(format!("git push: {e}"));
-                return;
-            }
-        }
-        let Some(branch) = self.git_rail.current_branch.clone() else {
-            self.toast("git push: no current branch");
-            return;
-        };
-        if branch.is_empty() {
-            self.toast("git push: no current branch");
-            return;
-        }
-        match crate::git::sync::push_set_upstream(&repo, &branch) {
-            Ok(summary) => {
-                self.after_git_change();
-                self.toast(format!("pushed (first time): {summary}"));
-            }
-            Err(e) => self.toast(format!("git push --set-upstream: {e}")),
-        }
+        let current_branch = self.git_rail.current_branch.clone();
+        let _ = self
+            .git_loader_tx
+            .send(crate::app::git_async::GitJob::Push {
+                repo,
+                current_branch,
+            });
+        self.toast("pushing…");
     }
 
     /// `git.cherry_pick` — apply the selected `Pane::GitGraph` commit on
@@ -1338,16 +1310,77 @@ impl App {
             self.toast("git cherry-pick: no commit selected");
             return;
         };
-        match crate::git::commit::cherry_pick(self.active_repo_path(), &hash) {
-            Ok(summary) => {
-                self.after_git_change();
-                self.tree.refresh();
-                self.toast(format!(
-                    "cherry-picked {}: {summary}",
-                    &hash[..8.min(hash.len())]
-                ));
+        let repo = self.active_repo_path().to_path_buf();
+        let _ = self
+            .git_loader_tx
+            .send(crate::app::git_async::GitJob::CherryPick {
+                repo,
+                hash: hash.clone(),
+            });
+        self.toast(format!("cherry-picking {}…", &hash[..8.min(hash.len())]));
+    }
+
+    /// Drain the git-loader result channel. Called from `App::tick`
+    /// before rendering so completions surface promptly. Each branch
+    /// fires `after_git_change` + a final toast matching the legacy
+    /// sync behaviour.
+    pub fn drain_git_results(&mut self) {
+        use crate::app::git_async::{GitResult, PushKind};
+        loop {
+            match self.git_loader_rx.try_recv() {
+                Ok(GitResult::Fetched(Ok(summary))) => {
+                    self.after_git_change();
+                    self.toast(format!("fetched: {summary}"));
+                }
+                Ok(GitResult::Fetched(Err(e))) => self.toast(format!("git fetch: {e}")),
+                Ok(GitResult::Pulled(Ok(summary))) => {
+                    self.after_git_change();
+                    self.tree.refresh();
+                    self.toast(format!("pulled: {summary}"));
+                }
+                Ok(GitResult::Pulled(Err(e))) => self.toast(format!("git pull: {e}")),
+                Ok(GitResult::Pushed {
+                    kind: PushKind::Normal,
+                    result: Ok(summary),
+                }) => {
+                    self.after_git_change();
+                    self.toast(format!("pushed: {summary}"));
+                }
+                Ok(GitResult::Pushed {
+                    kind: PushKind::SetUpstream,
+                    result: Ok(summary),
+                }) => {
+                    self.after_git_change();
+                    self.toast(format!("pushed (first time): {summary}"));
+                }
+                Ok(GitResult::Pushed {
+                    kind: PushKind::Normal,
+                    result: Err(e),
+                }) => self.toast(format!("git push: {e}")),
+                Ok(GitResult::Pushed {
+                    kind: PushKind::SetUpstream,
+                    result: Err(e),
+                }) => self.toast(format!("git push --set-upstream: {e}")),
+                Ok(GitResult::CherryPicked {
+                    hash,
+                    result: Ok(summary),
+                }) => {
+                    self.after_git_change();
+                    self.tree.refresh();
+                    self.toast(format!(
+                        "cherry-picked {}: {summary}",
+                        &hash[..8.min(hash.len())]
+                    ));
+                }
+                Ok(GitResult::CherryPicked { result: Err(e), .. }) => {
+                    self.toast(format!("git cherry-pick: {e}"))
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.toast("git loader thread died");
+                    break;
+                }
             }
-            Err(e) => self.toast(format!("git cherry-pick: {e}")),
         }
     }
 

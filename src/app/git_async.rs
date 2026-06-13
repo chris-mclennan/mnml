@@ -1,0 +1,126 @@
+//! Background-thread runner for `git push` / `pull` / `fetch` /
+//! `cherry-pick`. Same pattern as the sibling crates' loader-thread
+//! refactor (slack/teams/gmail/mandrill/buttondown/docker async
+//! migrations earlier today): the App sends a job + drains results
+//! in `tick()`, so a slow remote / credential-prompt / SSH key
+//! prompt no longer freezes the UI thread.
+//!
+//! Surface visible to the rest of `App`:
+//! * [`GitJob`] / [`GitResult`] enums + `spawn_git_loader` builder.
+//! * App stores the `Sender<GitJob>` + `Receiver<GitResult>` returned
+//!   here as `git_loader_tx` / `git_loader_rx`.
+//! * `App::run_git_{fetch,pull,push,cherry_pick}` now SEND the job
+//!   (instead of calling the sync helper directly) and toast a
+//!   pending status. `App::drain_git_results` (called from `tick`)
+//!   applies the result.
+//!
+//! Push has a fallback: if the first `git push` fails with "no
+//! upstream branch", retry with `--set-upstream origin <current>`.
+//! That fallback lives ON the loader thread so a slow network only
+//! pays the cost ONCE per user action; the alternative (toast then
+//! re-send) would cost two round-trips through the channel and
+//! show a confusing intermediate "no upstream" error before the
+//! retry recovered.
+
+use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread;
+
+#[derive(Debug, Clone)]
+pub enum GitJob {
+    Fetch {
+        repo: PathBuf,
+    },
+    Pull {
+        repo: PathBuf,
+    },
+    Push {
+        repo: PathBuf,
+        current_branch: Option<String>,
+    },
+    CherryPick {
+        repo: PathBuf,
+        hash: String,
+    },
+}
+
+/// What the loader thread reports back.
+#[derive(Debug)]
+pub enum GitResult {
+    Fetched(Result<String, String>),
+    Pulled(Result<String, String>),
+    Pushed {
+        kind: PushKind,
+        result: Result<String, String>,
+    },
+    CherryPicked {
+        hash: String,
+        result: Result<String, String>,
+    },
+}
+
+/// Push outcome flavor — affects the toast prefix.
+#[derive(Debug, Clone, Copy)]
+pub enum PushKind {
+    /// Plain `git push` succeeded.
+    Normal,
+    /// `git push --set-upstream origin <branch>` succeeded after
+    /// the plain push reported "no upstream branch".
+    SetUpstream,
+}
+
+/// Spawn the git-loader thread. Returns `(job_tx, result_rx)` for
+/// App to store. Dropping `job_tx` (App-drop) closes the channel
+/// and the thread exits cleanly.
+pub fn spawn_git_loader() -> (Sender<GitJob>, Receiver<GitResult>) {
+    let (job_tx, job_rx) = channel::<GitJob>();
+    let (res_tx, res_rx) = channel::<GitResult>();
+    thread::Builder::new()
+        .name("mnml-git-loader".into())
+        .spawn(move || {
+            while let Ok(job) = job_rx.recv() {
+                let result = match job {
+                    GitJob::Fetch { repo } => {
+                        GitResult::Fetched(crate::git::sync::fetch_all(&repo))
+                    }
+                    GitJob::Pull { repo } => {
+                        GitResult::Pulled(crate::git::sync::pull_ff_only(&repo))
+                    }
+                    GitJob::Push {
+                        repo,
+                        current_branch,
+                    } => match crate::git::sync::push(&repo) {
+                        Ok(s) => GitResult::Pushed {
+                            kind: PushKind::Normal,
+                            result: Ok(s),
+                        },
+                        Err(e)
+                            if (e.contains("has no upstream branch")
+                                || e.contains("--set-upstream"))
+                                && let Some(branch) = current_branch
+                                && !branch.is_empty() =>
+                        {
+                            GitResult::Pushed {
+                                kind: PushKind::SetUpstream,
+                                result: crate::git::sync::push_set_upstream(&repo, &branch),
+                            }
+                        }
+                        Err(e) => GitResult::Pushed {
+                            kind: PushKind::Normal,
+                            result: Err(e),
+                        },
+                    },
+                    GitJob::CherryPick { repo, hash } => GitResult::CherryPicked {
+                        result: crate::git::commit::cherry_pick(&repo, &hash),
+                        hash,
+                    },
+                };
+                if res_tx.send(result).is_err() {
+                    // App dropped the receiver — exit cleanly.
+                    break;
+                }
+            }
+        })
+        .expect("spawn mnml-git-loader");
+    (job_tx, res_rx)
+}
