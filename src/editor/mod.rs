@@ -1915,6 +1915,28 @@ impl Editor {
                 self.cursor = self.line_end(self.current_line());
                 self.move_extras_to_line_edge(true);
             }
+            MoveLineLastChar => {
+                // vim `$` — land on the last printable char, not on
+                // the trailing `\n` / EOF. For an empty line this
+                // collapses to the line start (same as the cursor's
+                // current position when on an empty line; harmless).
+                // 2026-06-13 nvchad-user SEV-3 S3-02 fix.
+                let line = self.current_line();
+                let start = self.line_start(line);
+                let end = self.line_end(line);
+                if end == start {
+                    self.cursor = start;
+                } else {
+                    // Step back one char from `end` (the `\n` byte
+                    // / EOF) to the LAST printable char's byte.
+                    let mut b = end - 1;
+                    while !self.text.is_char_boundary(b) {
+                        b = b.saturating_sub(1);
+                    }
+                    self.cursor = b;
+                }
+                self.move_extras_to_line_edge(true);
+            }
             MoveVisualDown(width) => {
                 let w = width.max(1);
                 let line = self.current_line();
@@ -2157,15 +2179,21 @@ impl Editor {
                 self.cursor = self.text.len();
             }
             SelectLine => {
+                // Vim `V` (visual-line) leaves the CURSOR on the line
+                // it was entered from, with the anchor at line_start;
+                // the line selection extends through the trailing `\n`
+                // conceptually but the cursor stays put. The prior
+                // implementation set cursor to `line_end + 1` which is
+                // the START of the NEXT line — visually "V snaps the
+                // cursor down one line." 2026-06-13 nvchad-user SEV-3
+                // S3-04 fix.
                 let line = self.current_line();
                 let start = self.line_start(line);
-                let end = if self.line_end(line) < self.text.len() {
-                    self.line_end(line) + 1 // include trailing newline
-                } else {
-                    self.line_end(line)
-                };
                 self.anchor = Some(start);
-                self.cursor = end;
+                // Keep self.cursor where it is (the cursor was somewhere
+                // ON the current line before V fired). For the bug-fix
+                // case the user hadn't moved horizontally so cursor ==
+                // start; either way it stays on the entered line.
             }
             SelectWord => {
                 let (lo, hi) = self.word_bounds_at(self.cursor);

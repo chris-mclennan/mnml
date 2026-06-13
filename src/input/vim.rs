@@ -510,7 +510,15 @@ impl VimInputHandler {
             KeyCode::Char('E') => MoveBigWordEnd,
             KeyCode::Char('0') | KeyCode::Home => MoveLineStart,
             KeyCode::Char('^') | KeyCode::Char('_') => MoveLineFirstNonWs,
-            KeyCode::Char('$') | KeyCode::End => MoveLineEnd,
+            // Vim `$` (and End) lands on the LAST printable char of
+            // the line, not on the trailing `\n` (which is where
+            // MoveLineEnd puts the cursor in standard mode). The
+            // block-cursor visual difference is the bug nvchad
+            // hunters keep catching: `$` and then a paste lands the
+            // paste ONE column past where the user expected (the
+            // cursor is sitting on `\n`, not the last char).
+            // 2026-06-13 SEV-3 S3-02 fix.
+            KeyCode::Char('$') | KeyCode::End => MoveLineLastChar,
             // `+` / `<CR>` — down N lines + first non-blank. `-` — up N lines + first non-blank.
             KeyCode::Char('+') | KeyCode::Enter => MoveDownFirstNonWs,
             KeyCode::Char('-') => MoveUpFirstNonWs,

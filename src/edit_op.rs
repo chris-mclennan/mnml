@@ -49,6 +49,13 @@ pub enum EditOp {
         forward: bool,
     },
     MoveLineEnd,
+    /// vim `$` — the LAST printable char of the current line (the byte
+    /// the block cursor visually covers). Unlike `MoveLineEnd` which
+    /// lands on the `\n` byte (or EOF) — vim's `$` lands one byte
+    /// earlier so the cursor block sits ON the last char.
+    /// On an empty line, lands at the line start (same as
+    /// MoveLineEnd). 2026-06-13 nvchad-user SEV-3 S3-02 fix.
+    MoveLineLastChar,
     /// vim `gj` — move down one visual row under wrap. `usize` is the
     /// viewport text width (char cells). When the cursor's col + width
     /// would stay on the same file line, the cursor moves forward by
