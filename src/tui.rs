@@ -808,6 +808,28 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // `Ctrl+W` from tree focus — vim window-prefix chord. Return focus
+    // to the active editor pane so the next key (h/l/j/k/w/c) is
+    // handled by the buffer's vim handler's Prefix::Window chain.
+    // Without this, vim users would `Ctrl+W` from the tree and then
+    // press `l` expecting "focus right pane" — but `l` got eaten by
+    // the tree's expand_or_descend handler. nvchad-user-2026-06-10
+    // S2-07.
+    if key.code == KeyCode::Char('w') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        if app.active.is_some() {
+            app.focus = crate::focus::Focus::Pane;
+            // Forward the same Ctrl+W to the now-focused pane so its
+            // vim handler enters Prefix::Window mode for the next
+            // key. Standard mode treats Ctrl+W as buffer.close —
+            // re-dispatching it from tree focus might close the
+            // active editor, which the user didn't ask for. Skip the
+            // re-dispatch in standard mode.
+            if app.config.editor.input_style == "vim" {
+                handle_pane_key(app, key);
+            }
+        }
+        return;
+    }
     match key.code {
         KeyCode::Char('/') => {
             app.tree.filter_mode = true;
