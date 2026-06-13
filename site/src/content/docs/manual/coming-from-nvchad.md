@@ -46,7 +46,19 @@ These are pure-vim behavior, nothing to translate. mnml's vim handler covers the
 - Text objects: `iw`/`aw`, `i(`/`a(`, `i"`/`a"`, `ip`/`ap`, `is`/`as`, plus tree-sitter `if`/`af` (function), `ic`/`ac` (class), `ia`/`aa` (argument), `ii`/`ai` (indent)
 - Visual-block (`Ctrl-V`) + `I` / `A` to insert/append on every line — the real multi-cursor for the column case
 
-The `.` dot-repeat, jumplist (`Ctrl-O` / `Ctrl-I`), and changelist (`g;` / `g,`) all work. Macros (`qa…q@a`) and named/numbered registers (`"ay`, `"+y`, `"0p`) are persisted across restarts.
+The statusline mode chip differentiates `VISUAL` (char), `V-LINE` (`V`), and `V-BLOCK` (`Ctrl-V`) — same purple background, different label and tooltip — so NvChad's "which kind of visual am I in?" muscle memory transfers without squinting.
+
+The `.` dot-repeat, jumplist (`Ctrl-O` / `Ctrl-I`), and changelist (`g;` / `g,`) all work. Macros (`qa…q@a`) and named/numbered registers (`"ay`, `"+y`, `"0p`) are persisted across restarts. Counts thread through macros — `5@a` replays macro `a` five times, like vim.
+
+A couple of edge-case motions that match vim exactly (and didn't always):
+
+- **`$` lands on the line's last printable char**, not one cell past it. Paste after `$` lands immediately after the last visible character.
+- **`G` (bare) lands on the *start* of the last line**, not the phantom row past a trailing newline.
+- **`*` and `#` advance past the current match** — the star jumps to the *next* occurrence of the word under the cursor (instead of finding the cursor's current word).
+- **`V` doesn't snap the cursor down a row** — the anchor moves to `line_start`, the cursor stays put, and `'<` / `'>` after a yank reflect the correct row range.
+- **`:%s/.../.../g` is one undo step** — a 12-match substitute reverts on one `u`, not twelve.
+
+`cc`, `guu`, `gUU`, `g~~` all operate on the full line and leave the cursor at the start of the next line, so `g~~g~~g~~` walks down toggling case line by line.
 
 See [Editing](/manual/editing/) for the full operator + text-object inventory; this page won't repeat it.
 

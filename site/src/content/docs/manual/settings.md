@@ -312,6 +312,16 @@ The statusline `♪` miniplayer chip can read from two sources — the sibling [
 
 The matching row is in the settings overlay under `── UI ──` as **Now-playing source** with options `auto` / `mixr` / `macos`. The chip itself is hidden when nothing is playing — switching sources doesn't toggle visibility, just which player gets queried.
 
+#### Mouse polish
+
+A few mouse-surface fixes worth knowing — none of them are settings (there's nothing to toggle), but they show up across the chrome and were enough of a "wait, that should work" feeling to call out:
+
+- **Right-click while a context menu is open retargets it.** Right-clicking on the bufferline used to require two clicks when a menu was already showing (the first closed it, the second opened a fresh one). The handler now cancels the open menu and falls through to dispatch the new right-click in one go — one click, one menu, at the new position.
+- **The vertical scrollbar is visible.** Previously the track and thumb used two close background colors that visually melted on subtle themes (onedark / catppuccin / kanagawa). The track is now a `│` glyph in grey over `bg2`; the thumb is `█` in `comment` color. Themes are unchanged — the contrast comes from the glyph shapes and fg-vs-bg channel separation.
+- **Save-prompt buttons read as buttons.** The `[S]ave` / `[D]iscard` / `[C]ancel` bracket-mnemonic style relabeled to `  Save  ` / `  Discard  ` / `  Cancel  ` (doubled padding for the button-box shape) with the hotkey letter underlined. The bg-color treatment (blue for the default, `bg2` for the others) was already there; the relabel lets it read as a row of buttons instead of bracket-noisy text.
+- **The tree-resize handle is 3 cells wide.** The hit-rect for "grab the tree's right edge to resize" used to be a single cell — fiddly with a trackpad. It now spans 1 cell inside the rail + 2 outside, so the cursor lands on it without precision aiming.
+- **More tooltips.** The activity-bar icons, the statusline `♪` now-playing chip, and the palette-bar back / forward / dropdown chevrons all have hover tooltips. The activity-bar tooltip pulls its label from each section's existing `meta()` so it stays in sync with the click action; the now-playing tooltip renders `<source>: <track>` so you see both player and song without truncate-guessing.
+
 ### `[editor]` — editing behavior
 
 ```toml

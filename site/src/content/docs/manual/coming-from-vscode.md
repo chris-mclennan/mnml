@@ -60,7 +60,7 @@ These tables cover the chords you reach for instinctively. Source of truth: `src
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` (system clipboard) |
 | `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` undo / redo | All three present (`Ctrl+Y` is redo too) |
 | `Ctrl+/` toggle line comment | `Ctrl+/` |
-| `Ctrl+]` / `Ctrl+[` indent / dedent | `Ctrl+]` (bracket match) + `Tab` / `Shift+Tab` for selection indent |
+| `Ctrl+]` / `Ctrl+[` indent / dedent | `Ctrl+]` / `Ctrl+[` (standard-mode override of bracket-match); `Tab` / `Shift+Tab` also indents a selection |
 | `Alt+↑` / `Alt+↓` move line | `Alt+↑` / `Alt+↓` (also `Alt+J` / `Alt+K`) |
 | `Shift+Alt+↓` duplicate line | `Ctrl+Shift+D` (mnml's chord); `Shift+Alt+↓` doesn't currently fire |
 | `Ctrl+Shift+K` delete line | `Ctrl+Shift+K` |
