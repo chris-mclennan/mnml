@@ -3937,6 +3937,25 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             {
                 app.focus_tree();
                 app.rail_section = crate::app::RailSection::Workspace;
+                // VS Code preview/pin gesture: single-click on a file
+                // opens it as a preview tab (replaceable by the next
+                // single-click); double-click promotes to a real tab
+                // (the editor's `open_path` non-preview path is the
+                // promotion). Use the same `last_click` tracker the
+                // editor uses for word/line select.
+                // vscode-mouse-2026-06-10 SEV-2 #5.
+                let now = std::time::Instant::now();
+                let count = match app.last_click {
+                    Some((prev, px, py, c))
+                        if px == x
+                            && py == y
+                            && now.duration_since(prev) < std::time::Duration::from_millis(450) =>
+                    {
+                        (c + 1).min(3)
+                    }
+                    _ => 1,
+                };
+                app.last_click = Some((now, x, y, count));
                 {
                     let idx = (y - tr.y) as usize + app.rects.tree_scroll;
                     if idx < app.tree.visible_rows().len() {
@@ -3964,6 +3983,13 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                                     }
                                 }
                                 app.tree.toggle_current();
+                            } else if count >= 2 {
+                                // Double-click promotes to a permanent
+                                // tab. `open_path` itself clears any
+                                // preview flag on existing panes for
+                                // this file.
+                                let path = row.path.clone();
+                                app.open_path(&path);
                             } else {
                                 // Single tree-click on a file = the
                                 // VS Code preview-tab gesture under

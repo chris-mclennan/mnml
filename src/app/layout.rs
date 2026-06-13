@@ -265,6 +265,17 @@ impl App {
             .iter()
             .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&path)))
         {
+            // Pin-promotion: a non-preview open (`preview = false`) on a
+            // file that's currently shown as a preview pane CLEARS the
+            // preview flag — so a tree double-click on a previewed file
+            // turns it into a permanent tab. vscode-mouse-2026-06-10
+            // SEV-2 #5.
+            if !preview
+                && let Some(Pane::Editor(b)) = self.panes.get_mut(i)
+                && b.is_preview
+            {
+                b.is_preview = false;
+            }
             self.reveal_pane(i);
             return;
         }

@@ -79,10 +79,23 @@ impl App {
             .iter()
             .map(|w| w.root.clone())
             .collect();
+        // Exclude the currently focused editor's file from the
+        // recent-files picker. Selecting "the file I'm already
+        // looking at" is a no-op and just steals the top row from
+        // the file the user probably wants next.
+        // vscode-mouse-2026-06-10 SEV-3 #8.
+        let active_path: Option<std::path::PathBuf> = self
+            .active
+            .and_then(|i| self.panes.get(i))
+            .and_then(|p| match p {
+                crate::pane::Pane::Editor(b) => b.path.clone(),
+                _ => None,
+            });
         let items: Vec<PickerItem> = self
             .recent_files
             .iter()
             .filter(|p| p.exists())
+            .filter(|p| active_path.as_deref() != Some(p.as_path()))
             .map(|p| {
                 // Pick the workspace this file belongs to (longest matching
                 // prefix), then build the relative label. Files outside any

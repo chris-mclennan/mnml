@@ -233,6 +233,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                     }
                 }
                 "picker.files" => "search files".into(),
+                "integrations.add" => "add integration".into(),
                 other => other.into(),
             };
             Some((rect, label.into_owned(), None))
