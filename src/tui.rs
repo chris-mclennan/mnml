@@ -2573,7 +2573,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         .map(|s| s.selected_row)
                         .unwrap_or(0);
                     let delta = rc_idx as isize - cur as isize;
-                    if delta != 0 {
+                    if delta == 0 {
+                        // Already focused — click cycles the value
+                        // forward (vscode-mouse SEV-2 2026-06-10:
+                        // "row title click moves the focus arrow;
+                        // clicking value glyphs themselves does
+                        // nothing. Only ← / → keys mutate"). Per-chip
+                        // hit-rects would be ideal, but click-to-
+                        // advance is the small interaction win that
+                        // makes the overlay feel responsive without
+                        // a renderer rework.
+                        app.settings_enter_row();
+                    } else {
                         app.settings_move_row(delta);
                     }
                 } else if let Some(area) = app.rects.settings_overlay_rect
