@@ -1690,6 +1690,42 @@ impl Editor {
             self.undo.remove(0);
         }
     }
+
+    /// Current number of undo entries. Callers can checkpoint, run a
+    /// multi-op atomic edit (e.g. `:%s/.../.../g`), then truncate the
+    /// stack back to `len + 1` so a single `u` undoes the whole run
+    /// instead of one entry per replacement.
+    pub fn undo_len(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// Push one pre-state checkpoint, run `body`, then collapse every
+    /// intermediate undo entry the body pushed into that single
+    /// checkpoint. The result: one `u` reverts the entire run.
+    ///
+    /// `body` receives `&mut Self` so the caller can stream ops
+    /// through `apply` (which would normally checkpoint per op).
+    /// Used by `:%s/.../.../g` and any future "batch many edits, undo
+    /// as one" path.
+    ///
+    /// 2026-06-13 nvchad-user SEV-2 follow-up (S2-02: `:%s` was not
+    /// a single undo step).
+    pub fn atomic_undo<R>(&mut self, body: impl FnOnce(&mut Self) -> R) -> R {
+        self.redo.clear();
+        self.in_insert_run = false;
+        let before_len = self.undo.len();
+        self.push_undo();
+        // After our checkpoint, the body may push N more entries
+        // (one per inner `apply`). We keep ours at `before_len` and
+        // drop the body's.
+        let target_len = before_len + 1;
+        let out = body(self);
+        if self.undo.len() > target_len {
+            self.undo.truncate(target_len);
+        }
+        self.in_insert_run = false;
+        out
+    }
     fn restore(&mut self, s: Snapshot) {
         self.text = s.text;
         self.cursor = s.cursor.min(self.text.len());
@@ -5881,5 +5917,41 @@ mod tests {
         // From byte 10 ('d'), `ge` again ⇒ end of "hello" = byte 4 ('o').
         e.apply(MoveWordEndBack, 10, &mut c);
         assert_eq!(e.cursor(), 4);
+    }
+
+    /// 2026-06-13 nvchad-user SEV-2 S2-02 regression: `:%s/.../.../g`
+    /// must undo in ONE step. atomic_undo wraps a multi-op edit so a
+    /// single `Undo` reverts the whole group.
+    #[test]
+    fn atomic_undo_collapses_many_ops_into_one_step() {
+        let (mut e, mut c) = ed("foo bar foo");
+        let initial = e.text().to_string();
+        // Three replacements: descending order so each keeps the
+        // earlier byte offsets valid (mimics the :%s code path).
+        e.atomic_undo(|ed| {
+            // Replace "foo" at byte 8 with "BAZ", then "foo" at 0 with "BAZ".
+            ed.apply(
+                EditOp::ReplaceRange {
+                    start: 8,
+                    end: 11,
+                    text: "BAZ".into(),
+                },
+                10,
+                &mut c,
+            );
+            ed.apply(
+                EditOp::ReplaceRange {
+                    start: 0,
+                    end: 3,
+                    text: "BAZ".into(),
+                },
+                10,
+                &mut c,
+            );
+        });
+        assert_eq!(e.text(), "BAZ bar BAZ");
+        // ONE undo reverts everything.
+        e.apply(EditOp::Undo, 10, &mut c);
+        assert_eq!(e.text(), initial);
     }
 }

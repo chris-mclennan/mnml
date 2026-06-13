@@ -419,9 +419,21 @@ impl App {
                 text: sub.replace.clone(),
             })
             .collect();
+        // Wrap the whole run in a single undo group so `u` reverts
+        // all replacements in one step. nvchad-user SEV-2 S2-02
+        // ("`:%s/.../.../g` is not a single undo step — needs one
+        // `u` per replaced line").
         if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
             let clip = &mut self.clipboard;
-            b.apply_edit_ops(ops, clip, 0);
+            b.editor.atomic_undo(|editor| {
+                for op in ops {
+                    editor.apply(op, 0, clip);
+                }
+            });
+            // Notify the LSP / persistent undo path by marking the
+            // buffer dirty (the per-op apply_edit_ops path used to do
+            // this; we replicate the high-level effect here).
+            b.dirty = true;
         }
         // Push the new text to the LSP so diagnostics stay current.
         if let Some(Pane::Editor(b)) = self.panes.get(idx)
