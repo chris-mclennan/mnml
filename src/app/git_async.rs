@@ -42,6 +42,16 @@ pub enum GitJob {
         repo: PathBuf,
         hash: String,
     },
+    /// `git blame` for `rel` (workspace-relative) under `repo`.
+    /// Carries `path` (absolute) so the result can re-find the open
+    /// editor pane after the shell-out returns. Used by
+    /// `toggle_blame` and `refresh_blame_for`.
+    /// untouched-surfaces-hunt-2026-06-08 SEV-2 #9.
+    Blame {
+        repo: PathBuf,
+        rel: String,
+        path: PathBuf,
+    },
 }
 
 /// What the loader thread reports back.
@@ -56,6 +66,13 @@ pub enum GitResult {
     CherryPicked {
         hash: String,
         result: Result<String, String>,
+    },
+    /// Blame result. `lines` is empty when the file is untracked or
+    /// the path isn't in any commit yet. Caller matches by `path`
+    /// to find the editor pane to update.
+    Blamed {
+        path: PathBuf,
+        lines: Vec<crate::git::blame::BlameLine>,
     },
 }
 
@@ -113,6 +130,10 @@ pub fn spawn_git_loader() -> (Sender<GitJob>, Receiver<GitResult>) {
                     GitJob::CherryPick { repo, hash } => GitResult::CherryPicked {
                         result: crate::git::commit::cherry_pick(&repo, &hash),
                         hash,
+                    },
+                    GitJob::Blame { repo, rel, path } => GitResult::Blamed {
+                        lines: crate::git::blame::blame(&repo, &rel),
+                        path,
                     },
                 };
                 if res_tx.send(result).is_err() {

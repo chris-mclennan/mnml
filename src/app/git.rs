@@ -529,9 +529,9 @@ impl App {
             return;
         }
         let repo = self.active_repo_path().to_path_buf();
-        let rel = match self.panes.get(cur) {
+        let (rel, path) = match self.panes.get(cur) {
             Some(Pane::Editor(b)) => match &b.path {
-                Some(p) => rel_path(&repo, p),
+                Some(p) => (rel_path(&repo, p), p.clone()),
                 None => {
                     self.toast("blame needs a saved file");
                     return;
@@ -542,28 +542,68 @@ impl App {
                 return;
             }
         };
-        let lines = crate::git::blame::blame(&repo, &rel);
-        if lines.is_empty() {
-            self.toast("git blame returned nothing (untracked file?)");
-            return;
-        }
-        if let Some(Pane::Editor(b)) = self.panes.get_mut(cur) {
-            b.blame = Some(lines);
-        }
-        self.toast("blame: on");
+        // Phase async: `git blame` on a huge file can take 10+s.
+        // Send it to the loader; `drain_git_results` matches the
+        // Blamed result back to the pane by absolute path on the
+        // next tick. untouched-surfaces-hunt-2026-06-08 SEV-2 #9.
+        let _ = self
+            .git_loader_tx
+            .send(crate::app::git_async::GitJob::Blame { repo, rel, path });
+        self.toast("computing blame…");
     }
 
     /// If a buffer with blame mode on was just saved, recompute its blame.
+    /// Async via the git loader — the saved buffer keeps its prior
+    /// blame visible until the recomputed one lands, which avoids a
+    /// blank gutter flash on every save.
     pub(super) fn refresh_blame_for(&mut self, path: &Path) {
         let repo = self.active_repo_path().to_path_buf();
         let rel = rel_path(&repo, path);
+        // Only queue if there's an editor pane with blame on for this
+        // path — avoids spinning the loader for buffers that never
+        // had blame requested.
+        let needs = self
+            .panes
+            .iter()
+            .any(|p| matches!(p, Pane::Editor(b) if b.blame.is_some() && b.is_at(path)));
+        if !needs {
+            return;
+        }
+        let _ = self
+            .git_loader_tx
+            .send(crate::app::git_async::GitJob::Blame {
+                repo,
+                rel,
+                path: path.to_path_buf(),
+            });
+    }
+
+    /// Apply a `GitResult::Blamed` to whatever editor pane is open
+    /// on the given path. No-ops when the pane was closed between
+    /// the request and the result.
+    pub(super) fn apply_blame_result(
+        &mut self,
+        path: &Path,
+        lines: Vec<crate::git::blame::BlameLine>,
+    ) {
+        if lines.is_empty() {
+            // Untracked file or other "no output" case. Don't clear
+            // the existing blame — preserve any prior result so a
+            // mid-edit save doesn't blank the gutter.
+            self.toast("git blame returned nothing (untracked file?)");
+            return;
+        }
+        let mut applied = false;
         for pane in &mut self.panes {
             if let Pane::Editor(b) = pane
-                && b.blame.is_some()
                 && b.is_at(path)
             {
-                b.blame = Some(crate::git::blame::blame(&repo, &rel));
+                b.blame = Some(lines.clone());
+                applied = true;
             }
+        }
+        if applied {
+            self.toast("blame: on");
         }
     }
 
@@ -1379,6 +1419,9 @@ impl App {
                 }
                 Ok(GitResult::CherryPicked { result: Err(e), .. }) => {
                     self.toast(format!("git cherry-pick: {e}"))
+                }
+                Ok(GitResult::Blamed { path, lines }) => {
+                    self.apply_blame_result(&path, lines);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
