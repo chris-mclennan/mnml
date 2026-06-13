@@ -126,12 +126,17 @@ impl Keymap {
         // swallow before the buffer's input handler ever sees them:
         // `Ctrl+W` (window/split prefix), `Ctrl+G` (file info), `Ctrl+D` /
         // `Ctrl+U` (half-page motions), `Ctrl+E` / `Ctrl+Y` (line scroll —
-        // 2026-06-08 nvchad hunt). Standard mode keeps them as
-        // `buffer.close` / `editor.goto_line` / `editor.add_cursor_at_next_word`
-        // / `focus.cycle` / (unbound).  We remove here BEFORE user `[keys.*]`
-        // overlays so a user can still bind them in `[keys.vim]` if desired.
+        // 2026-06-08 nvchad hunt), `Ctrl+R` (redo — 2026-06-13 nvchad
+        // SEV-1 follow-up; was firing the recent-files picker mid-edit,
+        // breaking the reflexive `u u u Ctrl+R` redo flow). Standard mode
+        // keeps these as `buffer.close` / `editor.goto_line` /
+        // `editor.add_cursor_at_next_word` / `focus.cycle` /
+        // `picker.recent`. We remove here BEFORE user `[keys.*]` overlays
+        // so a user can still bind them in `[keys.vim]` if desired.
         if cfg.editor.input_style == "vim" {
-            for spec in ["ctrl+w", "ctrl+g", "ctrl+d", "ctrl+u", "ctrl+e", "ctrl+y"] {
+            for spec in [
+                "ctrl+w", "ctrl+g", "ctrl+d", "ctrl+u", "ctrl+e", "ctrl+y", "ctrl+r",
+            ] {
                 if let Some(ev) = parse_key_spec(spec) {
                     km.map.remove(&Chord::of(&ev));
                 }

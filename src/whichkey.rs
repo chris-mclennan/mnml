@@ -311,7 +311,13 @@ pub fn root() -> &'static Leader {
                 ('m', cmd("markdown.preview", "markdown preview")),
                 ('p', cmd("palette", "command palette")),
                 ('o', cmd("task.run", "run task…")),
-                ('r', cmd("app.restart", "restart mnml")),
+                // 2026-06-13 nvchad-user SEV-1 follow-up: `<leader>r`
+                // used to fire `app.restart`, but `r` reads as
+                // redo/rename in any vim-flavoured leader chord and
+                // a reflexive `<leader>r` was wiping the running app
+                // mid-edit. Removed; `:rebuild` ex-command + the
+                // command palette (`<leader>p`) still expose restart
+                // for the rare time anyone actually wants it.
             ],
         )
     })

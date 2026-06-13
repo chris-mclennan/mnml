@@ -282,13 +282,19 @@ impl App {
                 None
             }
         });
+        // Seed priority:
+        //   1. Multi-line selection ⇒ blank (don't dump selection).
+        //   2. Single-line selection ⇒ the selected text.
+        //   3. Otherwise BLANK. Vim convention: `/` opens an empty
+        //      prompt; `n` / `N` repeat the last search. mnml used
+        //      to seed from the buffer's prior query, which meant a
+        //      second `/` re-opened with the previous text and any
+        //      new chars APPENDED — "five" then "/" then "eight"
+        //      typed `fiveeight`. 2026-06-13 nvchad-user SEV-1 fix.
         let seed = if multi_line_sel.is_some() {
-            // Don't dump the whole selection into the query field.
             String::new()
         } else if b.editor.has_selection() {
             b.editor.selected_text().to_string()
-        } else if let Some(f) = &b.find {
-            f.query.clone()
         } else {
             String::new()
         };

@@ -668,20 +668,30 @@ impl App {
                     self.save_active_as(rest);
                 }
             }
+            // `:q` / `:x` / `:wq` close the active PANE only. Vim
+            // quits when the last pane closes; mnml shows the welcome
+            // screen instead so unsaved work in OTHER mnml UI state
+            // (recents, settings, the tree, AI threads) isn't blown
+            // away by reflexive `ZZ` / `:q`. The explicit quit chord
+            // is `:qa` / `:qall` / `Cmd+Q` for app-quit.
+            //
+            // 2026-06-13 nvchad-user SEV-1 / SEV-2 follow-up: closing
+            // the last buffer with `ZZ` was firing `should_quit = true`
+            // and exiting the app, masking any other in-flight UI.
             "q" | "quit" => {
                 if self.active.is_some() && self.active_pane().is_some_and(Pane::is_dirty) {
                     self.toast("unsaved changes — use :q! to discard");
                 } else {
                     self.close_active_pane();
                     if self.panes.is_empty() {
-                        self.should_quit = true;
+                        self.show_welcome = true;
                     }
                 }
             }
             "q!" | "quit!" => {
                 self.force_close_active_pane();
                 if self.panes.is_empty() {
-                    self.should_quit = true;
+                    self.show_welcome = true;
                 }
             }
             "wq" | "x" | "xit" => {
@@ -689,7 +699,7 @@ impl App {
                 // After a successful save the buffer's clean, so this won't prompt.
                 self.close_active_pane();
                 if self.panes.is_empty() {
-                    self.should_quit = true;
+                    self.show_welcome = true;
                 }
             }
             "wa" | "wall" => self.save_all(),
