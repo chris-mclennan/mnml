@@ -37,11 +37,11 @@ pub fn build_help(keymap: &Keymap) -> Vec<HelpRow> {
     // Reverse the keymap: command id → list of chord-specs.
     let mut bindings: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
-    for (chord, id) in keymap.iter() {
+    for (seq, id) in keymap.iter() {
         bindings
             .entry(id.to_string())
             .or_default()
-            .push(chord.to_spec());
+            .push(crate::input::keymap::chord_seq_to_spec(seq));
     }
     for chords in bindings.values_mut() {
         chords.sort();

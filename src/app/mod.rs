@@ -2684,6 +2684,20 @@ pub struct App {
     /// Resolved key→command table (registry defaults + `[keys.*]` config).
     /// Rebuilt when the input style changes (a mode section may rebind a chord).
     pub keymap: crate::input::keymap::Keymap,
+    /// In-flight chord-chain prefix. Pushed-to whenever a key matches as
+    /// `Pending` / `PendingWithFallback`; cleared on Run / on a non-extending
+    /// key / on the timeout tick. Empty when no chain is in flight (the
+    /// usual case).
+    pub pending_chord_seq: Vec<crate::input::keymap::Chord>,
+    /// Wallclock deadline at which the chord-chain pending state gives up.
+    /// `App::tick` checks this each frame; on elapse, the `pending_chord_fallback`
+    /// fires (if any) and pending is cleared. None ⇒ nothing pending.
+    pub pending_chord_deadline: Option<std::time::Instant>,
+    /// Command id to fire if the chord-chain pending times out. Set when
+    /// the pending sequence matches a `PendingWithFallback` (ambiguous —
+    /// both a leaf binding and a longer chain's prefix). None when the
+    /// pending has no shorter leaf, OR when no chain is in flight.
+    pub pending_chord_fallback: Option<String>,
     /// While a leader sequence is in flight: the keys typed after `<leader>`
     /// (`Some("")` ⇒ the popup just opened). Steals key input like the picker.
     pub whichkey: Option<String>,
@@ -3224,6 +3238,9 @@ impl App {
             clipboard: Clipboard::new(),
             picker: None,
             keymap,
+            pending_chord_seq: Vec::new(),
+            pending_chord_deadline: None,
+            pending_chord_fallback: None,
             whichkey: None,
             dragging: None,
             close_prompt: None,

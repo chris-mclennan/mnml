@@ -2435,16 +2435,14 @@ fn builtin_commands() -> Vec<Command> {
             id: "lsp.hover",
             title: "LSP: hover (docs at cursor)",
             group: "lsp",
-            // VS Code convention is `Ctrl+K Ctrl+I`. mnml's keymap
-            // doesn't support chord-chain bindings (parse_key_spec
-            // is single-chord), so the chain was silently dropped at
-            // build time. `Alt+K` is the working single-chord
-            // analogue — mirrors vim's `K` (hover under cursor) with
-            // a modifier so it doesn't collide with text input. The
-            // user can rebind via `[keys.global] "ctrl+f1" =
-            // "lsp.hover"` if they want their own shape.
+            // VS Code's `Ctrl+K Ctrl+I`. Chord chains parse now —
+            // `ctrl+k` alone fires `whichkey.leader` after the
+            // chord-chain timeout (vim's `timeoutlen` semantics);
+            // pressing `ctrl+i` within the timeout fires this.
+            // `alt+k` is kept as a single-chord alternative for users
+            // who don't want the timeout pause.
             // vscode-keyboard-2026-06-10 S2-11.
-            keys: &["alt+k"],
+            keys: &["ctrl+k ctrl+i", "alt+k"],
             run: |app| app.lsp_hover(),
         },
         Command {

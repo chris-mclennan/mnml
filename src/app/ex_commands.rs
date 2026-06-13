@@ -2763,7 +2763,7 @@ impl App {
         let mut rows: Vec<(String, String)> = self
             .keymap
             .iter()
-            .map(|(c, id)| (c.to_spec(), id.to_string()))
+            .map(|(seq, id)| (crate::input::keymap::chord_seq_to_spec(seq), id.to_string()))
             .filter(|(spec, id)| {
                 filter.is_empty()
                     || spec.to_lowercase().contains(&filter)

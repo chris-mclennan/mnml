@@ -38,13 +38,13 @@ impl CheatsheetPane {
     pub fn build(keymap: &crate::input::keymap::Keymap) -> Self {
         let reg = crate::command::registry();
         let mut grouped: BTreeMap<String, Vec<CheatsheetRow>> = BTreeMap::new();
-        for (chord, id) in keymap.iter() {
+        for (seq, id) in keymap.iter() {
             let (group, title) = match reg.get(id) {
                 Some(c) => (c.group.to_string(), c.title.to_string()),
                 None => ("(unknown)".to_string(), id.to_string()),
             };
             grouped.entry(group).or_default().push(CheatsheetRow {
-                chord: chord.to_spec(),
+                chord: crate::input::keymap::chord_seq_to_spec(seq),
                 command_id: id.to_string(),
                 title,
             });

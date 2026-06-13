@@ -2,15 +2,29 @@
 //!
 //! `parse_key_spec` turns strings like `"ctrl+shift+p"`, `"enter"`, `"down"`,
 //! `"a"` into `crossterm::event::KeyEvent`s (used by the IPC channel so e2e
-//! scripts can send keys by name).
+//! scripts can send keys by name). `parse_key_seq` extends that to
+//! whitespace-separated chord CHAINS — `"ctrl+k ctrl+i"` parses as two
+//! events.
 //!
 //! [`Keymap`] is the *one table* app-level chords resolve through: built from
 //! every [`crate::command::Command`]'s default `keys` and then overlaid with the
 //! user's `[keys.global]` / `[keys.<input_style>]` config. `tui.rs`/`headless.rs`
-//! call `App::keymap.resolve(key)` instead of a hardcoded `match`. Adding or
-//! re-binding a chord = one row here or in config, nowhere else.
+//! drive it via [`Keymap::resolve_seq`] (chord-chain aware) for the dispatch
+//! path, and [`Keymap::resolve`] for single-chord shortcuts (tests, single-key
+//! callers that don't manage pending state).
+//!
+//! Chord-chain semantics — when a user starts a chain like `ctrl+k`:
+//! * [`SeqResolution::Pending`] — wait for next key.
+//! * [`SeqResolution::PendingWithFallback`] — the prefix is ALSO bound on its
+//!   own (e.g. `ctrl+k` = `whichkey.leader` and `ctrl+k ctrl+i` = `lsp.hover`).
+//!   Vim's ambiguous case: hold the prefix and wait `timeoutlen`; if a next
+//!   key arrives and extends, fire the longer binding; if it doesn't extend
+//!   or the timeout elapses, fire the inner. The App ticks the deadline.
+//! * [`SeqResolution::Run`] — exact match, no longer binding extends it.
+//!   Fire immediately.
+//! * [`SeqResolution::None`] — no match at all, no pending prefix.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -87,7 +101,34 @@ impl Chord {
 /// unconsumed key event).
 #[derive(Debug, Clone, Default)]
 pub struct Keymap {
-    map: HashMap<Chord, String>,
+    /// All bindings. A length-1 `Vec` is a normal single-chord binding;
+    /// longer `Vec`s are multi-chord chains like `ctrl+k ctrl+i`.
+    map: HashMap<Vec<Chord>, String>,
+    /// Every PROPER prefix of every bound sequence. Lets us answer
+    /// "is this pending prefix worth waiting on?" in O(1) without
+    /// scanning the full map. Rebuilt by [`Self::rebuild_prefixes`]
+    /// whenever the map changes.
+    prefixes: HashSet<Vec<Chord>>,
+}
+
+/// Result of looking up a (possibly-partial) chord sequence in the keymap.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SeqResolution<'a> {
+    /// Exact match; this is the FINAL command for the sequence. Fire it
+    /// immediately and clear pending state.
+    Run(&'a str),
+    /// No exact match, but the sequence is a prefix of one or more longer
+    /// bindings. Wait for the next key (with a timeout in case the user
+    /// gave up mid-chord).
+    Pending,
+    /// Both: exact match exists AND the sequence is also a prefix of longer
+    /// bindings. Vim's ambiguous case: wait `timeoutlen`; fire the inner
+    /// command if no extending key arrives, or fire the longer binding if
+    /// one does.
+    PendingWithFallback(&'a str),
+    /// No match, no prefix. Caller should clear pending and fall through
+    /// to whatever single-key handler exists for the current key.
+    None,
 }
 
 impl Keymap {
@@ -96,34 +137,29 @@ impl Keymap {
     /// value of `""` / `"none"` / `"unbound"` removes whatever was bound there.
     pub fn build(cfg: &Config) -> Keymap {
         let mut km = Keymap::default();
-        // Track which command first claimed each chord — when a later
-        // command in the registry order declares the same chord, the
+        // Track which command first claimed each sequence — when a later
+        // command in the registry order declares the same sequence, the
         // HashMap silently overwrites and the earlier binding stops
         // firing. This bit us twice (forge chords masked by `+insert`,
         // then `ctrl+\` masked between `term.scratch_toggle` and
         // `view.split_right`) — post-fix hunt 2026-06-08. Surface
         // collisions to stderr at startup so the next one shows up
         // immediately instead of weeks later.
-        let mut prior_owner: HashMap<Chord, &'static str> = HashMap::new();
+        let mut prior_owner: HashMap<Vec<Chord>, &'static str> = HashMap::new();
         for cmd in crate::command::registry().all() {
             for spec in cmd.keys {
-                let Some(ev) = parse_key_spec(spec) else {
-                    // parse_key_spec can't parse chord chains
-                    // (`ctrl+k ctrl+i`) or bare prefix glyphs
-                    // (`<leader>`); surface the silent drop so the
-                    // next one doesn't go unnoticed for weeks. The
-                    // command stays in the registry and is reachable
-                    // via the palette — only the chord binding is
-                    // missing. To bind via config, drop a working
-                    // single-chord spec into `[keys.global]`.
+                let Some(seq) = parse_key_seq(spec) else {
+                    // Every chord token in the spec must parse; if
+                    // any token (e.g. `ctrl++` or a bare prefix glyph
+                    // `<leader>`) doesn't, the whole spec drops.
+                    // Surface so the next mistake shows up in seconds.
                     eprintln!(
                         "mnml: command `{}` declares key `{spec}` that doesn't parse — chord ignored, command still palette-reachable",
                         cmd.id
                     );
                     continue;
                 };
-                let chord = Chord::of(&ev);
-                if let Some(prev) = prior_owner.get(&chord)
+                if let Some(prev) = prior_owner.get(&seq)
                     && *prev != cmd.id
                 {
                     eprintln!(
@@ -131,8 +167,8 @@ impl Keymap {
                         cmd.id
                     );
                 }
-                prior_owner.insert(chord, cmd.id);
-                km.map.insert(chord, cmd.id.to_string());
+                prior_owner.insert(seq.clone(), cmd.id);
+                km.map.insert(seq, cmd.id.to_string());
             }
         }
         // Vim mode reserves several chords the global keymap would otherwise
@@ -150,8 +186,8 @@ impl Keymap {
             for spec in [
                 "ctrl+w", "ctrl+g", "ctrl+d", "ctrl+u", "ctrl+e", "ctrl+y", "ctrl+r",
             ] {
-                if let Some(ev) = parse_key_spec(spec) {
-                    km.map.remove(&Chord::of(&ev));
+                if let Some(seq) = parse_key_seq(spec) {
+                    km.map.remove(&seq);
                 }
             }
         } else {
@@ -165,54 +201,113 @@ impl Keymap {
                 ("ctrl+]", "editor.indent_line"),
                 ("ctrl+[", "editor.outdent_line"),
             ] {
-                if let Some(ev) = parse_key_spec(spec) {
-                    km.map.insert(Chord::of(&ev), id.to_string());
+                if let Some(seq) = parse_key_seq(spec) {
+                    km.map.insert(seq, id.to_string());
                 }
             }
         }
         for section in ["global", cfg.editor.input_style.as_str()] {
             if let Some(table) = cfg.keys.get(section) {
                 for (key, id) in table {
-                    let Some(ev) = parse_key_spec(key) else {
+                    let Some(seq) = parse_key_seq(key) else {
                         eprintln!("mnml: [keys.{section}] bad key spec {key:?} — ignored");
                         continue;
                     };
-                    let chord = Chord::of(&ev);
                     let id = id.trim();
                     if id.is_empty() || id == "none" || id == "unbound" {
-                        km.map.remove(&chord);
+                        km.map.remove(&seq);
                     } else {
-                        km.map.insert(chord, id.to_string());
+                        km.map.insert(seq, id.to_string());
                     }
                 }
             }
         }
+        km.rebuild_prefixes();
         km
     }
 
-    /// The command id bound to this key event, if any.
-    pub fn resolve(&self, ev: &KeyEvent) -> Option<&str> {
-        self.map.get(&Chord::of(ev)).map(String::as_str)
+    /// Rebuild the `prefixes` set from the current `map`. Called after every
+    /// batch mutation (build, bind, etc.). O(sum of sequence lengths).
+    fn rebuild_prefixes(&mut self) {
+        self.prefixes.clear();
+        for seq in self.map.keys() {
+            for i in 1..seq.len() {
+                self.prefixes.insert(seq[..i].to_vec());
+            }
+        }
     }
 
-    /// Number of bound chords. Used by the About / Settings display.
+    /// Single-chord convenience lookup. Equivalent to
+    /// `resolve_seq(&[Chord::of(ev)])` collapsed to Option: returns the
+    /// command id only when the chord is bound on its own. For chord-chain
+    /// aware dispatch (with pending state), use [`Self::resolve_seq`].
+    pub fn resolve(&self, ev: &KeyEvent) -> Option<&str> {
+        let chord = Chord::of(ev);
+        self.map
+            .get(std::slice::from_ref(&chord))
+            .map(String::as_str)
+    }
+
+    /// Look up a possibly-partial chord sequence. See [`SeqResolution`] for
+    /// what each variant means + how the App's dispatch path is expected to
+    /// react to each one.
+    pub fn resolve_seq(&self, seq: &[Chord]) -> SeqResolution<'_> {
+        if seq.is_empty() {
+            return SeqResolution::None;
+        }
+        let exact = self.map.get(seq).map(String::as_str);
+        let is_prefix = self.prefixes.contains(seq);
+        match (exact, is_prefix) {
+            (Some(id), false) => SeqResolution::Run(id),
+            (Some(id), true) => SeqResolution::PendingWithFallback(id),
+            (None, true) => SeqResolution::Pending,
+            (None, false) => SeqResolution::None,
+        }
+    }
+
+    /// Number of bound sequences. Used by the About / Settings display.
     pub fn binding_count(&self) -> usize {
         self.map.len()
     }
 
-    /// Iterate `(chord, command_id)` pairs. Useful for `:Maps` discovery
-    /// and similar listings. Order is undefined (HashMap-backed).
-    pub fn iter(&self) -> impl Iterator<Item = (&Chord, &str)> {
-        self.map.iter().map(|(c, s)| (c, s.as_str()))
+    /// Iterate `(chord_seq, command_id)` pairs. Useful for `:Maps` discovery
+    /// and similar listings. Order is undefined (HashMap-backed). Single-
+    /// chord bindings yield a 1-element slice; chord chains yield N>1.
+    pub fn iter(&self) -> impl Iterator<Item = (&[Chord], &str)> {
+        self.map.iter().map(|(s, id)| (s.as_slice(), id.as_str()))
     }
 
     /// Bind one keyspec → command id (used for plugin-registered commands). A
     /// keyspec that doesn't parse is ignored. Overwrites any existing binding.
+    /// Accepts chord chains (whitespace-separated tokens).
     pub fn bind(&mut self, spec: &str, id: &str) {
-        if let Some(ev) = parse_key_spec(spec) {
-            self.map.insert(Chord::of(&ev), id.to_string());
+        if let Some(seq) = parse_key_seq(spec) {
+            self.map.insert(seq, id.to_string());
+            self.rebuild_prefixes();
         }
     }
+}
+
+/// Render a chord sequence to its canonical spec string. The inverse of
+/// [`parse_key_seq`] up to canonical-form differences (`shift+p` vs `P`).
+/// Used by help / cheatsheet rendering.
+pub fn chord_seq_to_spec(seq: &[Chord]) -> String {
+    seq.iter()
+        .map(|c| c.to_spec())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Parse a chord-chain spec — one or more whitespace-separated chords.
+/// Returns None if any individual chord token fails to parse. Single-token
+/// specs (the common case) yield a length-1 vec.
+pub fn parse_key_seq(spec: &str) -> Option<Vec<Chord>> {
+    let mut out = Vec::new();
+    for tok in spec.split_whitespace() {
+        let ev = parse_key_spec(tok)?;
+        out.push(Chord::of(&ev));
+    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 /// Parse a key spec. Modifiers (`ctrl+`, `shift+`, `alt+`) may prefix in any
@@ -376,5 +471,86 @@ mod tests {
             km.resolve(&parse_key_spec("ctrl+g").unwrap()),
             Some("tree.refresh")
         );
+    }
+
+    fn chord(spec: &str) -> Chord {
+        Chord::of(&parse_key_spec(spec).unwrap())
+    }
+
+    #[test]
+    fn parse_key_seq_handles_single_and_multi_token() {
+        assert_eq!(parse_key_seq("ctrl+a").unwrap().len(), 1);
+        let seq = parse_key_seq("ctrl+k ctrl+i").unwrap();
+        assert_eq!(seq.len(), 2);
+        assert_eq!(seq[0], chord("ctrl+k"));
+        assert_eq!(seq[1], chord("ctrl+i"));
+    }
+
+    #[test]
+    fn parse_key_seq_rejects_bad_token() {
+        // Whole seq fails if any token doesn't parse.
+        assert!(parse_key_seq("ctrl+k bogus").is_none());
+        assert!(parse_key_seq("").is_none());
+    }
+
+    #[test]
+    fn resolve_seq_returns_run_for_exact_match() {
+        let km = Keymap::build(&Config::default());
+        // F1 is a single-key binding.
+        assert_eq!(
+            km.resolve_seq(&[chord("f1")]),
+            SeqResolution::Run("view.help")
+        );
+    }
+
+    #[test]
+    fn resolve_seq_returns_none_for_unbound() {
+        let km = Keymap::build(&Config::default());
+        // `ctrl+z` is intentionally not bound in the registry — confirmed
+        // by the existing `default_keymap_has_builtin_chords` test below.
+        assert_eq!(km.resolve_seq(&[chord("ctrl+z")]), SeqResolution::None);
+        // Empty sequence is None too.
+        assert_eq!(km.resolve_seq(&[]), SeqResolution::None);
+    }
+
+    #[test]
+    fn resolve_seq_returns_pending_with_fallback_for_chain_prefix() {
+        // `ctrl+k` is bound to `whichkey.leader` AND is the prefix of
+        // `ctrl+k ctrl+i` → `lsp.hover`. Resolving just `[ctrl+k]` should
+        // return PendingWithFallback with the leader as fallback.
+        let km = Keymap::build(&Config::default());
+        match km.resolve_seq(&[chord("ctrl+k")]) {
+            SeqResolution::PendingWithFallback(fb) => assert_eq!(fb, "whichkey.leader"),
+            other => panic!("expected PendingWithFallback, got {other:?}"),
+        }
+        // The full chain resolves to the longer command.
+        assert_eq!(
+            km.resolve_seq(&[chord("ctrl+k"), chord("ctrl+i")]),
+            SeqResolution::Run("lsp.hover")
+        );
+    }
+
+    #[test]
+    fn resolve_seq_pending_alone_when_prefix_has_no_leaf() {
+        // Build a keymap where the only binding is a chord chain whose
+        // prefix is NOT itself bound. The intermediate state should be
+        // `Pending` (no fallback), not `PendingWithFallback`.
+        let mut km = Keymap::default();
+        km.map
+            .insert(parse_key_seq("alt+q alt+z").unwrap(), "test.cmd".into());
+        km.rebuild_prefixes();
+        assert_eq!(km.resolve_seq(&[chord("alt+q")]), SeqResolution::Pending);
+        assert_eq!(
+            km.resolve_seq(&[chord("alt+q"), chord("alt+z")]),
+            SeqResolution::Run("test.cmd")
+        );
+    }
+
+    #[test]
+    fn chord_seq_to_spec_joins_with_spaces() {
+        let seq = vec![chord("ctrl+k"), chord("ctrl+i")];
+        assert_eq!(chord_seq_to_spec(&seq), "ctrl+k ctrl+i");
+        let lone = vec![chord("f5")];
+        assert_eq!(chord_seq_to_spec(&lone), "f5");
     }
 }
