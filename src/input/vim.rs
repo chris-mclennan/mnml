@@ -2636,7 +2636,21 @@ impl VimInputHandler {
             }
             KeyCode::Char('y') => {
                 self.enter_normal();
-                InputResult::Ops(vec![YankSelection, SelectClear])
+                // In VisualLine mode the cursor sits at col 0 of the
+                // last-touched line (V→down→down lands at start of
+                // the third row). YankSelection saves
+                // `last_selection = (anchor, cursor)` — and
+                // `last_selection_rows`'s rollback logic
+                // (`if c2 == 0 && byte[hi-1] == '\n' { r2 -= 1 }`)
+                // would clip the last row off the `'<,'>` mark range.
+                // Push cursor to the END of the current line BEFORE
+                // YankSelection so the saved selection ends mid-row;
+                // last_selection_rows's rollback skips it.
+                if linewise {
+                    InputResult::Ops(vec![MoveLineEnd, YankSelection, SelectClear])
+                } else {
+                    InputResult::Ops(vec![YankSelection, SelectClear])
+                }
             }
             KeyCode::Char('o') => {
                 // Swap which end of the selection the cursor sits on.
