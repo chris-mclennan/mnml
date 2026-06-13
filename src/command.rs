@@ -2414,7 +2414,9 @@ fn builtin_commands() -> Vec<Command> {
             id: "lsp.hover",
             title: "LSP: hover (docs at cursor)",
             group: "lsp",
-            keys: &[],
+            // VS Code convention. Bound in 2026-06-13 session-3 sweep
+            // (vscode-keyboard hunt S2-11: hover was palette-only).
+            keys: &["ctrl+k ctrl+i"],
             run: |app| app.lsp_hover(),
         },
         Command {
@@ -3209,28 +3211,31 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.focus_left",
             title: "Focus split left",
             group: "view",
-            keys: &[],
+            // VS Code convention. Bound in 2026-06-13 session-3 sweep
+            // (vscode-keyboard hunt S2-07: directional split focus
+            // had no chord at all, palette-only).
+            keys: &["ctrl+k ctrl+left"],
             run: |app| app.focus_dir(crate::app::FocusDir::Left),
         },
         Command {
             id: "view.focus_right",
             title: "Focus split right",
             group: "view",
-            keys: &[],
+            keys: &["ctrl+k ctrl+right"],
             run: |app| app.focus_dir(crate::app::FocusDir::Right),
         },
         Command {
             id: "view.focus_up",
             title: "Focus split up",
             group: "view",
-            keys: &[],
+            keys: &["ctrl+k ctrl+up"],
             run: |app| app.focus_dir(crate::app::FocusDir::Up),
         },
         Command {
             id: "view.focus_down",
             title: "Focus split down",
             group: "view",
-            keys: &[],
+            keys: &["ctrl+k ctrl+down"],
             run: |app| app.focus_dir(crate::app::FocusDir::Down),
         },
         Command {
