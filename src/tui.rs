@@ -2608,15 +2608,21 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         BufferEvent::App(cmd) => crate::app::dispatch::apply_app_command(app, cmd),
         BufferEvent::Unhandled(k) => {
-            // Not text-editing. Esc has three escalating jobs (VS Code
-            // semantics, 2026-06-08 hunts caught the missing step):
+            // Esc escalation. Common to BOTH modes:
             //   1. clear extra cursors if multi-cursor mode is active
-            //   2. (selection-clear already happened inside the handler)
-            //   3. release focus to the tree
-            // Without step 1, the only keyboard exit from multi-cursor
-            // was the palette — Esc would silently focus the tree
-            // instead, and typing afterwards would still hit every
-            // cursor position once focus returned.
+            //      (without this, the only keyboard exit was the
+            //      palette — Esc on multi-cursor was a footgun in
+            //      both editing styles).
+            //   2. (selection-clear already happened inside the
+            //      handler).
+            //
+            // Vim-only:
+            //   3. release focus to the tree (no overlay-open path
+            //      reached here; Esc has dropped through all of them).
+            //
+            // Standard mode SKIPS step 3 — VS Code purist convention
+            // (Esc on a "clean" editor is a no-op).
+            // vscode-keyboard-2026-06-10 S2-10.
             if k.code == KeyCode::Esc {
                 let has_extras = matches!(
                     app.panes.get(i),
@@ -2624,7 +2630,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 );
                 if has_extras {
                     app.run_editor_op(crate::edit_op::EditOp::ClearExtraCursors);
-                } else {
+                } else if app.config.editor.input_style == "vim" {
                     app.focus_tree();
                 }
             }

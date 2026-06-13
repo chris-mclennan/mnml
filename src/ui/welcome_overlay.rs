@@ -29,6 +29,7 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
         || app.help_overlay.is_some()
         || app.signature.is_some()
         || app.completion.is_some()
+        || app.whichkey.is_some()
     {
         return;
     }

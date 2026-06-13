@@ -205,6 +205,17 @@ impl Keymap {
                     km.map.insert(seq, id.to_string());
                 }
             }
+            // Reserve `Ctrl+L` for the standard editor's SelectLine
+            // (the EditOp dispatched by `StandardInputHandler`). The
+            // global `view.redraw` binding would otherwise swallow it
+            // before the editor's pane handler ever sees the key —
+            // vscode-keyboard-2026-06-10 S2-02. `view.redraw` stays
+            // palette-reachable; the chord is the standard-mode loss.
+            for spec in ["ctrl+l"] {
+                if let Some(seq) = parse_key_seq(spec) {
+                    km.map.remove(&seq);
+                }
+            }
         }
         for section in ["global", cfg.editor.input_style.as_str()] {
             if let Some(table) = cfg.keys.get(section) {
@@ -340,6 +351,22 @@ pub fn parse_key_spec(spec: &str) -> Option<KeyEvent> {
             .or_else(|| lower.strip_prefix("meta+"))
         {
             mods |= KeyModifiers::ALT;
+            rest = &rest[rest.len() - r.len()..];
+        } else if let Some(r) = lower
+            .strip_prefix("super+")
+            .or_else(|| lower.strip_prefix("cmd+"))
+            .or_else(|| lower.strip_prefix("win+"))
+        {
+            // macOS Command key / Linux Super key / Windows Win key.
+            // Crossterm reports them as SUPER on platforms that
+            // forward the modifier (mostly Kitty / WezTerm protocol).
+            // On terminals that don't, the key spec parses but the
+            // chord never fires — the user can still bind via
+            // [keys.global] and it'll just be inert. Without this
+            // arm the spec doesn't parse at all and the chord-warn
+            // surfaces a startup eprintln for every cmd+ default.
+            // 2026-06-13 vscode-keyboard follow-up.
+            mods |= KeyModifiers::SUPER;
             rest = &rest[rest.len() - r.len()..];
         } else {
             break;

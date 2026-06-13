@@ -2439,10 +2439,13 @@ fn builtin_commands() -> Vec<Command> {
             // `ctrl+k` alone fires `whichkey.leader` after the
             // chord-chain timeout (vim's `timeoutlen` semantics);
             // pressing `ctrl+i` within the timeout fires this.
-            // `alt+k` is kept as a single-chord alternative for users
-            // who don't want the timeout pause.
+            //
+            // `alt+k` was a temporary single-chord fallback while the
+            // chord chain wasn't supported. Dropped after the chain
+            // landed — `alt+k` collides with `editor.move_line_up`,
+            // and the chord-warn at startup surfaced the collision.
             // vscode-keyboard-2026-06-10 S2-11.
-            keys: &["ctrl+k ctrl+i", "alt+k"],
+            keys: &["ctrl+k ctrl+i"],
             run: |app| app.lsp_hover(),
         },
         Command {

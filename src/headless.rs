@@ -29,6 +29,11 @@ pub fn run(mut app: App) -> Result<bool, String> {
 
     loop {
         app.tick();
+        // Chord-chain timeout fallback — same call the terminal loop
+        // makes between tick() and draw(). Without this, a `Ctrl+K`
+        // press in headless mode never times out into `whichkey.leader`
+        // because no key arrives to advance the state machine.
+        crate::tui::tick_chord_chain(&mut app);
         terminal
             .draw(|f| ui::draw(f, &mut app))
             .map_err(|e| format!("render: {e}"))?;
