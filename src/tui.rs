@@ -929,7 +929,10 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
             KeyCode::Up | KeyCode::Char('k') => app.git_rail_move_up(),
             KeyCode::Down | KeyCode::Char('j') => app.git_rail_move_down(),
             KeyCode::Enter | KeyCode::Char(' ') => app.git_rail_activate(),
-            KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => {
+            // Esc / Left / `h` / Tab return to the workspace section.
+            // Tab is the explicit cross-section affordance — symmetric
+            // with the Tab from workspace below.
+            KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') | KeyCode::Tab => {
                 app.rail_section = crate::app::RailSection::Workspace;
             }
             KeyCode::Char('R') => app.git_rail.refresh(&app.workspace.clone()),
@@ -980,33 +983,20 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
             app.tree.filter_mode = true;
         }
         KeyCode::Up | KeyCode::Char('k') => app.tree.move_up(),
-        KeyCode::Down | KeyCode::Char('j') => {
-            // At the bottom of the workspace list, ↓ crosses into the GIT
-            // section (only when it's expanded + non-empty — otherwise it's
-            // a no-op so the user doesn't fall into an empty section).
-            let last = app.tree.visible_rows().len().saturating_sub(1);
-            if app.tree.cursor() == last && app.git_section_expanded && !app.git_rail.is_empty() {
-                // Auto-flip focus into the git rail when the user
-                // arrows past the last file row. Cheap nav win in
-                // theory, but a silent footgun: the user thinks
-                // Enter still targets the tree (the IPC
-                // `treeSelection` still reports the last file) and
-                // accidentally fires git_rail_activate — first git
-                // item is often a Worktree, which spawns a `terminal
-                // (zsh)` pane. vscode-keyboard-2026-06-10 S2-09:
-                // 'Tree Enter on a non-file row silently spawns a
-                // terminal'.
-                //
-                // Toast the cross-section so at least the user has
-                // a chance to notice before hitting Enter. Real fix
-                // (require explicit Tab to cross) is a follow-up
-                // that needs a UX call — the auto-flip is some
-                // users' preferred nav style.
+        KeyCode::Down | KeyCode::Char('j') => app.tree.move_down(),
+        // Tab is the explicit cross-section affordance — flips into the
+        // git rail (when expanded + non-empty) and back. Replaces the
+        // earlier ↓-at-bottom auto-flip behaviour, which silently spawned
+        // terminals on Enter when the user's tree cursor "auto-moved"
+        // into a Worktree row without their realising — `git_rail_activate`
+        // on a Worktree fires `open_worktree_shell`. vscode-keyboard-
+        // 2026-06-10 S2-09.
+        KeyCode::Tab => {
+            if app.git_section_expanded && !app.git_rail.is_empty() {
                 app.rail_section = crate::app::RailSection::Git;
                 app.git_rail.set_cursor(0);
-                app.toast("→ git rail (Tab back to files)");
             } else {
-                app.tree.move_down();
+                app.toast("git rail not visible — toggle with the `git` chip");
             }
         }
         KeyCode::Right | KeyCode::Char('l') => app.tree.expand_or_descend(),
