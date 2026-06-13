@@ -407,6 +407,26 @@ pub fn run_test(path: &Path) -> TestOutcome {
 
     macro_rules! render {
         () => {{
+            // Async ops (git loader, lsp client, ai chat, chord-chain
+            // timeout fallback) need a tick to drain after their
+            // queueing step. Today's loader-thread refactor turned
+            // operations that used to be synchronous (e.g. `git blame`)
+            // into channel round-trips, so one tick + a 50ms sleep
+            // (enough for a small-repo `git` to complete in worst-case
+            // CI under load) + another tick to drain catches the
+            // common case without bloating the suite.
+            app.tick();
+            std::thread::sleep(Duration::from_millis(50));
+            // Force-expire any in-flight chord-chain pending and
+            // fire the fallback. Real users get 1 second to type the
+            // next chord; tests don't simulate that wait — when the
+            // .test stops sending keys, the fallback should fire
+            // immediately so the assertion can observe the popup.
+            if !app.pending_chord_seq.is_empty() {
+                app.pending_chord_deadline =
+                    Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
+                crate::tui::tick_chord_chain(&mut app);
+            }
             app.tick();
             if let Err(e) = term.draw(|f| crate::ui::draw(f, &mut app)) {
                 return fail(format!("render: {e}"));
@@ -521,6 +541,23 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
             Ok(())
         }
         Step::Shell(cmd) => {
+            // SECURITY: `shell <cmd>` runs arbitrary shell in the user's
+            // account in the workspace cwd. Default-deny: a cloned
+            // untrusted repo with `tests/e2e/*.test` + `cargo test`
+            // discovery (`tests/e2e.rs`) would otherwise be arbitrary
+            // RCE on the user's machine.
+            //
+            // Opt-in via `MNML_E2E_ALLOW_SHELL=1`. Real CI / the project's
+            // own `cargo test` runs already set this. For ad-hoc local
+            // exploration the user adds it explicitly:
+            //   MNML_E2E_ALLOW_SHELL=1 cargo test --test e2e
+            // untouched-surfaces-hunt-2026-06-08 SEV-2 #5.
+            if std::env::var("MNML_E2E_ALLOW_SHELL").as_deref() != Ok("1") {
+                return Err(format!(
+                    "shell `{cmd}`: refused. .test `shell` steps run unsandboxed; \
+                     set MNML_E2E_ALLOW_SHELL=1 to opt in (only for trusted repos)."
+                ));
+            }
             // POSIX shells go through $SHELL -c; Windows uses cmd.exe /C.
             // Workspace is cwd so paths in `<cmd>` resolve naturally.
             #[cfg(windows)]

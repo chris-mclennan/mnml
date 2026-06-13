@@ -44,6 +44,20 @@ fn main() -> ExitCode {
 // ───────────────────────── `.test` E2E runner ─────────────────────
 
 fn test_subcommand(argv: Vec<String>) -> ExitCode {
+    // `mnml test ...` is invoked explicitly by the user — they typed
+    // the path or wildcard. Authorize `shell` steps by default. The
+    // gate exists for the `cargo test` discovery path on a cloned
+    // untrusted repo, not for explicit invocations.
+    // untouched-surfaces-hunt-2026-06-08 SEV-2 #5.
+    // SAFETY: process-global env-var write before any e2e step
+    // executes. The variable is read once per Step::Shell; setting
+    // it here can't race anything since the harness runs single-
+    // threaded under `mnml test`.
+    if std::env::var("MNML_E2E_ALLOW_SHELL").is_err() {
+        unsafe {
+            std::env::set_var("MNML_E2E_ALLOW_SHELL", "1");
+        }
+    }
     let paths: Vec<PathBuf> = argv
         .into_iter()
         .filter(|a| !a.starts_with('-'))
