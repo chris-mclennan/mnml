@@ -141,6 +141,21 @@ impl Keymap {
                     km.map.remove(&Chord::of(&ev));
                 }
             }
+        } else {
+            // Standard-mode VS Code muscle memory: ctrl+] indents, ctrl+[
+            // outdents. Override the vim-canonical bracket_match binding
+            // — VS Code users press ctrl+] to indent and expect that to
+            // work; the bracket-match chord can be reached via `gd` /
+            // `view.bracket_match` from the palette.
+            // vscode-keyboard-2026-06-10 S3-01.
+            for (spec, id) in [
+                ("ctrl+]", "editor.indent_line"),
+                ("ctrl+[", "editor.outdent_line"),
+            ] {
+                if let Some(ev) = parse_key_spec(spec) {
+                    km.map.insert(Chord::of(&ev), id.to_string());
+                }
+            }
         }
         for section in ["global", cfg.editor.input_style.as_str()] {
             if let Some(table) = cfg.keys.get(section) {

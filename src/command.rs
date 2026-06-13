@@ -564,6 +564,27 @@ fn builtin_commands() -> Vec<Command> {
             keys: &["ctrl+]"],
             run: |app| app.bracket_match_jump(),
         },
+        // Standard-mode VS Code-canonical indent/outdent. The defaults
+        // are unbound (`keys: &[]`) — the standard-mode keymap overlay
+        // in `keymap.rs` re-binds them to `ctrl+]` / `ctrl+[`, which
+        // vim users already have on `editor.bracket_match` / outdent.
+        // Tab + BackTab still drive indent at the editor level in
+        // standard mode; these chords are for VS Code muscle memory.
+        // vscode-keyboard-2026-06-10 S3-01.
+        Command {
+            id: "editor.indent_line",
+            title: "Indent the focused editor line (VSCode `Ctrl+]`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.run_editor_op(crate::edit_op::EditOp::Indent),
+        },
+        Command {
+            id: "editor.outdent_line",
+            title: "Outdent the focused editor line (VSCode `Ctrl+[`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.run_editor_op(crate::edit_op::EditOp::Outdent),
+        },
         Command {
             id: "editor.add_cursor_below",
             title: "Add cursor on the line below (VSCode `Ctrl+Alt+Down`)",
