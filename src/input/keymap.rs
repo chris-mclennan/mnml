@@ -107,19 +107,32 @@ impl Keymap {
         let mut prior_owner: HashMap<Chord, &'static str> = HashMap::new();
         for cmd in crate::command::registry().all() {
             for spec in cmd.keys {
-                if let Some(ev) = parse_key_spec(spec) {
-                    let chord = Chord::of(&ev);
-                    if let Some(prev) = prior_owner.get(&chord)
-                        && *prev != cmd.id
-                    {
-                        eprintln!(
-                            "mnml: keymap collision on `{spec}` — `{prev}` overridden by `{}` (drop one default to silence)",
-                            cmd.id
-                        );
-                    }
-                    prior_owner.insert(chord, cmd.id);
-                    km.map.insert(chord, cmd.id.to_string());
+                let Some(ev) = parse_key_spec(spec) else {
+                    // parse_key_spec can't parse chord chains
+                    // (`ctrl+k ctrl+i`) or bare prefix glyphs
+                    // (`<leader>`); surface the silent drop so the
+                    // next one doesn't go unnoticed for weeks. The
+                    // command stays in the registry and is reachable
+                    // via the palette — only the chord binding is
+                    // missing. To bind via config, drop a working
+                    // single-chord spec into `[keys.global]`.
+                    eprintln!(
+                        "mnml: command `{}` declares key `{spec}` that doesn't parse — chord ignored, command still palette-reachable",
+                        cmd.id
+                    );
+                    continue;
+                };
+                let chord = Chord::of(&ev);
+                if let Some(prev) = prior_owner.get(&chord)
+                    && *prev != cmd.id
+                {
+                    eprintln!(
+                        "mnml: keymap collision on `{spec}` — `{prev}` overridden by `{}` (drop one default to silence)",
+                        cmd.id
+                    );
                 }
+                prior_owner.insert(chord, cmd.id);
+                km.map.insert(chord, cmd.id.to_string());
             }
         }
         // Vim mode reserves several chords the global keymap would otherwise
