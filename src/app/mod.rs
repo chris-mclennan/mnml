@@ -2853,6 +2853,11 @@ pub struct App {
     /// `(path, basename)` of a worktree awaiting the same kind of confirm
     /// prompt (→ `git worktree remove`).
     pending_worktree_remove: Option<(PathBuf, String)>,
+    /// `(stash_ref, label)` of a stash awaiting a "type 'drop' to
+    /// confirm" prompt. Set when the user picks a stash from the
+    /// stash drop picker; cleared on accept or cancel.
+    /// untouched-surfaces-hunt-2026-06-08 SEV-2 #8.
+    pub pending_stash_drop: Option<(String, String)>,
     /// `(pane_id, hunk_index)` of a diff hunk awaiting a
     /// "type 'discard' to confirm" prompt. Set when the user clicks
     /// the Discard chip; cleared on accept or cancel.
@@ -3289,6 +3294,7 @@ impl App {
             pending_branch_source: None,
             pending_delete_branch: None,
             pending_worktree_remove: None,
+            pending_stash_drop: None,
             pending_discard_hunk: None,
             pending_discard_file: None,
             pending_fs_action: None,

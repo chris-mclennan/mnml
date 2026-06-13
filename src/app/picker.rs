@@ -526,11 +526,19 @@ impl App {
                 }
             }
             PickerKind::StashesDrop => {
+                // Phase-in confirm prompt instead of acting
+                // immediately. Reflog-recoverable only until next
+                // `git gc` (~30 days); a hard typed confirm matches
+                // the branch-delete floor.
+                // untouched-surfaces-hunt-2026-06-08 SEV-2 #8.
                 let stash_ref = item.id;
-                match crate::git::stash::drop_stash(self.active_repo_path(), &stash_ref) {
-                    Ok(summary) => self.toast(summary),
-                    Err(e) => self.toast(format!("git stash drop: {e}")),
-                }
+                let label = item.label.clone();
+                self.prompt = Some(crate::prompt::Prompt::seeded(
+                    crate::prompt::PromptKind::GitStashDrop,
+                    format!("Type 'drop' to delete {label}"),
+                    "",
+                ));
+                self.pending_stash_drop = Some((stash_ref, label));
             }
             PickerKind::Reflog => {
                 // `id` is the full hash — open it as a commit-diff pane.
@@ -1073,6 +1081,9 @@ impl App {
             }
             crate::prompt::PromptKind::GitWorktreeRemove => {
                 self.confirm_worktree_remove(p.input.clone());
+            }
+            crate::prompt::PromptKind::GitStashDrop => {
+                self.confirm_stash_drop(p.input.clone());
             }
             crate::prompt::PromptKind::LspWorkspaceSymbol => {
                 let q = p.input.clone();

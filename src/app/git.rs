@@ -2469,6 +2469,23 @@ impl App {
         }
     }
 
+    /// Accept handler for `PromptKind::GitStashDrop` — require the
+    /// literal word "drop" to commit a `git stash drop <ref>`.
+    /// untouched-surfaces-hunt-2026-06-08 SEV-2 #8.
+    pub fn confirm_stash_drop(&mut self, typed: String) {
+        let Some((stash_ref, label)) = self.pending_stash_drop.take() else {
+            return;
+        };
+        if typed.trim() != "drop" {
+            self.toast("stash drop cancelled (type 'drop' to confirm)");
+            return;
+        }
+        match crate::git::stash::drop_stash(self.active_repo_path(), &stash_ref) {
+            Ok(summary) => self.toast(format!("dropped {label}: {summary}")),
+            Err(e) => self.toast(format!("git stash drop: {e}")),
+        }
+    }
+
     /// Right-click context-menu action: confirm + `git worktree remove`.
     pub fn git_worktree_remove_prompt(&mut self, path: PathBuf) {
         use crate::prompt::{Prompt, PromptKind};

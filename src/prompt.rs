@@ -72,6 +72,13 @@ pub enum PromptKind {
     /// Accept ⇒ `git worktree remove <held path>` *iff* the typed text
     /// matches the worktree's basename exactly (confirmation guard).
     GitWorktreeRemove,
+    /// Accept ⇒ `git stash drop <held ref>` *iff* the typed text matches
+    /// the literal word `drop` exactly. Same gating shape as
+    /// `DiffDiscardHunk` — drop is reflog-recoverable only until the
+    /// next `git gc` (~30 days), so a hard typed confirm is the right
+    /// floor. Ref + a short label held in `App.pending_stash_drop`.
+    /// untouched-surfaces-hunt-2026-06-08 SEV-2 #8.
+    GitStashDrop,
     /// Accept ⇒ reverse-apply the hunk against the working tree
     /// (`crate::git::diff::discard_hunk`) *iff* the typed text matches
     /// the literal word `discard` exactly. Hunk identity is held in
