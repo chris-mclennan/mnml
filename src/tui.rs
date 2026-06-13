@@ -819,8 +819,25 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
             // a no-op so the user doesn't fall into an empty section).
             let last = app.tree.visible_rows().len().saturating_sub(1);
             if app.tree.cursor() == last && app.git_section_expanded && !app.git_rail.is_empty() {
+                // Auto-flip focus into the git rail when the user
+                // arrows past the last file row. Cheap nav win in
+                // theory, but a silent footgun: the user thinks
+                // Enter still targets the tree (the IPC
+                // `treeSelection` still reports the last file) and
+                // accidentally fires git_rail_activate — first git
+                // item is often a Worktree, which spawns a `terminal
+                // (zsh)` pane. vscode-keyboard-2026-06-10 S2-09:
+                // 'Tree Enter on a non-file row silently spawns a
+                // terminal'.
+                //
+                // Toast the cross-section so at least the user has
+                // a chance to notice before hitting Enter. Real fix
+                // (require explicit Tab to cross) is a follow-up
+                // that needs a UX call — the auto-flip is some
+                // users' preferred nav style.
                 app.rail_section = crate::app::RailSection::Git;
                 app.git_rail.set_cursor(0);
+                app.toast("→ git rail (Tab back to files)");
             } else {
                 app.tree.move_down();
             }
