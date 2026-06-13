@@ -17,6 +17,21 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     if !app.show_welcome {
         return;
     }
+    // Stand down whenever another modal/overlay is open. The welcome
+    // panel is centered and tall; without this, opening a prompt
+    // (Ctrl+N → file name, `:` ex-command, `/` find, AI chat) or the
+    // fuzzy picker (Ctrl+P / Ctrl+Shift+P) on first launch would
+    // visibly bury the input under the welcome card and make the
+    // advertised chord targets unreachable. The user still sees the
+    // welcome card on next blank frame.
+    if app.prompt.is_some()
+        || app.picker.is_some()
+        || app.help_overlay.is_some()
+        || app.signature.is_some()
+        || app.completion.is_some()
+    {
+        return;
+    }
     let t = theme::cur();
     // Curated tips — the bare minimum a new user needs to click and chord
     // their way around.
