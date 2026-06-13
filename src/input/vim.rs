@@ -1820,27 +1820,55 @@ impl VimInputHandler {
                     PendingOp::Change => {
                         self.mode = VimMode::Insert;
                         // clear the line's contents but keep the line, then insert
-                        InputResult::Ops(vec![SelectLine, ReplaceSelection(String::new())])
+                        // `MoveLineEnd` extends the selection to cover the
+                        // whole line — see note on the case-transform branches
+                        // below for why this is needed after the 2026-06-13
+                        // SelectLine fix.
+                        InputResult::Ops(vec![
+                            SelectLine,
+                            MoveLineEnd,
+                            ReplaceSelection(String::new()),
+                        ])
                     }
                     PendingOp::Indent => InputResult::Ops(Self::repeated(Indent, n)),
                     PendingOp::Outdent => InputResult::Ops(Self::repeated(Outdent, n)),
                     PendingOp::Reflow => InputResult::Ops(vec![ReflowParagraph {
                         width: self.text_width,
                     }]),
+                    // `guu` / `gUU` / `g~~`. SelectLine sets
+                    // `anchor = line_start` but (since the 2026-06-13
+                    // V-doesn't-snap-down fix) leaves cursor where it
+                    // was — selection = (anchor, cursor) covers only
+                    // part of the line. Add `MoveLineEnd` after the
+                    // SelectLine so the selection extends through the
+                    // last printable char and the whole-line transform
+                    // actually fires.
                     PendingOp::Lower => InputResult::Ops(vec![
                         SelectLine,
+                        MoveLineEnd,
                         TransformSelectionCase(crate::edit_op::CaseTransform::Lower),
                         SelectClear,
+                        // Vim convention: `guu` leaves the cursor at
+                        // the START of the NEXT line, ready for a
+                        // chord-chain (`guu`/`gUU`/`g~~` per line).
+                        MoveDown,
+                        MoveLineStart,
                     ]),
                     PendingOp::Upper => InputResult::Ops(vec![
                         SelectLine,
+                        MoveLineEnd,
                         TransformSelectionCase(crate::edit_op::CaseTransform::Upper),
                         SelectClear,
+                        MoveDown,
+                        MoveLineStart,
                     ]),
                     PendingOp::ToggleCase => InputResult::Ops(vec![
                         SelectLine,
+                        MoveLineEnd,
                         TransformSelectionCase(crate::edit_op::CaseTransform::Toggle),
                         SelectClear,
+                        MoveDown,
+                        MoveLineStart,
                     ]),
                     PendingOp::SurroundAdd => {
                         // `yss<c>` ⇒ surround the current line.
