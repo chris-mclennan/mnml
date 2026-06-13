@@ -25,9 +25,16 @@ impl App {
             return;
         }
         // `accept_find` sets the state + jumps to the first match at-or-after
-        // the cursor; for `#` we then step back once.
+        // the cursor — which IS the word under cursor (its start byte is
+        // <= cursor). Vim's `*` / `#` semantic is "go to NEXT occurrence";
+        // sitting on the current match doesn't help. Advance one step in
+        // the requested direction. nvchad-user SEV-3 S3-05 fix:
+        // `*` doesn't advance cursor to the next match (statusline shows
+        // search registered; cursor stays put).
         self.accept_find(word);
-        if !forward {
+        if forward {
+            self.find_next();
+        } else {
             self.find_prev();
         }
     }
