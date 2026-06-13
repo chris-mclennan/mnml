@@ -40,6 +40,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
 
     frame.render_widget(Clear, area);
 
+    // Stash the outer overlay rect so the mouse dispatcher can treat
+    // any click INSIDE this rect as "stay open" (default to no-op
+    // unless it lands on a sibling row), and any click OUTSIDE as a
+    // dismiss. Without this, clicking a section header silently
+    // closed the overlay (vscode-mouse-2026-06-10 SEV-2).
+    app.rects.discovery_overlay_rect = Some(area);
+
     let block = Block::default()
         .borders(Borders::ALL)
         .title(Span::styled(

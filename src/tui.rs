@@ -2644,8 +2644,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         app.discovery_move_row(delta);
                     }
                     app.discovery_enter();
-                } else {
+                } else if let Some(area) = app.rects.discovery_overlay_rect
+                    && !crate::app::dispatch::contains(area, x, y)
+                {
+                    // Only OUTSIDE-rect clicks dismiss. Clicks inside
+                    // the overlay that miss a sibling row (e.g., on a
+                    // section header or the hint footer) are no-ops —
+                    // the user is still interacting with the overlay.
+                    // 2026-06-13 vscode-mouse SEV-2 fix.
                     app.discovery_overlay = None;
+                    app.rects.discovery_overlay_rect = None;
                 }
             }
             _ => {}
