@@ -2827,7 +2827,9 @@ impl InputHandler for VimInputHandler {
             VimMode::Normal => EditingMode::Normal,
             VimMode::Insert => EditingMode::Insert,
             VimMode::Replace => EditingMode::Replace,
-            VimMode::Visual | VimMode::VisualLine | VimMode::VisualBlock => EditingMode::Visual,
+            VimMode::Visual => EditingMode::Visual,
+            VimMode::VisualLine => EditingMode::VisualLine,
+            VimMode::VisualBlock => EditingMode::VisualBlock,
         }
     }
 

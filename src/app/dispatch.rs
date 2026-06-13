@@ -141,8 +141,9 @@ pub(crate) fn record_dot(
         app.dot_recording_saw_edit = edited;
         return;
     }
-    // 3. Visual → Insert (visual `c`) starts a change too.
-    if before == EditingMode::Visual && after == EditingMode::Insert {
+    // 3. Visual → Insert (visual `c`) starts a change too. All three
+    //    visual flavours (charwise, linewise, blockwise) count.
+    if before.is_visual() && after == EditingMode::Insert {
         app.dot_recording = Some(vec![key]);
         app.dot_recording_saw_edit = edited;
         return;
@@ -158,7 +159,8 @@ pub(crate) fn record_dot(
         app.dot_keys = vec![key];
     }
     // 5. Visual op (e.g. `vlld`) ⇒ also a one-shot capture.
-    if before == EditingMode::Visual && after == EditingMode::Normal && edited {
+    //    Covers V-LINE and V-BLOCK too.
+    if before.is_visual() && after == EditingMode::Normal && edited {
         app.dot_keys = vec![key];
     }
 }

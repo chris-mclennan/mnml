@@ -84,6 +84,8 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 crate::input::EditingMode::Insert => "green = INSERT",
                 crate::input::EditingMode::Replace => "orange = REPLACE",
                 crate::input::EditingMode::Visual => "purple = VISUAL",
+                crate::input::EditingMode::VisualLine => "purple = V-LINE",
+                crate::input::EditingMode::VisualBlock => "purple = V-BLOCK",
                 crate::input::EditingMode::Normal => "red = NORMAL",
                 crate::input::EditingMode::None => match app.focus {
                     crate::focus::Focus::Tree => "blue = TREE focus",

@@ -129,7 +129,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // input mode / file-rail focus aren't "vim").
     let is_vim_mode = matches!(
         app.editing_mode(),
-        EditingMode::Insert | EditingMode::Replace | EditingMode::Visual | EditingMode::Normal
+        EditingMode::Insert
+            | EditingMode::Replace
+            | EditingMode::Visual
+            | EditingMode::VisualLine
+            | EditingMode::VisualBlock
+            | EditingMode::Normal
     );
     let mut left: Vec<Seg> = Vec::new();
     // Index of the git-branch chip in `left` once pushed — used after
@@ -708,6 +713,12 @@ fn mode_chip(app: &App) -> (&'static str, Color) {
         EditingMode::Insert => ("INSERT", theme::cur().green),
         EditingMode::Replace => ("REPLACE", theme::cur().orange),
         EditingMode::Visual => ("VISUAL", theme::cur().purple),
+        // V-LINE / V-BLOCK share purple with VISUAL — they're a
+        // sub-mode of visual. Statusline differentiates them by
+        // label so the user knows which selection geometry's active.
+        // nvchad-user-2026-06-10 S3-03.
+        EditingMode::VisualLine => ("V-LINE", theme::cur().purple),
+        EditingMode::VisualBlock => ("V-BLOCK", theme::cur().purple),
         EditingMode::Normal => ("NORMAL", theme::cur().red),
         EditingMode::None => match app.focus {
             Focus::Tree => ("TREE", theme::cur().blue),

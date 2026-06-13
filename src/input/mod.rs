@@ -28,7 +28,15 @@ pub enum EditingMode {
     /// underline. Distinct from Insert so the mode chip can render
     /// `REPLACE`.
     Replace,
+    /// vim charwise visual (`v`) — `<motion>` extends.
     Visual,
+    /// vim linewise visual (`V`) — selects whole lines. Distinct so
+    /// the statusline can render `V-LINE` instead of just `VISUAL`.
+    /// nvchad-user-2026-06-10 S3-03.
+    VisualLine,
+    /// vim blockwise visual (`Ctrl-V`) — rectangular selection.
+    /// Statusline renders `V-BLOCK`.
+    VisualBlock,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +51,10 @@ impl EditingMode {
         match self {
             EditingMode::Insert | EditingMode::None => CursorShape::Bar,
             EditingMode::Replace => CursorShape::Underline,
-            EditingMode::Normal | EditingMode::Visual => CursorShape::Block,
+            EditingMode::Normal
+            | EditingMode::Visual
+            | EditingMode::VisualLine
+            | EditingMode::VisualBlock => CursorShape::Block,
         }
     }
     /// `None` ⇒ render no mode chip at all.
@@ -54,7 +65,18 @@ impl EditingMode {
             EditingMode::Insert => Some("INSERT"),
             EditingMode::Replace => Some("REPLACE"),
             EditingMode::Visual => Some("VISUAL"),
+            EditingMode::VisualLine => Some("V-LINE"),
+            EditingMode::VisualBlock => Some("V-BLOCK"),
         }
+    }
+    /// `true` if any of the three visual variants. Convenience for
+    /// match arms that want "is in visual mode" semantics without
+    /// triple-matching every variant.
+    pub fn is_visual(self) -> bool {
+        matches!(
+            self,
+            EditingMode::Visual | EditingMode::VisualLine | EditingMode::VisualBlock
+        )
     }
 }
 
