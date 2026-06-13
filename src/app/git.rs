@@ -1423,6 +1423,13 @@ impl App {
                 Ok(GitResult::Blamed { path, lines }) => {
                     self.apply_blame_result(&path, lines);
                 }
+                Ok(GitResult::CheckedOut {
+                    kind,
+                    from_branch,
+                    result,
+                }) => {
+                    self.apply_checkout_result(kind, from_branch, result);
+                }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.toast("git loader thread died");
@@ -2112,29 +2119,47 @@ impl App {
     /// Checkout the branch a `PickerKind::Branches` item id encodes.
     pub fn checkout_branch(&mut self, id: &str) {
         let repo = self.active_repo_path().to_path_buf();
-        let from = crate::git::branch::current(&repo);
-        // `is_local` gates undo registration — remote-tracking checkouts
-        // create a new local branch whose redo semantics get fuzzy, so
-        // only plain local-branch switches join the undo stack.
-        let (result, is_local) = if let Some(name) = id.strip_prefix("local:") {
-            (
-                crate::git::branch::checkout(&repo, name).map(|_| name.to_string()),
-                true,
-            )
+        let from_branch = crate::git::branch::current(&repo);
+        // Resolve the prefix to a CheckoutKind on the main thread —
+        // the loader doesn't need to know about the `local:` /
+        // `remote:` wire format. untouched-surfaces-hunt-2026-06-08
+        // SEV-2 #9.
+        let (kind, target) = if let Some(name) = id.strip_prefix("local:") {
+            (crate::app::git_async::CheckoutKind::Local, name.to_string())
         } else if let Some(remote) = id.strip_prefix("remote:") {
             (
-                crate::git::branch::checkout_track(&repo, remote).map(|_| remote.to_string()),
-                false,
+                crate::app::git_async::CheckoutKind::RemoteTrack,
+                remote.to_string(),
             )
         } else {
-            (
-                crate::git::branch::checkout(&repo, id).map(|_| id.to_string()),
-                true,
-            )
+            (crate::app::git_async::CheckoutKind::Local, id.to_string())
         };
+        let _ = self
+            .git_loader_tx
+            .send(crate::app::git_async::GitJob::Checkout {
+                repo,
+                kind,
+                target: target.clone(),
+                from_branch,
+            });
+        self.toast(format!("checking out {target}…"));
+    }
+
+    /// Apply a `GitResult::CheckedOut` — register the undo (local
+    /// checkouts only) + run the standard after-checkout side
+    /// effects. RemoteTrack creates a new local branch as a side
+    /// effect; redo semantics get fuzzy, so it skips the undo step.
+    pub(super) fn apply_checkout_result(
+        &mut self,
+        kind: crate::app::git_async::CheckoutKind,
+        from_branch: Option<String>,
+        result: Result<String, String>,
+    ) {
         match result {
             Ok(name) => {
-                if is_local && let Some(from) = &from {
+                if matches!(kind, crate::app::git_async::CheckoutKind::Local)
+                    && let Some(from) = &from_branch
+                {
                     self.note_checkout_for_undo(from, &name);
                 }
                 self.after_checkout(&name);

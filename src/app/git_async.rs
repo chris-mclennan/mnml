@@ -52,6 +52,30 @@ pub enum GitJob {
         rel: String,
         path: PathBuf,
     },
+    /// `git checkout` (local), `git checkout --track` (remote-track),
+    /// or `git checkout` (plain id). `kind` distinguishes which
+    /// branch helper to call. `from_branch` is carried through so
+    /// post-success undo-stack registration can fire on the main
+    /// thread without re-querying. untouched-surfaces SEV-2 #9.
+    Checkout {
+        repo: PathBuf,
+        kind: CheckoutKind,
+        target: String,
+        from_branch: Option<String>,
+    },
+}
+
+/// Which checkout helper to call. The string carried in the job's
+/// `target` is the bare branch / remote ref (no `local:` / `remote:`
+/// prefix — those are stripped on the caller side).
+#[derive(Debug, Clone, Copy)]
+pub enum CheckoutKind {
+    /// `git checkout -- <branch>`. Joins the undo stack.
+    Local,
+    /// `git checkout --track -- <remote>`. Creates a new local
+    /// tracking branch; does NOT join the undo stack (redo semantics
+    /// get fuzzy when an extra branch was created as a side effect).
+    RemoteTrack,
 }
 
 /// What the loader thread reports back.
@@ -73,6 +97,14 @@ pub enum GitResult {
     Blamed {
         path: PathBuf,
         lines: Vec<crate::git::blame::BlameLine>,
+    },
+    /// Checkout result. `from_branch` is carried through unchanged
+    /// so the post-success handler can register the undo + run
+    /// after_checkout without re-querying.
+    CheckedOut {
+        kind: CheckoutKind,
+        from_branch: Option<String>,
+        result: Result<String, String>,
     },
 }
 
@@ -135,6 +167,27 @@ pub fn spawn_git_loader() -> (Sender<GitJob>, Receiver<GitResult>) {
                         lines: crate::git::blame::blame(&repo, &rel),
                         path,
                     },
+                    GitJob::Checkout {
+                        repo,
+                        kind,
+                        target,
+                        from_branch,
+                    } => {
+                        let result = match kind {
+                            CheckoutKind::Local => {
+                                crate::git::branch::checkout(&repo, &target).map(|_| target.clone())
+                            }
+                            CheckoutKind::RemoteTrack => {
+                                crate::git::branch::checkout_track(&repo, &target)
+                                    .map(|_| target.clone())
+                            }
+                        };
+                        GitResult::CheckedOut {
+                            kind,
+                            from_branch,
+                            result,
+                        }
+                    }
                 };
                 if res_tx.send(result).is_err() {
                     // App dropped the receiver — exit cleanly.
