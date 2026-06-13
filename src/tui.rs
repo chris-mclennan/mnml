@@ -3051,11 +3051,23 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 } else {
                     app.context_menu_cancel();
                 }
+                return;
             }
-            MouseEventKind::Down(MouseButton::Right) => app.context_menu_cancel(),
-            _ => {}
+            MouseEventKind::Down(MouseButton::Right) => {
+                // Right-click while a context menu is OPEN. Cancel the
+                // existing menu, then fall through to the normal right-
+                // click dispatch so a fresh menu opens at the new
+                // position. Prior behavior was "cancel + return" — the
+                // user had to right-click twice to retarget the menu.
+                // vscode-mouse-2026-06-10 SEV-2 #6 — "right-click on
+                // bufferline tab sometimes fails to open the context
+                // menu" was THIS, when an earlier context menu was
+                // still open from a prior right-click.
+                app.context_menu_cancel();
+                // Fall through; no return.
+            }
+            _ => return,
         }
-        return;
     }
 
     // Middle-click on a bufferline tab closes it (browser-tab pattern). Match
