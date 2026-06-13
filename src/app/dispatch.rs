@@ -216,9 +216,11 @@ pub(crate) fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
             app.set_pending_macro_register(c);
             app.macro_toggle();
         }
-        MacroReplayFrom(c) => {
-            app.set_pending_macro_register(c);
-            app.macro_replay();
+        MacroReplayFrom { reg, count } => {
+            for _ in 0..count.max(1) {
+                app.set_pending_macro_register(reg);
+                app.macro_replay();
+            }
         }
         BlockInsertStart { append } => app.block_insert_start(append),
         BlockChangeStart => app.block_change_start(),

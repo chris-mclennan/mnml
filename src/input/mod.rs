@@ -80,8 +80,15 @@ pub enum AppCommand {
     /// `macro_toggle` is state-aware: idle ⇒ start recording into `reg`;
     /// already recording ⇒ stop (the new `reg` is ignored).
     MacroRecordInto(char),
-    /// vim `@<reg>` — replay the macro stored in `reg`. `'@'` ⇒ anonymous.
-    MacroReplayFrom(char),
+    /// vim `@<reg>` / `<count>@<reg>` — replay the macro stored in
+    /// `reg`, `count` times. `'@'` ⇒ anonymous register. `count == 1`
+    /// is the plain `@a` case; vim also accepts `5@a` to repeat
+    /// (S2-06 of the 2026-06-10 nvchad hunt — `5@a` was silently
+    /// dropping the count and replaying once).
+    MacroReplayFrom {
+        reg: char,
+        count: u32,
+    },
     /// vim visual-block `I` / `A` — enter Insert mode at the leftmost / right-of-
     /// rightmost column of the block, with the App tracking the rect so that on
     /// Esc the typed run is replayed at the same column on every other row.

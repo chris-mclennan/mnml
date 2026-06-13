@@ -1600,12 +1600,19 @@ impl VimInputHandler {
             }
             Prefix::MacroReplayTarget => {
                 self.prefix = Prefix::None;
+                // Vim `5@a` semantics — replay register `a` five times.
+                // Consult the count prefix before clearing it.
+                // 2026-06-13 nvchad-user SEV-2 S2-06 fix (`5@a` was a
+                // silent no-op; only the count was being thrown away
+                // because MacroReplayFrom carried only the register
+                // letter).
+                let count = self.count.take().unwrap_or(1).max(1);
                 if let KeyCode::Char(c) = key.code {
                     if c == '@' {
-                        return InputResult::App(AppCommand::MacroReplayFrom('@'));
+                        return InputResult::App(AppCommand::MacroReplayFrom { reg: '@', count });
                     }
                     if c.is_ascii_lowercase() {
-                        return InputResult::App(AppCommand::MacroReplayFrom(c));
+                        return InputResult::App(AppCommand::MacroReplayFrom { reg: c, count });
                     }
                 }
                 return InputResult::Consumed;

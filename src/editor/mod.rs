@@ -2085,7 +2085,14 @@ impl Editor {
                 }
             }
             MoveBufferStart => self.cursor = 0,
-            MoveBufferEnd => self.cursor = self.text.len(),
+            // Vim `G`: land on the START of the LAST line — never past
+            // a trailing `\n`. Prior implementation used `text.len()`
+            // which on `"a\nb\nc\n"` (3 lines) put the cursor on a
+            // phantom line 4. 2026-06-13 nvchad-user SEV-2 S2-05 fix.
+            MoveBufferEnd => {
+                let last = self.line_count().saturating_sub(1);
+                self.cursor = self.line_start(last);
+            }
             MoveToLine(n) => {
                 let line = n.saturating_sub(1).min(self.line_count().saturating_sub(1));
                 self.cursor = self.line_start(line);
@@ -4810,8 +4817,10 @@ mod tests {
         assert_eq!(e.row_col(), (1, 2));
         e.apply(MoveLineEnd, 10, &mut c);
         assert_eq!(e.row_col(), (1, 5));
+        // Vim `G` — land on the START of the last line, not past EOF.
+        // 2026-06-13 nvchad-user SEV-2 S2-05 behavior change.
         e.apply(MoveBufferEnd, 10, &mut c);
-        assert_eq!(e.cursor(), e.text().len());
+        assert_eq!(e.row_col(), (2, 0));
         e.apply(MoveBufferStart, 10, &mut c);
         assert_eq!(e.cursor(), 0);
     }
@@ -4905,7 +4914,10 @@ mod tests {
         }
         e.apply(CutSelection, 10, &mut c); // cut "foo"
         assert_eq!(e.text(), "bar");
-        e.apply(MoveBufferEnd, 10, &mut c);
+        // Move to end of last line via MoveLineEnd (was MoveBufferEnd,
+        // but G now lands on start-of-last-line per vim convention —
+        // 2026-06-13 S2-05 fix).
+        e.apply(MoveLineEnd, 10, &mut c);
         e.apply(Paste, 10, &mut c);
         assert_eq!(e.text(), "barfoo");
     }
@@ -5827,7 +5839,11 @@ mod tests {
 
         // Editor over the file; type a few chars to build an undo stack.
         let (mut e, mut c) = ed("abc");
-        e.apply(MoveBufferEnd, 10, &mut c);
+        // MoveLineEnd lands AFTER the last char of the line; the
+        // earlier MoveBufferEnd-as-text.len() coincided with that on
+        // a single-line buffer, but G's new vim-correct semantic
+        // (start of last line) doesn't. 2026-06-13 S2-05 fix.
+        e.apply(MoveLineEnd, 10, &mut c);
         for ch in "DE".chars() {
             e.apply(InsertChar(ch), 10, &mut c);
         }
