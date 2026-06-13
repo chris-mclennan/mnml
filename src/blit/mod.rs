@@ -79,6 +79,10 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
             &mut *w,
             &Message::Hello {
                 version: PROTOCOL_VERSION,
+                // Mnml-as-client advertises CLIENT_COMMANDS so tmnl's
+                // palette can list mnml's command registry without
+                // probing first.
+                caps: tmnl_protocol::Caps::CLIENT_COMMANDS,
             },
         )
         .map_err(|e| format!("blit: hello: {e}"))?;

@@ -278,6 +278,7 @@ fn accept_loop(
                 s,
                 &Message::Hello {
                     version: PROTOCOL_VERSION,
+                    caps: tmnl_protocol::Caps::empty(),
                 },
             );
             let _ = write_message(
