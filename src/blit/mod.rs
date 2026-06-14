@@ -263,6 +263,13 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
                     let me = mouse_to_crossterm(&m);
                     tui::dispatch_mouse(&mut app, me);
                 }
+                // tmnl-protocol 0.0.9: Focus / Hover / IME are
+                // opt-in via Caps::{FOCUS_EVENTS,HOVER_EVENTS,
+                // IME_EVENTS}. Mnml's blit client doesn't
+                // advertise any of these caps, so the server won't
+                // send them. Defensive arm — drop without trying
+                // to translate to crossterm.
+                Ok(InputEvent::Focus(_)) | Ok(InputEvent::Hover(_)) | Ok(InputEvent::Ime(_)) => {}
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     app.save_session_on_quit();
