@@ -659,7 +659,15 @@ impl App {
             if row_count == 0 {
                 return;
             }
-            let new = (state.selected_row as isize + delta).rem_euclid(row_count as isize);
+            // Clamp at the boundaries — was `rem_euclid` which wrapped
+            // around. Same shape as the discovery-overlay clamp
+            // (ea6bbd9); the wrap was equally wrong here — wheel
+            // scrolling past the last row jumped the cursor back to
+            // the top, and a click on a visible row would land on
+            // whatever shifted under it. Kept the in-row option
+            // cycler (`settings_adjust_value`) on `rem_euclid` since
+            // wrapping value choices is the intended behavior there.
+            let new = (state.selected_row as isize + delta).clamp(0, row_count as isize - 1);
             state.selected_row = new as usize;
         }
     }
