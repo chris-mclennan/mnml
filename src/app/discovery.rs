@@ -177,7 +177,16 @@ impl App {
             return;
         }
         if let Some(state) = self.discovery_overlay.as_mut() {
-            let new = (state.selected_row as isize + delta).rem_euclid(row_count as isize);
+            // Clamp at the boundaries — was `rem_euclid` which wrapped
+            // around. The wrap surfaced as a user-reported "scroll back
+            // to the top" bug: wheel-scrolling down past the last row
+            // jumped selected_row to 0, the viewport recentered at the
+            // top, and any subsequent click landed on whatever was now
+            // visible there. Clamp keeps the cursor pinned at the
+            // bottom (or top) edge instead. Keyboard ↑/↓ get the same
+            // change; wrap-around in overlay lists is uncommon vs
+            // clamp.
+            let new = (state.selected_row as isize + delta).clamp(0, row_count as isize - 1);
             state.selected_row = new as usize;
         }
     }
