@@ -16,10 +16,16 @@ use ratatui::widgets::Paragraph;
 use crate::app::App;
 use crate::ui::theme;
 
-pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
+pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if area.width == 0 || area.height == 0 {
+        app.rects.cmdline_bar = None;
         return;
     }
+    // Register the bar's rect so a click here opens the ex-cmdline.
+    // Same affordance as typing `:` from anywhere — gives the user
+    // a mouse path to the cmdline that doesn't require knowing the
+    // chord. User-requested 2026-06-18.
+    app.rects.cmdline_bar = Some(area);
     let t = theme::cur();
     // Default — blank line in the statusline's darker bg so it visually
     // belongs with the statusline above.

@@ -598,6 +598,37 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Ctrl+; → open the ex-cmdline regardless of focus or input
+    // mode. Gives standard-mode users a keyboard path to `:` since
+    // they don't get vim's `:` chord, and works from the tree too
+    // so empty-state launches can reach :settings via keyboard.
+    // Lives above the focus dispatch so the pane key handler can't
+    // intercept it. User-requested 2026-06-18.
+    if key.code == KeyCode::Char(';') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        if app.no_pane_cmdline.is_none() {
+            app.open_ex_command_prompt();
+        }
+        return;
+    }
+
+    // When the no-pane cmdline is open, it owns every keystroke
+    // regardless of which side of the focus boundary the user
+    // started typing from. Without this gate a pane-focused user
+    // who hit Ctrl+; would land in the cmdline visually but their
+    // typing would still go to the editor.
+    if app.no_pane_cmdline.is_some() {
+        match key.code {
+            KeyCode::Esc => app.no_pane_cmdline_cancel(),
+            KeyCode::Enter => app.no_pane_cmdline_commit(),
+            KeyCode::Backspace => app.no_pane_cmdline_backspace(),
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.no_pane_cmdline_push_char(c);
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match app.focus {
         Focus::Tree => handle_tree_key(app, key),
         Focus::Pane => handle_pane_key(app, key),
@@ -1010,22 +1041,11 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // No-pane cmdline — greedy capture while the user is typing a
-    // `:` ex-command from tree focus. Renders at the bottom in the
-    // same cmdline_bar the in-buffer vim cmdline uses, so the
-    // affordance reads consistent regardless of focus.
-    if app.no_pane_cmdline.is_some() {
-        match key.code {
-            KeyCode::Esc => app.no_pane_cmdline_cancel(),
-            KeyCode::Enter => app.no_pane_cmdline_commit(),
-            KeyCode::Backspace => app.no_pane_cmdline_backspace(),
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.no_pane_cmdline_push_char(c);
-            }
-            _ => {}
-        }
-        return;
-    }
+    // Note: the no_pane_cmdline keystroke gate lives in
+    // `dispatch_key` above so it's enforced regardless of focus —
+    // an opened cmdline owns input even when the user started
+    // typing from the pane side. The tree handler only sees keys
+    // when the cmdline is closed.
     match key.code {
         // `:` from tree focus → open the no-pane cmdline at the
         // bottom of the window. Same vim-style affordance the
@@ -3823,6 +3843,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 && crate::app::dispatch::contains(r, x, y)
             {
                 let _ = crate::command::run("editor.toggle_keymap", app);
+                return;
+            }
+            // Cmdline bar — click anywhere on the bottom 1-row strip
+            // opens the ex-cmdline (same as typing `:`). Checked
+            // BEFORE the statusline chips because the bar sits below
+            // the statusline and overlapping hit-rects are otherwise
+            // resolved top-down. A click while the cmdline is
+            // already open is a no-op (let the user keep typing).
+            if app.no_pane_cmdline.is_none()
+                && let Some(r) = app.rects.cmdline_bar
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.open_ex_command_prompt();
                 return;
             }
             // Statusline workspace / active-repo chip → open the repo picker

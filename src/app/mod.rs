@@ -1761,6 +1761,10 @@ pub struct PaneRects {
     /// About). `None` when the activity bar isn't visible (rail
     /// hidden, etc.).
     pub activity_bar_gear: Option<Rect>,
+    /// Bottom cmdline bar rect — click to open the ex-cmdline
+    /// (`:settings` / `:help` / …) without a keyboard chord. Set
+    /// every frame by `cmdline_bar::draw`.
+    pub cmdline_bar: Option<Rect>,
     pub statusline_mixr_chip: Option<Rect>,
     /// Play / pause control sitting to the LEFT of the track text
     /// when something's playing. Click is source-aware:
