@@ -52,6 +52,7 @@ pub mod help_overlay;
 pub mod hover;
 pub mod icons;
 pub mod image_view;
+pub mod integration_edit_overlay;
 // log_tail_view moved to mnml-aws-codebuild.
 pub mod md_inline_overlay;
 pub mod md_preview;
@@ -571,6 +572,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // "+ Add integration" overlay — `:integrations.add` or clicking
     // the + chip on the sidebar's INTEGRATIONS header.
     discovery_overlay::draw(frame, app, area);
+    // Integration edit panel — layered on TOP of the discovery
+    // overlay when the user presses `e` on a rail row or selects the
+    // `[+ Add custom integration]` row. No-op when no edit is in
+    // flight; the renderer reads `discovery_overlay.edit_panel`.
+    integration_edit_overlay::draw(frame, app, area);
     // Help overlay — `?` / view.help (auto-generated keymap reference).
     help_overlay::draw(frame, app, area);
     // Startup picker — drawn last among modal overlays so it sits on

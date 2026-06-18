@@ -29,13 +29,84 @@ pub struct DiscoveryOverlayState {
     /// on every key/render so user-installed siblings that were just
     /// added flip to `InRail` immediately.
     pub selected_row: usize,
+    /// When `Some`, the integration edit panel is layered over the
+    /// discovery overlay; all key input routes there until the user
+    /// saves (Enter) or cancels (Esc). `e` on an `InRail` row opens
+    /// it in `Edit` mode; selecting the `[+ Add custom integration]`
+    /// row at the top opens it in `AddCustom` mode.
+    pub edit_panel: Option<IntegrationEditState>,
 }
 
 impl DiscoveryOverlayState {
     pub fn open() -> Self {
-        Self { selected_row: 0 }
+        Self {
+            selected_row: 0,
+            edit_panel: None,
+        }
     }
 }
+
+/// In-flight edit of a `[[ui.integration_icon]]` entry. Owns the
+/// per-field state + the focus cursor so the renderer can paint a
+/// `▸` next to the focused field, family-Settings-row style.
+#[derive(Debug, Clone)]
+pub struct IntegrationEditState {
+    pub mode: IntegrationEditMode,
+    /// Stable id — required, must be unique across the config's
+    /// existing icons. Read-only in `Edit` mode (you can't rename
+    /// an existing integration without confusing the persistence
+    /// path); editable in `AddCustom`.
+    pub id: String,
+    /// Command to run when the icon is clicked. Same format as
+    /// `IntegrationIcon.command` — a registered command id or a
+    /// `:colon-prefixed` ex-command. Editable only in `AddCustom`.
+    pub command: String,
+    /// The on-glyph — any single char (or short string for codepoints
+    /// pasted as escape sequences). Free-form text input.
+    pub glyph: String,
+    /// What renders when the user's font lacks the glyph above —
+    /// typically a 1-3 char ASCII / simple-Unicode fallback.
+    pub fallback: String,
+    /// Theme color name (`orange` / `cyan` / `purple` / …). Cycled
+    /// with ←→ from a fixed palette.
+    pub color: String,
+    /// Hover tooltip shown by the bufferline chip.
+    pub tooltip: String,
+    /// Which field has the input cursor.
+    pub focused_field: IntegrationEditField,
+}
+
+/// Whether the panel is editing an existing entry or adding a fresh
+/// one. The `Edit` variant carries the id of the entry being edited
+/// so the save path can locate + replace it (or persist back to the
+/// catalog override).
+#[derive(Debug, Clone)]
+pub enum IntegrationEditMode {
+    Edit,
+    AddCustom,
+}
+
+/// Per-field focus marker for `IntegrationEditState`. `Id` and
+/// `Command` are skipped while focused on an existing edit (their
+/// state still lives in the struct but the renderer paints them
+/// `[fixed]` and the key handler skips them on Tab).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntegrationEditField {
+    Id,
+    Command,
+    Glyph,
+    Fallback,
+    Color,
+    Tooltip,
+}
+
+/// Closed-form color palette the `Color` field cycles through.
+/// Names map onto the same vocabulary the live `parse_color` path
+/// accepts via the existing `IntegrationIcon.color` field; the
+/// order matches the family-Settings ROYGBIV-ish reading order.
+pub const INTEGRATION_EDIT_COLORS: &[&str] = &[
+    "fg", "dim", "red", "orange", "yellow", "green", "cyan", "blue", "purple",
+];
 
 /// Per-catalog-entry render shape, computed fresh on each frame so
 /// install-state changes (after the user runs `i`) are reflected
@@ -168,6 +239,258 @@ impl App {
 
     pub fn close_discovery_overlay(&mut self) {
         self.discovery_overlay = None;
+    }
+
+    /// Open the integration-edit panel for the row currently focused
+    /// in the discovery overlay. No-op when the overlay isn't open
+    /// or the focused row isn't an `InRail` sibling (only rail
+    /// entries are editable — `Installed`/`NotInstalled` aren't in
+    /// the config yet). Pressed via `e` in the overlay key handler.
+    pub fn open_integration_edit_from_focused(&mut self) {
+        let Some((sibling, status)) = self.discovery_focused() else {
+            return;
+        };
+        if status != SiblingStatus::InRail {
+            return;
+        }
+        let id = sibling.id();
+        let icon = self
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .find(|ic| ic.id == id)
+            .cloned();
+        let Some(icon) = icon else {
+            return;
+        };
+        if let Some(state) = self.discovery_overlay.as_mut() {
+            state.edit_panel = Some(IntegrationEditState {
+                mode: IntegrationEditMode::Edit,
+                id: icon.id,
+                command: icon.command,
+                glyph: icon.glyph,
+                fallback: icon.fallback,
+                color: icon.color,
+                tooltip: icon.tooltip.unwrap_or_default(),
+                focused_field: IntegrationEditField::Glyph,
+            });
+        }
+    }
+
+    /// Open the integration-edit panel in `AddCustom` mode. Fields
+    /// start blank; user fills in id + command + glyph + color +
+    /// fallback + tooltip and saves. Triggered by the `[+ Add custom
+    /// integration]` row at the top of the discovery overlay.
+    pub fn open_integration_edit_add_custom(&mut self) {
+        if let Some(state) = self.discovery_overlay.as_mut() {
+            state.edit_panel = Some(IntegrationEditState {
+                mode: IntegrationEditMode::AddCustom,
+                id: String::new(),
+                command: String::new(),
+                glyph: String::new(),
+                fallback: String::new(),
+                color: "fg".to_string(),
+                tooltip: String::new(),
+                focused_field: IntegrationEditField::Id,
+            });
+        }
+    }
+
+    /// Close the edit panel without saving. Esc binding inside the
+    /// panel; also called when the overlay itself is dismissed.
+    pub fn integration_edit_cancel(&mut self) {
+        if let Some(state) = self.discovery_overlay.as_mut() {
+            state.edit_panel = None;
+        }
+    }
+
+    /// Commit the edit panel's current field values to
+    /// `config.ui.integration_icons` + persist to TOML. Returns
+    /// without saving when the panel state is invalid (empty id in
+    /// AddCustom, empty glyph, etc.) — toasts the reason so the user
+    /// can fix it without losing the in-flight edit. Closes the
+    /// panel on success.
+    pub fn integration_edit_save(&mut self) {
+        let Some(state) = self.discovery_overlay.as_ref() else {
+            return;
+        };
+        let Some(panel) = state.edit_panel.as_ref().cloned() else {
+            return;
+        };
+        // Validation — same rules the config parser enforces so we
+        // can't write a TOML the next load would reject.
+        let id = panel.id.trim();
+        let command = panel.command.trim();
+        let glyph = panel.glyph.trim();
+        if id.is_empty() {
+            self.toast("integration: id can't be empty");
+            return;
+        }
+        if command.is_empty() {
+            self.toast("integration: command can't be empty");
+            return;
+        }
+        if glyph.is_empty() {
+            self.toast("integration: glyph can't be empty");
+            return;
+        }
+        // Build the IntegrationIcon — `tooltip` is Option<String>
+        // (the existing struct); empty input collapses back to None.
+        let new_icon = IntegrationIcon {
+            id: id.to_string(),
+            glyph: glyph.to_string(),
+            fallback: if panel.fallback.trim().is_empty() {
+                glyph.to_string()
+            } else {
+                panel.fallback.trim().to_string()
+            },
+            command: command.to_string(),
+            color: panel.color.trim().to_string(),
+            tooltip: if panel.tooltip.trim().is_empty() {
+                None
+            } else {
+                Some(panel.tooltip.trim().to_string())
+            },
+        };
+        match panel.mode {
+            IntegrationEditMode::Edit => {
+                // Replace in place. The save panel can't change the
+                // id, so we match by the captured id directly.
+                if let Some(slot) = self
+                    .config
+                    .ui
+                    .integration_icons
+                    .iter_mut()
+                    .find(|ic| ic.id == new_icon.id)
+                {
+                    *slot = new_icon;
+                } else {
+                    self.toast(format!("integration: {} no longer in rail", new_icon.id));
+                    return;
+                }
+            }
+            IntegrationEditMode::AddCustom => {
+                if self
+                    .config
+                    .ui
+                    .integration_icons
+                    .iter()
+                    .any(|ic| ic.id == new_icon.id)
+                {
+                    self.toast(format!("integration: id {} already in rail", new_icon.id));
+                    return;
+                }
+                self.config.ui.integration_icons.push(new_icon);
+            }
+        }
+        match persist_integration_icons(&self.config.ui.integration_icons) {
+            Ok(path) => self.toast(format!("integration saved · {}", path.display())),
+            Err(e) => self.toast(format!("integration saved in-memory (persist failed: {e})")),
+        }
+        if let Some(state) = self.discovery_overlay.as_mut() {
+            state.edit_panel = None;
+        }
+    }
+
+    /// Tab → move focus to the next field. `delta = 1` for forward,
+    /// `-1` for backward (Shift+Tab). Skips `Id` / `Command` when
+    /// the panel is in `Edit` mode (those fields are read-only).
+    pub fn integration_edit_cycle_field(&mut self, delta: isize) {
+        use IntegrationEditField::*;
+        let order_full = [Id, Command, Glyph, Fallback, Color, Tooltip];
+        let order_edit = [Glyph, Fallback, Color, Tooltip];
+        let Some(state) = self.discovery_overlay.as_mut() else {
+            return;
+        };
+        let Some(panel) = state.edit_panel.as_mut() else {
+            return;
+        };
+        let order: &[IntegrationEditField] = match panel.mode {
+            IntegrationEditMode::Edit => &order_edit,
+            IntegrationEditMode::AddCustom => &order_full,
+        };
+        let Some(cur) = order.iter().position(|f| *f == panel.focused_field) else {
+            return;
+        };
+        let n = order.len() as isize;
+        let next = ((cur as isize + delta).rem_euclid(n)) as usize;
+        panel.focused_field = order[next];
+    }
+
+    /// ←→ cycle the Color field through `INTEGRATION_EDIT_COLORS`.
+    /// `delta = 1` for forward, `-1` for backward. No-op when the
+    /// focused field isn't `Color`.
+    pub fn integration_edit_color_cycle(&mut self, delta: isize) {
+        let Some(state) = self.discovery_overlay.as_mut() else {
+            return;
+        };
+        let Some(panel) = state.edit_panel.as_mut() else {
+            return;
+        };
+        if panel.focused_field != IntegrationEditField::Color {
+            return;
+        }
+        let n = INTEGRATION_EDIT_COLORS.len() as isize;
+        let cur = INTEGRATION_EDIT_COLORS
+            .iter()
+            .position(|c| *c == panel.color)
+            .unwrap_or(0) as isize;
+        let next = (cur + delta).rem_euclid(n) as usize;
+        panel.color = INTEGRATION_EDIT_COLORS[next].to_string();
+    }
+
+    /// Append a character to the focused text field. No-op when the
+    /// focused field is `Color` (cycled with arrows, not typed) or
+    /// when the panel is closed. The `Glyph` field accepts only the
+    /// first char of the input (so a paste of multiple chars trims).
+    pub fn integration_edit_type_char(&mut self, ch: char) {
+        let Some(state) = self.discovery_overlay.as_mut() else {
+            return;
+        };
+        let Some(panel) = state.edit_panel.as_mut() else {
+            return;
+        };
+        let buf: &mut String = match panel.focused_field {
+            IntegrationEditField::Id => &mut panel.id,
+            IntegrationEditField::Command => &mut panel.command,
+            IntegrationEditField::Glyph => &mut panel.glyph,
+            IntegrationEditField::Fallback => &mut panel.fallback,
+            IntegrationEditField::Tooltip => &mut panel.tooltip,
+            IntegrationEditField::Color => return,
+        };
+        // Hard cap on field length so an unbounded paste can't blow
+        // the panel render off-screen. 64 chars covers any
+        // reasonable tooltip / command. Glyph specifically caps at
+        // one to keep the chip a single cell.
+        let cap = if matches!(panel.focused_field, IntegrationEditField::Glyph) {
+            1
+        } else {
+            64
+        };
+        if buf.chars().count() >= cap {
+            return;
+        }
+        buf.push(ch);
+    }
+
+    /// Backspace — delete one char from the focused field.
+    pub fn integration_edit_backspace(&mut self) {
+        let Some(state) = self.discovery_overlay.as_mut() else {
+            return;
+        };
+        let Some(panel) = state.edit_panel.as_mut() else {
+            return;
+        };
+        let buf: &mut String = match panel.focused_field {
+            IntegrationEditField::Id => &mut panel.id,
+            IntegrationEditField::Command => &mut panel.command,
+            IntegrationEditField::Glyph => &mut panel.glyph,
+            IntegrationEditField::Fallback => &mut panel.fallback,
+            IntegrationEditField::Tooltip => &mut panel.tooltip,
+            IntegrationEditField::Color => return,
+        };
+        buf.pop();
     }
 
     pub fn discovery_move_row(&mut self, delta: isize) {

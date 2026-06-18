@@ -777,6 +777,31 @@ fn handle_search_section_key(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_discovery_overlay_key(app: &mut App, key: KeyEvent) {
+    // Integration-edit panel is greedy when open — every keystroke
+    // routes to the panel until Enter saves or Esc cancels. Tab /
+    // ←→ cycle field + color; text fields accept char + backspace.
+    let edit_panel_open = app
+        .discovery_overlay
+        .as_ref()
+        .is_some_and(|s| s.edit_panel.is_some());
+    if edit_panel_open {
+        match key.code {
+            KeyCode::Esc => app.integration_edit_cancel(),
+            KeyCode::Enter => app.integration_edit_save(),
+            KeyCode::Tab => app.integration_edit_cycle_field(1),
+            KeyCode::BackTab => app.integration_edit_cycle_field(-1),
+            KeyCode::Left => app.integration_edit_color_cycle(-1),
+            KeyCode::Right => app.integration_edit_color_cycle(1),
+            KeyCode::Up => app.integration_edit_cycle_field(-1),
+            KeyCode::Down => app.integration_edit_cycle_field(1),
+            KeyCode::Backspace => app.integration_edit_backspace(),
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.integration_edit_type_char(c);
+            }
+            _ => {}
+        }
+        return;
+    }
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => app.close_discovery_overlay(),
         KeyCode::Up | KeyCode::Char('k') => app.discovery_move_row(-1),
@@ -788,6 +813,13 @@ fn handle_discovery_overlay_key(app: &mut App, key: KeyEvent) {
         // `integrations.refresh` (auto-cleared on next + overlay open).
         KeyCode::Char('i') => app.discovery_install_selected(),
         KeyCode::Char('y') => app.discovery_yank_install(),
+        // `e` opens the edit panel for the focused rail row. No-op
+        // on non-InRail rows (the others aren't in the config yet).
+        KeyCode::Char('e') => app.open_integration_edit_from_focused(),
+        // `a` opens the edit panel in AddCustom mode — blank fields,
+        // user fills in id + command + glyph + color + fallback +
+        // tooltip from scratch.
+        KeyCode::Char('a') => app.open_integration_edit_add_custom(),
         _ => {}
     }
 }
