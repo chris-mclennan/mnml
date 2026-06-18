@@ -1010,12 +1010,27 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // No-pane cmdline — greedy capture while the user is typing a
+    // `:` ex-command from tree focus. Renders at the bottom in the
+    // same cmdline_bar the in-buffer vim cmdline uses, so the
+    // affordance reads consistent regardless of focus.
+    if app.no_pane_cmdline.is_some() {
+        match key.code {
+            KeyCode::Esc => app.no_pane_cmdline_cancel(),
+            KeyCode::Enter => app.no_pane_cmdline_commit(),
+            KeyCode::Backspace => app.no_pane_cmdline_backspace(),
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.no_pane_cmdline_push_char(c);
+            }
+            _ => {}
+        }
+        return;
+    }
     match key.code {
-        // `:` from tree focus → open the ex-command prompt so users
-        // can run `:settings`, `:help`, etc. without first opening a
-        // file. Without this the keystroke fell through silently —
-        // a user on the empty-state landing couldn't reach :settings
-        // without first opening a file. 2026-06-18 user-reported.
+        // `:` from tree focus → open the no-pane cmdline at the
+        // bottom of the window. Same vim-style affordance the
+        // in-buffer cmdline provides; user-reported 2026-06-18 that
+        // having it render in the center looked inconsistent.
         KeyCode::Char(':') => {
             app.open_ex_command_prompt();
         }

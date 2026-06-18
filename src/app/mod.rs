@@ -2605,6 +2605,19 @@ pub struct App {
     /// before any mixr read; reset to `None` implicitly when the
     /// 10s TTL lapses (a genuine queue-empty state).
     pub last_mixr_track_at: Option<std::time::Instant>,
+    /// App-level ex-cmdline buffer — `Some(text)` while a `:` prompt
+    /// is being typed from a non-pane focus (tree / empty-state /
+    /// any context without an editor buffer). The bottom cmdline_bar
+    /// reads this and paints `:<text>` in the same yellow style the
+    /// in-buffer vim cmdline uses, so the affordance is consistent
+    /// regardless of where focus is. `None` when no prompt is open.
+    ///
+    /// Vim's per-buffer cmdline still owns the in-buffer case to keep
+    /// the (already correct) vim handler's state intact — this only
+    /// kicks in when `pending_display()` would otherwise be `None`.
+    /// User-requested 2026-06-18 after the centered Prompt looked
+    /// inconsistent with vim's bottom-anchored cmdline.
+    pub no_pane_cmdline: Option<String>,
     /// The native mixr panel — mnml hosts `mixr --blit` and renders it
     /// as a right-docked half-width panel. `None` until `mixr.show`
     /// first launches it; then it persists (minimize hides it, it
@@ -3266,6 +3279,7 @@ impl App {
             now_playing: None,
             now_playing_rx: None,
             last_mixr_track_at: None,
+            no_pane_cmdline: None,
             mixr_panel: None,
             mixr_drag: None,
             under_tmnl: false,
@@ -3689,17 +3703,47 @@ impl App {
 
     /// Open the "New file…" prompt — captures `parent` so the accept handler
     /// knows where to put it.
-    /// Open a floating cmdline prompt that captures an ex-command —
-    /// `:settings`, `:help`, etc. — without requiring a buffer in
-    /// focus. Bound to `:` from the tree handler so :commands work
-    /// from the empty-state landing. The leading `:` glyph appears
-    /// in the prompt title so the affordance reads as the vim
-    /// cmdline equivalent. User-reported 2026-06-18.
+    /// Begin typing an ex-command from non-pane focus — the App-
+    /// level cmdline (`no_pane_cmdline`) gets populated and the
+    /// bottom `cmdline_bar` paints `:<text>▏` in the same yellow
+    /// style as vim's in-buffer cmdline. Enter dispatches via
+    /// `run_ex_command`; Esc cancels.
     pub fn open_ex_command_prompt(&mut self) {
-        self.prompt = Some(crate::prompt::Prompt::new(
-            crate::prompt::PromptKind::ExCommand,
-            ":".to_string(),
-        ));
+        self.no_pane_cmdline = Some(String::new());
+    }
+
+    /// Type a single char into the no-pane cmdline. No-op when it's
+    /// closed. Caller (tree key handler) gates on
+    /// `no_pane_cmdline.is_some()` before forwarding chars.
+    pub fn no_pane_cmdline_push_char(&mut self, ch: char) {
+        if let Some(buf) = self.no_pane_cmdline.as_mut() {
+            buf.push(ch);
+        }
+    }
+
+    /// Backspace one char.
+    pub fn no_pane_cmdline_backspace(&mut self) {
+        if let Some(buf) = self.no_pane_cmdline.as_mut() {
+            buf.pop();
+        }
+    }
+
+    /// Commit the typed cmdline — runs the body as an ex-command and
+    /// closes the line. Empty body just closes (matches vim's
+    /// Enter-on-empty behavior).
+    pub fn no_pane_cmdline_commit(&mut self) {
+        let Some(line) = self.no_pane_cmdline.take() else {
+            return;
+        };
+        let line = line.trim().to_string();
+        if !line.is_empty() {
+            self.run_ex_command(&line);
+        }
+    }
+
+    /// Esc — drop the cmdline without firing.
+    pub fn no_pane_cmdline_cancel(&mut self) {
+        self.no_pane_cmdline = None;
     }
 
     pub fn open_new_file_prompt(&mut self, parent: PathBuf) {
@@ -7672,6 +7716,12 @@ impl App {
     pub fn pending_display(&self) -> Option<String> {
         if self.focus == Focus::Pane {
             self.active_editor().and_then(|b| b.input.pending_display())
+        } else if let Some(text) = self.no_pane_cmdline.as_deref() {
+            // Match the vim cmdline's display shape — leading `:` +
+            // a caret block at the end so the cmdline_bar's
+            // `starts_with(':')` branch picks it up and renders in
+            // the same yellow style as the in-buffer cmdline.
+            Some(format!(":{text}▏"))
         } else {
             None
         }

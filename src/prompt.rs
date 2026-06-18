@@ -56,12 +56,6 @@ pub enum PromptKind {
     /// Accept ⇒ jump the active editor's cursor to the typed 1-based line
     /// number. (`Ctrl+G` — standard-mode equivalent of vim's `:N`.)
     GotoLine,
-    /// Accept ⇒ run the typed string as an ex-command (the body of a
-    /// `:settings` / `:help` / etc.). Opens when the user presses `:`
-    /// without a buffer in focus (empty-state landing, tree focus in
-    /// standard mode) so :commands still work without a file open.
-    /// User-reported 2026-06-18.
-    ExCommand,
     /// Accept ⇒ create an empty file at `<parent>/<input>`, then open it.
     NewFile,
     /// Accept ⇒ `mkdir -p <parent>/<input>`. No buffer opened.
