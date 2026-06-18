@@ -1750,16 +1750,24 @@ pub struct PaneRects {
     pub statusline_workspace_chip: Option<Rect>,
     /// Statusline clock chip — clickable shortcut to toggle local ↔ UTC.
     pub statusline_clock_chip: Option<Rect>,
-    /// `♪` mixr chip — the now-playing miniplayer + launch button.
-    /// Click opens `mixr.show` for non-mixr sources (Apple Music /
-    /// Spotify); for a mixr-source track it sends a pause toggle
-    /// instead (transport mode). See `tui.rs` click dispatch.
+    /// The now-playing track-text segment of the bottom statusline
+    /// transport cluster — `[play/pause] [ffwd] [track]`. Click
+    /// opens / cycles the mixr panel (`mixr.show`). When idle
+    /// (no track from any source) the cluster collapses to a
+    /// single `♪ mixr` chip that lives here as well.
     pub statusline_mixr_chip: Option<Rect>,
-    /// Satellite teleport chip rendered immediately to the right of
-    /// `statusline_mixr_chip` while mixr is the now-playing source
-    /// AND a deck is actively producing audio. Click sends
-    /// `mixr --command teleport`. `None` otherwise.
-    pub statusline_mixr_teleport_chip: Option<Rect>,
+    /// Play / pause control sitting to the LEFT of the track text
+    /// when something's playing. Click is source-aware:
+    /// mixr → `mixr --command pause`; Apple Music / Spotify →
+    /// AppleScript `playpause` against the matching app. `None`
+    /// when the cluster is in its idle single-chip form.
+    pub statusline_mixr_play_chip: Option<Rect>,
+    /// Forward control sitting between play/pause and the track
+    /// text. Source-aware: mixr → `mixr --command teleport` (jump
+    /// on beat to just before the mix-out); Apple Music / Spotify →
+    /// AppleScript `next track`. `None` when the cluster is in its
+    /// idle single-chip form.
+    pub statusline_mixr_ffwd_chip: Option<Rect>,
     /// The native mixr panel's mixr-cell rect (set by `ui::draw` when
     /// the panel is shown) — `tick` reads it to keep mixr sized to it.
     pub mixr_panel: Option<Rect>,

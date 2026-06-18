@@ -3757,40 +3757,50 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 });
                 return;
             }
-            // Satellite teleport chip — only renders when mixr is the
-            // now-playing source AND a deck is producing audio. Click
-            // sends `mixr --command teleport` (jumps on beat to just
-            // before the mix-out point). Checked BEFORE the main chip
-            // because they sit adjacent.
-            if let Some(r) = app.rects.statusline_mixr_teleport_chip
+            // Play / pause control — source-aware: mixr → pause IPC,
+            // Apple Music / Spotify → AppleScript `playpause`. Checked
+            // before the track-text chip because the three sit
+            // adjacent. Returns silently when no source matches
+            // (cluster is in idle form).
+            if let Some(r) = app.rects.statusline_mixr_play_chip
                 && crate::app::dispatch::contains(r, x, y)
             {
-                send_mixr_command("teleport");
+                let source = app
+                    .now_playing
+                    .as_ref()
+                    .map(|np| np.source.as_str())
+                    .unwrap_or("");
+                if source.eq_ignore_ascii_case("mixr") {
+                    send_mixr_command("pause");
+                } else if !source.is_empty() {
+                    send_macos_player(source, "playpause");
+                }
                 return;
             }
-            // mixr chip — behavior depends on the now-playing source.
-            // Mixr source: click toggles pause via the IPC (matches
-            // tmnl's transport chip). Other sources (Apple Music /
-            // Spotify) or idle: falls through to `mixr.show` which
-            // opens / cycles mnml's docked mixr panel.
+            // Ffwd control — mixr → teleport (jump on beat to just
+            // before mix-out); Apple Music / Spotify → next track via
+            // AppleScript.
+            if let Some(r) = app.rects.statusline_mixr_ffwd_chip
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                let source = app
+                    .now_playing
+                    .as_ref()
+                    .map(|np| np.source.as_str())
+                    .unwrap_or("");
+                if source.eq_ignore_ascii_case("mixr") {
+                    send_mixr_command("teleport");
+                } else if !source.is_empty() {
+                    send_macos_player(source, "next track");
+                }
+                return;
+            }
+            // Track text — opens / cycles mnml's docked mixr panel
+            // regardless of source. Same as the historical chip.
             if let Some(r) = app.rects.statusline_mixr_chip
                 && crate::app::dispatch::contains(r, x, y)
             {
-                let mixr_source = app
-                    .now_playing
-                    .as_ref()
-                    .map(|np| np.source.eq_ignore_ascii_case("mixr"))
-                    .unwrap_or(false);
-                let has_track = app
-                    .now_playing
-                    .as_ref()
-                    .map(|np| !np.track.is_empty())
-                    .unwrap_or(false);
-                if mixr_source && has_track {
-                    send_mixr_command("pause");
-                } else {
-                    command::run("mixr.show", app);
-                }
+                command::run("mixr.show", app);
                 return;
             }
             // LSP chip → :LspStatus toast (breakdown of running servers).
@@ -4530,5 +4540,29 @@ fn send_mixr_command(verb: &str) {
         .spawn();
     if let Err(e) = result {
         eprintln!("mnml: send_mixr_command({verb:?}) failed: {e}");
+    }
+}
+
+/// Drive Apple Music / Spotify via AppleScript for the statusline
+/// transport chips. `app_name` is the source string mnml reads from
+/// `now_playing` (`"Music"` / `"Spotify"`), `verb` is an AppleScript
+/// transport command — `"playpause"`, `"next track"`, etc.
+///
+/// Detached + non-blocking; failures log and are swallowed so a user
+/// without the named app installed doesn't get a scary toast.
+fn send_macos_player(app_name: &str, verb: &str) {
+    // Whitelist the source names we recognize so a malformed
+    // `np.source` can't be coerced into arbitrary AppleScript.
+    let app = match app_name {
+        s if s.eq_ignore_ascii_case("Music") => "Music",
+        s if s.eq_ignore_ascii_case("Spotify") => "Spotify",
+        _ => return,
+    };
+    let script = format!("tell application \"{app}\" to {verb}");
+    let result = std::process::Command::new("osascript")
+        .args(["-e", &script])
+        .spawn();
+    if let Err(e) = result {
+        eprintln!("mnml: send_macos_player({app_name:?}, {verb:?}) failed: {e}");
     }
 }

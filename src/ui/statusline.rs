@@ -306,83 +306,83 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // button: shows the track from whatever player the background
     // poller found (mixr / macOS Music / Spotify), `♪ mixr` when idle.
     // Click → `mixr.show`. Data is `App.now_playing`.
-    // When mixr is the now-playing source the chip's leading glyph
-    // swaps from `♪` to ⏸ (playing) or ▶ (track loaded but paused),
-    // so the chip doubles as a play/pause transport. A satellite
-    // ⏭ chip pushes adjacent while playing — click sends teleport.
-    // Non-mixr sources (Apple Music / Spotify) keep the `♪` glyph
-    // since mnml can't transport-control those; the chip stays a
-    // pure now-playing indicator + launch button.
-    // Nerd-font codepoints (same as tmnl's chrome-side satellite at
-    // `gpu_launcher_paint::MIXR_*_GLYPH`) — chosen over the basic
-    // Unicode ⏸/▶/⏭ because those don't render reliably across
-    // mnml's font-fallback chain (user-reported 2026-06-17: the
-    // chip looked like it had no leading glyph).
+    // Three-segment transport cluster `[play/pause] [ffwd] [track]`
+    // when any source is playing or has a track loaded. Source-aware
+    // dispatch — mixr uses its IPC, Apple Music / Spotify use
+    // AppleScript (see `tui.rs` send_macos_player). Idle (no track
+    // from any source) collapses to a single `♪ mixr` chip.
+    //
+    // Nerd-font codepoints (same as tmnl's chrome-side satellite
+    // at `gpu_launcher_paint::MIXR_*_GLYPH`) — basic Unicode
+    // ⏸/▶/⏭ rendered as invisible glyphs in mnml's font-fallback
+    // chain on the user's setup (reported 2026-06-17).
     const NF_PLAY: char = '\u{f04b}'; // nf-fa-play
     const NF_PAUSE: char = '\u{f04c}'; // nf-fa-pause
-    const NF_TELEPORT: char = '\u{f051}'; // nf-fa-step-forward
+    const NF_FFWD: char = '\u{f051}'; // nf-fa-step-forward
     let mixr_is_source = app
         .now_playing
         .as_ref()
         .map(|np| np.source.eq_ignore_ascii_case("mixr"))
         .unwrap_or(false);
-    let (mixr_glyph, render_satellite) = match (&app.now_playing, mixr_is_source) {
-        (Some(np), true) if np.playing => (NF_PAUSE, true),
-        (Some(np), true) if !np.track.is_empty() => (NF_PLAY, false),
-        _ => ('♪', false),
-    };
-    let mixr_seg_idx = {
-        let (label, fg) = match &app.now_playing {
-            Some(np) if np.playing => {
-                // Sanitise first — collapse control chars / whitespace
-                // runs (a stray tab in a title was splitting the chip)
-                // — then truncate hard so a long title can't crowd the
-                // right lane.
-                let clean = np.track.split_whitespace().collect::<Vec<_>>().join(" ");
-                let shown: String = if clean.chars().count() > 18 {
-                    clean.chars().take(17).chain(std::iter::once('…')).collect()
-                } else {
-                    clean
-                };
-                (format!(" {mixr_glyph} {shown} "), theme::cur().purple)
-            }
-            Some(np) if mixr_is_source && !np.track.is_empty() => {
-                // Mixr loaded with a paused/cued track — show the
-                // play glyph + track so the user knows what's
-                // queued and that clicking will toggle playback.
-                let clean = np.track.split_whitespace().collect::<Vec<_>>().join(" ");
-                let shown: String = if clean.chars().count() > 18 {
-                    clean.chars().take(17).chain(std::iter::once('…')).collect()
-                } else {
-                    clean
-                };
-                // Keep the chip in `purple` even when paused so the
-                // play glyph stays visible against `bg2`. `comment`
-                // is too close to the segment background and the
-                // chip read as "no glyph at all" — user-reported.
-                (format!(" {mixr_glyph} {shown} "), theme::cur().purple)
-            }
-            _ => (format!(" {mixr_glyph} mixr "), theme::cur().comment),
+    let has_track_loaded = app
+        .now_playing
+        .as_ref()
+        .map(|np| !np.track.is_empty())
+        .unwrap_or(false);
+    let track_is_playing = app
+        .now_playing
+        .as_ref()
+        .map(|np| np.playing)
+        .unwrap_or(false);
+    let (mixr_play_seg_idx, mixr_ffwd_seg_idx, mixr_seg_idx) = if has_track_loaded {
+        // Three-segment transport cluster.
+        let np = app.now_playing.as_ref().expect("guarded by has_track_loaded");
+        let clean = np.track.split_whitespace().collect::<Vec<_>>().join(" ");
+        // Truncate at 28 chars (+ 1 for the `…`) — user-requested
+        // wider than the previous 17, but still bounded so a long
+        // title can't push the clock + LSP chips off the strip.
+        let shown: String = if clean.chars().count() > 28 {
+            clean.chars().take(28).chain(std::iter::once('…')).collect()
+        } else {
+            clean
         };
-        let idx = right.len();
-        right.push(Seg::new(label, fg, theme::cur().bg2));
-        idx
-    };
-    // Satellite teleport chip — only renders when mixr is the
-    // source AND a deck is actively producing audio. Click sends
-    // `mixr --command teleport`. Same semantic as tmnl's chrome-
-    // side satellite (`gpu_launcher_paint::MIXR_TELEPORT_GLYPH`).
-    let mixr_teleport_seg_idx = if render_satellite {
-        let idx = right.len();
+        let glyph = if track_is_playing { NF_PAUSE } else { NF_PLAY };
+        // Play / pause segment.
+        let play_idx = right.len();
         right.push(Seg::new(
-            format!(" {NF_TELEPORT} "),
+            format!(" {glyph} "),
             theme::cur().purple,
             theme::cur().bg2,
         ));
-        Some(idx)
+        // Ffwd segment.
+        let ffwd_idx = right.len();
+        right.push(Seg::new(
+            format!(" {NF_FFWD} "),
+            theme::cur().purple,
+            theme::cur().bg2,
+        ));
+        // Track text segment.
+        let track_idx = right.len();
+        right.push(Seg::new(
+            format!(" {shown} "),
+            theme::cur().purple,
+            theme::cur().bg2,
+        ));
+        (Some(play_idx), Some(ffwd_idx), track_idx)
     } else {
-        None
+        // Idle: single `♪ mixr` chip, click launches mnml's mixr panel.
+        let idx = right.len();
+        right.push(Seg::new(
+            " ♪ mixr ".to_string(),
+            theme::cur().comment,
+            theme::cur().bg2,
+        ));
+        (None, None, idx)
     };
+    // Suppress unused-var warning when `mixr_is_source` falls out of
+    // use — it's used by the click dispatcher to pick mixr vs
+    // AppleScript routing, but the render side doesn't need it.
+    let _ = mixr_is_source;
     let mut clock_seg_idx: Option<usize> = None;
     let mut lsp_seg_idx: Option<usize> = None;
     let mut wrap_seg_idx: Option<usize> = None;
@@ -392,7 +392,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.statusline_workspace_chip = None;
     app.rects.statusline_clock_chip = None;
     app.rects.statusline_mixr_chip = None;
-    app.rects.statusline_mixr_teleport_chip = None;
+    app.rects.statusline_mixr_play_chip = None;
+    app.rects.statusline_mixr_ffwd_chip = None;
     app.rects.statusline_lsp_chip = None;
     app.rects.statusline_wrap_chip = None;
     app.rects.statusline_autosave_chip = None;
@@ -624,7 +625,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         })
     };
     app.rects.statusline_mixr_chip = to_rect(Some(mixr_seg_idx), &right_rects);
-    app.rects.statusline_mixr_teleport_chip = to_rect(mixr_teleport_seg_idx, &right_rects);
+    app.rects.statusline_mixr_play_chip = to_rect(mixr_play_seg_idx, &right_rects);
+    app.rects.statusline_mixr_ffwd_chip = to_rect(mixr_ffwd_seg_idx, &right_rects);
     app.rects.statusline_lsp_chip = to_rect(lsp_seg_idx, &right_rects);
     app.rects.statusline_wrap_chip = to_rect(wrap_seg_idx, &right_rects);
     app.rects.statusline_autosave_chip = to_rect(autosave_seg_idx, &right_rects);
