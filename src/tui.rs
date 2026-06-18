@@ -2898,6 +2898,39 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             let on_bottom = y == p_bottom && x >= panel.x && x <= p_right;
 
             if down {
+                // Size-state chips in the header — grow / shrink /
+                // minimize. Checked BEFORE drag detection because
+                // the chips sit ON the header drag-region and a
+                // drag-start would otherwise eat the click. Order
+                // doesn't matter — each is a single cell that
+                // only fires on its own rect.
+                if let Some(r) = app.rects.mixr_size_grow_button
+                    && crate::app::dispatch::contains(r, x, y)
+                {
+                    if let Some(p) = app.mixr_panel.as_mut() {
+                        p.size = crate::mixr_host::MixrSize::Full;
+                        p.focused = true;
+                    }
+                    return;
+                }
+                if let Some(r) = app.rects.mixr_size_shrink_button
+                    && crate::app::dispatch::contains(r, x, y)
+                {
+                    if let Some(p) = app.mixr_panel.as_mut() {
+                        p.size = crate::mixr_host::MixrSize::BottomStrip;
+                        p.focused = true;
+                    }
+                    return;
+                }
+                if let Some(r) = app.rects.mixr_size_minimize_button
+                    && crate::app::dispatch::contains(r, x, y)
+                {
+                    if let Some(p) = app.mixr_panel.as_mut() {
+                        p.size = crate::mixr_host::MixrSize::Minimized;
+                        p.focused = false;
+                    }
+                    return;
+                }
                 // Edges win over the header / cells. Any of them tears
                 // the panel off into a free-floating window.
                 let kind = if on_left {

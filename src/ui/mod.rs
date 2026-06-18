@@ -469,7 +469,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     // Native mixr panel — the 1-row title header, then mixr's cells.
     if let Some(harea) = mixr_header {
-        mixr_view::draw_header(frame, harea);
+        let size = app
+            .mixr_panel
+            .as_ref()
+            .map(|p| p.size)
+            .unwrap_or(crate::mixr_host::MixrSize::Minimized);
+        mixr_view::draw_header(frame, app, harea, size);
     }
     if let Some(marea) = mixr_area
         && let Some(panel) = app.mixr_panel.as_ref()

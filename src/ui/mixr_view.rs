@@ -59,12 +59,24 @@ pub fn draw(frame: &mut Frame, panel: &MixrPanel, area: Rect) {
     }
 }
 
-/// Draw the floating panel's 1-row header — a drag handle carrying the
-/// `‹` `›` width controls and the five reposition buttons. Registers
-/// each button's rect.
-/// Draw the panel's 1-row title bar — a quiet `♪ mixr` label on the
-/// panel background.
-pub fn draw_header(frame: &mut Frame, header: Rect) {
+/// Draw the panel's 1-row title bar — `♪ mixr` label on the left,
+/// size-control chips on the right (`⤢` grow / `⤡` shrink / `–`
+/// minimize). Each chip is shown only when it'd actually do
+/// something; click-handlers in `tui.rs` snap the panel to the
+/// matching `MixrSize`.
+pub fn draw_header(
+    frame: &mut Frame,
+    app: &mut crate::app::App,
+    header: Rect,
+    size: crate::mixr_host::MixrSize,
+) {
+    use crate::mixr_host::MixrSize;
+    // Reset hit-rects every paint — caller may toggle the panel off
+    // entirely, and stale rects would let the click router fire on
+    // empty cells.
+    app.rects.mixr_size_grow_button = None;
+    app.rects.mixr_size_shrink_button = None;
+    app.rects.mixr_size_minimize_button = None;
     if header.height == 0 || header.width == 0 {
         return;
     }
@@ -84,5 +96,46 @@ pub fn draw_header(frame: &mut Frame, header: Rect) {
         let c = &mut buf[(x, y)];
         c.set_char(ch);
         c.set_style(Style::default().fg(t.comment).bg(t.bg2));
+    }
+    // Right-aligned chip cluster — each is a single cell, separated
+    // by a 1-cell gap. Order (right → left): minimize, shrink, grow.
+    // We paint from the right edge inward so the cluster always
+    // hugs the right side regardless of header width.
+    //
+    // ⤢ grow — visible unless already Full.
+    // ⤡ shrink — visible only from Full (BottomStrip can't shrink
+    //   further without minimizing).
+    // – minimize — always visible while the panel is shown.
+    let mut chip_x = header.x + header.width;
+    let mut place_chip = |buf: &mut ratatui::buffer::Buffer, ch: char| -> Option<Rect> {
+        if chip_x <= header.x + 1 {
+            return None;
+        }
+        chip_x -= 1;
+        let cell = &mut buf[(chip_x, y)];
+        cell.set_char(ch);
+        cell.set_style(Style::default().fg(t.fg).bg(t.bg2));
+        let rect = Rect {
+            x: chip_x,
+            y,
+            width: 1,
+            height: 1,
+        };
+        // 1-cell gap between chips.
+        chip_x = chip_x.saturating_sub(1);
+        Some(rect)
+    };
+    if let Some(r) = place_chip(buf, '–') {
+        app.rects.mixr_size_minimize_button = Some(r);
+    }
+    if size == MixrSize::Full
+        && let Some(r) = place_chip(buf, '⤡')
+    {
+        app.rects.mixr_size_shrink_button = Some(r);
+    }
+    if size != MixrSize::Full
+        && let Some(r) = place_chip(buf, '⤢')
+    {
+        app.rects.mixr_size_grow_button = Some(r);
     }
 }

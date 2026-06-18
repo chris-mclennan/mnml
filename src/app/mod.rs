@@ -1778,6 +1778,13 @@ pub struct PaneRects {
     /// Header `-` / `+` width buttons (narrower / wider).
     pub mixr_width_minus: Option<Rect>,
     pub mixr_width_plus: Option<Rect>,
+    /// Right-aligned size-state buttons in the mixr panel header.
+    /// Each is `None` when the current state hides the button (e.g.
+    /// the grow chip hides while already Full). Click handlers in
+    /// `tui.rs` snap the panel to the corresponding `MixrSize`.
+    pub mixr_size_grow_button: Option<Rect>,
+    pub mixr_size_shrink_button: Option<Rect>,
+    pub mixr_size_minimize_button: Option<Rect>,
     /// The floating panel's free-edge resize strip (cell-area rows) —
     /// drag it to resize the width.
     pub mixr_resize_edge: Option<Rect>,
