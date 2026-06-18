@@ -370,10 +370,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ));
         (Some(play_idx), Some(ffwd_idx), track_idx)
     } else {
-        // Idle: single `♪ mixr` chip, click launches mnml's mixr panel.
+        // Idle: single `♪ <preferred>` chip. Click activates whichever
+        // music app the user picked in Settings (`ui.preferred_music_app`
+        // — default `mixr`). Lets a user who lives in Spotify see "♪
+        // spotify" and tap to open it, instead of the chip always
+        // showing mixr.
+        let label = match app.config.ui.preferred_music_app.as_str() {
+            "music" => " ♪ music ",
+            "spotify" => " ♪ spotify ",
+            _ => " ♪ mixr ",
+        };
         let idx = right.len();
         right.push(Seg::new(
-            " ♪ mixr ".to_string(),
+            label.to_string(),
             theme::cur().comment,
             theme::cur().bg2,
         ));

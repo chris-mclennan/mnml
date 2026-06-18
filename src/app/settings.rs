@@ -356,6 +356,27 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: npsrc_idx != npsrc_default_idx,
     }));
 
+    // Preferred music app — drives the idle `♪ <app>` chip label and
+    // the click-to-activate destination when nothing is currently
+    // playing.
+    let pma_idx = match cfg.ui.preferred_music_app.as_str() {
+        "music" => 1,
+        "spotify" => 2,
+        _ => 0,
+    };
+    let pma_default_idx = match d.ui.preferred_music_app.as_str() {
+        "music" => 1,
+        "spotify" => 2,
+        _ => 0,
+    };
+    out.push(SettingItem::Row(SettingRow {
+        key: "ui.preferred_music_app",
+        label: "Preferred music app",
+        options: vec!["mixr".into(), "music".into(), "spotify".into()],
+        current_idx: pma_idx,
+        modified: pma_idx != pma_default_idx,
+    }));
+
     // ── Editor ─────────────────────────────────────────────────────
     out.push(SettingItem::Section("Editor"));
 
@@ -534,6 +555,16 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
             };
             let changed = cfg.ui.now_playing_source != new;
             cfg.ui.now_playing_source = new.to_string();
+            changed
+        }
+        "ui.preferred_music_app" => {
+            let new = match opt_idx {
+                1 => "music",
+                2 => "spotify",
+                _ => "mixr",
+            };
+            let changed = cfg.ui.preferred_music_app != new;
+            cfg.ui.preferred_music_app = new.to_string();
             changed
         }
         "editor.input_style" => {

@@ -3795,12 +3795,38 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
-            // Track text — opens / cycles mnml's docked mixr panel
-            // regardless of source. Same as the historical chip.
+            // Track text — source-aware activate:
+            //   * mixr        → `mixr.show` (open / cycle the docked
+            //                   panel; today's behavior)
+            //   * Music       → AppleScript `activate` (brings the app
+            //                   forward without changing playback)
+            //   * Spotify     → AppleScript `activate`
+            //   * idle (none) → activate the user's preferred app
+            //                   (`ui.preferred_music_app`), opening
+            //                   Music / Spotify or the mixr panel
+            //                   based on the Settings pick.
             if let Some(r) = app.rects.statusline_mixr_chip
                 && crate::app::dispatch::contains(r, x, y)
             {
-                command::run("mixr.show", app);
+                let source = app
+                    .now_playing
+                    .as_ref()
+                    .map(|np| np.source.as_str())
+                    .unwrap_or("");
+                if source.eq_ignore_ascii_case("mixr") {
+                    command::run("mixr.show", app);
+                } else if !source.is_empty() {
+                    send_macos_player(source, "activate");
+                } else {
+                    // Idle — use the preferred-app pick.
+                    match app.config.ui.preferred_music_app.as_str() {
+                        "music" => send_macos_player("Music", "activate"),
+                        "spotify" => send_macos_player("Spotify", "activate"),
+                        _ => {
+                            command::run("mixr.show", app);
+                        }
+                    }
+                }
                 return;
             }
             // LSP chip → :LspStatus toast (breakdown of running servers).

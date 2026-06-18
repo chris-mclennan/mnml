@@ -435,6 +435,19 @@ pub struct UiConfig {
     /// now_playing_source = "mixr"
     /// ```
     pub now_playing_source: String,
+    /// Preferred default music app — what the statusline `♪` chip
+    /// activates on click when nothing is currently playing. When a
+    /// source IS playing, the chip activates that source's app
+    /// (mixr panel for mixr, Music for Music, Spotify for Spotify)
+    /// regardless of this preference. Idle chip label also follows
+    /// this — `♪ mixr` / `♪ music` / `♪ spotify`. Values: `"mixr"`
+    /// (default), `"music"`, `"spotify"`. Editable in `:settings`.
+    ///
+    /// ```toml
+    /// [ui]
+    /// preferred_music_app = "spotify"
+    /// ```
+    pub preferred_music_app: String,
 }
 
 /// One entry in the rail's INTEGRATIONS section. Same shape as
@@ -941,6 +954,7 @@ impl Default for Config {
                 check_updates: true,
                 tree_image_preview: true,
                 now_playing_source: "auto".to_string(),
+                preferred_music_app: "mixr".to_string(),
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -1111,6 +1125,10 @@ struct RawUi {
     /// See [`UiConfig::now_playing_source`].
     #[serde(default)]
     now_playing_source: Option<String>,
+    /// Preferred default music app — `"mixr"` / `"music"` / `"spotify"`.
+    /// See [`UiConfig::preferred_music_app`].
+    #[serde(default)]
+    preferred_music_app: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1366,6 +1384,12 @@ impl Config {
             let normalized = s.trim().to_ascii_lowercase();
             if matches!(normalized.as_str(), "auto" | "mixr" | "macos") {
                 self.ui.now_playing_source = normalized;
+            }
+        }
+        if let Some(s) = raw.ui.preferred_music_app {
+            let normalized = s.trim().to_ascii_lowercase();
+            if matches!(normalized.as_str(), "mixr" | "music" | "spotify") {
+                self.ui.preferred_music_app = normalized;
             }
         }
         if let Some(v) = raw.session.restore {
