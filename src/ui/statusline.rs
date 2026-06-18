@@ -313,14 +313,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Non-mixr sources (Apple Music / Spotify) keep the `♪` glyph
     // since mnml can't transport-control those; the chip stays a
     // pure now-playing indicator + launch button.
+    // Nerd-font codepoints (same as tmnl's chrome-side satellite at
+    // `gpu_launcher_paint::MIXR_*_GLYPH`) — chosen over the basic
+    // Unicode ⏸/▶/⏭ because those don't render reliably across
+    // mnml's font-fallback chain (user-reported 2026-06-17: the
+    // chip looked like it had no leading glyph).
+    const NF_PLAY: char = '\u{f04b}'; // nf-fa-play
+    const NF_PAUSE: char = '\u{f04c}'; // nf-fa-pause
+    const NF_TELEPORT: char = '\u{f051}'; // nf-fa-step-forward
     let mixr_is_source = app
         .now_playing
         .as_ref()
         .map(|np| np.source.eq_ignore_ascii_case("mixr"))
         .unwrap_or(false);
     let (mixr_glyph, render_satellite) = match (&app.now_playing, mixr_is_source) {
-        (Some(np), true) if np.playing => ('⏸', true),
-        (Some(np), true) if !np.track.is_empty() => ('▶', false),
+        (Some(np), true) if np.playing => (NF_PAUSE, true),
+        (Some(np), true) if !np.track.is_empty() => (NF_PLAY, false),
         _ => ('♪', false),
     };
     let mixr_seg_idx = {
@@ -348,7 +356,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     clean
                 };
-                (format!(" {mixr_glyph} {shown} "), theme::cur().comment)
+                // Keep the chip in `purple` even when paused so the
+                // play glyph stays visible against `bg2`. `comment`
+                // is too close to the segment background and the
+                // chip read as "no glyph at all" — user-reported.
+                (format!(" {mixr_glyph} {shown} "), theme::cur().purple)
             }
             _ => (format!(" {mixr_glyph} mixr "), theme::cur().comment),
         };
@@ -363,7 +375,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mixr_teleport_seg_idx = if render_satellite {
         let idx = right.len();
         right.push(Seg::new(
-            " ⏭ ".to_string(),
+            format!(" {NF_TELEPORT} "),
             theme::cur().purple,
             theme::cur().bg2,
         ));
