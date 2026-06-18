@@ -2598,6 +2598,14 @@ pub struct App {
     /// The blit loop drains these into `Message::OpenPane` each tick.
     /// Always empty when not `under_tmnl`.
     pub pending_open_panes: Vec<(String, Vec<String>)>,
+    /// Most recent `tmnl_protocol::Message::Title` mnml sent over
+    /// blit. `None` until the first send. The blit loop re-evaluates
+    /// the desired title each tick — workspace name normally, or
+    /// `"mixr"` while the docked mixr panel is the foreground UI —
+    /// and only re-sends when the value changes, so the tmnl chrome
+    /// chip updates without flooding the protocol with no-op
+    /// titles. Always `None` outside blit mode.
+    pub last_sent_blit_title: Option<String>,
     /// Host-command requests queued for the tmnl renderer. Each is a
     /// command id (e.g. `"browser.attach_dashboard"`) — the blit loop
     /// drains them into `Message::RunHostCommand` each tick. Populated
@@ -3230,6 +3238,7 @@ impl App {
             // tmnl's native palette chip isn't duplicate chrome.
             inside_tmnl_pty: std::env::var_os("TMNL_TRANSFER_SOCKET").is_some(),
             pending_open_panes: Vec::new(),
+            last_sent_blit_title: None,
             pending_host_commands: Vec::new(),
             hover_chip: None,
             hover_divider_idx: None,

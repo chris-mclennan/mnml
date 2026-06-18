@@ -96,7 +96,13 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
             Some(name) if !name.is_empty() => name.to_string(),
             _ => "mnml".to_string(),
         };
-        write_message(&mut *w, &Message::Title(title)).map_err(|e| format!("blit: title: {e}"))?;
+        write_message(&mut *w, &Message::Title(title.clone()))
+            .map_err(|e| format!("blit: title: {e}"))?;
+        // Seed `last_sent_blit_title` so the per-tick re-evaluation
+        // below doesn't immediately re-send the same string on the
+        // first frame. Subsequent ticks only fire when the focus
+        // state actually changes.
+        app.last_sent_blit_title = Some(title);
     }
 
     let (resize_tx, resize_rx) = channel::<(u16, u16)>();
@@ -181,6 +187,32 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
             let mut w = writer.lock().unwrap();
             for id in app.pending_host_commands.drain(..) {
                 let _ = write_message(&mut *w, &Message::RunHostCommand(id));
+            }
+        }
+        // Re-send `Message::Title` whenever the foreground UI changes
+        // between mnml's editor and the docked mixr panel. tmnl's
+        // chrome chip pulls this directly, so the chip swaps to
+        // `"mixr"` while the panel has focus + isn't minimized, and
+        // back to the workspace name otherwise. User-reported the
+        // mismatch (body shows mixr UI, chrome says mnml) on 2026-06-17.
+        {
+            let mixr_foreground = app
+                .mixr_panel
+                .as_ref()
+                .map(|p| p.focused && p.size != crate::mixr_host::MixrSize::Minimized)
+                .unwrap_or(false);
+            let desired = if mixr_foreground {
+                "mixr".to_string()
+            } else {
+                match app.workspace.file_name().and_then(|n| n.to_str()) {
+                    Some(name) if !name.is_empty() => name.to_string(),
+                    _ => "mnml".to_string(),
+                }
+            };
+            if app.last_sent_blit_title.as_deref() != Some(&desired) {
+                let mut w = writer.lock().unwrap();
+                let _ = write_message(&mut *w, &Message::Title(desired.clone()));
+                app.last_sent_blit_title = Some(desired);
             }
         }
         // Drain command-aggregation events from the reader thread.
