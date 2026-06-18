@@ -20,6 +20,11 @@ pub enum MenuAction {
     OpenExternally(PathBuf),
     /// Copy `text` (a workspace-relative path) to the clipboard.
     CopyPath(String),
+    /// Promote the right-clicked folder to the primary workspace.
+    /// Replaces `App.workspace` + reloads the tree. Surfaced on the
+    /// tree's directory-row context menu. User-requested 2026-06-18
+    /// for "I opened at ~/Projects, drill into one of these into."
+    SetAsWorkspace(PathBuf),
     /// Run a registered command by id (e.g. `tree.refresh`).
     Command(&'static str),
     CloseTab(PaneId),

@@ -31,6 +31,7 @@ impl App {
         };
         let items = if is_dir {
             vec![
+                MenuItem::new("Set as workspace", MenuAction::SetAsWorkspace(path.clone())),
                 MenuItem::new("New file…", MenuAction::NewFile(parent.clone())),
                 MenuItem::new("New folder…", MenuAction::NewFolder(parent)),
                 MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
@@ -408,6 +409,9 @@ impl App {
             CopyPath(text) => {
                 self.clipboard.set(text.clone(), false);
                 self.toast(format!("copied {text}"));
+            }
+            SetAsWorkspace(p) => {
+                self.set_workspace_to(p);
             }
             Command(id) => {
                 crate::command::run(id, self);

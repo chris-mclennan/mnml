@@ -4156,6 +4156,33 @@ impl App {
         self.toast(format!("workspace opened: {name}"));
     }
 
+    /// Right-click → "Set as workspace" from the tree context menu.
+    /// Promotes `path` to the primary workspace regardless of the
+    /// current empty-state / has-extras situation. Canonicalises the
+    /// path so the resolved root is consistent with everything else
+    /// in App that reads `self.workspace`.
+    pub fn set_workspace_to(&mut self, path: PathBuf) {
+        let root = match path.canonicalize() {
+            Ok(p) => p,
+            Err(e) => {
+                self.toast(format!("can't open workspace: {e}"));
+                return;
+            }
+        };
+        if root == self.workspace {
+            self.toast("workspace already active");
+            return;
+        }
+        let name = root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned());
+        // Reuse `promote_to_primary_workspace` so the side-effects
+        // (tree reload, repos rescan, toast) are consistent with the
+        // existing workspace-replacement path.
+        self.promote_to_primary_workspace(root, name);
+    }
+
     /// Runtime remove: drop the extra workspace at index `idx` (1-based,
     /// matching the workspace-switcher picker convention where 0 is the
     /// primary). Removes its repos from `App.repos`. Primary workspace
