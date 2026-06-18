@@ -306,6 +306,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // button: shows the track from whatever player the background
     // poller found (mixr / macOS Music / Spotify), `♪ mixr` when idle.
     // Click → `mixr.show`. Data is `App.now_playing`.
+    // When mixr is the now-playing source the chip's leading glyph
+    // swaps from `♪` to ⏸ (playing) or ▶ (track loaded but paused),
+    // so the chip doubles as a play/pause transport. A satellite
+    // ⏭ chip pushes adjacent while playing — click sends teleport.
+    // Non-mixr sources (Apple Music / Spotify) keep the `♪` glyph
+    // since mnml can't transport-control those; the chip stays a
+    // pure now-playing indicator + launch button.
+    let mixr_is_source = app
+        .now_playing
+        .as_ref()
+        .map(|np| np.source.eq_ignore_ascii_case("mixr"))
+        .unwrap_or(false);
+    let (mixr_glyph, render_satellite) = match (&app.now_playing, mixr_is_source) {
+        (Some(np), true) if np.playing => ('⏸', true),
+        (Some(np), true) if !np.track.is_empty() => ('▶', false),
+        _ => ('♪', false),
+    };
     let mixr_seg_idx = {
         let (label, fg) = match &app.now_playing {
             Some(np) if np.playing => {
@@ -319,13 +336,40 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     clean
                 };
-                (format!(" ♪ {shown} "), theme::cur().purple)
+                (format!(" {mixr_glyph} {shown} "), theme::cur().purple)
             }
-            _ => (" ♪ mixr ".to_string(), theme::cur().comment),
+            Some(np) if mixr_is_source && !np.track.is_empty() => {
+                // Mixr loaded with a paused/cued track — show the
+                // play glyph + track so the user knows what's
+                // queued and that clicking will toggle playback.
+                let clean = np.track.split_whitespace().collect::<Vec<_>>().join(" ");
+                let shown: String = if clean.chars().count() > 18 {
+                    clean.chars().take(17).chain(std::iter::once('…')).collect()
+                } else {
+                    clean
+                };
+                (format!(" {mixr_glyph} {shown} "), theme::cur().comment)
+            }
+            _ => (format!(" {mixr_glyph} mixr "), theme::cur().comment),
         };
         let idx = right.len();
         right.push(Seg::new(label, fg, theme::cur().bg2));
         idx
+    };
+    // Satellite teleport chip — only renders when mixr is the
+    // source AND a deck is actively producing audio. Click sends
+    // `mixr --command teleport`. Same semantic as tmnl's chrome-
+    // side satellite (`gpu_launcher_paint::MIXR_TELEPORT_GLYPH`).
+    let mixr_teleport_seg_idx = if render_satellite {
+        let idx = right.len();
+        right.push(Seg::new(
+            " ⏭ ".to_string(),
+            theme::cur().purple,
+            theme::cur().bg2,
+        ));
+        Some(idx)
+    } else {
+        None
     };
     let mut clock_seg_idx: Option<usize> = None;
     let mut lsp_seg_idx: Option<usize> = None;
@@ -336,6 +380,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.statusline_workspace_chip = None;
     app.rects.statusline_clock_chip = None;
     app.rects.statusline_mixr_chip = None;
+    app.rects.statusline_mixr_teleport_chip = None;
     app.rects.statusline_lsp_chip = None;
     app.rects.statusline_wrap_chip = None;
     app.rects.statusline_autosave_chip = None;
@@ -567,6 +612,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         })
     };
     app.rects.statusline_mixr_chip = to_rect(Some(mixr_seg_idx), &right_rects);
+    app.rects.statusline_mixr_teleport_chip = to_rect(mixr_teleport_seg_idx, &right_rects);
     app.rects.statusline_lsp_chip = to_rect(lsp_seg_idx, &right_rects);
     app.rects.statusline_wrap_chip = to_rect(wrap_seg_idx, &right_rects);
     app.rects.statusline_autosave_chip = to_rect(autosave_seg_idx, &right_rects);

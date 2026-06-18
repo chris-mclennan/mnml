@@ -1750,9 +1750,16 @@ pub struct PaneRects {
     pub statusline_workspace_chip: Option<Rect>,
     /// Statusline clock chip — clickable shortcut to toggle local ↔ UTC.
     pub statusline_clock_chip: Option<Rect>,
-    /// `♪` mixr chip — the now-playing miniplayer + launch button;
-    /// click opens `mixr.show`.
+    /// `♪` mixr chip — the now-playing miniplayer + launch button.
+    /// Click opens `mixr.show` for non-mixr sources (Apple Music /
+    /// Spotify); for a mixr-source track it sends a pause toggle
+    /// instead (transport mode). See `tui.rs` click dispatch.
     pub statusline_mixr_chip: Option<Rect>,
+    /// Satellite teleport chip rendered immediately to the right of
+    /// `statusline_mixr_chip` while mixr is the now-playing source
+    /// AND a deck is actively producing audio. Click sends
+    /// `mixr --command teleport`. `None` otherwise.
+    pub statusline_mixr_teleport_chip: Option<Rect>,
     /// The native mixr panel's mixr-cell rect (set by `ui::draw` when
     /// the panel is shown) — `tick` reads it to keep mixr sized to it.
     pub mixr_panel: Option<Rect>,

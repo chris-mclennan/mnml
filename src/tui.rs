@@ -3757,11 +3757,40 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 });
                 return;
             }
-            // mixr chip → open / focus the mixr DJ pane.
+            // Satellite teleport chip — only renders when mixr is the
+            // now-playing source AND a deck is producing audio. Click
+            // sends `mixr --command teleport` (jumps on beat to just
+            // before the mix-out point). Checked BEFORE the main chip
+            // because they sit adjacent.
+            if let Some(r) = app.rects.statusline_mixr_teleport_chip
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                send_mixr_command("teleport");
+                return;
+            }
+            // mixr chip — behavior depends on the now-playing source.
+            // Mixr source: click toggles pause via the IPC (matches
+            // tmnl's transport chip). Other sources (Apple Music /
+            // Spotify) or idle: falls through to `mixr.show` which
+            // opens / cycles mnml's docked mixr panel.
             if let Some(r) = app.rects.statusline_mixr_chip
                 && crate::app::dispatch::contains(r, x, y)
             {
-                command::run("mixr.show", app);
+                let mixr_source = app
+                    .now_playing
+                    .as_ref()
+                    .map(|np| np.source.eq_ignore_ascii_case("mixr"))
+                    .unwrap_or(false);
+                let has_track = app
+                    .now_playing
+                    .as_ref()
+                    .map(|np| !np.track.is_empty())
+                    .unwrap_or(false);
+                if mixr_source && has_track {
+                    send_mixr_command("pause");
+                } else {
+                    command::run("mixr.show", app);
+                }
                 return;
             }
             // LSP chip → :LspStatus toast (breakdown of running servers).
@@ -4486,4 +4515,20 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
         return true;
     }
     false
+}
+
+/// Shell out `mixr --command <verb>` for the statusline transport
+/// chip. Detached + non-blocking so a slow mixr-side handler can't
+/// stutter the render loop; failures are logged and otherwise
+/// swallowed so an absent / not-on-PATH mixr doesn't surface as a
+/// scary toast for users who don't have mixr installed at all.
+/// The `mixr --command` path writes to `~/.mixr/command` (an atomic
+/// file write) which a running mixr polls — nothing else is needed.
+fn send_mixr_command(verb: &str) {
+    let result = std::process::Command::new("mixr")
+        .args(["--command", verb])
+        .spawn();
+    if let Err(e) = result {
+        eprintln!("mnml: send_mixr_command({verb:?}) failed: {e}");
+    }
 }
