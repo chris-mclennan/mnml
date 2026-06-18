@@ -2576,6 +2576,14 @@ pub struct App {
     /// loop only, so no `osascript` subprocess spawns under headless /
     /// e2e. `tick` drains it into `now_playing`.
     pub now_playing_rx: Option<std::sync::mpsc::Receiver<Option<crate::now_playing::NowPlaying>>>,
+    /// Last time the now-playing poller returned a non-empty
+    /// mixr-source track. Drives the stickiness layer in
+    /// `drain_now_playing` so the statusline chip doesn't flicker
+    /// back to `♪ mixr` during the brief gaps mixr writes between
+    /// song transitions or `playing_active` flag dips. `None`
+    /// before any mixr read; reset to `None` implicitly when the
+    /// 10s TTL lapses (a genuine queue-empty state).
+    pub last_mixr_track_at: Option<std::time::Instant>,
     /// The native mixr panel — mnml hosts `mixr --blit` and renders it
     /// as a right-docked half-width panel. `None` until `mixr.show`
     /// first launches it; then it persists (minimize hides it, it
@@ -3236,6 +3244,7 @@ impl App {
             clock_show_utc: false,
             now_playing: None,
             now_playing_rx: None,
+            last_mixr_track_at: None,
             mixr_panel: None,
             mixr_drag: None,
             under_tmnl: false,
