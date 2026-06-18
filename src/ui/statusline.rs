@@ -337,10 +337,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let (mixr_play_seg_idx, mixr_ffwd_seg_idx, mixr_seg_idx) = if has_track_loaded {
         // Three-segment transport cluster.
         let np = app.now_playing.as_ref().expect("guarded by has_track_loaded");
-        let clean = np.track.split_whitespace().collect::<Vec<_>>().join(" ");
-        // Truncate at 28 chars (+ 1 for the `…`) — user-requested
-        // wider than the previous 17, but still bounded so a long
-        // title can't push the clock + LSP chips off the strip.
+        // Combine artist + title when the source separates them.
+        // Mixr bakes "Artist - Title" into `track` and uses `detail`
+        // for bpm, so its `track` already reads well by itself. macOS
+        // Music / Spotify keep title in `track` and artist in
+        // `detail` — join them as `Artist - Title` so the chip shows
+        // both. Falls back to bare `track` for any source that
+        // leaves `detail` empty.
+        let raw = if mixr_is_source || np.detail.is_empty() {
+            np.track.clone()
+        } else {
+            format!("{} - {}", np.detail, np.track)
+        };
+        let clean = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+        // Truncate at 28 chars (+ 1 for the `…`) — bounded so a long
+        // title + artist can't push the clock + LSP chips off the
+        // strip.
         let shown: String = if clean.chars().count() > 28 {
             clean.chars().take(28).chain(std::iter::once('…')).collect()
         } else {
