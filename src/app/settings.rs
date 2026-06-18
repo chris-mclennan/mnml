@@ -324,6 +324,29 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: cfg.ui.theme != d.ui.theme,
     }));
 
+    // Default workspace path — what mnml opens when launched without
+    // a `[WORKSPACE]` argument. Avoids landing on `$HOME` (which
+    // triggers the TCC prompt cascade: Photos library, Documents,
+    // Desktop, Downloads, etc.). Tilde-expanded when applied.
+    // Lives in config.toml under `[startup] default_workspace`.
+    let dws_current = cfg
+        .default_workspace
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let dws_default = d
+        .default_workspace
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    out.push(SettingItem::Text(TextRow {
+        key: "startup.default_workspace",
+        label: "Default workspace",
+        value: dws_current.clone(),
+        default: dws_default.clone(),
+        modified: dws_current != dws_default,
+    }));
+
     // Tree width (number row — v2). 16..=60; step 2.
     out.push(SettingItem::Number(NumberRow {
         key: "ui.tree_width",
@@ -654,6 +677,17 @@ pub fn apply_text_setting(cfg: &mut Config, key: &str, value: &str) -> bool {
             cfg.ui.theme = value.to_string();
             changed
         }
+        "startup.default_workspace" => {
+            let trimmed = value.trim();
+            let new = if trimmed.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(trimmed))
+            };
+            let changed = cfg.default_workspace != new;
+            cfg.default_workspace = new;
+            changed
+        }
         _ => false,
     }
 }
@@ -669,7 +703,25 @@ impl App {
 
     /// Close the settings overlay, keeping all current changes (the
     /// snapshot in `original` is discarded). The Enter / save path.
+    /// Also persists the `[startup] default_workspace` field to
+    /// `~/.config/mnml/config.toml` when it differs from the snapshot
+    /// — the only field today that needs cross-restart persistence
+    /// (the others are in-memory or read-back via Config::load).
     pub fn close_settings_overlay_save(&mut self) {
+        if let Some(state) = self.settings_overlay.as_ref()
+            && self.config.default_workspace != state.original.default_workspace
+        {
+            match crate::config::persist_default_workspace(
+                self.config.default_workspace.as_deref(),
+            ) {
+                Ok(_) => {}
+                Err(e) => {
+                    self.toast(format!(
+                        "default workspace saved in-memory (persist failed: {e})"
+                    ));
+                }
+            }
+        }
         self.settings_overlay = None;
     }
 

@@ -1525,6 +1525,113 @@ pub fn resolve_default_workspace() -> Option<PathBuf> {
     Some(expand_tilde(s))
 }
 
+/// Surgically update `[startup] default_workspace` in the user's
+/// `~/.config/mnml/config.toml` so a Settings-overlay edit survives
+/// restart. Replaces an existing `default_workspace = ...` line in
+/// the `[startup]` table; inserts the table when it doesn't exist;
+/// drops the line entirely when `path` is `None` (the "clear the
+/// preference" case). All other config lines pass through unchanged.
+///
+/// Returns the path written on success. Errors when `$HOME` /
+/// `$XDG_CONFIG_HOME` are unset, when the file can't be read /
+/// written, or when the existing TOML is invalid (we won't blindly
+/// overwrite a config the user might be debugging).
+pub fn persist_default_workspace(path: Option<&Path>) -> Result<PathBuf, String> {
+    let cfg_path = user_config_path()
+        .ok_or_else(|| "no $HOME or $XDG_CONFIG_HOME set".to_string())?;
+    if let Some(parent) = cfg_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+    let updated = upsert_startup_default_workspace(&existing, path);
+    std::fs::write(&cfg_path, &updated)
+        .map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
+    Ok(cfg_path)
+}
+
+/// Pure-string TOML rewrite — separated so it's testable. Walks
+/// lines, tracks the current table header, and mutates / inserts /
+/// removes the `default_workspace` line as appropriate. Doesn't
+/// understand multi-line TOML strings; that's fine here because the
+/// value is always a single-line quoted path.
+fn upsert_startup_default_workspace(src: &str, path: Option<&Path>) -> String {
+    let want_line = path.map(|p| {
+        let mut s = String::with_capacity(p.as_os_str().len() + 24);
+        s.push_str("default_workspace = ");
+        // Inline the same TOML-string escaping logic discovery.rs's
+        // toml_str uses — kept here so config.rs doesn't depend on
+        // discovery.rs.
+        s.push('"');
+        for c in p.display().to_string().chars() {
+            match c {
+                '"' => s.push_str("\\\""),
+                '\\' => s.push_str("\\\\"),
+                _ => s.push(c),
+            }
+        }
+        s.push('"');
+        s
+    });
+    let mut out = String::with_capacity(src.len() + 64);
+    let mut in_startup = false;
+    let mut replaced = false;
+    let mut startup_seen = false;
+    for line in src.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            let header = trimmed.trim_end();
+            // Leaving the [startup] table without having replaced
+            // the line — if we have a value to write, inject it
+            // immediately before this next-table header.
+            if in_startup && !replaced && let Some(w) = want_line.as_ref() {
+                out.push_str(w);
+                out.push('\n');
+                replaced = true;
+            }
+            in_startup = header == "[startup]";
+            if in_startup {
+                startup_seen = true;
+            }
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        if in_startup && trimmed.starts_with("default_workspace") {
+            // Drop the existing line; we'll write our replacement
+            // (if any) right here.
+            if let Some(w) = want_line.as_ref() {
+                out.push_str(w);
+                out.push('\n');
+            }
+            replaced = true;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    // Reached EOF while still in [startup] without seeing the key —
+    // append the line just before EOF.
+    if in_startup && !replaced && let Some(w) = want_line.as_ref() {
+        out.push_str(w);
+        out.push('\n');
+    }
+    // The [startup] table didn't exist anywhere — create it at the
+    // end of the file. Only when we have a value to write.
+    if !startup_seen && let Some(w) = want_line.as_ref() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if !out.is_empty() && !out.ends_with("\n\n") {
+            out.push('\n');
+        }
+        out.push_str("[startup]\n");
+        out.push_str(w);
+        out.push('\n');
+    }
+    out
+}
+
 /// Scaffold a workspace folder + a starter `README.md` if absent.
 /// Idempotent — running twice on an existing folder is a no-op. Called
 /// from the CLI when `resolve_default_workspace()` returns a path that
