@@ -1065,6 +1065,12 @@ impl App {
                 let s = p.input.trim().to_string();
                 self.goto_line_str(&s);
             }
+            crate::prompt::PromptKind::ExCommand => {
+                let line = p.input.trim().to_string();
+                if !line.is_empty() {
+                    self.run_ex_command(&line);
+                }
+            }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();
                 if let Some(FsAction::NewFile { parent }) = self.pending_fs_action.take() {

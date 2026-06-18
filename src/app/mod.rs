@@ -3689,6 +3689,19 @@ impl App {
 
     /// Open the "New file…" prompt — captures `parent` so the accept handler
     /// knows where to put it.
+    /// Open a floating cmdline prompt that captures an ex-command —
+    /// `:settings`, `:help`, etc. — without requiring a buffer in
+    /// focus. Bound to `:` from the tree handler so :commands work
+    /// from the empty-state landing. The leading `:` glyph appears
+    /// in the prompt title so the affordance reads as the vim
+    /// cmdline equivalent. User-reported 2026-06-18.
+    pub fn open_ex_command_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::ExCommand,
+            ":".to_string(),
+        ));
+    }
+
     pub fn open_new_file_prompt(&mut self, parent: PathBuf) {
         self.pending_fs_action = Some(FsAction::NewFile {
             parent: parent.clone(),

@@ -1011,6 +1011,14 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
         return;
     }
     match key.code {
+        // `:` from tree focus → open the ex-command prompt so users
+        // can run `:settings`, `:help`, etc. without first opening a
+        // file. Without this the keystroke fell through silently —
+        // a user on the empty-state landing couldn't reach :settings
+        // without first opening a file. 2026-06-18 user-reported.
+        KeyCode::Char(':') => {
+            app.open_ex_command_prompt();
+        }
         KeyCode::Char('/') => {
             app.tree.filter_mode = true;
         }
