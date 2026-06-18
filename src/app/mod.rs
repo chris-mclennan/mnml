@@ -1755,6 +1755,12 @@ pub struct PaneRects {
     /// opens / cycles the mixr panel (`mixr.show`). When idle
     /// (no track from any source) the cluster collapses to a
     /// single `♪ mixr` chip that lives here as well.
+    /// Activity-bar gear chip rect — VS Code-style settings entry at
+    /// the bottom of the bar. Click pops the gear context menu
+    /// (Settings… / Command Palette… / Cheatsheet… / Themes › /
+    /// About). `None` when the activity bar isn't visible (rail
+    /// hidden, etc.).
+    pub activity_bar_gear: Option<Rect>,
     pub statusline_mixr_chip: Option<Rect>,
     /// Play / pause control sitting to the LEFT of the track text
     /// when something's playing. Click is source-aware:

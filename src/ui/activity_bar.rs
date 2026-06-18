@@ -30,6 +30,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     app.rects.activity_bar_icons.clear();
+    app.rects.activity_bar_gear = None;
 
     let t = theme::cur();
     let bar_bg = t.bg_darker;
@@ -42,11 +43,45 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         area,
     );
 
+    // Gear icon at the BOTTOM of the activity bar (VS Code's
+    // customary settings position). Click pops a context menu with
+    // Settings / Command Palette / Cheatsheet / Themes / About.
+    // Painted before the section icons so it has dibs on the bottom
+    // row; sections that would overflow into it are clipped.
+    let gear_glyph = if nerd { "\u{F013}" } else { "*" }; // nf-fa-cog
+    if area.height >= 2 {
+        let gear_y = area.y + area.height - 2;
+        let gear_row = Rect {
+            x: area.x,
+            y: gear_y,
+            width: area.width,
+            height: 1,
+        };
+        let gear_rect = Rect {
+            x: area.x + 1,
+            y: gear_y,
+            width: area.width.saturating_sub(1),
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(gear_glyph)).style(
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bar_bg)
+                    .add_modifier(Modifier::DIM),
+            ),
+            gear_rect,
+        );
+        app.rects.activity_bar_gear = Some(gear_row);
+    }
+    // Carve the section-icon paint area so it stops above the gear.
+    let icons_end_y = area.y + area.height.saturating_sub(3);
+
     let icon_x = area.x + 1; // 1 cell of left padding
     let mut y = area.y + 1; // start 1 row down for top padding
 
     for section in ActivitySection::all() {
-        if y >= area.y + area.height {
+        if y >= icons_end_y {
             break;
         }
         let (glyph_nerd, fallback, _tooltip, _cmd) = section.meta();

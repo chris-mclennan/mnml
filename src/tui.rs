@@ -3950,6 +3950,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.set_activity_section(section);
                 return;
             }
+            // Gear icon at the bottom of the activity bar → pop the
+            // VS Code-style settings menu.
+            if let Some(r) = app.rects.activity_bar_gear
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.open_gear_context_menu((x, y));
+                return;
+            }
             // Search activity-bar section result rows — click → open
             // the hit's file at its line:col. Checked before tree
             // icons since they may overlap (tree_icon_buttons spans

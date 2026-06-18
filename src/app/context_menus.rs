@@ -66,6 +66,26 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some(name), anchor, items));
     }
 
+    /// VS Code-style gear-icon menu — opens when the user clicks
+    /// the gear at the bottom of the activity bar. Five-item menu
+    /// covering the daily-use trio (Settings / Command Palette /
+    /// Cheatsheet), a Themes submenu placeholder, and About.
+    pub fn open_gear_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Settings…", MenuAction::Command("view.settings")),
+            MenuItem::new("Command Palette…", MenuAction::Command("palette")),
+            MenuItem::new("Cheatsheet…", MenuAction::Command("view.help")),
+            // Themes — opens the existing theme picker (a Cmd+P-style
+            // filtered list of every discovered theme). v1 of the
+            // gear menu reuses it directly instead of building a
+            // submenu — fewer clicks for the same result.
+            MenuItem::new("Themes…", MenuAction::Command("theme.pick")),
+            MenuItem::new("About mnml", MenuAction::Command("view.about")),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some("mnml".into()), anchor, items));
+    }
+
     /// Right-click on the `> WORKSPACE` section header — exposes the
     /// workspace-scoped ops as a menu.
     pub fn open_workspace_header_context_menu(&mut self, anchor: (u16, u16)) {
