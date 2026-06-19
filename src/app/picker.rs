@@ -606,6 +606,10 @@ impl App {
                     self.accept_lookup_item(idx);
                 }
             }
+            PickerKind::EnvVars => {
+                let id = item.id.clone();
+                self.accept_env_vars(&id);
+            }
         }
     }
 
@@ -1110,6 +1114,14 @@ impl App {
             crate::prompt::PromptKind::LookupVarName => {
                 let var = p.input.trim().to_string();
                 self.accept_lookup_var_name(&var);
+            }
+            crate::prompt::PromptKind::EnvEditValue => {
+                let v = p.input.clone();
+                self.accept_env_edit_value(&v);
+            }
+            crate::prompt::PromptKind::EnvAddKey => {
+                let v = p.input.clone();
+                self.accept_env_add_key(&v);
             }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();

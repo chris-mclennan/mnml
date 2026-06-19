@@ -2842,6 +2842,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_bench_active(10, 4),
         },
         Command {
+            id: "http.edit_env",
+            title: "HTTP: structured editor for the active env file (.rqst/env/<name>.env)",
+            group: "http",
+            // Phase 3 polish — opens a picker over every var in
+            // the active env file (plus a synthetic `+ Add new
+            // variable…` row at the top). Accept an existing key
+            // → prompt to edit the value. Accept `+add` → prompt
+            // for `KEY=VALUE`. All writes round-trip through the
+            // existing `upsert_env_var` helper (in-place replace +
+            // append, preserves comments + ordering).
+            keys: &[],
+            run: |app| app.http_edit_env_open(),
+        },
+        Command {
             id: "http.lookup",
             title: "HTTP: lookup — fill an env var from a live API response",
             group: "http",

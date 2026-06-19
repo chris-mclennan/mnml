@@ -2634,6 +2634,10 @@ pub struct App {
     /// `PromptKind::LookupVarName` accept handler to write
     /// `<typed-var>=<pending_lookup_picked_id>` into the env file.
     pub pending_lookup_picked_id: Option<String>,
+    /// Env-var being edited by the structured env editor. Set
+    /// when the `EnvVars` picker accepts an existing key; consumed
+    /// by `PromptKind::EnvEditValue`. Phase 3 polish.
+    pub pending_env_edit_key: Option<String>,
     /// In-flight lookup-file fire result channel. Payload is
     /// `Ok((response_body, file_label))` or `Err(message)`. Drained
     /// by `App::tick`; on success, parses items + opens
@@ -3327,6 +3331,7 @@ impl App {
             pending_history_rows: Vec::new(),
             pending_lookup_items: Vec::new(),
             pending_lookup_picked_id: None,
+            pending_env_edit_key: None,
             lookup_fire_rx: None,
             debug_rects: false,
             no_pane_cmdline: None,

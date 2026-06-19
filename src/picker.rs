@@ -163,6 +163,14 @@ pub enum PickerKind {
     /// [`crate::prompt::PromptKind::LookupVarName`] prompt asking
     /// what env var name to write the picked item's id under.
     LookupItem,
+    /// `id` = the key name (string) for an existing var, or the
+    /// synthetic `"+add"` for the top-of-list "Add new variable…"
+    /// row. Accept ⇒ open a
+    /// [`crate::prompt::PromptKind::EnvEditValue`] prompt seeded
+    /// with the current value (or
+    /// [`crate::prompt::PromptKind::EnvAddKey`] for the `+add`
+    /// case). Structured env editor — phase 3 polish.
+    EnvVars,
 }
 
 #[derive(Debug, Clone)]

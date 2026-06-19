@@ -149,6 +149,156 @@ impl App {
         self.focus = Focus::Pane;
     }
 
+    /// `http.edit_env` — structured env-file editor. Opens a
+    /// picker listing every `KEY=VALUE` pair in the active env
+    /// file plus a synthetic `+ Add new variable…` row at the top.
+    /// Phase 3 polish of the rqst→mnml port-back.
+    pub fn http_edit_env_open(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let env_name = crate::http::template::EnvSet::select(&self.workspace, None)
+            .name()
+            .map(str::to_string)
+            .unwrap_or_else(|| "dev".to_string());
+        let env_path = self
+            .workspace
+            .join(".rqst")
+            .join("env")
+            .join(format!("{env_name}.env"));
+        let text = std::fs::read_to_string(&env_path).unwrap_or_default();
+        let mut items: Vec<PickerItem> = Vec::new();
+        items.push(PickerItem::new(
+            "+add".to_string(),
+            "+ Add new variable…".to_string(),
+            String::new(),
+        ));
+        for line in text.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            if let Some((k, v)) = trimmed.split_once('=') {
+                let key = k.trim().to_string();
+                let val = v.trim().to_string();
+                let preview = if val.len() > 48 {
+                    format!("{}…", &val[..46])
+                } else {
+                    val.clone()
+                };
+                items.push(PickerItem::new(key.clone(), key, preview));
+            }
+        }
+        self.open_picker(Picker::new(
+            PickerKind::EnvVars,
+            &format!("Env vars · {env_name}.env"),
+            items,
+        ));
+    }
+
+    /// Accept handler for `PickerKind::EnvVars`. The `+add`
+    /// synthetic id opens the add-key prompt; any other id is an
+    /// existing key — stash it + open the edit-value prompt seeded
+    /// with the current value.
+    pub fn accept_env_vars(&mut self, id: &str) {
+        if id == "+add" {
+            self.prompt = Some(crate::prompt::Prompt::new(
+                crate::prompt::PromptKind::EnvAddKey,
+                "KEY=VALUE for new env var:".to_string(),
+            ));
+            return;
+        }
+        let env_name = crate::http::template::EnvSet::select(&self.workspace, None)
+            .name()
+            .map(str::to_string)
+            .unwrap_or_else(|| "dev".to_string());
+        let env_path = self
+            .workspace
+            .join(".rqst")
+            .join("env")
+            .join(format!("{env_name}.env"));
+        let current_val = std::fs::read_to_string(&env_path)
+            .ok()
+            .and_then(|text| {
+                text.lines()
+                    .filter_map(|l| {
+                        let t = l.trim_start();
+                        if t.starts_with('#') {
+                            return None;
+                        }
+                        let (k, v) = t.split_once('=')?;
+                        (k.trim() == id).then(|| v.trim().to_string())
+                    })
+                    .next()
+            })
+            .unwrap_or_default();
+        self.pending_env_edit_key = Some(id.to_string());
+        let mut prompt = crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::EnvEditValue,
+            format!("Value for {id}:"),
+        );
+        let cursor = current_val.len();
+        prompt.input = current_val;
+        prompt.cursor = cursor;
+        self.prompt = Some(prompt);
+    }
+
+    /// Accept handler for `PromptKind::EnvEditValue`. Upserts
+    /// `<pending_env_edit_key>=<typed>` into the active env file.
+    pub fn accept_env_edit_value(&mut self, value: &str) {
+        let Some(key) = self.pending_env_edit_key.take() else {
+            return;
+        };
+        self.write_env_var(&key, value.trim());
+    }
+
+    /// Accept handler for `PromptKind::EnvAddKey`. Splits the
+    /// typed `KEY=VALUE` and upserts. Toasts an error for
+    /// malformed input (no `=`, empty key).
+    pub fn accept_env_add_key(&mut self, input: &str) {
+        let Some((key, value)) = input.split_once('=') else {
+            self.toast("env: input must be KEY=VALUE");
+            return;
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            self.toast("env: key can't be empty");
+            return;
+        }
+        self.write_env_var(key, value.trim());
+    }
+
+    /// Shared write-back path for `EnvEditValue` + `EnvAddKey`
+    /// + `LookupVarName`. Resolves the active env file, upserts,
+    /// toasts the result. Creates the parent dir if missing.
+    fn write_env_var(&mut self, key: &str, value: &str) {
+        let env_name = crate::http::template::EnvSet::select(&self.workspace, None)
+            .name()
+            .map(str::to_string)
+            .unwrap_or_else(|| "dev".to_string());
+        let env_path = self
+            .workspace
+            .join(".rqst")
+            .join("env")
+            .join(format!("{env_name}.env"));
+        let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
+        let updated = match upsert_env_var(&existing, key, value) {
+            Ok(s) => s,
+            Err(e) => {
+                self.toast(format!("env: {e}"));
+                return;
+            }
+        };
+        if let Some(parent) = env_path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            self.toast(format!("env: mkdir {}: {e}", parent.display()));
+            return;
+        }
+        match std::fs::write(&env_path, updated) {
+            Ok(()) => self.toast(format!("wrote {key}={value} → {}", env_path.display())),
+            Err(e) => self.toast(format!("env: write {}: {e}", env_path.display())),
+        }
+    }
+
     /// `http.lookup` — open the lookup picker (stage 1: pick a
     /// `.curl` file under `<workspace>/.rqst/lookups/`). Subsequent
     /// stages — fire-request → pick-item → enter-var-name → write-

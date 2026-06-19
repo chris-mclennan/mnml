@@ -63,6 +63,16 @@ pub enum PromptKind {
     /// `PickerKind::LookupItem` accept handler. Phase 7 of the
     /// rqst→mnml port-back.
     LookupVarName,
+    /// Accept ⇒ upsert `<pending_env_edit_key>=<typed>` into the
+    /// active env file. Stashed via `App::pending_env_edit_key`
+    /// when the EnvVars picker accepted an existing key. Phase 3
+    /// polish.
+    EnvEditValue,
+    /// Accept ⇒ split typed input on `=` → `<key>=<value>` and
+    /// upsert into the active env file. Empty / malformed input
+    /// toasts an error. Triggered by the `+add` row in the
+    /// `EnvVars` picker. Phase 3 polish.
+    EnvAddKey,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into
