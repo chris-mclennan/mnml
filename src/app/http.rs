@@ -115,6 +115,28 @@ impl App {
         self.focus = Focus::Pane;
     }
 
+    /// `http.sync` — read `<workspace>/.mnml/sources.json` (or
+    /// `<workspace>/.rqst/sources.json` for legacy workspaces) and
+    /// regenerate `.curl` stub files for every `kind: "swagger"`
+    /// source. Synchronous (fetches + writes happen on the UI
+    /// thread); for large/slow sources we'd want a background
+    /// thread + a trace pane like bench/chain. Phase 2 of the
+    /// rqst→mnml port-back; 2026-06-19.
+    pub fn http_sync_sources(&mut self) {
+        let workspace = self.workspace.clone();
+        match crate::http::sources::run_sync(&workspace) {
+            Ok((_trace, total)) => {
+                self.toast(format!(
+                    "http.sync: wrote {total} request stub(s) — refresh the tree to see them"
+                ));
+                self.tree.refresh();
+            }
+            Err(e) => {
+                self.toast(format!("http.sync failed: {e}"));
+            }
+        }
+    }
+
     /// `http.send` — parse the active `.http`/`.rest`/`.curl` editor (the block
     /// under the cursor for multi-block `.http` files), expand `{{vars}}` against
     /// `.mnml/env/$MNML_ENV`, open a `Pane::Request` split, and fire the request

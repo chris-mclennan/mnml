@@ -2823,6 +2823,18 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.send_request_from_active(),
         },
         Command {
+            id: "http.sync",
+            title: "HTTP: sync swagger sources → .curl stub files",
+            group: "http",
+            // Reads <workspace>/.mnml/sources.json (or
+            // <workspace>/.rqst/sources.json for legacy workspaces)
+            // and regenerates `.curl` files per swagger source. Same
+            // logic the CLI's `mnml http sync` uses. Phase 2 of the
+            // rqst→mnml port-back.
+            keys: &[],
+            run: |app| app.http_sync_sources(),
+        },
+        Command {
             id: "http.copy_curl",
             title: "HTTP: copy the request as a curl command",
             group: "http",

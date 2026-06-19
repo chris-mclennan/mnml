@@ -21,6 +21,7 @@ pub mod curl;
 pub mod discover;
 pub mod file;
 pub mod script;
+pub mod sources;
 pub mod template;
 
 use std::time::{Duration, Instant};

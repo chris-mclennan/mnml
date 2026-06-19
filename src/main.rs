@@ -33,6 +33,10 @@ fn main() -> ExitCode {
             args.next();
             discover_subcommand(args.collect())
         }
+        Some("sync") => {
+            args.next();
+            sync_subcommand(args.collect())
+        }
         Some("test") => {
             args.next();
             test_subcommand(args.collect())
@@ -512,6 +516,47 @@ fn chain_subcommand(argv: Vec<String>) -> ExitCode {
         }
         Err(e) => {
             eprintln!("mnml chain: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `mnml sync [--workspace DIR]` — read sources.json + regenerate
+/// every swagger source's `.curl` stubs. The same operation the
+/// `http.sync` palette command runs in-app, exposed as a CLI for
+/// scripting / cron / one-off batches.
+fn sync_subcommand(argv: Vec<String>) -> ExitCode {
+    let usage = "usage: mnml sync [--workspace DIR]\n  reads <workspace>/.mnml/sources.json (or .rqst/sources.json) and regenerates .curl stubs per swagger source";
+    let mut workspace: Option<PathBuf> = None;
+    let mut it = argv.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--workspace" => match it.next() {
+                Some(v) => workspace = Some(PathBuf::from(v)),
+                None => {
+                    eprintln!("mnml sync: --workspace needs a path");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "-h" | "--help" => {
+                println!("{usage}");
+                return ExitCode::SUCCESS;
+            }
+            s => {
+                eprintln!("mnml sync: unexpected arg: {s}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    match mnml::http::sources::run_sync(&ws) {
+        Ok((trace, total)) => {
+            print!("{trace}");
+            println!("ok — {total} stubs written");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("mnml sync: {e}");
             ExitCode::FAILURE
         }
     }
