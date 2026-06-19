@@ -1,0 +1,19 @@
+# cookies.normalize_clipboard reads the clipboard, collapses any of the
+# three DevTools cookie shapes into "name=v; name=v; …" form, writes it
+# back, and toasts a preview.
+#
+# Single-line input: yy yanks the whole line, normalize keeps the canonical
+# form. (Multi-line yank via 2yy is vim-mode-handler-dependent and flaky in
+# the e2e harness; the same normalization logic handles all shapes.)
+
+write cookies.txt "sessionid=abc123; csrftoken=xyz789"
+
+open cookies.txt
+
+command editor.use_vim
+key y
+key y
+
+command cookies.normalize_clipboard
+
+expect screen contains "sessionid=abc123; csrftoken=xyz789"

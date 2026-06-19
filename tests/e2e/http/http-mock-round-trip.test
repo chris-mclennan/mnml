@@ -1,0 +1,18 @@
+# Mock replay path (no network): pre-write a .mock.json sidecar, fire a
+# request to a local port that fails fast, then http.replay_mock injects
+# the mock response into the pane.
+
+write status418.curl "curl 'http://127.0.0.1:19876/nothing'"
+write status418.curl.mock.json "{\"status\":418,\"status_text\":\"I'm a teapot\",\"headers\":[],\"body\":\"I'm a teapot\",\"ts\":1}"
+
+open status418.curl
+
+command http.send
+wait 600
+
+command http.replay_mock
+
+expect screen contains "418"
+expect screen contains "teapot"
+
+expect file status418.curl.mock.json contains "teapot"

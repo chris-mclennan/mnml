@@ -1,0 +1,15 @@
+# jwt.decode reads the clipboard, decodes the claims segment, and
+# toasts headline fields. Uses the canonical jwt.io example token
+# whose payload is {"sub":"1234567890","name":"John Doe",...}.
+
+write sample.jwt "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+
+open sample.jwt
+
+command editor.use_vim
+key y
+key y
+
+command jwt.decode
+
+expect screen contains "sub=1234567890"

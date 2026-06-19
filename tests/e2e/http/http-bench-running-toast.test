@@ -1,0 +1,11 @@
+# http.bench fires a background worker; a second call while the first
+# is still in flight must toast "http.bench already running".
+
+write probe.curl "curl 'https://httpbin.org/get'"
+open probe.curl
+
+command http.bench
+expect screen contains "firing"
+
+command http.bench
+expect screen contains "http.bench already running"

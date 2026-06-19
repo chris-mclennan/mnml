@@ -1,0 +1,21 @@
+# REGRESSION: a prior build called open_curl_scratch twice per
+# CapturedRows accept, producing two scratch panes from one log entry.
+# Verify exactly one scratch pane opens on a single accept.
+
+write .rqst/captured/log.jsonl "{\"at\":1,\"request_id\":\"r1\",\"method\":\"GET\",\"url\":\"https://captured.example.com/api/items\",\"headers\":[],\"body\":null,\"paused\":false}"
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.view_captured
+
+expect screen contains "Captured requests"
+expect screen contains "captured.example.com/api/items"
+
+key enter
+
+expect screen contains "curl -X GET"
+expect screen contains "captured.example.com/api/items"
+expect pane "[scratch]"
+
+expect screen lacks "[scratch][scratch]"

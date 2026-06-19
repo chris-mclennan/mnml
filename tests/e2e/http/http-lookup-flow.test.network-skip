@@ -1,0 +1,34 @@
+# http.lookup — pick a .curl file, fire it, pick an item, name a var,
+# verify the var is written to .rqst/env/dev.env.
+#
+# NETWORK REQUIRED — fires a real GET to jsonplaceholder.typicode.com.
+
+write .rqst/config "default_env=dev"
+write .rqst/env/dev.env "# lookup test\n"
+write .rqst/lookups/users.curl "curl 'https://jsonplaceholder.typicode.com/users'"
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.lookup
+
+expect screen contains "Lookup file"
+expect screen contains "users.curl"
+
+key enter
+
+expect screen contains "firing request"
+
+wait 6000
+
+expect screen contains "Lookup item"
+
+key enter
+
+expect screen contains "Env var name"
+
+type "USER_ID"
+key enter
+
+expect screen contains "wrote USER_ID="
+expect file .mnml/env/dev.env contains "USER_ID="

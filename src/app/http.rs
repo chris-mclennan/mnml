@@ -549,33 +549,11 @@ impl App {
         let Some(id) = self.pending_lookup_picked_id.take() else {
             return;
         };
-        let env_name = crate::http::template::EnvSet::select(&self.workspace, None)
-            .name()
-            .map(str::to_string)
-            .unwrap_or_else(|| "dev".to_string());
-        let env_path = self
-            .workspace
-            .join(".rqst")
-            .join("env")
-            .join(format!("{env_name}.env"));
-        let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
-        let updated = match upsert_env_var(&existing, var, &id) {
-            Ok(s) => s,
-            Err(e) => {
-                self.toast(format!("lookup: {e}"));
-                return;
-            }
-        };
-        if let Some(parent) = env_path.parent()
-            && let Err(e) = std::fs::create_dir_all(parent)
-        {
-            self.toast(format!("lookup: mkdir {}: {e}", parent.display()));
-            return;
-        }
-        match std::fs::write(&env_path, updated) {
-            Ok(()) => self.toast(format!("wrote {var}={id} → {}", env_path.display())),
-            Err(e) => self.toast(format!("lookup: write {}: {e}", env_path.display())),
-        }
+        // 2026-06-19 — unified with `write_env_var` so the lookup
+        // write respects the same `.mnml/` vs `.rqst/` precedence
+        // the env editor uses: existing key → its file; new key →
+        // `.mnml/env/` (preferred).
+        self.write_env_var(var, &id);
     }
 
     /// `http.capture_now` — append every NetEntry from the active

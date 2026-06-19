@@ -1,0 +1,28 @@
+# http.edit_env — the "+ Add new variable…" row opens a KEY=VALUE
+# prompt and writes the result to .mnml/env/<active>.env (new keys
+# default to .mnml/ as the authoritative location).
+
+write .rqst/config "default_env=dev"
+write .rqst/env/dev.env "BASE_URL=https://existing.example.com\n"
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.edit_env
+
+expect screen contains "Env vars"
+expect screen contains "dev.env"
+expect screen contains "Add new variable"
+expect screen contains "BASE_URL"
+
+key enter
+
+expect screen contains "KEY=VALUE"
+
+type "MY_KEY=myvalue"
+key enter
+
+expect screen contains "wrote MY_KEY=myvalue"
+
+expect file .mnml/env/dev.env contains "MY_KEY=myvalue"
+expect file .rqst/env/dev.env contains "BASE_URL=https://existing.example.com"
