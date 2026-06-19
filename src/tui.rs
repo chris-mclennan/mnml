@@ -3272,6 +3272,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.open_workspace_header_context_menu((x, y));
                 return;
             }
+            // Right-click on an integration chip → Edit / Remove
+            // quick-actions. Lets a user tweak a chip without
+            // going through the discovery overlay first.
+            if let Some(&(_, icon_idx)) = app
+                .rects
+                .integration_icon_rects
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.open_integration_chip_context_menu(icon_idx, (x, y));
+                return;
+            }
             // Right-click on an extra-workspace header → that workspace's menu.
             if let Some(&(_, ws_idx)) = app
                 .rects

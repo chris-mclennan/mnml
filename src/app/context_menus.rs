@@ -66,6 +66,32 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some(name), anchor, items));
     }
 
+    /// Right-click on an integration chip → quick-actions menu.
+    /// Lets the user edit the chip's glyph/color/tooltip in place
+    /// or remove it without opening the discovery overlay first.
+    /// `icon_idx` is the position in `config.ui.integration_icons`.
+    pub fn open_integration_chip_context_menu(
+        &mut self,
+        icon_idx: usize,
+        anchor: (u16, u16),
+    ) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let Some(icon) = self.config.ui.integration_icons.get(icon_idx) else {
+            return;
+        };
+        let title = icon
+            .tooltip
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| icon.id.clone());
+        let id = icon.id.clone();
+        let items = vec![
+            MenuItem::new("Edit…", MenuAction::EditIntegration(id.clone())),
+            MenuItem::new("Remove from rail", MenuAction::RemoveIntegration(id)),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
     /// VS Code-style gear-icon menu — opens when the user clicks
     /// the gear at the bottom of the activity bar. Five-item menu
     /// covering the daily-use trio (Settings / Command Palette /
@@ -432,6 +458,12 @@ impl App {
             }
             SetAsWorkspace(p) => {
                 self.set_workspace_to(p);
+            }
+            EditIntegration(id) => {
+                self.open_integration_edit_by_id(&id);
+            }
+            RemoveIntegration(id) => {
+                self.remove_integration_by_id(&id);
             }
             Command(id) => {
                 crate::command::run(id, self);

@@ -25,6 +25,16 @@ pub enum MenuAction {
     /// tree's directory-row context menu. User-requested 2026-06-18
     /// for "I opened at ~/Projects, drill into one of these into."
     SetAsWorkspace(PathBuf),
+    /// Open the integration-edit panel for the integration with the
+    /// given id, pre-filled with that entry's glyph/color/tooltip.
+    /// Surfaced by the integration-chip right-click menu so users
+    /// can tweak a chip without going through the discovery overlay.
+    EditIntegration(String),
+    /// Drop the integration from the rail (config + persist). Same
+    /// effect as clicking the chip's row in the discovery overlay
+    /// when it's already InRail. Surfaced by the chip right-click
+    /// menu's "Remove from rail" entry.
+    RemoveIntegration(String),
     /// Run a registered command by id (e.g. `tree.refresh`).
     Command(&'static str),
     CloseTab(PaneId),

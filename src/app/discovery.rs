@@ -253,6 +253,58 @@ impl App {
         self.discovery_overlay = None;
     }
 
+    /// Open the integration-edit panel for the integration with the
+    /// given id. Surfaced from the chip's right-click context menu
+    /// so users can tweak a chip without going through the discovery
+    /// overlay first. Opens the discovery overlay if it isn't
+    /// already open — the edit panel lives layered on top of it.
+    pub fn open_integration_edit_by_id(&mut self, id: &str) {
+        let icon = self
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .find(|ic| ic.id == id)
+            .cloned();
+        let Some(icon) = icon else {
+            self.toast(format!("integration: {id} not in rail"));
+            return;
+        };
+        if self.discovery_overlay.is_none() {
+            self.open_discovery_overlay();
+        }
+        if let Some(state) = self.discovery_overlay.as_mut() {
+            state.edit_panel = Some(IntegrationEditState {
+                mode: IntegrationEditMode::Edit,
+                id: icon.id,
+                command: icon.command,
+                glyph: icon.glyph,
+                fallback: icon.fallback,
+                color: icon.color,
+                tooltip: icon.tooltip.unwrap_or_default(),
+                focused_field: IntegrationEditField::Glyph,
+            });
+        }
+    }
+
+    /// Drop the integration with the given id from the rail and
+    /// persist to TOML. Surfaced from the chip right-click menu's
+    /// "Remove from rail" entry.
+    pub fn remove_integration_by_id(&mut self, id: &str) {
+        let before = self.config.ui.integration_icons.len();
+        self.config.ui.integration_icons.retain(|ic| ic.id != id);
+        if self.config.ui.integration_icons.len() == before {
+            self.toast(format!("integration: {id} not in rail"));
+            return;
+        }
+        match persist_integration_icons(&self.config.ui.integration_icons) {
+            Ok(_) => self.toast(format!("removed {id} from rail")),
+            Err(e) => self.toast(format!(
+                "removed in-memory (persist failed: {e})"
+            )),
+        }
+    }
+
     /// Open the integration-edit panel for the row currently focused
     /// in the discovery overlay. No-op when the overlay isn't open
     /// or the focused row isn't an `InRail` sibling (only rail
