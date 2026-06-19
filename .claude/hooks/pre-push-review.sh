@@ -22,7 +22,10 @@ set -eu
 input_json="$(cat)"
 cmd="$(printf '%s' "$input_json" | jq -r '.tool_input.command // empty')"
 
-# Not a git push? Pass through silently.
+# Not a git push? Pass through silently. Both the bare `git push`
+# form and the chained `commit && git push` form match — earlier
+# versions of this hook only matched bare push, leaving chained
+# commands as a silent bypass.
 case "$cmd" in
     *git\ push*) ;;
     *) exit 0 ;;
