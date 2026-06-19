@@ -2960,6 +2960,18 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_paste_curl_to_active(),
         },
         Command {
+            id: "http.import_postman",
+            title: "HTTP: import a Postman Collection from clipboard",
+            group: "http",
+            // Postman Collection v2.1 JSON → one .curl per request
+            // in .rqst/captured/postman-<collection-name>/. Folder
+            // groups are flattened with a `<group>__<request>`
+            // filename prefix so the collection's hierarchy stays
+            // greppable.
+            keys: &[],
+            run: |app| app.http_import_postman_from_clipboard(),
+        },
+        Command {
             id: "http.import_har",
             title: "HTTP: import a .har file from clipboard or path",
             group: "http",

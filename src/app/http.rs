@@ -1343,6 +1343,137 @@ impl App {
         self.toast(format!("paste_curl: populated from {preview}"));
     }
 
+    /// `http.import_postman` — read a Postman Collection v2.1
+    /// JSON from clipboard and explode it into N `.curl` files
+    /// under `<workspace>/.rqst/captured/postman-<collection-name>/`.
+    /// Folder hierarchy is flattened into filenames so the
+    /// collection's grouping survives (`<group>__<request>.curl`).
+    /// Postman variables (`{{token}}`) are preserved verbatim —
+    /// they match mnml's existing template syntax so they round-
+    /// trip through `:http.send` naturally.
+    pub fn http_import_postman_from_clipboard(&mut self) {
+        let raw = self.clipboard.text();
+        if raw.trim().is_empty() {
+            self.toast("http.import_postman: clipboard is empty");
+            return;
+        }
+        let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                self.toast(format!("postman: not valid JSON: {e}"));
+                return;
+            }
+        };
+        // Postman collection top-level shape: { info: { name }, item: [...] }
+        let coll_name = parsed
+            .get("info")
+            .and_then(|i| i.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("collection")
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect::<String>();
+        let Some(items) = parsed.get("item").and_then(|i| i.as_array()) else {
+            self.toast("postman: missing `item` array (not a Collection?)");
+            return;
+        };
+        let out_dir = self
+            .workspace
+            .join(".rqst")
+            .join("captured")
+            .join(format!("postman-{coll_name}"));
+        if let Err(e) = std::fs::create_dir_all(&out_dir) {
+            self.toast(format!("postman: mkdir {}: {e}", out_dir.display()));
+            return;
+        }
+        // Walk the (potentially nested) item tree. Each leaf has a
+        // `request` field; each folder has its own `item` array.
+        fn walk(
+            items: &[serde_json::Value],
+            prefix: &str,
+            out_dir: &std::path::Path,
+            counter: &mut usize,
+            written: &mut usize,
+        ) {
+            for item in items {
+                let name = item
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("unnamed")
+                    .chars()
+                    .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                    .collect::<String>();
+                if let Some(sub) = item.get("item").and_then(|i| i.as_array()) {
+                    let new_prefix = if prefix.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{prefix}__{name}")
+                    };
+                    walk(sub, &new_prefix, out_dir, counter, written);
+                    continue;
+                }
+                let Some(req) = item.get("request") else { continue };
+                let method = req
+                    .get("method")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("GET")
+                    .to_uppercase();
+                let url = req
+                    .get("url")
+                    .and_then(|u| match u {
+                        serde_json::Value::String(s) => Some(s.clone()),
+                        serde_json::Value::Object(_) => {
+                            u.get("raw").and_then(|r| r.as_str()).map(str::to_string)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                if url.is_empty() {
+                    continue;
+                }
+                let mut curl = format!("curl -X {method} '{url}'");
+                if let Some(headers) = req.get("header").and_then(|h| h.as_array()) {
+                    for h in headers {
+                        let (Some(name), Some(value)) = (
+                            h.get("key").and_then(|n| n.as_str()),
+                            h.get("value").and_then(|v| v.as_str()),
+                        ) else {
+                            continue;
+                        };
+                        if h.get("disabled").and_then(|d| d.as_bool()).unwrap_or(false) {
+                            continue;
+                        }
+                        curl.push_str(&format!(" \\\n  -H '{name}: {value}'"));
+                    }
+                }
+                if let Some(body) = req.get("body")
+                    && let Some(raw) = body.get("raw").and_then(|r| r.as_str())
+                    && !raw.is_empty()
+                {
+                    let escaped = raw.replace('\'', "'\\''");
+                    curl.push_str(&format!(" \\\n  --data '{escaped}'"));
+                }
+                let stem = if prefix.is_empty() {
+                    format!("{counter:03}_{name}")
+                } else {
+                    format!("{counter:03}_{prefix}__{name}")
+                };
+                *counter += 1;
+                let path = out_dir.join(format!("{stem}.curl"));
+                if std::fs::write(&path, curl).is_ok() {
+                    *written += 1;
+                }
+            }
+        }
+        let mut counter = 0usize;
+        let mut written = 0usize;
+        walk(items, "", &out_dir, &mut counter, &mut written);
+        self.toast(format!(
+            "postman: wrote {written} curls → {}",
+            out_dir.display()
+        ));
+    }
+
     /// `http.import_har` — read a HAR (HTTP Archive) from the
     /// clipboard, write one `.curl` file per HAR entry into
     /// `<workspace>/.rqst/captured/har-<ts>/`. The natural follow-
