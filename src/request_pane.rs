@@ -64,6 +64,13 @@ pub struct RequestPane {
     /// 2026-06-19 — added when the Edit view was restructured into
     /// a tabbed UI to match the rqst Postman-style layout.
     pub edit_tab: EditTab,
+    /// Editable raw curl / `.http` source. Lives only as long as
+    /// the pane (not persisted to disk). Typing on the Source tab
+    /// appends here; `:http.paste_curl` with an empty clipboard
+    /// falls back to parsing this buffer, populating the
+    /// structured fields, then clearing.
+    pub source_buffer: String,
+    pub source_cursor: usize,
 }
 
 /// The tabbed UI on the Edit view. `Tab` advances; `Shift+Tab`
@@ -121,6 +128,11 @@ pub enum EditField {
     Method,
     Headers,
     Body,
+    /// 2026-06-19 v2 — Source-tab editable buffer. Typing populates
+    /// `source_buffer`; Ctrl+Enter (or `:http.paste_curl` with
+    /// empty clipboard fall-back) parses the buffer into the
+    /// structured Method/URL/Headers/Body fields.
+    Source,
 }
 
 impl EditField {
@@ -130,6 +142,10 @@ impl EditField {
             EditField::Method => EditField::Headers,
             EditField::Headers => EditField::Body,
             EditField::Body => EditField::Url,
+            // Source is reached only when the Source tab is active;
+            // Tab from Source cycles back to URL (out of the Source
+            // tab implicitly via re-render with the new focus).
+            EditField::Source => EditField::Url,
         }
     }
     pub fn prev(self) -> Self {
@@ -138,6 +154,7 @@ impl EditField {
             EditField::Method => EditField::Url,
             EditField::Headers => EditField::Method,
             EditField::Body => EditField::Headers,
+            EditField::Source => EditField::Body,
         }
     }
     pub fn label(self) -> &'static str {
@@ -146,6 +163,7 @@ impl EditField {
             EditField::Method => "Method",
             EditField::Headers => "Headers",
             EditField::Body => "Body",
+            EditField::Source => "Source",
         }
     }
 }
@@ -241,6 +259,8 @@ impl RequestPane {
             headers_buffer,
             headers_cursor,
             edit_tab: EditTab::Body,
+            source_buffer: String::new(),
+            source_cursor: 0,
         }
     }
 
@@ -319,6 +339,7 @@ impl RequestPane {
                 let body = self.request.body.get_or_insert_with(String::new);
                 Some((body, &mut self.body_cursor))
             }
+            EditField::Source => Some((&mut self.source_buffer, &mut self.source_cursor)),
         }
     }
 
@@ -403,6 +424,11 @@ impl RequestPane {
                 let cur = self.body_cursor.min(s.len());
                 self.body_cursor = s[..cur].rfind('\n').map(|i| i + 1).unwrap_or(0);
             }
+            EditField::Source => {
+                let s = self.source_buffer.as_str();
+                let cur = self.source_cursor.min(s.len());
+                self.source_cursor = s[..cur].rfind('\n').map(|i| i + 1).unwrap_or(0);
+            }
             EditField::Method => {}
         }
     }
@@ -421,6 +447,12 @@ impl RequestPane {
                 let cur = self.body_cursor.min(s.len());
                 let to_end_of_line = s[cur..].find('\n').unwrap_or(s.len() - cur);
                 self.body_cursor = cur + to_end_of_line;
+            }
+            EditField::Source => {
+                let s = self.source_buffer.as_str();
+                let cur = self.source_cursor.min(s.len());
+                let to_eol = s[cur..].find('\n').unwrap_or(s.len() - cur);
+                self.source_cursor = cur + to_eol;
             }
             EditField::Method => {}
         }

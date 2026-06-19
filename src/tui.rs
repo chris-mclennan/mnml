@@ -634,6 +634,15 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         } else {
             rp.edit_tab.prev()
         };
+        // When jumping to the Source tab, focus the Source field
+        // so the user can immediately type. When leaving Source,
+        // restore URL focus (the natural default for the other
+        // tabs).
+        if rp.edit_tab == crate::request_pane::EditTab::Source {
+            rp.focus = crate::request_pane::EditField::Source;
+        } else if rp.focus == crate::request_pane::EditField::Source {
+            rp.focus = crate::request_pane::EditField::Url;
+        }
         return;
     }
     // 2026-06-19 — keyboard hunt SEV-2: Ctrl+1..5 jumps directly
@@ -659,6 +668,11 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('5') => EditTab::Source,
             _ => rp.edit_tab,
         };
+        if rp.edit_tab == EditTab::Source {
+            rp.focus = crate::request_pane::EditField::Source;
+        } else if rp.focus == crate::request_pane::EditField::Source {
+            rp.focus = crate::request_pane::EditField::Url;
+        }
         return;
     }
 
@@ -3739,6 +3753,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 if let Some(Pane::Request(rp)) = app.panes.get_mut(pid) {
                     rp.view = crate::request_pane::ViewMode::Edit;
                     rp.edit_tab = tab;
+                    if tab == crate::request_pane::EditTab::Source {
+                        rp.focus = crate::request_pane::EditField::Source;
+                    } else if rp.focus == crate::request_pane::EditField::Source {
+                        rp.focus = crate::request_pane::EditField::Url;
+                    }
                 }
                 return;
             }
@@ -4719,6 +4738,15 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                 KeyCode::Char('v') if ctrl && shift => {
                     let _ = rp;
                     app.http_paste_curl_to_active();
+                    return true;
+                }
+                // Ctrl+Enter — parse the Source-tab buffer into
+                // the structured fields. Companion chord to
+                // Ctrl+Shift+V for users who'd rather type/paste
+                // into the Source field than work clipboard-first.
+                KeyCode::Enter if ctrl => {
+                    let _ = rp;
+                    app.http_parse_source_buffer();
                     return true;
                 }
                 // Ctrl+] / Ctrl+[ cycle the Edit-view tab strip

@@ -2960,6 +2960,18 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_paste_curl_to_active(),
         },
         Command {
+            id: "http.paste_source",
+            title: "HTTP: parse Source tab buffer into Method/URL/Headers/Body",
+            group: "http",
+            // Ctrl+Enter while focused on the Source field is the
+            // primary trigger; the palette command is the
+            // discoverability path. Parses source_buffer via
+            // crate::http::parse, populates the structured fields,
+            // clears the buffer, switches to Body tab.
+            keys: &[],
+            run: |app| app.http_parse_source_buffer(),
+        },
+        Command {
             id: "http.import_postman",
             title: "HTTP: import a Postman Collection from clipboard",
             group: "http",

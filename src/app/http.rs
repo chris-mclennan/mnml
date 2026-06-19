@@ -147,6 +147,7 @@ impl App {
             EditField::Method => "Request · Method",
             EditField::Headers => "Request · Headers",
             EditField::Body => "Request · Body",
+            EditField::Source => "Request · Source",
         };
         self.context_menu = Some(ContextMenu::new(Some(title.into()), anchor, items));
     }
@@ -1341,6 +1342,49 @@ impl App {
             raw.trim().to_string()
         };
         self.toast(format!("paste_curl: populated from {preview}"));
+    }
+
+    /// `http.paste_source` — parse the active Request pane's
+    /// `source_buffer` (Source tab) into the structured Method /
+    /// URL / Headers / Body fields, clear the buffer, switch to
+    /// Body tab. Same parse pipeline as `:http.paste_curl` (just
+    /// reads from the pane field instead of the clipboard).
+    pub fn http_parse_source_buffer(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("paste_source: no active Request pane");
+            return;
+        };
+        let src = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => rp.source_buffer.clone(),
+            _ => {
+                self.toast("paste_source: active pane is not a Request");
+                return;
+            }
+        };
+        if src.trim().is_empty() {
+            self.toast("paste_source: Source buffer is empty");
+            return;
+        }
+        let parsed = match crate::http::parse(&src) {
+            Ok(r) => r,
+            Err(e) => {
+                self.toast(format!("paste_source: parse failed: {e}"));
+                return;
+            }
+        };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.headers_buffer = crate::request_pane::headers_to_text(&parsed.headers);
+            rp.headers_cursor = rp.headers_buffer.len();
+            rp.url_cursor = parsed.url.len();
+            rp.body_cursor = parsed.body.as_deref().map(str::len).unwrap_or(0);
+            rp.request = parsed;
+            rp.source_buffer.clear();
+            rp.source_cursor = 0;
+            rp.view = crate::request_pane::ViewMode::Edit;
+            rp.edit_tab = crate::request_pane::EditTab::Body;
+            rp.focus = crate::request_pane::EditField::Url;
+            self.toast("paste_source: populated from Source buffer");
+        }
     }
 
     /// `http.import_postman` — read a Postman Collection v2.1

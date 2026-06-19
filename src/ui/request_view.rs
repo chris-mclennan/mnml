@@ -620,33 +620,59 @@ fn draw_edit(
         }
     }
 
-    // ── Source tab: paste raw curl / .http source here, parse it into
-    //     the structured fields via :http.paste_curl or Ctrl+Shift+V. ──
+    // ── Source tab: paste/type raw curl / .http source here, run
+    //     `:http.paste_source` (Ctrl+Enter) to parse it into the
+    //     structured fields. ──
     if cur_tab == crate::request_pane::EditTab::Source {
-        let h1_y = rows.len() as u16;
+        let s_focus = rp.focus == EditField::Source;
+        let hint_y = rows.len() as u16;
         rows.push(Line::from(vec![Span::styled(
-            "    Paste a curl command or .http block here.".to_string(),
+            "    Source — type / paste curl or .http here · :http.paste_source (Ctrl+Enter)".to_string(),
             dim,
         )]));
-        register_tab_row(fields, h1_y);
-        let h2_y = rows.len() as u16;
-        rows.push(Line::from(vec![Span::styled(
-            "    Then run :http.paste_curl (or Ctrl+Shift+V) to populate fields.".to_string(),
-            dim,
-        )]));
-        register_tab_row(fields, h2_y);
+        register_tab_row(fields, hint_y);
         rows.push(plain(String::new(), body_style));
-        // v1 Source tab is a paste-target hint — clipboard is the
-        // source. An editable in-pane source field is queued for v2
-        // (would need a 5th EditField variant + cycle slot + key
-        // routing). Right-click anywhere on this tab fires the
-        // field-aware menu with Paste curl available.
-        let y = rows.len() as u16;
-        rows.push(Line::from(vec![Span::styled(
-            "    (clipboard paste-curl reads your system clipboard directly)".to_string(),
-            dim,
-        )]));
-        register_tab_row(fields, y);
+        let src = &rp.source_buffer;
+        let val_style = Style::default().fg(t.fg).bg(t.bg_dark);
+        if src.is_empty() {
+            let y = rows.len() as u16;
+            rows.push(Line::from(vec![Span::styled(
+                "    (empty — paste here, or Ctrl+Shift+V to read clipboard)".to_string(),
+                dim,
+            )]));
+            register_tab_row(fields, y);
+            // If focused, render caret at left margin so the user
+            // sees where their typing will land.
+            if s_focus && focused && caret.is_none() {
+                let y = (rows.len() - 1) as u16;
+                *caret = Some((area.x + 4, y));
+            }
+        } else {
+            for (i, line) in src.lines().enumerate() {
+                let y = rows.len() as u16;
+                register_tab_row(fields, y);
+                rows.push(Line::from(vec![Span::styled(
+                    format!("    {line}"),
+                    val_style,
+                )]));
+                if s_focus && focused && caret.is_none() {
+                    let start = nth_line_start(src, i);
+                    let end = nth_line_end(src, i);
+                    if rp.source_cursor >= start && rp.source_cursor <= end {
+                        let col = src[start..rp.source_cursor.min(src.len())]
+                            .chars()
+                            .count() as u16;
+                        let yy = (rows.len() - 1) as u16;
+                        *caret = Some((area.x + 4 + col, yy));
+                    }
+                }
+            }
+            if s_focus && focused && caret.is_none() && src.ends_with('\n') {
+                let y = rows.len() as u16;
+                rows.push(plain(String::new(), body_style));
+                *caret = Some((area.x + 4, y));
+            }
+        }
     }
 
     // Sending/Done indicator (small).
