@@ -33,18 +33,24 @@ pub fn normalize_cookie_value(raw: &str) -> String {
         if trimmed.is_empty() {
             continue;
         }
-        // Prefer `=` as the separator; fall back to `:` only when
-        // there's no `=` in the chunk (DevTools "Application" tab
-        // formats as `name: value`).
-        let (name, value) = if let Some((n, v)) = trimmed.split_once('=') {
-            (n, v)
-        } else if let Some((n, v)) = trimmed.split_once(':') {
-            (n, v)
-        } else {
-            // Bare `name` with no value — skip rather than emit
-            // something malformed.
-            continue;
+        // Pick the separator by which character appears FIRST in
+        // the chunk. Base64 session tokens use `=` for padding —
+        // `auth: eyJ…=` is a valid DevTools-Application-tab paste
+        // and must be split on the FIRST `:`, not the `=` inside
+        // the value. 2026-06-19 — api-workflow-user agent caught
+        // the earlier prefer-`=` impl mis-splitting on padded
+        // tokens.
+        let eq = trimmed.find('=');
+        let colon = trimmed.find(':');
+        let (name, value) = match (eq, colon) {
+            (Some(e), Some(c)) if c < e => trimmed.split_at(c),
+            (Some(e), _) => trimmed.split_at(e),
+            (None, Some(c)) => trimmed.split_at(c),
+            (None, None) => continue, // bare name, skip
         };
+        // `split_at` keeps the delimiter on the second slice; trim
+        // it before passing through to the empty-key check.
+        let value = value.trim_start_matches([':', '=']);
         let name = name.trim();
         let value = value.trim();
         if name.is_empty() {

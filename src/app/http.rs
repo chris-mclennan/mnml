@@ -1318,8 +1318,22 @@ impl App {
             .clone();
         std::thread::spawn(move || {
             let result: Result<ResponseView, String> = (|| {
+                // 2026-06-19 — api-workflow-user agent flagged
+                // that `timeout(None)` leaks the worker thread for
+                // any endpoint that holds the socket without
+                // sending events (long-poll, badly-configured
+                // SSE, hung server). A per-read timeout of 60s
+                // exits the loop on quiet sockets without
+                // blocking SSE streams that actually emit events
+                // (every event resets the timer in `read_line`).
+                // Generous overall timeout so a slow SSE server
+                // can stream for many minutes; quiet sockets exit
+                // via the natural timeout. Full cancellation
+                // (Esc to abort an in-flight stream) is a v2
+                // follow-up that would need a channel back to
+                // the worker.
                 let client = reqwest::blocking::Client::builder()
-                    .timeout(None) // SSE servers hold the socket open
+                    .timeout(std::time::Duration::from_secs(600))
                     .build()
                     .map_err(|e| format!("client build failed: {e}"))?;
                 let method = reqwest::Method::from_bytes(request.method.to_uppercase().as_bytes())

@@ -12,6 +12,21 @@ impl App {
     }
 
     pub fn close_picker(&mut self) {
+        // 2026-06-19 — api-workflow-user agent flagged that Esc
+        // on a lookup-stage picker left `lookup_fire_rx` armed;
+        // when the response landed, `App::tick`'s drain popped a
+        // ghost LookupItem picker over whatever the user was now
+        // doing. Drop the receiver here so the worker's send is
+        // silently discarded.
+        if matches!(
+            self.picker.as_ref().map(|p| p.kind),
+            Some(crate::picker::PickerKind::LookupFile)
+                | Some(crate::picker::PickerKind::LookupItem)
+        ) {
+            self.lookup_fire_rx = None;
+            self.pending_lookup_items.clear();
+            self.pending_lookup_picked_id = None;
+        }
         self.picker = None;
     }
 

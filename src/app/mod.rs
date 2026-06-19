@@ -4505,18 +4505,27 @@ impl App {
     }
 
     pub fn open_scratch_with_text(&mut self, _title: String, text: String) {
-        self.split_active(crate::layout::SplitDir::Vertical);
+        // 2026-06-19 — api-workflow-user agent flagged that the
+        // earlier `split_active` + `panes.push` + `reveal_pane`
+        // pattern left an orphan blank scratch buffer per call
+        // (same bug as `open_curl_scratch`). Build the populated
+        // buffer first, then splice it into the layout in one
+        // step via `split_leaf_with`.
         let mut buf = crate::buffer::Buffer::scratch(&self.config);
-        // Seed the scratch buffer with `text` via a single InsertStr op
-        // (the only public mutation path on Editor outside of EditOp).
         let mut clip = crate::clipboard::Clipboard::detached();
         let _ = buf
             .editor
             .apply(crate::edit_op::EditOp::InsertStr(text), 24, &mut clip);
         buf.editor.place_cursor(0, 0);
-        self.panes.push(Pane::Editor(buf));
-        let new_id = self.panes.len() - 1;
-        self.reveal_pane(new_id);
+        let Some(cur) = self.active else {
+            self.panes.push(Pane::Editor(buf));
+            let new_id = self.panes.len() - 1;
+            self.reveal_pane(new_id);
+            return;
+        };
+        let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, Pane::Editor(buf));
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
     }
 
     /// Track the just-run command id for `picker.recent_commands`.
