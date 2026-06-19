@@ -2633,6 +2633,10 @@ pub struct App {
     /// granularity is 1 request — but they exit the loop on the
     /// next iteration boundary instead of running to completion.
     pub http_abort: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Domain-keyed cookie jar. Loaded from `.mnml/cookies.json`
+    /// at App init; written by `:cookies.persist`. Auto-injected
+    /// into Request pane sends via `spawn_http_job`.
+    pub cookie_jar: std::sync::Arc<std::sync::Mutex<crate::cookie_jar::CookieJar>>,
     /// Snapshot of `.rqst/captured/log.jsonl` for the current
     /// captured-viewer picker (`PickerKind::CapturedRows`). The
     /// picker's `id` field is a string index into this. Cleared
@@ -3168,6 +3172,9 @@ impl App {
         let workspace = workspace
             .canonicalize()
             .map_err(|e| format!("cannot open workspace {}: {e}", workspace.display()))?;
+        let cookie_jar_init = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::cookie_jar::CookieJar::load(&workspace),
+        ));
         let mut tree = Tree::open(&workspace);
         let git = GitStatus::new(&workspace);
         let lsp = crate::lsp::LspManager::new(&workspace, &config);
@@ -3342,6 +3349,7 @@ impl App {
             http_sync_rx: None,
             http_bench_rx: None,
             http_abort: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            cookie_jar: cookie_jar_init,
             pending_captured_rows: Vec::new(),
             pending_history_rows: Vec::new(),
             pending_lookup_items: Vec::new(),

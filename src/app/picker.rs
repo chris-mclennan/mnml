@@ -637,6 +637,25 @@ impl App {
                 let id = item.id.clone();
                 self.accept_env_vars(&id);
             }
+            PickerKind::Cookies => {
+                // id shape: `<host>\t<name>`.
+                let lookup = item.id.split_once('\t').and_then(|(host, name)| {
+                    let jar = self.cookie_jar.lock().ok()?;
+                    let val = jar.iter().find_map(|(h, n, v)| {
+                        if h == host && n == name {
+                            Some(v.to_string())
+                        } else {
+                            None
+                        }
+                    });
+                    val.map(|v| (name.to_string(), v))
+                });
+                if let Some((name, v)) = lookup {
+                    let pair = format!("{name}={v}");
+                    self.clipboard.set(pair.clone(), false);
+                    self.toast(format!("cookies: copied {pair}"));
+                }
+            }
         }
     }
 

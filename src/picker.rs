@@ -171,6 +171,10 @@ pub enum PickerKind {
     /// [`crate::prompt::PromptKind::EnvAddKey`] for the `+add`
     /// case). Structured env editor — phase 3 polish.
     EnvVars,
+    /// `id` = `<host>\t<name>` (tab-separated). Accept ⇒ copy
+    /// `<name>=<value>` to clipboard so the user can paste it
+    /// into a Cookie header. 2026-06-19 — cookie jar v1.
+    Cookies,
 }
 
 #[derive(Debug, Clone)]

@@ -3070,6 +3070,33 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.sse_parse_active_response(),
         },
         Command {
+            id: "cookies.show",
+            title: "Cookies: open picker over the persistent jar",
+            group: "http",
+            // Lists every cookie currently in the jar (host · name
+            // · value preview). Enter on a row copies the name=value
+            // pair to the clipboard.
+            keys: &[],
+            run: |app| app.cookies_show_picker(),
+        },
+        Command {
+            id: "cookies.clear",
+            title: "Cookies: clear every cookie in the jar",
+            group: "http",
+            keys: &[],
+            run: |app| app.cookies_clear_jar(),
+        },
+        Command {
+            id: "cookies.persist",
+            title: "Cookies: write the jar to .mnml/cookies.json",
+            group: "http",
+            // The jar auto-saves on app exit; this is the explicit
+            // 'flush now' for users who want the file on disk
+            // immediately (e.g. before a workspace switch).
+            keys: &[],
+            run: |app| app.cookies_persist(),
+        },
+        Command {
             id: "cookies.normalize_clipboard",
             title: "Cookies: normalize clipboard text → canonical `name=v; name=v` form",
             group: "http",

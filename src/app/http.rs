@@ -1033,6 +1033,82 @@ impl App {
         ));
     }
 
+    /// `cookies.show` — picker over every entry in the persistent
+    /// cookie jar. Rows: `<host> · <name> · <preview>`. Enter
+    /// copies `<name>=<value>` to clipboard.
+    pub fn cookies_show_picker(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let Ok(jar) = self.cookie_jar.lock() else {
+            self.toast("cookies: jar lock poisoned");
+            return;
+        };
+        let mut items: Vec<PickerItem> = jar
+            .iter()
+            .map(|(host, name, value)| {
+                let preview = if value.len() > 32 {
+                    format!("{}…", &value[..30])
+                } else {
+                    value.to_string()
+                };
+                let id = format!("{host}\t{name}");
+                let label = format!("{host}  ·  {name}  ·  {preview}");
+                PickerItem::new(id, label, String::new())
+            })
+            .collect();
+        let total = items.len();
+        drop(jar);
+        if items.is_empty() {
+            items.push(PickerItem::new(
+                "_empty".to_string(),
+                "(jar is empty — :http.send accumulates from Set-Cookie)".to_string(),
+                String::new(),
+            ));
+        }
+        self.open_picker(Picker::new(
+            PickerKind::Cookies,
+            &format!("Cookies ({total} total)"),
+            items,
+        ));
+    }
+
+    /// `cookies.clear` — drop every cookie from the jar (in-memory
+    /// + persisted file). Useful when login state on a domain has
+    /// gone bad and you want a fresh start.
+    pub fn cookies_clear_jar(&mut self) {
+        let prev = {
+            let Ok(mut jar) = self.cookie_jar.lock() else {
+                self.toast("cookies: jar lock poisoned");
+                return;
+            };
+            let prev = jar.total();
+            jar.clear();
+            let _ = jar.save(&self.workspace);
+            prev
+        };
+        self.toast(format!("cookies: cleared {prev} entries"));
+    }
+
+    /// `cookies.persist` — write the in-memory jar to
+    /// `.mnml/cookies.json` immediately. The jar auto-flushes on
+    /// some mutations but this is the explicit "flush now" path.
+    pub fn cookies_persist(&mut self) {
+        let outcome = {
+            let Ok(jar) = self.cookie_jar.lock() else {
+                self.toast("cookies: jar lock poisoned");
+                return;
+            };
+            let total = jar.total();
+            match jar.save(&self.workspace) {
+                Ok(p) => Ok((total, p)),
+                Err(e) => Err(e),
+            }
+        };
+        match outcome {
+            Ok((n, p)) => self.toast(format!("cookies: wrote {n} entries → {}", p.display())),
+            Err(e) => self.toast(format!("cookies: write failed: {e}")),
+        }
+    }
+
     /// `cookies.normalize_clipboard` — read the clipboard, run it
     /// through `crate::cookies::normalize_cookie_value` to collapse
     /// any of the three DevTools paste shapes into the canonical
@@ -1251,7 +1327,7 @@ impl App {
     /// Allocate a job id, ensure the result channel exists, spawn the worker.
     fn spawn_http_job(
         &mut self,
-        request: crate::http::Request,
+        mut request: crate::http::Request,
         script: crate::http::script::Script,
     ) -> u64 {
         use crate::request_pane::ResponseView;
@@ -1262,9 +1338,33 @@ impl App {
             .get_or_insert_with(std::sync::mpsc::channel)
             .0
             .clone();
+        // 2026-06-19 — cookie jar v1: if the request URL's host
+        // has cookies stored, inject a Cookie header (only when
+        // the caller didn't already set one). The header value
+        // is the on-the-wire `name=v; name=v` form via
+        // CookieJar::cookie_header_for.
+        let jar = self.cookie_jar.clone();
+        if let Some(host) = crate::cookie_jar::CookieJar::host_of(&request.url)
+            && !request.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("cookie"))
+            && let Ok(j) = jar.lock()
+            && let Some(cookie) = j.cookie_header_for(&host)
+        {
+            request.headers.push(("Cookie".to_string(), cookie));
+        }
+        let host_for_record = crate::cookie_jar::CookieJar::host_of(&request.url);
         std::thread::spawn(move || {
             let result: Result<ResponseView, String> = (|| {
                 let resp = crate::http::send(&request)?;
+                // Record any Set-Cookie headers from the response.
+                if let Some(host) = &host_for_record
+                    && let Ok(mut j) = jar.lock()
+                {
+                    for (k, v) in &resp.headers {
+                        if k.eq_ignore_ascii_case("set-cookie") {
+                            j.record_set_cookie(host, v);
+                        }
+                    }
+                }
                 let assertions = crate::http::script::run_assertions(
                     &script,
                     resp.status,
