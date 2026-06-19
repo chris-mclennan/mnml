@@ -2946,6 +2946,19 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.auth_extract_bearer_from_clipboard(),
         },
         Command {
+            id: "http.send_streaming",
+            title: "HTTP: send active request as a Server-Sent Events stream",
+            group: "http",
+            // Same parse as :http.send, but the worker uses an
+            // SSE-aware reader with no client timeout — for
+            // Anthropic / OpenAI / SSE-style text/event-stream
+            // endpoints. Events are buffered + rendered into the
+            // Response pane body when the stream closes. Phase 8
+            // polish.
+            keys: &[],
+            run: |app| app.send_streaming_from_active(),
+        },
+        Command {
             id: "sse.parse_active_response",
             title: "SSE: parse active Response pane body as Server-Sent Events",
             group: "http",

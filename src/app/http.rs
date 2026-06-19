@@ -1216,6 +1216,130 @@ impl App {
         job_id
     }
 
+    /// `http.send_streaming` — like `http.send`, but the response
+    /// is read as Server-Sent Events. The worker keeps the
+    /// connection open (no client timeout), pulls events through
+    /// `crate::sse::Reader`, and renders the buffered event list
+    /// into the Response pane body when the stream closes. Use for
+    /// Anthropic / OpenAI / SSE-style `text/event-stream` endpoints
+    /// where the server holds the socket and pushes events over
+    /// time.
+    ///
+    /// Buffered (not progressive): events are collected server-side
+    /// then displayed at end. Progressive in-pane display as events
+    /// arrive is a v2 follow-up. Phase 8 polish — 2026-06-19.
+    pub fn send_streaming_from_active(&mut self) {
+        let Some(request) = self.parse_active_as_request() else {
+            self.toast("http.send_streaming: no active .http/.curl/.rest editor");
+            return;
+        };
+        let script = crate::http::script::Script::default();
+        let job_id = self.spawn_sse_streaming_job(request.clone(), script.clone());
+        let Some(cur) = self.active else {
+            return;
+        };
+        let pane = Pane::Request(crate::request_pane::RequestPane::new(
+            None, request, script, job_id,
+        ));
+        let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+        self.toast("http.send_streaming: opening SSE stream…");
+    }
+
+    /// Background worker for SSE streaming. Builds a reqwest client
+    /// with NO timeout (servers keep SSE connections open
+    /// indefinitely; a 30s default would close us first), fires the
+    /// request, wraps the response in `crate::sse::Reader`, drains
+    /// every event, and posts a synthetic `ResponseView` whose body
+    /// is the formatted event list (`[event_name] data` per
+    /// block) over the existing `http_chan`. Status / headers /
+    /// elapsed pulled from the underlying response.
+    fn spawn_sse_streaming_job(
+        &mut self,
+        request: crate::http::Request,
+        _script: crate::http::script::Script,
+    ) -> u64 {
+        use crate::request_pane::ResponseView;
+        let job_id = self.next_job_id;
+        self.next_job_id += 1;
+        let tx = self
+            .http_chan
+            .get_or_insert_with(std::sync::mpsc::channel)
+            .0
+            .clone();
+        std::thread::spawn(move || {
+            let result: Result<ResponseView, String> = (|| {
+                let client = reqwest::blocking::Client::builder()
+                    .timeout(None) // SSE servers hold the socket open
+                    .build()
+                    .map_err(|e| format!("client build failed: {e}"))?;
+                let method = reqwest::Method::from_bytes(request.method.to_uppercase().as_bytes())
+                    .map_err(|_| format!("invalid HTTP method {:?}", request.method))?;
+                let mut req = client.request(method, &request.url);
+                for (k, v) in &request.headers {
+                    req = req.header(k, v);
+                }
+                if let Some(body) = &request.body {
+                    req = req.body(body.clone());
+                }
+                let started = std::time::Instant::now();
+                let resp = req.send().map_err(|e| format!("send: {e}"))?;
+                let status = resp.status().as_u16();
+                let status_text = resp
+                    .status()
+                    .canonical_reason()
+                    .unwrap_or("")
+                    .to_string();
+                let headers: Vec<(String, String)> = resp
+                    .headers()
+                    .iter()
+                    .map(|(k, v)| {
+                        (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                    })
+                    .collect();
+                // Wrap the Response in our SSE reader (Response
+                // implements Read). next_event blocks until the
+                // next `\n\n` boundary; when the server closes the
+                // socket we get EOF → Ok(None).
+                let mut reader = crate::sse::Reader::new(resp);
+                let mut body = String::new();
+                let mut count = 0u32;
+                loop {
+                    match reader.next_event() {
+                        Ok(Some(evt)) => {
+                            count += 1;
+                            if !evt.name.is_empty() {
+                                body.push_str(&format!("[{}]\n", evt.name));
+                            }
+                            body.push_str(&evt.data);
+                            body.push_str("\n\n");
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            body.push_str(&format!("\n--- stream error: {e} ---\n"));
+                            break;
+                        }
+                    }
+                }
+                if count == 0 {
+                    body.push_str("(stream closed with no events)\n");
+                }
+                Ok(ResponseView {
+                    status,
+                    status_text,
+                    headers,
+                    body,
+                    elapsed: started.elapsed(),
+                    assertions: Vec::new(),
+                    captures: Vec::new(),
+                })
+            })();
+            let _ = tx.send((job_id, result));
+        });
+        job_id
+    }
+
     /// `http.copy_curl` — copy the active request (in an editor: parse the buffer;
     /// in a request pane: the request it holds) to the clipboard as a curl command.
     pub fn copy_active_curl(&mut self) {
