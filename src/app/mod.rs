@@ -2614,6 +2614,11 @@ pub struct App {
     /// it. None when idle. Phase 2 of the rqst→mnml port-back.
     pub http_sync_rx:
         Option<std::sync::mpsc::Receiver<Result<(String, usize), String>>>,
+    /// In-flight `http.bench` worker result channel. Same shape /
+    /// drain pattern as `http_sync_rx`; payload is the bench's
+    /// trace string (multi-line summary the user will see in a
+    /// toast preview + paste from clipboard for the full thing).
+    pub http_bench_rx: Option<std::sync::mpsc::Receiver<String>>,
     /// `:debug.rects` overlay state — when `true`, the renderer
     /// paints colored borders around every registered click rect so
     /// the user can SEE the hit boundaries vs the rendered glyphs.
@@ -3297,6 +3302,7 @@ impl App {
             now_playing_rx: None,
             last_mixr_track_at: None,
             http_sync_rx: None,
+            http_bench_rx: None,
             debug_rects: false,
             no_pane_cmdline: None,
             mixr_panel: None,
@@ -8838,6 +8844,7 @@ impl App {
         self.drain_mixr_panel();
         self.drain_http_jobs();
         self.drain_http_sync_result();
+        self.drain_http_bench_result();
         self.drain_ai_jobs();
         self.drain_suggestions();
         self.maybe_fire_suggestion();

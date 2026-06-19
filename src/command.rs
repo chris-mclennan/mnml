@@ -2835,6 +2835,38 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_sync_sources(),
         },
         Command {
+            id: "http.bench",
+            title: "HTTP: bench active request 10× (concurrent)",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_bench_active(10, 4),
+        },
+        Command {
+            id: "http.history",
+            title: "HTTP: open .rqst/history.jsonl (one-line-per-send log)",
+            group: "http",
+            // Phase 9 — opens the JSONL history log as a regular
+            // editor buffer for grep / jq / manual scan. A richer
+            // picker (with per-entry re-fire) is a follow-up; the
+            // file-as-buffer path is what rqst users use today.
+            keys: &[],
+            run: |app| app.open_http_history(),
+        },
+        Command {
+            id: "http.save_mock",
+            title: "HTTP: save current response as a sibling .mock.json",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_save_active_response_as_mock(),
+        },
+        Command {
+            id: "http.replay_mock",
+            title: "HTTP: replay sibling .mock.json into the active request pane",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_replay_active_request_from_mock(),
+        },
+        Command {
             id: "jwt.decode",
             title: "JWT: decode clipboard token (claims only, no signature)",
             group: "http",

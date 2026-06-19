@@ -16,10 +16,13 @@
 //! Still to come (its own pass): editable request-pane field tabs (right now you
 //! edit the `.http` file in a normal editor).
 
+pub mod bench;
 pub mod chain;
 pub mod curl;
 pub mod discover;
 pub mod file;
+pub mod history;
+pub mod mock;
 pub mod script;
 pub mod sources;
 pub mod template;

@@ -115,6 +115,222 @@ impl App {
         self.focus = Focus::Pane;
     }
 
+    /// `http.history` — open `<workspace>/.rqst/history.jsonl` as
+    /// an editor buffer. Toasts if the file hasn't been created
+    /// yet (no requests sent this workspace). Phase 9 of the
+    /// rqst→mnml port-back.
+    pub fn open_http_history(&mut self) {
+        let path = self.workspace.join(".rqst").join("history.jsonl");
+        if !path.exists() {
+            self.toast(format!(
+                "http.history: no history yet (send a request to populate {})",
+                path.display()
+            ));
+            return;
+        }
+        self.open_path(&path);
+    }
+
+    /// `http.save_mock` — freeze the active Request pane's response
+    /// to disk as a `<source>.curl.mock.json` sidecar. The mock
+    /// captures status + status_text + headers + body so it can be
+    /// re-served by `http.replay_mock` for offline review or
+    /// canned-data testing. Phase 6 of the rqst→mnml port-back.
+    pub fn http_save_active_response_as_mock(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("http.save_mock: no active pane");
+            return;
+        };
+        let (source_path, mock) = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => {
+                let Some(rp_path) = rp.source_path.as_ref() else {
+                    self.toast("http.save_mock: pane has no source file path");
+                    return;
+                };
+                let crate::request_pane::RunState::Done(rv) = &rp.state else {
+                    self.toast("http.save_mock: response not ready yet");
+                    return;
+                };
+                (
+                    rp_path.clone(),
+                    crate::http::mock::Mock {
+                        status: rv.status,
+                        status_text: rv.status_text.clone(),
+                        headers: rv.headers.clone(),
+                        body: rv.body.clone(),
+                    },
+                )
+            }
+            _ => {
+                self.toast("http.save_mock: needs an active Request pane");
+                return;
+            }
+        };
+        let mock_path = crate::http::mock::sibling_path(&source_path);
+        match crate::http::mock::save(&mock_path, &mock) {
+            Ok(()) => self.toast(format!("saved mock → {}", mock_path.display())),
+            Err(e) => self.toast(format!("http.save_mock: {e}")),
+        }
+    }
+
+    /// `http.replay_mock` — load the active Request pane's sibling
+    /// `.mock.json` and serve it as if it had been the live
+    /// response. The pane's state flips to `Done` with the mock's
+    /// status / headers / body — no network call. Phase 6 of the
+    /// rqst→mnml port-back.
+    pub fn http_replay_active_request_from_mock(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("http.replay_mock: no active pane");
+            return;
+        };
+        let mock_path = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => {
+                let Some(p) = rp.source_path.as_ref() else {
+                    self.toast("http.replay_mock: pane has no source file path");
+                    return;
+                };
+                crate::http::mock::sibling_path(p)
+            }
+            _ => {
+                self.toast("http.replay_mock: needs an active Request pane");
+                return;
+            }
+        };
+        let mock = match crate::http::mock::load(&mock_path) {
+            Ok(m) => m,
+            Err(e) => {
+                self.toast(format!("http.replay_mock: {e}"));
+                return;
+            }
+        };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.state = crate::request_pane::RunState::Done(Box::new(
+                crate::request_pane::ResponseView {
+                    status: mock.status,
+                    status_text: mock.status_text,
+                    headers: mock.headers,
+                    body: mock.body,
+                    elapsed: std::time::Duration::ZERO,
+                    assertions: Vec::new(),
+                    captures: Vec::new(),
+                },
+            ));
+            rp.view = crate::request_pane::ViewMode::Response;
+        }
+        self.toast(format!("replayed mock ({})", mock_path.display()));
+    }
+
+    /// Parse the active editor as an HTTP request, expanding env
+    /// vars from `.mnml/env/$MNML_ENV` (or `.rqst/env/`). Returns
+    /// `None` when there's no active editor, it isn't a recognized
+    /// HTTP file, or parsing/template expansion fails. Used by
+    /// `http.bench` and similar one-off-request commands; the
+    /// richer `send_request_from_active` path does full multi-block
+    /// block-aware parsing for `.http` / `.rest`.
+    fn parse_active_as_request(&mut self) -> Option<crate::http::Request> {
+        use crate::http::{self, template::EnvSet};
+        let cur = self.active?;
+        // From a Request pane, just clone the in-flight request.
+        if let Some(Pane::Request(rp)) = self.panes.get(cur) {
+            return Some(rp.request.clone());
+        }
+        let (ext, text, cursor_row) = match self.panes.get(cur) {
+            Some(Pane::Editor(b)) => (
+                b.language_ext.clone().unwrap_or_default(),
+                b.editor.text().to_string(),
+                b.editor.row_col().0,
+            ),
+            _ => return None,
+        };
+        if !matches!(ext.as_str(), "http" | "rest" | "curl") {
+            return None;
+        }
+        let (mut request, script_src) = if matches!(ext.as_str(), "http" | "rest")
+            && let Ok(blocks) = http::file::parse_all(&text)
+        {
+            let lines: Vec<&str> = text.split('\n').collect();
+            let b = blocks
+                .iter()
+                .find(|b| cursor_row >= b.start_line && cursor_row <= b.end_line)
+                .unwrap_or(&blocks[0]);
+            let src = lines[b.start_line..=b.end_line.min(lines.len().saturating_sub(1))].join("\n");
+            (b.request.clone(), src)
+        } else {
+            match http::parse(&text) {
+                Ok(r) => (r, text.clone()),
+                Err(_) => return None,
+            }
+        };
+        let script = http::script::parse(&script_src);
+        let mut env = EnvSet::select(&self.workspace, None);
+        http::script::apply_pre(&script, &mut request, &mut env);
+        request.url = http::template::expand(&request.url, &env);
+        for (_, v) in request.headers.iter_mut() {
+            *v = http::template::expand(v, &env);
+        }
+        if let Some(body) = request.body.as_mut() {
+            *body = http::template::expand(body, &env);
+        }
+        Some(request)
+    }
+
+    /// `http.bench` — fire the active editor's request `n` times
+    /// across `concurrency` worker threads, then write the summary
+    /// trace to the clipboard and toast a one-liner. The full
+    /// trace has the p50/p95/p99/max + status-class breakdown so
+    /// the user can paste it into a buffer for inspection. Phase 5
+    /// of the rqst→mnml port-back; 2026-06-19.
+    ///
+    /// Runs on a background thread (10 sequential 30-second
+    /// reqwest calls = up to 5 minutes of frozen UI without
+    /// this). `App::tick` drains the result channel.
+    pub fn http_bench_active(&mut self, n: u32, concurrency: u32) {
+        if self.http_bench_rx.is_some() {
+            self.toast("http.bench already running");
+            return;
+        }
+        let Some(req) = self.parse_active_as_request() else {
+            self.toast("http.bench: no active .http/.curl/.rest editor");
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let trace = crate::http::bench::run(&req, n, concurrency);
+            let _ = tx.send(trace);
+        });
+        self.http_bench_rx = Some(rx);
+        self.toast(format!("http.bench: firing {n}× ({concurrency} concurrent)…"));
+    }
+
+    /// Drain the in-flight `http.bench` result and surface it via
+    /// toast + clipboard. Called from `App::tick`.
+    pub fn drain_http_bench_result(&mut self) {
+        let Some(rx) = self.http_bench_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(trace) => {
+                self.http_bench_rx = None;
+                // Pull the "bench summary" headline out for the
+                // toast; full trace lands on the clipboard for the
+                // user to inspect.
+                let headline = trace
+                    .lines()
+                    .find(|l| l.trim_start().starts_with("bench summary"))
+                    .unwrap_or("bench: complete")
+                    .trim()
+                    .to_string();
+                self.clipboard.set(trace, false);
+                self.toast(format!("{headline} (full trace → clipboard)"));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.http_bench_rx = None;
+                self.toast("http.bench: worker dropped");
+            }
+        }
+    }
+
     /// `jwt.decode` — decode the JWT currently on the clipboard
     /// (claims segment only — signature isn't verified, this is
     /// purely a display tool for tokens you already have). Toasts
@@ -415,6 +631,7 @@ impl App {
         };
         let done: Vec<HttpJobDone> = rx.try_iter().collect();
         let mut toasts: Vec<String> = Vec::new();
+        let workspace = self.workspace.clone();
         for (job_id, result) in done {
             let Some(Pane::Request(rp)) = self.panes.iter_mut().find(
                 |p| matches!(p, Pane::Request(rp) if rp.job_id == job_id && matches!(rp.state, RunState::Sending)),
@@ -435,10 +652,37 @@ impl App {
                     } else {
                         format!("← {} {}", rv.status, rv.status_text)
                     });
+                    // Phase 9 — append to .rqst/history.jsonl so
+                    // grep/jq workflows AND the in-app `http.history`
+                    // viewer see the request.
+                    crate::http::history::append(
+                        &workspace,
+                        &crate::http::history::Entry {
+                            method: &rp.request.method,
+                            url: &rp.request.url,
+                            status: Some(rv.status),
+                            duration_ms: Some(rv.elapsed.as_millis()),
+                            body_bytes: Some(rv.body.len()),
+                            error: None,
+                        },
+                    );
                     rp.state = RunState::Done(Box::new(rv));
                 }
                 Err(e) => {
                     toasts.push(format!("request failed: {e}"));
+                    // Failed sends still get a history entry so
+                    // forensic queries can find them.
+                    crate::http::history::append(
+                        &workspace,
+                        &crate::http::history::Entry {
+                            method: &rp.request.method,
+                            url: &rp.request.url,
+                            status: None,
+                            duration_ms: None,
+                            body_bytes: None,
+                            error: Some(&e),
+                        },
+                    );
                     rp.state = RunState::Failed(e);
                 }
             }
