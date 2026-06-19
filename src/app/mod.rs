@@ -7718,14 +7718,22 @@ impl App {
     }
 
     pub fn pending_display(&self) -> Option<String> {
-        if self.focus == Focus::Pane {
-            self.active_editor().and_then(|b| b.input.pending_display())
-        } else if let Some(text) = self.no_pane_cmdline.as_deref() {
+        // The no-pane cmdline wins regardless of focus — Ctrl+;
+        // opens it from ANY focus including pane, so its visible
+        // state has to override whatever the editor's input handler
+        // might be reporting. Bug found 2026-06-18: cmdline_bar
+        // rendered the editor's pending state and the cmdline was
+        // visually hidden by the pane, even though typing was
+        // landing in `no_pane_cmdline` correctly.
+        if let Some(text) = self.no_pane_cmdline.as_deref() {
             // Match the vim cmdline's display shape — leading `:` +
             // a caret block at the end so the cmdline_bar's
             // `starts_with(':')` branch picks it up and renders in
             // the same yellow style as the in-buffer cmdline.
-            Some(format!(":{text}▏"))
+            return Some(format!(":{text}▏"));
+        }
+        if self.focus == Focus::Pane {
+            self.active_editor().and_then(|b| b.input.pending_display())
         } else {
             None
         }

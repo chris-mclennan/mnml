@@ -594,20 +594,26 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // based on the resolve_seq result. See `dispatch_chord_chain` for the full
     // state machine. Returns true if the key was consumed (no fall-through);
     // false if it wasn't (fall through to the focused handler).
-    if dispatch_chord_chain(app, key) {
-        return;
-    }
-
-    // Ctrl+; → open the ex-cmdline regardless of focus or input
-    // mode. Gives standard-mode users a keyboard path to `:` since
-    // they don't get vim's `:` chord, and works from the tree too
-    // so empty-state launches can reach :settings via keyboard.
-    // Lives above the focus dispatch so the pane key handler can't
-    // intercept it. User-requested 2026-06-18.
+    // Ctrl+; → open the ex-cmdline regardless of focus, input mode,
+    // or any pending chord-chain state. Sits ABOVE dispatch_chord_chain
+    // because a half-typed leader sequence in editor focus would
+    // otherwise push this key onto pending_chord_seq and either fire
+    // a multi-key chord or leave the cmdline open silently swallowed.
+    // User-reported 2026-06-18 that Ctrl+; worked in tree focus but
+    // failed in pane focus — symptom of a leader chord left dangling
+    // in the pane's interaction.
     if key.code == KeyCode::Char(';') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        // Clear any in-flight chord chain — fresh chord, fresh state.
+        app.pending_chord_seq.clear();
+        app.pending_chord_deadline = None;
+        app.pending_chord_fallback = None;
         if app.no_pane_cmdline.is_none() {
             app.open_ex_command_prompt();
         }
+        return;
+    }
+
+    if dispatch_chord_chain(app, key) {
         return;
     }
 
