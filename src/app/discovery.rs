@@ -287,6 +287,144 @@ impl App {
         }
     }
 
+    /// Pop the "patch nerd font with this SVG" prompt — the user
+    /// types an SVG file path, the accept handler runs the
+    /// `scripts/patch_nerd_font.py` shell-out, the result toasts
+    /// + copies the assigned codepoint to the clipboard for paste
+    /// into the integration edit panel's Glyph field.
+    pub fn open_patch_nerd_font_svg_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::PatchNerdFontSvg,
+            "SVG file path to bake into Nerd Font:".to_string(),
+        ));
+    }
+
+    /// Pick the next free PUA codepoint at or above U+F300 by
+    /// scanning every currently-configured integration / launcher
+    /// glyph for collisions. The script's own range comment notes
+    /// U+F300+ is the recommended user-add range, well clear of
+    /// Nerd Fonts' own `nf-*` glyphs.
+    fn next_free_pua_codepoint(&self) -> u32 {
+        let mut taken: std::collections::HashSet<u32> =
+            std::collections::HashSet::new();
+        for ic in &self.config.ui.integration_icons {
+            if let Some(c) = ic.glyph.chars().next() {
+                taken.insert(c as u32);
+            }
+        }
+        for li in &self.config.ui.launcher_icons {
+            if let Some(c) = li.glyph.chars().next() {
+                taken.insert(c as u32);
+            }
+        }
+        let mut cp = 0xF300u32;
+        while taken.contains(&cp) {
+            cp += 1;
+        }
+        cp
+    }
+
+    /// Spawn the patch script. Picks the next free PUA codepoint,
+    /// runs `fontforge -script scripts/patch_nerd_font.py …` via
+    /// shell, and toasts the result. The patched font lands at the
+    /// `--output` path the script chose; the user has to install it
+    /// in Font Book (or copy to `~/Library/Fonts/`) for the new
+    /// glyph to render. The assigned codepoint is yanked to the
+    /// clipboard so the user can paste it into the Glyph field of
+    /// the integration edit panel.
+    pub fn run_patch_nerd_font_svg(&mut self, svg: &str) {
+        let svg = svg.trim();
+        if svg.is_empty() {
+            self.toast("svg path can't be empty");
+            return;
+        }
+        let svg_path = std::path::PathBuf::from(svg);
+        if !svg_path.exists() {
+            self.toast(format!("svg not found: {}", svg_path.display()));
+            return;
+        }
+        let cp = self.next_free_pua_codepoint();
+        // Default in/out font paths — same convention as the
+        // existing Claude/Codex shipped patch. User can re-run the
+        // script by hand if they want a different output path.
+        let home = match std::env::var_os("HOME") {
+            Some(h) => std::path::PathBuf::from(h),
+            None => {
+                self.toast("HOME unset — can't resolve font paths");
+                return;
+            }
+        };
+        let font_in = home
+            .join("Library/Fonts/JetBrainsMonoNerdFont-Regular.ttf");
+        let font_out = home
+            .join("Library/Fonts/JetBrainsMonoNerdFont-Regular-mnml.ttf");
+        if !font_in.exists() {
+            self.toast(format!(
+                "font not found: {} — install JetBrainsMono Nerd Font first",
+                font_in.display()
+            ));
+            return;
+        }
+        // Script lives at <repo>/scripts/patch_nerd_font.py — locate
+        // by walking up from the binary's dir. For installed mnml
+        // this won't be the source tree; toast a hint.
+        let script = match std::env::current_exe()
+            .ok()
+            .and_then(|p| {
+                // walk up looking for scripts/patch_nerd_font.py
+                let mut cur = p;
+                while cur.pop() {
+                    let cand = cur.join("scripts/patch_nerd_font.py");
+                    if cand.exists() {
+                        return Some(cand);
+                    }
+                }
+                None
+            })
+            .or_else(|| {
+                // fall back to ~/Projects/mnml — the dev path
+                let cand = home.join("Projects/mnml/scripts/patch_nerd_font.py");
+                if cand.exists() { Some(cand) } else { None }
+            }) {
+            Some(p) => p,
+            None => {
+                self.toast(
+                    "patch_nerd_font.py not found — clone mnml source tree to use this command",
+                );
+                return;
+            }
+        };
+        let glyph_name = format!("custom_{cp:04x}");
+        let glyph_spec = format!("{}:{cp:X}:{glyph_name}", svg_path.display());
+        let status = std::process::Command::new("fontforge")
+            .arg("-script")
+            .arg(&script)
+            .arg("--font")
+            .arg(&font_in)
+            .arg("--output")
+            .arg(&font_out)
+            .arg("--glyph")
+            .arg(&glyph_spec)
+            .status();
+        match status {
+            Ok(s) if s.success() => {
+                let codepoint_escape = format!("\\u{{{:X}}}", cp);
+                let mut clip = crate::clipboard::Clipboard::new();
+                clip.set(codepoint_escape.clone(), false);
+                self.toast(format!(
+                    "patched · U+{cp:X} copied · install {} then paste glyph",
+                    font_out.file_name().unwrap_or_default().to_string_lossy()
+                ));
+            }
+            Ok(s) => {
+                self.toast(format!("fontforge exited with status {s}"));
+            }
+            Err(e) => {
+                self.toast(format!("fontforge failed: {e} — `brew install fontforge`?"));
+            }
+        }
+    }
+
     /// Drop the integration with the given id from the rail and
     /// persist to TOML. Surfaced from the chip right-click menu's
     /// "Remove from rail" entry.

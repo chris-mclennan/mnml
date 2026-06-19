@@ -1065,6 +1065,10 @@ impl App {
                 let s = p.input.trim().to_string();
                 self.goto_line_str(&s);
             }
+            crate::prompt::PromptKind::PatchNerdFontSvg => {
+                let svg = p.input.trim().to_string();
+                self.run_patch_nerd_font_svg(&svg);
+            }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();
                 if let Some(FsAction::NewFile { parent }) = self.pending_fs_action.take() {

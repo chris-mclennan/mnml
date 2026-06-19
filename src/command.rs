@@ -1327,6 +1327,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_discovery_overlay(),
         },
         Command {
+            id: "integrations.patch_nerd_font_svg",
+            title: "Integrations: bake an SVG into your Nerd Font as a glyph",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_patch_nerd_font_svg_prompt(),
+        },
+        Command {
             id: "editor.jump_next_edit",
             title: "Jump to next edit position (vim `g,`)",
             group: "editor",
