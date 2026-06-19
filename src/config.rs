@@ -146,6 +146,13 @@ pub struct BrowserConfig {
     /// (navigate), `e` (eval), `s` (screenshot), etc. Default off — the
     /// visible window is what most users expect from `browser.open`.
     pub headless: bool,
+    /// Auto-append every `Network.requestWillBeSent` captured by an
+    /// open Browser pane to `<workspace>/.rqst/captured/log.jsonl` —
+    /// same format `:http.view_captured` reads. When this is on,
+    /// the rqst proxy/capture flow is transparent: you just browse,
+    /// the log accumulates. Default on. Off ⇒ only explicit
+    /// `:http.capture_now` writes to the log.
+    pub autocapture_to_log: bool,
     /// Where Chrome's `--user-data-dir` (cookies, localStorage, login
     /// state) is stored. `"workspace"` (default) ⇒
     /// `<workspace>/.mnml/chrome-profile/` — workspace-scoped, persists
@@ -972,6 +979,7 @@ impl Default for Config {
             browser: BrowserConfig {
                 headless: false,
                 profile_mode: "workspace".to_string(),
+                autocapture_to_log: true,
             },
             playwright: PlaywrightConfig::default(),
             ci: CiConfig::default(),
@@ -1035,6 +1043,7 @@ struct RawCi {
 struct RawBrowser {
     headless: Option<bool>,
     profile_mode: Option<String>,
+    autocapture_to_log: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1448,6 +1457,9 @@ impl Config {
                 "workspace" | "shared" | "ephemeral" => v,
                 _ => "workspace".to_string(),
             };
+        }
+        if let Some(v) = raw.browser.autocapture_to_log {
+            self.browser.autocapture_to_log = v;
         }
         if let Some(v) = raw.ci.provider {
             self.ci.provider = Some(v);

@@ -2857,6 +2857,23 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_lookup_open(),
         },
         Command {
+            id: "browser.autocapture_toggle",
+            title: "Browser: toggle auto-append network entries to captured log",
+            group: "http",
+            // Runtime override for `[browser] autocapture_to_log` —
+            // affects every Browser pane in this session until restart.
+            keys: &[],
+            run: |app| {
+                app.config.browser.autocapture_to_log =
+                    !app.config.browser.autocapture_to_log;
+                app.toast(if app.config.browser.autocapture_to_log {
+                    "browser autocapture → captured/log.jsonl: ON"
+                } else {
+                    "browser autocapture: OFF"
+                });
+            },
+        },
+        Command {
             id: "http.capture_now",
             title: "HTTP: append browser pane network entries → captured log",
             group: "http",

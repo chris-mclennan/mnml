@@ -956,6 +956,10 @@ impl App {
         // ends. NLL drops `b` at last use, so the post-match write
         // compiles cleanly.
         let mut nav_url: Option<String> = None;
+        // Same pattern for the new auto-capture-to-log path: the
+        // match arms push (id, request-json) pairs here; we write
+        // them to .rqst/captured/log.jsonl after the borrow ends.
+        let mut autocapture_pending: Vec<(String, serde_json::Value)> = Vec::new();
         let Some(Pane::Browser(b)) = self.panes.get_mut(idx) else {
             return;
         };
@@ -1118,6 +1122,15 @@ impl App {
                         req,
                     ) {
                         b.note_net_request(id, req);
+                        // Auto-capture: write the request to
+                        // <workspace>/.rqst/captured/log.jsonl so the
+                        // `:http.view_captured` picker reflects
+                        // everything you've browsed, not just what
+                        // you explicitly `:http.capture_now`-d. Config
+                        // knob `[browser] autocapture_to_log` gates
+                        // this; default on. 2026-06-19 user-requested
+                        // — "rqst had this when you opened the browser."
+                        autocapture_pending.push((id.to_string(), req.clone()));
                     }
                 }
             }
@@ -1169,6 +1182,81 @@ impl App {
         }
         if let Some(url) = nav_url {
             self.note_browser_url(url);
+        }
+        if !autocapture_pending.is_empty() && self.config.browser.autocapture_to_log {
+            self.append_browser_autocapture(autocapture_pending);
+        }
+    }
+
+    /// Append each pending request to
+    /// `<workspace>/.rqst/captured/log.jsonl` as a `CapturedRow` so
+    /// `:http.view_captured` reflects everything the browser pane
+    /// has seen. Best-effort: ignores I/O errors so a write failure
+    /// doesn't poison the CDP loop. Gated by `[browser]
+    /// autocapture_to_log` (default on). 2026-06-19 — user-requested
+    /// "rqst had a button that captured what the browser did, do
+    /// the same for the in-app browser."
+    fn append_browser_autocapture(&self, rows: Vec<(String, serde_json::Value)>) {
+        use std::io::Write;
+        let log_path = self
+            .workspace
+            .join(".rqst")
+            .join("captured")
+            .join("log.jsonl");
+        if let Some(parent) = log_path.parent()
+            && std::fs::create_dir_all(parent).is_err()
+        {
+            return;
+        }
+        let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        else {
+            return;
+        };
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        for (request_id, req) in rows {
+            let method = req
+                .get("method")
+                .and_then(|m| m.as_str())
+                .unwrap_or("GET")
+                .to_string();
+            let url = req
+                .get("url")
+                .and_then(|u| u.as_str())
+                .unwrap_or("")
+                .to_string();
+            let headers: Vec<(String, String)> = req
+                .get("headers")
+                .and_then(|h| h.as_object())
+                .map(|obj| {
+                    obj.iter()
+                        .filter_map(|(k, v)| {
+                            v.as_str().map(|s| (k.clone(), s.to_string()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let body = req
+                .get("postData")
+                .and_then(|b| b.as_str())
+                .map(str::to_string);
+            let row = crate::http::captured::CapturedRow {
+                at,
+                request_id,
+                method,
+                url,
+                headers,
+                body,
+                paused: false,
+            };
+            if let Ok(line) = serde_json::to_string(&row) {
+                let _ = writeln!(f, "{line}");
+            }
         }
     }
 
