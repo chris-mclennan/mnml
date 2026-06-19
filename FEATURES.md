@@ -143,11 +143,38 @@ The complete, organised feature inventory. For the front-door overview see
   (`@set-*`, `@assert`, `@capture`).
 - **Request pane** — an editable, form-style pane (method / URL / headers /
   body), re-send, copy-as-curl, and write-back to the source file.
+- **Env files** — `.mnml/env/<name>.env` (preferred) and `.rqst/env/<name>.env`
+  (legacy, ported from rqst). `.mnml/` overrides on the same key; resolution
+  chain is `--env` → `$MNML_ENV` → `.rqst/config`'s `default_env`.
 - **Chains** — run a `.chain.json` of dependent requests, extracting values
   between steps.
 - **Discover** — turn an OpenAPI / Swagger spec into one `.curl` stub per
   operation.
-- **CLI mode** — `mnml run FILE`, `mnml chain run FILE`, `mnml discover SPEC`.
+- **Sources sync** — `.mnml/sources.json` (or `.rqst/sources.json`) lists
+  swagger sources; `:http.sync` regenerates every `.curl` stub from upstream
+  on a background thread.
+- **Bench** — `:http.bench` fires the active request 10× concurrent on a
+  background thread, full p50/p95/p99/max trace to the clipboard, summary
+  headline toasts.
+- **Mocks** — `:http.save_mock` writes the active Done response to a sibling
+  `<source>.curl.mock.json`; `:http.replay_mock` serves it back as if it were
+  a live send (no network call).
+- **History** — every send (Ok or Err) appends to `.rqst/history.jsonl`;
+  `:http.history` opens a picker over the last 100 entries, Enter scratches a
+  re-fire-ready `.curl` buffer.
+- **Captured browser traffic** — when a Browser pane is open, every network
+  request auto-appends to `.rqst/captured/log.jsonl` (default on; toggle with
+  `[browser] autocapture_to_log` or `:browser.autocapture_toggle`).
+  `:http.view_captured` opens a picker, Enter scratches a `.curl` for re-fire.
+  `:http.capture_now` also dumps the pane's current NetEntry list on demand.
+- **Lookup picker** — `:http.lookup` walks a multi-stage UI: pick a `.curl`
+  under `.rqst/lookups/` → fire it → pick an item from the response list →
+  type a var name → writes `<var>=<id>` to the active env file.
+- **Helpers** — `:jwt.decode` (clipboard JWT → claims + EXPIRED flag);
+  `:auth.extract_bearer` (clipboard text → bare token).
+- **CLI mode** — `mnml run FILE`, `mnml chain run FILE`, `mnml discover SPEC`,
+  `mnml sync [--workspace DIR]`, `mnml proxy --url URL [--seconds N]`
+  (headless Chrome CDP capture into `.rqst/captured/log.jsonl`).
 
 ## Browser & CDP capture
 
@@ -187,6 +214,22 @@ The complete, organised feature inventory. For the front-door overview see
 - **Markdown** — a live preview pane with inline image embedding, and optional
   inline-rendered markdown in the editor.
 - **Image rendering** — inline images via the Kitty / iTerm2 graphics protocols.
+- **Now-playing transport chip** — the statusline's right-side cluster splits
+  into `[play/pause]` + `[ffwd]` + `[track]` adjacent segments when any source
+  is playing. Source-aware dispatch — mixr uses its `~/.mixr/command` IPC
+  (`pause`, `teleport`); Apple Music and Spotify use AppleScript via
+  `osascript` (`playpause`, `next track`, `activate`) with a hardcoded source
+  whitelist. macOS sources combine `artist - title` in the track text. A 10-s
+  stickiness layer papers over mixr's mid-transition empty reads so the chip
+  doesn't flicker. Idle collapses to one `♪ <app>` chip — label and click
+  destination follow `[ui] preferred_music_app` (`mixr` / `music` / `spotify`,
+  default `mixr`).
+- **Mixr panel size chips** — the `♪ mixr` panel's header carries three
+  right-aligned chips for snapping between size states: `⤢` grow (to
+  `Full`), `⤡` shrink (to `BottomStrip`, only from `Full`), `–` minimize.
+  Click handlers run before the header's drag detector so the chips don't
+  get eaten by a window-drag start. The minimize chip releases focus back
+  to the editor; grow and shrink keep focus on the panel.
 - **Zen mode**, **stacked notifications**, a clickable statusline.
 
 ## Headless, IPC & extensibility
