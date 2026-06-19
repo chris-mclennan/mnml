@@ -18,6 +18,8 @@ The point of baking it in: you can edit a route handler, jump to the `.http` fil
 
 Every piece is shared between the editor (`http.send` opens a Request pane) and the CLI (`mnml run FILE`, `mnml chain run FILE`). The wire format, the env loader, the script directives, the response shape — one implementation, two front-ends.
 
+There's also a file-less front door for the Postman-style "paste a curl from Chrome and just see the response" flow. `:http.new` opens a blank in-memory Request pane; `Ctrl+Shift+V` (or `:http.paste_curl`) populates Method / URL / Headers / Body from the clipboard. The Edit view is tabbed (Body / Headers / Params / Vars / Source) and Method / URL rows carry field-aware right-click menus. See [New request — Postman-style scratch pane](/manual/http-new-request/) for the full surface.
+
 ## Request files
 
 mnml's request parser auto-detects between the `.http` / `.rest` REST-Client format and pasted cURL commands. The file extension is a hint (`http.send` requires `.http`, `.rest`, or `.curl`), but inside the file the format is sniffed: a leading HTTP method line means `.http`-format; otherwise it's parsed as cURL.
@@ -81,14 +83,18 @@ When the send fires, mnml spawns a background thread, opens a `Pane::Request` sp
 
 ### Inside the Request pane
 
-| Key | Action |
+| Key | Action (Response view) |
 |---|---|
-| `Tab` | Flip between **Response** (read-only) and **Edit** (editable form) |
+| `Tab` | Flip to **Edit** view |
 | `r` | Re-fire the request using the pane's current field values |
-| `y` | Copy the response body |
+| `y` | Copy the request as a curl |
+| `Y` | Copy the response body |
+| `e` | Same as `Tab` — flip to Edit |
 | `Esc` | Return focus to the file tree |
 
-In **Edit** mode the pane is a four-field form (URL / Method / Headers / Body). `Shift+Tab` / `Tab` cycle which field has the caret; arrows + Home / End / Backspace edit the focused field; `Space` on the Method field cycles through `GET / POST / PUT / PATCH / DELETE / HEAD / OPTIONS`. Tweak the URL, press `r`, see the new response — no flip back to the source file.
+In **Edit** mode the pane is a four-field form (URL / Method / Headers / Body) with a tab strip (Body / Headers / Params / Vars / Source) sitting between the URL row and the field content. `Tab` / `Shift+Tab` cycle which form field has the caret; arrows + Home / End / Backspace edit the focused field; `Space` on the Method field cycles through `GET / POST / PUT / PATCH / DELETE / HEAD / OPTIONS`. `Ctrl+]` / `Ctrl+[` cycle the tab strip; `Ctrl+1..5` jump to a specific tab. `Esc` in Edit view flips back to Response (the inverse of Tab) — it doesn't leave the pane.
+
+`Ctrl+Shift+V` in Edit view pastes a curl from the clipboard and populates every field; right-clicking any row opens a field-aware menu with Send / Paste curl / Copy as curl / Switch to Response (and Cycle method on the Method row). The whole Postman-style surface — including `:http.new` to open a blank request — has its own page: [New request — Postman-style scratch pane](/manual/http-new-request/).
 
 Writing back to the source file is automatic — saving the request pane (`Ctrl-S` in standard, `:w` in vim) re-serialises the request as a `.http` block and edits the matched block in the original file, leaving every other block untouched. Multi-block files use the `### name` separator as the match key; single-block files round-trip through a whole-file overwrite.
 
@@ -286,6 +292,7 @@ This is a smoke-test surface — you can run an end-to-end "log in, fetch users,
 
 Deep-dives on individual surfaces:
 
+- [New request — Postman-style scratch pane](/manual/http-new-request/) — `:http.new`, paste-curl from clipboard, the tabbed Edit view, the field-aware right-click menu
 - [HTTP envs & templating](/manual/http-envs/) — the resolution chain (`--env` → `$MNML_ENV` → `.rqst/config`), the `.mnml/env/` over `.rqst/env/` precedence, every `{{$dynamic}}` builtin
 - [HTTP sync — sources.json](/manual/http-sync/) — batch-regenerate `.curl` stubs from multiple swagger sources via `:http.sync` or `mnml sync`
 - [HTTP bench](/manual/http-bench/) — 10× concurrent fire with p50 / p95 / p99 latency + status-class breakdown

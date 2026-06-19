@@ -97,6 +97,7 @@ export default defineConfig({
             { label: 'LSP', slug: 'manual/lsp' },
             { label: 'Git', slug: 'manual/git' },
             { label: 'HTTP client', slug: 'manual/http' },
+            { label: 'HTTP new request (Postman-style)', slug: 'manual/http-new-request' },
             { label: 'HTTP envs & templating', slug: 'manual/http-envs' },
             { label: 'HTTP sync — sources.json', slug: 'manual/http-sync' },
             { label: 'HTTP bench', slug: 'manual/http-bench' },

@@ -24,7 +24,12 @@ The mental model:
 - The **INTEGRATIONS rail** is your start menu — narrow strip of installed siblings on the left, with a `+` chip that opens a discovery overlay listing everything else mnml knows about.
 
 :::note
-Setting either array in your config *replaces* the built-in defaults — it doesn't append. If you want a custom rail integration alongside the defaults, copy the shipped list from `src/config.rs` into your `~/.config/mnml/config.toml` first, then add your entry.
+The two arrays have different merge semantics with the built-in defaults:
+
+- `[[ui.launcher_icon]]` (the bufferline strip) **replaces** the built-in Claude Code + Codex defaults entirely. Setting any `[[ui.launcher_icon]]` in your config means the defaults disappear; if you want them alongside your custom chips, copy them from `src/config.rs` into your config.
+- `[[ui.integration_icon]]` (the rail) **merges by `id`** with the built-in catalog. User entries override built-ins of the same id; built-in ids you don't mention stay; user-only ids append at the end, in your config order.
+
+The merge change landed 2026-06-19. Before then, setting any `[[ui.integration_icon]]` would drop every built-in chip — users with a single custom rail entry lost the whole catalog (including new built-ins like the green `+` `http_new` chip). The new merge semantics close that gap: you only have to spell out the chips you're overriding or adding.
 :::
 
 ## How mnml detects installation
