@@ -17,10 +17,12 @@ use ratatui::widgets::Paragraph;
 use crate::app::{ActivitySection, App};
 use crate::ui::theme;
 
-/// Width of the activity bar strip in cells. 4 cells = 1 padding + 1
-/// glyph + 1 padding + 1 spacer. Matches vscode's visual weight at
-/// this terminal-cell density.
-pub const ACTIVITY_BAR_WIDTH: u16 = 4;
+/// Width of the activity bar strip in cells. 3 cells = 1 padding + 1
+/// glyph + 1 padding. Was 4 (trailing spacer column) but the extra
+/// cell read as a too-wide gap between the window edge and the
+/// rail. Matches vscode's visual weight at this terminal-cell
+/// density.
+pub const ACTIVITY_BAR_WIDTH: u16 = 3;
 
 /// Paint the activity bar into `area`. Registers a click rect per
 /// icon on `app.rects.activity_bar_icons` so mouse handling can
