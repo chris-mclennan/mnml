@@ -18,6 +18,14 @@
 
 pub mod ai;
 pub mod app;
+// Port-back helpers from the retired `rqst` app (2026-06-19).
+// `jwt`: claims-only JWT decoder; `auth`: bearer-token extraction
+// from clipboard text; `cookies`: small cookie-jar helpers; `sse`:
+// minimal Server-Sent Events parser (Anthropic/OpenAI streams).
+pub mod auth;
+pub mod cookies;
+pub mod jwt;
+pub mod sse;
 // `mod aws` was split out to the standalone mnml-aws-codebuild
 // binary in 2026-06.
 // `mod azdevops` was split out to the standalone mnml-forge-azdevops

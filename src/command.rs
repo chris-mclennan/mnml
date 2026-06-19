@@ -2835,6 +2835,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_sync_sources(),
         },
         Command {
+            id: "jwt.decode",
+            title: "JWT: decode clipboard token (claims only, no signature)",
+            group: "http",
+            keys: &[],
+            run: |app| app.jwt_decode_clipboard(),
+        },
+        Command {
+            id: "auth.extract_bearer",
+            title: "Auth: extract bearer token from clipboard text",
+            group: "http",
+            keys: &[],
+            run: |app| app.auth_extract_bearer_from_clipboard(),
+        },
+        Command {
             id: "http.copy_curl",
             title: "HTTP: copy the request as a curl command",
             group: "http",

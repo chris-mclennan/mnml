@@ -115,6 +115,66 @@ impl App {
         self.focus = Focus::Pane;
     }
 
+    /// `jwt.decode` — decode the JWT currently on the clipboard
+    /// (claims segment only — signature isn't verified, this is
+    /// purely a display tool for tokens you already have). Toasts
+    /// the headline claims (`sub`, `email`, `exp`) so a user can
+    /// quickly check who/when a token is for. Phase 8 of the
+    /// rqst→mnml port-back; 2026-06-19.
+    pub fn jwt_decode_clipboard(&mut self) {
+        let token = self.clipboard.text();
+        if token.trim().is_empty() {
+            self.toast("jwt.decode: clipboard is empty");
+            return;
+        }
+        let Some(claims) = crate::jwt::decode(&token) else {
+            self.toast("jwt.decode: not a valid JWT (3 dot-separated segments)");
+            return;
+        };
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(sub) = claims.sub.as_deref() {
+            parts.push(format!("sub={sub}"));
+        }
+        if let Some(email) = claims.email.as_deref() {
+            parts.push(format!("email={email}"));
+        }
+        if let Some(exp) = claims.exp_display() {
+            parts.push(format!("exp={exp}"));
+        }
+        if claims.is_expired() {
+            parts.push("EXPIRED".into());
+        }
+        let msg = if parts.is_empty() {
+            "jwt.decode: (token has no standard claims)".to_string()
+        } else {
+            format!("jwt: {}", parts.join(" · "))
+        };
+        self.toast(msg);
+    }
+
+    /// `auth.extract_bearer` — pull a bearer token out of arbitrary
+    /// clipboard text (a paste of `Authorization: Bearer eyJ…` or
+    /// just `Bearer eyJ…`, or the bare JWT itself). Writes the
+    /// extracted token back to the clipboard so the user can paste
+    /// it into an env file. Phase 8 of the rqst→mnml port-back.
+    pub fn auth_extract_bearer_from_clipboard(&mut self) {
+        let raw = self.clipboard.text();
+        match crate::auth::extract_bearer_from_clipboard(&raw) {
+            Some(token) => {
+                let preview = if token.len() > 18 {
+                    format!("{}…{}", &token[..6], &token[token.len() - 6..])
+                } else {
+                    token.clone()
+                };
+                self.clipboard.set(token, false);
+                self.toast(format!("bearer: {preview} (copied)"));
+            }
+            None => {
+                self.toast("auth.extract_bearer: no bearer token found");
+            }
+        }
+    }
+
     /// `http.sync` — read `<workspace>/.mnml/sources.json` (or
     /// `<workspace>/.rqst/sources.json` for legacy workspaces) and
     /// regenerate `.curl` stub files for every `kind: "swagger"`
