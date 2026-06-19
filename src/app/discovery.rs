@@ -448,6 +448,13 @@ impl App {
             env: vec![],
             session_id: None,
         };
+        // Mirror the install-flow pattern at line 920: close the
+        // discovery overlay before splitting so the new Pty isn't
+        // hidden under the still-painted overlay. The reachable
+        // case is "user opens the SVG prompt from inside the
+        // overlay" (vs the palette path, where the overlay isn't
+        // open) — second-pass reviewer caught this.
+        self.close_discovery_overlay();
         self.open_pty(profile);
         self.toast(format!(
             "patching · glyph copied · install {} after fontforge exits, then paste",
