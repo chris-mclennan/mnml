@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 #
-# PreToolUse hook for Bash — when the command about to run is `git push`,
-# ask Claude (via stdout to the hook framework) to invoke the
-# `code-reviewer` agent on the staged + most-recent-commit diff before
-# the push fires. The hook prints a marker the assistant sees and
-# treats as "run the review before continuing."
+# PreToolUse hook for Bash — fires on `git push` to remind the
+# assistant to run the `code-reviewer` agent before pushing.
 #
-# Why this shape: the actual review needs Claude's reasoning + the
-# agent tool. A shell-only review (clippy, fmt) already runs in
-# pre-commit hooks; this layer catches the things those can't —
-# correctness bugs, missed callers, doc-comment drift, etc.
+# State model: the hook fires ONCE per unique HEAD SHA. On first
+# fire it writes a marker at `.claude/state/reviewed-<sha>`, then
+# exits 2 with the review-gate marker on stderr. The assistant
+# runs the reviewer, addresses any findings (which produces a
+# new commit + new SHA + new gate fire), or pushes the same SHA
+# (which finds the marker and passes through).
 #
-# Triggers only on a literal `git push` (any args / branch). Skips
-# `git push --dry-run`, `git push --tags`, and anything that's
-# obviously not a "ship this" push. The reviewer reads CLAUDE_TOOL_INPUT
-# (PreToolUse contract) to get the command string.
+# This eliminates the "skip-review" friction without losing the
+# review prompt: every distinct commit set gets reviewed exactly
+# once. A push that follows a clean review just passes through.
+#
+# Skips silently for `--dry-run` and `--tags` (no commits to
+# review there).
 
 set -eu
 
@@ -33,25 +34,45 @@ case "$cmd" in
 esac
 
 # `git push --tags` — pushing tag refs only, no commits to review.
-# Tag-pushing IS a "ship this" action, but the review window was at
-# the underlying commits' push, not the tag.
 case "$cmd" in
     *--tags*) exit 0 ;;
 esac
 
-# Emit a marker the assistant treats as "stop and review before
-# pushing." Returning a non-zero exit code blocks the tool call; the
-# assistant sees the marker in stderr and decides what to do.
-#
-# Per the hook contract, stderr from a PreToolUse exit-2 hook is
-# surfaced to the assistant.
-cat >&2 <<'EOF'
-PRE_PUSH_REVIEW_GATE: run the `code-reviewer` agent on the diff that's
-about to be pushed before continuing. If review surfaces blockers, fix
-them with a new commit (do not amend). If review is clean, re-run the
-push — this hook only fires once per attempt.
+# Resolve project state directory + current HEAD SHA. Falls back
+# silently if `git rev-parse` fails (detached HEAD edge cases,
+# uninitialised repo, etc.) — better to gate than panic.
+state_dir="${CLAUDE_PROJECT_DIR:-${PWD}}/.claude/state"
+head_sha="$(git -C "${CLAUDE_PROJECT_DIR:-${PWD}}" rev-parse HEAD 2>/dev/null || echo "")"
+if [ -z "$head_sha" ]; then
+    # Can't determine HEAD — gate just to be safe.
+    head_sha="unknown"
+fi
+marker="${state_dir}/reviewed-${head_sha}"
 
-To bypass for trivial pushes (docs, comments): preface your next
-message with "skip-review" and re-issue the push.
+# Already reviewed this exact commit set? Pass through. This is
+# the "user re-running the push after a clean review" path —
+# nothing has changed, the review's already been done.
+if [ -f "$marker" ]; then
+    exit 0
+fi
+
+# First gate fire for this HEAD. Drop the marker so the NEXT
+# attempt (after the reviewer has done its thing) passes through
+# automatically. Touch is atomic enough — worst case a concurrent
+# push races but the result is identical.
+mkdir -p "$state_dir"
+touch "$marker"
+
+# Garbage-collect old markers (>7 days old) so this dir doesn't
+# grow forever. Best-effort.
+find "$state_dir" -name "reviewed-*" -type f -mtime +7 -delete 2>/dev/null || true
+
+cat >&2 <<EOF
+PRE_PUSH_REVIEW_GATE: run the \`code-reviewer\` agent on the diff
+that's about to be pushed before continuing. If review surfaces
+blockers, fix them with a new commit (do not amend). If review is
+clean, re-run the push — the gate only fires once per HEAD SHA.
+
+(Reviewed-HEAD marker: ${marker})
 EOF
 exit 2
