@@ -142,7 +142,29 @@ The complete, organised feature inventory. For the front-door overview see
   files, `{{variable}}` templating, environments, and pre/post-request scripts
   (`@set-*`, `@assert`, `@capture`).
 - **Request pane** — an editable, form-style pane (method / URL / headers /
-  body), re-send, copy-as-curl, and write-back to the source file.
+  body), re-send, copy-as-curl, and write-back to the source file. The Edit
+  view is **tabbed** — Body / Headers / Params / Vars / Source — with
+  `Ctrl+]` / `Ctrl+[` cycling and `Ctrl+1..5` for direct jumps.
+- **Blank request scratch** — `:http.new` (or the green `+` chip in the
+  INTEGRATIONS rail) opens an empty Request pane in Edit mode, no file
+  backing. Postman-style entry point.
+- **Paste curl** — `:http.paste_curl` (also `Ctrl+Shift+V` in Edit view, or
+  right-click a field → "Paste curl from clipboard") reads the clipboard,
+  parses it as curl / `.http` / `.rest`, and overwrites the active pane's
+  Method / URL / Headers / Body. Opens a blank pane first if none active.
+- **Field-aware right-click menu** — Send / Paste curl / Copy as curl /
+  Switch to Response, with per-field title (`Request · URL` / `· Method` /
+  etc) and an extra "Cycle method" entry on the Method row. Same menu
+  fires from every tab's content area.
+- **Cycle method** — `:http.cycle_method` (also Space when Method field is
+  focused) walks through GET → POST → PUT → PATCH → DELETE → HEAD → OPTIONS.
+- **SSE streaming** — `:http.send_streaming` opens the request over an SSE
+  reader (per-event newline buffering, no overall timeout for SSE servers
+  that hold the socket).
+- **Cookies normalizer** — `:cookies.normalize_clipboard` collapses any of
+  the three DevTools cookie-paste shapes (`name=val` per line,
+  `name: val` per line, or canonical `name=val; name=val`) into the
+  on-the-wire `name=v; name=v` form, written back to clipboard.
 - **Env files** — `.mnml/env/<name>.env` (preferred) and `.rqst/env/<name>.env`
   (legacy, ported from rqst). `.mnml/` overrides on the same key; resolution
   chain is `--env` → `$MNML_ENV` → `.rqst/config`'s `default_env`.
@@ -170,8 +192,13 @@ The complete, organised feature inventory. For the front-door overview see
 - **Lookup picker** — `:http.lookup` walks a multi-stage UI: pick a `.curl`
   under `.rqst/lookups/` → fire it → pick an item from the response list →
   type a var name → writes `<var>=<id>` to the active env file.
+- **Env editor** — `:http.edit_env` opens a structured picker over every
+  `KEY=VALUE` row in the active env file plus a `+ Add new variable…` row.
+  Reads both `.mnml/env/` and `.rqst/env/` files (with `.mnml/` precedence);
+  writes back to whichever file the key currently lives in.
 - **Helpers** — `:jwt.decode` (clipboard JWT → claims + EXPIRED flag);
-  `:auth.extract_bearer` (clipboard text → bare token).
+  `:auth.extract_bearer` (clipboard text → bare token);
+  `:sse.parse_active_response` (parse Done body as SSE events + summarize).
 - **CLI mode** — `mnml run FILE`, `mnml chain run FILE`, `mnml discover SPEC`,
   `mnml sync [--workspace DIR]`, `mnml proxy --url URL [--seconds N]`
   (headless Chrome CDP capture into `.rqst/captured/log.jsonl`).

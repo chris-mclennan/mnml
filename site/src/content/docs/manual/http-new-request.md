@@ -7,6 +7,8 @@ The HTTP client has two front doors. The original one is file-first: open a `.ht
 
 This page is about the second door — an in-memory Postman-style scratch pane that exists for the moments when you don't want files, you don't want a workspace, you just want to paste a curl from Chrome DevTools and watch the response. The pane has no `source_path`, never writes to disk on its own, and disappears with the session. Use it the same way you'd use the Postman "new request" tab: a holding area while you figure out what you actually want to keep.
 
+![:http.paste_curl mints a fresh Request pane, populates Method/URL/Headers from the clipboard curl, then `r` fires a 200 OK against httpbin.org/get](../../../assets/tapes/http-new-paste-curl.gif)
+
 ## Opening a blank request
 
 | Surface | Call |

@@ -1343,6 +1343,34 @@ impl App {
         self.toast(format!("paste_curl: populated from {preview}"));
     }
 
+    /// `http.abort` — release the UI-side tracking for any
+    /// in-flight HTTP work (bench / sync / lookup fire). The
+    /// worker thread keeps running until it naturally completes
+    /// (~seconds for bench / sync, possibly minutes for SSE), but
+    /// the user gets immediate UI feedback that they've moved on.
+    /// Late results from the orphaned thread land on a dropped
+    /// receiver and are silently discarded.
+    ///
+    /// True cancellation (interrupting a worker mid-network-call)
+    /// is a v3 follow-up that would need cooperative cancel tokens
+    /// threaded through reqwest::blocking — or a switch to async
+    /// reqwest with proper drop semantics. The simpler "drop the
+    /// rx" path covers the user-visible case (toast clears, "next
+    /// thing please") without rearchitecting the worker shape.
+    pub fn http_abort_all(&mut self) {
+        let was_active = self.http_bench_rx.is_some()
+            || self.http_sync_rx.is_some()
+            || self.lookup_fire_rx.is_some();
+        self.http_bench_rx = None;
+        self.http_sync_rx = None;
+        self.lookup_fire_rx = None;
+        if was_active {
+            self.toast("http: released UI tracking (worker finishes in background)");
+        } else {
+            self.toast("http: nothing in flight");
+        }
+    }
+
     /// `http.cycle_method` — cycle the active Request pane's
     /// method through the standard verbs. Same gesture as Space
     /// when the Method field is focused, but reachable from the

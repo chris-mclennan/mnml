@@ -2960,6 +2960,19 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_paste_curl_to_active(),
         },
         Command {
+            id: "http.abort",
+            title: "HTTP: cancel any in-flight bench / sync work",
+            group: "http",
+            // Sets the shared atomic abort flag. Long-running
+            // workers (bench, sync) poll between iterations and
+            // exit on the next boundary. send_streaming runs to
+            // its natural socket-close (or 600s timeout) — but
+            // the user's UI-side rx is dropped so they see the
+            // toast clear immediately.
+            keys: &[],
+            run: |app| app.http_abort_all(),
+        },
+        Command {
             id: "http.cycle_method",
             title: "HTTP: cycle method (GET→POST→PUT→DELETE→PATCH→…)",
             group: "http",

@@ -124,6 +124,8 @@ pub fn draw(
         .retain(|(_, p, _)| *p != pane_id);
 
     if active_edit {
+        let show_ws = app.config.ui.show_whitespace;
+        let workspace = app.workspace.clone();
         draw_edit(
             rp,
             t,
@@ -134,6 +136,8 @@ pub fn draw(
             pane_id,
             &mut fields,
             &mut edit_tabs_local,
+            show_ws,
+            &workspace,
         );
     } else {
         draw_response(rp, t, &mut rows);
@@ -206,6 +210,8 @@ fn draw_edit(
     pane_id: PaneId,
     fields: &mut Vec<(Rect, PaneId, EditField)>,
     tabs: &mut Vec<(Rect, PaneId, crate::request_pane::EditTab)>,
+    show_ws: bool,
+    workspace: &std::path::Path,
 ) {
     // Stash a click-target rect for the row at `row_idx_in_rows` covering
     // the full pane width (y stays as the *row index*; `draw` translates
@@ -431,8 +437,18 @@ fn draw_edit(
     } else {
         for (i, line) in body.lines().enumerate() {
             let row_y = rows.len() as u16;
+            // 2026-06-19 — keyboard hunt SEV-3 v2: when
+            // [ui] show_whitespace is on, render `\t` as `→` and
+            // leading spaces as `·` (matching the editor view) so
+            // a user typing Tab in the multi-line Body field
+            // actually sees something happen.
+            let rendered = if show_ws {
+                line.replace('\t', "→")
+            } else {
+                line.to_string()
+            };
             rows.push(Line::from(vec![Span::styled(
-                format!("    {line}"),
+                format!("    {rendered}"),
                 Style::default().fg(t.grey_fg).bg(t.bg_dark),
             )]));
             register_field(fields, row_y, EditField::Body);
@@ -531,31 +547,76 @@ fn draw_edit(
     if cur_tab == crate::request_pane::EditTab::Vars {
         let hint_y = rows.len() as u16;
         rows.push(Line::from(vec![Span::styled(
-            "    Active env vars — open structured editor: :http.edit_env".to_string(),
+            "    Active env vars — edit with :http.edit_env".to_string(),
             dim,
         )]));
         register_tab_row(fields, hint_y);
         rows.push(plain(String::new(), body_style));
-        // Try .mnml/env/<active>.env first (precedence), then .rqst/.
-        // Render keys with value previews. Empty state if no env files
-        // are present in the workspace.
-        // Note: render code can't read disk lazily; cwd-bound paths are
-        // resolved at render time, which is cheap and runs at frame
-        // rate but only when this tab is visible.
-        let mut found_any = false;
-        for sub in [".mnml", ".rqst"] {
-            // We don't know the workspace path from inside the render
-            // (request_view.rs doesn't take App by ref) — leave this
-            // as a placeholder; the structured editor (:http.edit_env)
-            // handles disk reading correctly. v2 plumbs `App.workspace`
-            // through to make this fully populated.
-            let _ = sub;
+        // 2026-06-19 v2 — workspace plumbed; read both env files in
+        // .rqst → .mnml order and last-wins on same key (matches
+        // EnvSet::load precedence + the env editor picker).
+        let env_name = crate::http::template::EnvSet::select(workspace, None)
+            .name()
+            .map(str::to_string)
+            .unwrap_or_else(|| "dev".to_string());
+        let mut by_key: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for sub in [".rqst", ".mnml"] {
+            let path = workspace
+                .join(sub)
+                .join("env")
+                .join(format!("{env_name}.env"));
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                for line in text.lines() {
+                    let trimmed = line.trim_start();
+                    if trimmed.is_empty() || trimmed.starts_with('#') {
+                        continue;
+                    }
+                    if let Some((k, v)) = trimmed.split_once('=') {
+                        by_key.insert(k.trim().to_string(), v.trim().to_string());
+                    }
+                }
+            }
         }
-        if !found_any {
+        let name_y = rows.len() as u16;
+        rows.push(Line::from(vec![Span::styled(
+            format!("    env: {env_name}.env"),
+            Style::default().fg(t.cyan).bg(t.bg_dark),
+        )]));
+        register_tab_row(fields, name_y);
+        rows.push(plain(String::new(), body_style));
+        if by_key.is_empty() {
+            let y = rows.len() as u16;
             rows.push(Line::from(vec![Span::styled(
-                "    (Vars browser scaffold — uses :http.edit_env for editing)".to_string(),
+                "    (no env vars in this workspace — :http.edit_env to add)".to_string(),
                 dim,
             )]));
+            register_tab_row(fields, y);
+        } else {
+            for (k, v) in &by_key {
+                let y = rows.len() as u16;
+                register_tab_row(fields, y);
+                let preview = if v.len() > 56 {
+                    format!("{}…", &v[..54])
+                } else {
+                    v.clone()
+                };
+                rows.push(Line::from(vec![
+                    Span::styled("    ".to_string(), body_style),
+                    Span::styled(
+                        k.clone(),
+                        Style::default()
+                            .fg(t.cyan)
+                            .bg(t.bg_dark)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        " = ".to_string(),
+                        Style::default().fg(t.comment).bg(t.bg_dark),
+                    ),
+                    Span::styled(preview, Style::default().fg(t.fg).bg(t.bg_dark)),
+                ]));
+            }
         }
     }
 

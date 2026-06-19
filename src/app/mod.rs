@@ -2626,6 +2626,13 @@ pub struct App {
     /// trace string (multi-line summary the user will see in a
     /// toast preview + paste from clipboard for the full thing).
     pub http_bench_rx: Option<std::sync::mpsc::Receiver<String>>,
+    /// 2026-06-19 — v2 polish: shared "user has asked us to stop"
+    /// flag the long-running HTTP workers poll between iterations.
+    /// Set by `:http.abort` (and Esc on a Request pane that's
+    /// in-flight). Workers don't preempt mid-network-call —
+    /// granularity is 1 request — but they exit the loop on the
+    /// next iteration boundary instead of running to completion.
+    pub http_abort: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Snapshot of `.rqst/captured/log.jsonl` for the current
     /// captured-viewer picker (`PickerKind::CapturedRows`). The
     /// picker's `id` field is a string index into this. Cleared
@@ -3334,6 +3341,7 @@ impl App {
             last_mixr_track_at: None,
             http_sync_rx: None,
             http_bench_rx: None,
+            http_abort: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pending_captured_rows: Vec::new(),
             pending_history_rows: Vec::new(),
             pending_lookup_items: Vec::new(),
