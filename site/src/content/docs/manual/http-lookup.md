@@ -3,6 +3,8 @@ title: HTTP lookups
 description: Fill an env var from a real API response — a 4-stage picker that fires a `.curl` file, lets you pick an item, and writes the id back to `.rqst/env/<active>.env`.
 ---
 
+![:http.lookup — pick a file, fire it, pick an item, name the var, write to .env](../../../assets/tapes/http-lookup-flow.gif)
+
 Lookups solve a very specific problem: a request needs an id (a merchant id, a user id, a location id), the id lives in some other endpoint's response, and you keep copy-pasting the value between Postman tabs. The lookup picker chains the two — fire the "list" endpoint, pick the row you want, upsert its id into your env file under a name like `MERCHANT_ID`.
 
 The result: next time you fire any request with `{{MERCHANT_ID}}` in its URL or body, it resolves to the id you just picked. No tab-switching, no clipboard, no editing the env file by hand.
@@ -96,10 +98,10 @@ The picker pops a prompt:
 
 ```text
 Env var name for Hot Pizza Co (2148):
-> MERCHANT_ID█
+> █
 ```
 
-The prompt is pre-filled with a **suggestion** based on the lookup file's stem — `merchants.curl` suggests `MERCHANT_ID` (trailing `s` stripped, uppercased, hyphens → underscores). `delivery-partners.curl` suggests `DELIVERY_PARTNER_ID`. Edit if you want a different name, then `Enter`.
+Type the env var name you want this id under (`MERCHANT_ID`, `USER_ID`, `LOCATION_ID`, whatever's conventional in your env file), then `Enter`. The prompt starts empty so you can pick whatever name fits — no auto-derived suggestion. Convention in mnml's env files is uppercase-snake-case ending in `_ID`.
 
 The picker writes `<var>=<id>` to `<workspace>/.rqst/env/<active>.env` — preserving every other line, comments and ordering intact. Existing vars with the same name are replaced in place; new vars are appended:
 

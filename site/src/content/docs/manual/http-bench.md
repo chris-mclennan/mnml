@@ -3,6 +3,8 @@ title: HTTP bench
 description: Fire the active request 10× concurrent and read the p50 / p95 / p99 latency breakdown.
 ---
 
+![:http.bench against httpbin.org/get — headline toast lands, then the full p50/p95/p99 trace opens in a buffer](../../../assets/tapes/http-bench-output.gif)
+
 `http.bench` fires the active editor's request N times across M worker threads, then writes a single trace string to the clipboard with sorted-sample percentiles and a status-class breakdown. It's the "is this endpoint actually fast?" tool — and the "is the failure rate something or nothing?" tool — without leaving the editor.
 
 The defaults (10 requests, 4 concurrent) are deliberately small. They're a quick sanity check, not a load-test rig. For real load testing, use `oha` / `wrk` / `vegeta` in a `:term` pane.

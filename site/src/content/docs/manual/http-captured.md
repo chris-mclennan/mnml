@@ -3,6 +3,8 @@ title: HTTP captured browser traffic
 description: Every request the in-app browser pane sees is auto-appended to `.rqst/captured/log.jsonl` — review past traffic, re-fire any entry as a `.curl` buffer, or run headless via `mnml proxy`.
 ---
 
+![mnml proxy --url news.ycombinator.com streams per-request log lines, then :http.view_captured opens the picker over the resulting captures](../../../assets/tapes/http-captured-proxy.gif)
+
 When the in-app Browser pane is open, every `Network.requestWillBeSent` event Chrome forwards is appended to `<workspace>/.rqst/captured/log.jsonl` — a separate JSONL log from the [HTTP history](/manual/http-history/), capturing *what the browser saw* rather than *what mnml fired*. The picker (`:http.view_captured`) lets you browse the log, filter, and re-fire any captured request as a fresh `.curl` buffer.
 
 Same data shape, two ways in: the live browser pane (auto-capture is on by default), and the headless CLI (`mnml proxy --url URL`) which spawns Chrome, drives it to a URL, and appends every observed request to the same log without ever rendering a UI.
