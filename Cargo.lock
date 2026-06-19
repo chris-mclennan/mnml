@@ -2077,6 +2077,7 @@ dependencies = [
  "tree-sitter-zig",
  "tungstenite",
  "uds_windows",
+ "unicode-width",
  "vt100",
  "zip 8.6.0",
 ]

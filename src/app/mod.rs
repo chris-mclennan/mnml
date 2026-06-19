@@ -2609,6 +2609,14 @@ pub struct App {
     /// before any mixr read; reset to `None` implicitly when the
     /// 10s TTL lapses (a genuine queue-empty state).
     pub last_mixr_track_at: Option<std::time::Instant>,
+    /// `:debug.rects` overlay state — when `true`, the renderer
+    /// paints colored borders around every registered click rect so
+    /// the user can SEE the hit boundaries vs the rendered glyphs.
+    /// Toggle via `:debug.rects` from the cmdline. Bug-hunt tool —
+    /// added 2026-06-19 after the workspace-add `+` chip's rect
+    /// off-by-one (wide-glyph cell-width mismatch) wasted a long
+    /// debug session.
+    pub debug_rects: bool,
     /// App-level ex-cmdline buffer — `Some(text)` while a `:` prompt
     /// is being typed from a non-pane focus (tree / empty-state /
     /// any context without an editor buffer). The bottom cmdline_bar
@@ -3283,6 +3291,7 @@ impl App {
             now_playing: None,
             now_playing_rx: None,
             last_mixr_track_at: None,
+            debug_rects: false,
             no_pane_cmdline: None,
             mixr_panel: None,
             mixr_drag: None,
@@ -7107,6 +7116,20 @@ impl App {
     /// Returns true if so. (The drag continues with [`Self::drag_tree_edge_to`]
     /// + ends with [`Self::end_tree_edge_drag`].)
     pub fn begin_tree_edge_drag(&mut self, x: u16, y: u16) -> bool {
+        // A registered click chip wins over the drag handle when
+        // they overlap. The drag zone is wide (3 cells) for trackpad
+        // discoverability, so it commonly overlaps small right-
+        // aligned chips like the `+` workspace-add button. Without
+        // this check, the chip was unclickable (the drag handle
+        // swallowed the click first). 2026-06-19 user-reported.
+        let on_chip = self
+            .rects
+            .tree_icon_buttons
+            .iter()
+            .any(|(r, _)| crate::app::dispatch::contains(*r, x, y));
+        if on_chip {
+            return false;
+        }
         if let Some(r) = self.rects.tree_edge
             && x >= r.x
             && x < r.x + r.width

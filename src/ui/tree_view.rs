@@ -411,12 +411,26 @@ fn draw_add_repo_row(
     rail_bg: ratatui::style::Color,
 ) {
     let width = area.width as usize;
-    let chip_w = 3usize;
-    if width < chip_w + 1 {
+    let glyph = if nerd { "\u{F0419}" } else { "+" };
+    // Visible chip = the glyph itself, no surrounding padding.
+    // Click rect width matches the glyph's DISPLAY-CELL width:
+    // - ascii `+`: 1 cell
+    // - nerd `󰐙`: 2 cells (the codepoint paints centered across 2
+    //   terminal cells; the click target is those 2 cells exactly)
+    //
+    // 2026-06-19 user-feedback iteration: 4-cell `" glyph "` felt
+    // too wide; 3-cell `" glyph"` was asymmetric (1-cell padding on
+    // the left, none on the right because the right edge IS the
+    // glyph). 2 cells = symmetric, visible = clickable, no off-by-
+    // one possible.
+    let chip_w = unicode_width::UnicodeWidthStr::width(glyph).max(1);
+    // 1-cell right margin so the chip doesn't sit flush against the
+    // rail's right border. User-requested 2026-06-19.
+    let right_margin = 1usize;
+    if width < chip_w + right_margin + 1 {
         return;
     }
-    let glyph = if nerd { "\u{F0419}" } else { "+" };
-    let pad = width.saturating_sub(chip_w);
+    let pad = width.saturating_sub(chip_w + right_margin);
     let row_rect = Rect {
         x: area.x,
         y,
@@ -427,7 +441,7 @@ fn draw_add_repo_row(
         Paragraph::new(Line::from(vec![
             Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)),
             Span::styled(
-                format!(" {glyph} "),
+                glyph.to_string(),
                 Style::default().fg(theme::cur().green).bg(rail_bg),
             ),
         ])),
@@ -1738,5 +1752,57 @@ mod tests {
             screen.contains("beta.txt"),
             "tree missing beta.txt:\n{screen}"
         );
+    }
+
+    /// Click-rect audit: for every `tree_icon_buttons` rect, every
+    /// non-empty cell of the visible chip cluster must be INSIDE
+    /// the registered rect. A non-empty cell immediately adjacent
+    /// (left or right, same row) to the rect means the rendered
+    /// chip extends beyond its click target — clicking the visible
+    /// glyph would miss the dispatch. This catches the wide-glyph
+    /// display-cell off-by-one that hid the workspace `+` chip from
+    /// clicks for a long debug session on 2026-06-19.
+    #[test]
+    fn audit_tree_icon_button_rects_cover_visible_chip() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        std::fs::write(ws.join("alpha.txt"), "a\n").unwrap();
+        let mut app = App::new(ws.clone(), crate::config::Config::default()).unwrap();
+
+        let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+        let buf = term.backend().buffer();
+
+        let is_visible = |x: u16, y: u16| -> bool {
+            x < buf.area.width
+                && y < buf.area.height
+                && !buf[(x, y)].symbol().trim().is_empty()
+        };
+
+        for (rect, label) in &app.rects.tree_icon_buttons {
+            // Check the cell IMMEDIATELY left and right of the rect
+            // on the same rows. A non-empty adjacent cell means the
+            // chip extends past the registered hit area.
+            for y in rect.y..rect.y.saturating_add(rect.height) {
+                if rect.x > 0 && is_visible(rect.x - 1, y) {
+                    panic!(
+                        "tree_icon_button rect `{label}` at ({x},{y},{w}x{h}): visible glyph at ({lx},{y}) is OUTSIDE the rect (off-by-one to the left)",
+                        x = rect.x, w = rect.width, h = rect.height,
+                        lx = rect.x - 1,
+                    );
+                }
+                let right_x = rect.x + rect.width;
+                if is_visible(right_x, y) {
+                    panic!(
+                        "tree_icon_button rect `{label}` at ({x},{y},{w}x{h}): visible glyph at ({rx},{y}) is OUTSIDE the rect (off-by-one to the right)",
+                        x = rect.x, w = rect.width, h = rect.height,
+                        rx = right_x,
+                    );
+                }
+            }
+        }
     }
 }

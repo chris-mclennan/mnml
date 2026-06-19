@@ -131,6 +131,7 @@ tree-sitter-diff = "0.1"
 tree-sitter-vue-next = "0.1"
 tree-sitter-svelte-ng = "1.0"
 tree-sitter-astro-next = "0.1"
+unicode-width = "0.2.2"
 
 # Added per-track later (kept out for now to keep build fast / resolution simple):
 #   nucleo             — fuzzy matcher (picker/palette) — hand-rolled in src/fuzzy.rs for now

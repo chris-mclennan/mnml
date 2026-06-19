@@ -34,6 +34,7 @@ pub mod cmdline_history_view;
 pub mod completion;
 pub mod context_menu;
 pub mod dap_repl_view;
+pub mod debug_rects;
 pub mod debug_view;
 pub mod diagnostics_view;
 pub mod diff_view;
@@ -216,18 +217,25 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let (tree_area, right) = if app.tree_visible {
         let w = app.tree_width.min(upper.width.saturating_sub(20)).max(8);
         let cols = RLayout::horizontal([Constraint::Length(w), Constraint::Min(1)]).split(upper);
-        // The rail's rightmost cell column is the resize handle.
-        // Widen the hit-rect to 3 cells (1 inside the rail + 2
-        // outside) so a trackpad user can actually find it without
-        // pixel-perfect aim. vscode-mouse-2026-06-10 SEV-3 #6.
-        // The render of the column visually stays on the rail's last
-        // cell; this widening only affects hit-testing.
+        // The rail's resize handle is only the visible grip area —
+        // a 3-cell-wide × 4-row-tall band centered vertically on the
+        // rail. Wider hit zone (3 cols vs the 1-col visible grip)
+        // for trackpad findability per vscode-mouse-2026-06-10
+        // SEV-3 #6; taller hit area (4 rows vs the 2-row visible
+        // grip) gives an extra row of margin on each side. Restricts
+        // to the grip's y-range so clicking anywhere ELSE on the
+        // separator strip (e.g. on a right-aligned chip) doesn't
+        // initiate a drag. 2026-06-19 user-requested.
         let resize_x = cols[0].x + cols[0].width.saturating_sub(1);
+        let grip_visible_h: u16 = 2;
+        let grip_hit_h: u16 = (grip_visible_h + 2).min(cols[0].height);
+        let grip_visible_y = cols[0].y + cols[0].height.saturating_sub(grip_visible_h) / 2;
+        let grip_hit_y = grip_visible_y.saturating_sub(1).max(cols[0].y);
         app.rects.tree_edge = Some(Rect {
             x: resize_x.saturating_sub(1),
-            y: cols[0].y,
+            y: grip_hit_y,
             width: 3,
-            height: cols[0].height,
+            height: grip_hit_h,
         });
         (Some(cols[0]), cols[1])
     } else {
@@ -586,6 +594,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // the discovery panel (if the user picks a category whose rect lies
     // beneath the panel, the highlight will still flash through).
     discovery::draw_flash(frame, app, area);
+
+    // `:debug.rects` overlay — paints colored borders around every
+    // registered click rect so the user can SEE where clicks are caught.
+    // Runs last so the borders sit on top of every other paint layer.
+    debug_rects::draw(frame, app);
 
     // ── terminal cursor ──
     // An overlay's text caret (picker query, prompt input) wins when it's open;
