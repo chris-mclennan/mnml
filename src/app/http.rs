@@ -59,6 +59,24 @@ fn splice_http_block(existing: &str, name: Option<&str>, new_block: &str) -> Opt
     Some(joined)
 }
 
+/// Does the `.env` file at `path` contain a (non-comment) line
+/// for `key`? Used by `write_env_var` to decide which file gets
+/// the write when both `.mnml/env/` and `.rqst/env/` exist.
+fn file_contains_env_key(path: &std::path::Path, key: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    text.lines().any(|line| {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            return false;
+        }
+        trimmed
+            .split_once('=')
+            .is_some_and(|(k, _)| k.trim() == key)
+    })
+}
+
 /// Insert-or-replace a `KEY=VALUE` line in an `.env` file body.
 /// Preserves comments + ordering of other keys. If `var` isn't
 /// present, appends a new line. Used by the lookup picker's
@@ -94,11 +112,22 @@ fn upsert_env_var(existing: &str, var: &str, value: &str) -> Result<String, Stri
 }
 
 impl App {
-    /// Right-click on the Request pane URL row — exposes copy-as-curl,
-    /// re-fire, switch to Response view.
-    pub fn open_request_url_context_menu(&mut self, anchor: (u16, u16)) {
+    /// Right-click on any Request pane Edit-mode field row →
+    /// field-aware context menu. Common actions (Send / Copy as
+    /// curl / Switch to Response) appear for every field; the
+    /// Method row adds "Cycle method" so users can change the
+    /// verb without keyboard. v2 ideas: "Format JSON" on Body,
+    /// "Paste cookies" on Headers. 2026-06-19 — vscode-user-mouse
+    /// agent flagged the earlier "Request" title + URL-only naming
+    /// as misleading.
+    pub fn open_request_field_context_menu(
+        &mut self,
+        field: crate::request_pane::EditField,
+        anchor: (u16, u16),
+    ) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let items = vec![
+        use crate::request_pane::EditField;
+        let mut items = vec![
             MenuItem::new("Send", MenuAction::Command("http.send")),
             MenuItem::new("Copy as curl", MenuAction::Command("http.copy_curl")),
             MenuItem::new(
@@ -106,7 +135,26 @@ impl App {
                 MenuAction::Command("http.toggle_view"),
             ),
         ];
-        self.context_menu = Some(ContextMenu::new(Some("Request".into()), anchor, items));
+        if matches!(field, EditField::Method) {
+            items.insert(
+                0,
+                MenuItem::new("Cycle method", MenuAction::Command("http.cycle_method")),
+            );
+        }
+        let title = match field {
+            EditField::Url => "Request · URL",
+            EditField::Method => "Request · Method",
+            EditField::Headers => "Request · Headers",
+            EditField::Body => "Request · Body",
+        };
+        self.context_menu = Some(ContextMenu::new(Some(title.into()), anchor, items));
+    }
+
+    /// Deprecated alias — kept while existing callers migrate. New
+    /// callers should use [`Self::open_request_field_context_menu`]
+    /// with the actual field.
+    pub fn open_request_url_context_menu(&mut self, anchor: (u16, u16)) {
+        self.open_request_field_context_menu(crate::request_pane::EditField::Url, anchor);
     }
 
     /// `y` in the browser pane's network panel — copy the selected request as a
@@ -159,33 +207,42 @@ impl App {
             .name()
             .map(str::to_string)
             .unwrap_or_else(|| "dev".to_string());
-        let env_path = self
-            .workspace
-            .join(".rqst")
-            .join("env")
-            .join(format!("{env_name}.env"));
-        let text = std::fs::read_to_string(&env_path).unwrap_or_default();
+        // 2026-06-19 — api-workflow-user SEV-3: read BOTH .rqst/
+        // and .mnml/ env files so keys exclusive to .mnml/ surface
+        // in the picker. `.mnml/` wins same-key (matches EnvSet::
+        // load precedence).
+        let mut by_key: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for sub in [".rqst", ".mnml"] {
+            let env_path = self
+                .workspace
+                .join(sub)
+                .join("env")
+                .join(format!("{env_name}.env"));
+            let text = std::fs::read_to_string(&env_path).unwrap_or_default();
+            for line in text.lines() {
+                let trimmed = line.trim_start();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                if let Some((k, v)) = trimmed.split_once('=') {
+                    by_key.insert(k.trim().to_string(), v.trim().to_string());
+                }
+            }
+        }
         let mut items: Vec<PickerItem> = Vec::new();
         items.push(PickerItem::new(
             "+add".to_string(),
             "+ Add new variable…".to_string(),
             String::new(),
         ));
-        for line in text.lines() {
-            let trimmed = line.trim_start();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-            if let Some((k, v)) = trimmed.split_once('=') {
-                let key = k.trim().to_string();
-                let val = v.trim().to_string();
-                let preview = if val.len() > 48 {
-                    format!("{}…", &val[..46])
-                } else {
-                    val.clone()
-                };
-                items.push(PickerItem::new(key.clone(), key, preview));
-            }
+        for (key, val) in by_key {
+            let preview = if val.len() > 48 {
+                format!("{}…", &val[..46])
+            } else {
+                val.clone()
+            };
+            items.push(PickerItem::new(key.clone(), key, preview));
         }
         self.open_picker(Picker::new(
             PickerKind::EnvVars,
@@ -215,6 +272,8 @@ impl App {
             .join(".rqst")
             .join("env")
             .join(format!("{env_name}.env"));
+        // 2026-06-19 SEV-3: preserve the raw value (don't trim) so
+        // intentional whitespace round-trips through edit + save.
         let current_val = std::fs::read_to_string(&env_path)
             .ok()
             .and_then(|text| {
@@ -225,7 +284,7 @@ impl App {
                             return None;
                         }
                         let (k, v) = t.split_once('=')?;
-                        (k.trim() == id).then(|| v.trim().to_string())
+                        (k.trim() == id).then(|| v.to_string())
                     })
                     .next()
             })
@@ -243,11 +302,17 @@ impl App {
 
     /// Accept handler for `PromptKind::EnvEditValue`. Upserts
     /// `<pending_env_edit_key>=<typed>` into the active env file.
+    ///
+    /// 2026-06-19 — api-workflow-user SEV-3: earlier impl trimmed
+    /// the value, silently dropping intentional leading/trailing
+    /// whitespace (`API_KEY= Bearer xyz` → `API_KEY=Bearer xyz`).
+    /// Now preserves the typed value verbatim. Newlines are still
+    /// rejected by `upsert_env_var` (would corrupt the file).
     pub fn accept_env_edit_value(&mut self, value: &str) {
         let Some(key) = self.pending_env_edit_key.take() else {
             return;
         };
-        self.write_env_var(&key, value.trim());
+        self.write_env_var(&key, value);
     }
 
     /// Accept handler for `PromptKind::EnvAddKey`. Splits the
@@ -269,16 +334,39 @@ impl App {
     /// Shared write-back path for `EnvEditValue` + `EnvAddKey`
     /// + `LookupVarName`. Resolves the active env file, upserts,
     /// toasts the result. Creates the parent dir if missing.
+    ///
+    /// 2026-06-19 — api-workflow-user SEV-3: when both `.mnml/`
+    /// and `.rqst/` env files exist and the key lives in `.mnml/`,
+    /// writing to `.rqst/` is overshadowed on next request (same-
+    /// key precedence). Now writes to WHICHEVER existing file
+    /// contains the key; new keys go to `.mnml/` (the preferred
+    /// mnml-native location).
     fn write_env_var(&mut self, key: &str, value: &str) {
         let env_name = crate::http::template::EnvSet::select(&self.workspace, None)
             .name()
             .map(str::to_string)
             .unwrap_or_else(|| "dev".to_string());
-        let env_path = self
+        let mnml_path = self
+            .workspace
+            .join(".mnml")
+            .join("env")
+            .join(format!("{env_name}.env"));
+        let rqst_path = self
             .workspace
             .join(".rqst")
             .join("env")
             .join(format!("{env_name}.env"));
+        // Decide target: .mnml takes precedence (the authoritative
+        // EnvSet::load reader), so a key that lives there gets the
+        // write. Otherwise a key already in .rqst gets the write
+        // there. New keys default to .mnml (preferred location).
+        let mnml_has = file_contains_env_key(&mnml_path, key);
+        let rqst_has = file_contains_env_key(&rqst_path, key);
+        let env_path = if mnml_has || (!rqst_has) {
+            mnml_path
+        } else {
+            rqst_path
+        };
         let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
         let updated = match upsert_env_var(&existing, key, value) {
             Ok(s) => s,
@@ -1214,6 +1302,26 @@ impl App {
             let _ = tx.send((job_id, result));
         });
         job_id
+    }
+
+    /// `http.cycle_method` — cycle the active Request pane's
+    /// method through the standard verbs. Same gesture as Space
+    /// when the Method field is focused, but reachable from the
+    /// palette / Method-row context menu without keyboard focus.
+    pub fn http_cycle_method(&mut self) {
+        let Some(cur) = self.active else { return };
+        let new_method = if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            let verbs = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
+            let idx = verbs.iter().position(|v| *v == rp.request.method).unwrap_or(0);
+            let next = (idx + 1) % verbs.len();
+            rp.request.method = verbs[next].to_string();
+            Some(rp.request.method.clone())
+        } else {
+            None
+        };
+        if let Some(m) = new_method {
+            self.toast(format!("method: {m}"));
+        }
     }
 
     /// `http.new` — open a blank Request pane in Edit mode for

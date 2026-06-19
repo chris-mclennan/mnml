@@ -3307,7 +3307,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // dup Request panes from Send, no-op'ing Switch). Set
             // active to the right-clicked Request pane first so the
             // menu's commands operate on the visible target.
-            if let Some(&(_, pid, _)) = app
+            if let Some(&(_, pid, field)) = app
                 .rects
                 .request_fields
                 .iter()
@@ -3315,7 +3315,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             {
                 app.active = Some(pid);
                 app.focus_pane();
-                app.open_request_url_context_menu((x, y));
+                app.open_request_field_context_menu(field, (x, y));
                 return;
             }
             // Right-click anywhere inside an AI pane → re-ask / cancel /

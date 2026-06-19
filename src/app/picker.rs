@@ -900,6 +900,12 @@ impl App {
         self.pending_worktree_remove = None;
         self.pending_branch_source = None;
         self.rename_preview_state = None;
+        // 2026-06-19 — api-workflow-user SEV-3: Esc on a lookup
+        // var-name / env edit prompt left these stashes set, so the
+        // next picker accept of the same type could fire against
+        // stale state.
+        self.pending_lookup_picked_id = None;
+        self.pending_env_edit_key = None;
         if was_find {
             self.restore_find_preview_snapshot();
             self.find_pending_range = None;

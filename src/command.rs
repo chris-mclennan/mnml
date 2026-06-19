@@ -2946,6 +2946,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.auth_extract_bearer_from_clipboard(),
         },
         Command {
+            id: "http.cycle_method",
+            title: "HTTP: cycle method (GET→POST→PUT→DELETE→PATCH→…)",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_cycle_method(),
+        },
+        Command {
             id: "http.new",
             title: "HTTP: new blank request pane (Postman-style scratch)",
             group: "http",
