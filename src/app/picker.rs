@@ -637,6 +637,10 @@ impl App {
                 let id = item.id.clone();
                 self.accept_env_vars(&id);
             }
+            PickerKind::AuthPresets => {
+                let name = item.id.clone();
+                self.accept_auth_preset(&name);
+            }
             PickerKind::Cookies => {
                 // id shape: `<host>\t<name>`.
                 let lookup = item.id.split_once('\t').and_then(|(host, name)| {
@@ -1178,6 +1182,10 @@ impl App {
             crate::prompt::PromptKind::HttpParamAdd => {
                 let v = p.input.clone();
                 self.accept_http_param_add(&v);
+            }
+            crate::prompt::PromptKind::AuthSavePreset => {
+                let v = p.input.clone();
+                self.accept_auth_save_preset(&v);
             }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();

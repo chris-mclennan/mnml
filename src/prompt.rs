@@ -77,6 +77,10 @@ pub enum PromptKind {
     /// Request pane's URL as a query parameter. `?` if URL has no
     /// query string yet; `&` if it does.
     HttpParamAdd,
+    /// Accept ⇒ save active Request pane's Authorization header
+    /// as `.mnml/auth/<typed-name>.txt`. The preset can later be
+    /// applied via `:auth.apply_preset`.
+    AuthSavePreset,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into

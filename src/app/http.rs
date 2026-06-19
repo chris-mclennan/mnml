@@ -1033,6 +1033,160 @@ impl App {
         ));
     }
 
+    /// `auth.save_preset` — read the active Request pane's
+    /// Authorization header, prompt for a preset name, write to
+    /// `.mnml/auth/<name>.txt`. Useful when a long-lived token is
+    /// the only thing distinguishing several environments — store
+    /// once, apply later via `:auth.apply_preset`.
+    pub fn auth_save_preset_prompt(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("auth: no active Request pane");
+            return;
+        };
+        let has = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => rp
+                .request
+                .headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("authorization")),
+            _ => false,
+        };
+        if !has {
+            self.toast("auth: active Request has no Authorization header");
+            return;
+        }
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::AuthSavePreset,
+            "Preset name (filename stem):".to_string(),
+        ));
+    }
+
+    /// Accept handler for `PromptKind::AuthSavePreset`.
+    pub fn accept_auth_save_preset(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            self.toast("auth: preset name can't be empty");
+            return;
+        }
+        let safe_name: String = name
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .collect();
+        let Some(cur) = self.active else { return };
+        let header_value = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => rp
+                .request
+                .headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+                .map(|(_, v)| v.clone()),
+            _ => None,
+        };
+        let Some(value) = header_value else { return };
+        let path = self.workspace.join(".mnml").join("auth").join(format!("{safe_name}.txt"));
+        if let Some(parent) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            self.toast(format!("auth: mkdir: {e}"));
+            return;
+        }
+        match std::fs::write(&path, &value) {
+            Ok(()) => self.toast(format!("auth: saved → {}", path.display())),
+            Err(e) => self.toast(format!("auth: write failed: {e}")),
+        }
+    }
+
+    /// `auth.apply_preset` — picker over `.mnml/auth/*.txt`. Enter
+    /// reads the preset and sets the active Request pane's
+    /// Authorization header to its content.
+    pub fn auth_apply_preset_picker(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let auth_dir = self.workspace.join(".mnml").join("auth");
+        let entries: Vec<PickerItem> = match std::fs::read_dir(&auth_dir) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .is_some_and(|x| x == "txt")
+                })
+                .filter_map(|e| {
+                    let stem = e
+                        .path()
+                        .file_stem()?
+                        .to_string_lossy()
+                        .into_owned();
+                    let preview = std::fs::read_to_string(e.path())
+                        .ok()
+                        .map(|s| {
+                            let line = s.lines().next().unwrap_or("").to_string();
+                            if line.len() > 48 {
+                                format!("{}…", &line[..46])
+                            } else {
+                                line
+                            }
+                        })
+                        .unwrap_or_default();
+                    Some(PickerItem::new(stem.clone(), stem, preview))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        if entries.is_empty() {
+            self.toast(format!(
+                "auth: no presets in {} (save with :auth.save_preset)",
+                auth_dir.display()
+            ));
+            return;
+        }
+        self.open_picker(Picker::new(
+            PickerKind::AuthPresets,
+            "Auth presets",
+            entries,
+        ));
+    }
+
+    /// Accept handler for `PickerKind::AuthPresets`.
+    pub fn accept_auth_preset(&mut self, name: &str) {
+        let path = self
+            .workspace
+            .join(".mnml")
+            .join("auth")
+            .join(format!("{name}.txt"));
+        let value = match std::fs::read_to_string(&path) {
+            Ok(s) => s.trim_end().to_string(),
+            Err(e) => {
+                self.toast(format!("auth: read {}: {e}", path.display()));
+                return;
+            }
+        };
+        let Some(cur) = self.active else {
+            self.toast("auth: no active Request pane");
+            return;
+        };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            // Replace existing Authorization header in-place, or
+            // append a new one. Also reflect into headers_buffer
+            // (the editable textarea source of truth) so the user
+            // sees the change in the Headers tab immediately.
+            let existing = rp
+                .request
+                .headers
+                .iter()
+                .position(|(k, _)| k.eq_ignore_ascii_case("authorization"));
+            if let Some(i) = existing {
+                rp.request.headers[i].1 = value.clone();
+            } else {
+                rp.request
+                    .headers
+                    .push(("Authorization".to_string(), value.clone()));
+            }
+            rp.headers_buffer = crate::request_pane::headers_to_text(&rp.request.headers);
+            rp.headers_cursor = rp.headers_buffer.len();
+            self.toast(format!("auth: applied {name}"));
+        }
+    }
+
     /// `cookies.show` — picker over every entry in the persistent
     /// cookie jar. Rows: `<host> · <name> · <preview>`. Enter
     /// copies `<name>=<value>` to clipboard.

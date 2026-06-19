@@ -3070,6 +3070,26 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.sse_parse_active_response(),
         },
         Command {
+            id: "auth.save_preset",
+            title: "Auth: save current Authorization header as a named preset",
+            group: "http",
+            // Reads the active Request pane's Authorization header
+            // and writes it as a preset to .mnml/auth/<name>.txt
+            // for later reuse via :auth.apply_preset.
+            keys: &[],
+            run: |app| app.auth_save_preset_prompt(),
+        },
+        Command {
+            id: "auth.apply_preset",
+            title: "Auth: apply a saved preset → active Request Authorization header",
+            group: "http",
+            // Picker over .mnml/auth/*.txt presets. Enter writes
+            // (or replaces) the Authorization header on the active
+            // Request pane with the preset's content.
+            keys: &[],
+            run: |app| app.auth_apply_preset_picker(),
+        },
+        Command {
             id: "cookies.show",
             title: "Cookies: open picker over the persistent jar",
             group: "http",
