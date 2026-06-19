@@ -135,6 +135,10 @@ pub enum IpcCommand {
     },
     /// Force a fresh dump of `screen.txt` / `status.json`.
     Snapshot,
+    /// Write every registered click-rect to `rects.json` in the IPC
+    /// dir. Each entry has `{x, y, w, h, label}`. Used by the
+    /// click-rect audit + by ad-hoc debugging (`./run.sh dump-rects`).
+    DumpRects,
     /// Stop the loop.
     Quit,
     /// Stop the loop with the restart exit code (the `run.sh` wrapper rebuilds + relaunches).
@@ -248,6 +252,14 @@ impl Ipc {
     pub fn write_status(&self, json: &str) {
         let _ = std::fs::write(&self.status_path, json.as_bytes());
     }
+    /// Write a JSON dump of every registered click rect to
+    /// `<ipc>/rects.json`. Triggered by the `dump-rects` IPC command
+    /// + the headless render loop on every snapshot when
+    /// `app.debug_rects` is enabled. Format: a JSON array of
+    /// `{"label": str, "x": u16, "y": u16, "w": u16, "h": u16}`.
+    pub fn write_rects(&self, json: &str) {
+        let _ = std::fs::write(self.dir.join("rects.json"), json.as_bytes());
+    }
     pub fn append_event(&self, json_line: &str) {
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
@@ -335,6 +347,7 @@ fn parse_command(line: &str) -> IpcCommand {
             None => IpcCommand::Unknown(line.to_string()),
         },
         "snapshot" => IpcCommand::Snapshot,
+        "dump-rects" => IpcCommand::DumpRects,
         "quit" => IpcCommand::Quit,
         "restart" => IpcCommand::Restart,
         _ => IpcCommand::Unknown(line.to_string()),
@@ -623,6 +636,7 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
             ])
         }
         IpcCommand::Snapshot => json_event(&[("event", "snapshot")]),
+        IpcCommand::DumpRects => json_event(&[("event", "dump_rects")]),
         IpcCommand::Quit => {
             // Scripts/E2E know what they're doing — force, bypassing the dirty guard.
             app.should_quit = true;
@@ -643,6 +657,67 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
 pub fn dump_screen_status(ipc: &Ipc, screen: &ratatui::buffer::Buffer, app: &App) {
     ipc.write_screen(&screen_to_text(screen));
     ipc.write_status(&status_json(app));
+    // Always emit `rects.json` alongside the screen so headless
+    // audit scripts can verify click rects without a separate IPC
+    // round-trip. Cheap (a few hundred bytes of JSON per frame at
+    // worst). Added 2026-06-19 with the click-rect audit toolkit.
+    ipc.write_rects(&rects_dump_json(app));
+}
+
+/// Serialize every registered click rect to JSON. Walks the
+/// well-known fields on `App.rects` (single `Option<Rect>` and
+/// `Vec<(Rect, label)>` shapes) and emits one entry per visible
+/// rect. Used by the `dump-rects` IPC command + the click-rect audit
+/// test. The label is the descriptive name of the field (or the
+/// embedded command-id for tagged vec entries) so the consumer can
+/// look up what fires when that rect is clicked.
+pub fn rects_dump_json(app: &App) -> String {
+    let mut out = String::from("[\n");
+    let mut first = true;
+    let push_rect = |out: &mut String, first: &mut bool, label: &str, r: ratatui::layout::Rect| {
+        if !*first {
+            out.push_str(",\n");
+        }
+        *first = false;
+        out.push_str(&format!(
+            "  {{\"label\":\"{label}\",\"x\":{x},\"y\":{y},\"w\":{w},\"h\":{h}}}",
+            x = r.x,
+            y = r.y,
+            w = r.width,
+            h = r.height
+        ));
+    };
+    macro_rules! one {
+        ($label:expr, $field:expr) => {
+            if let Some(r) = $field {
+                push_rect(&mut out, &mut first, $label, r);
+            }
+        };
+    }
+    one!("tree_toggle", app.rects.tree_toggle);
+    one!("tree_edge", app.rects.tree_edge);
+    one!("integration_section_toggle", app.rects.integration_section_toggle);
+    one!("statusline_workspace_chip", app.rects.statusline_workspace_chip);
+    one!("statusline_branch_chip", app.rects.statusline_branch_chip);
+    one!("statusline_mode_chip", app.rects.statusline_mode_chip);
+    one!("statusline_clock_chip", app.rects.statusline_clock_chip);
+    one!("statusline_mixr_chip", app.rects.statusline_mixr_chip);
+    one!("activity_bar_gear", app.rects.activity_bar_gear);
+    one!("cmdline_bar", app.rects.cmdline_bar);
+    for (r, label) in &app.rects.tree_icon_buttons {
+        push_rect(&mut out, &mut first, &format!("tree_icon:{label}"), *r);
+    }
+    for (r, idx) in &app.rects.integration_icon_rects {
+        push_rect(&mut out, &mut first, &format!("integration:{idx}"), *r);
+    }
+    for (r, section) in &app.rects.activity_bar_icons {
+        push_rect(&mut out, &mut first, &format!("activity:{section:?}"), *r);
+    }
+    for (r, idx) in &app.rects.launcher_icon_rects {
+        push_rect(&mut out, &mut first, &format!("launcher:{idx}"), *r);
+    }
+    out.push_str("\n]");
+    out
 }
 
 /// Poll the command channel and apply every queued command, logging each as an

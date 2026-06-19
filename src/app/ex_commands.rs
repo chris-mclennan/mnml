@@ -756,6 +756,19 @@ impl App {
             "settings" => {
                 self.open_settings_overlay();
             }
+            // `:debug.rects` — toggle the visual click-rect overlay.
+            // Paints borders around every registered hit-rect so you
+            // can SEE where clicks are caught vs where glyphs are
+            // rendered. Bug-hunt tool added 2026-06-19 after a wide-
+            // glyph cell-width mismatch off-by-one hid for hours.
+            "debug.rects" => {
+                self.debug_rects = !self.debug_rects;
+                self.toast(if self.debug_rects {
+                    "debug.rects on (toggle with `:debug.rects`)"
+                } else {
+                    "debug.rects off"
+                });
+            }
             // `:help` / `:h` — open the keymap-reference overlay.
             "help" | "h" => {
                 self.toggle_help_overlay();
