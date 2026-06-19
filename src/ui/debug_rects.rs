@@ -50,6 +50,36 @@ pub fn draw(frame: &mut Frame, app: &App) {
     for (r, _) in &app.rects.launcher_icon_rects {
         paint_single(frame, Some(*r), Color::LightYellow);
     }
+
+    // 2026-06-19 — vscode-user-mouse agent flagged that ~30 of
+    // ~40 rect families were uncovered. Adding the high-impact
+    // ones that drive request-pane / picker / bufferline /
+    // context-menu hit-testing. Less load-bearing families
+    // (scrollbar thumbs, fold chips, completion items, settings
+    // rows) stay out — `:debug.rects` is primarily a hunt aid
+    // for clickable surfaces.
+    paint_single(frame, app.rects.picker_box, Color::Blue);
+    for (r, _) in &app.rects.picker_items {
+        paint_single(frame, Some(*r), Color::LightCyan);
+    }
+    for (r, _, _) in &app.rects.request_fields {
+        paint_single(frame, Some(*r), Color::LightMagenta);
+    }
+    for (r, _) in &app.rects.bufferline_tabs {
+        paint_single(frame, Some(*r), Color::Yellow);
+    }
+    for (r, _) in &app.rects.context_menu_items {
+        paint_single(frame, Some(*r), Color::LightRed);
+    }
+    for (r, _) in &app.rects.extra_workspace_toggles {
+        paint_single(frame, Some(*r), Color::Cyan);
+    }
+    for (r, _) in &app.rects.discovery_integration_rows {
+        paint_single(frame, Some(*r), Color::Magenta);
+    }
+    for (r, _) in &app.rects.git_rail_rows {
+        paint_single(frame, Some(*r), Color::Green);
+    }
 }
 
 /// Paint a single rect outline using box-drawing edge-only cells.

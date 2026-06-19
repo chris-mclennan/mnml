@@ -732,6 +732,25 @@ pub fn rects_dump_json(app: &App) -> String {
     for (r, id) in &app.rects.bufferline_tabs {
         push_rect(&mut out, &mut first, &format!("bufferline_tab:{id}"), *r);
     }
+    // 2026-06-19 — second batch of rect families per vscode-user-
+    // mouse agent's "toolkit misses what it was built for" finding.
+    if let Some(r) = app.rects.picker_box {
+        push_rect(&mut out, &mut first, "picker_box", r);
+    }
+    for (r, idx) in &app.rects.picker_items {
+        push_rect(&mut out, &mut first, &format!("picker_item:{idx}"), *r);
+    }
+    for (r, pid, field) in &app.rects.request_fields {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("request_field:{pid}:{field:?}"),
+            *r,
+        );
+    }
+    for (r, idx) in &app.rects.context_menu_items {
+        push_rect(&mut out, &mut first, &format!("context_menu_item:{idx}"), *r);
+    }
     out.push_str("\n]");
     out
 }

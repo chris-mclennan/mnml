@@ -423,7 +423,13 @@ fn draw_add_repo_row(
     // the left, none on the right because the right edge IS the
     // glyph). 2 cells = symmetric, visible = clickable, no off-by-
     // one possible.
-    let chip_w = unicode_width::UnicodeWidthStr::width(glyph).max(1);
+    // 2026-06-19 — vscode-user-mouse agent caught `w=1` in
+    // rects.json for the workspace `+` chip. Root cause:
+    // `unicode_width` treats PUA codepoints (`\u{F0419}` etc.) as
+    // 1-cell wide — it has no way to know nerd-fonts paint them
+    // across 2 terminal cells. Hardcode 2 for the nerd path; ascii
+    // `+` is genuinely 1 cell.
+    let chip_w = if nerd { 2usize } else { 1usize };
     // 1-cell right margin so the chip doesn't sit flush against the
     // rail's right border. User-requested 2026-06-19.
     let right_margin = 1usize;

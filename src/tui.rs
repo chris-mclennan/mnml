@@ -3301,13 +3301,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             // Right-click on a Request pane URL/Method/Headers/Body row →
-            // copy-as-curl / send / toggle view.
-            if app
+            // copy-as-curl / send / toggle view. 2026-06-19 — vscode-
+            // user-mouse agent caught that the menu would dispatch
+            // against whatever pane was previously active (spawning
+            // dup Request panes from Send, no-op'ing Switch). Set
+            // active to the right-clicked Request pane first so the
+            // menu's commands operate on the visible target.
+            if let Some(&(_, pid, _)) = app
                 .rects
                 .request_fields
                 .iter()
-                .any(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
+                app.active = Some(pid);
+                app.focus_pane();
                 app.open_request_url_context_menu((x, y));
                 return;
             }
@@ -3670,7 +3677,15 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             // Click on a request-pane Edit-mode field row → focus that field.
-            if let Some(&(_, pid, field)) = app
+            // 2026-06-19 — vscode-user-mouse agent caught that the
+            // caret was never positioned at the click site (it stayed
+            // wherever it was, typically end-of-value). For the URL
+            // field — the most common edit target — compute the byte
+            // position from the visual column and update url_cursor.
+            // Headers / Body are multi-line; positioning their carets
+            // by click requires per-row mapping that's a v2 follow-up;
+            // they still get focused so the user can type / use arrows.
+            if let Some(&(rect, pid, field)) = app
                 .rects
                 .request_fields
                 .iter()
@@ -3681,6 +3696,24 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 if let Some(Pane::Request(rp)) = app.panes.get_mut(pid) {
                     rp.view = crate::request_pane::ViewMode::Edit;
                     rp.focus = field;
+                    if matches!(field, crate::request_pane::EditField::Url) {
+                        // URL row layout: " URL  <value>". Label
+                        // offset = leading-space + "URL" + 2 spaces ≈
+                        // 6 cells. Visual column within the value =
+                        // click x - rect.x - label_offset. Convert
+                        // visual column to a byte position via
+                        // char_indices(); clamp to value length.
+                        let dx = x.saturating_sub(rect.x);
+                        let label_offset: u16 = 6;
+                        let visual_col = dx.saturating_sub(label_offset) as usize;
+                        let url = &rp.request.url;
+                        let byte_pos = url
+                            .char_indices()
+                            .nth(visual_col)
+                            .map(|(i, _)| i)
+                            .unwrap_or(url.len());
+                        rp.url_cursor = byte_pos;
+                    }
                 }
                 return;
             }
@@ -4622,7 +4655,12 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                 }
                 KeyCode::Tab => rp.focus_next_field(),
                 KeyCode::BackTab => rp.focus_prev_field(),
-                KeyCode::Esc => app.focus_tree(),
+                // 2026-06-19 — vscode-user-keyboard agent flagged
+                // that Esc-from-Edit jumping to the tree was
+                // unexpected (Tab toggles to Response; Esc should
+                // be the inverse, not "leave the pane entirely").
+                // Now Esc toggles back to Response view.
+                KeyCode::Esc => rp.view = crate::request_pane::ViewMode::Response,
                 KeyCode::Backspace => rp.backspace(),
                 KeyCode::Left => rp.move_left(),
                 KeyCode::Right => rp.move_right(),
@@ -4664,16 +4702,15 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                 KeyCode::Char(c) if !ctrl => {
                     // `r` from URL / Method fires; `r` inside multi-line fields
                     // is a literal char (so typing "Authorization" etc. works).
-                    let multi_line = matches!(
-                        rp.focus,
-                        crate::request_pane::EditField::Body
-                            | crate::request_pane::EditField::Headers
-                    );
-                    if c == 'r' && !multi_line {
-                        app.send_request_from_active();
-                    } else {
-                        rp.type_char(c);
-                    }
+                    // 2026-06-19 — vscode-user-keyboard agent caught
+                    // SEV-1: the earlier `if c == 'r' && !multi_line`
+                    // branch made it impossible to type any URL
+                    // containing the letter 'r' (which is most URLs).
+                    // `r` to re-fire belongs ONLY in Response view —
+                    // see the `KeyCode::Char('r')` arm below at line
+                    // 4723. In Edit view, every printable char goes
+                    // to the focused field.
+                    rp.type_char(c);
                 }
                 _ => {}
             }
