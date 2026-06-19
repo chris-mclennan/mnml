@@ -3676,6 +3676,23 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
+            // Click on a Request pane Edit-view tab chip (Body /
+            // Headers / Params / Vars / Source) → switch the
+            // pane's edit_tab.
+            if let Some(&(_, pid, tab)) = app
+                .rects
+                .request_edit_tabs
+                .iter()
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                if let Some(Pane::Request(rp)) = app.panes.get_mut(pid) {
+                    rp.view = crate::request_pane::ViewMode::Edit;
+                    rp.edit_tab = tab;
+                }
+                return;
+            }
             // Click on a request-pane Edit-mode field row → focus that field.
             // 2026-06-19 — vscode-user-mouse agent caught that the
             // caret was never positioned at the click site (it stayed
@@ -4653,6 +4670,18 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                 KeyCode::Char('v') if ctrl && shift => {
                     let _ = rp;
                     app.http_paste_curl_to_active();
+                    return true;
+                }
+                // Ctrl+] / Ctrl+[ cycle the Edit-view tab strip
+                // (Body → Headers → Params → Vars → Source → Body).
+                // VS Code-style "next/prev" chords. Distinct from
+                // Tab (field cycle) and Ctrl+Shift+V (paste curl).
+                KeyCode::Char(']') if ctrl => {
+                    rp.edit_tab = rp.edit_tab.next();
+                    return true;
+                }
+                KeyCode::Char('[') if ctrl => {
+                    rp.edit_tab = rp.edit_tab.prev();
                     return true;
                 }
                 KeyCode::Tab if shift => rp.focus_prev_field(),

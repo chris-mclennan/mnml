@@ -57,6 +57,60 @@ pub struct RequestPane {
     pub headers_buffer: String,
     /// Byte-offset caret for the Headers field.
     pub headers_cursor: usize,
+    /// Which tab the Edit view is showing. The tab strip (Body /
+    /// Headers / Params / Vars / Source) sits above the per-tab
+    /// content area; URL + Method always stay above the strip.
+    /// Default = Body so the form mirrors rqst's startup tab.
+    /// 2026-06-19 — added when the Edit view was restructured into
+    /// a tabbed UI to match the rqst Postman-style layout.
+    pub edit_tab: EditTab,
+    /// Editable raw source field shown on `EditTab::Source` — a
+    /// place to paste a curl / `.http` block. Committed via the
+    /// `:http.paste_curl` op which parses it into the other
+    /// request fields. Not bound to disk; the user types here, the
+    /// pane parses, and the structured fields become the truth.
+    pub source_buffer: String,
+    /// Byte-offset caret for the Source field.
+    pub source_cursor: usize,
+}
+
+/// The tabbed UI on the Edit view. `Tab` advances; `Shift+Tab`
+/// retreats. Mouse-clickable. The URL + Method row always stays
+/// visible above the strip; only the area below switches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditTab {
+    Body,
+    Headers,
+    Params,
+    Vars,
+    Source,
+}
+
+impl EditTab {
+    pub const ALL: &'static [EditTab] = &[
+        EditTab::Body,
+        EditTab::Headers,
+        EditTab::Params,
+        EditTab::Vars,
+        EditTab::Source,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            EditTab::Body => "Body",
+            EditTab::Headers => "Headers",
+            EditTab::Params => "Params",
+            EditTab::Vars => "Vars",
+            EditTab::Source => "Source",
+        }
+    }
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|t| *t == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+    pub fn prev(self) -> Self {
+        let i = Self::ALL.iter().position(|t| *t == self).unwrap_or(0);
+        Self::ALL[(i + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
 }
 
 /// Which face of the request pane is shown.
@@ -194,6 +248,9 @@ impl RequestPane {
             body_cursor,
             headers_buffer,
             headers_cursor,
+            edit_tab: EditTab::Body,
+            source_buffer: String::new(),
+            source_cursor: 0,
         }
     }
 

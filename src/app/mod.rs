@@ -1944,6 +1944,13 @@ pub struct PaneRects {
     /// that field. Multi-line fields (Headers / Body) push one row entry
     /// per rendered line so clicking anywhere in the field area works.
     pub request_fields: Vec<(Rect, PaneId, crate::request_pane::EditField)>,
+    /// `(chip_rect, PaneId, EditTab)` for each visible tab chip in
+    /// a Request pane's Edit view (Body / Headers / Params / Vars /
+    /// Source). Click switches the pane's `edit_tab`. Cleared +
+    /// rebuilt every render. 2026-06-19 — added with the tabbed
+    /// Edit-view rebuild. Distinct from `request_tabs` (above)
+    /// which is the Edit/Response view-mode toggle.
+    pub request_edit_tabs: Vec<(Rect, PaneId, crate::request_pane::EditTab)>,
     /// `(row_rect, filtered_index)` for each visible completion popup row
     /// (excluding the docs footer). Cleared + rebuilt every render. Click
     /// on a row ⇒ select + accept.
