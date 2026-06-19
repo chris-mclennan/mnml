@@ -6,7 +6,24 @@
 /// highlighting), or `None` if `needle` isn't a subsequence. An empty `needle`
 /// matches everything with score 0.
 pub fn fuzzy_match(needle: &str, haystack: &str) -> Option<(i64, Vec<usize>)> {
-    let nl: Vec<char> = needle.chars().flat_map(|c| c.to_lowercase()).collect();
+    // 2026-06-19 — keyboard hunt SEV-2: a query like
+    // `send_streaming` returned no matches against
+    // `HTTP: send active request as a Server-Sent Events stream`
+    // because the needle's `_` didn't appear in the haystack.
+    // Normalize the needle by treating `_`, `-`, `.` as word
+    // separators that match any whitespace OR the same char in
+    // the haystack — but the simplest fix is to strip them: a
+    // user typing the dotted id (`http.send_streaming`) reads as
+    // `httpsendstreaming` against the haystack, which fuzzy-matches
+    // both ids and titles. Common picker semantics.
+    let needle_normalized: String = needle
+        .chars()
+        .filter(|c| !matches!(c, '_' | '-' | '.'))
+        .collect();
+    let nl: Vec<char> = needle_normalized
+        .chars()
+        .flat_map(|c| c.to_lowercase())
+        .collect();
     if nl.is_empty() {
         return Some((0, Vec::new()));
     }

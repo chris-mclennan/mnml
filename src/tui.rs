@@ -636,6 +636,31 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         };
         return;
     }
+    // 2026-06-19 — keyboard hunt SEV-2: Ctrl+1..5 jumps directly
+    // to the matching Edit-view tab. Same Request-pane-only gate as
+    // Ctrl+]/Ctrl+[. Same standard-mode chord-chain bypass needed
+    // for the same reason.
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(
+            key.code,
+            KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') | KeyCode::Char('5')
+        )
+        && matches!(app.focus, Focus::Pane)
+        && let Some(cur) = app.active
+        && let Some(Pane::Request(rp)) = app.panes.get_mut(cur)
+        && rp.view == crate::request_pane::ViewMode::Edit
+    {
+        use crate::request_pane::EditTab;
+        rp.edit_tab = match key.code {
+            KeyCode::Char('1') => EditTab::Body,
+            KeyCode::Char('2') => EditTab::Headers,
+            KeyCode::Char('3') => EditTab::Params,
+            KeyCode::Char('4') => EditTab::Vars,
+            KeyCode::Char('5') => EditTab::Source,
+            _ => rp.edit_tab,
+        };
+        return;
+    }
 
     if dispatch_chord_chain(app, key) {
         return;

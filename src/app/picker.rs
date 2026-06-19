@@ -288,11 +288,23 @@ impl App {
     /// plugin-registered ones).
     pub fn open_command_palette(&mut self) {
         use crate::picker::PickerItem;
+        // 2026-06-19 — keyboard hunt SEV-2: include the command
+        // id in the label so a user typing the dotted id (VS Code
+        // muscle memory) finds the command directly. The id renders
+        // visually as a faint suffix; the fuzzy matcher (with its
+        // _-stripping fix) treats `http.send_streaming` ≈ `httpsendstreaming`
+        // ≈ both the id and the title text.
         let mut items: Vec<PickerItem> = crate::command::registry()
             .all()
             .iter()
             .filter(|c| c.id != "palette")
-            .map(|c| PickerItem::new(c.id, format!("{}  ·  {}", c.group, c.title), c.key_hint()))
+            .map(|c| {
+                PickerItem::new(
+                    c.id,
+                    format!("{}  ·  {}  ·  {}", c.group, c.title, c.id),
+                    c.key_hint(),
+                )
+            })
             .collect();
         for dc in &self.dynamic_commands {
             items.push(PickerItem::new(

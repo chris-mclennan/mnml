@@ -300,17 +300,29 @@ fn draw_edit(
         for tab in EditTab::ALL {
             let label = tab.label();
             let is_cur = rp.edit_tab == *tab;
-            let style = if is_cur {
-                Style::default()
-                    .fg(t.fg)
-                    .bg(t.bg3)
-                    .add_modifier(Modifier::BOLD)
+            // 2026-06-19 — keyboard hunt SEV-3: the prior cue was
+            // BG color only (`bg3` vs `bg_dark`), which flattens
+            // on themes with close BG steps + reads as identical
+            // to colorblind users. Active tab now renders with
+            // bracket markers + UNDERLINED + BOLD, so the cue
+            // survives in monochrome.
+            let (display, style) = if is_cur {
+                (
+                    format!("[{label}]"),
+                    Style::default()
+                        .fg(t.fg)
+                        .bg(t.bg3)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                )
             } else {
-                Style::default().fg(t.comment).bg(t.bg_dark)
+                (
+                    format!(" {label} "),
+                    Style::default().fg(t.comment).bg(t.bg_dark),
+                )
             };
-            spans.push(Span::styled(format!(" {label} "), style));
+            let chip_w = display.chars().count() as u16;
+            spans.push(Span::styled(display, style));
             spans.push(Span::styled(" ".to_string(), Style::default().bg(t.bg_dark)));
-            let chip_w = label.chars().count() as u16 + 2;
             tabs.push((
                 Rect {
                     x: area.x + col,
@@ -563,24 +575,17 @@ fn draw_edit(
         )]));
         register_tab_row(fields, h2_y);
         rows.push(plain(String::new(), body_style));
-        let src = &rp.source_buffer;
-        if src.is_empty() {
-            let y = rows.len() as u16;
-            rows.push(Line::from(vec![Span::styled(
-                "    (empty — clipboard paste-curl uses your clipboard directly)".to_string(),
-                dim,
-            )]));
-            register_tab_row(fields, y);
-        } else {
-            for line in src.lines() {
-                let y = rows.len() as u16;
-                register_tab_row(fields, y);
-                rows.push(Line::from(vec![Span::styled(
-                    format!("    {line}"),
-                    Style::default().fg(t.grey_fg).bg(t.bg_dark),
-                )]));
-            }
-        }
+        // v1 Source tab is a paste-target hint — clipboard is the
+        // source. An editable in-pane source field is queued for v2
+        // (would need a 5th EditField variant + cycle slot + key
+        // routing). Right-click anywhere on this tab fires the
+        // field-aware menu with Paste curl available.
+        let y = rows.len() as u16;
+        rows.push(Line::from(vec![Span::styled(
+            "    (clipboard paste-curl reads your system clipboard directly)".to_string(),
+            dim,
+        )]));
+        register_tab_row(fields, y);
     }
 
     // Sending/Done indicator (small).

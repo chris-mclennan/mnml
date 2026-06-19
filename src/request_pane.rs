@@ -64,14 +64,6 @@ pub struct RequestPane {
     /// 2026-06-19 — added when the Edit view was restructured into
     /// a tabbed UI to match the rqst Postman-style layout.
     pub edit_tab: EditTab,
-    /// Editable raw source field shown on `EditTab::Source` — a
-    /// place to paste a curl / `.http` block. Committed via the
-    /// `:http.paste_curl` op which parses it into the other
-    /// request fields. Not bound to disk; the user types here, the
-    /// pane parses, and the structured fields become the truth.
-    pub source_buffer: String,
-    /// Byte-offset caret for the Source field.
-    pub source_cursor: usize,
 }
 
 /// The tabbed UI on the Edit view. `Tab` advances; `Shift+Tab`
@@ -249,8 +241,6 @@ impl RequestPane {
             headers_buffer,
             headers_cursor,
             edit_tab: EditTab::Body,
-            source_buffer: String::new(),
-            source_cursor: 0,
         }
     }
 
