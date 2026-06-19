@@ -56,6 +56,13 @@ pub enum PromptKind {
     /// Accept ⇒ jump the active editor's cursor to the typed 1-based line
     /// number. (`Ctrl+G` — standard-mode equivalent of vim's `:N`.)
     GotoLine,
+    /// Accept ⇒ write `<typed-var>=<pending_lookup_picked_id>` to
+    /// the current env file (`<workspace>/.rqst/env/<active>.env`)
+    /// and toast the result. The picked id was stashed into
+    /// `App::pending_lookup_picked_id` by the
+    /// `PickerKind::LookupItem` accept handler. Phase 7 of the
+    /// rqst→mnml port-back.
+    LookupVarName,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into

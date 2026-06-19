@@ -2842,16 +2842,19 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_bench_active(10, 4),
         },
         Command {
-            id: "http.lookup_list",
-            title: "HTTP: list .rqst/lookups/ files (fill env vars from API responses)",
+            id: "http.lookup",
+            title: "HTTP: lookup — fill an env var from a live API response",
             group: "http",
-            // Phase 7 of the rqst→mnml port-back. v1 lists the
-            // available `.curl` files under `.rqst/lookups/` via a
-            // toast so the user can `open` one and run it; the
-            // full multi-stage picker (file → item → var-name) is
-            // a follow-up that needs a dedicated UI pane.
+            // Multi-stage flow ported from rqst's `Ctrl+;` lookup:
+            // stage 1 is a picker over `.curl` files under
+            // `.rqst/lookups/`; accept fires it on a background
+            // thread; stage 2 is a picker over the parsed items;
+            // stage 3 is a prompt for the env var name; the final
+            // write lands `<var>=<id>` in
+            // `.rqst/env/<active>.env`. Phase 7 of the rqst→mnml
+            // port-back.
             keys: &[],
-            run: |app| app.http_lookup_list(),
+            run: |app| app.http_lookup_open(),
         },
         Command {
             id: "http.capture_now",

@@ -140,6 +140,29 @@ pub enum PickerKind {
     /// inline-suggestion backend (`[ai] suggest_backend`). Opened the
     /// first time the user enables ghost-text.
     SuggestBackend,
+    /// `id` = the row index (as a string) into
+    /// [`crate::app::App::pending_captured_rows`]. Accept ⇒ open
+    /// the row as a `.curl` text in a new editor pane (formatted
+    /// via [`crate::http::captured::CapturedRow::to_curl`]) so the
+    /// user can fire it as a regular request. Phase 4 of the
+    /// rqst→mnml port-back.
+    CapturedRows,
+    /// `id` = the row index (as a string) into
+    /// [`crate::app::App::pending_history_rows`]. Accept ⇒ open
+    /// the request as a `.curl` editor pane so the user can re-
+    /// fire it. Phase 9 of the rqst→mnml port-back.
+    HistoryRows,
+    /// `id` = path of a `.curl` file under `.rqst/lookups/`. Accept
+    /// ⇒ fire the file as a request in a background thread; when
+    /// the response lands, parse the body for list items and open
+    /// a [`PickerKind::LookupItem`] picker. Phase 7 of the
+    /// rqst→mnml port-back.
+    LookupFile,
+    /// `id` = the index (as a string) into
+    /// [`crate::app::App::pending_lookup_items`]. Accept ⇒ open a
+    /// [`crate::prompt::PromptKind::LookupVarName`] prompt asking
+    /// what env var name to write the picked item's id under.
+    LookupItem,
 }
 
 #[derive(Debug, Clone)]

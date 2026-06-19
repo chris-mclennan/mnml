@@ -2619,6 +2619,26 @@ pub struct App {
     /// trace string (multi-line summary the user will see in a
     /// toast preview + paste from clipboard for the full thing).
     pub http_bench_rx: Option<std::sync::mpsc::Receiver<String>>,
+    /// Snapshot of `.rqst/captured/log.jsonl` for the current
+    /// captured-viewer picker (`PickerKind::CapturedRows`). The
+    /// picker's `id` field is a string index into this. Cleared
+    /// after the picker closes. Phase 4 follow-up.
+    pub pending_captured_rows: Vec<crate::http::captured::CapturedRow>,
+    /// Snapshot of `.rqst/history.jsonl` rows for the current
+    /// history picker (`PickerKind::HistoryRows`). Phase 9 follow-up.
+    pub pending_history_rows: Vec<serde_json::Value>,
+    /// Parsed lookup items from the most-recent lookup-file fire.
+    /// Indexed by `PickerKind::LookupItem`'s `id`. Phase 7.
+    pub pending_lookup_items: Vec<crate::http::lookup::LookupItem>,
+    /// The id of the lookup item the user picked — used by the
+    /// `PromptKind::LookupVarName` accept handler to write
+    /// `<typed-var>=<pending_lookup_picked_id>` into the env file.
+    pub pending_lookup_picked_id: Option<String>,
+    /// In-flight lookup-file fire result channel. Payload is
+    /// `Ok((response_body, file_label))` or `Err(message)`. Drained
+    /// by `App::tick`; on success, parses items + opens
+    /// `PickerKind::LookupItem` picker.
+    pub lookup_fire_rx: Option<std::sync::mpsc::Receiver<Result<(String, String), String>>>,
     /// `:debug.rects` overlay state — when `true`, the renderer
     /// paints colored borders around every registered click rect so
     /// the user can SEE the hit boundaries vs the rendered glyphs.
@@ -3303,6 +3323,11 @@ impl App {
             last_mixr_track_at: None,
             http_sync_rx: None,
             http_bench_rx: None,
+            pending_captured_rows: Vec::new(),
+            pending_history_rows: Vec::new(),
+            pending_lookup_items: Vec::new(),
+            pending_lookup_picked_id: None,
+            lookup_fire_rx: None,
             debug_rects: false,
             no_pane_cmdline: None,
             mixr_panel: None,
@@ -4437,6 +4462,27 @@ impl App {
     /// Open a scratch buffer pre-seeded with `text` in a horizontal split
     /// below the active leaf. `_title` is decorative — scratch buffers
     /// have no path. Used by `:Capture <cmd>` to surface command output.
+    /// Open a `.curl`-flagged scratch buffer seeded with `curl_text`.
+    /// Used by the captured-rows / history picker accept paths so
+    /// the chosen row lands as a fireable scratch — `:http.send`
+    /// works because `language_ext = "curl"` is what the http
+    /// dispatcher checks. Phase 4 + 9 follow-ups.
+    pub fn open_curl_scratch(&mut self, curl_text: &str, _method: &str, _url: &str) {
+        self.split_active(crate::layout::SplitDir::Vertical);
+        let mut buf = crate::buffer::Buffer::scratch(&self.config);
+        buf.language_ext = Some("curl".to_string());
+        let mut clip = crate::clipboard::Clipboard::detached();
+        let _ = buf.editor.apply(
+            crate::edit_op::EditOp::InsertStr(curl_text.to_string()),
+            24,
+            &mut clip,
+        );
+        buf.editor.place_cursor(0, 0);
+        self.panes.push(Pane::Editor(buf));
+        let new_id = self.panes.len() - 1;
+        self.reveal_pane(new_id);
+    }
+
     pub fn open_scratch_with_text(&mut self, _title: String, text: String) {
         self.split_active(crate::layout::SplitDir::Vertical);
         let mut buf = crate::buffer::Buffer::scratch(&self.config);
@@ -8845,6 +8891,7 @@ impl App {
         self.drain_http_jobs();
         self.drain_http_sync_result();
         self.drain_http_bench_result();
+        self.drain_lookup_fire_result();
         self.drain_ai_jobs();
         self.drain_suggestions();
         self.maybe_fire_suggestion();

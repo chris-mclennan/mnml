@@ -78,6 +78,12 @@ impl EnvSet {
         }
     }
 
+    /// Active env name (`Some("dev")`) — set by [`Self::select`] /
+    /// [`Self::load`]. `None` only on `Self::empty()`.
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
     pub fn lookup(&self, key: &str) -> Option<String> {
         if let Some(v) = self.vars.get(key) {
             return Some(v.clone());

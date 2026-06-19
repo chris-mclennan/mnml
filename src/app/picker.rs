@@ -568,6 +568,44 @@ impl App {
                 let id = item.id.clone();
                 self.accept_suggest_backend(&id);
             }
+            PickerKind::CapturedRows => {
+                if let Ok(idx) = item.id.parse::<usize>()
+                    && let Some(row) = self.pending_captured_rows.get(idx).cloned()
+                {
+                    self.open_curl_scratch(&row.to_curl(), &row.method, &row.url);
+                }
+                self.pending_captured_rows.clear();
+            }
+            PickerKind::HistoryRows => {
+                if let Ok(idx) = item.id.parse::<usize>()
+                    && let Some(v) = self.pending_history_rows.get(idx).cloned()
+                {
+                    let method = v
+                        .get("method")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("GET")
+                        .to_string();
+                    let url = v
+                        .get("url")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    // History only logs method + url, not headers /
+                    // body — build a minimal curl from those.
+                    let curl = format!("curl -X {method} '{url}'");
+                    self.open_curl_scratch(&curl, &method, &url);
+                }
+                self.pending_history_rows.clear();
+            }
+            PickerKind::LookupFile => {
+                let path = std::path::PathBuf::from(item.id.clone());
+                self.accept_lookup_file(&path);
+            }
+            PickerKind::LookupItem => {
+                if let Ok(idx) = item.id.parse::<usize>() {
+                    self.accept_lookup_item(idx);
+                }
+            }
         }
     }
 
@@ -1068,6 +1106,10 @@ impl App {
             crate::prompt::PromptKind::PatchNerdFontSvg => {
                 let svg = p.input.trim().to_string();
                 self.run_patch_nerd_font_svg(&svg);
+            }
+            crate::prompt::PromptKind::LookupVarName => {
+                let var = p.input.trim().to_string();
+                self.accept_lookup_var_name(&var);
             }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();

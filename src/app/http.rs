@@ -59,6 +59,40 @@ fn splice_http_block(existing: &str, name: Option<&str>, new_block: &str) -> Opt
     Some(joined)
 }
 
+/// Insert-or-replace a `KEY=VALUE` line in an `.env` file body.
+/// Preserves comments + ordering of other keys. If `var` isn't
+/// present, appends a new line. Used by the lookup picker's
+/// final stage to write picked items to the active env file.
+/// Errs only when a malformed value would corrupt the file.
+fn upsert_env_var(existing: &str, var: &str, value: &str) -> Result<String, String> {
+    if value.contains('\n') {
+        return Err("lookup: value can't contain newline".into());
+    }
+    let mut replaced = false;
+    let mut out = String::with_capacity(existing.len() + var.len() + value.len() + 8);
+    for line in existing.lines() {
+        let trimmed = line.trim_start();
+        if !replaced
+            && !trimmed.starts_with('#')
+            && let Some((k, _)) = trimmed.split_once('=')
+            && k.trim() == var
+        {
+            out.push_str(&format!("{var}={value}\n"));
+            replaced = true;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !replaced {
+        if !out.ends_with('\n') && !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!("{var}={value}\n"));
+    }
+    Ok(out)
+}
+
 impl App {
     /// Right-click on the Request pane URL row — exposes copy-as-curl,
     /// re-fire, switch to Response view.
@@ -115,14 +149,16 @@ impl App {
         self.focus = Focus::Pane;
     }
 
-    /// `http.lookup_list` — discover `.curl` files under
-    /// `<workspace>/.rqst/lookups/` and toast the names so the
-    /// user can `open` one. v1 of phase 7 of the rqst→mnml port-
-    /// back; the full picker (file → fire → item → env-var-name)
-    /// is queued as a follow-up.
-    pub fn http_lookup_list(&mut self) {
+    /// `http.lookup` — open the lookup picker (stage 1: pick a
+    /// `.curl` file under `<workspace>/.rqst/lookups/`). Subsequent
+    /// stages — fire-request → pick-item → enter-var-name → write-
+    /// to-env — are chained by the picker/prompt accept handlers.
+    /// Phase 7 of the rqst→mnml port-back.
+    pub fn http_lookup_open(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
         let dir = self.workspace.join(".rqst").join("lookups");
-        let mut found: Vec<String> = Vec::new();
+        let workspace = self.workspace.clone();
+        let mut items: Vec<PickerItem> = Vec::new();
         if let Ok(read) = std::fs::read_dir(&dir) {
             for entry in read.flatten() {
                 let path = entry.path();
@@ -130,21 +166,178 @@ impl App {
                     .extension()
                     .and_then(|e| e.to_str())
                     .is_some_and(|e| matches!(e, "curl" | "http" | "rest"))
-                    && let Some(name) = path.file_name().and_then(|n| n.to_str())
                 {
-                    found.push(name.to_string());
+                    let label = crate::http::lookup::relative_label(&path, &workspace);
+                    items.push(PickerItem::new(
+                        path.to_string_lossy().into_owned(),
+                        label,
+                        String::new(),
+                    ));
                 }
             }
         }
-        found.sort();
-        if found.is_empty() {
+        if items.is_empty() {
             self.toast(format!(
                 "no lookups in {} — add a `.curl` file under that dir",
                 dir.display()
             ));
             return;
         }
-        self.toast(format!("lookups: {}", found.join(", ")));
+        items.sort_by(|a, b| a.label.cmp(&b.label));
+        self.open_picker(Picker::new(
+            PickerKind::LookupFile,
+            "Lookup file",
+            items,
+        ));
+    }
+
+    /// Accept handler for `PickerKind::LookupFile`. Spawns a
+    /// background thread that fires the chosen `.curl` file as an
+    /// HTTP request; on response, `App::tick`'s drain opens the
+    /// `LookupItem` picker with parsed list rows.
+    pub fn accept_lookup_file(&mut self, file_path: &std::path::Path) {
+        use crate::http::{self, template::EnvSet};
+        let text = match std::fs::read_to_string(file_path) {
+            Ok(t) => t,
+            Err(e) => {
+                self.toast(format!("lookup: read {}: {e}", file_path.display()));
+                return;
+            }
+        };
+        let mut request = match http::parse(&text) {
+            Ok(r) => r,
+            Err(e) => {
+                self.toast(format!("lookup: parse {}: {e}", file_path.display()));
+                return;
+            }
+        };
+        let script = http::script::parse(&text);
+        let mut env = EnvSet::select(&self.workspace, None);
+        http::script::apply_pre(&script, &mut request, &mut env);
+        request.url = http::template::expand(&request.url, &env);
+        for (_, v) in request.headers.iter_mut() {
+            *v = http::template::expand(v, &env);
+        }
+        if let Some(body) = request.body.as_mut() {
+            *body = http::template::expand(body, &env);
+        }
+        let file_label = crate::http::lookup::relative_label(file_path, &self.workspace);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = http::send(&request)
+                .map(|r| (r.body, file_label.clone()))
+                .map_err(|e| format!("lookup fire: {e}"));
+            let _ = tx.send(result);
+        });
+        self.lookup_fire_rx = Some(rx);
+        self.toast("lookup: firing request…");
+    }
+
+    /// Drain the in-flight lookup-fire result. On success, parses
+    /// the response body for list items and opens the
+    /// `PickerKind::LookupItem` picker. Called from `App::tick`.
+    pub fn drain_lookup_fire_result(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let Some(rx) = self.lookup_fire_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok((body, label))) => {
+                self.lookup_fire_rx = None;
+                let Some(parsed) = crate::http::lookup::parse_items(&body) else {
+                    self.toast(format!(
+                        "lookup: {label} response wasn't a recognized list shape"
+                    ));
+                    return;
+                };
+                if parsed.is_empty() {
+                    self.toast(format!("lookup: {label} returned 0 items"));
+                    return;
+                }
+                let items: Vec<PickerItem> = parsed
+                    .iter()
+                    .enumerate()
+                    .map(|(i, item)| {
+                        PickerItem::new(
+                            i.to_string(),
+                            item.label.clone(),
+                            item.id.clone(),
+                        )
+                    })
+                    .collect();
+                self.pending_lookup_items = parsed;
+                self.open_picker(Picker::new(
+                    PickerKind::LookupItem,
+                    &format!("Lookup item · {label}"),
+                    items,
+                ));
+            }
+            Ok(Err(e)) => {
+                self.lookup_fire_rx = None;
+                self.toast(e);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.lookup_fire_rx = None;
+                self.toast("lookup: worker dropped");
+            }
+        }
+    }
+
+    /// Accept handler for `PickerKind::LookupItem`. Stashes the
+    /// picked item's id into `pending_lookup_picked_id` and opens
+    /// the var-name prompt.
+    pub fn accept_lookup_item(&mut self, idx: usize) {
+        let Some(item) = self.pending_lookup_items.get(idx).cloned() else {
+            return;
+        };
+        self.pending_lookup_picked_id = Some(item.id.clone());
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::LookupVarName,
+            format!("Env var name for {} ({}):", item.label, item.id),
+        ));
+    }
+
+    /// Accept handler for `PromptKind::LookupVarName`. Writes
+    /// `<var>=<id>` to `<workspace>/.rqst/env/<current>.env`
+    /// (appending or replacing in place if the var exists), toasts
+    /// the write.
+    pub fn accept_lookup_var_name(&mut self, var: &str) {
+        let var = var.trim();
+        if var.is_empty() {
+            self.toast("lookup: var name can't be empty");
+            return;
+        }
+        let Some(id) = self.pending_lookup_picked_id.take() else {
+            return;
+        };
+        let env_name = crate::http::template::EnvSet::select(&self.workspace, None)
+            .name()
+            .map(str::to_string)
+            .unwrap_or_else(|| "dev".to_string());
+        let env_path = self
+            .workspace
+            .join(".rqst")
+            .join("env")
+            .join(format!("{env_name}.env"));
+        let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
+        let updated = match upsert_env_var(&existing, var, &id) {
+            Ok(s) => s,
+            Err(e) => {
+                self.toast(format!("lookup: {e}"));
+                return;
+            }
+        };
+        if let Some(parent) = env_path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            self.toast(format!("lookup: mkdir {}: {e}", parent.display()));
+            return;
+        }
+        match std::fs::write(&env_path, updated) {
+            Ok(()) => self.toast(format!("wrote {var}={id} → {}", env_path.display())),
+            Err(e) => self.toast(format!("lookup: write {}: {e}", env_path.display())),
+        }
     }
 
     /// `http.capture_now` — append every NetEntry from the active
@@ -223,40 +416,108 @@ impl App {
         }
     }
 
-    /// `http.view_captured` — open `<workspace>/.rqst/captured/
-    /// log.jsonl` as an editor buffer for grep / jq / scan. Phase 4
-    /// of the rqst→mnml port-back. A dedicated viewer pane with
-    /// per-row re-fire is a v2 follow-up.
+    /// `http.view_captured` — load `.rqst/captured/log.jsonl` and
+    /// open a picker over the entries. Enter opens the chosen row
+    /// as a fresh `.curl` editor buffer (via `CapturedRow::to_curl`)
+    /// so the user can fire it again. Phase 4 of the rqst→mnml
+    /// port-back — replaces the v1 stub that just opened the JSONL
+    /// file in an editor.
     pub fn open_http_captured_log(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
         let path = self
             .workspace
             .join(".rqst")
             .join("captured")
             .join("log.jsonl");
-        if !path.exists() {
+        let rows = crate::http::captured::load(&path);
+        if rows.is_empty() {
             self.toast(format!(
-                "http.view_captured: no log yet — run http.capture_now first ({})",
+                "http.view_captured: no entries at {} — run http.capture_now first",
                 path.display()
             ));
             return;
         }
-        self.open_path(&path);
+        let items: Vec<PickerItem> = rows
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                // Display: "METHOD short_url" (matching browser pane's
+                // short_url convention — host + path, no scheme/query).
+                let short = r
+                    .url
+                    .strip_prefix("https://")
+                    .or_else(|| r.url.strip_prefix("http://"))
+                    .unwrap_or(&r.url);
+                let short = short.split(['?', '#']).next().unwrap_or(short);
+                let detail = if r.body.as_deref().unwrap_or("").is_empty() {
+                    String::new()
+                } else {
+                    format!("(body: {} bytes)", r.body.as_deref().unwrap().len())
+                };
+                PickerItem::new(i.to_string(), format!("{} {short}", r.method), detail)
+            })
+            .collect();
+        self.pending_captured_rows = rows;
+        self.open_picker(Picker::new(
+            PickerKind::CapturedRows,
+            "Captured requests",
+            items,
+        ));
     }
 
-    /// `http.history` — open `<workspace>/.rqst/history.jsonl` as
-    /// an editor buffer. Toasts if the file hasn't been created
-    /// yet (no requests sent this workspace). Phase 9 of the
-    /// rqst→mnml port-back.
+    /// `http.history` — load `.rqst/history.jsonl` and open a
+    /// picker over the most recent 100 entries. Enter opens the
+    /// chosen entry's method/URL as a `.curl` scratch buffer so
+    /// the user can re-fire it. Phase 9 of the rqst→mnml
+    /// port-back — replaces the v1 stub that just opened the file
+    /// in an editor.
     pub fn open_http_history(&mut self) {
-        let path = self.workspace.join(".rqst").join("history.jsonl");
-        if !path.exists() {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let workspace = self.workspace.clone();
+        let rows = crate::http::history::tail(&workspace, 100);
+        if rows.is_empty() {
             self.toast(format!(
-                "http.history: no history yet (send a request to populate {})",
-                path.display()
+                "http.history: no history yet at {}",
+                workspace.join(".rqst").join("history.jsonl").display()
             ));
             return;
         }
-        self.open_path(&path);
+        let items: Vec<PickerItem> = rows
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(i, v)| {
+                let method = v
+                    .get("method")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let url = v
+                    .get("url")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let status = v.get("status").and_then(|s| s.as_u64());
+                let dur = v.get("duration_ms").and_then(|d| d.as_u64());
+                let detail = match (status, dur) {
+                    (Some(s), Some(d)) => format!("{s} · {d}ms"),
+                    (Some(s), None) => format!("{s}"),
+                    (None, Some(d)) => format!("FAILED · {d}ms"),
+                    (None, None) => "FAILED".to_string(),
+                };
+                let short = url
+                    .strip_prefix("https://")
+                    .or_else(|| url.strip_prefix("http://"))
+                    .unwrap_or(&url)
+                    .split(['?', '#'])
+                    .next()
+                    .unwrap_or(&url)
+                    .to_string();
+                PickerItem::new(i.to_string(), format!("{method} {short}"), detail)
+            })
+            .collect();
+        self.pending_history_rows = rows;
+        self.open_picker(Picker::new(PickerKind::HistoryRows, "HTTP history", items));
     }
 
     /// `http.save_mock` — freeze the active Request pane's response
