@@ -38,14 +38,21 @@ case "$cmd" in
     *--tags*) exit 0 ;;
 esac
 
-# Resolve project state directory + current HEAD SHA. Falls back
-# silently if `git rev-parse` fails (detached HEAD edge cases,
-# uninitialised repo, etc.) — better to gate than panic.
+# Resolve project state directory + current HEAD SHA. When git
+# can't determine HEAD (corrupted .git, empty repo, etc.) we gate
+# unconditionally — the safer failure mode for a review prompt
+# than silently passing through with a wildcard marker that any
+# subsequent push would also hit. Code-reviewer flagged the prior
+# `unknown` fallback as a low-severity bypass path.
 state_dir="${CLAUDE_PROJECT_DIR:-${PWD}}/.claude/state"
 head_sha="$(git -C "${CLAUDE_PROJECT_DIR:-${PWD}}" rev-parse HEAD 2>/dev/null || echo "")"
 if [ -z "$head_sha" ]; then
-    # Can't determine HEAD — gate just to be safe.
-    head_sha="unknown"
+    cat >&2 <<'EOF'
+PRE_PUSH_REVIEW_GATE: cannot determine HEAD SHA (broken git state?).
+Gate is held closed until the repo state can be resolved. Fix the
+underlying issue and retry.
+EOF
+    exit 2
 fi
 marker="${state_dir}/reviewed-${head_sha}"
 
