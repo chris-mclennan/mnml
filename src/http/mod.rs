@@ -25,6 +25,7 @@ pub mod file;
 pub mod history;
 pub mod lookup;
 pub mod mock;
+pub mod proxy;
 pub mod script;
 pub mod sources;
 pub mod template;

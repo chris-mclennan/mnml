@@ -37,6 +37,10 @@ fn main() -> ExitCode {
             args.next();
             sync_subcommand(args.collect())
         }
+        Some("proxy") => {
+            args.next();
+            proxy_subcommand(args.collect())
+        }
         Some("test") => {
             args.next();
             test_subcommand(args.collect())
@@ -516,6 +520,78 @@ fn chain_subcommand(argv: Vec<String>) -> ExitCode {
         }
         Err(e) => {
             eprintln!("mnml chain: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `mnml proxy --url URL [--workspace DIR] [--seconds N] [--idle-ms N]
+/// [--quiet]` — headless CDP capture. Spawns headless Chrome,
+/// navigates to URL, captures every Network.requestWillBeSent into
+/// `<workspace>/.rqst/captured/log.jsonl`, exits on timeout or
+/// network quiescence. Phase 4 of the rqst→mnml port-back —
+/// covers the same surface as rqst's `rqst proxy` for headless /
+/// CI / scripted captures (the in-app `http.capture_now` covers
+/// the interactive case).
+fn proxy_subcommand(argv: Vec<String>) -> ExitCode {
+    let usage = "usage: mnml proxy --url URL [--workspace DIR] [--seconds N] [--idle-ms N] [--quiet]";
+    let mut opts = mnml::http::proxy::Options::default();
+    let mut it = argv.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--url" => match it.next() {
+                Some(v) => opts.url = v,
+                None => {
+                    eprintln!("mnml proxy: --url needs a value");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--workspace" | "-w" => match it.next() {
+                Some(v) => opts.workspace = PathBuf::from(v),
+                None => {
+                    eprintln!("mnml proxy: --workspace needs a path");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--seconds" => match it.next().and_then(|s| s.parse::<u64>().ok()) {
+                Some(s) => opts.max_seconds = Some(s),
+                None => {
+                    eprintln!("mnml proxy: --seconds needs a positive integer");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--idle-ms" => match it.next().and_then(|s| s.parse::<u64>().ok()) {
+                Some(ms) => opts.idle_ms = ms,
+                None => {
+                    eprintln!("mnml proxy: --idle-ms needs a positive integer");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "--quiet" => opts.verbose = false,
+            "-h" | "--help" => {
+                println!("{usage}");
+                return ExitCode::SUCCESS;
+            }
+            s => {
+                eprintln!("mnml proxy: unexpected arg: {s}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    if opts.url.trim().is_empty() {
+        eprintln!("{usage}");
+        return ExitCode::FAILURE;
+    }
+    if opts.workspace == PathBuf::from(".") {
+        opts.workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    }
+    match mnml::http::proxy::run(opts) {
+        Ok(n) => {
+            println!("ok — {n} requests captured");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("mnml proxy: {e}");
             ExitCode::FAILURE
         }
     }
