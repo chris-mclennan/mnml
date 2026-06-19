@@ -118,21 +118,49 @@ impl App {
     /// `http.sync` — read `<workspace>/.mnml/sources.json` (or
     /// `<workspace>/.rqst/sources.json` for legacy workspaces) and
     /// regenerate `.curl` stub files for every `kind: "swagger"`
-    /// source. Synchronous (fetches + writes happen on the UI
-    /// thread); for large/slow sources we'd want a background
-    /// thread + a trace pane like bench/chain. Phase 2 of the
-    /// rqst→mnml port-back; 2026-06-19.
+    /// source. Runs on a background thread (reqwest's blocking
+    /// client has a 30-second per-request timeout; 6 sources ×
+    /// 30s = potentially 3 minutes of frozen UI without this).
+    /// `App::tick` drains the result channel + toasts. Reviewer-
+    /// flagged 2026-06-19 — phase 2 of the rqst→mnml port-back.
     pub fn http_sync_sources(&mut self) {
+        if self.http_sync_rx.is_some() {
+            self.toast("http.sync already running");
+            return;
+        }
         let workspace = self.workspace.clone();
-        match crate::http::sources::run_sync(&workspace) {
-            Ok((_trace, total)) => {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = crate::http::sources::run_sync(&workspace);
+            let _ = tx.send(result);
+        });
+        self.http_sync_rx = Some(rx);
+        self.toast("http.sync: fetching swagger sources…");
+    }
+
+    /// Drain the in-flight `http.sync` result. Called from
+    /// `App::tick`; no-op when nothing is pending or the worker
+    /// hasn't responded yet.
+    pub fn drain_http_sync_result(&mut self) {
+        let Some(rx) = self.http_sync_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok((_trace, total))) => {
+                self.http_sync_rx = None;
                 self.toast(format!(
-                    "http.sync: wrote {total} request stub(s) — refresh the tree to see them"
+                    "http.sync: wrote {total} request stub(s) — tree refreshed"
                 ));
                 self.tree.refresh();
             }
-            Err(e) => {
+            Ok(Err(e)) => {
+                self.http_sync_rx = None;
                 self.toast(format!("http.sync failed: {e}"));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.http_sync_rx = None;
+                self.toast("http.sync: worker dropped");
             }
         }
     }

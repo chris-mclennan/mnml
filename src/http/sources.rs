@@ -57,11 +57,16 @@ pub fn load(workspace: &Path) -> Result<Option<Vec<Source>>, String> {
             .and_then(|s| s.as_str())
             .unwrap_or("")
             .to_string();
-        let url = v
-            .get("url")
-            .and_then(|s| s.as_str())
-            .ok_or_else(|| format!("source `{name}` missing 'url'"))?
-            .to_string();
+        // Skip malformed entries instead of aborting the whole
+        // load — reviewer-flagged 2026-06-19: a single bad entry
+        // in a 6-source file used to kill the other 5 silently.
+        // The trace path in `run_sync` already logs per-source
+        // failures, so the omission surfaces via the toast/CLI.
+        let Some(url) = v.get("url").and_then(|s| s.as_str()) else {
+            eprintln!("mnml http sync: source `{name}` missing 'url' — skipping");
+            continue;
+        };
+        let url = url.to_string();
         // `out` is a path relative to the workspace, or absolute.
         // Falls back to `.rqst/requests/<name>` for parity with rqst
         // — same shape the existing tattle workspace already uses.

@@ -187,6 +187,13 @@ fn is_valid_var_name(s: &str) -> bool {
 /// non-migrated workspace) so `select` can fall through to its
 /// other arms cleanly. Phase 1 of the rqst→mnml port-back —
 /// 2026-06-19.
+///
+/// Value handling: assumes BARE values, like rqst's real config
+/// files (`default_env=dev`). Surrounding quotes are NOT stripped
+/// — a hypothetical `default_env="dev"` would resolve to env
+/// `"dev"` (literal quotes), which the loader would then fail to
+/// find and `select` would fall through to empty. Real workspaces
+/// use the bare form so this isn't a live bug.
 fn read_rqst_config_default_env(workspace: &Path) -> Option<String> {
     let text = fs::read_to_string(workspace.join(".rqst").join("config")).ok()?;
     for line in text.lines() {

@@ -43,6 +43,16 @@ case "$cmd" in
     *--tags*) exit 0 ;;
 esac
 
+# Only gate pushes from the mnml repo. Pushing other projects from
+# this shell (a workspace folder, a sibling sibling-app repo, etc.)
+# shouldn't trigger an mnml-code reviewer. Detect by checking the
+# git toplevel against $CLAUDE_PROJECT_DIR.
+toplevel="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+if [ -n "$toplevel" ] && [ -n "${CLAUDE_PROJECT_DIR:-}" ] && \
+   [ "$toplevel" != "${CLAUDE_PROJECT_DIR}" ]; then
+    exit 0
+fi
+
 # Resolve project state directory + current HEAD SHA. When git
 # can't determine HEAD (corrupted .git, empty repo, etc.) we gate
 # unconditionally — the safer failure mode for a review prompt

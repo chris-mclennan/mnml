@@ -531,7 +531,7 @@ fn sync_subcommand(argv: Vec<String>) -> ExitCode {
     let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
-            "--workspace" => match it.next() {
+            "--workspace" | "-w" => match it.next() {
                 Some(v) => workspace = Some(PathBuf::from(v)),
                 None => {
                     eprintln!("mnml sync: --workspace needs a path");

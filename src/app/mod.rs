@@ -2609,6 +2609,11 @@ pub struct App {
     /// before any mixr read; reset to `None` implicitly when the
     /// 10s TTL lapses (a genuine queue-empty state).
     pub last_mixr_track_at: Option<std::time::Instant>,
+    /// In-flight `http.sync` worker result channel. `Some(rx)`
+    /// while the background fetch is running; `App::tick` drains
+    /// it. None when idle. Phase 2 of the rqst→mnml port-back.
+    pub http_sync_rx:
+        Option<std::sync::mpsc::Receiver<Result<(String, usize), String>>>,
     /// `:debug.rects` overlay state — when `true`, the renderer
     /// paints colored borders around every registered click rect so
     /// the user can SEE the hit boundaries vs the rendered glyphs.
@@ -3291,6 +3296,7 @@ impl App {
             now_playing: None,
             now_playing_rx: None,
             last_mixr_track_at: None,
+            http_sync_rx: None,
             debug_rects: false,
             no_pane_cmdline: None,
             mixr_panel: None,
@@ -8831,6 +8837,7 @@ impl App {
         self.drain_now_playing();
         self.drain_mixr_panel();
         self.drain_http_jobs();
+        self.drain_http_sync_result();
         self.drain_ai_jobs();
         self.drain_suggestions();
         self.maybe_fire_suggestion();
