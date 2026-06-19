@@ -1156,6 +1156,10 @@ impl App {
                 let v = p.input.clone();
                 self.accept_env_add_key(&v);
             }
+            crate::prompt::PromptKind::HttpParamAdd => {
+                let v = p.input.clone();
+                self.accept_http_param_add(&v);
+            }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();
                 if let Some(FsAction::NewFile { parent }) = self.pending_fs_action.take() {

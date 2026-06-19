@@ -1343,6 +1343,178 @@ impl App {
         self.toast(format!("paste_curl: populated from {preview}"));
     }
 
+    /// `http.import_har` — read a HAR (HTTP Archive) from the
+    /// clipboard, write one `.curl` file per HAR entry into
+    /// `<workspace>/.rqst/captured/har-<ts>/`. The natural follow-
+    /// up to `:http.paste_curl` for users with many requests:
+    /// "save all as HAR" in DevTools, paste here, get N fireable
+    /// curls. Spec: <http://www.softwareishard.com/blog/har-12-spec/>.
+    pub fn http_import_har_from_clipboard(&mut self) {
+        let raw = self.clipboard.text();
+        if raw.trim().is_empty() {
+            self.toast("http.import_har: clipboard is empty");
+            return;
+        }
+        let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                self.toast(format!("har: not valid JSON: {e}"));
+                return;
+            }
+        };
+        let entries = parsed
+            .get("log")
+            .and_then(|l| l.get("entries"))
+            .and_then(|e| e.as_array());
+        let Some(entries) = entries else {
+            self.toast("har: missing log.entries (not a HAR file?)");
+            return;
+        };
+        // Stable directory name: timestamp from the first entry's
+        // startedDateTime, falling back to a counter, so the path
+        // is deterministic across re-imports.
+        let stem = entries
+            .first()
+            .and_then(|e| e.get("startedDateTime"))
+            .and_then(|s| s.as_str())
+            .map(|s| s.replace(':', "-").chars().take(19).collect::<String>())
+            .unwrap_or_else(|| "import".to_string());
+        let out_dir = self
+            .workspace
+            .join(".rqst")
+            .join("captured")
+            .join(format!("har-{stem}"));
+        if let Err(e) = std::fs::create_dir_all(&out_dir) {
+            self.toast(format!("har: mkdir {}: {e}", out_dir.display()));
+            return;
+        }
+        let mut written = 0usize;
+        for (i, entry) in entries.iter().enumerate() {
+            let Some(req) = entry.get("request") else { continue };
+            let method = req
+                .get("method")
+                .and_then(|m| m.as_str())
+                .unwrap_or("GET")
+                .to_uppercase();
+            let Some(url) = req.get("url").and_then(|u| u.as_str()) else {
+                continue;
+            };
+            let mut curl = format!("curl -X {method} '{url}'");
+            if let Some(headers) = req.get("headers").and_then(|h| h.as_array()) {
+                for h in headers {
+                    let (Some(name), Some(value)) = (
+                        h.get("name").and_then(|n| n.as_str()),
+                        h.get("value").and_then(|v| v.as_str()),
+                    ) else {
+                        continue;
+                    };
+                    // Skip pseudo-headers; Chrome HAR emits them
+                    // (`:method`, `:authority`) but they're not
+                    // usable as curl `-H` args.
+                    if name.starts_with(':') {
+                        continue;
+                    }
+                    curl.push_str(&format!(" \\\n  -H '{name}: {value}'"));
+                }
+            }
+            if let Some(post) = req.get("postData").and_then(|p| p.get("text")).and_then(|t| t.as_str())
+                && !post.is_empty()
+            {
+                let escaped = post.replace('\'', "'\\''");
+                curl.push_str(&format!(" \\\n  --data '{escaped}'"));
+            }
+            // Filename: derived from host + path so users can grep.
+            // Plain parse — strip query string, sanitize each
+            // component to ASCII alphanum/underscore.
+            let host_path = {
+                let stripped = url.split('?').next().unwrap_or(url);
+                let after_scheme = stripped.split_once("://").map(|(_, r)| r).unwrap_or(stripped);
+                after_scheme
+                    .chars()
+                    .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                    .collect::<String>()
+                    .chars()
+                    .take(80)
+                    .collect::<String>()
+            };
+            let stem = if host_path.is_empty() {
+                format!("entry_{i:03}")
+            } else {
+                format!("{i:03}_{host_path}")
+            };
+            let path = out_dir.join(format!("{stem}.curl"));
+            if std::fs::write(&path, curl).is_ok() {
+                written += 1;
+            }
+        }
+        self.toast(format!(
+            "har: wrote {written} curls → {}",
+            out_dir.display()
+        ));
+    }
+
+    /// `http.params_add` — open a prompt to type `KEY=VALUE`,
+    /// append to the active Request pane's URL as a query
+    /// parameter. Used when on the Params tab and you want to add
+    /// a new param without hand-editing the URL field.
+    pub fn http_params_add(&mut self) {
+        let has_request = matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Request(_))
+        );
+        if !has_request {
+            self.toast("http.params_add: no active Request pane");
+            return;
+        }
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::HttpParamAdd,
+            "Query parameter KEY=VALUE:".to_string(),
+        ));
+    }
+
+    /// Accept handler for `PromptKind::HttpParamAdd`. Appends the
+    /// param to the active URL with the correct separator.
+    pub fn accept_http_param_add(&mut self, input: &str) {
+        let Some((key, value)) = input.split_once('=') else {
+            self.toast("params: input must be KEY=VALUE");
+            return;
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            self.toast("params: key can't be empty");
+            return;
+        }
+        let value = value.trim();
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            let sep = if rp.request.url.contains('?') { '&' } else { '?' };
+            rp.request.url.push(sep);
+            rp.request.url.push_str(key);
+            rp.request.url.push('=');
+            rp.request.url.push_str(value);
+            rp.url_cursor = rp.request.url.len();
+            // Auto-switch to Params tab so user sees the addition.
+            rp.edit_tab = crate::request_pane::EditTab::Params;
+            self.toast(format!("params: added {key}={value}"));
+        }
+    }
+
+    /// `http.params_clear` — strip the entire `?…` portion from
+    /// the active Request URL.
+    pub fn http_params_clear(&mut self) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            if let Some(i) = rp.request.url.find('?') {
+                let removed = rp.request.url[i..].to_string();
+                rp.request.url.truncate(i);
+                rp.url_cursor = rp.request.url.len();
+                self.toast(format!("params: cleared {removed}"));
+            } else {
+                self.toast("params: no query string on URL");
+            }
+        }
+    }
+
     /// `http.abort` — release the UI-side tracking for any
     /// in-flight HTTP work (bench / sync / lookup fire). The
     /// worker thread keeps running until it naturally completes

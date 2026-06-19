@@ -2960,6 +2960,32 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_paste_curl_to_active(),
         },
         Command {
+            id: "http.import_har",
+            title: "HTTP: import a .har file from clipboard or path",
+            group: "http",
+            // Parses Chrome / Firefox / Safari DevTools HAR exports
+            // (`File → Save all as HAR`) into N `.curl` files in
+            // `.rqst/captured/har-<timestamp>/`. Each entry's
+            // method / URL / headers / postData becomes one curl
+            // ready to fire or paste into a Request pane.
+            keys: &[],
+            run: |app| app.http_import_har_from_clipboard(),
+        },
+        Command {
+            id: "http.params_add",
+            title: "HTTP: add a query parameter (?key=value) to the active Request URL",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_params_add(),
+        },
+        Command {
+            id: "http.params_clear",
+            title: "HTTP: clear all query parameters from the active Request URL",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_params_clear(),
+        },
+        Command {
             id: "http.abort",
             title: "HTTP: cancel any in-flight bench / sync work",
             group: "http",

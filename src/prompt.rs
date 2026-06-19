@@ -73,6 +73,10 @@ pub enum PromptKind {
     /// toasts an error. Triggered by the `+add` row in the
     /// `EnvVars` picker. Phase 3 polish.
     EnvAddKey,
+    /// Accept ⇒ split typed input on `=`, append to the active
+    /// Request pane's URL as a query parameter. `?` if URL has no
+    /// query string yet; `&` if it does.
+    HttpParamAdd,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into
