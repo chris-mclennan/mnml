@@ -4467,8 +4467,15 @@ impl App {
     /// the chosen row lands as a fireable scratch — `:http.send`
     /// works because `language_ext = "curl"` is what the http
     /// dispatcher checks. Phase 4 + 9 follow-ups.
+    ///
+    /// 2026-06-19 — api-workflow-user agent caught a SEV-2: the
+    /// earlier impl `split_active`'d (which itself pushes a blank
+    /// scratch buffer) then `panes.push`'d a second populated
+    /// buffer, leaving the blank one orphaned in the buffer list
+    /// every accept. Now builds the buffer first + uses
+    /// `split_leaf_with` to splice it directly into the layout
+    /// in one step.
     pub fn open_curl_scratch(&mut self, curl_text: &str, _method: &str, _url: &str) {
-        self.split_active(crate::layout::SplitDir::Vertical);
         let mut buf = crate::buffer::Buffer::scratch(&self.config);
         buf.language_ext = Some("curl".to_string());
         let mut clip = crate::clipboard::Clipboard::detached();
@@ -4478,9 +4485,18 @@ impl App {
             &mut clip,
         );
         buf.editor.place_cursor(0, 0);
-        self.panes.push(Pane::Editor(buf));
-        let new_id = self.panes.len() - 1;
-        self.reveal_pane(new_id);
+        let Some(cur) = self.active else {
+            // No active pane (empty-state landing) — push then
+            // adopt as primary. Rare path; matches what the
+            // existing scratch-from-empty case does.
+            self.panes.push(Pane::Editor(buf));
+            let new_id = self.panes.len() - 1;
+            self.reveal_pane(new_id);
+            return;
+        };
+        let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, Pane::Editor(buf));
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
     }
 
     pub fn open_scratch_with_text(&mut self, _title: String, text: String) {

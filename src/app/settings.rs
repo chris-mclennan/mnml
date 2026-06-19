@@ -501,6 +501,15 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         d.editor.breadcrumb,
     ));
 
+    // ── Browser ────────────────────────────────────────────────────
+    out.push(SettingItem::Section("Browser"));
+    out.push(bool_row(
+        "browser.autocapture_to_log",
+        "Auto-append browser requests → captured/log.jsonl",
+        cfg.browser.autocapture_to_log,
+        d.browser.autocapture_to_log,
+    ));
+
     // ── Session ─────────────────────────────────────────────────────
     out.push(SettingItem::Section("Session"));
     out.push(bool_row(
@@ -625,6 +634,7 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
         "editor.inlay_hints" => set_bool(&mut cfg.editor.inlay_hints, opt_idx),
         "editor.code_lens" => set_bool(&mut cfg.editor.code_lens, opt_idx),
         "editor.breadcrumb" => set_bool(&mut cfg.editor.breadcrumb, opt_idx),
+        "browser.autocapture_to_log" => set_bool(&mut cfg.browser.autocapture_to_log, opt_idx),
         "session.restore" => set_bool(&mut cfg.session.restore, opt_idx),
         _ => false,
     }

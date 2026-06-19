@@ -757,6 +757,83 @@ impl App {
         self.toast(msg);
     }
 
+    /// `sse.parse_active_response` — parse the active Request
+    /// pane's Done response body as Server-Sent Events and toast
+    /// the event count + first event's name/data preview. Useful
+    /// when an endpoint streams `data: <json>` lines and you want
+    /// to confirm the SSE shape without reading raw text. The full
+    /// progressive streaming-send display (per-event response pane
+    /// updates) is a v2 follow-up. Phase 8 follow-up of the
+    /// rqst→mnml port-back.
+    pub fn sse_parse_active_response(&mut self) {
+        let body = self
+            .active
+            .and_then(|i| self.panes.get(i))
+            .and_then(|p| match p {
+                Pane::Request(rp) => match &rp.state {
+                    crate::request_pane::RunState::Done(rv) => Some(rv.body.clone()),
+                    _ => None,
+                },
+                _ => None,
+            });
+        let Some(body) = body else {
+            self.toast("sse.parse: no active Request pane with a Done response");
+            return;
+        };
+        let mut reader = crate::sse::Reader::new(body.as_bytes());
+        let mut events: Vec<crate::sse::Event> = Vec::new();
+        while let Ok(Some(evt)) = reader.next_event() {
+            events.push(evt);
+        }
+        if events.is_empty() {
+            self.toast("sse.parse: body has no SSE events (no blank-line-delimited data blocks)");
+            return;
+        }
+        let first = &events[0];
+        let preview = if first.data.len() > 40 {
+            format!("{}…", &first.data[..38])
+        } else {
+            first.data.clone()
+        };
+        let label = if first.name.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", first.name)
+        };
+        self.toast(format!(
+            "sse: {} event(s){label} · first: {preview}",
+            events.len()
+        ));
+    }
+
+    /// `cookies.normalize_clipboard` — read the clipboard, run it
+    /// through `crate::cookies::normalize_cookie_value` to collapse
+    /// any of the three DevTools paste shapes into the canonical
+    /// `name=value; name=value; …` form, and write the result back
+    /// to the clipboard. Lets a user paste cookies copied from
+    /// Chrome's Network or Application tab, run this, then paste
+    /// the result into a `Cookie:` header value without hand-
+    /// editing. Phase 8 follow-up of the rqst→mnml port-back.
+    pub fn cookies_normalize_clipboard(&mut self) {
+        let raw = self.clipboard.text();
+        if raw.trim().is_empty() {
+            self.toast("cookies.normalize: clipboard is empty");
+            return;
+        }
+        let normalized = crate::cookies::normalize_cookie_value(&raw);
+        if normalized.is_empty() {
+            self.toast("cookies.normalize: no cookie pairs found");
+            return;
+        }
+        let preview = if normalized.len() > 64 {
+            format!("{}…", &normalized[..62])
+        } else {
+            normalized.clone()
+        };
+        self.clipboard.set(normalized, false);
+        self.toast(format!("cookies: {preview} (copied)"));
+    }
+
     /// `auth.extract_bearer` — pull a bearer token out of arbitrary
     /// clipboard text (a paste of `Authorization: Bearer eyJ…` or
     /// just `Bearer eyJ…`, or the bare JWT itself). Writes the

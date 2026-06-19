@@ -167,6 +167,17 @@ mod tests {
         let samples: Vec<Sample> = vec![(10, 200), (20, 200), (30, 500), (40, 200), (50, 200)];
         let out = format_summary(&req, 5, 1, 100, &samples, &[]);
         assert!(out.contains("min 10"), "{}", out);
+        // 2026-06-19 — api-workflow-user agent flagged that the
+        // earlier assertion set only covered min/max, so a
+        // rounding regression in pct() would silently pass. With
+        // samples sorted ascending [10,20,30,40,50] and indices
+        // `((n-1)*p).round()`:
+        //   p50: 4 * 0.50 = 2.0 → durations[2] = 30
+        //   p95: 4 * 0.95 = 3.8 → round 4 → durations[4] = 50
+        //   p99: 4 * 0.99 = 3.96 → round 4 → durations[4] = 50
+        assert!(out.contains("p50 30"), "{}", out);
+        assert!(out.contains("p95 50"), "{}", out);
+        assert!(out.contains("p99 50"), "{}", out);
         assert!(out.contains("max 50"), "{}", out);
         assert!(out.contains("2xx=4"), "{}", out);
         assert!(out.contains("5xx=1"), "{}", out);

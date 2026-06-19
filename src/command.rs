@@ -2932,6 +2932,33 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.auth_extract_bearer_from_clipboard(),
         },
         Command {
+            id: "sse.parse_active_response",
+            title: "SSE: parse active Response pane body as Server-Sent Events",
+            group: "http",
+            // Reads the active Request pane's Done response body,
+            // runs it through `crate::sse::Reader`, toasts the
+            // event count + first event's name/data. Useful when an
+            // endpoint returns SSE but the body view shows raw
+            // `data: …` lines — confirms the SSE shape is well-
+            // formed and surfaces individual events. Full streaming-
+            // send progressive display is a v2 follow-up.
+            keys: &[],
+            run: |app| app.sse_parse_active_response(),
+        },
+        Command {
+            id: "cookies.normalize_clipboard",
+            title: "Cookies: normalize clipboard text → canonical `name=v; name=v` form",
+            group: "http",
+            // Accepts any of the three DevTools shapes
+            // (`name=value` per line, `name: value` per line, or
+            // the proper `name=v; name=v` form) and rewrites the
+            // clipboard with the canonical Cookie-header form. v2
+            // would auto-fire when typing into a Cookie: header
+            // value in the Request pane's Edit view.
+            keys: &[],
+            run: |app| app.cookies_normalize_clipboard(),
+        },
+        Command {
             id: "http.copy_curl",
             title: "HTTP: copy the request as a curl command",
             group: "http",
