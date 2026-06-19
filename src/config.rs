@@ -1363,10 +1363,18 @@ impl Config {
                 })
                 .collect();
         }
-        // `[[ui.integration_icon]]` — rail INTEGRATIONS section. Same
-        // shape, same merge rule (presence replaces defaults).
+        // `[[ui.integration_icon]]` — rail INTEGRATIONS section.
+        // 2026-06-19 — vscode-user-mouse second hunt SEV-3: prior
+        // semantics replaced the entire default vec, so a user
+        // with their own `[[ui.integration_icon]]` entries was
+        // missing built-in chips (e.g. the new `http_new` `+`
+        // button) entirely. Now merges by `id`: user entries
+        // override built-ins of the same id; built-in ids not
+        // mentioned in user config stay. Order: built-ins first
+        // (preserving the default rail order), then any user-only
+        // entries appended at the end.
         if let Some(raws) = raw.ui.integration_icons {
-            self.ui.integration_icons = raws
+            let user_entries: Vec<IntegrationIcon> = raws
                 .into_iter()
                 .filter_map(|r| {
                     let glyph = r.glyph?;
@@ -1389,6 +1397,34 @@ impl Config {
                     })
                 })
                 .collect();
+            // 1. Built-ins (in order), with same-id user entries
+            //    substituted in place.
+            let mut merged: Vec<IntegrationIcon> = self
+                .ui
+                .integration_icons
+                .iter()
+                .map(|builtin| {
+                    user_entries
+                        .iter()
+                        .find(|u| u.id == builtin.id)
+                        .cloned()
+                        .unwrap_or_else(|| builtin.clone())
+                })
+                .collect();
+            // 2. User-only entries (no matching built-in id),
+            //    appended in their config order.
+            let builtin_ids: std::collections::HashSet<String> = self
+                .ui
+                .integration_icons
+                .iter()
+                .map(|e| e.id.clone())
+                .collect();
+            for user in user_entries {
+                if !builtin_ids.contains(&user.id) {
+                    merged.push(user);
+                }
+            }
+            self.ui.integration_icons = merged;
         }
         // `ticket_prefixes` — pty-tab auto-naming from scrollback.
         // Replaces the default (empty list) when set. Blank entries are

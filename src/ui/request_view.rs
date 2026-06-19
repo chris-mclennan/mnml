@@ -449,6 +449,24 @@ fn draw_edit(
     }
     } // end Body tab
 
+    // 2026-06-19 — mouse hunt SEV-2 #5: Params/Vars/Source content
+    // rows didn't register click targets, so right-click anywhere
+    // in those tabs got no context menu. Register the next-pushed
+    // row as `EditField::Url` so the field-aware right-click works
+    // (the URL-titled menu has Paste curl + Send + Copy as curl —
+    // exactly what a user on the Source tab would want).
+    let register_tab_row = |fields: &mut Vec<(Rect, PaneId, EditField)>, row_y: u16| {
+        fields.push((
+            Rect {
+                x: area.x,
+                y: row_y,
+                width: area.width,
+                height: 1,
+            },
+            pane_id,
+            EditField::Url,
+        ));
+    };
     // ── Params tab: per-key=value rows parsed from URL query string ───
     if cur_tab == crate::request_pane::EditTab::Params {
         let url = &rp.request.url;
@@ -464,12 +482,16 @@ fn draw_edit(
             None => Vec::new(),
         };
         if params.is_empty() {
+            let row_y = rows.len() as u16;
             rows.push(Line::from(vec![Span::styled(
                 "    (no query parameters — add ?key=value to URL)".to_string(),
                 dim,
             )]));
+            register_tab_row(fields, row_y);
         } else {
             for (k, v) in &params {
+                let row_y = rows.len() as u16;
+                register_tab_row(fields, row_y);
                 rows.push(Line::from(vec![
                     Span::styled("    ".to_string(), body_style),
                     Span::styled(
@@ -495,10 +517,12 @@ fn draw_edit(
 
     // ── Vars tab: read-only list of active env file's KEY=VALUE rows ──
     if cur_tab == crate::request_pane::EditTab::Vars {
+        let hint_y = rows.len() as u16;
         rows.push(Line::from(vec![Span::styled(
             "    Active env vars — open structured editor: :http.edit_env".to_string(),
             dim,
         )]));
+        register_tab_row(fields, hint_y);
         rows.push(plain(String::new(), body_style));
         // Try .mnml/env/<active>.env first (precedence), then .rqst/.
         // Render keys with value previews. Empty state if no env files
@@ -526,23 +550,31 @@ fn draw_edit(
     // ── Source tab: paste raw curl / .http source here, parse it into
     //     the structured fields via :http.paste_curl or Ctrl+Shift+V. ──
     if cur_tab == crate::request_pane::EditTab::Source {
+        let h1_y = rows.len() as u16;
         rows.push(Line::from(vec![Span::styled(
             "    Paste a curl command or .http block here.".to_string(),
             dim,
         )]));
+        register_tab_row(fields, h1_y);
+        let h2_y = rows.len() as u16;
         rows.push(Line::from(vec![Span::styled(
             "    Then run :http.paste_curl (or Ctrl+Shift+V) to populate fields.".to_string(),
             dim,
         )]));
+        register_tab_row(fields, h2_y);
         rows.push(plain(String::new(), body_style));
         let src = &rp.source_buffer;
         if src.is_empty() {
+            let y = rows.len() as u16;
             rows.push(Line::from(vec![Span::styled(
                 "    (empty — clipboard paste-curl uses your clipboard directly)".to_string(),
                 dim,
             )]));
+            register_tab_row(fields, y);
         } else {
             for line in src.lines() {
+                let y = rows.len() as u16;
+                register_tab_row(fields, y);
                 rows.push(Line::from(vec![Span::styled(
                     format!("    {line}"),
                     Style::default().fg(t.grey_fg).bg(t.bg_dark),

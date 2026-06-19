@@ -762,6 +762,14 @@ pub fn rects_dump_json(app: &App) -> String {
             *r,
         );
     }
+    for (r, pid, view) in &app.rects.request_tabs {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("request_tab:{pid}:{view:?}"),
+            *r,
+        );
+    }
     out.push_str("\n]");
     out
 }
