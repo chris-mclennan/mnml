@@ -716,6 +716,22 @@ pub fn rects_dump_json(app: &App) -> String {
     for (r, idx) in &app.rects.launcher_icon_rects {
         push_rect(&mut out, &mut first, &format!("launcher:{idx}"), *r);
     }
+    // Extra rect families added per reviewer feedback (overstated
+    // "every registered click rect" claim) — the ones most likely
+    // to be subject to the same chip-overlap bug pattern that
+    // motivated the audit toolkit.
+    for (r, idx) in &app.rects.extra_workspace_toggles {
+        push_rect(&mut out, &mut first, &format!("extra_workspace_toggle:{idx}"), *r);
+    }
+    for (r, idx) in &app.rects.discovery_integration_rows {
+        push_rect(&mut out, &mut first, &format!("discovery_integration_row:{idx}"), *r);
+    }
+    for (r, _) in &app.rects.git_rail_rows {
+        push_rect(&mut out, &mut first, "git_rail_row", *r);
+    }
+    for (r, id) in &app.rects.bufferline_tabs {
+        push_rect(&mut out, &mut first, &format!("bufferline_tab:{id}"), *r);
+    }
     out.push_str("\n]");
     out
 }

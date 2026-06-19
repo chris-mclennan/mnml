@@ -1782,6 +1782,21 @@ mod tests {
                 && !buf[(x, y)].symbol().trim().is_empty()
         };
 
+        // Guard: if the TestBackend's width clipped every chip out
+        // (e.g. a tempdir name wider than the chip-cluster slot
+        // makes `chip_count` drop to 0), the loop below passes
+        // vacuously without exercising anything. Reviewer-flagged
+        // 2026-06-19: airtight the test against that case so a
+        // future width regression can't silently mask the audit.
+        assert!(
+            !app.rects.tree_icon_buttons.is_empty(),
+            "audit precondition: tree_icon_buttons was empty — \
+             the 80×24 TestBackend isn't wide enough to render any \
+             chip (workspace name `{ws}` may be too long for the \
+             header cluster). Test would pass vacuously.",
+            ws = ws.file_name().unwrap_or_default().to_string_lossy(),
+        );
+
         for (rect, label) in &app.rects.tree_icon_buttons {
             // Check the cell IMMEDIATELY left and right of the rect
             // on the same rows. A non-empty adjacent cell means the
