@@ -22,12 +22,14 @@ set -eu
 input_json="$(cat)"
 cmd="$(printf '%s' "$input_json" | jq -r '.tool_input.command // empty')"
 
-# Not a git push? Pass through silently. Both the bare `git push`
-# form and the chained `commit && git push` form match — earlier
-# versions of this hook only matched bare push, leaving chained
-# commands as a silent bypass.
+# Not a git push? Pass through silently. The matcher recognises
+# `git push` as the LEADING command OR following a shell chain
+# operator (`&&` / `;` / `|`) — explicitly excluding `git push`
+# appearing inside a quoted argument (e.g. a commit-message body
+# that happens to contain those two words). A naive `*git\ push*`
+# false-matched on commit messages with those words verbatim.
 case "$cmd" in
-    *git\ push*) ;;
+    "git push"*|*"&& git push"*|*"; git push"*|*"| git push"*) ;;
     *) exit 0 ;;
 esac
 
