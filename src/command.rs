@@ -2946,6 +2946,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.auth_extract_bearer_from_clipboard(),
         },
         Command {
+            id: "http.paste_curl",
+            title: "HTTP: paste curl from clipboard — populate active Request pane",
+            group: "http",
+            // Reads the clipboard, parses as curl / .http / .rest,
+            // overwrites the active Request pane's Method / URL /
+            // Headers / Body in place. The Postman-style "paste a
+            // curl from Chrome DevTools" workflow. Mirrors rqst's
+            // Source tab. v2 of the Request pane UI will surface
+            // this as a dedicated field; today it's palette + the
+            // context menu.
+            keys: &[],
+            run: |app| app.http_paste_curl_to_active(),
+        },
+        Command {
             id: "http.cycle_method",
             title: "HTTP: cycle method (GET→POST→PUT→DELETE→PATCH→…)",
             group: "http",

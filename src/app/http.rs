@@ -129,6 +129,7 @@ impl App {
         use crate::request_pane::EditField;
         let mut items = vec![
             MenuItem::new("Send", MenuAction::Command("http.send")),
+            MenuItem::new("Paste curl from clipboard", MenuAction::Command("http.paste_curl")),
             MenuItem::new("Copy as curl", MenuAction::Command("http.copy_curl")),
             MenuItem::new(
                 "Switch to Response",
@@ -1280,6 +1281,50 @@ impl App {
             let _ = tx.send((job_id, result));
         });
         job_id
+    }
+
+    /// `http.paste_curl` — read the clipboard, parse as curl /
+    /// `.http` / `.rest`, overwrite the active Request pane's
+    /// Method / URL / Headers / Body. Postman-style "paste a curl
+    /// from Chrome DevTools" workflow. If no active Request pane,
+    /// opens a blank one first (`:http.new` + `:http.paste_curl`
+    /// chain works seamlessly).
+    pub fn http_paste_curl_to_active(&mut self) {
+        let raw = self.clipboard.text();
+        if raw.trim().is_empty() {
+            self.toast("http.paste_curl: clipboard is empty");
+            return;
+        }
+        let parsed = match crate::http::parse(&raw) {
+            Ok(r) => r,
+            Err(e) => {
+                self.toast(format!("http.paste_curl: parse failed: {e}"));
+                return;
+            }
+        };
+        let has_request = matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Request(_))
+        );
+        if !has_request {
+            self.open_new_request_pane();
+        }
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.headers_buffer = crate::request_pane::headers_to_text(&parsed.headers);
+            rp.headers_cursor = rp.headers_buffer.len();
+            rp.url_cursor = parsed.url.len();
+            rp.body_cursor = parsed.body.as_deref().map(str::len).unwrap_or(0);
+            rp.request = parsed;
+            rp.view = crate::request_pane::ViewMode::Edit;
+            rp.focus = crate::request_pane::EditField::Url;
+        }
+        let preview = if raw.trim().len() > 56 {
+            format!("{}…", &raw.trim()[..54])
+        } else {
+            raw.trim().to_string()
+        };
+        self.toast(format!("paste_curl: populated from {preview}"));
     }
 
     /// `http.cycle_method` — cycle the active Request pane's

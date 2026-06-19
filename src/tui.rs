@@ -4645,6 +4645,16 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         if rp.view == ViewMode::Edit {
             match key.code {
+                // Ctrl+Shift+V — paste curl from clipboard +
+                // populate Method / URL / Headers / Body in one go.
+                // The Postman-style "I just copied a curl from
+                // Chrome DevTools" workflow. Plain Ctrl+V keeps
+                // standard "paste into the focused field" behavior.
+                KeyCode::Char('v') if ctrl && shift => {
+                    let _ = rp;
+                    app.http_paste_curl_to_active();
+                    return true;
+                }
                 KeyCode::Tab if shift => rp.focus_prev_field(),
                 // Tab inside Body inserts a literal `\t` (multi-line code-y
                 // field — typing indented JSON / XML is common). Other

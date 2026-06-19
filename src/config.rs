@@ -665,6 +665,20 @@ impl Default for Config {
                         tooltip: Some("HTTP: send active request".to_string()),
                     },
                     IntegrationIcon {
+                        // Postman-style "new request" chip. `\u{F067}`
+                        // (nf-fa-plus) is in every Nerd Font variant;
+                        // pairs visually with the HTTP send glyph
+                        // above (paper plane). User-requested
+                        // 2026-06-19 — the "where's the new-request
+                        // button?" gap.
+                        id: "http_new".to_string(),
+                        glyph: "\u{F067}".to_string(),
+                        fallback: "+".to_string(),
+                        command: "http.new".to_string(),
+                        color: "green".to_string(),
+                        tooltip: Some("HTTP: new blank request".to_string()),
+                    },
+                    IntegrationIcon {
                         id: "codebuild".to_string(),
                         glyph: "\u{F0492}".to_string(), // nf-md-hammer-wrench
                         fallback: "C".to_string(),
