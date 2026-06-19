@@ -115,6 +115,14 @@ pub fn draw(
     // ── caret position to return (set when Edit-mode draws the focused field) ──
     let mut caret: Option<(u16, u16)> = None;
 
+    // Edit-tab chip rects collected with `y` = row index in
+    // `rows`; corrected to screen y after scroll is computed
+    // below (same shape as `request_fields`).
+    let mut edit_tabs_local: Vec<(Rect, PaneId, crate::request_pane::EditTab)> = Vec::new();
+    app.rects
+        .request_edit_tabs
+        .retain(|(_, p, _)| *p != pane_id);
+
     if active_edit {
         draw_edit(
             rp,
@@ -125,6 +133,7 @@ pub fn draw(
             focused,
             pane_id,
             &mut fields,
+            &mut edit_tabs_local,
         );
     } else {
         draw_response(rp, t, &mut rows);
@@ -157,6 +166,23 @@ pub fn draw(
         r.y = area.y + visible_off as u16;
         app.rects.request_fields.push((r, pid, f));
     }
+    // 2026-06-19 — api-workflow third hunt SEV-1: tab chip rects
+    // were registered with row-index y, but never adjusted for
+    // scroll. Clicks compared against screen coords never matched
+    // any chip. Apply the same scroll-offset translation as
+    // request_fields.
+    for (mut r, pid, t) in edit_tabs_local.drain(..) {
+        let row_off = r.y;
+        if (row_off as usize) < scroll {
+            continue;
+        }
+        let visible_off = row_off as usize - scroll;
+        if visible_off >= h {
+            continue;
+        }
+        r.y = area.y + visible_off as u16;
+        app.rects.request_edit_tabs.push((r, pid, t));
+    }
 
     // Adjust the caret for scroll + return it so the terminal cursor sits there.
     caret.and_then(|(x, y)| {
@@ -179,6 +205,7 @@ fn draw_edit(
     focused: bool,
     pane_id: PaneId,
     fields: &mut Vec<(Rect, PaneId, EditField)>,
+    tabs: &mut Vec<(Rect, PaneId, crate::request_pane::EditTab)>,
 ) {
     // Stash a click-target rect for the row at `row_idx_in_rows` covering
     // the full pane width (y stays as the *row index*; `draw` translates
@@ -262,6 +289,47 @@ fn draw_edit(
         *caret = Some((area.x + caret_col.min(area.width.saturating_sub(1)), y));
     }
 
+    // 2026-06-19 — tabbed Edit view per the rqst Postman-style
+    // layout. Tab strip sits between URL + the per-tab content.
+    // Tab clicks switch via App.rects.request_tabs.
+    {
+        use crate::request_pane::EditTab;
+        let strip_y = rows.len() as u16;
+        let mut spans: Vec<Span> = Vec::new();
+        let mut col: u16 = 2;
+        for tab in EditTab::ALL {
+            let label = tab.label();
+            let is_cur = rp.edit_tab == *tab;
+            let style = if is_cur {
+                Style::default()
+                    .fg(t.fg)
+                    .bg(t.bg3)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(t.comment).bg(t.bg_dark)
+            };
+            spans.push(Span::styled(format!(" {label} "), style));
+            spans.push(Span::styled(" ".to_string(), Style::default().bg(t.bg_dark)));
+            let chip_w = label.chars().count() as u16 + 2;
+            tabs.push((
+                Rect {
+                    x: area.x + col,
+                    y: strip_y,
+                    width: chip_w,
+                    height: 1,
+                },
+                pane_id,
+                *tab,
+            ));
+            col += chip_w + 1;
+        }
+        rows.push(Line::from(spans));
+    }
+
+    // ── Per-tab content ───────────────────────────────────────────────
+    let cur_tab = rp.edit_tab;
+
+    if cur_tab == crate::request_pane::EditTab::Headers {
     // Headers (editable as `Key: Value` text; one line per entry)
     let h_focus = rp.focus == EditField::Headers;
     let headers_label_y = rows.len() as u16;
@@ -329,7 +397,9 @@ fn draw_edit(
             *caret = Some((area.x + 4, y));
         }
     }
+    } // end Headers tab
 
+    if cur_tab == crate::request_pane::EditTab::Body {
     // Body
     let b_focus = rp.focus == EditField::Body;
     let body_label_y = rows.len() as u16;
@@ -375,6 +445,109 @@ fn draw_edit(
             let y = rows.len() as u16;
             rows.push(plain(String::new(), body_style));
             *caret = Some((area.x + 4, y));
+        }
+    }
+    } // end Body tab
+
+    // ── Params tab: per-key=value rows parsed from URL query string ───
+    if cur_tab == crate::request_pane::EditTab::Params {
+        let url = &rp.request.url;
+        let params: Vec<(String, String)> = match url.find('?') {
+            Some(i) => url[i + 1..]
+                .split('&')
+                .filter(|s| !s.is_empty())
+                .map(|kv| match kv.split_once('=') {
+                    Some((k, v)) => (k.to_string(), v.to_string()),
+                    None => (kv.to_string(), String::new()),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        if params.is_empty() {
+            rows.push(Line::from(vec![Span::styled(
+                "    (no query parameters — add ?key=value to URL)".to_string(),
+                dim,
+            )]));
+        } else {
+            for (k, v) in &params {
+                rows.push(Line::from(vec![
+                    Span::styled("    ".to_string(), body_style),
+                    Span::styled(
+                        k.clone(),
+                        Style::default()
+                            .fg(t.cyan)
+                            .bg(t.bg_dark)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        " = ".to_string(),
+                        Style::default().fg(t.comment).bg(t.bg_dark),
+                    ),
+                    Span::styled(v.clone(), Style::default().fg(t.fg).bg(t.bg_dark)),
+                ]));
+            }
+            rows.push(Line::from(vec![Span::styled(
+                "    (edit the URL field to change — Params is read-only for now)".to_string(),
+                dim,
+            )]));
+        }
+    }
+
+    // ── Vars tab: read-only list of active env file's KEY=VALUE rows ──
+    if cur_tab == crate::request_pane::EditTab::Vars {
+        rows.push(Line::from(vec![Span::styled(
+            "    Active env vars — open structured editor: :http.edit_env".to_string(),
+            dim,
+        )]));
+        rows.push(plain(String::new(), body_style));
+        // Try .mnml/env/<active>.env first (precedence), then .rqst/.
+        // Render keys with value previews. Empty state if no env files
+        // are present in the workspace.
+        // Note: render code can't read disk lazily; cwd-bound paths are
+        // resolved at render time, which is cheap and runs at frame
+        // rate but only when this tab is visible.
+        let mut found_any = false;
+        for sub in [".mnml", ".rqst"] {
+            // We don't know the workspace path from inside the render
+            // (request_view.rs doesn't take App by ref) — leave this
+            // as a placeholder; the structured editor (:http.edit_env)
+            // handles disk reading correctly. v2 plumbs `App.workspace`
+            // through to make this fully populated.
+            let _ = sub;
+        }
+        if !found_any {
+            rows.push(Line::from(vec![Span::styled(
+                "    (Vars browser scaffold — uses :http.edit_env for editing)".to_string(),
+                dim,
+            )]));
+        }
+    }
+
+    // ── Source tab: paste raw curl / .http source here, parse it into
+    //     the structured fields via :http.paste_curl or Ctrl+Shift+V. ──
+    if cur_tab == crate::request_pane::EditTab::Source {
+        rows.push(Line::from(vec![Span::styled(
+            "    Paste a curl command or .http block here.".to_string(),
+            dim,
+        )]));
+        rows.push(Line::from(vec![Span::styled(
+            "    Then run :http.paste_curl (or Ctrl+Shift+V) to populate fields.".to_string(),
+            dim,
+        )]));
+        rows.push(plain(String::new(), body_style));
+        let src = &rp.source_buffer;
+        if src.is_empty() {
+            rows.push(Line::from(vec![Span::styled(
+                "    (empty — clipboard paste-curl uses your clipboard directly)".to_string(),
+                dim,
+            )]));
+        } else {
+            for line in src.lines() {
+                rows.push(Line::from(vec![Span::styled(
+                    format!("    {line}"),
+                    Style::default().fg(t.grey_fg).bg(t.bg_dark),
+                )]));
+            }
         }
     }
 

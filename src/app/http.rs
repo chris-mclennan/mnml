@@ -268,16 +268,24 @@ impl App {
             .name()
             .map(str::to_string)
             .unwrap_or_else(|| "dev".to_string());
-        let env_path = self
-            .workspace
-            .join(".rqst")
-            .join("env")
-            .join(format!("{env_name}.env"));
-        // 2026-06-19 SEV-3: preserve the raw value (don't trim) so
-        // intentional whitespace round-trips through edit + save.
-        let current_val = std::fs::read_to_string(&env_path)
-            .ok()
-            .and_then(|text| {
+        // 2026-06-19 — api-workflow third hunt SEV-2: previously
+        // seeded the prompt from a hardcoded `.rqst/env/` path, so
+        // a key whose `.mnml/` value was shown in the picker would
+        // pre-fill with the stale `.rqst/` baseline. Now read in
+        // the same .rqst→.mnml order as `http_edit_env_open` and
+        // pick the last value seen — matches the picker display.
+        let current_val = ["", ".rqst", ".mnml"]
+            .iter()
+            .filter(|s| !s.is_empty())
+            .filter_map(|sub| {
+                let p = self
+                    .workspace
+                    .join(sub)
+                    .join("env")
+                    .join(format!("{env_name}.env"));
+                std::fs::read_to_string(p).ok()
+            })
+            .flat_map(|text| {
                 text.lines()
                     .filter_map(|l| {
                         let t = l.trim_start();
@@ -287,8 +295,9 @@ impl App {
                         let (k, v) = t.split_once('=')?;
                         (k.trim() == id).then(|| v.to_string())
                     })
-                    .next()
+                    .collect::<Vec<_>>()
             })
+            .last()
             .unwrap_or_default();
         self.pending_env_edit_key = Some(id.to_string());
         let mut prompt = crate::prompt::Prompt::new(
@@ -1318,6 +1327,13 @@ impl App {
             rp.request = parsed;
             rp.view = crate::request_pane::ViewMode::Edit;
             rp.focus = crate::request_pane::EditField::Url;
+            // 2026-06-19 — api-workflow third hunt SEV-3: if the
+            // user was on the Source tab when paste_curl fired
+            // (the natural position per the Source tab's hint),
+            // the view stayed on Source showing the empty
+            // source_buffer. Auto-switch to Body so they see
+            // their populated request.
+            rp.edit_tab = crate::request_pane::EditTab::Body;
         }
         let preview = if raw.trim().len() > 56 {
             format!("{}…", &raw.trim()[..54])
@@ -1333,12 +1349,15 @@ impl App {
     /// palette / Method-row context menu without keyboard focus.
     pub fn http_cycle_method(&mut self) {
         let Some(cur) = self.active else { return };
+        // 2026-06-19 — api-workflow third hunt SEV-3: this used an
+        // inline verb list that swapped PATCH and DELETE vs
+        // `STANDARD_METHODS`, so the palette command's cycle order
+        // diverged from Space-key cycling in the Method field. Use
+        // the canonical list.
         let new_method = if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
-            let verbs = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
-            let idx = verbs.iter().position(|v| *v == rp.request.method).unwrap_or(0);
-            let next = (idx + 1) % verbs.len();
-            rp.request.method = verbs[next].to_string();
-            Some(rp.request.method.clone())
+            let cycled = crate::request_pane::cycle_method(&rp.request.method);
+            rp.request.method = cycled.clone();
+            Some(cycled)
         } else {
             None
         };
@@ -1387,7 +1406,15 @@ impl App {
             ),
             None => {
                 self.panes.push(Pane::Request(pane));
-                self.panes.len() - 1
+                let new_id = self.panes.len() - 1;
+                // 2026-06-19 — api-workflow third hunt caught SEV-1:
+                // the earlier path forgot to seed the layout tree
+                // (still `Layout::Empty`), so the new pane was
+                // tracked in panes[] + active but rendered nothing.
+                // Mirror what every other empty-state landing path
+                // does (e.g. `open_path` at mod.rs:5247).
+                *self.layout_mut() = crate::layout::Layout::Leaf(new_id);
+                new_id
             }
         };
         self.active = Some(new_id);

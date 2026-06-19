@@ -613,6 +613,30 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // 2026-06-19 — Ctrl+] / Ctrl+[ in a Request pane's Edit view
+    // cycle the tab strip (Body/Headers/Params/Vars/Source). In
+    // standard input mode, the global chord chain binds these to
+    // editor.indent_line / outdent_line, which would otherwise
+    // swallow them. Intercept first when we're on a Request pane
+    // in Edit view so tab cycling works in both input modes.
+    // api-workflow third hunt SEV-2.
+    if matches!(
+        key.code,
+        KeyCode::Char(']') | KeyCode::Char('[')
+    ) && key.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(app.focus, Focus::Pane)
+        && let Some(cur) = app.active
+        && let Some(Pane::Request(rp)) = app.panes.get_mut(cur)
+        && rp.view == crate::request_pane::ViewMode::Edit
+    {
+        rp.edit_tab = if key.code == KeyCode::Char(']') {
+            rp.edit_tab.next()
+        } else {
+            rp.edit_tab.prev()
+        };
+        return;
+    }
+
     if dispatch_chord_chain(app, key) {
         return;
     }

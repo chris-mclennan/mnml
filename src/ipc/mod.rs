@@ -751,6 +751,17 @@ pub fn rects_dump_json(app: &App) -> String {
     for (r, idx) in &app.rects.context_menu_items {
         push_rect(&mut out, &mut first, &format!("context_menu_item:{idx}"), *r);
     }
+    // 2026-06-19 — api-workflow third hunt: tabbed Edit-view chip
+    // rects weren't in the dump, making the click bug undetectable
+    // via the toolkit.
+    for (r, pid, tab) in &app.rects.request_edit_tabs {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("request_edit_tab:{pid}:{tab:?}"),
+            *r,
+        );
+    }
     out.push_str("\n]");
     out
 }
