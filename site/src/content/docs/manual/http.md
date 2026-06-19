@@ -284,7 +284,20 @@ This is a smoke-test surface — you can run an end-to-end "log in, fetch users,
 
 ## Where to go next
 
+Deep-dives on individual surfaces:
+
+- [HTTP envs & templating](/manual/http-envs/) — the resolution chain (`--env` → `$MNML_ENV` → `.rqst/config`), the `.mnml/env/` over `.rqst/env/` precedence, every `{{$dynamic}}` builtin
+- [HTTP sync — sources.json](/manual/http-sync/) — batch-regenerate `.curl` stubs from multiple swagger sources via `:http.sync` or `mnml sync`
+- [HTTP bench](/manual/http-bench/) — 10× concurrent fire with p50 / p95 / p99 latency + status-class breakdown
+- [HTTP mocks](/manual/http-mocks/) — freeze a response to a sibling `.mock.json` and replay it offline
+- [HTTP history](/manual/http-history/) — `.rqst/history.jsonl`, the in-app picker, and shell-side grep / jq queries
+- [HTTP captured browser traffic](/manual/http-captured/) — auto-capture from the browser pane, `:http.capture_now`, and the headless `mnml proxy --url` CLI
+- [HTTP lookups](/manual/http-lookup/) — the 4-stage picker that fills env vars from real API responses
+- [HTTP helpers — JWT & bearer](/manual/http-helpers/) — `:jwt.decode` and `:auth.extract_bearer`
+
+And the surrounding context:
+
 - [Editing](/manual/editing/) — the buffer your `.http` files live in
 - [Git](/manual/git/) — version-controlling the request files alongside the code
 - [Configuration](/reference/configuration/) — `[keys.global]` for rebinding `http.*` chords; `MNML_ENV` and `--env` semantics
-- [AI panes](/manual/ai/) — what `http.ai_debug` plugs into when a request is mis-firing
+- [AI panes](/manual/ai-panes/) — what `http.ai_debug` plugs into when a request is mis-firing
