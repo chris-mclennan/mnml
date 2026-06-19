@@ -2946,6 +2946,19 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.auth_extract_bearer_from_clipboard(),
         },
         Command {
+            id: "http.new",
+            title: "HTTP: new blank request pane (Postman-style scratch)",
+            group: "http",
+            // Opens an in-memory Request pane already in Edit view
+            // with empty fields, no source file. User edits Method
+            // / URL / Headers / Body and hits `r` to fire. `Ctrl+S`
+            // toasts "no source file" — use `:w path.curl` from a
+            // sibling editor to persist the curl (v2 follow-up: a
+            // proper save-as prompt).
+            keys: &[],
+            run: |app| app.open_new_request_pane(),
+        },
+        Command {
             id: "http.send_streaming",
             title: "HTTP: send active request as a Server-Sent Events stream",
             group: "http",

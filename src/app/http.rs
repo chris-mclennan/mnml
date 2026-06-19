@@ -1216,6 +1216,54 @@ impl App {
         job_id
     }
 
+    /// `http.new` — open a blank Request pane in Edit mode for
+    /// the "I want to start a request without thinking about files
+    /// first" Postman-style workflow. The pane has:
+    ///   * Method = GET, URL = empty, headers = none, body = none
+    ///   * view = Edit (the form is visible immediately)
+    ///   * focus = URL (typing populates URL)
+    ///   * state = Failed("(not sent — press `r` to fire)") so
+    ///     the response panel shows a useful hint instead of an
+    ///     empty Sending… spinner
+    ///   * source_path = None (Ctrl+S toasts "no source file";
+    ///     save-as is a v2 follow-up)
+    /// User-requested 2026-06-19 — closing the "where's the new-
+    /// request button" gap.
+    pub fn open_new_request_pane(&mut self) {
+        use crate::request_pane::{EditField, RequestPane, RunState, ViewMode};
+        let request = crate::http::Request {
+            method: "GET".to_string(),
+            url: String::new(),
+            headers: Vec::new(),
+            body: None,
+        };
+        let mut pane = RequestPane::new(
+            None,
+            request,
+            crate::http::script::Script::default(),
+            0,
+        );
+        pane.view = ViewMode::Edit;
+        pane.focus = EditField::Url;
+        pane.state = RunState::Failed(
+            "(not sent — type a URL, then press `r` to fire)".to_string(),
+        );
+        let new_id = match self.active {
+            Some(cur) => self.split_leaf_with(
+                cur,
+                crate::layout::SplitDir::Vertical,
+                Pane::Request(pane),
+            ),
+            None => {
+                self.panes.push(Pane::Request(pane));
+                self.panes.len() - 1
+            }
+        };
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+        self.toast("new request — Tab cycles fields, `r` fires");
+    }
+
     /// `http.send_streaming` — like `http.send`, but the response
     /// is read as Server-Sent Events. The worker keeps the
     /// connection open (no client timeout), pulls events through
