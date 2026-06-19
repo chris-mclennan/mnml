@@ -115,6 +115,134 @@ impl App {
         self.focus = Focus::Pane;
     }
 
+    /// `http.lookup_list` — discover `.curl` files under
+    /// `<workspace>/.rqst/lookups/` and toast the names so the
+    /// user can `open` one. v1 of phase 7 of the rqst→mnml port-
+    /// back; the full picker (file → fire → item → env-var-name)
+    /// is queued as a follow-up.
+    pub fn http_lookup_list(&mut self) {
+        let dir = self.workspace.join(".rqst").join("lookups");
+        let mut found: Vec<String> = Vec::new();
+        if let Ok(read) = std::fs::read_dir(&dir) {
+            for entry in read.flatten() {
+                let path = entry.path();
+                if path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| matches!(e, "curl" | "http" | "rest"))
+                    && let Some(name) = path.file_name().and_then(|n| n.to_str())
+                {
+                    found.push(name.to_string());
+                }
+            }
+        }
+        found.sort();
+        if found.is_empty() {
+            self.toast(format!(
+                "no lookups in {} — add a `.curl` file under that dir",
+                dir.display()
+            ));
+            return;
+        }
+        self.toast(format!("lookups: {}", found.join(", ")));
+    }
+
+    /// `http.capture_now` — append every NetEntry from the active
+    /// browser pane into `<workspace>/.rqst/captured/log.jsonl`.
+    /// The captured log persists across browser sessions so the
+    /// user can review or re-fire entries later. Phase 4 of the
+    /// rqst→mnml port-back.
+    pub fn http_capture_browser_net_to_log(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("http.capture_now: no active pane");
+            return;
+        };
+        let entries: Vec<crate::http::captured::CapturedRow> = match self.panes.get(cur) {
+            Some(Pane::Browser(b)) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                b.net
+                    .iter()
+                    .map(|n| crate::http::captured::CapturedRow {
+                        at: now,
+                        request_id: n.request_id.clone(),
+                        method: n.method.clone(),
+                        url: n.url.clone(),
+                        headers: n.headers.clone(),
+                        body: n.post_data.clone(),
+                        paused: false,
+                    })
+                    .collect()
+            }
+            _ => {
+                self.toast("http.capture_now: needs an active browser pane");
+                return;
+            }
+        };
+        if entries.is_empty() {
+            self.toast("http.capture_now: browser pane has no network entries yet");
+            return;
+        }
+        let log_path = self
+            .workspace
+            .join(".rqst")
+            .join("captured")
+            .join("log.jsonl");
+        if let Some(parent) = log_path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            self.toast(format!("http.capture_now: mkdir {}: {e}", parent.display()));
+            return;
+        }
+        let count = entries.len();
+        let mut written = 0;
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            Ok(mut f) => {
+                use std::io::Write;
+                for row in &entries {
+                    if let Ok(line) = serde_json::to_string(row) {
+                        if f.write_all(line.as_bytes()).is_ok()
+                            && f.write_all(b"\n").is_ok()
+                        {
+                            written += 1;
+                        }
+                    }
+                }
+                self.toast(format!(
+                    "http.capture_now: wrote {written}/{count} entries to {}",
+                    log_path.display()
+                ));
+            }
+            Err(e) => self.toast(format!("http.capture_now: open {}: {e}", log_path.display())),
+        }
+    }
+
+    /// `http.view_captured` — open `<workspace>/.rqst/captured/
+    /// log.jsonl` as an editor buffer for grep / jq / scan. Phase 4
+    /// of the rqst→mnml port-back. A dedicated viewer pane with
+    /// per-row re-fire is a v2 follow-up.
+    pub fn open_http_captured_log(&mut self) {
+        let path = self
+            .workspace
+            .join(".rqst")
+            .join("captured")
+            .join("log.jsonl");
+        if !path.exists() {
+            self.toast(format!(
+                "http.view_captured: no log yet — run http.capture_now first ({})",
+                path.display()
+            ));
+            return;
+        }
+        self.open_path(&path);
+    }
+
     /// `http.history` — open `<workspace>/.rqst/history.jsonl` as
     /// an editor buffer. Toasts if the file hasn't been created
     /// yet (no requests sent this workspace). Phase 9 of the

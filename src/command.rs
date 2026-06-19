@@ -2842,6 +2842,37 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_bench_active(10, 4),
         },
         Command {
+            id: "http.lookup_list",
+            title: "HTTP: list .rqst/lookups/ files (fill env vars from API responses)",
+            group: "http",
+            // Phase 7 of the rqst→mnml port-back. v1 lists the
+            // available `.curl` files under `.rqst/lookups/` via a
+            // toast so the user can `open` one and run it; the
+            // full multi-stage picker (file → item → var-name) is
+            // a follow-up that needs a dedicated UI pane.
+            keys: &[],
+            run: |app| app.http_lookup_list(),
+        },
+        Command {
+            id: "http.capture_now",
+            title: "HTTP: append browser pane network entries → captured log",
+            group: "http",
+            // Phase 4 of the rqst→mnml port-back. Writes the active
+            // browser pane's NetEntry list as JSONL into
+            // `<workspace>/.rqst/captured/log.jsonl` so the captures
+            // accumulate across sessions and can be reviewed/replayed
+            // later.
+            keys: &[],
+            run: |app| app.http_capture_browser_net_to_log(),
+        },
+        Command {
+            id: "http.view_captured",
+            title: "HTTP: open .rqst/captured/log.jsonl (captured browser traffic)",
+            group: "http",
+            keys: &[],
+            run: |app| app.open_http_captured_log(),
+        },
+        Command {
             id: "http.history",
             title: "HTTP: open .rqst/history.jsonl (one-line-per-send log)",
             group: "http",

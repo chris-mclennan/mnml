@@ -17,11 +17,13 @@
 //! edit the `.http` file in a normal editor).
 
 pub mod bench;
+pub mod captured;
 pub mod chain;
 pub mod curl;
 pub mod discover;
 pub mod file;
 pub mod history;
+pub mod lookup;
 pub mod mock;
 pub mod script;
 pub mod sources;
