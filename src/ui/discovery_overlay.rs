@@ -135,6 +135,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                     row_rect,
                 );
             }
+            DiscoveryItem::AddCustom => {
+                let visual_idx = row_visual_idx_for_sibling(&items, abs_idx);
+                let is_focused = visual_idx == selected_row;
+                row_visual_idx += 1;
+                let _ = row_visual_idx;
+                app.rects
+                    .discovery_integration_rows
+                    .push((row_rect, visual_idx));
+                let cursor = if is_focused { "▸" } else { " " };
+                let style = if is_focused {
+                    Style::default()
+                        .fg(t.cyan)
+                        .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                } else {
+                    Style::default().fg(t.cyan).add_modifier(Modifier::BOLD)
+                };
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(format!(" {cursor} "), style),
+                        Span::styled("[+ Add custom integration]".to_string(), style),
+                    ])),
+                    row_rect,
+                );
+            }
             DiscoveryItem::Sibling { sibling, status } => {
                 // Figure out which non-Section row this is (so we can
                 // compare against selected_row).

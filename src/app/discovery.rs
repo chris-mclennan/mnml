@@ -122,11 +122,19 @@ pub enum DiscoveryItem {
         sibling: SiblingRef,
         status: SiblingStatus,
     },
+    /// Synthetic top-of-list affordance — `[+ Add custom integration]`.
+    /// Enter on this row opens the edit panel in AddCustom mode (same
+    /// path the `a` chord uses). Always the first navigable row so the
+    /// user sees an obvious entry point even when the rail is full.
+    AddCustom,
 }
 
 impl DiscoveryItem {
     pub fn is_row(&self) -> bool {
-        matches!(self, DiscoveryItem::Sibling { .. })
+        matches!(
+            self,
+            DiscoveryItem::Sibling { .. } | DiscoveryItem::AddCustom
+        )
     }
 }
 
@@ -182,6 +190,10 @@ pub fn build_items(app: &App) -> Vec<DiscoveryItem> {
     }
 
     let mut out = Vec::with_capacity(family_catalog::CATALOG.len() + 8);
+    // `[+ Add custom integration]` lives at the very top so the
+    // affordance is impossible to miss. Enter on this row opens the
+    // edit panel in AddCustom mode (same path the `a` chord uses).
+    out.push(DiscoveryItem::AddCustom);
     for header in section_order {
         let Some(rows) = by_category.get(header) else {
             continue;
@@ -515,21 +527,55 @@ impl App {
     }
 
     /// The sibling under the current selection cursor, paired with its
-    /// status — returns `None` if the overlay isn't open or the row
-    /// index is out of range.
+    /// status — returns `None` if the overlay isn't open OR the focused
+    /// row is the `AddCustom` synthetic (caller uses
+    /// [`Self::discovery_focused_is_add_custom`] for that case) OR the
+    /// row index is out of range.
     pub fn discovery_focused(&self) -> Option<(SiblingRef, SiblingStatus)> {
         let state = self.discovery_overlay.as_ref()?;
         let items = build_items(self);
         let mut row_idx = 0usize;
         for item in &items {
-            if let DiscoveryItem::Sibling { sibling, status } = item {
-                if row_idx == state.selected_row {
-                    return Some((sibling.clone(), *status));
+            match item {
+                DiscoveryItem::Sibling { sibling, status } => {
+                    if row_idx == state.selected_row {
+                        return Some((sibling.clone(), *status));
+                    }
+                    row_idx += 1;
                 }
-                row_idx += 1;
+                DiscoveryItem::AddCustom => {
+                    row_idx += 1;
+                }
+                DiscoveryItem::Section(_) => {}
             }
         }
         None
+    }
+
+    /// `true` iff the focused row in the discovery overlay is the
+    /// synthetic `[+ Add custom integration]` row. Enter on this row
+    /// opens the edit panel in AddCustom mode.
+    pub fn discovery_focused_is_add_custom(&self) -> bool {
+        let Some(state) = self.discovery_overlay.as_ref() else {
+            return false;
+        };
+        let items = build_items(self);
+        let mut row_idx = 0usize;
+        for item in &items {
+            match item {
+                DiscoveryItem::AddCustom => {
+                    if row_idx == state.selected_row {
+                        return true;
+                    }
+                    row_idx += 1;
+                }
+                DiscoveryItem::Sibling { .. } => {
+                    row_idx += 1;
+                }
+                DiscoveryItem::Section(_) => {}
+            }
+        }
+        false
     }
 
     /// Enter on a row dispatches by status:
@@ -537,6 +583,12 @@ impl App {
     /// - `Installed` → add to rail config (in-memory; persistence is v2)
     /// - `NotInstalled` → toast hint to press `i` or `y`
     pub fn discovery_enter(&mut self) {
+        // AddCustom synthetic row → open the edit panel in
+        // AddCustom mode. Same path as the `a` chord.
+        if self.discovery_focused_is_add_custom() {
+            self.open_integration_edit_add_custom();
+            return;
+        }
         let Some((sibling, status)) = self.discovery_focused() else {
             return;
         };
