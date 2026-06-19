@@ -54,7 +54,16 @@ def main() -> int:
             font_out = args[i + 1]
             i += 2
         elif a == "--glyph":
-            spec = args[i + 1].split(":")
+            # maxsplit=3 so a path with embedded colons (rare but
+            # possible on macOS / Linux — `/tmp/my:icon.svg` etc)
+            # doesn't get mis-parsed. Layout: PATH:CP:NAME[:KEY=VAL...]
+            # — the path is everything before the first colon, but a
+            # colon inside the path's basename would steal the CP
+            # field. Splitting from the LEFT with maxsplit keeps the
+            # first three positional fields intact; extras (KEY=VAL
+            # pairs) still split off the remainder via the `for part
+            # in spec[3:]` loop below using a separate split there.
+            spec = args[i + 1].split(":", 3)
             if len(spec) < 2:
                 raise SystemExit(
                     f"--glyph wants SVG_PATH:CODEPOINT[:NAME[:KEY=VAL...]], got {args[i + 1]!r}"
@@ -68,7 +77,11 @@ def main() -> int:
                 )
             name = spec[2] if len(spec) > 2 else f"u{codepoint:04X}"
             extras = {}
-            for part in spec[3:]:
+            # spec[3] is the joined tail when maxsplit=3 collapsed
+            # multiple KEY=VAL pairs into one slot. Re-split it on
+            # `:` here where path-colons can't interfere any more.
+            extras_tail = spec[3] if len(spec) > 3 else ""
+            for part in extras_tail.split(":") if extras_tail else []:
                 if "=" in part:
                     k, v = part.split("=", 1)
                     extras[k] = v

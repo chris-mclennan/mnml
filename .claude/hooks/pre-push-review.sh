@@ -32,6 +32,13 @@ case "$cmd" in
     *--dry-run*) exit 0 ;;
 esac
 
+# `git push --tags` — pushing tag refs only, no commits to review.
+# Tag-pushing IS a "ship this" action, but the review window was at
+# the underlying commits' push, not the tag.
+case "$cmd" in
+    *--tags*) exit 0 ;;
+esac
+
 # Emit a marker the assistant treats as "stop and review before
 # pushing." Returning a non-zero exit code blocks the tool call; the
 # assistant sees the marker in stderr and decides what to do.

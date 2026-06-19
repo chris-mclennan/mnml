@@ -57,10 +57,12 @@ pub enum PromptKind {
     /// number. (`Ctrl+G` — standard-mode equivalent of vim's `:N`.)
     GotoLine,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
-    /// the next free PUA codepoint, then yank the assigned codepoint
-    /// (as `\u{XXXX}`) to the clipboard so the user can paste it into
-    /// the integration edit panel's Glyph field. Surfaced from the
-    /// palette command `integrations.patch_nerd_font_svg`.
+    /// the next free PUA codepoint, then yank the assigned glyph as a
+    /// literal char to the clipboard so the user can paste it into
+    /// the integration edit panel's Glyph field directly (NOT as
+    /// `\u{XXXX}` — TOML doesn't parse Rust's escape syntax).
+    /// Surfaced from the palette command
+    /// `integrations.patch_nerd_font_svg`.
     PatchNerdFontSvg,
     /// Accept ⇒ create an empty file at `<parent>/<input>`, then open it.
     NewFile,

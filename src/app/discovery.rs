@@ -304,7 +304,7 @@ impl App {
     /// glyph for collisions. The script's own range comment notes
     /// U+F300+ is the recommended user-add range, well clear of
     /// Nerd Fonts' own `nf-*` glyphs.
-    fn next_free_pua_codepoint(&self) -> u32 {
+    fn next_free_pua_codepoint(&self) -> Option<u32> {
         let mut taken: std::collections::HashSet<u32> =
             std::collections::HashSet::new();
         for ic in &self.config.ui.integration_icons {
@@ -317,11 +317,21 @@ impl App {
                 taken.insert(c as u32);
             }
         }
+        // Walk U+F300 → U+F8FF (end of the BMP Private Use Area).
+        // The script's docstring + the U+F300+ user-add convention
+        // both end here; past F8FF we cross into CJK Compatibility
+        // Ideographs which is a real Unicode block, not user space.
+        // Returning `None` when the range is exhausted lets the
+        // caller toast a meaningful error instead of patching an
+        // out-of-range codepoint.
         let mut cp = 0xF300u32;
-        while taken.contains(&cp) {
+        while cp <= 0xF8FF {
+            if !taken.contains(&cp) {
+                return Some(cp);
+            }
             cp += 1;
         }
-        cp
+        None
     }
 
     /// Spawn the patch script. Picks the next free PUA codepoint,
@@ -343,7 +353,12 @@ impl App {
             self.toast(format!("svg not found: {}", svg_path.display()));
             return;
         }
-        let cp = self.next_free_pua_codepoint();
+        let Some(cp) = self.next_free_pua_codepoint() else {
+            self.toast(
+                "PUA range U+F300–F8FF exhausted — remove an integration first",
+            );
+            return;
+        };
         // Default in/out font paths — same convention as the
         // existing Claude/Codex shipped patch. User can re-run the
         // script by hand if they want a different output path.
@@ -394,35 +409,50 @@ impl App {
                 return;
             }
         };
+        // Eagerly copy the literal glyph character to the clipboard
+        // (NOT a Rust `\u{...}` escape — TOML rejects that syntax).
+        // The script writes the same codepoint, so by the time the
+        // user pastes into the Glyph field, the patched font + the
+        // clipboard agree. char::from_u32 on a PUA codepoint always
+        // succeeds (the PUA is a defined block) so the unwrap is
+        // safe in practice; defensive fallback prints `U+XXXX` for
+        // any non-char codepoint that might slip in via a config
+        // edit.
+        let glyph_str = char::from_u32(cp)
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| format!("U+{cp:X}"));
+        {
+            let mut clip = crate::clipboard::Clipboard::new();
+            clip.set(glyph_str.clone(), false);
+        }
+        // Spawn fontforge in a Pty pane so the user can watch
+        // progress without freezing the TUI render loop. FontForge
+        // can take 2-5 seconds on a Nerd Font and was blocking the
+        // editor frame in the synchronous version.
         let glyph_name = format!("custom_{cp:04x}");
         let glyph_spec = format!("{}:{cp:X}:{glyph_name}", svg_path.display());
-        let status = std::process::Command::new("fontforge")
-            .arg("-script")
-            .arg(&script)
-            .arg("--font")
-            .arg(&font_in)
-            .arg("--output")
-            .arg(&font_out)
-            .arg("--glyph")
-            .arg(&glyph_spec)
-            .status();
-        match status {
-            Ok(s) if s.success() => {
-                let codepoint_escape = format!("\\u{{{:X}}}", cp);
-                let mut clip = crate::clipboard::Clipboard::new();
-                clip.set(codepoint_escape.clone(), false);
-                self.toast(format!(
-                    "patched · U+{cp:X} copied · install {} then paste glyph",
-                    font_out.file_name().unwrap_or_default().to_string_lossy()
-                ));
-            }
-            Ok(s) => {
-                self.toast(format!("fontforge exited with status {s}"));
-            }
-            Err(e) => {
-                self.toast(format!("fontforge failed: {e} — `brew install fontforge`?"));
-            }
-        }
+        let profile = crate::pty_pane::BinaryProfile {
+            label: format!("patch font: U+{cp:X}"),
+            exe: "fontforge".to_string(),
+            args: vec![
+                "-script".to_string(),
+                script.to_string_lossy().into_owned(),
+                "--font".to_string(),
+                font_in.to_string_lossy().into_owned(),
+                "--output".to_string(),
+                font_out.to_string_lossy().into_owned(),
+                "--glyph".to_string(),
+                glyph_spec,
+            ],
+            cwd: None,
+            env: vec![],
+            session_id: None,
+        };
+        self.open_pty(profile);
+        self.toast(format!(
+            "patching · glyph copied · install {} after fontforge exits, then paste",
+            font_out.file_name().unwrap_or_default().to_string_lossy()
+        ));
     }
 
     /// Drop the integration with the given id from the rail and
