@@ -1641,6 +1641,179 @@ impl App {
         }
     }
 
+    /// `http.diff_last_two` — open a scratch buffer with a
+    /// textual diff between the active Request pane's previous
+    /// Done response and the current one. Lines starting with
+    /// `-` came only from previous, `+` came only from current,
+    /// ` ` were shared.
+    pub fn http_diff_last_two(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("http.diff: no active Request pane");
+            return;
+        };
+        let (prev, current) = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => {
+                let cur_rv = match &rp.state {
+                    crate::request_pane::RunState::Done(rv) => Some(rv.clone()),
+                    _ => None,
+                };
+                (rp.prev_response.clone(), cur_rv)
+            }
+            _ => return,
+        };
+        let (Some(prev), Some(current)) = (prev, current) else {
+            self.toast("http.diff: need at least 2 successful sends to diff");
+            return;
+        };
+        let mut out = String::new();
+        out.push_str("# HTTP diff — last two responses\n\n");
+        out.push_str(&format!(
+            "status: {} {} → {} {}\n",
+            prev.status, prev.status_text, current.status, current.status_text
+        ));
+        out.push_str(&format!(
+            "elapsed: {}ms → {}ms\n\n",
+            prev.elapsed.as_millis(),
+            current.elapsed.as_millis()
+        ));
+        // Headers (set comparison). Render unchanged / removed / added.
+        out.push_str("## headers\n\n");
+        let prev_set: std::collections::HashSet<(String, String)> =
+            prev.headers.iter().cloned().collect();
+        let curr_set: std::collections::HashSet<(String, String)> =
+            current.headers.iter().cloned().collect();
+        for (k, v) in &prev.headers {
+            if curr_set.contains(&(k.clone(), v.clone())) {
+                out.push_str(&format!("  {k}: {v}\n"));
+            } else {
+                out.push_str(&format!("- {k}: {v}\n"));
+            }
+        }
+        for (k, v) in &current.headers {
+            if !prev_set.contains(&(k.clone(), v.clone())) {
+                out.push_str(&format!("+ {k}: {v}\n"));
+            }
+        }
+        out.push_str("\n## body\n\n");
+        // Simple line-by-line diff (no LCS — fast + readable for
+        // most API responses).
+        let p_lines: Vec<&str> = prev.body.lines().collect();
+        let c_lines: Vec<&str> = current.body.lines().collect();
+        let max = p_lines.len().max(c_lines.len());
+        for i in 0..max {
+            let pl = p_lines.get(i).copied().unwrap_or("");
+            let cl = c_lines.get(i).copied().unwrap_or("");
+            if pl == cl {
+                out.push_str(&format!("  {pl}\n"));
+            } else {
+                if !pl.is_empty() {
+                    out.push_str(&format!("- {pl}\n"));
+                }
+                if !cl.is_empty() {
+                    out.push_str(&format!("+ {cl}\n"));
+                }
+            }
+        }
+        self.open_scratch_with_text("[http-diff]".to_string(), out);
+    }
+
+    /// `http.fan_envs` — fan the active Request out against every
+    /// env file in the workspace (one fire per env, concurrent),
+    /// collect the (env, status, ms, error) tuples, render a
+    /// table summary to clipboard + a one-line toast headline.
+    /// The fastest way to verify "does this work against dev,
+    /// staging, AND prod?" without manually swapping envs.
+    pub fn http_fan_envs(&mut self) {
+        let Some(request) = self.parse_active_as_request() else {
+            self.toast("http.fan_envs: no active .http/.curl/.rest editor");
+            return;
+        };
+        let mut env_names: Vec<String> = Vec::new();
+        for sub in [".mnml", ".rqst"] {
+            let dir = self.workspace.join(sub).join("env");
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.extension().is_some_and(|x| x == "env")
+                        && let Some(stem) = p.file_stem().and_then(|s| s.to_str())
+                    {
+                        let s = stem.to_string();
+                        if !env_names.contains(&s) {
+                            env_names.push(s);
+                        }
+                    }
+                }
+            }
+        }
+        if env_names.is_empty() {
+            self.toast("http.fan_envs: no env files found in .mnml/env or .rqst/env");
+            return;
+        }
+        let workspace = self.workspace.clone();
+        let raw_request = request.clone();
+        let started = std::time::Instant::now();
+        // Concurrent fan-out: one thread per env. Each thread
+        // reads its own EnvSet, expands the request URL/headers/
+        // body, fires via crate::http::send, returns the tuple.
+        let (tx, rx) = std::sync::mpsc::channel();
+        for env_name in env_names.iter() {
+            let tx = tx.clone();
+            let env_name = env_name.clone();
+            let ws = workspace.clone();
+            let req_template = raw_request.clone();
+            std::thread::spawn(move || {
+                let env = crate::http::template::EnvSet::load(&ws, &env_name);
+                let mut req = req_template.clone();
+                req.url = crate::http::template::expand(&req.url, &env);
+                for (_, v) in req.headers.iter_mut() {
+                    *v = crate::http::template::expand(v, &env);
+                }
+                if let Some(b) = req.body.as_mut() {
+                    *b = crate::http::template::expand(b, &env);
+                }
+                let started = std::time::Instant::now();
+                let result = match crate::http::send(&req) {
+                    Ok(resp) => Ok((resp.status, started.elapsed())),
+                    Err(e) => Err(e),
+                };
+                let _ = tx.send((env_name, result));
+            });
+        }
+        drop(tx);
+        // Collect all results (blocking — fan_envs is short-lived).
+        let mut rows: Vec<(String, String)> = Vec::new();
+        let mut clipboard_text = String::from("env\tstatus\tms\n");
+        let mut ok_count = 0usize;
+        while let Ok((env_name, result)) = rx.recv() {
+            let line = match result {
+                Ok((status, elapsed)) => {
+                    let ms = elapsed.as_millis();
+                    if (200..300).contains(&status) {
+                        ok_count += 1;
+                    }
+                    clipboard_text.push_str(&format!("{env_name}\t{status}\t{ms}\n"));
+                    format!("{env_name}: {status} ({ms}ms)")
+                }
+                Err(e) => {
+                    clipboard_text.push_str(&format!("{env_name}\tERR\t{e}\n"));
+                    format!("{env_name}: ERR ({e})")
+                }
+            };
+            rows.push((env_name, line));
+        }
+        let elapsed = started.elapsed().as_millis();
+        let total = rows.len();
+        let summary = rows
+            .iter()
+            .map(|(_, l)| l.as_str())
+            .collect::<Vec<_>>()
+            .join(" · ");
+        self.clipboard.set(clipboard_text, false);
+        self.toast(format!(
+            "fan_envs: {ok_count}/{total} OK in {elapsed}ms · {summary} · (full table → clipboard)"
+        ));
+    }
+
     /// `http.import_postman` — read a Postman Collection v2.1
     /// JSON from clipboard and explode it into N `.curl` files
     /// under `<workspace>/.rqst/captured/postman-<collection-name>/`.
@@ -2255,7 +2428,16 @@ impl App {
                             error: None,
                         },
                     );
-                    rp.state = RunState::Done(Box::new(rv));
+                    // 2026-06-19 — diff support: shift the
+                    // previous Done into prev_response so
+                    // :http.diff_last_two can compare. Done →
+                    // prev_response; new rv → state.
+                    if let RunState::Done(prev) = std::mem::replace(
+                        &mut rp.state,
+                        RunState::Done(Box::new(rv)),
+                    ) {
+                        rp.prev_response = Some(prev);
+                    }
                 }
                 Err(e) => {
                     toasts.push(format!("request failed: {e}"));

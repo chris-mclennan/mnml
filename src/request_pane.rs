@@ -71,6 +71,11 @@ pub struct RequestPane {
     /// structured fields, then clearing.
     pub source_buffer: String,
     pub source_cursor: usize,
+    /// The previous Done response (if any). Saved off when a new
+    /// send completes — lets `:http.diff_last_two` compare the
+    /// current Done against this snapshot. Cleared on a fresh
+    /// :http.new or paste_curl that overwrites the request.
+    pub prev_response: Option<Box<ResponseView>>,
 }
 
 /// The tabbed UI on the Edit view. `Tab` advances; `Shift+Tab`
@@ -223,6 +228,7 @@ pub enum RunState {
     Failed(String),
 }
 
+#[derive(Clone)]
 pub struct ResponseView {
     pub status: u16,
     pub status_text: String,
@@ -261,6 +267,7 @@ impl RequestPane {
             edit_tab: EditTab::Body,
             source_buffer: String::new(),
             source_cursor: 0,
+            prev_response: None,
         }
     }
 

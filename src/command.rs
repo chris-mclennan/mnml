@@ -2972,6 +2972,29 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_parse_source_buffer(),
         },
         Command {
+            id: "http.diff_last_two",
+            title: "HTTP: diff the active Request pane's last two responses",
+            group: "http",
+            // Compares prev_response to the current Done state
+            // (status + headers + body) and opens a scratch
+            // buffer with a unified-diff-like rendering. Useful
+            // for 'did re-firing change anything?' debugging.
+            keys: &[],
+            run: |app| app.http_diff_last_two(),
+        },
+        Command {
+            id: "http.fan_envs",
+            title: "HTTP: fan the active request out against every env file in parallel",
+            group: "http",
+            // Reads every .mnml/env/*.env (or .rqst/env/*.env if
+            // .mnml/ has none), spawns one send per env file with
+            // the env applied to {{VAR}} substitution, collects
+            // the (env_name, status, ms, error) tuple, renders a
+            // table summary into the clipboard + toast.
+            keys: &[],
+            run: |app| app.http_fan_envs(),
+        },
+        Command {
             id: "http.import_postman",
             title: "HTTP: import a Postman Collection from clipboard",
             group: "http",
