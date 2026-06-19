@@ -29,18 +29,26 @@ impl EnvSet {
         Self::default()
     }
 
-    /// Load `<workspace>/.mnml/env/<name>.env`. Missing file ⇒ empty set (the
-    /// name is still recorded).
+    /// Load `<workspace>/.mnml/env/<name>.env`, with a fall-back to
+    /// `<workspace>/.rqst/env/<name>.env` for workspaces ported over
+    /// from the legacy rqst app. `.mnml/` wins when both exist so a
+    /// migrating user can override per-key without losing the
+    /// originals. Missing file ⇒ empty set (the name is still
+    /// recorded). 2026-06-19 — phase 1 of the rqst→mnml port-back.
     pub fn load(workspace: &Path, name: &str) -> Self {
-        let path = workspace
-            .join(".mnml")
-            .join("env")
-            .join(format!("{name}.env"));
         let mut vars = HashMap::new();
-        if let Ok(text) = fs::read_to_string(&path) {
-            for line in text.lines() {
-                if let Some((k, v)) = parse_env_line(line) {
-                    vars.insert(k, v);
+        // Read the legacy .rqst path first so .mnml overrides on the
+        // SAME key win in the final map.
+        for sub in [".rqst", ".mnml"] {
+            let path = workspace
+                .join(sub)
+                .join("env")
+                .join(format!("{name}.env"));
+            if let Ok(text) = fs::read_to_string(&path) {
+                for line in text.lines() {
+                    if let Some((k, v)) = parse_env_line(line) {
+                        vars.insert(k, v);
+                    }
                 }
             }
         }
@@ -50,11 +58,19 @@ impl EnvSet {
         }
     }
 
-    /// Pick the env from `explicit` or `$MNML_ENV`; `None`/empty ⇒ empty set.
+    /// Pick the env in this order:
+    ///   1. `explicit` (the `--env NAME` CLI flag / palette arg)
+    ///   2. `$MNML_ENV`
+    ///   3. `<workspace>/.rqst/config`'s `default_env=…` (rqst legacy
+    ///      workspaces; phase 1 of the port-back means a user
+    ///      launching mnml at a `~/Projects/tattle-mnml-workspace`
+    ///      gets `dev` selected without re-configuring)
+    /// `None`/empty ⇒ empty set.
     pub fn select(workspace: &Path, explicit: Option<&str>) -> Self {
         let name = explicit
             .map(str::to_string)
             .or_else(|| std::env::var("MNML_ENV").ok())
+            .or_else(|| read_rqst_config_default_env(workspace))
             .filter(|s| !s.trim().is_empty());
         match name {
             Some(n) => Self::load(workspace, &n),
@@ -162,6 +178,30 @@ fn is_valid_var_name(s: &str) -> bool {
         return false;
     }
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Best-effort read of `<workspace>/.rqst/config` for the
+/// `default_env=…` key. The file is rqst's KEY=VALUE format —
+/// comments (`#`), blank lines, unrelated keys all silently
+/// ignored. Returns `None` when the file is absent (a
+/// non-migrated workspace) so `select` can fall through to its
+/// other arms cleanly. Phase 1 of the rqst→mnml port-back —
+/// 2026-06-19.
+fn read_rqst_config_default_env(workspace: &Path) -> Option<String> {
+    let text = fs::read_to_string(workspace.join(".rqst").join("config")).ok()?;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((k, v)) = trimmed.split_once('=')
+            && k.trim() == "default_env"
+            && !v.trim().is_empty()
+        {
+            return Some(v.trim().to_string());
+        }
+    }
+    None
 }
 
 fn parse_env_line(line: &str) -> Option<(String, String)> {
