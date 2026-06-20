@@ -21,6 +21,14 @@ log_file="${TMPDIR:-/tmp}/mnml-nightly-launcher.log"
   echo "  dev_bin=$dev_bin"
 } >> "$log_file" 2>&1
 
+# Finder launches us with a minimal PATH that omits ~/.cargo/bin, so
+# the auto-rebuild below would fail with `cargo: command not found`
+# (the PATH export further down was too late — it only ran on the exec
+# path, after the build). Set a usable PATH up front, before any cargo
+# call. Covers rustup's ~/.cargo/bin plus the Homebrew prefixes where a
+# brew-installed cargo might live.
+export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
 # 2026-06-19 — auto-rebuild on demand. If the binary doesn't exist
 # OR any source file is newer than the binary, rebuild before
 # launching. cargo's incremental compile is ~5–15s when stale;
