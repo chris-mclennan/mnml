@@ -892,9 +892,35 @@ impl App {
 
     /// Commit the edit buffer — leaves the live config as-is (already
     /// written by every insert/backspace) and just exits edit mode.
+    ///
+    /// 2026-06-19 — user-reported: setting `default_workspace` via
+    /// :settings + Enter looked successful but didn't persist
+    /// across restart. Root cause was that
+    /// `close_settings_overlay_save` (the only persist path) was
+    /// only triggered by mouse-click-outside; keyboard users had
+    /// no save path. Now commit-on-Enter ALSO persists any field
+    /// that's hooked to disk (currently just default_workspace),
+    /// so the keyboard-only flow matches the click-out flow.
     pub fn settings_text_edit_commit(&mut self) {
-        if let Some(state) = self.settings_overlay.as_mut() {
-            state.text_edit = None;
+        let Some(state) = self.settings_overlay.as_mut() else {
+            return;
+        };
+        state.text_edit = None;
+        // Persist disk-backed Text settings now (currently just
+        // default_workspace). Other fields are in-memory only.
+        let original_dws = state.original.default_workspace.clone();
+        let current_dws = self.config.default_workspace.clone();
+        if original_dws != current_dws {
+            match crate::config::persist_default_workspace(current_dws.as_deref()) {
+                Ok(path) => {
+                    // Rebaseline state.original so a subsequent Esc
+                    // doesn't appear to revert what we just wrote
+                    // to disk. The change is committed.
+                    state.original.default_workspace = current_dws.clone();
+                    self.toast(format!("settings: saved → {}", path.display()));
+                }
+                Err(e) => self.toast(format!("settings: persist failed: {e}")),
+            }
         }
     }
 
