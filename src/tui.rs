@@ -2844,6 +2844,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         if new_chip != prev_chip {
             app.hover_chip = new_chip.map(|c| (c, now));
         }
+        // 2026-06-19 polish — cmdline popup row hover highlights
+        // without requiring a click. Move into the row → that
+        // row becomes the selected highlight. Move OFF the popup
+        // → highlight stays on last hovered row (clicked behavior).
+        if let Some(&(_, idx)) = app
+            .rects
+            .cmdline_popup_items
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        {
+            app.cmdline_popup_selected = idx;
+        }
         // Track divider hover for the yellow drag-cue. Updated in lockstep
         // with chip hover; both are cleared on click / typing.
         let new_div = app.rects.split_dividers.iter().position(|d| {
