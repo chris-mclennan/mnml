@@ -86,6 +86,7 @@ pub enum EditTab {
     Body,
     Headers,
     Params,
+    Auth,
     Vars,
     Source,
 }
@@ -95,6 +96,7 @@ impl EditTab {
         EditTab::Body,
         EditTab::Headers,
         EditTab::Params,
+        EditTab::Auth,
         EditTab::Vars,
         EditTab::Source,
     ];
@@ -103,6 +105,7 @@ impl EditTab {
             EditTab::Body => "Body",
             EditTab::Headers => "Headers",
             EditTab::Params => "Params",
+            EditTab::Auth => "Auth",
             EditTab::Vars => "Vars",
             EditTab::Source => "Source",
         }

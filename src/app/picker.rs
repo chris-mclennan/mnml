@@ -1218,6 +1218,20 @@ impl App {
                 let path = p.input.clone();
                 self.http_save_response_to(&path);
             }
+            crate::prompt::PromptKind::HttpAuthBearer => {
+                let tok = p.input.clone();
+                self.http_auth_set("Authorization", &format!("Bearer {tok}"));
+            }
+            crate::prompt::PromptKind::HttpAuthBasic => {
+                use base64::prelude::*;
+                let creds = p.input.clone();
+                let encoded = BASE64_STANDARD.encode(creds.as_bytes());
+                self.http_auth_set("Authorization", &format!("Basic {encoded}"));
+            }
+            crate::prompt::PromptKind::HttpAuthApiKey => {
+                let key = p.input.clone();
+                self.http_auth_set("X-Api-Key", &key);
+            }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();
                 if let Some(FsAction::NewFile { parent }) = self.pending_fs_action.take() {

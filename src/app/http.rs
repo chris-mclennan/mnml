@@ -200,6 +200,76 @@ impl App {
         }
     }
 
+    /// Dispatcher for Auth-tab row clicks. `id` matches the
+    /// row's stable id stored in App.rects.request_auth_rows.
+    pub fn http_auth_row_clicked(&mut self, id: &str) {
+        match id {
+            "set_bearer" => {
+                self.prompt = Some(crate::prompt::Prompt::new(
+                    crate::prompt::PromptKind::HttpAuthBearer,
+                    "Bearer token:".to_string(),
+                ));
+            }
+            "set_basic" => {
+                self.prompt = Some(crate::prompt::Prompt::new(
+                    crate::prompt::PromptKind::HttpAuthBasic,
+                    "Basic auth — user:password:".to_string(),
+                ));
+            }
+            "set_api_key" => {
+                self.prompt = Some(crate::prompt::Prompt::new(
+                    crate::prompt::PromptKind::HttpAuthApiKey,
+                    "X-Api-Key value:".to_string(),
+                ));
+            }
+            "apply_preset" => self.auth_apply_preset_picker(),
+            "save_preset" => self.auth_save_preset_prompt(),
+            "clear" => self.http_auth_clear(),
+            _ => {}
+        }
+    }
+
+    /// Replace (or insert) a header on the active Request pane.
+    /// Used by the Auth tab to set Authorization / X-Api-Key.
+    pub fn http_auth_set(&mut self, name: &str, value: &str) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            let pos = rp
+                .request
+                .headers
+                .iter()
+                .position(|(k, _)| k.eq_ignore_ascii_case(name));
+            if let Some(i) = pos {
+                rp.request.headers[i].1 = value.to_string();
+            } else {
+                rp.request
+                    .headers
+                    .push((name.to_string(), value.to_string()));
+            }
+            rp.headers_buffer = crate::request_pane::headers_to_text(&rp.request.headers);
+            rp.headers_cursor = rp.headers_buffer.len();
+            self.toast(format!("auth: set {name}"));
+        }
+    }
+
+    /// Remove the Authorization header from the active Request.
+    pub fn http_auth_clear(&mut self) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            let pre = rp.request.headers.len();
+            rp.request
+                .headers
+                .retain(|(k, _)| !k.eq_ignore_ascii_case("authorization"));
+            if rp.request.headers.len() < pre {
+                rp.headers_buffer = crate::request_pane::headers_to_text(&rp.request.headers);
+                rp.headers_cursor = rp.headers_buffer.len();
+                self.toast("auth: cleared Authorization");
+            } else {
+                self.toast("auth: no Authorization header to clear");
+            }
+        }
+    }
+
     /// `http.save_response` — open a prompt for the destination
     /// path; on Enter, write the active Done response body there.
     pub fn http_save_response_prompt(&mut self) {

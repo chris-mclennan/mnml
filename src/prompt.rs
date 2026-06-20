@@ -88,6 +88,14 @@ pub enum PromptKind {
     /// Accept ⇒ save the active Request pane's Done response body
     /// to the typed file path (workspace-relative or absolute).
     HttpSaveResponse,
+    /// Accept ⇒ replace the active Request pane's Authorization
+    /// header with `Bearer <typed-token>`.
+    HttpAuthBearer,
+    /// Accept ⇒ replace Authorization with `Basic <base64(typed)>`.
+    /// Typed value is `user:pass`.
+    HttpAuthBasic,
+    /// Accept ⇒ replace `X-Api-Key` header value with typed.
+    HttpAuthApiKey,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into

@@ -1813,6 +1813,10 @@ pub struct PaneRects {
     /// Click rect over the AI section header in the Request pane.
     /// Click → fire :http.ai_debug (same as the `a` keystroke).
     pub request_ai_section: Option<Rect>,
+    /// Click rect for each row in the Auth tab. id values:
+    /// `set_bearer` / `set_basic` / `set_api_key` / `apply_preset` /
+    /// `save_preset` / `clear`. Cleared + repopulated each render.
+    pub request_auth_rows: Vec<(Rect, String)>,
     /// `(row_rect, idx_in_matches)` for each visible row in the
     /// cmdline completion popup. Click sets selected idx + rewrites
     /// cmdline + accepts.

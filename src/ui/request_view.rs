@@ -90,6 +90,7 @@ pub fn draw(
     let workspace = app.workspace.clone();
     let mut vars_rows_local: Vec<(Rect, String)> = Vec::new();
     let mut params_rows_local: Vec<(Rect, String)> = Vec::new();
+    let mut auth_rows_local: Vec<(Rect, String)> = Vec::new();
     draw_edit(
         rp,
         t,
@@ -104,6 +105,7 @@ pub fn draw(
         &workspace,
         &mut vars_rows_local,
         &mut params_rows_local,
+        &mut auth_rows_local,
     );
 
     // Section divider + Response panel
@@ -217,6 +219,20 @@ pub fn draw(
         r.y = area.y + visible_off as u16;
         app.rects.request_params_rows.push((r, key));
     }
+    // Auth-row rects → screen-y.
+    app.rects.request_auth_rows.clear();
+    for (mut r, id) in auth_rows_local.drain(..) {
+        let row_off = r.y;
+        if (row_off as usize) < scroll {
+            continue;
+        }
+        let visible_off = row_off as usize - scroll;
+        if visible_off >= h {
+            continue;
+        }
+        r.y = area.y + visible_off as u16;
+        app.rects.request_auth_rows.push((r, id));
+    }
     // AI section header rect → screen-y, only if visible.
     app.rects.request_ai_section = None;
     if (ai_section_row_y as usize) >= scroll {
@@ -257,6 +273,7 @@ fn draw_edit(
     workspace: &std::path::Path,
     vars_rows_local: &mut Vec<(Rect, String)>,
     params_rows_local: &mut Vec<(Rect, String)>,
+    auth_rows_local: &mut Vec<(Rect, String)>,
 ) {
     // Stash a click-target rect for the row at `row_idx_in_rows` covering
     // the full pane width (y stays as the *row index*; `draw` translates
@@ -668,6 +685,78 @@ fn draw_edit(
     }
 
     // ── Vars tab: read-only list of active env file's KEY=VALUE rows ──
+    // ── Auth tab — Postman-style. Shows current Authorization
+    //     header + quick-set rows (None / Bearer / Basic / API key /
+    //     Apply saved preset). Each row clickable to dispatch the
+    //     matching App method. ───
+    if cur_tab == crate::request_pane::EditTab::Auth {
+        // Detect current auth state from the Authorization header.
+        let current = rp
+            .request
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+            .map(|(_, v)| v.clone());
+        let summary = match current.as_deref() {
+            Some(v) if v.starts_with("Bearer ") => format!("Bearer · {}", &v[7..].chars().take(20).collect::<String>()),
+            Some(v) if v.starts_with("Basic ") => "Basic · (base64 user:pass)".to_string(),
+            Some(v) if v.len() > 24 => format!("{}…", &v[..22]),
+            Some(v) => v.to_string(),
+            None => "(no Authorization header — request will be unauthenticated)".to_string(),
+        };
+        let summary_y = rows.len() as u16;
+        rows.push(Line::from(vec![
+            Span::styled("    Current:  ".to_string(), dim),
+            Span::styled(
+                summary,
+                Style::default()
+                    .fg(if current.is_some() { t.cyan } else { t.comment })
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        register_tab_row(fields, summary_y);
+        rows.push(plain(String::new(), body_style));
+
+        // Action rows.
+        let actions: &[(&str, &str)] = &[
+            ("set_bearer", "+ Set Bearer token…"),
+            ("set_basic", "+ Set Basic auth (user:pass)…"),
+            ("set_api_key", "+ Set X-Api-Key…"),
+            ("apply_preset", "↻ Apply saved preset…"),
+            ("save_preset", "💾 Save current as preset…"),
+            ("clear", "✗ Clear Authorization"),
+        ];
+        for (id, label) in actions {
+            let row_y = rows.len() as u16;
+            // Color clear in red, save in green, others normal.
+            let color = match *id {
+                "clear" => t.red,
+                "save_preset" => t.green,
+                _ => t.fg,
+            };
+            rows.push(Line::from(vec![
+                Span::styled(
+                    format!("    {label}"),
+                    Style::default()
+                        .fg(color)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+            auth_rows_local.push((
+                Rect {
+                    x: area.x,
+                    y: row_y,
+                    width: area.width,
+                    height: 1,
+                },
+                id.to_string(),
+            ));
+            register_tab_row(fields, row_y);
+        }
+    }
+
     if cur_tab == crate::request_pane::EditTab::Vars {
         let hint_y = rows.len() as u16;
         rows.push(Line::from(vec![Span::styled(

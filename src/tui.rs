@@ -671,7 +671,12 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     if key.modifiers.contains(KeyModifiers::CONTROL)
         && matches!(
             key.code,
-            KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') | KeyCode::Char('5')
+            KeyCode::Char('1')
+                | KeyCode::Char('2')
+                | KeyCode::Char('3')
+                | KeyCode::Char('4')
+                | KeyCode::Char('5')
+                | KeyCode::Char('6')
         )
         && matches!(app.focus, Focus::Pane)
         && let Some(cur) = app.active
@@ -683,8 +688,9 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('1') => EditTab::Body,
             KeyCode::Char('2') => EditTab::Headers,
             KeyCode::Char('3') => EditTab::Params,
-            KeyCode::Char('4') => EditTab::Vars,
-            KeyCode::Char('5') => EditTab::Source,
+            KeyCode::Char('4') => EditTab::Auth,
+            KeyCode::Char('5') => EditTab::Vars,
+            KeyCode::Char('6') => EditTab::Source,
             _ => rp.edit_tab,
         };
         if rp.edit_tab == EditTab::Source {
@@ -3810,6 +3816,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.cmdline_popup_accept(idx);
+                return;
+            }
+            // Click on an Auth-tab action row → dispatch to the
+            // matching App method (prompt or palette command).
+            if let Some((_, id)) = app
+                .rects
+                .request_auth_rows
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                .cloned()
+            {
+                app.http_auth_row_clicked(&id);
                 return;
             }
             // Click on the AI section header → opens a prompt
