@@ -26,6 +26,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // a mouse path to the cmdline that doesn't require knowing the
     // chord. User-requested 2026-06-18.
     app.rects.cmdline_bar = Some(area);
+    // Reset the in-flight indicator rect on every frame; populated
+    // below if any async HTTP op is running. Click on the indicator
+    // → :http.abort (mirrors Esc-on-bar behavior).
+    app.rects.cmdline_inflight = None;
     let t = theme::cur();
     // Default — blank line in the statusline's darker bg so it visually
     // belongs with the statusline above.
@@ -100,8 +104,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .iter()
             .map(|s| s.content.chars().count())
             .sum();
+        let inflight_chars = inflight_text.chars().count();
         let pad = (area.width as usize)
-            .saturating_sub(toast_w + inflight_text.chars().count())
+            .saturating_sub(toast_w + inflight_chars)
             .saturating_sub(1);
         spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
         spans.push(Span::styled(
@@ -111,6 +116,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ));
+        // Click rect spans the indicator text only.
+        let indicator_x = area.x + (toast_w + pad) as u16;
+        app.rects.cmdline_inflight = Some(Rect {
+            x: indicator_x,
+            y: area.y,
+            width: inflight_chars as u16,
+            height: 1,
+        });
     }
 
     if spans.is_empty() {

@@ -1791,6 +1791,9 @@ pub struct PaneRects {
     /// (`:settings` / `:help` / …) without a keyboard chord. Set
     /// every frame by `cmdline_bar::draw`.
     pub cmdline_bar: Option<Rect>,
+    /// Click rect for the right-side `⟳ … running…` indicator.
+    /// Click → `:http.abort`. None when nothing is in flight.
+    pub cmdline_inflight: Option<Rect>,
     /// `(row_rect, idx_in_matches)` for each visible row in the
     /// cmdline completion popup. Click sets selected idx + rewrites
     /// cmdline + accepts.

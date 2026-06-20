@@ -4054,6 +4054,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // the statusline and overlapping hit-rects are otherwise
             // resolved top-down. A click while the cmdline is
             // already open is a no-op (let the user keep typing).
+            //
+            // 2026-06-20 — check the right-side `⟳ … running…`
+            // indicator FIRST so clicks there abort the in-flight
+            // op instead of opening the cmdline. Same area covers
+            // both targets; narrower one wins.
+            if let Some(r) = app.rects.cmdline_inflight
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.http_abort_all();
+                return;
+            }
             if app.no_pane_cmdline.is_none()
                 && let Some(r) = app.rects.cmdline_bar
                 && crate::app::dispatch::contains(r, x, y)
