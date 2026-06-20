@@ -130,6 +130,34 @@ fn format_summary(
         out.push_str(&format!(" {class}xx={count}"));
     }
     out.push('\n');
+    // 2026-06-20 — ASCII histogram of response times.
+    // 10 equal buckets across [min, max]; bar width scales to
+    // the largest bucket count. Skipped for ≤1 sample.
+    if durations.len() > 1 && max > min {
+        out.push_str("\n  histogram (ms):\n");
+        const BUCKETS: usize = 10;
+        const BAR_W: usize = 30;
+        let range = (max - min).max(1);
+        let mut counts = [0u32; BUCKETS];
+        for d in &durations {
+            let pos = if *d >= max {
+                BUCKETS - 1
+            } else {
+                ((d - min) * BUCKETS as u64 / range) as usize
+            };
+            counts[pos.min(BUCKETS - 1)] += 1;
+        }
+        let peak = counts.iter().copied().max().unwrap_or(1).max(1);
+        for (i, &c) in counts.iter().enumerate() {
+            let lo = min + range * i as u64 / BUCKETS as u64;
+            let hi = min + range * (i + 1) as u64 / BUCKETS as u64;
+            let bar_len = (c as usize * BAR_W) / peak as usize;
+            let bar: String = std::iter::repeat('█').take(bar_len).collect();
+            out.push_str(&format!(
+                "    {lo:>4}–{hi:<4} ms │{bar:<BAR_W$}│ {c}\n"
+            ));
+        }
+    }
     if !errs.is_empty() {
         out.push_str(&format!("  errors: {} (showing up to 3)\n", errs.len()));
         for e in errs.iter().take(3) {

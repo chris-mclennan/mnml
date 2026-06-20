@@ -120,26 +120,50 @@ impl App {
     pub fn http_insert_header_picker(&mut self) {
         use crate::picker::{Picker, PickerItem, PickerKind};
         const COMMON_HEADERS: &[(&str, &str)] = &[
+            // Content negotiation
             ("Accept", "Acceptable media types for the response"),
             ("Accept-Encoding", "Acceptable content encodings (gzip, br, …)"),
             ("Accept-Language", "Preferred natural languages"),
-            ("Authorization", "Credentials for authentication (Bearer, Basic, …)"),
-            ("Cache-Control", "Caching directives (no-cache, max-age=…)"),
+            ("Accept-Charset", "Preferred character sets"),
             ("Content-Type", "Media type of the request body"),
             ("Content-Length", "Size of the request body in bytes"),
             ("Content-Encoding", "Encoding applied to the body (gzip, br, …)"),
+            ("Content-Disposition", "Attachment / inline indicator"),
+            // Auth + identity
+            ("Authorization", "Credentials for authentication (Bearer, Basic, …)"),
             ("Cookie", "HTTP cookies"),
-            ("Host", "Target hostname (usually auto-set by clients)"),
+            ("X-Api-Key", "API key (convention)"),
+            ("X-Auth-Token", "Auth token (convention)"),
+            // Caching / conditionals
+            ("Cache-Control", "Caching directives (no-cache, max-age=…)"),
+            ("Pragma", "Implementation-specific cache directives"),
             ("If-Match", "Conditional request — match this ETag"),
             ("If-None-Match", "Conditional request — NOT this ETag (caching)"),
             ("If-Modified-Since", "Conditional request — modified after this date"),
+            ("If-Unmodified-Since", "Conditional request — not modified since"),
+            // Routing / origin
+            ("Host", "Target hostname (usually auto-set by clients)"),
             ("Origin", "Origin of the request (CORS)"),
             ("Referer", "URL of the referring page"),
             ("User-Agent", "Client identification string"),
-            ("X-Api-Key", "API key (convention)"),
+            // CORS preflight (request side)
+            ("Access-Control-Request-Method", "CORS preflight — intended method"),
+            ("Access-Control-Request-Headers", "CORS preflight — intended headers"),
+            // Proxy / forwarding
             ("X-Forwarded-For", "Original client IP (proxy chain)"),
-            ("X-Requested-With", "XMLHttpRequest / fetch indicator"),
+            ("X-Forwarded-Proto", "Original scheme (http/https) through proxy"),
+            ("X-Forwarded-Host", "Original Host header through proxy"),
+            ("X-Real-IP", "Original client IP (nginx convention)"),
+            // Tracing / debugging
             ("X-Trace-Id", "Distributed-trace correlation id"),
+            ("X-Request-Id", "Request correlation id"),
+            ("X-Correlation-Id", "Correlation id (convention)"),
+            // GraphQL / RPC
+            ("X-GraphQL-Operation", "GraphQL operation name"),
+            // Misc
+            ("X-Requested-With", "XMLHttpRequest / fetch indicator"),
+            ("DNT", "Do Not Track preference (1 = opt-out)"),
+            ("Upgrade-Insecure-Requests", "1 = prefer HTTPS (CSP)"),
         ];
         let items: Vec<PickerItem> = COMMON_HEADERS
             .iter()

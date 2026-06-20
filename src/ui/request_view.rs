@@ -499,12 +499,28 @@ fn draw_edit(
     // Body
     let b_focus = rp.focus == EditField::Body;
     let body_label_y = rows.len() as u16;
+    let body = rp.request.body.as_deref().unwrap_or("");
+    // 2026-06-20 — detect content type from body shape so the
+    // user sees what mnml thinks the body is. JSON / XML /
+    // form-encoded / plain.
+    let detected = detect_body_kind(body);
+    let kind_label = if let Some(k) = detected {
+        format!("  ({k}) — Ctrl+Shift+F formats JSON")
+    } else {
+        String::new()
+    };
     rows.push(Line::from(vec![
         bar_span(b_focus),
         Span::styled("Body".to_string(), label_style(b_focus)),
+        Span::styled(
+            kind_label,
+            Style::default()
+                .fg(t.comment)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::DIM),
+        ),
     ]));
     register_field(fields, body_label_y, EditField::Body);
-    let body = rp.request.body.as_deref().unwrap_or("");
     if body.is_empty() {
         let empty_y = rows.len() as u16;
         rows.push(Line::from(vec![Span::styled(
@@ -829,6 +845,38 @@ fn draw_edit(
             format!("  ✓ last: {} ({} ms)", r.status, r.elapsed.as_millis()),
             Style::default().fg(t.green).bg(t.bg_dark),
         )),
+    }
+}
+
+/// Lightweight content-type sniffing for the Body field label
+/// hint. Walks at most the first ~512 bytes — runs every frame
+/// on the body's leading prefix, so keep it cheap.
+fn detect_body_kind(body: &str) -> Option<&'static str> {
+    let head = body.trim_start();
+    if head.is_empty() {
+        return None;
+    }
+    let sample: String = head.chars().take(256).collect();
+    let first = sample.chars().next()?;
+    match first {
+        '{' | '[' => Some("JSON"),
+        '<' => {
+            // XML or HTML — close enough; if it starts with `<?xml`
+            // or a tag, call it XML.
+            Some("XML")
+        }
+        _ => {
+            // Form-encoded: `key=val&key=val` shape, no quotes/braces.
+            if sample.contains('=')
+                && sample.contains('&')
+                && !sample.contains('{')
+                && !sample.contains('[')
+            {
+                Some("form")
+            } else {
+                Some("text")
+            }
+        }
     }
 }
 
