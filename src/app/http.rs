@@ -928,16 +928,22 @@ impl App {
             Ok(trace) => {
                 self.http_bench_rx = None;
                 // Pull the "bench summary" headline out for the
-                // toast; full trace lands on the clipboard for the
-                // user to inspect.
+                // toast; the FULL trace also opens as a scratch
+                // buffer so the user can read / share / save it
+                // directly. Earlier impl only put the trace on
+                // the clipboard (mouse hunt SEV-3: invisible,
+                // and the toast's "trace → clipboard" hint
+                // wasn't clickable). Clipboard still gets a copy
+                // for paste-into-elsewhere workflows.
                 let headline = trace
                     .lines()
                     .find(|l| l.trim_start().starts_with("bench summary"))
                     .unwrap_or("bench: complete")
                     .trim()
                     .to_string();
-                self.clipboard.set(trace, false);
-                self.toast(format!("{headline} (full trace → clipboard)"));
+                self.clipboard.set(trace.clone(), false);
+                self.open_scratch_with_text("[bench-trace]".to_string(), trace);
+                self.toast(format!("{headline} · full trace → [bench-trace] + clipboard"));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
