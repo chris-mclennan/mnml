@@ -957,19 +957,13 @@ impl Default for Config {
                         color: "pink".to_string(),
                         tooltip: Some("mixr DJ panel".to_string()),
                     },
-                    // HTTP client is built into mnml core. The rail
-                    // chip fires `:http.send` which targets the
-                    // focused buffer (open a .http / .curl / .rest
-                    // file first); the user's muscle memory is the
-                    // existing `<leader>h` chord set.
-                    IntegrationIcon {
-                        id: "http".to_string(),
-                        glyph: "\u{F0590}".to_string(), // nf-md-web
-                        fallback: "ht".to_string(),
-                        command: ":http.send".to_string(),
-                        color: "blue".to_string(),
-                        tooltip: Some("HTTP client (built-in)".to_string()),
-                    },
+                    // 2026-06-19 — removed a duplicate `id: "http"`
+                    // entry that lived here. The earlier `IntegrationIcon`
+                    // around line 654 covers HTTP already (paper-plane
+                    // glyph, `http.send` command). Having both produced
+                    // two visually distinct rail chips for the same
+                    // command — confusing on first launch. Reported
+                    // by vscode-user-mouse second hunt as SEV-3.
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,

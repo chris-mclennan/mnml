@@ -54,18 +54,34 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
     } else {
         return;
     };
-    if line.trim().is_empty() {
-        return;
-    }
-
-    // Compute matches fresh each frame. Cheap — N=~150 commands,
-    // O(N) prefix filter.
-    let Some(state) = crate::app::compute_cmdline_completions_for_app(app, &line) else {
-        return;
+    // 2026-06-19 polish — empty cmdline (user just typed `:` or
+    // opened with Ctrl+;) shows recent commands so they can be
+    // re-fired with one keystroke. VS Code's palette behavior.
+    // Falls back to nothing if recent_commands is empty (fresh
+    // session).
+    let state = if line.trim().is_empty() {
+        if app.recent_commands.is_empty() {
+            return;
+        }
+        let matches: Vec<String> = app
+            .recent_commands
+            .iter()
+            .take(MAX_VISIBLE * 2)
+            .cloned()
+            .collect();
+        crate::app::CmdlineCompleteState {
+            head: String::new(),
+            matches,
+            idx: 0,
+            last_shown: String::new(),
+        }
+    } else {
+        // Compute matches fresh each frame. Cheap — N=~150 commands.
+        match crate::app::compute_cmdline_completions_for_app(app, &line) {
+            Some(s) if s.matches.len() >= 2 => s,
+            _ => return,
+        }
     };
-    if state.matches.len() < 2 {
-        return;
-    }
     // Reset the popup-selected idx when the cmdline content has
     // changed since the last render. Without this, typing in
     // the cmdline leaves the highlight stranded on a row that's
