@@ -19,7 +19,9 @@
 use crate::app::App;
 use crate::focus::Focus;
 use crate::layout::{Layout, PaneId, SplitDir};
+use crate::pane::Pane;
 use ratatui::layout::Rect;
+use std::path::PathBuf;
 
 /// Which region of a pane body the cursor is over during a tab drag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,10 +53,49 @@ impl App {
         if src == target {
             return;
         }
-        // Detach the dragged pane from the visible tree first. If it was a
-        // background tab (not currently shown) this is a no-op; if it was a
-        // visible split half, its split collapses into its sibling. `target`'s
-        // id is stable across this — `remove_leaf` only reshapes the tree.
+        self.splice_pane_at(src, target, zone);
+        self.active = Some(src);
+        self.focus = Focus::Pane;
+    }
+
+    /// Complete a *file-tree* drag that ended at `(x, y)`: open `path` (reusing
+    /// an already-open editor pane for it, else creating one) and place it next
+    /// to the pane under the cursor — the tree-file twin of `drop_tab_on_pane`.
+    /// Falls back to a plain `open_path` when not released over a pane body.
+    pub fn drop_tree_file_on_pane(&mut self, path: PathBuf, x: u16, y: u16) {
+        self.rects.tab_drop_target = None;
+        let Some((target, zone)) = hit_pane(self, x, y) else {
+            // Not over a pane — behave like a normal open.
+            self.open_path(&path);
+            return;
+        };
+        // Reuse an already-open editor pane for this file, else mint one.
+        let src = match self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&path)))
+        {
+            Some(id) => id,
+            None => {
+                let mut b = crate::buffer::Buffer::open(&path, &self.config)
+                    .unwrap_or_else(|_| crate::buffer::Buffer::scratch(&self.config));
+                b.apply_editorconfig(&self.workspace);
+                self.panes.push(Pane::Editor(b));
+                self.panes.len() - 1
+            }
+        };
+        if src != target {
+            self.splice_pane_at(src, target, zone);
+        }
+        self.active = Some(src);
+        self.focus = Focus::Pane;
+    }
+
+    /// Place pane `src` next to leaf `target` per `zone`. Detaches `src` from
+    /// the visible tree first (a no-op if it was a background tab; if it was a
+    /// visible split half, that split collapses into its sibling). `target`'s
+    /// id is stable across this — `remove_leaf` only reshapes the tree.
+    fn splice_pane_at(&mut self, src: PaneId, target: PaneId, zone: DropZone) {
         self.layout_mut().remove_leaf(src);
         match zone {
             DropZone::Center => {
@@ -86,8 +127,6 @@ impl App {
                 );
             }
         }
-        self.active = Some(src);
-        self.focus = Focus::Pane;
     }
 }
 

@@ -4441,20 +4441,15 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                                     }
                                 }
                                 app.tree.toggle_current();
-                            } else if count >= 2 {
-                                // Double-click promotes to a permanent
-                                // tab. `open_path` itself clears any
-                                // preview flag on existing panes for
-                                // this file.
-                                let path = row.path.clone();
-                                app.open_path(&path);
-                            } else {
-                                // Single tree-click on a file = the
-                                // VS Code preview-tab gesture under
-                                // standard input_style. (Vim style
-                                // behaves identically to `open_path`.)
-                                app.open_path_preview(&row.path);
                             }
+                            // Files: the open is DEFERRED to mouse-up. On a
+                            // plain click the Up handler opens it (preview, or
+                            // a permanent tab on double-click); if the user
+                            // instead click-holds and drags, it becomes a
+                            // drag (onto a pane body → drag-to-split; onto a
+                            // tree dir → move-in-tree) and never opens here.
+                            // Opening on Down made a drag impossible — the
+                            // file flashed open the instant you pressed.
                         }
                     }
                 }
@@ -4579,15 +4574,24 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // Tree drag — arm if armed, update target idx. Runs alongside
             // the other drag handlers since it doesn't conflict (the tree
             // drag only fires on tree rect coordinates).
-            if app.tree_drag.is_some() {
+            if let Some(d) = app.tree_drag.as_ref() {
+                let src_is_file = !d.src_is_dir;
                 if let Some(tr) = app.rects.tree
                     && crate::app::dispatch::contains(tr, x, y)
                 {
                     let idx = (y - tr.y) as usize + app.rects.tree_scroll;
                     let target = (idx < app.tree.visible_rows().len()).then_some(idx);
                     app.drag_tree_to(target, y);
+                    app.rects.tab_drop_target = None;
                 } else {
                     app.drag_tree_to(None, y);
+                    // Dragging a tree FILE over a pane body → show the
+                    // drag-to-split drop hint (dirs only move within the tree).
+                    if src_is_file {
+                        app.update_tab_drop_target(x, y);
+                    } else {
+                        app.rects.tab_drop_target = None;
+                    }
                 }
             }
             // Tab-page chip drag-to-reorder. If the user pressed on a
@@ -4703,16 +4707,46 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             app.end_divider_drag();
             app.drag_select = None;
             app.dragging_tab_page = None;
-            // Tree drag-drop — complete the move if armed.
-            if let Some(tr) = app.rects.tree
-                && crate::app::dispatch::contains(tr, x, y)
-            {
-                let idx = (y - tr.y) as usize + app.rects.tree_scroll;
-                let target = (idx < app.tree.visible_rows().len()).then_some(idx);
-                app.end_tree_drag(target);
-            } else {
-                // Released outside tree → cancel any in-flight drag.
-                app.tree_drag = None;
+            // Tree drag-drop release. Three outcomes:
+            //  1. over a pane body + the source is a FILE → drag-to-split:
+            //     open the file in a split / move it into that pane.
+            //  2. over the tree → complete a file/dir MOVE if the drag armed;
+            //     otherwise it was a plain click on a file → the DEFERRED open
+            //     (preview, or a permanent tab on double-click).
+            //  3. released anywhere else → cancel.
+            if let Some(drag) = app.tree_drag.as_ref() {
+                let src_path = drag.src_path.clone();
+                let src_is_dir = drag.src_is_dir;
+                let armed = drag.armed;
+                let over_body = app
+                    .rects
+                    .pane_bodies
+                    .iter()
+                    .any(|(r, _)| crate::app::dispatch::contains(*r, x, y));
+                let tree_rect = app
+                    .rects
+                    .tree
+                    .filter(|tr| crate::app::dispatch::contains(*tr, x, y));
+                if over_body && !src_is_dir {
+                    app.tree_drag = None;
+                    app.drop_tree_file_on_pane(src_path, x, y);
+                } else if let Some(tr) = tree_rect {
+                    let idx = (y - tr.y) as usize + app.rects.tree_scroll;
+                    let target = (idx < app.tree.visible_rows().len()).then_some(idx);
+                    app.end_tree_drag(target); // moves if armed; no-op otherwise
+                    if !armed && !src_is_dir {
+                        // Plain click on a file → the deferred open.
+                        let permanent = matches!(app.last_click, Some((_, _, _, c)) if c >= 2);
+                        if permanent {
+                            app.open_path(&src_path);
+                        } else {
+                            app.open_path_preview(&src_path);
+                        }
+                    }
+                } else {
+                    // Released in limbo (e.g. over chrome) → cancel.
+                    app.tree_drag = None;
+                }
             }
             // Bufferline tab release. If it ended over a pane body, split that
             // pane (edge zone) or move the dragged pane into it (center zone).

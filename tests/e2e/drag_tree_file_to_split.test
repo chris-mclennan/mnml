@@ -1,0 +1,20 @@
+# Drag a FILE from the tree onto an editor pane → open it in a split.
+# (The tree single-click open is deferred to mouse-up, so a click-and-hold
+# becomes a drag instead of opening the file immediately on press.)
+write aa.txt AAAAAAAA
+write bb.txt BBBBBBBB
+open aa.txt
+command tree.refresh
+
+# Rail: row 1 = workspace header, row 2 = aa.txt, row 3 = bb.txt.
+# Only aa.txt is open; bb.txt's content isn't on screen yet.
+expect pane "aa.txt"
+expect screen lacks "BBBBBBBB"
+
+# Drag bb.txt's tree row (col 5, row 3) onto the right zone of the editor
+# pane → splits: aa.txt on the left, bb.txt on the right. bb.txt becomes
+# the active pane.
+drag 5 3 90 20
+expect screen contains "AAAAAAAA"
+expect screen contains "BBBBBBBB"
+expect pane "bb.txt"
