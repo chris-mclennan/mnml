@@ -88,6 +88,27 @@ impl App {
         }
     }
 
+    /// Launch mixr in its own durable home — the "music keeps playing
+    /// after I close mnml" path. Under tmnl it becomes a sibling
+    /// **native tab** that survives mnml's exit (via [`Self::launch_tool`],
+    /// the same promote-to-own-tab machinery `htop`/`claude` use).
+    /// Standalone it opens mixr's full TUI in a `Pane::Pty` — which,
+    /// like any in-mnml pane, still dies with mnml; durable *standalone*
+    /// needs mixr's headless audio daemon (a later phase).
+    ///
+    /// Unlike [`Self::open_mixr_pane`] (an ephemeral blit panel mnml
+    /// owns and kills on close), this hands mixr off so mnml is no
+    /// longer its owner. Won't start a *second* mixr next to a live one
+    /// — the same audio-device / `~/.mixr/command` contention the pane
+    /// guard avoids.
+    pub fn launch_mixr(&mut self) {
+        if crate::now_playing::mixr::is_running() {
+            self.toast("mixr already running — control it from the ♪ chip");
+            return;
+        }
+        self.launch_tool("mixr", Vec::new());
+    }
+
     /// Drain frames from the hosted mixr panel + keep it sized to its
     /// docked rect. No-op until `mixr.show` launches the panel.
     pub(super) fn drain_mixr_panel(&mut self) {

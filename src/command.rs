@@ -3290,6 +3290,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_mixr_pane(),
         },
         Command {
+            id: "mixr.launch",
+            title: "Mixr: launch in its own tab (keeps playing after mnml closes)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.launch_mixr(),
+        },
+        Command {
             id: "browser.open",
             title: "Browser: open Chrome (CDP) — console / nav / eval",
             group: "browser",
