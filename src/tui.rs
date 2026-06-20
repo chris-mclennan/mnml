@@ -586,6 +586,25 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // 2026-06-20 — Esc on bare focus with in-flight HTTP work
+    // aborts. Runs AFTER overlay/cmdline gates so it doesn't
+    // steal Esc from picker / prompt / cmdline cancellation,
+    // but BEFORE the pane-focused handlers so users don't lose
+    // the chord to a deeper handler. Idempotent — also fine if
+    // no work is in flight.
+    if matches!(key.code, KeyCode::Esc)
+        && app.picker.is_none()
+        && app.prompt.is_none()
+        && app.context_menu.is_none()
+        && app.no_pane_cmdline.is_none()
+        && (app.http_bench_rx.is_some()
+            || app.http_sync_rx.is_some()
+            || app.lookup_fire_rx.is_some())
+    {
+        app.http_abort_all();
+        return;
+    }
+
     // App-level chords (any focus) resolve through the one keymap table — registry
     // defaults overlaid with `[keys.*]` config. These win over the focused pane;
     // all built-in defaults are modified/F-keys the editor doesn't want anyway.

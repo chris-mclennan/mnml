@@ -138,9 +138,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
     let needed = 2 + id_w + 3 + title_w + if key_w > 0 { 3 + key_w } else { 0 };
     let inner_w = needed.max(20).min(MAX_WIDTH - 2);
     let box_w = (inner_w + 2).min(cmdline_bar.width);
-    // +2 for top + bottom border; +1 if we need the "(N more)" row.
+    // +2 for top + bottom border; +1 if we need the "(N more)" row;
+    // +1 for the chord-hint footer (always shown).
     let extra_row = if total > visible { 1 } else { 0 };
-    let box_h = (visible as u16) + 2 + extra_row;
+    let footer_row = 1;
+    let box_h = (visible as u16) + 2 + extra_row + footer_row;
     // Anchor: float UPward from cmdline. y = cmdline.y - box_h.
     // If that goes negative (small terminal), clamp to row 0.
     let box_y = cmdline_bar.y.saturating_sub(box_h);
@@ -329,4 +331,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
             row_rect,
         );
     }
+    // 2026-06-20 — chord-hint footer at the bottom of the popup.
+    // Shows the keys that work here so first-time users don't
+    // have to guess. Right at the bottom-inside-the-border row.
+    let footer_y = inner.y + visible as u16 + extra_row;
+    let footer = "  Tab/↓ next · Shift+Tab/↑ prev · Enter run · Esc cancel";
+    let truncated: String = footer.chars().take(inner.width as usize).collect();
+    let footer_rect = Rect {
+        x: inner.x,
+        y: footer_y,
+        width: inner.width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            truncated,
+            Style::default()
+                .fg(t.comment)
+                .bg(t.bg_darker)
+                .add_modifier(Modifier::DIM),
+        )))
+        .style(Style::default().bg(t.bg_darker)),
+        footer_rect,
+    );
 }
