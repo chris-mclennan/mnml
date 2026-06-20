@@ -697,23 +697,37 @@ pub(crate) fn compute_cmdline_completions_for_app(app: &App, line: &str) -> Opti
         // AND every registered palette command id. Without the
         // registry merge, typing `:http` matches nothing because
         // EX_COMPLETION_NAMES is just the vim-style command set.
-        // 2026-06-19 — the previous fix updated the stateless
-        // compute_cmdline_completions (called only via the
-        // fallthrough at the end of this function), but missed
-        // this for_app-version's first-word branch — which is
-        // what the popup actually uses.
-        let mut matches: Vec<String> = EX_COMPLETION_NAMES
+        //
+        // Recent-first ordering: any matches that are in
+        // `app.recent_commands` (most-recent first there) bubble
+        // to the top, in MRU order. The rest follows alphabetical.
+        // Builds discoverability into the gesture — your
+        // commonly-used commands surface immediately.
+        let mut all: std::collections::BTreeSet<String> = EX_COMPLETION_NAMES
             .iter()
             .filter(|name| name.starts_with(token))
             .map(|s| s.to_string())
             .collect();
         for cmd in crate::command::registry().all() {
             if cmd.id.starts_with(token) {
-                matches.push(cmd.id.to_string());
+                all.insert(cmd.id.to_string());
             }
         }
-        matches.sort();
-        matches.dedup();
+        // Split: recents-matching-prefix first (MRU order), then
+        // the rest sorted alphabetically.
+        let mut matches: Vec<String> = Vec::new();
+        for recent in &app.recent_commands {
+            if recent.starts_with(token) && all.contains(recent) {
+                matches.push(recent.clone());
+            }
+        }
+        let in_recents: std::collections::HashSet<String> =
+            matches.iter().cloned().collect();
+        for m in all.iter() {
+            if !in_recents.contains(m) {
+                matches.push(m.clone());
+            }
+        }
         return Some(CmdlineCompleteState {
             head: String::new(),
             matches,

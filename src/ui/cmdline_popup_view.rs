@@ -26,7 +26,8 @@ use crate::app::App;
 use crate::ui::theme;
 
 const MAX_VISIBLE: usize = 8;
-const MAX_WIDTH: u16 = 60;
+const MAX_WIDTH: u16 = 90;
+
 
 pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
     // Always clear the previous frame's rect registrations — the
@@ -65,17 +66,53 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
     if state.matches.len() < 2 {
         return;
     }
+    // Reset the popup-selected idx when the cmdline content has
+    // changed since the last render. Without this, typing in
+    // the cmdline leaves the highlight stranded on a row that's
+    // no longer first — visually disorienting. We piggyback off
+    // cmdline_complete_state.last_shown which the Tab cycle
+    // already tracks.
+    let prior_line = app
+        .cmdline_complete_state
+        .as_ref()
+        .map(|s| s.last_shown.clone())
+        .unwrap_or_default();
+    if prior_line != line {
+        app.cmdline_popup_selected = 0;
+    }
 
     let total = state.matches.len();
     let visible = total.min(MAX_VISIBLE);
-    let label_w = state
+
+    // 2026-06-19 — polish: show command title alongside id, mark
+    // recent rows with ★. Recent-set + per-row title lookup
+    // (registry().get) are cheap — one HashMap probe per row.
+    let recent_set: std::collections::HashSet<&str> = app
+        .recent_commands
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+    let id_w = state
         .matches
         .iter()
         .take(visible)
         .map(|m| m.chars().count() as u16)
         .max()
         .unwrap_or(0);
-    let inner_w = label_w.max(20).min(MAX_WIDTH - 2);
+    let title_w = state
+        .matches
+        .iter()
+        .take(visible)
+        .filter_map(|m| {
+            crate::command::registry()
+                .get(m.as_str())
+                .map(|c| c.title.chars().count() as u16)
+        })
+        .max()
+        .unwrap_or(0);
+    // 2-cell marker (▸/★/spc + space) + id + 3-cell separator + title
+    let needed = 2 + id_w + 3 + title_w;
+    let inner_w = needed.max(20).min(MAX_WIDTH - 2);
     let box_w = (inner_w + 2).min(cmdline_bar.width);
     // +2 for top + bottom border; +1 if we need the "(N more)" row.
     let extra_row = if total > visible { 1 } else { 0 };
@@ -132,21 +169,75 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
     for (offset, idx) in (start..end).enumerate() {
         let match_text = &state.matches[idx];
         let is_sel = idx == selected;
-        let style = if is_sel {
+        let title = crate::command::registry()
+            .get(match_text.as_str())
+            .map(|c| c.title);
+        let is_recent = recent_set.contains(match_text.as_str());
+
+        // Marker column: ▸ for selected, ★ for recent (only when
+        // not selected — selected wins visually), space otherwise.
+        let marker = if is_sel {
+            "▸ "
+        } else if is_recent {
+            "★ "
+        } else {
+            "  "
+        };
+        let marker_style = if is_sel {
+            Style::default()
+                .fg(t.yellow)
+                .bg(t.bg3)
+                .add_modifier(Modifier::BOLD)
+        } else if is_recent {
+            Style::default().fg(t.yellow).bg(t.bg_darker)
+        } else {
+            Style::default().fg(t.comment).bg(t.bg_darker)
+        };
+        let id_style = if is_sel {
             Style::default()
                 .fg(t.fg)
                 .bg(t.bg3)
                 .add_modifier(Modifier::BOLD)
         } else {
+            Style::default().fg(t.fg).bg(t.bg_darker)
+        };
+        let sep_style = Style::default()
+            .fg(t.bg3)
+            .bg(if is_sel { t.bg3 } else { t.bg_darker });
+        let title_style = if is_sel {
+            Style::default().fg(t.comment).bg(t.bg3)
+        } else {
             Style::default().fg(t.comment).bg(t.bg_darker)
         };
-        let marker = if is_sel { "▸ " } else { "  " };
-        // Truncate to inner width.
-        let text = format!("{marker}{match_text}");
-        let truncated: String = text
-            .chars()
-            .take(inner.width as usize)
-            .collect();
+
+        // Pad the id to id_w so the title column aligns.
+        let id_padded = format!(
+            "{:<width$}",
+            match_text,
+            width = id_w as usize
+        );
+        let mut spans = vec![
+            Span::styled(marker.to_string(), marker_style),
+            Span::styled(id_padded, id_style),
+        ];
+        if let Some(t_str) = title {
+            spans.push(Span::styled("   ".to_string(), sep_style));
+            spans.push(Span::styled(t_str.to_string(), title_style));
+        }
+        // Pad to inner width so the selected row's bg covers the
+        // entire line (no half-painted background on long titles).
+        let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+        if used < inner.width as usize {
+            spans.push(Span::styled(
+                " ".repeat(inner.width as usize - used),
+                if is_sel {
+                    Style::default().bg(t.bg3)
+                } else {
+                    Style::default().bg(t.bg_darker)
+                },
+            ));
+        }
+
         let row_y = inner.y + offset as u16;
         let row_rect = Rect {
             x: inner.x,
@@ -155,7 +246,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
             height: 1,
         };
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(truncated, style)))
+            Paragraph::new(Line::from(spans))
                 .style(Style::default().bg(t.bg_darker)),
             row_rect,
         );
