@@ -708,12 +708,23 @@ fn compute_cmdline_completions(line: &str, workspace: &Path) -> Option<CmdlineCo
     let head = &line[..split_at];
     let token = &line[split_at..];
     if head.is_empty() {
-        // First word — complete ex command names.
+        // First word — complete ex command names AND registered
+        // palette command ids. 2026-06-19 — user reported the
+        // popup didn't show for `:http`; root cause was
+        // EX_COMPLETION_NAMES is a hardcoded vim ex-command list
+        // (`edit`, `buffer`, …) that doesn't include the
+        // command registry (`http.send`, `http.new`, …). Now
+        // merges both sources.
         let mut matches: Vec<String> = EX_COMPLETION_NAMES
             .iter()
             .filter(|name| name.starts_with(token))
             .map(|s| s.to_string())
             .collect();
+        for cmd in crate::command::registry().all() {
+            if cmd.id.starts_with(token) {
+                matches.push(cmd.id.to_string());
+            }
+        }
         matches.sort();
         matches.dedup();
         return Some(CmdlineCompleteState {
