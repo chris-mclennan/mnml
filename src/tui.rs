@@ -689,17 +689,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         match key.code {
             KeyCode::Esc => app.no_pane_cmdline_cancel(),
-            // Enter accepts the highlighted popup match (rewrites
-            // cmdline to it first) so :htt + Enter fires the
-            // highlighted http.X without forcing the user to Tab
-            // to complete. If the popup isn't showing, just commit
-            // the typed line as before.
-            KeyCode::Enter => {
-                if app.cmdline_popup_is_showing() {
-                    app.cmdline_popup_accept_current();
-                }
-                app.no_pane_cmdline_commit();
-            }
+            // Enter runs whatever is currently in the cmdline.
+            // 2026-06-19 — earlier impl auto-substituted the
+            // popup match, but that breaks legitimate vim
+            // abbreviations (`:reg`, `:wq`, …). Users wanting
+            // the popup match use Tab/click first to put it
+            // into the line.
+            KeyCode::Enter => app.no_pane_cmdline_commit(),
             KeyCode::Backspace => app.no_pane_cmdline_backspace(),
             // 2026-06-19 — popup nav. Tab / Down advance the
             // highlighted match; Shift+Tab / Up retreat. Rewrites

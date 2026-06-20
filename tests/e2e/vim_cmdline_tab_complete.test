@@ -1,28 +1,32 @@
-# `:` cmdline Tab completion — cycles through ex commands.
+# `:` cmdline Tab completion — cycles through ex commands AND registered
+# palette commands. 2026-06-19 — completer was unified (registry + vim
+# ex names merged); first Tab now picks the highest-scoring alphabetical
+# match across both sources.
 
 write data.txt "alpha"
 open data.txt
 command editor.use_vim
 
-# Open the cmdline. Type "wr" — Tab should complete to "write" (the only
-# ex command in EX_COMPLETION_NAMES starting with "wr").
+# Open the cmdline. Type "wr" — Tab cycles. Multiple matches now exist:
+# - ai.write_tests (id-contains "wr", score 200)
+# - view.toggle_wrap (id-contains "wr", score 200)
+# - write (EX prefix, score 150)
+# First Tab picks the alphabetically-first at the highest score tier.
 key :
 type "wr"
 key tab
-# The pending-display in the statusline shows ":<text>" — so we expect to
-# see ":write" rendered somewhere.
-expect screen contains ":write"
+expect screen contains ":ai.write_tests"
 key escape
 
-# "ta" has many matches (tabnew/tabnext/tabprev/...). First Tab picks the
-# first sorted match — "tabclose".
+# "ta" has many matches. tab.* commands (id-prefix, score 300) outrank
+# tabclose etc. (EX prefix, score 150). First Tab picks tab.close
+# (alphabetically first at 300).
 key :
 type "ta"
 key tab
-expect screen contains ":tabclose"
-# Second Tab cycles to next match — "tabe".
+expect screen contains ":tab.close"
 key tab
-expect screen contains ":tabe"
+expect screen contains ":tab.first"
 key escape
 
 # File-path completion: after a path-accepting command + space, Tab cycles

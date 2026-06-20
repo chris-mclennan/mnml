@@ -230,34 +230,14 @@ pub(crate) fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
         CmdlinePopupMove(delta) => app.cmdline_popup_move(delta as isize),
         CmdlinePopupAcceptCurrentAndCommit => app.cmdline_popup_accept_current(),
         CmdlineEnter(typed) => {
-            // If the typed line is exactly a valid known command
-            // (in the registry, EX_COMPLETION_NAMES, or starts
-            // with a path-taker), run it as typed. Otherwise look
-            // up the popup's highlighted match and run that
-            // instead. The check is approximate — anything past
-            // the first word is the user's text, untouched.
-            let first = typed.split_whitespace().next().unwrap_or("");
-            let is_typed_valid = crate::command::registry().get(first).is_some()
-                || crate::input::vim::EX_COMPLETION_NAMES.contains(&first);
-            if !is_typed_valid {
-                // Try the popup's highlighted match.
-                let line = if let Some(state) =
-                    crate::app::compute_cmdline_completions_for_app(app, &typed)
-                {
-                    if !state.matches.is_empty() {
-                        let idx = app.cmdline_popup_selected.min(state.matches.len() - 1);
-                        Some(format!("{}{}", state.head, state.matches[idx]))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                if let Some(line) = line {
-                    app.run_ex_command(&line);
-                    return;
-                }
-            }
+            // 2026-06-19 — earlier impl auto-substituted the
+            // popup's highlighted match if the typed first-word
+            // wasn't in the registry/EX_COMPLETION_NAMES. That
+            // broke legitimate vim abbreviations like `:reg`
+            // (handled by ex_commands.rs but not in
+            // EX_COMPLETION_NAMES). Now Enter just runs whatever
+            // is in the cmdline; users wanting the popup match
+            // use Tab/click first to insert it into the line.
             app.run_ex_command(&typed);
         }
         RepeatInsertStart { count, above } => app.repeat_insert_start(count as usize, above),
