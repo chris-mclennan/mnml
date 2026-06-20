@@ -328,6 +328,15 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: cfg.ui.theme != d.ui.theme,
     }));
 
+    // 2026-06-20 — first Color row: cmdline popup border color.
+    out.push(SettingItem::Color(ColorRow {
+        key: "ui.cmdline_popup_border_color",
+        label: "Cmdline popup border color",
+        value: cfg.ui.cmdline_popup_border_color.clone(),
+        default: d.ui.cmdline_popup_border_color.clone(),
+        modified: cfg.ui.cmdline_popup_border_color != d.ui.cmdline_popup_border_color,
+    }));
+
     // Default workspace path — what mnml opens when launched without
     // a `[WORKSPACE]` argument. Avoids landing on `$HOME` (which
     // triggers the TCC prompt cascade: Photos library, Documents,
@@ -727,6 +736,11 @@ pub fn apply_text_setting(cfg: &mut Config, key: &str, value: &str) -> bool {
         "ui.theme" => {
             let changed = cfg.ui.theme != value;
             cfg.ui.theme = value.to_string();
+            changed
+        }
+        "ui.cmdline_popup_border_color" => {
+            let changed = cfg.ui.cmdline_popup_border_color != value;
+            cfg.ui.cmdline_popup_border_color = value.to_string();
             changed
         }
         "startup.default_workspace" => {

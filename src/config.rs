@@ -262,6 +262,12 @@ pub struct SessionConfig {
 #[derive(Debug, Clone)]
 pub struct UiConfig {
     pub theme: String,
+    /// 2026-06-20 — first Color-row consumer in Settings. Hex
+    /// `RRGGBB` (no `#`) for the cmdline completion popup's
+    /// border. Empty string = use theme yellow. Validated at
+    /// render time: invalid → fall back to theme yellow with no
+    /// toast (Settings UI shows `(invalid)`).
+    pub cmdline_popup_border_color: String,
     /// Optional alternate theme name. When set, the bufferline's theme-toggle
     /// slider swaps between `theme` ↔ `theme_toggle` (NvChad convention —
     /// users configure a light+dark pair, the button is a 1-press flip).
@@ -557,6 +563,7 @@ impl Default for Config {
             },
             ui: UiConfig {
                 theme: "onedark".to_string(),
+                cmdline_popup_border_color: String::new(),
                 theme_toggle: None,
                 ascii_icons: false,
                 tree_width: 30,
@@ -1097,6 +1104,7 @@ struct RawEditor {
 #[derive(Debug, Default, Deserialize)]
 struct RawUi {
     theme: Option<String>,
+    cmdline_popup_border_color: Option<String>,
     theme_toggle: Option<String>,
     ascii_icons: Option<bool>,
     tree_width: Option<u16>,
@@ -1249,6 +1257,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.theme {
             self.ui.theme = v;
+        }
+        if let Some(v) = raw.ui.cmdline_popup_border_color {
+            self.ui.cmdline_popup_border_color = v;
         }
         if let Some(v) = raw.ui.theme_toggle {
             self.ui.theme_toggle = Some(v);

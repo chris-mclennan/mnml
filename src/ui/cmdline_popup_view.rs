@@ -24,6 +24,20 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::app::App;
 use crate::ui::theme;
+use ratatui::style::Color;
+
+/// Parse a `RRGGBB` hex string (no leading `#`) into a Color.
+/// Empty or malformed returns None — caller falls back to theme.
+fn parse_hex_color(hex: &str) -> Option<Color> {
+    let h = hex.trim().trim_start_matches('#');
+    if h.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&h[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&h[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&h[4..6], 16).ok()?;
+    Some(Color::Rgb(r, g, b))
+}
 
 const MAX_VISIBLE: usize = 8;
 const MAX_WIDTH: u16 = 110;
@@ -155,18 +169,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
     };
 
     let t = theme::cur();
-    // 2026-06-19 — earlier bg/border colors matched the editor
-    // pane background too closely, making the popup invisible
-    // against the splash screen. Now uses bg_darker (one step
-    // darker than bg_dark, the editor pane bg) and a yellow
-    // border (matching the cmdline_bar's yellow `:foo▏` text)
-    // so the popup visually clusters with the cmdline.
+    // 2026-06-20 — border color is configurable via Settings →
+    // Color row `ui.cmdline_popup_border_color`. Empty string =
+    // theme yellow. Invalid hex falls back to theme yellow.
+    let border_color = parse_hex_color(&app.config.ui.cmdline_popup_border_color)
+        .unwrap_or(t.yellow);
     let block_style = Style::default().fg(t.fg).bg(t.bg_darker);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(
             Style::default()
-                .fg(t.yellow)
+                .fg(border_color)
                 .bg(t.bg_darker)
                 .add_modifier(Modifier::BOLD),
         )
