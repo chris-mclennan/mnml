@@ -47,6 +47,18 @@ impl App {
             p.focused = p.size != MixrSize::Minimized;
             return;
         }
+        // A mixr is already alive that mnml doesn't own — the user
+        // launched it standalone (its own terminal / tmnl tab), or it
+        // outlived a previous mnml. Hosting it in a blit pane is
+        // impossible (it renders to its own screen, not our socket), and
+        // spawning a *second* mixr would make two processes fight over
+        // the one audio device and the shared `~/.mixr/command` channel.
+        // So don't spawn — the ♪ transport chips already remote-control
+        // it via the command file (see `tui::send_mixr_command`).
+        if crate::now_playing::mixr::is_running() {
+            self.toast("mixr already running — control it from the ♪ chip");
+            return;
+        }
         // First open — launch `mixr --blit` sized to the bottom strip
         // (best-effort; `tick` keeps it sized to its rect).
         let (cols, rows) = self
