@@ -683,38 +683,15 @@ pub(crate) fn compute_cmdline_completions_for_app(app: &App, line: &str) -> Opti
     }
     // First word + path completers handled below.
     if head.is_empty() {
-        let mut matches: Vec<String> = EX_COMPLETION_NAMES
-            .iter()
-            .filter(|name| name.starts_with(token))
-            .map(|s| s.to_string())
-            .collect();
-        matches.sort();
-        matches.dedup();
-        return Some(CmdlineCompleteState {
-            head: String::new(),
-            matches,
-            idx: 0,
-            last_shown: String::new(),
-        });
-    }
-    compute_cmdline_completions(line, &app.workspace)
-}
-
-fn compute_cmdline_completions(line: &str, workspace: &Path) -> Option<CmdlineCompleteState> {
-    use crate::input::vim::EX_COMPLETION_NAMES;
-    // Identify the trailing whitespace-separated token; everything before is
-    // the cmdline's "head" (preserved verbatim).
-    let split_at = line.rfind(char::is_whitespace).map(|i| i + 1).unwrap_or(0);
-    let head = &line[..split_at];
-    let token = &line[split_at..];
-    if head.is_empty() {
-        // First word — complete ex command names AND registered
-        // palette command ids. 2026-06-19 — user reported the
-        // popup didn't show for `:http`; root cause was
-        // EX_COMPLETION_NAMES is a hardcoded vim ex-command list
-        // (`edit`, `buffer`, …) that doesn't include the
-        // command registry (`http.send`, `http.new`, …). Now
-        // merges both sources.
+        // Merge EX_COMPLETION_NAMES (hardcoded vim ex commands)
+        // AND every registered palette command id. Without the
+        // registry merge, typing `:http` matches nothing because
+        // EX_COMPLETION_NAMES is just the vim-style command set.
+        // 2026-06-19 — the previous fix updated the stateless
+        // compute_cmdline_completions (called only via the
+        // fallthrough at the end of this function), but missed
+        // this for_app-version's first-word branch — which is
+        // what the popup actually uses.
         let mut matches: Vec<String> = EX_COMPLETION_NAMES
             .iter()
             .filter(|name| name.starts_with(token))
@@ -734,11 +711,12 @@ fn compute_cmdline_completions(line: &str, workspace: &Path) -> Option<CmdlineCo
             last_shown: String::new(),
         });
     }
-    // Trailing arg — only path-takers are handled here. Buffer-name
-    // completion (`:b <prefix>`) and theme completion (`:colorscheme`)
-    // live in `compute_cmdline_completions_for_app` because they need App
-    // state this stateless helper doesn't have.
-    let first_word = head.split_whitespace().next().unwrap_or("");
+    // 2026-06-19 — used to fall through to a separate stateless
+    // `compute_cmdline_completions` helper that duplicated the
+    // first-word block (and silently went stale when commands
+    // moved to the registry). Folded inline: only path completion
+    // is left, and it needs nothing the for_app function doesn't
+    // already have.
     let path_takers = [
         "e", "edit", "sp", "split", "vs", "vsp", "vsplit", "tabnew", "tabe", "tabedit", "badd",
         "ba", "saveas", "w", "write", "source", "so", "r", "read", "Files",
@@ -751,18 +729,16 @@ fn compute_cmdline_completions(line: &str, workspace: &Path) -> Option<CmdlineCo
             last_shown: String::new(),
         });
     }
-    // Split the user's path prefix into "dir part" + "stem" (the chars after
-    // the last `/` we'll match against entries in dir).
     let (dir_part, stem) = match token.rfind('/') {
         Some(i) => (&token[..=i], &token[i + 1..]),
         None => ("", token),
     };
     let base = if dir_part.is_empty() {
-        workspace.to_path_buf()
+        app.workspace.to_path_buf()
     } else if dir_part.starts_with('/') {
         Path::new(dir_part).to_path_buf()
     } else {
-        workspace.join(dir_part)
+        app.workspace.join(dir_part)
     };
     let mut matches: Vec<String> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&base) {
@@ -773,7 +749,6 @@ fn compute_cmdline_completions(line: &str, workspace: &Path) -> Option<CmdlineCo
             if !name.starts_with(stem) {
                 continue;
             }
-            // Hidden files only show when the user opted in (typed leading `.`).
             if name.starts_with('.') && !stem.starts_with('.') {
                 continue;
             }
