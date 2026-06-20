@@ -123,40 +123,75 @@ pub fn draw(
     rows.push(Line::from(Span::raw("")));
     draw_response(rp, t, &mut rows);
 
-    // Section divider + AI prompt panel
-    rows.push(Line::from(Span::styled(
-        format!("{}", "─".repeat(area.width.saturating_sub(2) as usize)),
-        Style::default().fg(t.bg3).bg(t.bg_dark),
-    )));
-    let ai_y = rows.len() as u16;
-    rows.push(Line::from(vec![
-        Span::styled(
-            "  ai".to_string(),
-            Style::default()
-                .fg(t.orange)
-                .bg(t.bg_dark)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "   (click here to ask a custom question · `a` for quick debug)".to_string(),
-            Style::default()
-                .fg(t.comment)
-                .bg(t.bg_dark)
-                .add_modifier(Modifier::UNDERLINED),
-        ),
-    ]));
-    let ai_section_row_y = ai_y;
+    // 2026-06-20 — AI section now PINNED to the bottom of the pane
+    // (poor man's independent scrolling). The Request + Response
+    // rows scroll within the top region; the AI header always
+    // stays visible at the bottom 2 rows so the affordance never
+    // hides itself. Saves a full per-section scroll refactor.
+    const AI_ROWS: u16 = 2; // separator + header line
 
-    // scroll — Response can be long; Edit is short
-    let h = area.height as usize;
+    // scroll — Response can be long; Edit is short. Scrollable
+    // viewport is everything EXCEPT the bottom AI strip.
+    let h = area.height.saturating_sub(AI_ROWS) as usize;
     let max_scroll = rows.len().saturating_sub(h.min(rows.len()));
     rp.scroll = rp.scroll.min(max_scroll);
     let scroll = rp.scroll;
     let view: Vec<Line> = rows.into_iter().skip(scroll).take(h).collect();
+    let upper = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: area.height.saturating_sub(AI_ROWS),
+    };
     frame.render_widget(
         Paragraph::new(view).style(Style::default().bg(t.bg_dark)),
-        area,
+        upper,
     );
+    // Pinned AI strip — drawn as a fresh 2-row Paragraph at the
+    // bottom. Click rect is registered against ai_strip.y.
+    if area.height >= AI_ROWS {
+        let ai_strip = Rect {
+            x: area.x,
+            y: area.y + area.height - AI_ROWS,
+            width: area.width,
+            height: AI_ROWS,
+        };
+        let mut ai_lines: Vec<Line> = Vec::new();
+        ai_lines.push(Line::from(Span::styled(
+            format!("{}", "─".repeat(area.width.saturating_sub(2) as usize)),
+            Style::default().fg(t.bg3).bg(t.bg_dark),
+        )));
+        ai_lines.push(Line::from(vec![
+            Span::styled(
+                "  ai".to_string(),
+                Style::default()
+                    .fg(t.orange)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "   (click here to ask a custom question · `a` for quick debug)".to_string(),
+                Style::default()
+                    .fg(t.comment)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::UNDERLINED),
+            ),
+        ]));
+        frame.render_widget(
+            Paragraph::new(ai_lines).style(Style::default().bg(t.bg_dark)),
+            ai_strip,
+        );
+        // Header rect = the bottom row only.
+        app.rects.request_ai_section = Some(Rect {
+            x: ai_strip.x,
+            y: ai_strip.y + 1,
+            width: ai_strip.width,
+            height: 1,
+        });
+    } else {
+        app.rects.request_ai_section = None;
+    }
+    let _ai_section_row_y: u16 = 0; // formerly used by the inline AI rect
     app.rects.editor_panes.push((area, pane_id));
     app.rects.request_tabs = tabs;
     // Field rects were collected with `y` as a row index within `rows`
@@ -233,19 +268,7 @@ pub fn draw(
         r.y = area.y + visible_off as u16;
         app.rects.request_auth_rows.push((r, id));
     }
-    // AI section header rect → screen-y, only if visible.
-    app.rects.request_ai_section = None;
-    if (ai_section_row_y as usize) >= scroll {
-        let visible_off = ai_section_row_y as usize - scroll;
-        if visible_off < h {
-            app.rects.request_ai_section = Some(Rect {
-                x: area.x,
-                y: area.y + visible_off as u16,
-                width: area.width,
-                height: 1,
-            });
-        }
-    }
+    // (AI section rect registered when its pinned strip is drawn.)
 
     // Adjust the caret for scroll + return it so the terminal cursor sits there.
     caret.and_then(|(x, y)| {
