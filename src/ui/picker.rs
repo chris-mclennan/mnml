@@ -60,9 +60,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let title = format!(" {} ", picker.title);
     let counter = format!(" {count} ");
     let prompt = format!("  {}", picker.query);
+    let title_cols = title.chars().count();
     let avail = query_area.width as usize;
-    let pad = avail
-        .saturating_sub(title.chars().count() + counter.chars().count() + prompt.chars().count());
+    let pad = avail.saturating_sub(title_cols + counter.chars().count() + prompt.chars().count());
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
@@ -89,9 +89,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         ])),
         query_area,
     );
-    // Caret: just after the prompt text ("  " + query).
-    let caret_x = query_area.x
-        + (2 + picker.query.chars().count() as u16).min(query_area.width.saturating_sub(1));
+    // Caret: just after the prompt text. The query line renders as
+    // [title][" "][prompt="  "+query][pad][counter], so the caret must skip the
+    // title span + separator space + the prompt's leading indent, not just "  ".
+    let caret_offset = title_cols as u16 + 1 + prompt.chars().count() as u16;
+    let caret_x = query_area.x + caret_offset.min(query_area.width.saturating_sub(1));
     app.rects.picker_caret = Some((caret_x, query_area.y));
 
     // ── list ──
@@ -158,4 +160,38 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         Paragraph::new(lines).style(Style::default().bg(theme::cur().bg_darker)),
         list_area,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::picker::{Picker, PickerItem, PickerKind};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// Regression: the query caret must land *after* the typed query, not over
+    /// the title. The query line renders `[title][" "]["  "+query]…`, so the
+    /// cell immediately left of the caret should be the last query char — never
+    /// a character of the "Command palette" title. (Bug: caret was computed as
+    /// `x + 2 + query.len`, ignoring the title width, so it sat on the title.)
+    #[test]
+    fn caret_sits_after_the_query_not_on_the_title() {
+        let ws = std::env::temp_dir();
+        let mut app = App::new(ws, crate::config::Config::default()).unwrap();
+        let mut picker = Picker::new(
+            PickerKind::Commands,
+            "Command palette",
+            vec![PickerItem::new("file.save", "Save file", "ctrl+s")],
+        );
+        picker.type_char('s');
+        app.picker = Some(picker);
+
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        term.draw(|f| draw(f, &mut app, f.area())).unwrap();
+
+        let (cx, cy) = app.rects.picker_caret.expect("picker caret recorded");
+        let buf = term.backend().buffer();
+        // The cell just before the caret holds the last typed query char.
+        assert_eq!(buf[(cx - 1, cy)].symbol(), "s");
+    }
 }
