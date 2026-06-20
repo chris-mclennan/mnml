@@ -693,41 +693,56 @@ pub(crate) fn compute_cmdline_completions_for_app(app: &App, line: &str) -> Opti
     }
     // First word + path completers handled below.
     if head.is_empty() {
-        // Merge EX_COMPLETION_NAMES (hardcoded vim ex commands)
-        // AND every registered palette command id. Without the
-        // registry merge, typing `:http` matches nothing because
-        // EX_COMPLETION_NAMES is just the vim-style command set.
+        // 2026-06-19 — tiered fuzzy matching for first-word.
+        // Earlier impl was prefix-only on id; `:hsend` matched
+        // nothing because `http.send` doesn't START with "hsend".
+        // Now scoring layers (higher = better match):
         //
-        // Recent-first ordering: any matches that are in
-        // `app.recent_commands` (most-recent first there) bubble
-        // to the top, in MRU order. The rest follows alphabetical.
-        // Builds discoverability into the gesture — your
-        // commonly-used commands surface immediately.
-        let mut all: std::collections::BTreeSet<String> = EX_COMPLETION_NAMES
-            .iter()
-            .filter(|name| name.starts_with(token))
-            .map(|s| s.to_string())
-            .collect();
+        //   T1 (300): id starts with token            (`http.s` → http.send)
+        //   T2 (200): id contains token as substring  (`http`   → http.send)
+        //   T3 (100): title contains token (case-ins) (`send`   → http.send)
+        //   T0 ( 50): EX_COMPLETION_NAMES prefix hit  (legacy vim ex commands)
+        //
+        // Within a tier, recent_commands order bumps to top
+        // (each MRU position adds a small score). Lower-tier
+        // matches still show but are ranked below higher-tier.
+        let token_lc = token.to_lowercase();
+        let mut scored: Vec<(i32, String)> = Vec::new();
         for cmd in crate::command::registry().all() {
-            if cmd.id.starts_with(token) {
-                all.insert(cmd.id.to_string());
+            let mut score = 0i32;
+            let id_lc = cmd.id.to_lowercase();
+            if id_lc.starts_with(&token_lc) {
+                score = score.max(300);
+            } else if !token.is_empty() && id_lc.contains(&token_lc) {
+                score = score.max(200);
+            }
+            if score == 0
+                && !token.is_empty()
+                && cmd.title.to_lowercase().contains(&token_lc)
+            {
+                score = 100;
+            }
+            if score > 0 {
+                // Recent-bump: most-recent gets +N, second +N-1, etc.
+                if let Some(pos) = app
+                    .recent_commands
+                    .iter()
+                    .position(|r| r == cmd.id)
+                {
+                    score += (50 - pos as i32).max(0);
+                }
+                scored.push((score, cmd.id.to_string()));
             }
         }
-        // Split: recents-matching-prefix first (MRU order), then
-        // the rest sorted alphabetically.
-        let mut matches: Vec<String> = Vec::new();
-        for recent in &app.recent_commands {
-            if recent.starts_with(token) && all.contains(recent) {
-                matches.push(recent.clone());
+        for name in EX_COMPLETION_NAMES {
+            if name.starts_with(token) {
+                scored.push((50, name.to_string()));
             }
         }
-        let in_recents: std::collections::HashSet<String> =
-            matches.iter().cloned().collect();
-        for m in all.iter() {
-            if !in_recents.contains(m) {
-                matches.push(m.clone());
-            }
-        }
+        // Sort: higher score first; ties alphabetical.
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        scored.dedup_by(|a, b| a.1 == b.1);
+        let matches: Vec<String> = scored.into_iter().map(|(_, s)| s).collect();
         return Some(CmdlineCompleteState {
             head: String::new(),
             matches,

@@ -1308,11 +1308,15 @@ impl App {
         if state.matches.len() < 2 {
             return;
         }
-        let cur = self.cmdline_popup_selected.min(state.matches.len() - 1);
-        let new_idx = if delta < 0 {
-            (cur + state.matches.len() - 1) % state.matches.len()
+        let n = state.matches.len() as isize;
+        let cur = self.cmdline_popup_selected.min(state.matches.len() - 1) as isize;
+        // Wrap on single-step (delta = ±1) for the familiar
+        // Tab-cycle feel; clamp on multi-step (PageUp/PageDown)
+        // so the user lands at the boundary, not wraps past it.
+        let new_idx = if delta.abs() == 1 {
+            ((cur + delta).rem_euclid(n)) as usize
         } else {
-            (cur + 1) % state.matches.len()
+            (cur + delta).clamp(0, n - 1) as usize
         };
         self.cmdline_popup_selected = new_idx;
         // Track last_shown as the CURRENT typed line so the
@@ -1332,6 +1336,30 @@ impl App {
     pub fn cmdline_popup_accept_current(&mut self) {
         let idx = self.cmdline_popup_selected;
         self.cmdline_popup_accept(idx);
+    }
+
+    /// Jump the cmdline popup highlight to a specific index
+    /// (clamped). Used by Home (idx=0) and End (idx=usize::MAX,
+    /// clamps to last).
+    pub fn cmdline_popup_move_to(&mut self, idx: usize) {
+        let line = if let Some(text) = self.no_pane_cmdline.clone() {
+            text
+        } else if let Some(text) = self.active_editor_mut().and_then(|b| b.input.cmdline_get()) {
+            text
+        } else {
+            return;
+        };
+        let Some(state) = compute_cmdline_completions_for_app(self, &line) else {
+            return;
+        };
+        if state.matches.len() < 2 {
+            return;
+        }
+        self.cmdline_popup_selected = idx.min(state.matches.len() - 1);
+        let mut stored = state;
+        stored.idx = self.cmdline_popup_selected;
+        stored.last_shown = line;
+        self.cmdline_complete_state = Some(stored);
     }
 
     /// Returns true when the popup is currently displaying ≥2

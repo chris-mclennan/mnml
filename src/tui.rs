@@ -710,6 +710,10 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Tab => app.cmdline_popup_move(1),
             KeyCode::Down => app.cmdline_popup_move(1),
             KeyCode::Up => app.cmdline_popup_move(-1),
+            KeyCode::PageDown => app.cmdline_popup_move(8),
+            KeyCode::PageUp => app.cmdline_popup_move(-8),
+            KeyCode::Home => app.cmdline_popup_move_to(0),
+            KeyCode::End => app.cmdline_popup_move_to(usize::MAX),
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.no_pane_cmdline_push_char(c);
             }

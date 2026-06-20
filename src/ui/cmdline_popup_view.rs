@@ -26,7 +26,7 @@ use crate::app::App;
 use crate::ui::theme;
 
 const MAX_VISIBLE: usize = 8;
-const MAX_WIDTH: u16 = 90;
+const MAX_WIDTH: u16 = 110;
 
 
 pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
@@ -110,8 +110,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
         })
         .max()
         .unwrap_or(0);
-    // 2-cell marker (▸/★/spc + space) + id + 3-cell separator + title
-    let needed = 2 + id_w + 3 + title_w;
+    let key_w = state
+        .matches
+        .iter()
+        .take(visible)
+        .filter_map(|m| crate::command::registry().get(m.as_str()))
+        .map(|c| c.key_hint().chars().count() as u16)
+        .max()
+        .unwrap_or(0);
+    // 2 (marker) + id + 3 (sep) + title + 3 (sep) + key hint
+    let needed = 2 + id_w + 3 + title_w + if key_w > 0 { 3 + key_w } else { 0 };
     let inner_w = needed.max(20).min(MAX_WIDTH - 2);
     let box_w = (inner_w + 2).min(cmdline_bar.width);
     // +2 for top + bottom border; +1 if we need the "(N more)" row.
@@ -222,7 +230,36 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
         ];
         if let Some(t_str) = title {
             spans.push(Span::styled("   ".to_string(), sep_style));
-            spans.push(Span::styled(t_str.to_string(), title_style));
+            // Pad title so the key column is right-aligned at
+            // inner.width (preserves visual alignment when the
+            // title is shorter than title_w).
+            let title_padded = format!(
+                "{:<width$}",
+                t_str,
+                width = title_w as usize
+            );
+            spans.push(Span::styled(title_padded, title_style));
+        }
+        // Key chord column — right side, dim style. Shows the
+        // chord that fires this command if it has one bound.
+        let key_hint = crate::command::registry()
+            .get(match_text.as_str())
+            .map(|c| c.key_hint())
+            .unwrap_or_default();
+        if !key_hint.is_empty() {
+            spans.push(Span::styled("   ".to_string(), sep_style));
+            let key_style = if is_sel {
+                Style::default()
+                    .fg(t.yellow)
+                    .bg(t.bg3)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(t.yellow)
+                    .bg(t.bg_darker)
+                    .add_modifier(Modifier::DIM)
+            };
+            spans.push(Span::styled(key_hint.to_string(), key_style));
         }
         // Pad to inner width so the selected row's bg covers the
         // entire line (no half-painted background on long titles).
