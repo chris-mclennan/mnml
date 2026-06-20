@@ -75,7 +75,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let mut inflight: Vec<String> = Vec::new();
     if app.http_bench_rx.is_some() {
-        inflight.push(fmt_with_elapsed("bench", app.http_bench_started));
+        // 2026-06-20 — bench shows live `(done/total · Ns)` if
+        // progress is tracked; falls back to elapsed-only.
+        let label = if let Some((progress, total)) = &app.http_bench_progress {
+            let done = progress.load(std::sync::atomic::Ordering::Relaxed);
+            match app.http_bench_started {
+                Some(s) => format!(
+                    "bench ({done}/{total} · {}s)",
+                    now.duration_since(s).as_secs()
+                ),
+                None => format!("bench ({done}/{total})"),
+            }
+        } else {
+            fmt_with_elapsed("bench", app.http_bench_started)
+        };
+        inflight.push(label);
     }
     if app.http_sync_rx.is_some() {
         inflight.push(fmt_with_elapsed("sync", app.http_sync_started));

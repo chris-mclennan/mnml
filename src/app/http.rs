@@ -1384,12 +1384,16 @@ impl App {
             return;
         };
         let (tx, rx) = std::sync::mpsc::channel();
+        let progress = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let progress_worker = progress.clone();
         std::thread::spawn(move || {
-            let trace = crate::http::bench::run(&req, n, concurrency);
+            let trace =
+                crate::http::bench::run_with_progress(&req, n, concurrency, Some(progress_worker));
             let _ = tx.send(trace);
         });
         self.http_bench_rx = Some(rx);
         self.http_bench_started = Some(std::time::Instant::now());
+        self.http_bench_progress = Some((progress, n));
         self.toast(format!("http.bench: firing {n}× ({concurrency} concurrent)…"));
     }
 

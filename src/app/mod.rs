@@ -2698,6 +2698,10 @@ pub struct App {
     /// stash an Instant so the cmdline_bar can show elapsed time
     /// next to the `⟳ running…` indicator.
     pub http_bench_started: Option<std::time::Instant>,
+    /// 2026-06-20 — live progress for the bench worker. The worker
+    /// increments this AtomicU32 after each completed request;
+    /// cmdline_bar reads it to show `bench (12/100 · 5s)`.
+    pub http_bench_progress: Option<(std::sync::Arc<std::sync::atomic::AtomicU32>, u32)>,
     pub http_sync_started: Option<std::time::Instant>,
     pub lookup_fire_started: Option<std::time::Instant>,
     /// 2026-06-19 — v2 polish: shared "user has asked us to stop"
@@ -3431,6 +3435,7 @@ impl App {
             http_sync_rx: None,
             http_bench_rx: None,
             http_bench_started: None,
+            http_bench_progress: None,
             http_sync_started: None,
             lookup_fire_started: None,
             http_abort: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -9041,6 +9046,7 @@ impl App {
         // cmdline_bar's `⟳ … (Ns)` indicator turns off.
         if self.http_bench_rx.is_none() {
             self.http_bench_started = None;
+            self.http_bench_progress = None;
         }
         if self.http_sync_rx.is_none() {
             self.http_sync_started = None;

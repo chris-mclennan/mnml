@@ -25,6 +25,19 @@ type Sample = (u64, u16);
 /// whole bench). Returns the formatted summary; transport errors
 /// are folded into the trace's "errors" section.
 pub fn run(req: &Request, n: u32, concurrency: u32) -> String {
+    run_with_progress(req, n, concurrency, None)
+}
+
+/// 2026-06-20 — variant that reports live progress via a shared
+/// AtomicU32. Increments AFTER each request completes (vs the
+/// internal `counter` which is "jobs picked up"). UI reads it
+/// for the cmdline_bar in-flight indicator.
+pub fn run_with_progress(
+    req: &Request,
+    n: u32,
+    concurrency: u32,
+    completed: Option<Arc<AtomicU32>>,
+) -> String {
     let n = n.max(1);
     let concurrency = concurrency.max(1).min(n);
     let counter = Arc::new(AtomicU32::new(0));
@@ -39,6 +52,7 @@ pub fn run(req: &Request, n: u32, concurrency: u32) -> String {
         let req = req_arc.clone();
         let results = results.clone();
         let errors = errors.clone();
+        let completed = completed.clone();
         handles.push(thread::spawn(move || {
             loop {
                 let i = counter.fetch_add(1, Ordering::SeqCst);
@@ -54,6 +68,9 @@ pub fn run(req: &Request, n: u32, concurrency: u32) -> String {
                     Err(e) => {
                         errors.lock().unwrap().push(e);
                     }
+                }
+                if let Some(c) = &completed {
+                    c.fetch_add(1, Ordering::SeqCst);
                 }
             }
         }));
