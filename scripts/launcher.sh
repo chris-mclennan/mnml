@@ -51,16 +51,17 @@ elif [ -x "/Applications/tmnl.app/Contents/MacOS/tmnl" ]; then
 fi
 
 if [ -n "$tmnl_bin" ]; then
-    echo "  found tmnl at $tmnl_bin — exec tmnl --mnml --no-workspace" >> "$log_file"
+    echo "  found tmnl at $tmnl_bin — exec tmnl --mnml" >> "$log_file"
     # tmnl resolves mnml via PATH; we prepended our bundled bin
     # above so the packaged mnml wins. Override tmnl's default
-    # arg list so `--no-workspace` reaches mnml. Rationale:
-    # clicking the .app icon should land in the empty-state
-    # landing (no folder auto-opened) so the user picks from
-    # "Open file / Open folder / Open default workspace" rather
-    # than jumping straight into the configured default_workspace.
-    # Bare `mnml` from the CLI still honors default_workspace.
-    export TMNL_LAUNCH_ARGS="--input standard --no-workspace"
+    # arg list so the icon-launch honors the user's configured
+    # `[startup] default_workspace`. 2026-06-19 — earlier this
+    # path passed `--no-workspace` to force the empty-state
+    # landing on icon click, but that overrode the user's
+    # explicit config every time. Now: if default_workspace is
+    # set, open it; otherwise mnml falls through to the empty-
+    # state landing on its own.
+    export TMNL_LAUNCH_ARGS="--input standard"
     exec "$tmnl_bin" --mnml
 fi
 

@@ -42,6 +42,10 @@ pub struct SettingsOverlayState {
 pub struct TextEditState {
     pub key: &'static str,
     pub buffer: String,
+    /// Byte position of the caret within `buffer` (always at a
+    /// char boundary). Starts at the end of `pre_edit_value`
+    /// when edit mode is entered. Moved by Left/Right/Home/End.
+    pub cursor: usize,
     pub pre_edit_value: String,
 }
 
@@ -836,9 +840,11 @@ impl App {
         };
         if let Some((key, value)) = start_edit {
             if let Some(state) = self.settings_overlay.as_mut() {
+                let cursor = value.len();
                 state.text_edit = Some(TextEditState {
                     key,
                     buffer: value.clone(),
+                    cursor,
                     pre_edit_value: value,
                 });
             }
@@ -857,9 +863,8 @@ impl App {
             .is_some_and(|s| s.text_edit.is_some())
     }
 
-    /// Append a printable character to the edit buffer. Live-writes
-    /// the partial value through `apply_text_setting` so the renderer
-    /// reflects the in-progress edit (useful for color preview).
+    /// Insert a printable character at the caret. Live-writes the
+    /// partial value through `apply_text_setting`.
     pub fn settings_text_edit_insert(&mut self, c: char) {
         let Some(state) = self.settings_overlay.as_mut() else {
             return;
@@ -867,13 +872,16 @@ impl App {
         let Some(edit) = state.text_edit.as_mut() else {
             return;
         };
-        edit.buffer.push(c);
+        let pos = edit.cursor.min(edit.buffer.len());
+        edit.buffer.insert(pos, c);
+        edit.cursor = pos + c.len_utf8();
         let key = edit.key;
         let value = edit.buffer.clone();
         apply_text_setting(&mut self.config, key, &value);
     }
 
-    /// Drop the trailing char from the edit buffer. No-op when empty.
+    /// Delete the character to the LEFT of the caret. No-op when
+    /// the caret is at position 0.
     pub fn settings_text_edit_backspace(&mut self) {
         let Some(state) = self.settings_overlay.as_mut() else {
             return;
@@ -881,13 +889,90 @@ impl App {
         let Some(edit) = state.text_edit.as_mut() else {
             return;
         };
-        if edit.buffer.is_empty() {
+        let pos = edit.cursor.min(edit.buffer.len());
+        if pos == 0 {
             return;
         }
-        edit.buffer.pop();
+        let prev = edit.buffer[..pos]
+            .char_indices()
+            .next_back()
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        edit.buffer.replace_range(prev..pos, "");
+        edit.cursor = prev;
         let key = edit.key;
         let value = edit.buffer.clone();
         apply_text_setting(&mut self.config, key, &value);
+    }
+
+    /// Delete the character to the RIGHT of the caret (Delete /
+    /// fn-Backspace). No-op when the caret is at end-of-buffer.
+    pub fn settings_text_edit_delete(&mut self) {
+        let Some(state) = self.settings_overlay.as_mut() else {
+            return;
+        };
+        let Some(edit) = state.text_edit.as_mut() else {
+            return;
+        };
+        let pos = edit.cursor.min(edit.buffer.len());
+        if pos >= edit.buffer.len() {
+            return;
+        }
+        let next = edit.buffer[pos..]
+            .char_indices()
+            .nth(1)
+            .map(|(i, _)| pos + i)
+            .unwrap_or(edit.buffer.len());
+        edit.buffer.replace_range(pos..next, "");
+        let key = edit.key;
+        let value = edit.buffer.clone();
+        apply_text_setting(&mut self.config, key, &value);
+    }
+
+    /// Move the caret one char left.
+    pub fn settings_text_edit_move_left(&mut self) {
+        if let Some(state) = self.settings_overlay.as_mut()
+            && let Some(edit) = state.text_edit.as_mut()
+        {
+            let pos = edit.cursor.min(edit.buffer.len());
+            edit.cursor = edit.buffer[..pos]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+        }
+    }
+
+    /// Move the caret one char right.
+    pub fn settings_text_edit_move_right(&mut self) {
+        if let Some(state) = self.settings_overlay.as_mut()
+            && let Some(edit) = state.text_edit.as_mut()
+        {
+            let pos = edit.cursor.min(edit.buffer.len());
+            edit.cursor = edit.buffer[pos..]
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| pos + i)
+                .unwrap_or(edit.buffer.len());
+        }
+    }
+
+    /// Caret → start of buffer.
+    pub fn settings_text_edit_home(&mut self) {
+        if let Some(state) = self.settings_overlay.as_mut()
+            && let Some(edit) = state.text_edit.as_mut()
+        {
+            edit.cursor = 0;
+        }
+    }
+
+    /// Caret → end of buffer.
+    pub fn settings_text_edit_end(&mut self) {
+        if let Some(state) = self.settings_overlay.as_mut()
+            && let Some(edit) = state.text_edit.as_mut()
+        {
+            edit.cursor = edit.buffer.len();
+        }
     }
 
     /// Commit the edit buffer — leaves the live config as-is (already

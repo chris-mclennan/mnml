@@ -930,10 +930,18 @@ fn handle_settings_overlay_key(app: &mut App, key: KeyEvent) {
     // cancels). Other navigation keys are intercepted to avoid the
     // overlay reacting twice.
     if app.settings_text_edit_active() {
+        // 2026-06-19 — user-reported: couldn't arrow-cursor inside
+        // the edit buffer, forcing backspace from the end to fix
+        // mid-string typos. Added Left/Right/Home/End/Delete.
         match key.code {
             KeyCode::Esc => app.settings_text_edit_cancel(),
             KeyCode::Enter => app.settings_text_edit_commit(),
             KeyCode::Backspace => app.settings_text_edit_backspace(),
+            KeyCode::Delete => app.settings_text_edit_delete(),
+            KeyCode::Left => app.settings_text_edit_move_left(),
+            KeyCode::Right => app.settings_text_edit_move_right(),
+            KeyCode::Home => app.settings_text_edit_home(),
+            KeyCode::End => app.settings_text_edit_end(),
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.settings_text_edit_insert(c);
             }
