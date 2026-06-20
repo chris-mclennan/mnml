@@ -1805,6 +1805,11 @@ pub struct PaneRects {
     /// existing key → opens edit prompt with that key. Cleared
     /// + repopulated every render.
     pub request_vars_rows: Vec<(Rect, String)>,
+    /// Click rect for each row in the Params tab. Empty string =
+    /// `+ Add new parameter…` row → opens params_add prompt;
+    /// non-empty = existing key → deletes that param (v2 will
+    /// open an edit prompt).
+    pub request_params_rows: Vec<(Rect, String)>,
     /// `(row_rect, idx_in_matches)` for each visible row in the
     /// cmdline completion popup. Click sets selected idx + rewrites
     /// cmdline + accepts.

@@ -3095,6 +3095,26 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_set_method("OPTIONS"),
         },
         Command {
+            id: "http.insert_header",
+            title: "HTTP: insert a common header (Accept, Content-Type, Authorization, …)",
+            group: "http",
+            // Opens a picker over the IANA-common header names.
+            // Enter inserts `Name: ` at the Headers field's cursor.
+            keys: &[],
+            run: |app| app.http_insert_header_picker(),
+        },
+        Command {
+            id: "http.format_body",
+            title: "HTTP: pretty-print JSON Body field of the active Request pane",
+            group: "http",
+            // Parses the Body field as JSON and rewrites it with
+            // 2-space indent. No-op when Body isn't valid JSON
+            // (toasts the parse error). Useful after pasting a
+            // minified payload from a browser DevTools panel.
+            keys: &[],
+            run: |app| app.http_format_body(),
+        },
+        Command {
             id: "http.cycle_method",
             title: "HTTP: cycle method (GET→POST→PUT→DELETE→PATCH→…)",
             group: "http",

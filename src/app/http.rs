@@ -112,6 +112,100 @@ fn upsert_env_var(existing: &str, var: &str, value: &str) -> Result<String, Stri
 }
 
 impl App {
+    /// `http.insert_header` — opens a picker over common HTTP
+    /// header names. Enter inserts `Name: ` at the active Request
+    /// pane's Headers cursor (or appends if no Headers field
+    /// focus). Saves the user typing `Content-Type`/`Accept`/etc
+    /// from memory.
+    pub fn http_insert_header_picker(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        const COMMON_HEADERS: &[(&str, &str)] = &[
+            ("Accept", "Acceptable media types for the response"),
+            ("Accept-Encoding", "Acceptable content encodings (gzip, br, …)"),
+            ("Accept-Language", "Preferred natural languages"),
+            ("Authorization", "Credentials for authentication (Bearer, Basic, …)"),
+            ("Cache-Control", "Caching directives (no-cache, max-age=…)"),
+            ("Content-Type", "Media type of the request body"),
+            ("Content-Length", "Size of the request body in bytes"),
+            ("Content-Encoding", "Encoding applied to the body (gzip, br, …)"),
+            ("Cookie", "HTTP cookies"),
+            ("Host", "Target hostname (usually auto-set by clients)"),
+            ("If-Match", "Conditional request — match this ETag"),
+            ("If-None-Match", "Conditional request — NOT this ETag (caching)"),
+            ("If-Modified-Since", "Conditional request — modified after this date"),
+            ("Origin", "Origin of the request (CORS)"),
+            ("Referer", "URL of the referring page"),
+            ("User-Agent", "Client identification string"),
+            ("X-Api-Key", "API key (convention)"),
+            ("X-Forwarded-For", "Original client IP (proxy chain)"),
+            ("X-Requested-With", "XMLHttpRequest / fetch indicator"),
+            ("X-Trace-Id", "Distributed-trace correlation id"),
+        ];
+        let items: Vec<PickerItem> = COMMON_HEADERS
+            .iter()
+            .map(|(name, hint)| PickerItem::new(name.to_string(), name.to_string(), hint.to_string()))
+            .collect();
+        self.open_picker(Picker::new(
+            PickerKind::HttpHeader,
+            "Insert HTTP header",
+            items,
+        ));
+    }
+
+    /// Accept handler for `PickerKind::HttpHeader`. Inserts
+    /// `<name>: ` at the Headers cursor (or appends as a new
+    /// line if there's existing content).
+    pub fn accept_http_header(&mut self, name: &str) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            let to_insert = if rp.headers_buffer.is_empty() {
+                format!("{name}: ")
+            } else if rp.headers_buffer.ends_with('\n') {
+                format!("{name}: ")
+            } else {
+                format!("\n{name}: ")
+            };
+            let cursor = rp.headers_buffer.len();
+            rp.headers_buffer.push_str(&to_insert);
+            rp.headers_cursor = rp.headers_buffer.len();
+            rp.view = crate::request_pane::ViewMode::Edit;
+            rp.focus = crate::request_pane::EditField::Headers;
+            rp.edit_tab = crate::request_pane::EditTab::Headers;
+            self.toast(format!("header: inserted {name}"));
+            let _ = cursor;
+        }
+    }
+
+    /// `http.format_body` — parse the active Request pane's Body
+    /// as JSON and rewrite with 2-space indent. No-op if Body
+    /// isn't valid JSON (toasts the parse error).
+    pub fn http_format_body(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("http.format_body: no active Request pane");
+            return;
+        };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            let body = match rp.request.body.as_deref() {
+                Some(b) if !b.trim().is_empty() => b.to_string(),
+                _ => {
+                    self.toast("http.format_body: Body is empty");
+                    return;
+                }
+            };
+            match serde_json::from_str::<serde_json::Value>(&body) {
+                Ok(v) => match serde_json::to_string_pretty(&v) {
+                    Ok(pretty) => {
+                        rp.body_cursor = pretty.len();
+                        rp.request.body = Some(pretty);
+                        self.toast("body: formatted as JSON");
+                    }
+                    Err(e) => self.toast(format!("body: format failed: {e}")),
+                },
+                Err(e) => self.toast(format!("body: not valid JSON: {e}")),
+            }
+        }
+    }
+
     /// Click on the Method chip opens this dropdown — one entry
     /// per HTTP verb. Each entry calls `:http.set_method:<VERB>`
     /// which sets that exact verb on the active Request pane.
@@ -2135,6 +2229,34 @@ impl App {
             // Auto-switch to Params tab so user sees the addition.
             rp.edit_tab = crate::request_pane::EditTab::Params;
             self.toast(format!("params: added {key}={value}"));
+        }
+    }
+
+    /// Delete a single query param `key` from the active URL.
+    /// Used by the Params-tab row click. No-op when the param
+    /// isn't present.
+    pub fn http_params_delete(&mut self, key: &str) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            let url = &rp.request.url;
+            let Some(qi) = url.find('?') else { return };
+            let (base, query) = url.split_at(qi);
+            let query = &query[1..]; // strip the leading `?`
+            let remaining: Vec<&str> = query
+                .split('&')
+                .filter(|kv| {
+                    let k = kv.split_once('=').map(|(k, _)| k).unwrap_or(*kv);
+                    k != key
+                })
+                .collect();
+            let new_url = if remaining.is_empty() {
+                base.to_string()
+            } else {
+                format!("{base}?{}", remaining.join("&"))
+            };
+            rp.request.url = new_url;
+            rp.url_cursor = rp.request.url.len();
+            self.toast(format!("params: deleted {key}"));
         }
     }
 

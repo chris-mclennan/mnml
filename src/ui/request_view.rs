@@ -89,6 +89,7 @@ pub fn draw(
     let show_ws = app.config.ui.show_whitespace;
     let workspace = app.workspace.clone();
     let mut vars_rows_local: Vec<(Rect, String)> = Vec::new();
+    let mut params_rows_local: Vec<(Rect, String)> = Vec::new();
     draw_edit(
         rp,
         t,
@@ -102,6 +103,7 @@ pub fn draw(
         show_ws,
         &workspace,
         &mut vars_rows_local,
+        &mut params_rows_local,
     );
 
     // Section divider + Response panel
@@ -196,6 +198,20 @@ pub fn draw(
         r.y = area.y + visible_off as u16;
         app.rects.request_vars_rows.push((r, key));
     }
+    // Params-row rects → screen-y.
+    app.rects.request_params_rows.clear();
+    for (mut r, key) in params_rows_local.drain(..) {
+        let row_off = r.y;
+        if (row_off as usize) < scroll {
+            continue;
+        }
+        let visible_off = row_off as usize - scroll;
+        if visible_off >= h {
+            continue;
+        }
+        r.y = area.y + visible_off as u16;
+        app.rects.request_params_rows.push((r, key));
+    }
 
     // Adjust the caret for scroll + return it so the terminal cursor sits there.
     caret.and_then(|(x, y)| {
@@ -222,6 +238,7 @@ fn draw_edit(
     show_ws: bool,
     workspace: &std::path::Path,
     vars_rows_local: &mut Vec<(Rect, String)>,
+    params_rows_local: &mut Vec<(Rect, String)>,
 ) {
     // Stash a click-target rect for the row at `row_idx_in_rows` covering
     // the full pane width (y stays as the *row index*; `draw` translates
@@ -538,7 +555,9 @@ fn draw_edit(
             EditField::Url,
         ));
     };
-    // ── Params tab: per-key=value rows parsed from URL query string ───
+    // ── Params tab — `+ Add` row + clickable existing params.
+    //     Click `+ Add` → :http.params_add prompt; click a row → no-op
+    //     today (v2: edit prompt). Mirrors the Vars tab UX. ───
     if cur_tab == crate::request_pane::EditTab::Params {
         let url = &rp.request.url;
         let params: Vec<(String, String)> = match url.find('?') {
@@ -552,16 +571,44 @@ fn draw_edit(
                 .collect(),
             None => Vec::new(),
         };
+        // `+ Add new parameter…` row
+        let add_y = rows.len() as u16;
+        rows.push(Line::from(vec![Span::styled(
+            "    + Add new parameter…".to_string(),
+            Style::default()
+                .fg(t.green)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        )]));
+        params_rows_local.push((
+            Rect {
+                x: area.x,
+                y: add_y,
+                width: area.width,
+                height: 1,
+            },
+            String::new(),
+        ));
+        register_tab_row(fields, add_y);
         if params.is_empty() {
             let row_y = rows.len() as u16;
             rows.push(Line::from(vec![Span::styled(
-                "    (no query parameters — add ?key=value to URL)".to_string(),
+                "    (no query parameters yet — click + Add or :http.params_add)".to_string(),
                 dim,
             )]));
             register_tab_row(fields, row_y);
         } else {
             for (k, v) in &params {
                 let row_y = rows.len() as u16;
+                params_rows_local.push((
+                    Rect {
+                        x: area.x,
+                        y: row_y,
+                        width: area.width,
+                        height: 1,
+                    },
+                    k.clone(),
+                ));
                 register_tab_row(fields, row_y);
                 rows.push(Line::from(vec![
                     Span::styled("    ".to_string(), body_style),
@@ -580,7 +627,7 @@ fn draw_edit(
                 ]));
             }
             rows.push(Line::from(vec![Span::styled(
-                "    (edit the URL field to change — Params is read-only for now)".to_string(),
+                "    (click a row to delete — value-edit is v2)".to_string(),
                 dim,
             )]));
         }
@@ -848,16 +895,28 @@ fn draw_response(
             ));
         }
         RunState::Done(r) => {
+            // 2026-06-20 — status code as a colored chip (matches
+            // the Method chip styling for visual consistency).
+            // 2xx green, 3xx yellow, 4xx orange, 5xx red, anything
+            // else fg-on-bg3 (neutral).
             let status_color = match r.status {
                 200..=299 => t.green,
                 300..=399 => t.yellow,
                 400..=499 => t.orange,
-                _ => t.red,
+                500..=599 => t.red,
+                _ => t.bg3,
             };
             rows.push(Line::from(vec![
-                Span::styled("← ", Style::default().fg(t.yellow).bg(t.bg_dark)),
+                Span::styled("  ".to_string(), Style::default().bg(t.bg_dark)),
                 Span::styled(
-                    format!("{} {}", r.status, r.status_text),
+                    format!(" {} ", r.status),
+                    Style::default()
+                        .fg(t.bg_dark)
+                        .bg(status_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  {}", r.status_text),
                     Style::default()
                         .fg(status_color)
                         .bg(t.bg_dark)

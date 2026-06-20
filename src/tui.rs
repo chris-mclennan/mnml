@@ -3829,6 +3829,23 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
+            // Click on a Params-tab row → empty (`+ Add`) opens
+            // the KEY=VALUE prompt; non-empty deletes that param
+            // from the URL (v2 will open an edit prompt instead).
+            if let Some((_, key)) = app
+                .rects
+                .request_params_rows
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                .cloned()
+            {
+                if key.is_empty() {
+                    app.http_params_add();
+                } else {
+                    app.http_params_delete(&key);
+                }
+                return;
+            }
             // Click on a Request pane Edit-view tab chip (Body /
             // Headers / Params / Vars / Source) → switch the
             // pane's edit_tab.

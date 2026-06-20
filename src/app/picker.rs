@@ -637,6 +637,10 @@ impl App {
                 let id = item.id.clone();
                 self.accept_env_vars(&id);
             }
+            PickerKind::HttpHeader => {
+                let name = item.id.clone();
+                self.accept_http_header(&name);
+            }
             PickerKind::AuthPresets => {
                 let name = item.id.clone();
                 self.accept_auth_preset(&name);

@@ -175,6 +175,9 @@ pub enum PickerKind {
     /// `<name>=<value>` to clipboard so the user can paste it
     /// into a Cookie header. 2026-06-19 — cookie jar v1.
     Cookies,
+    /// `id` = the header name. Accept ⇒ insert `<id>: ` at the
+    /// active Request pane's Headers cursor.
+    HttpHeader,
     /// `id` = the auth preset filename stem (no extension). Accept
     /// ⇒ read `.mnml/auth/<id>.txt`, set the active Request pane's
     /// Authorization header to its content.
