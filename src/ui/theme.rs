@@ -71,7 +71,7 @@ pub const fn onedark() -> Theme {
         line: rgb(0x31353d),
         lightbg: rgb(0x2d3139),
         fg: rgb(0xabb2bf),
-        comment: rgb(0x6f737b),
+        comment: rgb(0x80848d),
         grey: rgb(0x42464e),
         grey_fg: rgb(0x565c64),
         red: rgb(0xe06c75),

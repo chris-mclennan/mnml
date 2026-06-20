@@ -54,63 +54,18 @@ pub fn draw(
     let mut rows: Vec<Line> = Vec::new();
     let plain = |s: String, st: Style| Line::from(Span::styled(s, st));
 
-    // ── tab bar — [Edit] [Response] ──
-    let active_edit = rp.view == ViewMode::Edit;
-    let tab = |label: &str, active: bool| {
-        let mut st = Style::default().fg(t.fg).bg(t.bg_dark);
-        if active {
-            st = st
-                .fg(t.yellow)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
-        } else {
-            st = st.fg(t.comment);
-        }
-        Span::styled(format!("  {label}  "), st)
-    };
-    rows.push(Line::from(vec![
-        Span::styled(" ", body_style),
-        tab("Edit", active_edit),
-        tab("Response", !active_edit),
-        Span::styled(
-            "       (Tab toggles view · S-Tab cycles field · r send · y copy curl · esc tree)",
-            dim,
-        ),
-    ]));
-    // Register click rects for both tab chips. The tab bar is row 0
-    // of the rendered output; layout is:
-    //   leading space (1) + "  Edit  " (8) + "  Response  " (12) + hint.
-    let tab_y = area.y;
-    if area.width > 1 {
-        let edit_x = area.x + 1;
-        let edit_w = 8u16.min(area.width.saturating_sub(1));
-        if edit_w > 0 {
-            tabs.push((
-                Rect {
-                    x: edit_x,
-                    y: tab_y,
-                    width: edit_w,
-                    height: 1,
-                },
-                pane_id,
-                ViewMode::Edit,
-            ));
-        }
-        let resp_x = area.x + 1 + 8;
-        if area.x + area.width > resp_x {
-            let resp_w = 12u16.min(area.x + area.width - resp_x);
-            tabs.push((
-                Rect {
-                    x: resp_x,
-                    y: tab_y,
-                    width: resp_w,
-                    height: 1,
-                },
-                pane_id,
-                ViewMode::Response,
-            ));
-        }
-    }
-    rows.push(plain(String::new(), body_style));
+    // 2026-06-20 — removed [Edit][Response] tab strip. New
+    // Postman-style layout shows Request / Response / AI sections
+    // stacked vertically — both Edit and Response are always
+    // visible. `rp.view` still gates the key handler routing
+    // (edit-mode keys vs. response-mode scroll/refire) for now;
+    // user can flip with Tab or just type to land in fields.
+    // 2026-06-20 — removed Edit/Response click-rect registration
+    // since the visual tab strip is gone. `tabs` (the App.rects
+    // collection) is still drained/restored so the existing
+    // caller pattern keeps working, but no chips push into it
+    // from here anymore.
+    let _ = pane_id;
 
     // ── caret position to return (set when Edit-mode draws the focused field) ──
     let mut caret: Option<(u16, u16)> = None;
@@ -123,25 +78,63 @@ pub fn draw(
         .request_edit_tabs
         .retain(|(_, p, _)| *p != pane_id);
 
-    if active_edit {
-        let show_ws = app.config.ui.show_whitespace;
-        let workspace = app.workspace.clone();
-        draw_edit(
-            rp,
-            t,
-            &mut rows,
-            area,
-            &mut caret,
-            focused,
-            pane_id,
-            &mut fields,
-            &mut edit_tabs_local,
-            show_ws,
-            &workspace,
-        );
-    } else {
-        draw_response(rp, t, &mut rows);
-    }
+    // 2026-06-20 — three-panel layout (Postman-style). Render all
+    // three sections vertically: Request (URL+tabs+content),
+    // Response (status+body), AI prompt at the bottom. The
+    // Edit/Response tab strip above is now visual scaffolding;
+    // the user can scroll the combined output to see whatever
+    // they need. rp.view stays as an internal hint for the
+    // tab-strip rendering above but doesn't gate which sections
+    // draw — both always draw.
+    let show_ws = app.config.ui.show_whitespace;
+    let workspace = app.workspace.clone();
+    draw_edit(
+        rp,
+        t,
+        &mut rows,
+        area,
+        &mut caret,
+        focused,
+        pane_id,
+        &mut fields,
+        &mut edit_tabs_local,
+        show_ws,
+        &workspace,
+    );
+
+    // Section divider + Response panel
+    rows.push(Line::from(Span::styled(
+        format!("{}", "─".repeat(area.width.saturating_sub(2) as usize)),
+        Style::default().fg(t.bg3).bg(t.bg_dark),
+    )));
+    rows.push(Line::from(Span::styled(
+        "  response".to_string(),
+        Style::default()
+            .fg(t.yellow)
+            .bg(t.bg_dark)
+            .add_modifier(Modifier::BOLD),
+    )));
+    rows.push(Line::from(Span::raw("")));
+    draw_response(rp, t, &mut rows);
+
+    // Section divider + AI prompt panel
+    rows.push(Line::from(Span::styled(
+        format!("{}", "─".repeat(area.width.saturating_sub(2) as usize)),
+        Style::default().fg(t.bg3).bg(t.bg_dark),
+    )));
+    rows.push(Line::from(vec![
+        Span::styled(
+            "  ai".to_string(),
+            Style::default()
+                .fg(t.orange)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "   (press `a` to ask Claude about this response)".to_string(),
+            Style::default().fg(t.comment).bg(t.bg_dark),
+        ),
+    ]));
 
     // scroll — Response can be long; Edit is short
     let h = area.height as usize;

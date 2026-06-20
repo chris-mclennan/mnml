@@ -4898,7 +4898,7 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
             KeyCode::Char('y') => app.copy_active_curl(),
             KeyCode::Char('Y') => app.copy_active_response_body(),
             KeyCode::Char('e') => rp.toggle_view(),
-            KeyCode::Char('.') => app.ai_debug_request(),
+            KeyCode::Char('.') | KeyCode::Char('a') => app.ai_debug_request(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }
