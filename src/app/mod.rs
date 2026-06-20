@@ -1800,6 +1800,11 @@ pub struct PaneRects {
     /// scratch buffer / pane (best-effort substring match on
     /// pane titles).
     pub cmdline_toast_target: Option<(Rect, String)>,
+    /// Click rect for each row in the Vars tab. Empty string =
+    /// `+ Add new variable…` row → opens add prompt; non-empty =
+    /// existing key → opens edit prompt with that key. Cleared
+    /// + repopulated every render.
+    pub request_vars_rows: Vec<(Rect, String)>,
     /// `(row_rect, idx_in_matches)` for each visible row in the
     /// cmdline completion popup. Click sets selected idx + rewrites
     /// cmdline + accepts.

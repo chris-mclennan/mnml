@@ -3812,6 +3812,23 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.cmdline_popup_accept(idx);
                 return;
             }
+            // Click on a Vars-tab row → open the env editor
+            // directly. Empty key (the `+ Add` row) → add prompt;
+            // non-empty key → edit prompt for that key.
+            if let Some((_, key)) = app
+                .rects
+                .request_vars_rows
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                .cloned()
+            {
+                if key.is_empty() {
+                    app.accept_env_vars("+add");
+                } else {
+                    app.accept_env_vars(&key);
+                }
+                return;
+            }
             // Click on a Request pane Edit-view tab chip (Body /
             // Headers / Params / Vars / Source) → switch the
             // pane's edit_tab.
@@ -3854,18 +3871,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 if let Some(Pane::Request(rp)) = app.panes.get_mut(pid) {
                     rp.view = crate::request_pane::ViewMode::Edit;
                     rp.focus = field;
-                    // 2026-06-20 — Method chip click cycles verb
-                    // (Postman dropdown-style; quicker than the
-                    // old focus+Space gesture). The first click
-                    // ALSO focuses Method; only subsequent clicks
-                    // cycle. Detect via the chip's small width
-                    // (≤8 cells) — wider rects are headers/body
-                    // multi-line rows.
-                    if matches!(field, crate::request_pane::EditField::Method)
-                        && rect.width <= 12
-                    {
-                        rp.request.method =
-                            crate::request_pane::cycle_method(&rp.request.method);
+                    // 2026-06-20 — Method chip click opens a
+                    // verb-picker context menu (one entry per
+                    // HTTP verb). Click an item → method set.
+                    // Width ≤ 12 disambiguates the chip rect from
+                    // the wider headers/body rows.
+                    let chip_clicked = matches!(field, crate::request_pane::EditField::Method)
+                        && rect.width <= 12;
+                    if chip_clicked {
+                        let _ = rp;
+                        app.open_method_dropdown((x, y));
+                        return;
                     }
                     if matches!(field, crate::request_pane::EditField::Url) {
                         // URL row layout: " URL  <value>". Label

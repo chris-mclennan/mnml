@@ -112,6 +112,34 @@ fn upsert_env_var(existing: &str, var: &str, value: &str) -> Result<String, Stri
 }
 
 impl App {
+    /// Click on the Method chip opens this dropdown — one entry
+    /// per HTTP verb. Each entry calls `:http.set_method:<VERB>`
+    /// which sets that exact verb on the active Request pane.
+    /// Postman-style verb picker.
+    pub fn open_method_dropdown(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("GET", MenuAction::Command("http.set_method.get")),
+            MenuItem::new("POST", MenuAction::Command("http.set_method.post")),
+            MenuItem::new("PUT", MenuAction::Command("http.set_method.put")),
+            MenuItem::new("PATCH", MenuAction::Command("http.set_method.patch")),
+            MenuItem::new("DELETE", MenuAction::Command("http.set_method.delete")),
+            MenuItem::new("HEAD", MenuAction::Command("http.set_method.head")),
+            MenuItem::new("OPTIONS", MenuAction::Command("http.set_method.options")),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some("Method".into()), anchor, items));
+    }
+
+    /// Backing for the 7 `:http.set_method.<verb>` palette
+    /// commands. Sets the method on the active Request pane.
+    pub fn http_set_method(&mut self, verb: &str) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.request.method = verb.to_string();
+            self.toast(format!("method: {verb}"));
+        }
+    }
+
     /// Right-click on any Request pane Edit-mode field row →
     /// field-aware context menu. Common actions (Send / Copy as
     /// curl / Switch to Response) appear for every field; the

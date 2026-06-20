@@ -88,6 +88,7 @@ pub fn draw(
     // draw — both always draw.
     let show_ws = app.config.ui.show_whitespace;
     let workspace = app.workspace.clone();
+    let mut vars_rows_local: Vec<(Rect, String)> = Vec::new();
     draw_edit(
         rp,
         t,
@@ -100,6 +101,7 @@ pub fn draw(
         &mut edit_tabs_local,
         show_ws,
         &workspace,
+        &mut vars_rows_local,
     );
 
     // Section divider + Response panel
@@ -180,6 +182,20 @@ pub fn draw(
         r.y = area.y + visible_off as u16;
         app.rects.request_edit_tabs.push((r, pid, t));
     }
+    // Vars-row rects → screen-y, push into App.rects.
+    app.rects.request_vars_rows.clear();
+    for (mut r, key) in vars_rows_local.drain(..) {
+        let row_off = r.y;
+        if (row_off as usize) < scroll {
+            continue;
+        }
+        let visible_off = row_off as usize - scroll;
+        if visible_off >= h {
+            continue;
+        }
+        r.y = area.y + visible_off as u16;
+        app.rects.request_vars_rows.push((r, key));
+    }
 
     // Adjust the caret for scroll + return it so the terminal cursor sits there.
     caret.and_then(|(x, y)| {
@@ -205,6 +221,7 @@ fn draw_edit(
     tabs: &mut Vec<(Rect, PaneId, crate::request_pane::EditTab)>,
     show_ws: bool,
     workspace: &std::path::Path,
+    vars_rows_local: &mut Vec<(Rect, String)>,
 ) {
     // Stash a click-target rect for the row at `row_idx_in_rows` covering
     // the full pane width (y stays as the *row index*; `draw` translates
@@ -611,16 +628,47 @@ fn draw_edit(
         )]));
         register_tab_row(fields, name_y);
         rows.push(plain(String::new(), body_style));
+        // 2026-06-20 polish — `+ Add new variable…` row at the
+        // top, each existing var row clickable to edit. Both
+        // register rects in App.rects.request_vars_rows; click
+        // handler in tui.rs dispatches to the env editor.
+        let add_y = rows.len() as u16;
+        rows.push(Line::from(vec![Span::styled(
+            "    + Add new variable…".to_string(),
+            Style::default()
+                .fg(t.green)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        )]));
+        vars_rows_local.push((
+            Rect {
+                x: area.x,
+                y: add_y,
+                width: area.width,
+                height: 1,
+            },
+            String::new(), // empty = add row
+        ));
+        register_tab_row(fields, add_y);
         if by_key.is_empty() {
             let y = rows.len() as u16;
             rows.push(Line::from(vec![Span::styled(
-                "    (no env vars in this workspace — :http.edit_env to add)".to_string(),
+                "    (no env vars yet — click + Add or :http.edit_env)".to_string(),
                 dim,
             )]));
             register_tab_row(fields, y);
         } else {
             for (k, v) in &by_key {
                 let y = rows.len() as u16;
+                vars_rows_local.push((
+                    Rect {
+                        x: area.x,
+                        y,
+                        width: area.width,
+                        height: 1,
+                    },
+                    k.clone(),
+                ));
                 register_tab_row(fields, y);
                 let preview = if v.len() > 56 {
                     format!("{}…", &v[..54])
