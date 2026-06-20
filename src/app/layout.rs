@@ -1252,10 +1252,14 @@ impl App {
     /// idx by one). Re-uses the same compute path so behavior
     /// stays consistent.
     pub fn cmdline_popup_accept(&mut self, idx: usize) {
-        let Some(b) = self.active_editor_mut() else {
-            return;
-        };
-        let Some(line) = b.input.cmdline_get() else {
+        // Two paths can host the cmdline (see cmdline_popup_view):
+        // 1. App.no_pane_cmdline (Ctrl+; from no-pane focus)
+        // 2. Active editor's input handler
+        let line = if let Some(text) = self.no_pane_cmdline.clone() {
+            text
+        } else if let Some(text) = self.active_editor_mut().and_then(|b| b.input.cmdline_get()) {
+            text
+        } else {
             return;
         };
         // `cmdline_get` returns the line WITHOUT the leading `:` —
@@ -1269,7 +1273,10 @@ impl App {
         }
         let new_line = format!("{}{}", state.head, &state.matches[idx]);
         self.cmdline_popup_selected = idx;
-        if let Some(b) = self.active_editor_mut() {
+        // Write back to whichever path was hosting the cmdline.
+        if self.no_pane_cmdline.is_some() {
+            self.no_pane_cmdline = Some(new_line.clone());
+        } else if let Some(b) = self.active_editor_mut() {
             b.input.cmdline_set(Some(new_line.clone()));
         }
         let mut stored = state;

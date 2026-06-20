@@ -37,15 +37,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
         return;
     }
 
-    // Only show when there's actually a `:` cmdline open. Read
-    // the line straight from the active editor's input handler —
-    // that gives us clean text without the `▏` caret marker that
-    // `pending_display()` embeds. Fall back to nothing when the
-    // active surface isn't an editor (e.g. focus on tree).
-    let Some(line) = app
+    // Two paths can host an active `:` cmdline:
+    //   1. App.no_pane_cmdline — Ctrl+; from tree / empty-state.
+    //      Stored as raw text (no `:` prefix, no caret marker).
+    //   2. The active editor's input handler `cmdline_get` — the
+    //      vim `:` cmdline that the user just typed.
+    // Check (1) first to mirror `pending_display`'s precedence.
+    let line: String = if let Some(text) = app.no_pane_cmdline.clone() {
+        text
+    } else if let Some(text) = app
         .active_editor()
         .and_then(|b| b.input.cmdline_get())
-    else {
+    {
+        text
+    } else {
         return;
     };
     if line.trim().is_empty() {
