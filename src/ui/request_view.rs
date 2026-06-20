@@ -848,6 +848,20 @@ fn draw_edit(
     }
 }
 
+/// Render a byte count as a 2-3 char human string. 999 → 999 B,
+/// 1234 → 1.2 KB, 1_234_567 → 1.2 MB.
+fn human_bytes(n: usize) -> String {
+    const KB: usize = 1024;
+    const MB: usize = 1024 * 1024;
+    if n < KB {
+        format!("{n} B")
+    } else if n < MB {
+        format!("{:.1} KB", n as f64 / KB as f64)
+    } else {
+        format!("{:.1} MB", n as f64 / MB as f64)
+    }
+}
+
 /// Lightweight content-type sniffing for the Body field label
 /// hint. Walks at most the first ~512 bytes — runs every frame
 /// on the body's leading prefix, so keep it cheap.
@@ -989,6 +1003,14 @@ fn draw_response(
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(format!("   {} ms", r.elapsed.as_millis()), dim),
+                Span::styled(
+                    format!(
+                        "   {} lines · {}",
+                        r.body.lines().count(),
+                        human_bytes(r.body.len())
+                    ),
+                    dim,
+                ),
             ]));
             for (k, v) in &r.headers {
                 rows.push(plain(format!("  {k}: {v}"), dim));

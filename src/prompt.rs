@@ -85,6 +85,9 @@ pub enum PromptKind {
     /// Request pane's request + response as context. Spawned by
     /// clicking the AI section in the Request pane.
     AiAskAboutRequest,
+    /// Accept ⇒ save the active Request pane's Done response body
+    /// to the typed file path (workspace-relative or absolute).
+    HttpSaveResponse,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into

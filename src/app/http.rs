@@ -200,6 +200,58 @@ impl App {
         }
     }
 
+    /// `http.save_response` — open a prompt for the destination
+    /// path; on Enter, write the active Done response body there.
+    pub fn http_save_response_prompt(&mut self) {
+        use crate::request_pane::RunState;
+        let has_done = matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Request(rp)) if matches!(rp.state, RunState::Done(_))
+        );
+        if !has_done {
+            self.toast("http.save_response: no Done response on active pane");
+            return;
+        }
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::HttpSaveResponse,
+            "Save response to file:".to_string(),
+        ));
+    }
+
+    /// Accept handler for `PromptKind::HttpSaveResponse`. Writes
+    /// the active pane's Done response body to `path`.
+    pub fn http_save_response_to(&mut self, path: &str) {
+        use crate::request_pane::RunState;
+        let path = path.trim();
+        if path.is_empty() {
+            self.toast("save: path can't be empty");
+            return;
+        }
+        let Some(cur) = self.active else { return };
+        let body = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => match &rp.state {
+                RunState::Done(r) => r.body.clone(),
+                _ => return,
+            },
+            _ => return,
+        };
+        let p = if path.starts_with('/') {
+            std::path::PathBuf::from(path)
+        } else {
+            self.workspace.join(path)
+        };
+        if let Some(parent) = p.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            self.toast(format!("save: mkdir {}: {e}", parent.display()));
+            return;
+        }
+        match std::fs::write(&p, &body) {
+            Ok(()) => self.toast(format!("save: wrote {} bytes → {}", body.len(), p.display())),
+            Err(e) => self.toast(format!("save: write {}: {e}", p.display())),
+        }
+    }
+
     /// `http.format_body` — parse the active Request pane's Body
     /// as JSON and rewrite with 2-space indent. No-op if Body
     /// isn't valid JSON (toasts the parse error).

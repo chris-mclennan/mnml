@@ -3104,6 +3104,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_insert_header_picker(),
         },
         Command {
+            id: "http.save_response",
+            title: "HTTP: save active Response body to a file (prompt for path)",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_save_response_prompt(),
+        },
+        Command {
             id: "http.format_body",
             title: "HTTP: pretty-print JSON Body field of the active Request pane",
             group: "http",

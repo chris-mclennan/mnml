@@ -1214,6 +1214,10 @@ impl App {
                 let q = p.input.clone();
                 self.ai_ask_about_request_with_question(&q);
             }
+            crate::prompt::PromptKind::HttpSaveResponse => {
+                let path = p.input.clone();
+                self.http_save_response_to(&path);
+            }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();
                 if let Some(FsAction::NewFile { parent }) = self.pending_fs_action.take() {
