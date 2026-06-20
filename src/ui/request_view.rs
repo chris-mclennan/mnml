@@ -942,12 +942,16 @@ fn draw_edit(
         }
     }
 
-    // Sending/Done indicator (small).
+    // Sending/Streaming/Done indicator (small).
     rows.push(plain(String::new(), body_style));
     match &rp.state {
         RunState::Sending => rows.push(plain(
             "  ⟳ sending…".to_string(),
             Style::default().fg(t.yellow).bg(t.bg_dark),
+        )),
+        RunState::Streaming(r) => rows.push(plain(
+            format!("  ▶ streaming · {} events received", r.captures.len()),
+            Style::default().fg(t.cyan).bg(t.bg_dark),
         )),
         RunState::Failed(e) => rows.push(plain(
             format!("  ✗ last send: {e}"),
@@ -1076,6 +1080,21 @@ fn draw_response(
                     .bg(t.bg_dark)
                     .add_modifier(Modifier::BOLD),
             ));
+        }
+        RunState::Streaming(r) => {
+            // SSE in-flight — show status chip + accumulated body
+            // (events appended as they arrive).
+            rows.push(plain(
+                format!("  ▶ streaming · {} {}", r.status, r.status_text),
+                Style::default()
+                    .fg(t.cyan)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            rows.push(plain(String::new(), body_style));
+            for l in r.body.lines() {
+                rows.push(plain(l.to_string(), body_style));
+            }
         }
         RunState::Failed(e) => {
             rows.push(plain(

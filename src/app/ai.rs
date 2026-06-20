@@ -1421,6 +1421,7 @@ impl App {
                 }
                 let resp_text = match &rp.state {
                     RunState::Sending => "(still in flight — wait for it)".to_string(),
+                    RunState::Streaming(r) => format!("(streaming · {} bytes so far)\n{}", r.body.len(), r.body),
                     RunState::Failed(e) => format!("transport error: {e}"),
                     RunState::Done(r) => {
                         let mut s = format!("{} {}\n", r.status, r.status_text);
@@ -1462,6 +1463,7 @@ impl App {
                 }
                 let resp_text = match &rp.state {
                     RunState::Sending => "(still in flight — wait for it)".to_string(),
+                    RunState::Streaming(r) => format!("(streaming · {} bytes so far)\n{}", r.body.len(), r.body),
                     RunState::Failed(e) => format!("transport error: {e}"),
                     RunState::Done(r) => {
                         let mut s = format!("{} {}\n", r.status, r.status_text);

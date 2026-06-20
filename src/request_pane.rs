@@ -227,8 +227,37 @@ pub fn cycle_method(current: &str) -> String {
 
 pub enum RunState {
     Sending,
+    /// 2026-06-20 — SSE progressive display. Stream is open and
+    /// events have started arriving; mutating `partial.body` as
+    /// each event lands. Flips to `Done` on stream close.
+    Streaming(Box<ResponseView>),
     Done(Box<ResponseView>),
     Failed(String),
+}
+
+/// Progressive SSE stream messages. Worker thread sends Open
+/// → Event* → Close. App.tick drains and mutates the matching
+/// Request pane's Streaming state. job_id matches RequestPane.job_id.
+pub enum SseStreamMsg {
+    Open {
+        job_id: u64,
+        status: u16,
+        status_text: String,
+        headers: Vec<(String, String)>,
+        started: std::time::Instant,
+    },
+    Event {
+        job_id: u64,
+        name: String,
+        data: String,
+    },
+    Close {
+        job_id: u64,
+    },
+    Error {
+        job_id: u64,
+        error: String,
+    },
 }
 
 #[derive(Clone)]
@@ -477,6 +506,7 @@ impl RequestPane {
             .unwrap_or_else(|| "request".to_string());
         let marker = match &self.state {
             RunState::Sending => "…",
+            RunState::Streaming(_) => "▶",
             RunState::Failed(_) => "✗",
             RunState::Done(r) if r.assertions.iter().any(|a| !a.passed) => "✗",
             RunState::Done(_) => "⚡",

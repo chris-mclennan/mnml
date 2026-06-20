@@ -3075,6 +3075,13 @@ pub struct App {
         std::sync::mpsc::Sender<HttpJobDone>,
         std::sync::mpsc::Receiver<HttpJobDone>,
     )>,
+    /// 2026-06-20 — separate channel for SSE progressive display.
+    /// Workers send Open → Event* → Close (see `SseStreamMsg`);
+    /// `tick` drains it and mutates the matching pane's body live.
+    pub sse_chan: Option<(
+        std::sync::mpsc::Sender<crate::request_pane::SseStreamMsg>,
+        std::sync::mpsc::Receiver<crate::request_pane::SseStreamMsg>,
+    )>,
     /// Channel for background `claude -p` runs (lazily created); worker threads
     /// stream `(job_id, AiMsg)` (deltas then a final Done/Failed), [`Self::tick`]
     /// drains it into the matching `Pane::Ai`.
@@ -3516,6 +3523,7 @@ impl App {
             pending_fs_action: None,
             completion: None,
             http_chan: None,
+            sse_chan: None,
             ai_chan: None,
             suggest_chan: None,
             pending_suggest: None,
@@ -6132,6 +6140,7 @@ impl App {
                     self.toast("wait for the response first");
                     return;
                 }
+                RunState::Streaming(r) => Some(r.body.clone()),
                 RunState::Failed(_) => {
                     self.toast("no response — the request failed");
                     return;
@@ -9023,6 +9032,7 @@ impl App {
         self.drain_now_playing();
         self.drain_mixr_panel();
         self.drain_http_jobs();
+        self.drain_sse_jobs();
         self.drain_http_sync_result();
         self.drain_http_bench_result();
         self.drain_lookup_fire_result();

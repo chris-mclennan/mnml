@@ -2608,16 +2608,23 @@ impl App {
         request: crate::http::Request,
         _script: crate::http::script::Script,
     ) -> u64 {
-        use crate::request_pane::ResponseView;
+        use crate::request_pane::SseStreamMsg;
         let job_id = self.next_job_id;
         self.next_job_id += 1;
         let tx = self
-            .http_chan
+            .sse_chan
             .get_or_insert_with(std::sync::mpsc::channel)
             .0
             .clone();
         std::thread::spawn(move || {
-            let result: Result<ResponseView, String> = (|| {
+            // 2026-06-20 — progressive display. Worker now sends
+            // Open → Event* → Close (was: buffered all events,
+            // sent one synthetic ResponseView). App.tick mutates
+            // the matching pane's Streaming state in real time.
+            let send_err = |error: String| {
+                let _ = tx.send(SseStreamMsg::Error { job_id, error });
+            };
+            let _result: Result<(), String> = (|| {
                 // 2026-06-19 — api-workflow-user agent flagged
                 // that `timeout(None)` leaks the worker thread for
                 // any endpoint that holds the socket without
@@ -2660,44 +2667,50 @@ impl App {
                         (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())
                     })
                     .collect();
-                // Wrap the Response in our SSE reader (Response
-                // implements Read). next_event blocks until the
-                // next `\n\n` boundary; when the server closes the
-                // socket we get EOF → Ok(None).
+                // Open message → App allocates Streaming state.
+                if tx
+                    .send(SseStreamMsg::Open {
+                        job_id,
+                        status,
+                        status_text,
+                        headers,
+                        started,
+                    })
+                    .is_err()
+                {
+                    return Ok(()); // receiver dropped → abort
+                }
                 let mut reader = crate::sse::Reader::new(resp);
-                let mut body = String::new();
-                let mut count = 0u32;
                 loop {
                     match reader.next_event() {
                         Ok(Some(evt)) => {
-                            count += 1;
-                            if !evt.name.is_empty() {
-                                body.push_str(&format!("[{}]\n", evt.name));
+                            if tx
+                                .send(SseStreamMsg::Event {
+                                    job_id,
+                                    name: evt.name,
+                                    data: evt.data,
+                                })
+                                .is_err()
+                            {
+                                return Ok(());
                             }
-                            body.push_str(&evt.data);
-                            body.push_str("\n\n");
                         }
                         Ok(None) => break,
                         Err(e) => {
-                            body.push_str(&format!("\n--- stream error: {e} ---\n"));
-                            break;
+                            let _ = tx.send(SseStreamMsg::Error {
+                                job_id,
+                                error: e.to_string(),
+                            });
+                            return Ok(());
                         }
                     }
                 }
-                if count == 0 {
-                    body.push_str("(stream closed with no events)\n");
-                }
-                Ok(ResponseView {
-                    status,
-                    status_text,
-                    headers,
-                    body,
-                    elapsed: started.elapsed(),
-                    assertions: Vec::new(),
-                    captures: Vec::new(),
-                })
+                let _ = tx.send(SseStreamMsg::Close { job_id });
+                Ok(())
             })();
-            let _ = tx.send((job_id, result));
+            if let Err(e) = _result {
+                send_err(e);
+            }
         });
         job_id
     }
@@ -2726,6 +2739,103 @@ impl App {
     }
 
     /// Deliver any completed background HTTP sends to their request panes.
+    /// 2026-06-20 — drain progressive SSE stream messages and
+    /// mutate the matching Request pane's Streaming state.
+    pub(super) fn drain_sse_jobs(&mut self) {
+        use crate::request_pane::{ResponseView, RunState, SseStreamMsg};
+        let Some((_, rx)) = &self.sse_chan else {
+            return;
+        };
+        let msgs: Vec<SseStreamMsg> = rx.try_iter().collect();
+        for msg in msgs {
+            match msg {
+                SseStreamMsg::Open {
+                    job_id,
+                    status,
+                    status_text,
+                    headers,
+                    started,
+                } => {
+                    // Find pane with matching job_id.
+                    if let Some((pid, _)) = self
+                        .panes
+                        .iter()
+                        .enumerate()
+                        .find(|(_, p)| matches!(p, Pane::Request(r) if r.job_id == job_id))
+                    {
+                        if let Some(Pane::Request(rp)) = self.panes.get_mut(pid) {
+                            rp.state = RunState::Streaming(Box::new(ResponseView {
+                                status,
+                                status_text,
+                                headers,
+                                body: String::new(),
+                                elapsed: started.elapsed(),
+                                assertions: Vec::new(),
+                                captures: Vec::new(),
+                            }));
+                        }
+                    }
+                }
+                SseStreamMsg::Event {
+                    job_id,
+                    name,
+                    data,
+                } => {
+                    if let Some((pid, _)) = self
+                        .panes
+                        .iter()
+                        .enumerate()
+                        .find(|(_, p)| matches!(p, Pane::Request(r) if r.job_id == job_id))
+                    {
+                        if let Some(Pane::Request(rp)) = self.panes.get_mut(pid)
+                            && let RunState::Streaming(rv) = &mut rp.state
+                        {
+                            if !name.is_empty() {
+                                rv.body.push_str(&format!("[{name}]\n"));
+                            }
+                            rv.body.push_str(&data);
+                            rv.body.push_str("\n\n");
+                            // Use captures count to track event count
+                            rv.captures.push((String::new(), String::new()));
+                        }
+                    }
+                }
+                SseStreamMsg::Close { job_id } => {
+                    if let Some((pid, _)) = self
+                        .panes
+                        .iter()
+                        .enumerate()
+                        .find(|(_, p)| matches!(p, Pane::Request(r) if r.job_id == job_id))
+                    {
+                        if let Some(Pane::Request(rp)) = self.panes.get_mut(pid) {
+                            if let RunState::Streaming(rv) = std::mem::replace(
+                                &mut rp.state,
+                                RunState::Sending,
+                            ) {
+                                // Clear captures (used as event counter)
+                                let mut rv = *rv;
+                                rv.captures.clear();
+                                rp.state = RunState::Done(Box::new(rv));
+                            }
+                        }
+                    }
+                }
+                SseStreamMsg::Error { job_id, error } => {
+                    if let Some((pid, _)) = self
+                        .panes
+                        .iter()
+                        .enumerate()
+                        .find(|(_, p)| matches!(p, Pane::Request(r) if r.job_id == job_id))
+                    {
+                        if let Some(Pane::Request(rp)) = self.panes.get_mut(pid) {
+                            rp.state = RunState::Failed(error);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub(super) fn drain_http_jobs(&mut self) {
         use crate::request_pane::RunState;
         let Some((_, rx)) = &self.http_chan else {
