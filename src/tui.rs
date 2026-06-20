@@ -686,10 +686,30 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // who hit Ctrl+; would land in the cmdline visually but their
     // typing would still go to the editor.
     if app.no_pane_cmdline.is_some() {
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         match key.code {
             KeyCode::Esc => app.no_pane_cmdline_cancel(),
-            KeyCode::Enter => app.no_pane_cmdline_commit(),
+            // Enter accepts the highlighted popup match (rewrites
+            // cmdline to it first) so :htt + Enter fires the
+            // highlighted http.X without forcing the user to Tab
+            // to complete. If the popup isn't showing, just commit
+            // the typed line as before.
+            KeyCode::Enter => {
+                if app.cmdline_popup_is_showing() {
+                    app.cmdline_popup_accept_current();
+                }
+                app.no_pane_cmdline_commit();
+            }
             KeyCode::Backspace => app.no_pane_cmdline_backspace(),
+            // 2026-06-19 — popup nav. Tab / Down advance the
+            // highlighted match; Shift+Tab / Up retreat. Rewrites
+            // the cmdline to the new selection so Enter fires
+            // whatever's highlighted. No-op when popup isn't
+            // showing (compute returns <2 matches).
+            KeyCode::Tab if shift => app.cmdline_popup_move(-1),
+            KeyCode::Tab => app.cmdline_popup_move(1),
+            KeyCode::Down => app.cmdline_popup_move(1),
+            KeyCode::Up => app.cmdline_popup_move(-1),
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.no_pane_cmdline_push_char(c);
             }

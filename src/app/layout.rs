@@ -1284,6 +1284,73 @@ impl App {
         self.cmdline_complete_state = Some(stored);
     }
 
+    /// Move the cmdline popup selection by `delta` (positive =
+    /// down) and rewrite the cmdline to the new selection's match.
+    /// Used by Up/Down arrow keys when the popup is showing.
+    /// No-op when the popup would have <2 matches.
+    pub fn cmdline_popup_move(&mut self, delta: isize) {
+        // Two paths can host the cmdline (mirror popup view).
+        let line = if let Some(text) = self.no_pane_cmdline.clone() {
+            text
+        } else if let Some(text) = self.active_editor_mut().and_then(|b| b.input.cmdline_get()) {
+            text
+        } else {
+            return;
+        };
+        let Some(state) = compute_cmdline_completions_for_app(self, &line) else {
+            return;
+        };
+        if state.matches.len() < 2 {
+            return;
+        }
+        let cur = self.cmdline_popup_selected.min(state.matches.len() - 1);
+        let new_idx = if delta < 0 {
+            (cur + state.matches.len() - 1) % state.matches.len()
+        } else {
+            (cur + 1) % state.matches.len()
+        };
+        let new_line = format!("{}{}", state.head, &state.matches[new_idx]);
+        self.cmdline_popup_selected = new_idx;
+        if self.no_pane_cmdline.is_some() {
+            self.no_pane_cmdline = Some(new_line.clone());
+        } else if let Some(b) = self.active_editor_mut() {
+            b.input.cmdline_set(Some(new_line.clone()));
+        }
+        let mut stored = state;
+        stored.idx = new_idx;
+        stored.last_shown = new_line;
+        self.cmdline_complete_state = Some(stored);
+    }
+
+    /// Rewrite the cmdline to whatever is currently highlighted
+    /// in the popup. Companion to `cmdline_popup_is_showing` —
+    /// Enter handlers call these in pair so the user can type a
+    /// prefix and hit Enter without manually Tab'ing to complete.
+    pub fn cmdline_popup_accept_current(&mut self) {
+        let idx = self.cmdline_popup_selected;
+        self.cmdline_popup_accept(idx);
+    }
+
+    /// Returns true when the popup is currently displaying ≥2
+    /// matches for the active cmdline. Used by key handlers that
+    /// want to gate Up/Down between popup-nav (when showing) and
+    /// vim ex-history nav (when not).
+    pub fn cmdline_popup_is_showing(&self) -> bool {
+        let line = if let Some(text) = self.no_pane_cmdline.clone() {
+            text
+        } else if let Some(text) = self.active_editor().and_then(|b| b.input.cmdline_get()) {
+            text
+        } else {
+            return false;
+        };
+        if line.trim().is_empty() {
+            return false;
+        }
+        compute_cmdline_completions_for_app(self, &line)
+            .map(|s| s.matches.len() >= 2)
+            .unwrap_or(false)
+    }
+
     pub fn cmdline_tab_complete(&mut self) {
         let Some(b) = self.active_editor_mut() else {
             self.cmdline_complete_state = None;

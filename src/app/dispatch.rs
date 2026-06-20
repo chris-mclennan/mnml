@@ -227,6 +227,39 @@ pub(crate) fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
         BlockInsertStart { append } => app.block_insert_start(append),
         BlockChangeStart => app.block_change_start(),
         CmdlineTabComplete => app.cmdline_tab_complete(),
+        CmdlinePopupMove(delta) => app.cmdline_popup_move(delta as isize),
+        CmdlinePopupAcceptCurrentAndCommit => app.cmdline_popup_accept_current(),
+        CmdlineEnter(typed) => {
+            // If the typed line is exactly a valid known command
+            // (in the registry, EX_COMPLETION_NAMES, or starts
+            // with a path-taker), run it as typed. Otherwise look
+            // up the popup's highlighted match and run that
+            // instead. The check is approximate — anything past
+            // the first word is the user's text, untouched.
+            let first = typed.split_whitespace().next().unwrap_or("");
+            let is_typed_valid = crate::command::registry().get(first).is_some()
+                || crate::input::vim::EX_COMPLETION_NAMES.contains(&first);
+            if !is_typed_valid {
+                // Try the popup's highlighted match.
+                let line = if let Some(state) =
+                    crate::app::compute_cmdline_completions_for_app(app, &typed)
+                {
+                    if !state.matches.is_empty() {
+                        let idx = app.cmdline_popup_selected.min(state.matches.len() - 1);
+                        Some(format!("{}{}", state.head, state.matches[idx]))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                if let Some(line) = line {
+                    app.run_ex_command(&line);
+                    return;
+                }
+            }
+            app.run_ex_command(&typed);
+        }
         RepeatInsertStart { count, above } => app.repeat_insert_start(count as usize, above),
         FlashStart(a, b) => app.flash_start(a, b),
     }

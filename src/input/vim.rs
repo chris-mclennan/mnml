@@ -590,9 +590,17 @@ impl VimInputHandler {
                 // read it via `cmdline_get`, compute completions (which may
                 // include workspace file paths the handler can't see), and
                 // write the result back via `cmdline_set`. Cursor returns
-                // to end-of-line after Tab.
+                // to end-of-line after Tab. The App-level Tab handler also
+                // bumps `cmdline_popup_selected` so the floating popup's
+                // highlight stays in sync.
                 self.cmdline = Some(line);
                 InputResult::App(AppCommand::CmdlineTabComplete)
+            }
+            KeyCode::BackTab => {
+                // 2026-06-19 — Shift+Tab retreats the popup
+                // selection one step (Tab's inverse).
+                self.cmdline = Some(line);
+                InputResult::App(AppCommand::CmdlinePopupMove(-1))
             }
             KeyCode::Esc => {
                 self.cmdline = None;
@@ -618,13 +626,22 @@ impl VimInputHandler {
                             self.ex_history.drain(..drop);
                         }
                     }
-                    InputResult::App(AppCommand::ExCommand(line))
+                    // CmdlineEnter (not ExCommand) so the App can
+                    // accept the popup's highlighted match if the
+                    // typed first-word isn't itself a valid
+                    // command id.
+                    InputResult::App(AppCommand::CmdlineEnter(line))
                 }
             }
             KeyCode::Up => {
+                // 2026-06-19 — when ex-history is empty (fresh
+                // session) OR no history nav is active and the
+                // popup is showing, route Up to popup nav.
+                // Vim power users with history see no behavior
+                // change; new users get popup nav out of the box.
                 if self.ex_history.is_empty() {
                     self.cmdline = Some(line);
-                    return InputResult::Consumed;
+                    return InputResult::App(AppCommand::CmdlinePopupMove(-1));
                 }
                 if self.ex_history_cursor.is_none() {
                     self.ex_history_typing = Some(line.clone());
@@ -641,7 +658,7 @@ impl VimInputHandler {
             KeyCode::Down => {
                 if self.ex_history.is_empty() || self.ex_history_cursor.is_none() {
                     self.cmdline = Some(line);
-                    return InputResult::Consumed;
+                    return InputResult::App(AppCommand::CmdlinePopupMove(1));
                 }
                 let curh = self.ex_history_cursor.unwrap();
                 let new = curh + 1;
@@ -3218,8 +3235,13 @@ mod tests {
         v.handle_key(k('q'), &ctx());
         assert_eq!(v.pending_display().as_deref(), Some(":wq\u{258f}"));
         match v.handle_key(kc(KeyCode::Enter), &ctx()) {
-            InputResult::App(AppCommand::ExCommand(s)) => assert_eq!(s, "wq"),
-            _ => panic!("expected ExCommand"),
+            // 2026-06-19 — vim cmdline Enter now emits
+            // CmdlineEnter (the App-side handler decides whether
+            // to accept a popup match) instead of ExCommand. Old
+            // ExCommand path still exists for cases that send
+            // commands directly.
+            InputResult::App(AppCommand::CmdlineEnter(s)) => assert_eq!(s, "wq"),
+            _ => panic!("expected CmdlineEnter"),
         }
     }
 

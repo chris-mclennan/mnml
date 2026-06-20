@@ -134,6 +134,18 @@ pub enum AppCommand {
     /// its own (no workspace access), so the App owns the cycle state and
     /// rewrites the cmdline via `InputHandler::cmdline_set`.
     CmdlineTabComplete,
+    /// Move the cmdline completion popup's highlight by ±1.
+    /// `i8` so the variant stays small; -1 = up, +1 = down.
+    CmdlinePopupMove(i8),
+    /// Rewrite cmdline to the currently-highlighted popup match
+    /// + commit (run it). Used by Enter when the popup is showing.
+    CmdlinePopupAcceptCurrentAndCommit,
+    /// User pressed Enter on the cmdline. If the popup is showing,
+    /// accept the highlighted match and run that instead of the
+    /// typed line; otherwise run the typed line as-is.
+    /// Carries the typed line because the input handler has
+    /// already closed its cmdline state by the time this fires.
+    CmdlineEnter(String),
     /// flash/leap-style 2-char jump motion. Handler accumulates the two
     /// chars (`s<a><b>`) and hands them up; App computes every visible
     /// occurrence in the active editor, assigns each a label, paints them,
