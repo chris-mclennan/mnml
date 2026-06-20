@@ -49,6 +49,18 @@ bench  GET https://api.example.com/users
 bench summary — 10 samples in 1842 ms (rate: 5.4 req/s)
   latency ms — min 142 · p50 178 · p95 412 · p99 412 · max 412 · mean 198
   status: 2xx=9 3xx=0 4xx=0 5xx=1
+
+  histogram (ms):
+    142–169  ms │██████████████████████████████│ 4
+    169–196  ms │███████████████               │ 2
+    196–223  ms │███████                       │ 1
+    223–250  ms │                              │ 0
+    250–277  ms │                              │ 0
+    277–304  ms │                              │ 0
+    304–331  ms │                              │ 0
+    331–358  ms │███████                       │ 1
+    358–385  ms │                              │ 0
+    385–412  ms │███████                       │ 1
   errors: 1 (showing up to 3)
     request timed out
 ```
@@ -59,6 +71,7 @@ Per-row meaning:
 - **Samples / time / rate** — total samples that completed, wall-clock from spawn to last completion, throughput.
 - **Latency** — min · p50 · p95 · p99 · max · mean, all in milliseconds. Sample-based — percentiles are calculated by sorting the durations and indexing at `round((N-1) * p)`.
 - **Status classes** — `2xx=N 3xx=N 4xx=N 5xx=N`, a count per HTTP status class for the successful sends.
+- **Histogram** — 10 equal-width buckets across `[min, max]` ms with an ASCII bar per bucket (bar width scales to the largest bucket count). Lets you see distribution shape — tight cluster around p50, bimodal split, fat tail. Skipped when `samples ≤ 1` or when `min == max`.
 - **Errors** — transport-level errors (timeouts, DNS failures, broken TLS). Up to the first 3 error messages are included; the count is the total.
 
 A zero-sample run (every request errored out, or `n = 0`) still emits the summary block with `0 samples` — useful when the endpoint is completely down, since the errors block lists why.
@@ -82,6 +95,16 @@ loop {
 `concurrency` is clamped to `[1, n]` — asking for 100 workers with 10 requests gives you 10 workers; asking for 0 gives you 1. Spawning more workers than there are requests would be wasted thread overhead.
 
 The HTTP client is `reqwest::blocking::Client::builder().timeout(30s).build()` — same as a normal `:http.send`. Connection pooling is per-thread, not shared across workers, so a 100-shot bench against the same host opens up to `concurrency` distinct TCP connections.
+
+## Aborting an in-flight bench
+
+While `bench` is running, the cmdline bar shows `⟳ bench (Ns) running…` pinned to the right. Cancel any time:
+
+- **Click the indicator** — fires `:http.abort` against every in-flight HTTP op.
+- **`Esc` on the cmdline** — same effect.
+- **Palette / ex** — `:http.abort` directly.
+
+Workers poll a shared `AtomicBool` between iterations and exit at the next sample boundary. See [Cmdline popup](/manual/cmdline-popup/#the-in-flight-http-indicator) for the full mechanism.
 
 ## When to use it
 

@@ -1,4 +1,5 @@
-# Ctrl+1..5 jumps directly to the matching Edit-view tab.
+# Ctrl+1..6 jumps directly to the matching Edit-view tab.
+# Slots: 1=Body 2=Headers 3=Params 4=Auth 5=Vars 6=Source
 
 write anchor.txt anchor
 open anchor.txt
@@ -8,7 +9,10 @@ command http.new
 key ctrl+3
 expect screen contains "[Params]"
 
-key ctrl+5
+key ctrl+4
+expect screen contains "[Auth]"
+
+key ctrl+6
 expect screen contains "[Source]"
 
 key ctrl+2

@@ -83,18 +83,24 @@ When the send fires, mnml spawns a background thread, opens a `Pane::Request` sp
 
 ### Inside the Request pane
 
-| Key | Action (Response view) |
+The pane is a **three-panel stack**: a Request form on top (Method chip + URL + the 6-tab Edit strip), a Response panel in the middle (status / headers / body), and an AI strip pinned to the bottom. Both Edit and Response are always rendered — there's no Edit-vs-Response tab toggle. The whole surface has its own page: [HTTP Request pane — tabs & layout](/manual/http-edit-tabs/).
+
+Method renders as a **colored chip** — GET green, POST orange, PUT blue, PATCH cyan, DELETE red, HEAD yellow, OPTIONS purple. Click the chip to open a verb dropdown; press `Space` (when the Method field is focused) to cycle.
+
+The Edit strip has six tabs: **Body**, **Headers**, **Params**, **Auth**, **Vars**, **Source**. `Ctrl+]` / `Ctrl+[` cycle them; `Ctrl+1..6` jump directly to one. `Tab` / `Shift+Tab` cycle which **field** has the caret (independent of which tab you're on).
+
+A quick chord reference for Response-view focus:
+
+| Key | Action |
 |---|---|
-| `Tab` | Flip to **Edit** view |
 | `r` | Re-fire the request using the pane's current field values |
 | `y` | Copy the request as a curl |
 | `Y` | Copy the response body |
-| `e` | Same as `Tab` — flip to Edit |
+| `a` / `.` | Ask Claude about this request/response (canned debug) |
+| `e` / `Tab` | Toggle view |
 | `Esc` | Return focus to the file tree |
 
-In **Edit** mode the pane is a four-field form (URL / Method / Headers / Body) with a tab strip (Body / Headers / Params / Vars / Source) sitting between the URL row and the field content. `Tab` / `Shift+Tab` cycle which form field has the caret; arrows + Home / End / Backspace edit the focused field; `Space` on the Method field cycles through `GET / POST / PUT / PATCH / DELETE / HEAD / OPTIONS`. `Ctrl+]` / `Ctrl+[` cycle the tab strip; `Ctrl+1..5` jump to a specific tab. `Esc` in Edit view flips back to Response (the inverse of Tab) — it doesn't leave the pane.
-
-`Ctrl+Shift+V` in Edit view pastes a curl from the clipboard and populates every field; right-clicking any row opens a field-aware menu with Send / Paste curl / Copy as curl / Switch to Response (and Cycle method on the Method row). The whole Postman-style surface — including `:http.new` to open a blank request — has its own page: [New request — Postman-style scratch pane](/manual/http-new-request/).
+`Ctrl+Shift+V` in Edit view pastes a curl from the clipboard and populates every field; `Ctrl+Shift+F` formats the Body as JSON; right-clicking any row opens a field-aware menu with Send / Paste curl / Copy as curl / Switch to Response (and Cycle method on the Method row).
 
 Writing back to the source file is automatic — saving the request pane (`Ctrl-S` in standard, `:w` in vim) re-serialises the request as a `.http` block and edits the matched block in the original file, leaving every other block untouched. Multi-block files use the `### name` separator as the match key; single-block files round-trip through a whole-file overwrite.
 
@@ -102,13 +108,13 @@ Writing back to the source file is automatic — saving the request pane (`Ctrl-
 
 The Response view shows:
 
-- **Status line** — `200 OK · 142 ms · 3.2 KB`
+- **Status chip + stats** — `200 OK   142 ms   18 lines · 3.2 KB`. The chip color tracks the status class — `2xx` green, `3xx` cyan, `4xx` yellow, `5xx` red.
 - **Headers** — every response header, in arrival order, dimmed
 - **Body** — pretty-printed when the `Content-Type` says JSON (or the body starts with `{` / `[`); raw otherwise
 - **Assertions** — `✓` / `✗` per `@assert` directive in the source
 - **Captures** — `name = value` per `@capture` directive (also pinned into the running env so the next request in the file picks them up)
 
-`Ctrl-Shift-P` → **HTTP: copy the response body** (palette id `http.copy_response_body`) copies the body verbatim to the clipboard.
+`Ctrl-Shift-P` → **HTTP: copy the response body** (palette id `http.copy_response_body`) copies the body verbatim to the clipboard. **HTTP: save active Response body to a file** (`http.save_response`) writes it to a path you pick. **HTTP: diff the active Request pane's last two responses** (`http.diff_last_two`) opens a scratch buffer with a unified diff between the previous and current Done responses — useful when re-firing should have changed something.
 
 ### From the CLI
 
@@ -292,15 +298,17 @@ This is a smoke-test surface — you can run an end-to-end "log in, fetch users,
 
 Deep-dives on individual surfaces:
 
-- [New request — Postman-style scratch pane](/manual/http-new-request/) — `:http.new`, paste-curl from clipboard, the tabbed Edit view, the field-aware right-click menu
+- [HTTP Request pane — tabs & layout](/manual/http-edit-tabs/) — the three-panel layout, the colored Method chip, the six Edit tabs (Body / Headers / Params / Auth / Vars / Source), the AI strip, every chord that drives them
+- [New request — Postman-style scratch pane](/manual/http-new-request/) — `:http.new`, paste-curl from clipboard, the field-aware right-click menu
 - [HTTP envs & templating](/manual/http-envs/) — the resolution chain (`--env` → `$MNML_ENV` → `.rqst/config`), the `.mnml/env/` over `.rqst/env/` precedence, every `{{$dynamic}}` builtin
 - [HTTP sync — sources.json](/manual/http-sync/) — batch-regenerate `.curl` stubs from multiple swagger sources via `:http.sync` or `mnml sync`
-- [HTTP bench](/manual/http-bench/) — 10× concurrent fire with p50 / p95 / p99 latency + status-class breakdown
+- [HTTP bench](/manual/http-bench/) — 10× concurrent fire with p50 / p95 / p99 latency + ASCII histogram
 - [HTTP mocks](/manual/http-mocks/) — freeze a response to a sibling `.mock.json` and replay it offline
 - [HTTP history](/manual/http-history/) — `.rqst/history.jsonl`, the in-app picker, and shell-side grep / jq queries
 - [HTTP captured browser traffic](/manual/http-captured/) — auto-capture from the browser pane, `:http.capture_now`, and the headless `mnml proxy --url` CLI
 - [HTTP lookups](/manual/http-lookup/) — the 4-stage picker that fills env vars from real API responses
-- [HTTP helpers — JWT & bearer](/manual/http-helpers/) — `:jwt.decode` and `:auth.extract_bearer`
+- [HTTP helpers — JWT, bearer, cookies, SSE](/manual/http-helpers/) — `:jwt.decode`, `:auth.extract_bearer`, the `cookies.*` family, SSE streaming + parsing
+- [Cmdline popup](/manual/cmdline-popup/) — the floating completion popup, in-flight HTTP indicator (click to abort), toast `[name]` reveal
 
 And the surrounding context:
 

@@ -1,4 +1,4 @@
-# Ctrl+] cycles Body→Headers→Params→Vars→Source→Body in Edit view.
+# Ctrl+] cycles Body→Headers→Params→Auth→Vars→Source→Body in Edit view.
 
 write anchor.txt anchor
 open anchor.txt
@@ -12,6 +12,9 @@ expect screen contains "[Headers]"
 
 key ctrl+]
 expect screen contains "[Params]"
+
+key ctrl+]
+expect screen contains "[Auth]"
 
 key ctrl+]
 expect screen contains "[Vars]"

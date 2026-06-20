@@ -1,0 +1,14 @@
+# :http.format_body parses Body as JSON and rewrites with 2-space indent.
+
+write minified.curl "curl -X POST 'http://127.0.0.1:19876/x' -H 'Content-Type: application/json' --data '{\"a\":1,\"b\":{\"c\":[1,2,3]}}'"
+open minified.curl
+
+command http.send
+wait 600
+
+# Switch to Edit view + Body tab if not already (http.send opens Response by
+# default). The format command works regardless of focused view since it
+# operates on rp.request.body.
+command http.format_body
+
+expect screen contains "body: formatted as JSON"

@@ -1,0 +1,16 @@
+# Auth tab — Postman parity. Switch to the Auth tab via Ctrl+4 (now slot 4
+# in the 6-tab strip: Body/Headers/Params/Auth/Vars/Source).
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+
+key ctrl+4
+
+expect screen contains "[Auth]"
+expect screen contains "Current:"
+expect screen contains "Set Bearer token"
+expect screen contains "Set Basic auth"
+expect screen contains "Set X-Api-Key"
+expect screen contains "Clear Authorization"

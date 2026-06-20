@@ -1,9 +1,9 @@
 ---
 title: HTTP helpers — JWT, bearer, cookies, SSE
-description: Four small palette commands — `jwt.decode`, `auth.extract_bearer`, `cookies.normalize_clipboard`, and `sse.parse_active_response`.
+description: Small palette commands that operate on tokens, headers, the persistent cookie jar, and SSE streams — `jwt.decode`, `auth.extract_bearer`, the `cookies.*` family, `sse.parse_active_response`, and the streaming-send mode.
 ---
 
-Four small palette commands that pay for themselves the first time an Authorization header or a Set-Cookie value isn't doing what you expect. Most operate on the clipboard — paste a token (or a header line, or a 401 response), run the command, get the answer as a toast or a re-written clipboard.
+A family of small palette commands that pay for themselves the first time an Authorization header, a Set-Cookie value, or an SSE stream isn't doing what you expect. Most operate on the clipboard — paste a token (or a header line, or a 401 response), run the command, get the answer as a toast or a re-written clipboard. The cookies family operates on the persistent cookie jar mnml maintains across sends.
 
 The point of having them in mnml: the alternative is opening `jwt.io` in a browser or pasting a token into a one-off Python script. These are one-keystroke versions of the same query, embedded next to the request files they fix.
 
@@ -116,7 +116,45 @@ A handful of related glue lives in `crate::auth` for power-users:
 
 - **`replace_bearer_in_curl(curl_text, new_token)`** — rewrites the `Authorization: Bearer …` header in a curl command. Useful in a script that auto-rotates tokens across a tree of `.curl` files; not currently exposed as a palette command.
 
-## `cookies.normalize_clipboard` — canonicalise pasted cookies
+## The cookies family — managing the persistent jar
+
+mnml keeps a **persistent cookie jar** across HTTP sends — when a response sets a cookie (or your request carries one), the jar holds it for subsequent requests against the same host. The jar lives at `.mnml/cookies.json` and auto-saves on app exit.
+
+Five palette commands manage it:
+
+| Command id | What it does |
+|---|---|
+| `cookies.show` | Picker over every cookie (host · name · value preview). Enter copies `name=value` to the clipboard. |
+| `cookies.delete` | Picker over every cookie. Enter removes the selected cookie + persists. |
+| `cookies.clear` | Clears every cookie in the jar (no prompt — be sure). |
+| `cookies.persist` | Explicit "flush jar to `.mnml/cookies.json` now" (the jar auto-saves on app exit; this is for the impatient). |
+| `cookies.normalize_clipboard` | Normalises pasted cookies to the canonical Cookie-header form (no jar interaction). |
+
+### `cookies.show` — read the jar
+
+Opens a picker listing every cookie in the jar:
+
+```
+api.example.com  ·  session_id  ·  eyJhbGciOiJIUzI1NiJ9...
+api.example.com  ·  csrf_token  ·  abc123xyz789
+auth.example.com ·  refresh     ·  rT8aB...vQ2pK1
+```
+
+Enter on a row copies `name=value` to the clipboard — useful when you need to paste it into a Cookie header by hand.
+
+### `cookies.delete` — remove one
+
+The companion to `cookies.show`: same picker, but Enter **removes** the selected cookie and persists the jar. Useful when a stale session cookie is making every subsequent request 401.
+
+### `cookies.clear` — empty the jar
+
+Wipes every cookie. No prompt. Use after a workspace switch where the previous workspace's cookies would leak into requests against the new one.
+
+### `cookies.persist` — flush now
+
+The jar auto-saves on app exit, so explicit persistence is rare. Useful before a workspace switch (to make sure the previous workspace's `.mnml/cookies.json` is current) or when you want the file on disk before opening it for inspection.
+
+### `cookies.normalize_clipboard` — canonicalise pasted cookies
 
 | Surface | Call |
 |---|---|
@@ -148,14 +186,47 @@ Paste the output into a `Cookie:` header in your `.curl` or `.http` file. Useful
 
 A v2 enhancement would auto-fire when typing into a Cookie header value in the Request pane's Edit view — for now, it's a manual palette call.
 
-## `sse.parse_active_response` — verify a Server-Sent Events stream
+## SSE — Server-Sent Events
+
+mnml has two SSE surfaces. **`:http.send_streaming`** opens the request with a per-event progressive reader (events render as they arrive). **`:sse.parse_active_response`** parses an already-Done body to surface its shape — useful for verifying an SSE response that came back via a normal `:http.send`.
+
+### `:http.send_streaming` — progressive event display
+
+| Surface | Call |
+|---|---|
+| Palette | `HTTP: send active request as a Server-Sent Events stream` |
+| Ex-command | `:http.send_streaming` |
+
+Same request parse as `http.send`, but the worker uses an **SSE-aware reader** with no overall client timeout — for Anthropic / OpenAI / SSE-style `text/event-stream` endpoints that hold the socket open. The Request pane enters `Streaming` state on connection open and the response body grows line-by-line as events arrive:
+
+```
+[message_start]
+{"type": "message_start", "message": {...}}
+
+[content_block_delta]
+{"type": "content_block_delta", "delta": {"text": "Hello"}}
+
+[content_block_delta]
+{"type": "content_block_delta", "delta": {"text": " world"}}
+
+[message_stop]
+{"type": "message_stop"}
+```
+
+Each event renders as a `[name]` line (when the event has a `name:` directive) followed by the `data:` payload and a blank line. The pane scrolls live; status / headers settle at the top on connection open.
+
+On stream close, the pane transitions from `Streaming` to `Done` — the response is now a normal Done response with all events in the body. `r` re-fires; `Y` copies the accumulated body.
+
+A 600s socket-level timeout still applies as a safety bound; that's enough for any reasonable LLM completion. An explicit `:http.abort` (or `Esc` on the cmdline bar) cancels the stream and clears the pane's UI state — see [Cmdline popup](/manual/cmdline-popup/#the-in-flight-http-indicator).
+
+### `:sse.parse_active_response` — verify an already-Done stream
 
 | Surface | Call |
 |---|---|
 | Palette | `SSE: parse active Response pane body as Server-Sent Events` |
 | Ex-command | `:sse.parse_active_response` |
 
-When an endpoint returns Server-Sent Events (`Content-Type: text/event-stream`), the Response pane just shows raw `data: …` lines — not super readable. `sse.parse_active_response` reads the body, runs it through the SSE reader, and toasts:
+When an endpoint returns Server-Sent Events but you fired with `:http.send` (not `send_streaming`), the Response pane just shows raw `data: …` lines — not super readable. `sse.parse_active_response` reads the Done body, runs it through the SSE reader, and toasts:
 
 - The total event count.
 - The first event's `event:` name (if any) and a preview of its `data:` payload.
@@ -163,8 +234,6 @@ When an endpoint returns Server-Sent Events (`Content-Type: text/event-stream`),
 This confirms the SSE shape is well-formed (mis-quoted JSON, missing blank-line separators, etc. all fall out in the parse) and gives you a fast read on what the endpoint actually sent.
 
 Requirements: an active `Pane::Request` with `RunState::Done`. Otherwise the command toasts an error.
-
-What it doesn't do: progressive display while the stream is still arriving. Today the Request pane buffers the full response before flipping to `Done`, so SSE streams that don't terminate cleanly won't render. A streaming-send mode with progressive event display is queued as a v2 follow-up.
 
 ## Next
 

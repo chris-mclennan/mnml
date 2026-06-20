@@ -1,0 +1,15 @@
+# Status code renders as a colored chip in the Response panel.
+
+write probe.curl "curl 'http://127.0.0.1:19876/probe'"
+write probe.curl.mock.json {"status":418,"status_text":"I'm a teapot","headers":[],"body":"teapot","ts":1}
+
+open probe.curl
+
+command http.send
+wait 600
+
+command http.replay_mock
+
+# Status chip = " 418 " bg-colored. The 418 number must appear.
+expect screen contains "418"
+expect screen contains "teapot"

@@ -68,13 +68,17 @@ A second row kind has shipped alongside the discrete-choice rows: **number rows*
 - `r` resets just this row to its built-in default.
 - `[ <value><unit> ]` is the live value; the `*` modified marker appears when it differs from the default.
 
-The three first-class number rows today:
+The first-class number rows today:
 
 | Row | TOML key | Range | Step | Unit | Default |
 |---|---|---|---|---|---|
 | Scrolloff | `[ui] scrolloff` | 0..=20 | 1 | (none) | 0 |
 | Sidescrolloff | `[ui] sidescrolloff` | 0..=20 | 1 | (none) | 0 |
 | File tree width | `[ui] tree_width` | 16..=60 | 2 | `cols` | 30 |
+| Tab width | `[editor] tab_width` | 1..=12 | 1 | `cols` | 4 |
+| Color column (0 = off) | `[ui] color_column` | 0..=200 | 4 | (none) | 0 |
+
+`Color column` is a vertical hint line at column N — set it to `80` for the classic line-length guide, or leave at `0` (off) when you don't want one. `Tab width` is the per-buffer expansion width for `\t` characters; `.editorconfig` files in your repo override this per-file.
 
 ### Text rows (v2)
 
@@ -108,7 +112,14 @@ The fourth row kind: **color rows** for hex-color settings. Same shape as text r
 
 - Invalid hex (wrong length, non-hex chars) falls back to the foreground color for the swatch and appends ` · invalid hex` to the dim hint suffix.
 - Same edit-mode shape as text rows: `Enter` enters greedy edit mode, printable keys append, `Backspace` deletes, `Enter` commits, `Esc` cancels + restores. Each keystroke live-writes through `apply_text_setting`, so the swatch repaints in the in-progress color as you type (the parsed-color preview is the whole reason live edit matters for color rows). `r` still resets to the row's default; the `*` modified marker behaves the same way.
-- No first-class color rows are wired into `build_settings` yet — the `ColorRow` variant is reserved for future overrides (theme accent picker, status-line color override, etc.). The live-edit machinery is shared with text rows, so adding such a row needs only a `build_settings` entry + an `apply_text_setting` arm — no new overlay code.
+
+The first-class color row today:
+
+| Row | TOML key | Default |
+|---|---|---|
+| Cmdline popup border color | `[ui] cmdline_popup_border_color` | (theme accent) |
+
+The cmdline popup is the floating completion box above the `:` cmdline. Setting this overrides the popup's border color independently of the theme — useful when you want the popup chrome to pop against an otherwise low-contrast theme. See [Cmdline popup](/manual/cmdline-popup/) for the full surface. More color rows are reserved for future overrides (status-line color override, gutter accent, etc.) — the live-edit machinery is shared so adding one needs only a `build_settings` entry + an `apply_text_setting` arm.
 
 ### What's in the overlay vs what's TOML-only
 
@@ -142,7 +153,9 @@ Each row drives a single `Config` slot. Useful when you want to find the matchin
 | Palette / picker position | `[ui] picker_position` |
 | Scrolloff | `[ui] scrolloff` |
 | Sidescrolloff | `[ui] sidescrolloff` |
+| Color column | `[ui] color_column` |
 | Theme | `[ui] theme` |
+| Cmdline popup border color | `[ui] cmdline_popup_border_color` |
 | File tree width | `[ui] tree_width` |
 | File-tree image preview | `[ui] tree_image_preview` |
 | Now-playing source | `[ui] now_playing_source` |

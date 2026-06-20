@@ -1,6 +1,6 @@
 ---
 title: "New request — Postman-style scratch pane"
-description: "`:http.new`, paste-curl from clipboard, the tabbed Edit view (Body/Headers/Params/Vars/Source), the field-aware right-click menu, and the `+` chip on the INTEGRATIONS rail."
+description: "`:http.new`, paste-curl from clipboard, the field-aware right-click menu, and the `+` chip on the INTEGRATIONS rail. The deep tour of the Edit view tabs lives on the dedicated tabs page."
 ---
 
 The HTTP client has two front doors. The original one is file-first: open a `.http` or `.curl` file, point your cursor at the block you want, fire `http.send`. That's still the right shape when the request lives next to the code it hits and you want it version-controlled.
@@ -84,76 +84,17 @@ Every field's right-click menu carries **Paste curl from clipboard** as the seco
 
 ## The tabbed Edit view
 
-When the pane is in Edit mode, a tab strip sits between the URL row and the field content:
+When the pane is in Edit mode, a 6-tab strip sits between the URL row and the field content:
 
 ```
- [Body]   Headers   Params   Vars   Source
+ [Body]   Headers   Params   Auth   Vars   Source
 ```
 
-The active tab renders with bracket markers (`[Body]`), **bold**, and **underline**. Inactive tabs render dimmed. Color isn't the cue — the brackets + underline + bold survive on themes with close-step backgrounds and stay legible in monochrome (an earlier render relied on background-color alone, which flattened on close themes and was invisible to colorblind users; the SEV-3 fix on 2026-06-19 swapped to the textual cue).
+The active tab renders with bracket markers (`[Body]`), **bold**, and **underline**. Inactive tabs render dimmed. Color isn't the cue — the brackets + underline + bold survive on themes with close-step backgrounds and stay legible in monochrome.
 
-### Switching tabs
-
-| Chord | Action |
-|---|---|
-| `Ctrl+]` | Next tab (Body → Headers → Params → Vars → Source → Body) |
-| `Ctrl+[` | Previous tab |
-| `Ctrl+1` | Jump to **Body** |
-| `Ctrl+2` | Jump to **Headers** |
-| `Ctrl+3` | Jump to **Params** |
-| `Ctrl+4` | Jump to **Vars** |
-| `Ctrl+5` | Jump to **Source** |
-| Mouse click | Click any chip |
-
-The `Ctrl+]` / `Ctrl+[` / `Ctrl+1..5` chords are intercepted before the global chord chain so they work in both input modes. (Standard mode's keymap binds `Ctrl+]` / `Ctrl+[` to `editor.indent_line` / `outdent_line` globally; the dispatcher checks for a focused Request pane in Edit view first and steals the chord. Same intercept site handles `Ctrl+1..5`.)
+`Ctrl+]` / `Ctrl+[` cycle the tabs; `Ctrl+1..6` jump to one directly; click any chip with the mouse. The deep tour — what each tab contains, the Auth presets, the Body content-type detection, the live Vars browser — lives on [HTTP Request pane — tabs & layout](/manual/http-edit-tabs/).
 
 `Tab` is reserved for cycling fields (URL → Method → Headers → Body → URL) — it does *not* switch tabs. The tab strip and the field focus are independent: you can be on the Headers tab with the URL field focused, for example, though most of the time you'll be on the tab whose field is focused because that's where the content lives.
-
-### Per-tab content
-
-#### Body
-
-The existing multi-line Body field. Editable. JSON / XML / form-encoded — anything you can type in. `Tab` inside Body inserts a literal `\t` rather than cycling fields, because indented bodies are common.
-
-#### Headers
-
-The existing `Key: Value` list. Editable as a flat textarea — type `Authorization: Bearer xyz\n` to add a line. Header keys render in cyan + bold, values in foreground; lines without a `:` render dim (a visible hint they're not yet a valid header).
-
-#### Params
-
-Read-only display of the URL's query string parsed as `?key=value` pairs:
-
-```
-    foo = bar
-    limit = 10
-    (edit the URL field to change — Params is read-only for now)
-```
-
-Empty query string shows `(no query parameters — add ?key=value to URL)`. Editing live (adding / removing / reordering) is a v2 feature; today, edit the URL field and the Params tab reflects the new query string on next render.
-
-#### Vars
-
-Scaffold pointing at the structured env editor:
-
-```
-    Active env vars — open structured editor: :http.edit_env
-
-    (Vars browser scaffold — uses :http.edit_env for editing)
-```
-
-The live env browser inside this tab is a v2 feature — render-time it'd need the workspace path threaded through to disk-read the active `.env` file. For now, run `:http.edit_env` to add / edit / remove a variable; the picker is the same one [HTTP envs & templating](/manual/http-envs/) describes.
-
-#### Source
-
-A paste-target hint:
-
-```
-    Paste a curl command or .http block here.
-    Then run :http.paste_curl (or Ctrl+Shift+V) to populate fields.
-    (clipboard paste-curl reads your system clipboard directly)
-```
-
-The "source" is the clipboard — the tab is documentation for the paste flow, not an editable buffer. An editable in-pane source field is a v2 feature; it'd need a 5th `EditField` variant, a cycle slot, and key routing. Today's Source tab is honest about being a hint surface and right-clicking anywhere in it fires the field-aware menu with Paste curl ready.
 
 ## Field-aware right-click menu
 
@@ -182,19 +123,19 @@ The Method row's menu prepends **Cycle method** so you can change the HTTP verb 
 
 Params, Vars, and Source content rows register as URL-field click targets — the URL-titled menu (with Send / Paste curl / Copy as curl / Switch to Response) fires from right-clicking inside any of those tabs.
 
-## Cycling methods
+## Cycling + setting methods
 
-| Surface | Call |
-|---|---|
-| Palette | `HTTP: cycle method (GET→POST→PUT→DELETE→PATCH→…)` |
-| Ex-command | `:http.cycle_method` |
-| Right-click menu | **Cycle method** on the Method row |
-| Key (Method field focused) | `Space` |
-| Command id | `http.cycle_method` |
+Three ways to change the HTTP verb:
 
-The cycle order is `GET → POST → PUT → PATCH → DELETE → HEAD → OPTIONS → GET`. Unknown methods reset to POST.
+| Surface | Call | Result |
+|---|---|---|
+| **Click the Method chip** | (mouse) | Opens a dropdown listing all 7 verbs. Click one to set it directly. |
+| **`:http.cycle_method`** | palette / ex / Space (Method focused) | Cycle `GET → POST → PUT → PATCH → DELETE → HEAD → OPTIONS → GET`. |
+| **`:http.set_method.<verb>`** | one of 7 palette commands | Set a specific verb (`http.set_method.get`, `http.set_method.post`, …). Useful as a chord binding. |
 
-All three surfaces share the same cycle helper now (`request_pane::cycle_method`), so the order is consistent. (Earlier, the palette command had `PATCH` and `DELETE` swapped versus the Space-key cycle on the focused field, leading to a "wait, I just hit cycle and now my method is wrong" bug. The SEV-3 fix on 2026-06-19 unified them.)
+The Method chip is **colored per verb** — GET green, POST orange, PUT blue, PATCH cyan, DELETE red, HEAD yellow, OPTIONS purple — so the shape of the request reads at a glance. Unknown methods reset to POST.
+
+The right-click menu's **Cycle method** entry calls the same `http.cycle_method` helper, so chord / click / palette stay consistent.
 
 ## Esc — return to Response
 
@@ -217,8 +158,10 @@ The chord summary:
 | `Tab` | Cycle field forward (URL → Method → Headers → Body → URL) |
 | `Shift+Tab` | Cycle field backward |
 | `Ctrl+]` / `Ctrl+[` | Next / previous tab |
-| `Ctrl+1..5` | Jump directly to Body / Headers / Params / Vars / Source |
+| `Ctrl+1..6` | Jump directly to Body / Headers / Params / Auth / Vars / Source |
 | `Ctrl+Shift+V` | Paste curl from clipboard (populate all fields) |
+| `Ctrl+Shift+F` | Format Body as JSON |
+| `Ctrl+Enter` | Parse the Source-tab buffer into Method/URL/Headers/Body |
 | `Ctrl+V` | Paste plain text into focused field |
 | `Space` (Method focused) | Cycle HTTP verb |
 | `Enter` (URL / Method) | Fire the request |

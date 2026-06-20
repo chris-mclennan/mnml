@@ -20,7 +20,7 @@ use ratatui::widgets::Paragraph;
 use crate::app::App;
 use crate::layout::PaneId;
 use crate::pane::Pane;
-use crate::request_pane::{EditField, RunState, ViewMode};
+use crate::request_pane::{EditField, RunState};
 use crate::ui::theme;
 
 pub fn draw(
@@ -41,18 +41,15 @@ pub fn draw(
     // Detach the click-target registries so the draw fns below can push
     // into them while `rp` is borrowed from `app.panes`. Restored at the
     // bottom (and at the early-return below).
-    let mut tabs = std::mem::take(&mut app.rects.request_tabs);
+    // 2026-06-20 — `tabs` (the old Edit/Response chip rects) and
+    // the top-level body_style/dim/plain locals went unused when
+    // the tab strip was removed; cleaned up.
     let mut fields = std::mem::take(&mut app.rects.request_fields);
     let Some(Pane::Request(rp)) = app.panes.get_mut(pane_id) else {
-        app.rects.request_tabs = tabs;
         app.rects.request_fields = fields;
         return None;
     };
-
-    let body_style = Style::default().fg(t.fg).bg(t.bg_dark);
-    let dim = Style::default().fg(t.comment).bg(t.bg_dark);
     let mut rows: Vec<Line> = Vec::new();
-    let plain = |s: String, st: Style| Line::from(Span::styled(s, st));
 
     // 2026-06-20 — removed [Edit][Response] tab strip. New
     // Postman-style layout shows Request / Response / AI sections
@@ -191,9 +188,7 @@ pub fn draw(
     } else {
         app.rects.request_ai_section = None;
     }
-    let _ai_section_row_y: u16 = 0; // formerly used by the inline AI rect
     app.rects.editor_panes.push((area, pane_id));
-    app.rects.request_tabs = tabs;
     // Field rects were collected with `y` as a row index within `rows`
     // (no scroll offset applied). Adjust by `scroll` + clip to area now
     // that the final scroll value is known.
@@ -405,7 +400,7 @@ fn draw_edit(
     ));
     // Label offset for caret math now = bar (2) + chip + 2 spaces.
     let label_len = 2u16 + method_chip_len + 2;
-    let url_y = method_y;
+    let _url_y = method_y; // kept for the URL caret-positioning math reference
     if u_focus && focused {
         // y = index of the row we just pushed (0-based from rows[0])
         let y = (rows.len() - 1) as u16;

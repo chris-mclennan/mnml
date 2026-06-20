@@ -1,12 +1,13 @@
-# Ctrl+5 switches to Source tab; typing fills source_buffer; http.paste_source
-# parses + auto-switches to Body tab.
+# Ctrl+6 switches to Source tab (Auth was inserted as slot 4 → Source is now
+# slot 6 in the Body/Headers/Params/Auth/Vars/Source tab strip); typing fills
+# source_buffer; http.paste_source parses + auto-switches to Body tab.
 
 write anchor.txt anchor
 open anchor.txt
 
 command http.new
 
-key ctrl+5
+key ctrl+6
 
 expect screen contains "[Source]"
 
