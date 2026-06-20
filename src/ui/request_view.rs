@@ -251,36 +251,69 @@ fn draw_edit(
         }
     };
 
-    // Method
+    // 2026-06-20 — Method + URL on the same line, Postman-style.
+    // Method renders as a colored chip — GET green, POST orange,
+    // PUT blue, PATCH cyan, DELETE red, HEAD yellow, OPTIONS
+    // magenta. Click the chip → :http.cycle_method advances the
+    // verb (also Space when focused). URL fills the rest of the
+    // line.
     let m_focus = rp.focus == EditField::Method;
+    let u_focus = rp.focus == EditField::Url;
+    let method = rp.request.method.to_uppercase();
+    let method_color = match method.as_str() {
+        "GET" => t.green,
+        "POST" => t.orange,
+        "PUT" => t.blue,
+        "PATCH" => t.cyan,
+        "DELETE" => t.red,
+        "HEAD" => t.yellow,
+        "OPTIONS" => t.purple,
+        _ => t.fg,
+    };
+    let method_chip = format!(" {method} ");
+    let method_chip_len = method_chip.chars().count() as u16;
     let method_y = rows.len() as u16;
+    let url_text = rp.request.url.clone();
     rows.push(Line::from(vec![
-        bar_span(m_focus),
-        Span::styled("Method  ", label_style(m_focus)),
+        bar_span(m_focus || u_focus),
         Span::styled(
-            rp.request.method.clone(),
+            method_chip,
             Style::default()
-                .fg(t.green)
-                .bg(t.bg_dark)
+                .fg(t.bg_dark)
+                .bg(method_color)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("   (space → cycle)".to_string(), dim),
+        Span::styled("  ".to_string(), Style::default().bg(t.bg_dark)),
+        Span::styled(url_text.clone(), Style::default().fg(t.fg).bg(t.bg_dark)),
     ]));
-    register_field(fields, method_y, EditField::Method);
-
-    // URL (field — caret rendered when focused)
-    let u_focus = rp.focus == EditField::Url;
-    let url_text = rp.request.url.clone();
-    let label_url = "URL     ".to_string();
-    // 2-cell bar prefix + label text length = total prefix-before-input.
-    let label_len = 2u16 + label_url.chars().count() as u16;
-    let url_y = rows.len() as u16;
-    rows.push(Line::from(vec![
-        bar_span(u_focus),
-        Span::styled(label_url, label_style(u_focus)),
-        Span::styled(url_text.clone(), Style::default().fg(t.blue).bg(t.bg_dark)),
-    ]));
-    register_field(fields, url_y, EditField::Url);
+    // Method chip rect — narrow (just the chip, no row-spanning).
+    // Click triggers cycle in tui.rs (gated on `rect.width ≤ 12`).
+    fields.push((
+        Rect {
+            x: area.x + 2, // skip bar
+            y: method_y,
+            width: method_chip_len,
+            height: 1,
+        },
+        pane_id,
+        EditField::Method,
+    ));
+    // URL field rect — area AFTER the method chip + 2 pad.
+    fields.push((
+        Rect {
+            x: area.x + 2 + method_chip_len + 2,
+            y: method_y,
+            width: area
+                .width
+                .saturating_sub(2 + method_chip_len + 2),
+            height: 1,
+        },
+        pane_id,
+        EditField::Url,
+    ));
+    // Label offset for caret math now = bar (2) + chip + 2 spaces.
+    let label_len = 2u16 + method_chip_len + 2;
+    let url_y = method_y;
     if u_focus && focused {
         // y = index of the row we just pushed (0-based from rows[0])
         let y = (rows.len() - 1) as u16;

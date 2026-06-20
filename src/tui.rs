@@ -3835,6 +3835,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 if let Some(Pane::Request(rp)) = app.panes.get_mut(pid) {
                     rp.view = crate::request_pane::ViewMode::Edit;
                     rp.focus = field;
+                    // 2026-06-20 — Method chip click cycles verb
+                    // (Postman dropdown-style; quicker than the
+                    // old focus+Space gesture). The first click
+                    // ALSO focuses Method; only subsequent clicks
+                    // cycle. Detect via the chip's small width
+                    // (≤8 cells) — wider rects are headers/body
+                    // multi-line rows.
+                    if matches!(field, crate::request_pane::EditField::Method)
+                        && rect.width <= 12
+                    {
+                        rp.request.method =
+                            crate::request_pane::cycle_method(&rp.request.method);
+                    }
                     if matches!(field, crate::request_pane::EditField::Url) {
                         // URL row layout: " URL  <value>". Label
                         // offset = leading-space + "URL" + 2 spaces ≈
