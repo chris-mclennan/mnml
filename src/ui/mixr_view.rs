@@ -102,10 +102,19 @@ pub fn draw_header(
     // We paint from the right edge inward so the cluster always
     // hugs the right side regardless of header width.
     //
-    // ⤢ grow — visible unless already Full.
-    // ⤡ shrink — visible only from Full (BottomStrip can't shrink
-    //   further without minimizing).
-    // – minimize — always visible while the panel is shown.
+    //   grow   — visible unless already Full.
+    //   shrink — visible only from Full (BottomStrip can't shrink
+    //            further without minimizing).
+    //   – minimize — always visible while the panel is shown.
+    //
+    // grow/shrink use nerd-font codepoints (nf-fa-expand /
+    // nf-fa-compress), not the basic-Unicode arrows ⤢/⤡ — those render
+    // as invisible glyphs in the user's font-fallback chain (the same
+    // issue that hid the statusline transport chips, reported
+    // 2026-06-17; only the minimize en-dash was ever visible). The
+    // en-dash minimize renders fine, so it stays.
+    const NF_GROW: char = '\u{f065}'; // nf-fa-expand
+    const NF_SHRINK: char = '\u{f066}'; // nf-fa-compress
     let mut chip_x = header.x + header.width;
     let mut place_chip = |buf: &mut ratatui::buffer::Buffer, ch: char| -> Option<Rect> {
         if chip_x <= header.x + 1 {
@@ -129,12 +138,12 @@ pub fn draw_header(
         app.rects.mixr_size_minimize_button = Some(r);
     }
     if size == MixrSize::Full
-        && let Some(r) = place_chip(buf, '⤡')
+        && let Some(r) = place_chip(buf, NF_SHRINK)
     {
         app.rects.mixr_size_shrink_button = Some(r);
     }
     if size != MixrSize::Full
-        && let Some(r) = place_chip(buf, '⤢')
+        && let Some(r) = place_chip(buf, NF_GROW)
     {
         app.rects.mixr_size_grow_button = Some(r);
     }
