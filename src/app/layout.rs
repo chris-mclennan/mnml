@@ -1285,11 +1285,16 @@ impl App {
     }
 
     /// Move the cmdline popup selection by `delta` (positive =
-    /// down) and rewrite the cmdline to the new selection's match.
-    /// Used by Up/Down arrow keys when the popup is showing.
+    /// down). Used by Up/Down arrow keys when the popup is showing.
+    /// Does NOT rewrite the cmdline — only updates the highlight.
+    /// (Tab DOES rewrite, by vim convention; Enter accepts.)
     /// No-op when the popup would have <2 matches.
+    ///
+    /// 2026-06-19 — earlier impl rewrote the cmdline on every Down
+    /// keystroke. That re-narrowed the match list to a single
+    /// candidate, hiding the popup and looking-like-Enter to the
+    /// user. Arrow keys now navigate visually only.
     pub fn cmdline_popup_move(&mut self, delta: isize) {
-        // Two paths can host the cmdline (mirror popup view).
         let line = if let Some(text) = self.no_pane_cmdline.clone() {
             text
         } else if let Some(text) = self.active_editor_mut().and_then(|b| b.input.cmdline_get()) {
@@ -1309,16 +1314,14 @@ impl App {
         } else {
             (cur + 1) % state.matches.len()
         };
-        let new_line = format!("{}{}", state.head, &state.matches[new_idx]);
         self.cmdline_popup_selected = new_idx;
-        if self.no_pane_cmdline.is_some() {
-            self.no_pane_cmdline = Some(new_line.clone());
-        } else if let Some(b) = self.active_editor_mut() {
-            b.input.cmdline_set(Some(new_line.clone()));
-        }
+        // Track last_shown as the CURRENT typed line so the
+        // popup view's reset-on-type check doesn't fire next
+        // frame (line hasn't actually changed — just the
+        // selected index in the popup).
         let mut stored = state;
         stored.idx = new_idx;
-        stored.last_shown = new_line;
+        stored.last_shown = line;
         self.cmdline_complete_state = Some(stored);
     }
 
