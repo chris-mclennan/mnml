@@ -7,7 +7,11 @@ and the only thing missing is a session to do it in.
 ## HTTP
 
 ### gRPC support
-**Status:** tabled 2026-06-19. Multi-day work.
+**Status:** v1 (external `grpcurl` shell-out) **shipped** — see
+commit log for `:grpc.send`. Active .grpc JSON file shape:
+`{ server, method, plaintext?, headers?, message }`. Output lands
+in `[grpc-response]` scratch. Multi-day native `tonic` client
+still tabled — pick up when there's reason to.
 
 Why deferred: needs protocol-design discussion before writing code.
 gRPC is HTTP/2 + protobuf wire format. The natural mnml integration
@@ -33,7 +37,11 @@ Pick #1 to ship something, #2 if mnml's value-add justifies the dep
 churn. Discuss before coding.
 
 ### WebSocket support
-**Status:** tabled 2026-06-19. Multi-day work.
+**Status:** v1 (external `websocat` shell-out, one-shot fire-and-
+receive) **shipped** — see commit log for `:ws.send`. Active .ws
+JSON file shape: `{ url, message, timeout_ms?, headers? }`. Output
+lands in `[ws-response]` scratch. Persistent / multi-round-trip
+streams via `Pane::Websocket` still tabled.
 
 Why deferred: needs protocol-design discussion before writing code.
 Possible shapes:

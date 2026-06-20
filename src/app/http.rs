@@ -322,6 +322,211 @@ impl App {
         }
     }
 
+    /// `ws.send` — one-shot WebSocket fire-and-receive via the
+    /// system `websocat` binary. Sends `message`, waits for a
+    /// single response, closes. Multi-round-trip or persistent
+    /// streams are v2 (would need a Pane::Websocket).
+    ///
+    /// Active editor JSON shape:
+    ///   { "url": "wss://…",
+    ///     "message": "string payload",
+    ///     "timeout_ms": 5000,  // optional
+    ///     "headers": { "name": "value" } } // optional
+    pub fn ws_send_active(&mut self) {
+        let buf_text = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Editor(b)) => b.editor.text().to_string(),
+            _ => {
+                self.toast("ws.send: no active editor");
+                return;
+            }
+        };
+        let cfg: serde_json::Value = match serde_json::from_str(&buf_text) {
+            Ok(v) => v,
+            Err(e) => {
+                self.toast(format!("ws.send: not valid JSON: {e}"));
+                return;
+            }
+        };
+        let url = cfg
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let Some(url) = url else {
+            self.toast("ws.send: missing 'url' field");
+            return;
+        };
+        let message = cfg
+            .get("message")
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .unwrap_or_default();
+        let timeout_ms = cfg
+            .get("timeout_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5000);
+        let mut cmd = std::process::Command::new("websocat");
+        // -n1 reads exactly 1 message from server then exits.
+        cmd.arg("--exit-on-eof")
+            .arg("-n1")
+            .arg(&url);
+        if let Some(headers) = cfg.get("headers").and_then(|v| v.as_object()) {
+            for (k, v) in headers {
+                if let Some(vs) = v.as_str() {
+                    cmd.arg("-H").arg(format!("{k}: {vs}"));
+                }
+            }
+        }
+        cmd.stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        self.toast(format!("ws: connecting {url}…"));
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                self.toast(format!("ws: spawn websocat failed: {e} (is it on PATH?)"));
+                return;
+            }
+        };
+        // Write message to websocat's stdin.
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            let _ = writeln!(stdin, "{message}");
+            drop(stdin); // close stdin so websocat sees EOF
+        }
+        let started = std::time::Instant::now();
+        // Poll for completion with timeout.
+        let response = std::thread::scope(|s| {
+            let handle = s.spawn(|| child.wait_with_output());
+            loop {
+                if handle.is_finished() {
+                    return handle.join().ok().and_then(|r| r.ok());
+                }
+                if started.elapsed().as_millis() as u64 > timeout_ms {
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        });
+        let mut body = format!("# ws {url}\n\n## sent\n\n{message}\n\n");
+        match response {
+            Some(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if !stdout.is_empty() {
+                    body.push_str("## received\n\n");
+                    body.push_str(&stdout);
+                }
+                if !stderr.is_empty() {
+                    body.push_str("\n## stderr\n\n");
+                    body.push_str(&stderr);
+                }
+                self.toast(format!("ws: ok ({}ms) → [ws-response]", started.elapsed().as_millis()));
+            }
+            None => {
+                body.push_str(&format!("\n## timeout ({timeout_ms}ms)\n"));
+                self.toast(format!("ws: timeout after {timeout_ms}ms"));
+            }
+        }
+        self.open_scratch_with_text("[ws-response]".to_string(), body);
+    }
+
+    /// `grpc.send` — fire the active `.grpc` JSON file via the
+    /// system `grpcurl` binary. v1 path (per TODO.md): no native
+    /// deps, just shells out. Output lands in a `[grpc-response]`
+    /// scratch buffer.
+    ///
+    /// Active editor must contain JSON of the shape:
+    ///   { "server": "host:port",
+    ///     "method": "package.Service/Method",
+    ///     "plaintext": true | false,   // optional, default false
+    ///     "headers": { "name": "value" }, // optional
+    ///     "message": { ... } }         // the request payload
+    pub fn grpc_send_active(&mut self) {
+        let buf_text = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Editor(b)) => b.editor.text().to_string(),
+            _ => {
+                self.toast("grpc.send: no active editor");
+                return;
+            }
+        };
+        let cfg: serde_json::Value = match serde_json::from_str(&buf_text) {
+            Ok(v) => v,
+            Err(e) => {
+                self.toast(format!("grpc.send: not valid JSON: {e}"));
+                return;
+            }
+        };
+        let server = cfg
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let method = cfg
+            .get("method")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let (Some(server), Some(method)) = (server, method) else {
+            self.toast("grpc.send: missing 'server' or 'method' field");
+            return;
+        };
+        let plaintext = cfg
+            .get("plaintext")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let message = cfg
+            .get("message")
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "{}".to_string());
+        let mut cmd = std::process::Command::new("grpcurl");
+        if plaintext {
+            cmd.arg("-plaintext");
+        }
+        if let Some(headers) = cfg.get("headers").and_then(|v| v.as_object()) {
+            for (k, v) in headers {
+                if let Some(vs) = v.as_str() {
+                    cmd.arg("-H").arg(format!("{k}: {vs}"));
+                }
+            }
+        }
+        cmd.arg("-d")
+            .arg(&message)
+            .arg(&server)
+            .arg(&method);
+        self.toast(format!("grpc: firing {method} → {server}…"));
+        let output = match cmd.output() {
+            Ok(o) => o,
+            Err(e) => {
+                self.toast(format!("grpc: spawn grpcurl failed: {e} (is it on PATH?)"));
+                return;
+            }
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut body = format!("# grpc {method} → {server}\n\n");
+        if !output.status.success() {
+            body.push_str(&format!("## exit: {}\n\n", output.status));
+        }
+        if !stdout.is_empty() {
+            body.push_str("## response\n\n");
+            body.push_str(&stdout);
+            body.push('\n');
+        }
+        if !stderr.is_empty() {
+            body.push_str("\n## stderr\n\n");
+            body.push_str(&stderr);
+        }
+        self.open_scratch_with_text("[grpc-response]".to_string(), body);
+        self.toast(format!(
+            "grpc: {} · response → [grpc-response]",
+            if output.status.success() {
+                "ok"
+            } else {
+                "error"
+            }
+        ));
+    }
+
     /// `http.format_body` — parse the active Request pane's Body
     /// as JSON and rewrite with 2-space indent. No-op if Body
     /// isn't valid JSON (toasts the parse error).
