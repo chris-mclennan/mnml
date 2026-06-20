@@ -4084,6 +4084,23 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.http_abort_all();
                 return;
             }
+            // 2026-06-20 — toast `[name]` mention: click reveals
+            // the matching pane (substring match on pane title).
+            if let Some((r, name)) = app.rects.cmdline_toast_target.clone()
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                if let Some((idx, _)) = app
+                    .panes
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.title().contains(&name))
+                {
+                    app.active = Some(idx);
+                    app.focus_pane();
+                    app.reveal_pane(idx);
+                    return;
+                }
+            }
             if app.no_pane_cmdline.is_none()
                 && let Some(r) = app.rects.cmdline_bar
                 && crate::app::dispatch::contains(r, x, y)

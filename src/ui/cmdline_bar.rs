@@ -30,6 +30,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // below if any async HTTP op is running. Click on the indicator
     // → :http.abort (mirrors Esc-on-bar behavior).
     app.rects.cmdline_inflight = None;
+    // Toast target rect cleared each frame; populated below if the
+    // toast text mentions a `[name]` we can reveal.
+    app.rects.cmdline_toast_target = None;
     let t = theme::cur();
     // Default — blank line in the statusline's darker bg so it visually
     // belongs with the statusline above.
@@ -92,10 +95,49 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let mut spans: Vec<Span<'static>> = Vec::new();
     if let Some(t_msg) = toast {
-        spans.push(Span::styled(
-            t_msg,
-            Style::default().fg(t.comment).bg(bg),
-        ));
+        // 2026-06-20 — detect `[scratch-name]` mentions so click
+        // can reveal the matching scratch pane. Capture the first
+        // bracketed name; render it in yellow to suggest it's
+        // interactable.
+        if let (Some(lb), Some(rb)) = (t_msg.find('['), t_msg.find(']'))
+            && lb < rb
+        {
+            let head = &t_msg[..lb];
+            let name = &t_msg[lb..=rb]; // includes brackets
+            let tail = &t_msg[rb + 1..];
+            spans.push(Span::styled(
+                head.to_string(),
+                Style::default().fg(t.comment).bg(bg),
+            ));
+            spans.push(Span::styled(
+                name.to_string(),
+                Style::default()
+                    .fg(t.yellow)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            ));
+            spans.push(Span::styled(
+                tail.to_string(),
+                Style::default().fg(t.comment).bg(bg),
+            ));
+            // Register a click rect over JUST the bracketed name
+            // so clicking reveals that scratch pane.
+            let name_x = area.x + head.chars().count() as u16;
+            app.rects.cmdline_toast_target = Some((
+                Rect {
+                    x: name_x,
+                    y: area.y,
+                    width: name.chars().count() as u16,
+                    height: 1,
+                },
+                name.trim_matches(['[', ']']).to_string(),
+            ));
+        } else {
+            spans.push(Span::styled(
+                t_msg,
+                Style::default().fg(t.comment).bg(bg),
+            ));
+        }
     }
     if !inflight_text.is_empty() {
         // Pad to right-align the inflight indicator. Computed

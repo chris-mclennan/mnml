@@ -1794,6 +1794,11 @@ pub struct PaneRects {
     /// Click rect for the right-side `⟳ … running…` indicator.
     /// Click → `:http.abort`. None when nothing is in flight.
     pub cmdline_inflight: Option<Rect>,
+    /// Click rect over the `[name]` mention in the live toast,
+    /// paired with the captured name. Click → reveal the matching
+    /// scratch buffer / pane (best-effort substring match on
+    /// pane titles).
+    pub cmdline_toast_target: Option<(Rect, String)>,
     /// `(row_rect, idx_in_matches)` for each visible row in the
     /// cmdline completion popup. Click sets selected idx + rewrites
     /// cmdline + accepts.
