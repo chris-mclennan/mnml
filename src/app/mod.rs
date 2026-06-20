@@ -1810,6 +1810,9 @@ pub struct PaneRects {
     /// non-empty = existing key → deletes that param (v2 will
     /// open an edit prompt).
     pub request_params_rows: Vec<(Rect, String)>,
+    /// Click rect over the AI section header in the Request pane.
+    /// Click → fire :http.ai_debug (same as the `a` keystroke).
+    pub request_ai_section: Option<Rect>,
     /// `(row_rect, idx_in_matches)` for each visible row in the
     /// cmdline completion popup. Click sets selected idx + rewrites
     /// cmdline + accepts.

@@ -126,6 +126,7 @@ pub fn draw(
         format!("{}", "─".repeat(area.width.saturating_sub(2) as usize)),
         Style::default().fg(t.bg3).bg(t.bg_dark),
     )));
+    let ai_y = rows.len() as u16;
     rows.push(Line::from(vec![
         Span::styled(
             "  ai".to_string(),
@@ -135,10 +136,14 @@ pub fn draw(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            "   (press `a` to ask Claude about this response)".to_string(),
-            Style::default().fg(t.comment).bg(t.bg_dark),
+            "   (press `a` or click here to ask Claude about this response)".to_string(),
+            Style::default()
+                .fg(t.comment)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::UNDERLINED),
         ),
     ]));
+    let ai_section_row_y = ai_y;
 
     // scroll — Response can be long; Edit is short
     let h = area.height as usize;
@@ -211,6 +216,19 @@ pub fn draw(
         }
         r.y = area.y + visible_off as u16;
         app.rects.request_params_rows.push((r, key));
+    }
+    // AI section header rect → screen-y, only if visible.
+    app.rects.request_ai_section = None;
+    if (ai_section_row_y as usize) >= scroll {
+        let visible_off = ai_section_row_y as usize - scroll;
+        if visible_off < h {
+            app.rects.request_ai_section = Some(Rect {
+                x: area.x,
+                y: area.y + visible_off as u16,
+                width: area.width,
+                height: 1,
+            });
+        }
     }
 
     // Adjust the caret for scroll + return it so the terminal cursor sits there.

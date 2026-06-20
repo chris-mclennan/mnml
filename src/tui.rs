@@ -3812,6 +3812,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.cmdline_popup_accept(idx);
                 return;
             }
+            // Click on the AI section header → fire :http.ai_debug
+            // (same as the `a` keystroke).
+            if let Some(r) = app.rects.request_ai_section
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.ai_debug_request();
+                return;
+            }
             // Click on a Vars-tab row → open the env editor
             // directly. Empty key (the `+ Add` row) → add prompt;
             // non-empty key → edit prompt for that key.
