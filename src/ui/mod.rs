@@ -385,12 +385,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             MixrSize::Minimized => None,
             MixrSize::BottomStrip => {
                 let h = crate::mixr_host::STRIP_ROWS.min(body_area.height);
-                // Reserve mnml's rightmost column: when the panel would span the
-                // full body it touches the screen edge, where mnml's last column
-                // can render as a partial cell under tmnl's GPU grid — clipping
-                // mixr's 1-cell right gutter to a sliver. Pulling in 1 column
-                // lands the gutter on a whole interior cell.
-                let w = body_area.width.saturating_sub(1).min(crate::mixr_host::MAX_WIDTH);
+                let w = body_area.width.min(crate::mixr_host::MAX_WIDTH);
                 (w >= 20 && h >= 6).then_some(Rect {
                     x: body_area.x,
                     y: body_area.y + body_area.height - h,
@@ -399,8 +394,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 })
             }
             MixrSize::Full => {
-                // Same 1-column right reserve as BottomStrip (see there).
-                let w = body_area.width.saturating_sub(1).min(crate::mixr_host::MAX_WIDTH);
+                let w = body_area.width.min(crate::mixr_host::MAX_WIDTH);
                 (w >= 20 && body_area.height >= 6).then_some(Rect {
                     x: body_area.x,
                     y: body_area.y,
