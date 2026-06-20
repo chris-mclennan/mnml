@@ -479,6 +479,7 @@ impl App {
             let _ = tx.send(result);
         });
         self.lookup_fire_rx = Some(rx);
+        self.lookup_fire_started = Some(std::time::Instant::now());
         self.toast("lookup: firing request…");
     }
 
@@ -915,6 +916,7 @@ impl App {
             let _ = tx.send(trace);
         });
         self.http_bench_rx = Some(rx);
+        self.http_bench_started = Some(std::time::Instant::now());
         self.toast(format!("http.bench: firing {n}× ({concurrency} concurrent)…"));
     }
 
@@ -1340,6 +1342,7 @@ impl App {
             let _ = tx.send(result);
         });
         self.http_sync_rx = Some(rx);
+        self.http_sync_started = Some(std::time::Instant::now());
         self.toast("http.sync: fetching swagger sources…");
     }
 

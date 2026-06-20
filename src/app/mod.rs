@@ -2661,6 +2661,12 @@ pub struct App {
     /// trace string (multi-line summary the user will see in a
     /// toast preview + paste from clipboard for the full thing).
     pub http_bench_rx: Option<std::sync::mpsc::Receiver<String>>,
+    /// 2026-06-19 polish — when these async ops are in flight,
+    /// stash an Instant so the cmdline_bar can show elapsed time
+    /// next to the `⟳ running…` indicator.
+    pub http_bench_started: Option<std::time::Instant>,
+    pub http_sync_started: Option<std::time::Instant>,
+    pub lookup_fire_started: Option<std::time::Instant>,
     /// 2026-06-19 — v2 polish: shared "user has asked us to stop"
     /// flag the long-running HTTP workers poll between iterations.
     /// Set by `:http.abort` (and Esc on a Request pane that's
@@ -3384,6 +3390,9 @@ impl App {
             last_mixr_track_at: None,
             http_sync_rx: None,
             http_bench_rx: None,
+            http_bench_started: None,
+            http_sync_started: None,
+            lookup_fire_started: None,
             http_abort: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             cookie_jar: cookie_jar_init,
             pending_captured_rows: Vec::new(),
@@ -8981,6 +8990,18 @@ impl App {
         self.drain_http_sync_result();
         self.drain_http_bench_result();
         self.drain_lookup_fire_result();
+        // 2026-06-19 — keep started stamps in sync with rx. When
+        // a drain just cleared its rx, also clear the stamp so the
+        // cmdline_bar's `⟳ … (Ns)` indicator turns off.
+        if self.http_bench_rx.is_none() {
+            self.http_bench_started = None;
+        }
+        if self.http_sync_rx.is_none() {
+            self.http_sync_started = None;
+        }
+        if self.lookup_fire_rx.is_none() {
+            self.lookup_fire_started = None;
+        }
         self.drain_ai_jobs();
         self.drain_suggestions();
         self.maybe_fire_suggestion();

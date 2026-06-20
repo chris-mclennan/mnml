@@ -56,15 +56,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // ~3s; long-running ops (bench, sync, lookup) used to leave
     // the user with no visible progress signal. Right side of
     // the bar so it doesn't fight with the toast echo.
-    let mut inflight: Vec<&str> = Vec::new();
+    // Build a per-op `name (Ns)` entry so the user sees how long
+    // each has been running. Elapsed comes from App.*_started
+    // (Instant); falls back to no-suffix if a stamp is missing.
+    let now = std::time::Instant::now();
+    let fmt_with_elapsed = |name: &str, start: Option<std::time::Instant>| {
+        match start {
+            Some(s) => format!("{name} ({}s)", now.duration_since(s).as_secs()),
+            None => name.to_string(),
+        }
+    };
+    let mut inflight: Vec<String> = Vec::new();
     if app.http_bench_rx.is_some() {
-        inflight.push("bench");
+        inflight.push(fmt_with_elapsed("bench", app.http_bench_started));
     }
     if app.http_sync_rx.is_some() {
-        inflight.push("sync");
+        inflight.push(fmt_with_elapsed("sync", app.http_sync_started));
     }
     if app.lookup_fire_rx.is_some() {
-        inflight.push("lookup");
+        inflight.push(fmt_with_elapsed("lookup", app.lookup_fire_started));
     }
 
     // No cmdline → mirror the live toast (dim) so messages persist in a
