@@ -1,0 +1,9 @@
+# :cookies.show on a fresh workspace shows the empty-jar hint.
+
+write anchor.txt anchor
+open anchor.txt
+
+command cookies.show
+
+expect screen contains "Cookies"
+expect screen contains "jar is empty"

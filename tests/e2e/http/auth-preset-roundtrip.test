@@ -1,0 +1,26 @@
+# auth.save_preset writes .mnml/auth/<name>.txt; auth.apply_preset restores
+# it onto a new blank pane.
+
+write auth.curl "curl 'https://api.example.com/me' -H 'Authorization: Bearer tok123'"
+open auth.curl
+
+command http.send
+
+command auth.save_preset
+
+expect screen contains "Preset name"
+
+type "mytoken"
+key enter
+
+expect file .mnml/auth/mytoken.txt contains "Bearer tok123"
+
+command http.new
+
+command auth.apply_preset
+
+expect screen contains "mytoken"
+
+key enter
+
+expect screen contains "auth: applied mytoken"

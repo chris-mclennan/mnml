@@ -1,0 +1,19 @@
+# Mouse: right-click on URL field opens "Paste curl from clipboard".
+# buffer.close clears the editor so http.new fills the screen (active=None).
+
+write seed.curl "curl 'https://api.example.com/data'"
+open seed.curl
+command http.copy_curl
+command buffer.close
+
+command view.toggle_tree
+command http.new
+
+# URL row at screen y=5 (pane body starts at area.y=2, URL is pane row 3).
+rightclick 50 5
+
+expect screen contains "Paste curl from clipboard"
+expect screen contains "Request"
+
+key esc
+expect screen lacks "Paste curl from clipboard"

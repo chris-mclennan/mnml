@@ -1,0 +1,18 @@
+# Ctrl+1..5 jumps directly to the matching Edit-view tab.
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+
+key ctrl+3
+expect screen contains "[Params]"
+
+key ctrl+5
+expect screen contains "[Source]"
+
+key ctrl+2
+expect screen contains "[Headers]"
+
+key ctrl+1
+expect screen contains "[Body]"

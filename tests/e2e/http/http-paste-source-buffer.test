@@ -1,0 +1,19 @@
+# Ctrl+5 switches to Source tab; typing fills source_buffer; http.paste_source
+# parses + auto-switches to Body tab.
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+
+key ctrl+5
+
+expect screen contains "[Source]"
+
+type "curl 'https://api.example.com/users'"
+
+command http.paste_source
+
+expect screen contains "api.example.com"
+expect screen contains "GET"
+expect screen contains "[Body]"

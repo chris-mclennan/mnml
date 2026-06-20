@@ -1,0 +1,15 @@
+# http.import_postman reads a Postman Collection v2.1 JSON from clipboard
+# and writes .curl files into .rqst/captured/postman-<name>/.
+
+write pm.json {"info":{"name":"TestColl","schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},"item":[{"name":"GetUsers","request":{"method":"GET","url":{"raw":"https://api.example.com/users"},"header":[]}}]}
+
+open pm.json
+
+command editor.use_vim
+key y
+key y
+
+command http.import_postman
+
+expect screen contains "wrote 1 curls"
+expect file .rqst/captured/postman-TestColl/000_GetUsers.curl contains "api.example.com"

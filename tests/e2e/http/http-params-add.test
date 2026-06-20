@@ -1,0 +1,18 @@
+# http.params_add KEY=VALUE prompt appends to URL + auto-switches to Params.
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+
+type "https://example.com/api"
+
+command http.params_add
+
+expect screen contains "Query parameter"
+
+type "userid=42"
+key enter
+
+expect screen contains "userid=42"
+expect screen contains "[Params]"

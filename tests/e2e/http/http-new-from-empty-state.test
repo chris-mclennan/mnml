@@ -1,0 +1,8 @@
+# SEV-1 regression guard: with no prior panes, http.new used to leave
+# Layout::Empty. Confirm the pane actually draws.
+
+command http.new
+
+expect screen contains "GET"
+expect screen contains "Edit"
+expect pane "request"

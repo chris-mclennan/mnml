@@ -1,0 +1,23 @@
+# Ctrl+] cycles Body→Headers→Params→Vars→Source→Body in Edit view.
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+
+expect screen contains "[Body]"
+
+key ctrl+]
+expect screen contains "[Headers]"
+
+key ctrl+]
+expect screen contains "[Params]"
+
+key ctrl+]
+expect screen contains "[Vars]"
+
+key ctrl+]
+expect screen contains "[Source]"
+
+key ctrl+]
+expect screen contains "[Body]"

@@ -1,0 +1,16 @@
+# http.params_clear strips the ?... query string from the URL.
+
+write anchor.txt anchor
+open anchor.txt
+
+command http.new
+
+type "https://example.com/api?a=1&b=2"
+
+key ctrl+3
+expect screen contains "a = 1"
+
+command http.params_clear
+
+expect screen contains "cleared"
+expect screen contains "no query parameters"

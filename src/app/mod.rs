@@ -693,19 +693,21 @@ pub(crate) fn compute_cmdline_completions_for_app(app: &App, line: &str) -> Opti
     }
     // First word + path completers handled below.
     if head.is_empty() {
-        // 2026-06-19 — tiered fuzzy matching for first-word.
-        // Earlier impl was prefix-only on id; `:hsend` matched
-        // nothing because `http.send` doesn't START with "hsend".
-        // Now scoring layers (higher = better match):
+        // 2026-06-19 — tiered scoring for first-word completion.
+        // Single source of truth (compute_cmdline_completions_for_app
+        // is the only completer). Scoring layers high → low:
         //
-        //   T1 (300): id starts with token            (`http.s` → http.send)
-        //   T2 (200): id contains token as substring  (`http`   → http.send)
-        //   T3 (100): title contains token (case-ins) (`send`   → http.send)
-        //   T0 ( 50): EX_COMPLETION_NAMES prefix hit  (legacy vim ex commands)
+        //   T1 (300): id starts with token           (`http.s` → http.send)
+        //   T2 (200): id contains token as substring (`http`   → http.send)
+        //   T3 (150): EX_COMPLETION_NAMES prefix     (legacy vim ex commands)
+        //   T4 (100): title contains token (3+ chars) (`send`  → http.send)
         //
-        // Within a tier, recent_commands order bumps to top
-        // (each MRU position adds a small score). Lower-tier
-        // matches still show but are ranked below higher-tier.
+        // EX_COMPLETION_NAMES outranks title-contains so vim
+        // muscle memory (`:wr` → write, `:ta` → tabclose) survives.
+        // Title-contains gated to ≥3 chars to avoid flooding on
+        // short tokens like `:ta` (matches every "Tab" title).
+        // Recent-commands bump (+50 most-recent, decreasing)
+        // applies within tiers.
         let token_lc = token.to_lowercase();
         let mut scored: Vec<(i32, String)> = Vec::new();
         for cmd in crate::command::registry().all() {
@@ -717,13 +719,12 @@ pub(crate) fn compute_cmdline_completions_for_app(app: &App, line: &str) -> Opti
                 score = score.max(200);
             }
             if score == 0
-                && !token.is_empty()
+                && token.chars().count() >= 3
                 && cmd.title.to_lowercase().contains(&token_lc)
             {
                 score = 100;
             }
             if score > 0 {
-                // Recent-bump: most-recent gets +N, second +N-1, etc.
                 if let Some(pos) = app
                     .recent_commands
                     .iter()
@@ -736,7 +737,7 @@ pub(crate) fn compute_cmdline_completions_for_app(app: &App, line: &str) -> Opti
         }
         for name in EX_COMPLETION_NAMES {
             if name.starts_with(token) {
-                scored.push((50, name.to_string()));
+                scored.push((150, name.to_string()));
             }
         }
         // Sort: higher score first; ties alphabetical.
