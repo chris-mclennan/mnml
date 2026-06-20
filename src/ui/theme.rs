@@ -246,6 +246,99 @@ pub fn set(name: &str) -> Option<Theme> {
     Some(t)
 }
 
+/// Path to the canonical "current theme" file — `~/.config/mnml/current-theme.toml`
+/// (respecting `$XDG_CONFIG_HOME`). This is the family's single source of truth:
+/// [`write_current`] keeps it in sync with mnml's active theme, and every sibling
+/// (tmnl, mixr, the `mnml-*` integrations) reads it to follow mnml's colours.
+pub fn current_theme_path() -> Option<std::path::PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
+        && !xdg.is_empty()
+    {
+        return Some(
+            std::path::PathBuf::from(xdg)
+                .join("mnml")
+                .join("current-theme.toml"),
+        );
+    }
+    std::env::var_os("HOME").map(|h| {
+        std::path::PathBuf::from(h)
+            .join(".config")
+            .join("mnml")
+            .join("current-theme.toml")
+    })
+}
+
+/// `#rrggbb` for a theme colour. Theme colours are always `Color::Rgb`; any other
+/// variant (shouldn't occur) renders as black so the file stays valid.
+fn hex(c: Color) -> String {
+    match c {
+        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+        _ => "#000000".to_string(),
+    }
+}
+
+/// Serialise `t` to the `[base_30]` + `[base_16]` TOML shape mnml itself parses
+/// ([`parse_theme`]). The key names match the NvChad base_30 schema so any
+/// consumer — mnml's own parser, tmnl's `map_mnml_to_palette`, a sibling's
+/// `theme.rs` — reads the colours it expects. `comment` (the dim role) is emitted
+/// under both `light_grey` and `grey_fg2` so loaders keying off either find it.
+pub fn to_toml(t: &Theme) -> String {
+    let mut s = String::with_capacity(1024);
+    s.push_str(
+        "# Written by mnml — the resolved active theme. Family apps (tmnl, mixr,\n\
+         # mnml-* siblings) read this to follow mnml's colours. Regenerated on\n\
+         # launch and on every theme switch; do not hand-edit.\n",
+    );
+    s.push_str(&format!("name = \"{}\"\n\n[base_30]\n", t.name));
+    let row = |s: &mut String, k: &str, c: Color| s.push_str(&format!("{k} = \"{}\"\n", hex(c)));
+    row(&mut s, "white", t.fg);
+    row(&mut s, "black", t.bg_dark);
+    row(&mut s, "darker_black", t.bg_darker);
+    row(&mut s, "black2", t.statusline);
+    row(&mut s, "one_bg", t.bg);
+    row(&mut s, "one_bg2", t.bg2);
+    row(&mut s, "one_bg3", t.bg3);
+    row(&mut s, "statusline_bg", t.statusline);
+    row(&mut s, "line", t.line);
+    row(&mut s, "lightbg", t.lightbg);
+    row(&mut s, "light_grey", t.comment);
+    row(&mut s, "grey_fg2", t.comment);
+    row(&mut s, "grey", t.grey);
+    row(&mut s, "grey_fg", t.grey_fg);
+    row(&mut s, "red", t.red);
+    row(&mut s, "pink", t.pink);
+    row(&mut s, "green", t.green);
+    row(&mut s, "vibrant_green", t.vibrant_green);
+    row(&mut s, "yellow", t.yellow);
+    row(&mut s, "sun", t.sun);
+    row(&mut s, "orange", t.orange);
+    row(&mut s, "blue", t.blue);
+    row(&mut s, "nord_blue", t.nord_blue);
+    row(&mut s, "teal", t.teal);
+    row(&mut s, "cyan", t.cyan);
+    row(&mut s, "purple", t.purple);
+    row(&mut s, "dark_purple", t.dark_purple);
+    s.push_str("\n[base_16]\n");
+    for (i, c) in t.base16.iter().enumerate() {
+        s.push_str(&format!("base{i:02X} = \"{}\"\n", hex(*c)));
+    }
+    s
+}
+
+/// Write `t` to [`current_theme_path`] so the family can follow mnml's colours.
+/// Best-effort: creates `~/.config/mnml/` if needed and swallows I/O errors (an
+/// unwritable config dir must not crash the editor). Call at startup and after
+/// every theme switch.
+pub fn write_current(t: &Theme) {
+    let Some(path) = current_theme_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, to_toml(t));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,6 +390,24 @@ mod tests {
         assert_eq!(t.red, Color::Rgb(0xab, 0xcd, 0xef));
         // no [base_30] → not a usable theme
         assert!(parse_theme("x", "name = \"x\"").is_none());
+    }
+
+    #[test]
+    fn to_toml_round_trips_through_the_parser() {
+        // The canonical file mnml writes must read back identically through
+        // its own parser — that's the contract every sibling relies on.
+        let src = onedark();
+        let toml = to_toml(&src);
+        let back = parse_theme("onedark", &toml).expect("written theme re-parses");
+        assert_eq!(back.fg, src.fg);
+        assert_eq!(back.bg, src.bg);
+        assert_eq!(back.bg_dark, src.bg_dark);
+        assert_eq!(back.bg_darker, src.bg_darker);
+        // The dim role survives — emitted as light_grey, read back as comment.
+        assert_eq!(back.comment, src.comment);
+        assert_eq!(back.blue, src.blue);
+        assert_eq!(back.red, src.red);
+        assert_eq!(back.base16, src.base16);
     }
 
     #[test]

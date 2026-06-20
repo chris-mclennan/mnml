@@ -359,6 +359,10 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
             mnml::ui::theme::names().join(", ")
         );
     }
+    // Materialise the resolved active theme (even the default) to
+    // `~/.config/mnml/current-theme.toml` so the family — tmnl, mixr, the
+    // `mnml-*` siblings — can follow mnml's colours from one source of truth.
+    mnml::ui::theme::write_current(&mnml::ui::theme::cur());
 
     let mut app = match App::new(args.workspace, config) {
         Ok(a) => a,

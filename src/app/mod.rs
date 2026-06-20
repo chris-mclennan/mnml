@@ -4190,6 +4190,9 @@ impl App {
     /// "theme: onedark" doesn't pop on every launch.
     fn set_theme_silent(&mut self, name: &str) -> Option<String> {
         let t = crate::ui::theme::set(name)?;
+        // Keep the canonical `current-theme.toml` in sync so the family
+        // (tmnl, mixr, mnml-* siblings) retints to match within a tick.
+        crate::ui::theme::write_current(&t);
         self.config.ui.theme = t.name.to_string();
         for pane in &mut self.panes {
             if let Some(b) = pane.as_editor_mut() {
