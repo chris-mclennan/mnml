@@ -3921,10 +3921,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .iter()
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
-                app.reveal_pane(id);
-                // Arm a drag — a subsequent Drag event into a
-                // different tab's rect will swap them. The arm is
-                // cleared on Up; harmless on a normal click.
+                // Arm a drag — the buffer-switch (reveal) is deferred to
+                // mouse-up so a drag-to-split doesn't first swap the grabbed
+                // tab into the pane (which would make the drop land on its own
+                // pane). A subsequent Drag into another tab's rect reorders;
+                // a Drag onto a pane body splits. On a plain click (up on the
+                // same tab) the Up handler reveals.
                 app.rects.bufferline_drag_tab = Some(id);
                 return;
             }
@@ -4625,6 +4627,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     // After the swap, the pane WE were dragging now
                     // lives at `dst`'s old id (i.e. `dst`).
                     app.rects.bufferline_drag_tab = Some(dst);
+                    app.rects.tab_drop_target = None;
+                } else {
+                    // Not over the tab strip — track the pane-body drop zone so
+                    // the drop-hint overlay can show where a split would land.
+                    app.update_tab_drop_target(x, y);
                 }
                 return;
             }
@@ -4707,6 +4714,23 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 // Released outside tree → cancel any in-flight drag.
                 app.tree_drag = None;
             }
+            // Bufferline tab release. If it ended over a pane body, split that
+            // pane (edge zone) or move the dragged pane into it (center zone).
+            // Otherwise it was a plain click / a reorder release on the tab
+            // strip → reveal the tab (deferred buffer-switch).
+            if let Some(src) = app.rects.bufferline_drag_tab {
+                let over_body = app
+                    .rects
+                    .pane_bodies
+                    .iter()
+                    .any(|(r, _)| crate::app::dispatch::contains(*r, x, y));
+                if over_body {
+                    app.drop_tab_on_pane(src, x, y);
+                } else {
+                    app.reveal_pane(src);
+                }
+            }
+            app.rects.tab_drop_target = None;
             // Mouse-up always clears the bufferline-tab drag arm.
             app.rects.bufferline_drag_tab = None;
         }

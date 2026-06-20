@@ -51,6 +51,7 @@ mod session;
 pub(crate) mod settings;
 mod snippets;
 mod startup_picker;
+pub(crate) mod tab_drop;
 mod tmnl;
 
 pub use startup_picker::{StartupPickerAction, StartupPickerState};
@@ -2022,6 +2023,13 @@ pub struct PaneRects {
     /// The context-menu overlay's outer box (when open) and `(rect, item-index)` per row.
     pub context_menu_box: Option<Rect>,
     pub context_menu_items: Vec<(Rect, usize)>,
+    /// `(body_rect, pane_id)` per visible layout leaf — recorded by
+    /// `render_layout` for ALL pane kinds. Used to hit-test a tab drag-drop
+    /// onto a pane body (drag-to-split). Cleared + rebuilt each frame.
+    pub pane_bodies: Vec<(Rect, PaneId)>,
+    /// While a bufferline tab is being dragged over a pane body, the target
+    /// `(pane_id, drop-zone)` for the drop-hint overlay (see `app::tab_drop`).
+    pub tab_drop_target: Option<(PaneId, crate::app::tab_drop::DropZone)>,
 }
 
 /// Ex-cmdline Tab completion cycle. While the user keeps pressing Tab, this

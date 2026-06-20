@@ -88,7 +88,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout as RLayout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use crate::app::App;
 use crate::focus::Focus;
@@ -125,6 +125,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.statusline = None;
         app.rects.body = Some(area);
         app.rects.editor_panes.clear();
+        app.rects.pane_bodies.clear();
         app.rects.editor_gutters.clear();
         app.rects.fold_chips.clear();
         app.rects.code_lens_chips.clear();
@@ -439,6 +440,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.mixr_panel_header = mixr_header;
     app.rects.body = Some(body_area);
     app.rects.editor_panes.clear();
+    app.rects.pane_bodies.clear();
     app.rects.editor_gutters.clear();
     app.rects.fold_chips.clear();
     app.rects.code_lens_chips.clear();
@@ -468,6 +470,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let mut path = Vec::new();
         render_layout(frame, app, &layout, body_area, &mut path)
     };
+
+    // Drag-to-split: while a bufferline tab is dragged over a pane body, paint
+    // a hint showing where the pane will land.
+    draw_tab_drop_hint(frame, app);
 
     // Scratch terminal strip — paints below the body. Resizes the pty
     // so the shell knows about the new viewport.
@@ -640,6 +646,9 @@ fn render_layout(
     match layout {
         Layout::Empty => None,
         Layout::Leaf(id) => {
+            // Record this leaf's body rect (all pane kinds) for tab drag-drop
+            // hit-testing (drag-to-split).
+            app.rects.pane_bodies.push((area, *id));
             let focused = app.active == Some(*id);
             // Resolve the variant first so the immutable peek doesn't outlive into
             // the `&mut App` draw call.
@@ -727,6 +736,53 @@ fn render_layout(
             path.pop();
             c1.or(c2)
         }
+    }
+}
+
+/// Drag-to-split drop hint. When a bufferline tab is dragged over a pane body,
+/// paint the zone it will land in (left/right/top/bottom half for a split, or
+/// the center box for a move-in-place) with a tinted fill + accent border and a
+/// short label. No-op when no tab is being dragged over a pane.
+fn draw_tab_drop_hint(frame: &mut Frame, app: &App) {
+    let Some((pid, zone)) = app.rects.tab_drop_target else {
+        return;
+    };
+    let Some((body, _)) = app
+        .rects
+        .pane_bodies
+        .iter()
+        .find(|(_, p)| *p == pid)
+        .copied()
+    else {
+        return;
+    };
+    let rect = crate::app::tab_drop::zone_rect(body, zone);
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+    let t = theme::cur();
+    let label = match zone {
+        crate::app::tab_drop::DropZone::Center => "move here",
+        _ => "split here",
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(t.blue).add_modifier(Modifier::BOLD))
+        .style(Style::default().bg(t.bg2));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    if inner.width > 0 && inner.height > 0 {
+        let cy = inner.y + inner.height / 2;
+        let row = Rect::new(inner.x, cy, inner.width, 1);
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                label,
+                Style::default().fg(t.blue).add_modifier(Modifier::BOLD),
+            ))
+            .alignment(ratatui::layout::Alignment::Center),
+            row,
+        );
     }
 }
 
