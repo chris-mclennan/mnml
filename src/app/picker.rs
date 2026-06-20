@@ -645,6 +645,25 @@ impl App {
                 let name = item.id.clone();
                 self.accept_auth_preset(&name);
             }
+            PickerKind::CookiesDelete => {
+                if let Some((host, name)) = item.id.split_once('\t') {
+                    let removed = {
+                        let Ok(mut jar) = self.cookie_jar.lock() else {
+                            self.toast("cookies: jar lock poisoned");
+                            return;
+                        };
+                        jar.remove(host, name)
+                    };
+                    if removed {
+                        let Ok(jar) = self.cookie_jar.lock() else { return };
+                        let _ = jar.save(&self.workspace);
+                        drop(jar);
+                        self.toast(format!("cookies: removed {host} · {name}"));
+                    } else {
+                        self.toast("cookies: not found");
+                    }
+                }
+            }
             PickerKind::Cookies => {
                 // id shape: `<host>\t<name>`.
                 let lookup = item.id.split_once('\t').and_then(|(host, name)| {
@@ -1190,6 +1209,10 @@ impl App {
             crate::prompt::PromptKind::AuthSavePreset => {
                 let v = p.input.clone();
                 self.accept_auth_save_preset(&v);
+            }
+            crate::prompt::PromptKind::AiAskAboutRequest => {
+                let q = p.input.clone();
+                self.ai_ask_about_request_with_question(&q);
             }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();

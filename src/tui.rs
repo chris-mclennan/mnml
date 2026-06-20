@@ -3812,12 +3812,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.cmdline_popup_accept(idx);
                 return;
             }
-            // Click on the AI section header → fire :http.ai_debug
-            // (same as the `a` keystroke).
+            // Click on the AI section header → opens a prompt
+            // asking what the user wants to know (custom Q + A).
+            // The `a` key still fires the default debug prompt
+            // (no question, just 'why is this not working').
             if let Some(r) = app.rects.request_ai_section
                 && crate::app::dispatch::contains(r, x, y)
             {
-                app.ai_debug_request();
+                app.ai_ask_about_request_prompt();
                 return;
             }
             // Click on a Vars-tab row → open the env editor
@@ -4951,6 +4953,14 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                 KeyCode::Char('v') if ctrl && shift => {
                     let _ = rp;
                     app.http_paste_curl_to_active();
+                    return true;
+                }
+                // Ctrl+Shift+F — format JSON Body. Same chord as
+                // most IDEs use for code formatting. No-op on
+                // non-JSON Body (toast explains).
+                KeyCode::Char('f') if ctrl && shift => {
+                    let _ = rp;
+                    app.http_format_body();
                     return true;
                 }
                 // Ctrl+Enter — parse the Source-tab buffer into

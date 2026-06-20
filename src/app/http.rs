@@ -1317,6 +1317,41 @@ impl App {
         }
     }
 
+    /// `cookies.delete` — picker over jar entries; Enter removes
+    /// the selected cookie + persists. Companion to `cookies.show`
+    /// (which copies on Enter).
+    pub fn cookies_delete_picker(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let Ok(jar) = self.cookie_jar.lock() else {
+            self.toast("cookies: jar lock poisoned");
+            return;
+        };
+        let items: Vec<PickerItem> = jar
+            .iter()
+            .map(|(host, name, value)| {
+                let preview = if value.len() > 32 {
+                    format!("{}…", &value[..30])
+                } else {
+                    value.to_string()
+                };
+                let id = format!("{host}\t{name}");
+                let label = format!("{host}  ·  {name}  ·  {preview}");
+                PickerItem::new(id, label, String::new())
+            })
+            .collect();
+        let total = items.len();
+        drop(jar);
+        if items.is_empty() {
+            self.toast("cookies: jar is empty");
+            return;
+        }
+        self.open_picker(Picker::new(
+            PickerKind::CookiesDelete,
+            &format!("Delete cookie ({total} total)"),
+            items,
+        ));
+    }
+
     /// `cookies.show` — picker over every entry in the persistent
     /// cookie jar. Rows: `<host> · <name> · <preview>`. Enter
     /// copies `<name>=<value>` to clipboard.

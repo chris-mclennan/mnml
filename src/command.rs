@@ -3182,6 +3182,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.auth_apply_preset_picker(),
         },
         Command {
+            id: "cookies.delete",
+            title: "Cookies: remove one cookie (picker)",
+            group: "http",
+            keys: &[],
+            run: |app| app.cookies_delete_picker(),
+        },
+        Command {
             id: "cookies.show",
             title: "Cookies: open picker over the persistent jar",
             group: "http",

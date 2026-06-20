@@ -81,6 +81,10 @@ pub enum PromptKind {
     /// as `.mnml/auth/<typed-name>.txt`. The preset can later be
     /// applied via `:auth.apply_preset`.
     AuthSavePreset,
+    /// Accept ⇒ ask Claude the typed question with the active
+    /// Request pane's request + response as context. Spawned by
+    /// clicking the AI section in the Request pane.
+    AiAskAboutRequest,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into

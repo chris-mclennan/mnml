@@ -1380,6 +1380,74 @@ impl App {
 
     /// `http.ai_debug` (`.` in a request pane) — hand the request + its response
     /// (or transport error) to `claude -p` and ask why it's failing / how to fix.
+    /// Opens a prompt asking what the user wants to know about
+    /// the active Request pane's request + response. On Enter,
+    /// calls `ai_ask_about_request_with_question`. Used by the
+    /// clickable AI section header in the Request pane.
+    pub fn ai_ask_about_request_prompt(&mut self) {
+        let has_request = matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Request(_))
+        );
+        if !has_request {
+            self.toast("open a request pane first (http.send)");
+            return;
+        }
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::AiAskAboutRequest,
+            "Ask Claude about this request/response:".to_string(),
+        ));
+    }
+
+    /// Accept handler for `PromptKind::AiAskAboutRequest`. Builds
+    /// an AI prompt with the user's question + the active
+    /// request/response context and dispatches to `ask_ai`.
+    pub fn ai_ask_about_request_with_question(&mut self, question: &str) {
+        use crate::request_pane::RunState;
+        let question = question.trim();
+        if question.is_empty() {
+            self.toast("ai: question can't be empty");
+            return;
+        }
+        let context = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Request(rp)) => {
+                let req = &rp.request;
+                let mut req_text = format!("{} {}\n", req.method, req.url);
+                for (k, v) in &req.headers {
+                    req_text.push_str(&format!("{k}: {v}\n"));
+                }
+                if let Some(b) = &req.body {
+                    req_text.push_str(&format!("\n{b}\n"));
+                }
+                let resp_text = match &rp.state {
+                    RunState::Sending => "(still in flight — wait for it)".to_string(),
+                    RunState::Failed(e) => format!("transport error: {e}"),
+                    RunState::Done(r) => {
+                        let mut s = format!("{} {}\n", r.status, r.status_text);
+                        for (k, v) in &r.headers {
+                            s.push_str(&format!("{k}: {v}\n"));
+                        }
+                        let body: String = r.body.chars().take(4000).collect();
+                        s.push_str(&format!("\n{body}\n"));
+                        s
+                    }
+                };
+                if matches!(rp.state, RunState::Sending) {
+                    self.toast("wait for the response first");
+                    return;
+                }
+                format!(
+                    "{question}\n\n## Request\n```http\n{req_text}```\n\n## Response\n```\n{resp_text}```"
+                )
+            }
+            _ => {
+                self.toast("open a request pane first (http.send)");
+                return;
+            }
+        };
+        self.ask_ai("AI: ask about request", context);
+    }
+
     pub fn ai_debug_request(&mut self) {
         use crate::request_pane::RunState;
         let prompt = match self.active.and_then(|i| self.panes.get(i)) {

@@ -124,6 +124,23 @@ impl CookieJar {
         self.by_host.clear();
     }
 
+    /// Remove a single cookie by `(host, name)`. Returns true when
+    /// a cookie was actually removed. Drops the host entry entirely
+    /// when its last cookie is removed (keeps `total()` honest).
+    pub fn remove(&mut self, host: &str, name: &str) -> bool {
+        let host = host.to_lowercase();
+        let Some(entries) = self.by_host.get_mut(&host) else {
+            return false;
+        };
+        let pre = entries.len();
+        entries.retain(|(n, _)| n != name);
+        let removed = entries.len() < pre;
+        if entries.is_empty() {
+            self.by_host.remove(&host);
+        }
+        removed
+    }
+
     /// Total cookie count (across all hosts). For toast messages.
     pub fn total(&self) -> usize {
         self.by_host.values().map(|v| v.len()).sum()

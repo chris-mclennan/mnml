@@ -136,7 +136,7 @@ pub fn draw(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            "   (press `a` or click here to ask Claude about this response)".to_string(),
+            "   (click here to ask a custom question · `a` for quick debug)".to_string(),
             Style::default()
                 .fg(t.comment)
                 .bg(t.bg_dark)

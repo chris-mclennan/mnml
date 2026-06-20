@@ -175,6 +175,9 @@ pub enum PickerKind {
     /// `<name>=<value>` to clipboard so the user can paste it
     /// into a Cookie header. 2026-06-19 — cookie jar v1.
     Cookies,
+    /// `id` = `<host>\t<name>` (same as Cookies). Accept ⇒
+    /// remove that cookie from the jar + persist. 2026-06-20.
+    CookiesDelete,
     /// `id` = the header name. Accept ⇒ insert `<id>: ` at the
     /// active Request pane's Headers cursor.
     HttpHeader,
