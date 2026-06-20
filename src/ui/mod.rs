@@ -29,6 +29,7 @@ pub mod bufferline;
 pub mod cheatsheet_view;
 pub mod close_prompt;
 pub mod cmdline_bar;
+pub mod cmdline_popup_view;
 pub mod cmdline_history_view;
 // codebuilds_view moved to mnml-aws-codebuild.
 pub mod completion;
@@ -526,6 +527,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     // ── cmdline bar (below statusline) ──
     cmdline_bar::draw(frame, app, cmdline_bar_area);
+
+    // ── cmdline completion popup (floats UP from the cmdline bar
+    //     over the editor pane content while a `:` cmdline is open
+    //     and has ≥2 matches). 2026-06-19 — discoverability gold:
+    //     auto-shows on type so users don't have to know Tab cycles.
+    cmdline_popup_view::draw(frame, app, cmdline_bar_area);
 
     // ── overlays (picker / palette, then which-key) ──
     if app.picker.is_some() {

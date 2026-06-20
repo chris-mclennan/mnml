@@ -3747,6 +3747,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
+            // Click on a row in the cmdline completion popup →
+            // accept that match (writes the completion into the
+            // cmdline and bumps cmdline_popup_selected so subsequent
+            // Tabs continue from there). 2026-06-19 — discoverability
+            // gold: users can mouse-pick from the popup.
+            if let Some(&(_, idx)) = app
+                .rects
+                .cmdline_popup_items
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.cmdline_popup_accept(idx);
+                return;
+            }
             // Click on a Request pane Edit-view tab chip (Body /
             // Headers / Params / Vars / Source) → switch the
             // pane's edit_tab.

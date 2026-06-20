@@ -1246,14 +1246,48 @@ impl App {
     /// `:saveas` / `:source` / `:r`). Cycle state persists on
     /// `App.cmdline_complete_state`; any non-Tab keystroke that mutates the
     /// cmdline drops it (we check `last_shown` vs. current text on each Tab).
+    /// Mouse-click accept: jump to `idx` in the current cmdline
+    /// completion popup, rewrite the cmdline with the chosen
+    /// match. Companion to `cmdline_tab_complete` (which advances
+    /// idx by one). Re-uses the same compute path so behavior
+    /// stays consistent.
+    pub fn cmdline_popup_accept(&mut self, idx: usize) {
+        let Some(b) = self.active_editor_mut() else {
+            return;
+        };
+        let Some(line) = b.input.cmdline_get() else {
+            return;
+        };
+        // `cmdline_get` returns the line WITHOUT the leading `:` —
+        // the `:` is added by `pending_display`. Same shape that
+        // `compute_cmdline_completions_for_app` expects.
+        let Some(state) = compute_cmdline_completions_for_app(self, &line) else {
+            return;
+        };
+        if idx >= state.matches.len() {
+            return;
+        }
+        let new_line = format!("{}{}", state.head, &state.matches[idx]);
+        self.cmdline_popup_selected = idx;
+        if let Some(b) = self.active_editor_mut() {
+            b.input.cmdline_set(Some(new_line.clone()));
+        }
+        let mut stored = state;
+        stored.idx = idx;
+        stored.last_shown = new_line;
+        self.cmdline_complete_state = Some(stored);
+    }
+
     pub fn cmdline_tab_complete(&mut self) {
         let Some(b) = self.active_editor_mut() else {
             self.cmdline_complete_state = None;
+            self.cmdline_popup_selected = 0;
             return;
         };
         let Some(line) = b.input.cmdline_get() else {
             // cmdline is closed — drop any stale cycle state.
             self.cmdline_complete_state = None;
+            self.cmdline_popup_selected = 0;
             return;
         };
         // If the user edited the line since the last cycle, drop state.
@@ -1284,6 +1318,9 @@ impl App {
         // the handler reports it on the next Tab.
         let mut stored = new_state;
         stored.last_shown = new_line.clone();
+        // Mirror the cycle index into the popup-selected so the
+        // floating popup highlights the same row.
+        self.cmdline_popup_selected = stored.idx;
         // Write back to the handler.
         if let Some(b) = self.active_editor_mut() {
             b.input.cmdline_set(Some(new_line));

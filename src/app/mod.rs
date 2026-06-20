@@ -637,7 +637,7 @@ fn expand_mark_refs(line: &str, lookup: &dyn Fn(char) -> Option<usize>) -> Strin
 /// - FIRST word ⇒ match against [`crate::input::vim::EX_COMPLETION_NAMES`].
 /// - Trailing arg of a path-accepting command ⇒ workspace-rooted file/dir
 ///   lookup using the user's typed prefix.
-fn compute_cmdline_completions_for_app(app: &App, line: &str) -> Option<CmdlineCompleteState> {
+pub(crate) fn compute_cmdline_completions_for_app(app: &App, line: &str) -> Option<CmdlineCompleteState> {
     use crate::input::vim::EX_COMPLETION_NAMES;
     let split_at = line.rfind(char::is_whitespace).map(|i| i + 1).unwrap_or(0);
     let head = &line[..split_at];
@@ -1765,6 +1765,10 @@ pub struct PaneRects {
     /// (`:settings` / `:help` / …) without a keyboard chord. Set
     /// every frame by `cmdline_bar::draw`.
     pub cmdline_bar: Option<Rect>,
+    /// `(row_rect, idx_in_matches)` for each visible row in the
+    /// cmdline completion popup. Click sets selected idx + rewrites
+    /// cmdline + accepts.
+    pub cmdline_popup_items: Vec<(Rect, usize)>,
     pub statusline_mixr_chip: Option<Rect>,
     /// Play / pause control sitting to the LEFT of the track text
     /// when something's playing. Click is source-aware:
@@ -2411,6 +2415,11 @@ pub struct App {
     /// keystroke (handled by App::cmdline_tab_complete tracking the previous
     /// line text).
     pub cmdline_complete_state: Option<CmdlineCompleteState>,
+    /// Index of the highlighted row in the cmdline popup. Bumped by
+    /// Tab / Down / Up and clamped against the current match count
+    /// at render time. 2026-06-19 — paired with the floating popup
+    /// (see `cmdline_popup_view`).
+    pub cmdline_popup_selected: usize,
     /// Recent toasts (oldest first, capped at `MESSAGE_LOG_MAX`). Vim
     /// `:messages` shows them. Keeps a history beyond the live toast
     /// (which expires after `TOAST_TTL`).
@@ -3294,6 +3303,7 @@ impl App {
             closed_tab_layouts: Vec::new(),
             pending_rename_preview: None,
             cmdline_complete_state: None,
+            cmdline_popup_selected: 0,
             macro_buffer: std::collections::HashMap::new(),
             pending_macro_register: None,
             last_external_check: None,
