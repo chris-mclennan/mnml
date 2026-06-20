@@ -633,10 +633,20 @@ fn expand_mark_refs(line: &str, lookup: &dyn Fn(char) -> Option<usize>) -> Strin
     out
 }
 
-/// Compute Tab-completion candidates for the current `:` cmdline.
-/// - FIRST word ⇒ match against [`crate::input::vim::EX_COMPLETION_NAMES`].
-/// - Trailing arg of a path-accepting command ⇒ workspace-rooted file/dir
-///   lookup using the user's typed prefix.
+/// Compute completion candidates for the current `:` cmdline —
+/// used by both Tab-cycle and the floating popup. Single
+/// source of truth: previous shape duplicated the first-word
+/// logic in a stateless helper, which silently went stale when
+/// commands moved to the registry.
+///
+/// - FIRST word ⇒ merged matches from
+///   [`crate::input::vim::EX_COMPLETION_NAMES`] (hardcoded vim
+///   ex commands) AND every id in
+///   [`crate::command::registry`].
+/// - Trailing arg of `:b`/`:buffer` ⇒ open-buffer display names.
+/// - Trailing arg of `:colorscheme`/`:colo` ⇒ theme names.
+/// - Trailing arg of a path-accepting command ⇒ workspace-rooted
+///   file/dir lookup using the user's typed prefix.
 pub(crate) fn compute_cmdline_completions_for_app(app: &App, line: &str) -> Option<CmdlineCompleteState> {
     use crate::input::vim::EX_COMPLETION_NAMES;
     let split_at = line.rfind(char::is_whitespace).map(|i| i + 1).unwrap_or(0);

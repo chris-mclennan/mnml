@@ -1240,12 +1240,11 @@ impl App {
     /// Tab pressed on the `:` cmdline ⇒ cycle through completion candidates.
     /// First Tab swaps in the alphabetically-first match; subsequent Tabs
     /// cycle through the list. Candidates come from
-    /// [`crate::input::vim::EX_COMPLETION_NAMES`] for the FIRST word, and
-    /// from the workspace filesystem for trailing args of path-accepting
-    /// commands (`:e` / `:edit` / `:sp` / `:vsp` / `:tabnew` / `:badd` /
-    /// `:saveas` / `:source` / `:r`). Cycle state persists on
-    /// `App.cmdline_complete_state`; any non-Tab keystroke that mutates the
-    /// cmdline drops it (we check `last_shown` vs. current text on each Tab).
+    /// [`crate::app::compute_cmdline_completions_for_app`] — the single
+    /// source of truth shared with the floating popup. Cycle state
+    /// persists on `App.cmdline_complete_state`; any non-Tab keystroke
+    /// that mutates the cmdline drops it (we check `last_shown` vs.
+    /// current text on each Tab).
     /// Mouse-click accept: jump to `idx` in the current cmdline
     /// completion popup, rewrite the cmdline with the chosen
     /// match. Companion to `cmdline_tab_complete` (which advances
