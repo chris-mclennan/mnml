@@ -364,6 +364,32 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: cfg.ui.tree_width != d.ui.tree_width,
     }));
 
+    // 2026-06-20 — Editor.tab_width: 1..=12; step 1.
+    out.push(SettingItem::Number(NumberRow {
+        key: "editor.tab_width",
+        label: "Tab width",
+        value: cfg.editor.tab_width as i32,
+        min: 1,
+        max: 12,
+        step: 1,
+        default: d.editor.tab_width as i32,
+        unit: " cols",
+        modified: cfg.editor.tab_width != d.editor.tab_width,
+    }));
+
+    // UI.color_column: 0..=200; step 4. 0 = off.
+    out.push(SettingItem::Number(NumberRow {
+        key: "ui.color_column",
+        label: "Color column (0 = off)",
+        value: cfg.ui.color_column as i32,
+        min: 0,
+        max: 200,
+        step: 4,
+        default: d.ui.color_column as i32,
+        unit: "",
+        modified: cfg.ui.color_column != d.ui.color_column,
+    }));
+
     // Now-playing source — auto / mixr / macos.
     let npsrc_idx = match cfg.ui.now_playing_source.as_str() {
         "mixr" => 1,
@@ -674,6 +700,18 @@ pub fn apply_number_setting(cfg: &mut Config, key: &str, value: i32) -> bool {
             let new = value.max(0) as u16;
             let changed = cfg.ui.tree_width != new;
             cfg.ui.tree_width = new;
+            changed
+        }
+        "editor.tab_width" => {
+            let new = value.max(1) as usize;
+            let changed = cfg.editor.tab_width != new;
+            cfg.editor.tab_width = new;
+            changed
+        }
+        "ui.color_column" => {
+            let new = value.max(0) as usize;
+            let changed = cfg.ui.color_column != new;
+            cfg.ui.color_column = new;
             changed
         }
         _ => false,
