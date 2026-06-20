@@ -23,6 +23,7 @@ pub mod app;
 // from clipboard text; `cookies`: small cookie-jar helpers; `sse`:
 // minimal Server-Sent Events parser (Anthropic/OpenAI streams).
 pub mod auth;
+pub mod websocket;
 pub mod cookie_jar;
 pub mod cookies;
 pub mod jwt;

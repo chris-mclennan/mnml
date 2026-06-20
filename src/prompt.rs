@@ -96,6 +96,10 @@ pub enum PromptKind {
     HttpAuthBasic,
     /// Accept ⇒ replace `X-Api-Key` header value with typed.
     HttpAuthApiKey,
+    /// Accept ⇒ connect to the typed wss:// URL via tungstenite.
+    WsConnect,
+    /// Accept ⇒ send the typed message on the active WebSocket.
+    WsSendMessage,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into

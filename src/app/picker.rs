@@ -1232,6 +1232,14 @@ impl App {
                 let key = p.input.clone();
                 self.http_auth_set("X-Api-Key", &key);
             }
+            crate::prompt::PromptKind::WsConnect => {
+                let url = p.input.clone();
+                self.ws_connect_to(&url);
+            }
+            crate::prompt::PromptKind::WsSendMessage => {
+                let msg = p.input.clone();
+                self.ws_send_on_active(&msg);
+            }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();
                 if let Some(FsAction::NewFile { parent }) = self.pending_fs_action.take() {

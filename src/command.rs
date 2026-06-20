@@ -3111,6 +3111,31 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_save_response_prompt(),
         },
         Command {
+            id: "ws.connect",
+            title: "WebSocket: connect to a URL (native, persistent)",
+            group: "http",
+            // Prompts for a wss:// URL; connects via tungstenite
+            // on a background thread. Output streams into a
+            // [ws-<host>] scratch buffer; subsequent :ws.send
+            // commands push messages over the same connection.
+            keys: &[],
+            run: |app| app.ws_connect_prompt(),
+        },
+        Command {
+            id: "ws.send_message",
+            title: "WebSocket: send a message on the active connection",
+            group: "http",
+            keys: &[],
+            run: |app| app.ws_send_message_prompt(),
+        },
+        Command {
+            id: "ws.disconnect",
+            title: "WebSocket: close the active connection",
+            group: "http",
+            keys: &[],
+            run: |app| app.ws_disconnect(),
+        },
+        Command {
             id: "ws.send",
             title: "WebSocket: send the active .ws file via websocat",
             group: "http",

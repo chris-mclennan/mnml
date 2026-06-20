@@ -10,8 +10,20 @@ and the only thing missing is a session to do it in.
 **Status:** v1 (external `grpcurl` shell-out) **shipped** — see
 commit log for `:grpc.send`. Active .grpc JSON file shape:
 `{ server, method, plaintext?, headers?, message }`. Output lands
-in `[grpc-response]` scratch. Multi-day native `tonic` client
-still tabled — pick up when there's reason to.
+in `[grpc-response]` scratch.
+
+Native client (`tonic` + `prost` + `prost-reflect` for runtime
+descriptor parsing) genuinely tabled. Adds ~50 deps including
+build-time codegen tooling, and dynamic gRPC requires server-side
+reflection support which not all environments expose. Honest
+read: the shell-out covers what 90% of users want (they already
+have `grpcurl` on PATH for one-off gRPC calls); the native
+client doesn't add product value commensurate with the
+implementation complexity for an editor.
+
+Pick up if/when a real workflow needs sub-100ms gRPC dispatch
+(e.g. inline assertions during a bench run) or there's reason
+to ship mnml to environments without grpcurl.
 
 Why deferred: needs protocol-design discussion before writing code.
 gRPC is HTTP/2 + protobuf wire format. The natural mnml integration
@@ -37,11 +49,22 @@ Pick #1 to ship something, #2 if mnml's value-add justifies the dep
 churn. Discuss before coding.
 
 ### WebSocket support
-**Status:** v1 (external `websocat` shell-out, one-shot fire-and-
-receive) **shipped** — see commit log for `:ws.send`. Active .ws
-JSON file shape: `{ url, message, timeout_ms?, headers? }`. Output
-lands in `[ws-response]` scratch. Persistent / multi-round-trip
-streams via `Pane::Websocket` still tabled.
+**Status:** v1 (external `websocat` shell-out, one-shot
+fire-and-receive) **shipped** as `:ws.send`. Active .ws JSON
+file shape: `{ url, message, timeout_ms?, headers? }`. Output
+lands in `[ws-response]` scratch.
+
+**v2 (native persistent connection) also shipped**: `:ws.connect`
+prompts for a wss:// URL, spawns a worker thread on `tungstenite`
+(already in tree for CDP). Incoming messages stream into a
+`[ws-<host>]` scratch buffer with `← text` per line; outgoing
+appear with `→ text`. `:ws.send_message` prompts for a message
+to push over the live connection; `:ws.disconnect` closes.
+
+Single connection per App for v1 (multi-connection would need a
+proper `Pane::Websocket` variant + the ~10 match-arm updates;
+queued). Subprotocol selection + ping-interval tuning + auto-
+reconnect also queued for v2.
 
 Why deferred: needs protocol-design discussion before writing code.
 Possible shapes:
