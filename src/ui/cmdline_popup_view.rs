@@ -92,10 +92,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
     };
 
     let t = theme::cur();
-    let block_style = Style::default().fg(t.fg).bg(t.bg_dark);
+    // 2026-06-19 — earlier bg/border colors matched the editor
+    // pane background too closely, making the popup invisible
+    // against the splash screen. Now uses bg_darker (one step
+    // darker than bg_dark, the editor pane bg) and a yellow
+    // border (matching the cmdline_bar's yellow `:foo▏` text)
+    // so the popup visually clusters with the cmdline.
+    let block_style = Style::default().fg(t.fg).bg(t.bg_darker);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(t.bg3).bg(t.bg_dark))
+        .border_style(
+            Style::default()
+                .fg(t.yellow)
+                .bg(t.bg_darker)
+                .add_modifier(Modifier::BOLD),
+        )
         .style(block_style);
     // Clear underlying cells then paint the bordered box.
     frame.render_widget(Clear, area);
@@ -127,7 +138,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
                 .bg(t.bg3)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(t.comment).bg(t.bg_dark)
+            Style::default().fg(t.comment).bg(t.bg_darker)
         };
         let marker = if is_sel { "▸ " } else { "  " };
         // Truncate to inner width.
@@ -145,7 +156,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
         };
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(truncated, style)))
-                .style(Style::default().bg(t.bg_dark)),
+                .style(Style::default().bg(t.bg_darker)),
             row_rect,
         );
         app.rects.cmdline_popup_items.push((row_rect, idx));
@@ -168,9 +179,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 truncated,
-                Style::default().fg(t.bg3).bg(t.bg_dark),
+                Style::default().fg(t.bg3).bg(t.bg_darker),
             )))
-            .style(Style::default().bg(t.bg_dark)),
+            .style(Style::default().bg(t.bg_darker)),
             row_rect,
         );
     }
