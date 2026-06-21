@@ -2075,6 +2075,76 @@ impl App {
     }
 
     /// Open a fuzzy picker over local + remote branches; accept ⇒ checkout.
+    /// `:git.merge` — picker over local branches (current excluded).
+    /// Accept fires `git merge <name>` into the current branch.
+    pub fn open_merge_branch_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let cur = crate::git::branch::current(self.active_repo_path());
+        let mut branches = crate::git::branch::local_branches(self.active_repo_path());
+        if let Some(c) = cur.as_ref() {
+            branches.retain(|b| b != c);
+        }
+        if branches.is_empty() {
+            self.toast("no other branches to merge");
+            return;
+        }
+        let title = match cur.as_ref() {
+            Some(c) => format!("Merge into {c}"),
+            None => "Merge into current".to_string(),
+        };
+        let items: Vec<PickerItem> = branches
+            .iter()
+            .map(|b| PickerItem::new(b.clone(), b.clone(), "merge"))
+            .collect();
+        self.open_picker(Picker::new(PickerKind::GitMergeInto, title, items));
+    }
+
+    /// `:git.rebase` — picker over local + remote branches.
+    /// Accept fires `git rebase <name>` of the current branch onto
+    /// the picked one.
+    pub fn open_rebase_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let cur = crate::git::branch::current(self.active_repo_path());
+        let mut items: Vec<PickerItem> = Vec::new();
+        for b in crate::git::branch::local_branches(self.active_repo_path()) {
+            if Some(&b) == cur.as_ref() {
+                continue;
+            }
+            items.push(PickerItem::new(b.clone(), b, "local"));
+        }
+        for b in crate::git::branch::remote_branches(self.active_repo_path()) {
+            items.push(PickerItem::new(b.clone(), b, "remote"));
+        }
+        if items.is_empty() {
+            self.toast("no branches to rebase onto");
+            return;
+        }
+        let title = match cur.as_ref() {
+            Some(c) => format!("Rebase {c} onto…"),
+            None => "Rebase onto…".to_string(),
+        };
+        self.open_picker(Picker::new(PickerKind::GitRebaseOnto, title, items));
+    }
+
+    /// Accept handlers — called by the picker dispatcher.
+    pub fn git_merge_branch(&mut self, name: String) {
+        let repo = self.active_repo_path().to_path_buf();
+        self.toast(format!("merging {name}…"));
+        match crate::git::branch::merge(&repo, &name) {
+            Ok(()) => self.toast(format!("merged {name}")),
+            Err(e) => self.toast(format!("merge {name}: {e}")),
+        }
+    }
+
+    pub fn git_rebase_onto(&mut self, name: String) {
+        let repo = self.active_repo_path().to_path_buf();
+        self.toast(format!("rebasing onto {name}…"));
+        match crate::git::branch::rebase(&repo, &name) {
+            Ok(()) => self.toast(format!("rebased onto {name}")),
+            Err(e) => self.toast(format!("rebase onto {name}: {e}")),
+        }
+    }
+
     /// `:git.delete_branch` — picker over local branches. Accept
     /// runs `git branch -D <name>` (force delete) after a confirm
     /// prompt. The current branch is excluded from the list since

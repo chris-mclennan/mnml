@@ -194,6 +194,13 @@ pub enum PickerKind {
     /// `id` = local branch name. Accept ⇒ open a confirm prompt
     /// before running `git branch -D`. 2026-06-21 — git polish.
     GitDeleteBranch,
+    /// `id` = local branch name. Accept ⇒ `git merge <name>` into
+    /// the current branch. Surfaces conflicts as a toast; the user
+    /// resolves via the editor.
+    GitMergeInto,
+    /// `id` = branch name. Accept ⇒ `git rebase <name>` of the
+    /// current branch onto the picked one.
+    GitRebaseOnto,
 }
 
 #[derive(Debug, Clone)]

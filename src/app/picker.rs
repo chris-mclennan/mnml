@@ -686,6 +686,14 @@ impl App {
             PickerKind::GitDeleteBranch => {
                 self.git_delete_branch_confirm(item.id.clone());
             }
+            PickerKind::GitMergeInto => {
+                self.git_merge_branch(item.id.clone());
+            }
+            PickerKind::GitRebaseOnto => {
+                // Remote branch ids come through as `origin/main`
+                // etc. — git rebase takes those literally.
+                self.git_rebase_onto(item.id.clone());
+            }
             PickerKind::CookiesDelete => {
                 if let Some((host, name)) = item.id.split_once('\t') {
                     let removed = {

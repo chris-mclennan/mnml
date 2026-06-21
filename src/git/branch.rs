@@ -175,6 +175,18 @@ pub fn create_from(workspace: &Path, name: &str, source: &str) -> Result<(), Str
 pub fn delete_branch(workspace: &Path, name: &str) -> Result<(), String> {
     run(workspace, &["branch", "-D", "--", name])
 }
+/// `git merge <branch>` — merge a branch into the current.
+/// Surfaces git's own error message (conflicts, untracked
+/// overwrite, etc.) verbatim.
+pub fn merge(workspace: &Path, branch: &str) -> Result<(), String> {
+    run(workspace, &["merge", "--no-edit", "--", branch])
+}
+
+/// `git rebase <branch>` — rebase the current branch onto another.
+pub fn rebase(workspace: &Path, branch: &str) -> Result<(), String> {
+    run(workspace, &["rebase", "--", branch])
+}
+
 /// `git worktree remove <path>` — drop a linked worktree. Same confirm-gating
 /// principle as branch delete.
 pub fn worktree_remove(workspace: &Path, path: &Path) -> Result<(), String> {

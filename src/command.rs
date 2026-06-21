@@ -2450,6 +2450,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_branch_picker(),
         },
         Command {
+            id: "git.merge",
+            title: "Git: merge a branch into the current (--no-edit)",
+            group: "git",
+            // Picker over local branches (current excluded since git
+            // refuses to merge into itself). Accept fires
+            // `git merge --no-edit <name>` — conflicts toast as the
+            // git error verbatim; user resolves via the editor.
+            keys: &[],
+            run: |app| app.open_merge_branch_picker(),
+        },
+        Command {
+            id: "git.rebase",
+            title: "Git: rebase the current branch onto another (local or remote)",
+            group: "git",
+            // Picker over local + remote branches. Accept fires
+            // `git rebase <name>` — same conflict-handling
+            // behavior as merge.
+            keys: &[],
+            run: |app| app.open_rebase_picker(),
+        },
+        Command {
             id: "git.delete_branch",
             title: "Git: delete a local branch (picker, force -D, confirm prompt)",
             group: "git",
