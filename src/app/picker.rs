@@ -1287,6 +1287,7 @@ impl App {
                     self.claude_agents_kill_confirmed();
                 } else {
                     self.pending_kill_pid = None;
+                    self.pending_kill_batch.clear();
                     self.toast("kill cancelled (type 'kill' exactly to confirm)");
                 }
             }

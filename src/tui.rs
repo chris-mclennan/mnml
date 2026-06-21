@@ -1812,6 +1812,25 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Char('K') => app.claude_agents_action(ClaudeAgentsAction::KillPrompt),
+            KeyCode::Char(' ') => {
+                let n = if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    Some(p.toggle_multi_selected())
+                } else {
+                    None
+                };
+                if let Some(n) = n {
+                    if n == 0 {
+                        app.toast("multi-select cleared");
+                    } else {
+                        app.toast(format!("{n} selected (K batch-kills all)"));
+                    }
+                }
+            }
+            KeyCode::Char('g') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.cycle_group_by();
+                }
+            }
             KeyCode::Char('o') => app.claude_agents_action(ClaudeAgentsAction::ResumeSession),
             KeyCode::Char('p') => {
                 let new_state = if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {

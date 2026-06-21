@@ -3118,6 +3118,10 @@ pub struct App {
     /// confirm prompt. Set when the user presses `K` on a row;
     /// resolved on prompt accept.
     pub pending_kill_pid: Option<u32>,
+    /// Pending batch-kill list — `(session_id, pid)` pairs set when
+    /// the user presses `K` while rows are multi-selected. Resolved
+    /// on prompt accept the same way as `pending_kill_pid`.
+    pub pending_kill_batch: Vec<(String, u32)>,
     /// 2026-06-20 — theme picker live preview. Snapshot of the
     /// active theme name when the Themes picker opens; restored on
     /// Esc / cleared on Enter. Up/Down on the picker applies the
@@ -3578,6 +3582,7 @@ impl App {
             http_chain_chan: None,
             http_chain_in_flight: false,
             pending_kill_pid: None,
+            pending_kill_batch: Vec::new(),
             theme_preview_restore: None,
             pending_pr_desc_job: None,
             ai_chan: None,
@@ -8509,6 +8514,25 @@ impl App {
                 }
             }
             ClaudeAgentsAction::KillPrompt => {
+                // Batch mode: if any rows are multi-selected, kill
+                // them all (after one confirm prompt).
+                let batch: Vec<(String, u32)> = if let Some(Pane::ClaudeAgents(pane)) =
+                    self.panes.get(i)
+                {
+                    pane.multi_selected_pids()
+                } else {
+                    Vec::new()
+                };
+                if !batch.is_empty() {
+                    self.pending_kill_batch = batch.clone();
+                    self.pending_kill_pid = None;
+                    let n = batch.len();
+                    self.prompt = Some(crate::prompt::Prompt::new(
+                        crate::prompt::PromptKind::ClaudeKillConfirm,
+                        format!("type 'kill' to SIGTERM {n} selected session(s)"),
+                    ));
+                    return;
+                }
                 let Some(pid) = row.pid else {
                     self.toast("no PID — session already ended");
                     return;
@@ -8558,10 +8582,41 @@ impl App {
         }
     }
 
-    /// Fire SIGTERM at `pid`. Used by the
-    /// `PromptKind::ClaudeKillConfirm` accept path. Best-effort —
-    /// no-op when the OS rejects the signal or `kill` isn't on PATH.
+    /// Fire SIGTERM at the pending kill targets. Used by the
+    /// `PromptKind::ClaudeKillConfirm` accept path. Handles both
+    /// single-PID (`pending_kill_pid`) and batch
+    /// (`pending_kill_batch`) targets.
     pub fn claude_agents_kill_confirmed(&mut self) {
+        if !self.pending_kill_batch.is_empty() {
+            let batch = std::mem::take(&mut self.pending_kill_batch);
+            let mut killed = 0usize;
+            let mut failed = 0usize;
+            let mut killed_sids: Vec<String> = Vec::new();
+            for (sid, pid) in &batch {
+                let out = std::process::Command::new("kill")
+                    .arg("-TERM")
+                    .arg(pid.to_string())
+                    .output();
+                match out {
+                    Ok(o) if o.status.success() => {
+                        killed += 1;
+                        killed_sids.push(sid.clone());
+                    }
+                    _ => failed += 1,
+                }
+            }
+            // Drop the killed sids from the multi-select set.
+            if let Some(i) = self.active
+                && let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i)
+            {
+                for sid in &killed_sids {
+                    p.multi_selected.remove(sid);
+                }
+            }
+            self.toast(format!("SIGTERM → {killed} killed, {failed} failed"));
+            self.refresh_claude_agents_pane();
+            return;
+        }
         let Some(pid) = self.pending_kill_pid.take() else {
             return;
         };
@@ -8579,7 +8634,6 @@ impl App {
             }
             Err(e) => self.toast(format!("kill {pid}: {e}")),
         }
-        // Refresh so the row's state updates.
         self.refresh_claude_agents_pane();
     }
 

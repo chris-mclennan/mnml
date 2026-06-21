@@ -137,6 +137,11 @@ pub struct AgentRow {
     /// hasn't gotten a matching tool_result back yet. Lower bound;
     /// useful as a "waiting on you to confirm" badge counter.
     pub pending_tool_uses: usize,
+    /// Tokens/min, derived by diff'ing this row's `tokens` against
+    /// the previous refresh sample (`token_samples` on the pane).
+    /// `None` when there's no prior sample yet, or when the rate is
+    /// effectively zero. Only populated for live sessions.
+    pub tokens_per_min: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,6 +256,43 @@ pub struct ClaudeAgentsPane {
     /// toasts (`prior_state_snapshot` is empty on first build to
     /// avoid spamming the user on dashboard open).
     pub prior_state_snapshot: std::collections::HashMap<String, (AgentState, usize)>,
+    /// `(session_id → (sample_time, tokens))` — used to derive
+    /// `tokens_per_min` between refreshes. Decays naturally as
+    /// sessions roll off.
+    pub token_samples: std::collections::HashMap<String, (SystemTime, u64)>,
+    /// Multi-select set — `space` toggles a row's session id into
+    /// this set; `K` kills every row in the set (falling back to
+    /// the focused row when the set is empty).
+    pub multi_selected: std::collections::HashSet<String>,
+    /// Grouping mode for section headers in the row list. `g`
+    /// cycles between source (current default) and workspace.
+    pub group_by: GroupBy,
+}
+
+/// Section grouping for the row list — what the colored section
+/// headers between row blocks indicate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupBy {
+    /// One section per `AgentSource` (Claude / Codex). v1 default.
+    Source,
+    /// One section per workspace (cwd basename). Useful when you've
+    /// got several projects with multiple sessions each.
+    Workspace,
+}
+
+impl GroupBy {
+    pub fn label(self) -> &'static str {
+        match self {
+            GroupBy::Source => "source",
+            GroupBy::Workspace => "workspace",
+        }
+    }
+    pub fn cycle(self) -> Self {
+        match self {
+            GroupBy::Source => GroupBy::Workspace,
+            GroupBy::Workspace => GroupBy::Source,
+        }
+    }
 }
 
 impl ClaudeAgentsPane {
@@ -280,7 +322,42 @@ impl ClaudeAgentsPane {
             show_help: false,
             last_live_tail: SystemTime::now(),
             prior_state_snapshot: std::collections::HashMap::new(),
+            token_samples: std::collections::HashMap::new(),
+            multi_selected: std::collections::HashSet::new(),
+            group_by: GroupBy::Source,
         }
+    }
+
+    /// Walk `self.rows`, compute `tokens_per_min` from the
+    /// `token_samples` cache. Updates the cache with the latest
+    /// sample for each row. Called from `refresh_in_place` after
+    /// row data is settled, and from `live_tail_selected` for the
+    /// single row.
+    pub fn recompute_token_rates(&mut self) {
+        let now = SystemTime::now();
+        let mut new_samples: std::collections::HashMap<String, (SystemTime, u64)> =
+            std::collections::HashMap::new();
+        for row in &mut self.rows {
+            // Only live sessions get a rate.
+            if !matches!(row.state, AgentState::Streaming | AgentState::ToolCall) {
+                row.tokens_per_min = None;
+                new_samples.insert(row.session_id.clone(), (now, row.tokens));
+                continue;
+            }
+            if let Some(&(prev_ts, prev_tokens)) = self.token_samples.get(&row.session_id) {
+                let dt = now.duration_since(prev_ts).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+                let dtok = row.tokens.saturating_sub(prev_tokens);
+                if dt > 0.5 && dtok > 0 {
+                    row.tokens_per_min = Some((dtok as f64) * 60.0 / dt);
+                } else {
+                    row.tokens_per_min = None;
+                }
+            } else {
+                row.tokens_per_min = None;
+            }
+            new_samples.insert(row.session_id.clone(), (now, row.tokens));
+        }
+        self.token_samples = new_samples;
     }
 
     /// Re-tail JUST the selected row's transcript (if it's a live
@@ -355,6 +432,8 @@ impl ClaudeAgentsPane {
                 row.last_activity = mtime;
             }
         }
+        // Update rate from latest sample.
+        self.recompute_token_rates();
         self.last_live_tail = SystemTime::now();
         true
     }
@@ -431,6 +510,7 @@ impl ClaudeAgentsPane {
         });
         self.rows = rows;
         self.built_at = SystemTime::now();
+        self.recompute_token_rates();
         if let Some(sid) = prior_sid
             && let Some(new_idx) = self
                 .visible_indices()
@@ -523,6 +603,33 @@ impl ClaudeAgentsPane {
 
     pub fn cycle_detail(&mut self) {
         self.detail = self.detail.cycle();
+    }
+
+    pub fn cycle_group_by(&mut self) {
+        self.group_by = self.group_by.cycle();
+    }
+
+    /// Toggle the focused row's session id into `multi_selected`.
+    /// Returns the new size of the set, for toast messages.
+    pub fn toggle_multi_selected(&mut self) -> usize {
+        if let Some(sid) = self.selected_row().map(|r| r.session_id.clone()) {
+            if self.multi_selected.contains(&sid) {
+                self.multi_selected.remove(&sid);
+            } else {
+                self.multi_selected.insert(sid);
+            }
+        }
+        self.multi_selected.len()
+    }
+
+    /// Return the PIDs of all sessions in `multi_selected` that
+    /// actually have a PID (live ones). Used by the batch-kill path.
+    pub fn multi_selected_pids(&self) -> Vec<(String, u32)> {
+        self.rows
+            .iter()
+            .filter(|r| self.multi_selected.contains(&r.session_id))
+            .filter_map(|r| r.pid.map(|p| (r.session_id.clone(), p)))
+            .collect()
     }
 }
 
@@ -658,6 +765,7 @@ fn collect_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
                 recent_files: stats.recent_files,
                 recent_subagents: stats.recent_subagents,
                 pending_tool_uses: stats.pending_tool_uses,
+                tokens_per_min: None,
             });
         }
     }
@@ -751,6 +859,7 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
                 recent_files: Vec::new(),
                 recent_subagents: Vec::new(),
                 pending_tool_uses: 0,
+                tokens_per_min: None,
             });
         }
     }
@@ -797,6 +906,7 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
             recent_files: Vec::new(),
             recent_subagents: Vec::new(),
             pending_tool_uses: 0,
+            tokens_per_min: None,
         });
     }
 
