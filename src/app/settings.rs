@@ -33,6 +33,11 @@ pub struct SettingsOverlayState {
     /// mode — printable keys append to `buffer`, Backspace removes,
     /// Enter commits, Esc cancels (restores `pre_edit_value`).
     pub text_edit: Option<TextEditState>,
+    /// Raw text of `<workspace>/.mnml/config.toml` at open time, or `None`
+    /// if the file didn't exist. Esc/cancel restores the workspace file to
+    /// this snapshot (undoing the live per-setting disk writes); `None` ⇒
+    /// the file is deleted on cancel if editing created it.
+    pub original_workspace_file: Option<String>,
 }
 
 /// Captured state for the active text-edit on a Text/Color row.
@@ -50,11 +55,14 @@ pub struct TextEditState {
 }
 
 impl SettingsOverlayState {
-    pub fn open(cfg: &Config) -> Self {
+    pub fn open(cfg: &Config, workspace: &std::path::Path) -> Self {
+        let original_workspace_file =
+            std::fs::read_to_string(crate::config::workspace_config_path(workspace)).ok();
         Self {
             original: cfg.clone(),
             selected_row: 0,
             text_edit: None,
+            original_workspace_file,
         }
     }
 }
@@ -758,13 +766,107 @@ pub fn apply_text_setting(cfg: &mut Config, key: &str, value: &str) -> bool {
     }
 }
 
+/// Map a settings-overlay `key` to the `(toml_section, toml_key, value_toml)`
+/// line(s) that persist its CURRENT value into `<workspace>/.mnml/config.toml`.
+/// Reads the already-applied value off `cfg`. Most keys map to one line; the
+/// combined `ui.line_numbers` row maps to two underlying fields.
+///
+/// `startup.default_workspace` returns empty — "which folder to open" is
+/// inherently global (persisted to `~/.config/mnml/config.toml` via
+/// [`crate::config::persist_default_workspace`]), not a per-project override.
+/// Unknown keys return empty (no-op).
+fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'static str, String)> {
+    let q = crate::config::toml_quote;
+    let b = |v: bool| v.to_string();
+    match key {
+        // ── ui (bool) ──
+        "ui.line_numbers" => vec![
+            (
+                "ui",
+                "relative_line_numbers",
+                b(cfg.ui.relative_line_numbers),
+            ),
+            ("ui", "line_numbers", b(cfg.ui.line_numbers)),
+        ],
+        "ui.cursor_line" => vec![("ui", "cursor_line", b(cfg.ui.cursor_line))],
+        "ui.scrollbar" => vec![("ui", "scrollbar", b(cfg.ui.scrollbar))],
+        "ui.syntax" => vec![("ui", "syntax", b(cfg.ui.syntax))],
+        "ui.show_whitespace" => vec![("ui", "show_whitespace", b(cfg.ui.show_whitespace))],
+        "ui.bracket_rainbow" => vec![("ui", "bracket_rainbow", b(cfg.ui.bracket_rainbow))],
+        "ui.highlight_trailing_ws" => vec![(
+            "ui",
+            "highlight_trailing_ws",
+            b(cfg.ui.highlight_trailing_ws),
+        )],
+        "ui.clock" => vec![("ui", "clock", b(cfg.ui.clock))],
+        "ui.highlight_word_under_cursor" => vec![(
+            "ui",
+            "highlight_word_under_cursor",
+            b(cfg.ui.highlight_word_under_cursor),
+        )],
+        "ui.wrap" => vec![("ui", "wrap", b(cfg.ui.wrap))],
+        "ui.sticky_context" => vec![("ui", "sticky_context", b(cfg.ui.sticky_context))],
+        "ui.render_markdown" => vec![("ui", "render_markdown", b(cfg.ui.render_markdown))],
+        "ui.auto_md_preview" => vec![("ui", "auto_md_preview", b(cfg.ui.auto_md_preview))],
+        // ── ui (string) ──
+        "ui.picker_position" => vec![("ui", "picker_position", q(&cfg.ui.picker_position))],
+        "ui.now_playing_source" => {
+            vec![("ui", "now_playing_source", q(&cfg.ui.now_playing_source))]
+        }
+        "ui.preferred_music_app" => {
+            vec![("ui", "preferred_music_app", q(&cfg.ui.preferred_music_app))]
+        }
+        "ui.theme" => vec![("ui", "theme", q(&cfg.ui.theme))],
+        "ui.cmdline_popup_border_color" => vec![(
+            "ui",
+            "cmdline_popup_border_color",
+            q(&cfg.ui.cmdline_popup_border_color),
+        )],
+        // ── ui (int) ──
+        "ui.scrolloff" => vec![("ui", "scrolloff", cfg.ui.scrolloff.to_string())],
+        "ui.sidescrolloff" => vec![("ui", "sidescrolloff", cfg.ui.sidescrolloff.to_string())],
+        "ui.tree_width" => vec![("ui", "tree_width", cfg.ui.tree_width.to_string())],
+        "ui.color_column" => vec![("ui", "color_column", cfg.ui.color_column.to_string())],
+        // ── editor ──
+        "editor.input_style" => vec![("editor", "input_style", q(&cfg.editor.input_style))],
+        "editor.wheel_moves_cursor" => vec![(
+            "editor",
+            "wheel_moves_cursor",
+            q(&cfg.editor.wheel_moves_cursor),
+        )],
+        "editor.tab_width" => vec![("editor", "tab_width", cfg.editor.tab_width.to_string())],
+        "editor.trim_trailing_ws_on_save" => vec![(
+            "editor",
+            "trim_trailing_ws_on_save",
+            b(cfg.editor.trim_trailing_ws_on_save),
+        )],
+        "editor.auto_pair" => vec![("editor", "auto_pair", b(cfg.editor.auto_pair))],
+        "editor.auto_indent" => vec![("editor", "auto_indent", b(cfg.editor.auto_indent))],
+        "editor.format_on_save" => {
+            vec![("editor", "format_on_save", b(cfg.editor.format_on_save))]
+        }
+        "editor.inlay_hints" => vec![("editor", "inlay_hints", b(cfg.editor.inlay_hints))],
+        "editor.code_lens" => vec![("editor", "code_lens", b(cfg.editor.code_lens))],
+        "editor.breadcrumb" => vec![("editor", "breadcrumb", b(cfg.editor.breadcrumb))],
+        // ── browser / session ──
+        "browser.autocapture_to_log" => vec![(
+            "browser",
+            "autocapture_to_log",
+            b(cfg.browser.autocapture_to_log),
+        )],
+        "session.restore" => vec![("session", "restore", b(cfg.session.restore))],
+        // Global / unknown — handled elsewhere or not persisted here.
+        _ => Vec::new(),
+    }
+}
+
 impl App {
     /// Open the settings overlay. Snapshots the current config for
     /// revert-on-cancel. Idempotent — re-opening replaces the snapshot
     /// (so a second `view.settings` from inside the overlay would
     /// "commit" the current state as the new baseline).
     pub fn open_settings_overlay(&mut self) {
-        self.settings_overlay = Some(SettingsOverlayState::open(&self.config));
+        self.settings_overlay = Some(SettingsOverlayState::open(&self.config, &self.workspace));
     }
 
     /// Close the settings overlay, keeping all current changes (the
@@ -792,10 +894,44 @@ impl App {
     }
 
     /// Close the settings overlay, reverting the live config back to
-    /// the snapshot taken on open. The Esc / cancel path.
+    /// the snapshot taken on open. The Esc / cancel path. Also restores
+    /// `<workspace>/.mnml/config.toml` to its pre-open state, undoing the
+    /// live per-setting disk writes made during this session.
     pub fn close_settings_overlay_cancel(&mut self) {
         if let Some(state) = self.settings_overlay.take() {
             self.config = state.original;
+            let path = crate::config::workspace_config_path(&self.workspace);
+            let restore = match &state.original_workspace_file {
+                // Existed at open — write the snapshot back.
+                Some(text) => std::fs::write(&path, text).err().map(|e| e.to_string()),
+                // Didn't exist at open — remove it if editing created it.
+                None => {
+                    if path.exists() {
+                        std::fs::remove_file(&path).err().map(|e| e.to_string())
+                    } else {
+                        None
+                    }
+                }
+            };
+            if let Some(e) = restore {
+                self.toast(format!("settings: revert of workspace file failed: {e}"));
+            }
+        }
+    }
+
+    /// Persist setting `key`'s current value to `<workspace>/.mnml/config.toml`
+    /// (the checked-into-the-repo overrides file). Best-effort — a write
+    /// failure toasts but the in-memory change already applied. No-op for keys
+    /// that aren't workspace-persisted (e.g. `startup.default_workspace`, which
+    /// is global). Call only after the apply reported the value changed.
+    fn persist_setting_to_workspace(&mut self, key: &str) {
+        for (section, toml_key, value) in workspace_persist_lines(&self.config, key) {
+            if let Err(e) =
+                crate::config::persist_workspace_setting(&self.workspace, section, toml_key, &value)
+            {
+                self.toast(format!("settings: saved in-memory (persist failed: {e})"));
+                break;
+            }
         }
     }
 
@@ -834,6 +970,9 @@ impl App {
         let Some(row) = rows.get(state.selected_row) else {
             return;
         };
+        // When an apply changes the value, capture the key so we can persist
+        // it to the workspace file once the read-borrows above are released.
+        let mut persist_key: Option<&'static str> = None;
         match row {
             SettingItem::Row(r) => {
                 if r.key == RESET_ALL_KEY {
@@ -845,13 +984,17 @@ impl App {
                 let n = r.options.len() as isize;
                 let new_idx = (r.current_idx as isize + delta).rem_euclid(n) as usize;
                 let key = r.key;
-                apply_setting(&mut self.config, key, new_idx);
+                if apply_setting(&mut self.config, key, new_idx) {
+                    persist_key = Some(key);
+                }
             }
             SettingItem::Number(n) => {
                 let new_value = (n.value as isize + (delta * n.step as isize))
                     .clamp(n.min as isize, n.max as isize) as i32;
                 let key = n.key;
-                apply_number_setting(&mut self.config, key, new_value);
+                if apply_number_setting(&mut self.config, key, new_value) {
+                    persist_key = Some(key);
+                }
             }
             // Text + Color rows are display-only in v1 of v2-row-kinds.
             // ←/→ is a no-op; the user edits the value in TOML for now.
@@ -859,6 +1002,9 @@ impl App {
             // machine (v2.x follow-up).
             SettingItem::Text(_) | SettingItem::Color(_) => {}
             SettingItem::Section(_) => {}
+        }
+        if let Some(key) = persist_key {
+            self.persist_setting_to_workspace(key);
         }
     }
 
@@ -1042,22 +1188,30 @@ impl App {
         let Some(state) = self.settings_overlay.as_mut() else {
             return;
         };
+        let edited_key = state.text_edit.as_ref().map(|e| e.key);
         state.text_edit = None;
-        // Persist disk-backed Text settings now (currently just
-        // default_workspace). Other fields are in-memory only.
+        // `startup.default_workspace` is global — persist to
+        // `~/.config/mnml/config.toml` (its existing home), and rebaseline the
+        // snapshot so a later Esc doesn't appear to revert a committed global
+        // change.
         let original_dws = state.original.default_workspace.clone();
         let current_dws = self.config.default_workspace.clone();
         if original_dws != current_dws {
             match crate::config::persist_default_workspace(current_dws.as_deref()) {
                 Ok(path) => {
-                    // Rebaseline state.original so a subsequent Esc
-                    // doesn't appear to revert what we just wrote
-                    // to disk. The change is committed.
                     state.original.default_workspace = current_dws.clone();
                     self.toast(format!("settings: saved → {}", path.display()));
                 }
                 Err(e) => self.toast(format!("settings: persist failed: {e}")),
             }
+        }
+        // Other Text rows (theme, cmdline border color) persist to the
+        // per-workspace file like the discrete rows. Esc still reverts them
+        // via the workspace-file snapshot restore.
+        if let Some(key) = edited_key
+            && key != "startup.default_workspace"
+        {
+            self.persist_setting_to_workspace(key);
         }
     }
 
@@ -1095,20 +1249,18 @@ impl App {
         let default_cfg = Config::default();
         let default_items = build_settings(&default_cfg);
         let default_row = default_items.iter().find(|i| i.row_key() == Some(key));
-        match default_row {
-            Some(SettingItem::Row(d)) => {
-                apply_setting(&mut self.config, key, d.current_idx);
-            }
-            Some(SettingItem::Number(d)) => {
-                apply_number_setting(&mut self.config, key, d.value);
-            }
-            Some(SettingItem::Text(d)) => {
-                apply_text_setting(&mut self.config, key, &d.value);
-            }
-            Some(SettingItem::Color(d)) => {
-                apply_text_setting(&mut self.config, key, &d.value);
-            }
-            _ => {}
+        let changed = match default_row {
+            Some(SettingItem::Row(d)) => apply_setting(&mut self.config, key, d.current_idx),
+            Some(SettingItem::Number(d)) => apply_number_setting(&mut self.config, key, d.value),
+            Some(SettingItem::Text(d)) => apply_text_setting(&mut self.config, key, &d.value),
+            Some(SettingItem::Color(d)) => apply_text_setting(&mut self.config, key, &d.value),
+            _ => false,
+        };
+        if changed {
+            // Reset writes the default as an explicit override into the
+            // workspace file (the per-project intent). `startup.*` /
+            // unknown keys are no-op'd by `workspace_persist_lines`.
+            self.persist_setting_to_workspace(key);
         }
     }
 }
@@ -1375,5 +1527,97 @@ mod tests {
         apply_setting(&mut app.config, "ui.cursor_line", 0); // on
         app.close_settings_overlay_save();
         assert!(app.config.ui.cursor_line, "save path keeps the change");
+    }
+
+    // ── workspace-config persistence ──────────────────────────────────
+
+    fn focus_row(app: &mut App, key: &str) {
+        let idx = build_settings(&app.config)
+            .iter()
+            .filter(|i| i.is_row())
+            .position(|i| i.row_key() == Some(key))
+            .expect("row exists");
+        if let Some(s) = app.settings_overlay.as_mut() {
+            s.selected_row = idx;
+        }
+    }
+
+    #[test]
+    fn adjust_persists_discrete_to_workspace_file() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        let mut app = App::new(ws.clone(), Config::default()).unwrap();
+        app.open_settings_overlay();
+        focus_row(&mut app, "ui.cursor_line");
+        app.settings_adjust_value(1);
+        let path = ws.join(".mnml").join("config.toml");
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("[ui]"), "section written: {body}");
+        assert!(
+            body.contains(&format!("cursor_line = {}", app.config.ui.cursor_line)),
+            "value written: {body}"
+        );
+        // Re-adjusting upserts in place — no duplicate lines accumulate.
+        app.settings_adjust_value(1);
+        app.settings_adjust_value(1);
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            body.matches("cursor_line = ").count(),
+            1,
+            "no dupes: {body}"
+        );
+    }
+
+    #[test]
+    fn adjust_persists_tab_width_editor_section() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        let mut app = App::new(ws.clone(), Config::default()).unwrap();
+        app.open_settings_overlay();
+        focus_row(&mut app, "editor.tab_width");
+        app.settings_adjust_value(1);
+        let body = std::fs::read_to_string(ws.join(".mnml").join("config.toml")).unwrap();
+        assert!(body.contains("[editor]"), "{body}");
+        assert!(
+            body.contains(&format!("tab_width = {}", app.config.editor.tab_width)),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn esc_deletes_workspace_file_created_during_edit() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        let mut app = App::new(ws.clone(), Config::default()).unwrap();
+        let path = ws.join(".mnml").join("config.toml");
+        assert!(!path.exists());
+        app.open_settings_overlay();
+        focus_row(&mut app, "ui.cursor_line");
+        app.settings_adjust_value(1);
+        assert!(path.exists(), "edit created the file");
+        app.close_settings_overlay_cancel();
+        assert!(!path.exists(), "Esc removed the edit-created file");
+    }
+
+    #[test]
+    fn esc_restores_prior_workspace_file_and_preserves_comments() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        std::fs::create_dir_all(ws.join(".mnml")).unwrap();
+        let path = ws.join(".mnml").join("config.toml");
+        let original = "# project settings\n[editor]\ntab_width = 4  # ours\n";
+        std::fs::write(&path, original).unwrap();
+        // Reload so the workspace override is reflected in app.config.
+        let cfg = Config::load(None, &ws);
+        let mut app = App::new(ws.clone(), cfg).unwrap();
+        app.open_settings_overlay();
+        focus_row(&mut app, "ui.cursor_line");
+        app.settings_adjust_value(1);
+        let mid = std::fs::read_to_string(&path).unwrap();
+        assert!(mid.contains("cursor_line = "), "wrote during edit");
+        assert!(mid.contains("# ours"), "comment preserved during edit");
+        app.close_settings_overlay_cancel();
+        let restored = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(restored, original, "Esc restored the exact prior file");
     }
 }

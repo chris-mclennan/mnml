@@ -1699,6 +1699,129 @@ fn upsert_startup_default_workspace(src: &str, path: Option<&Path>) -> String {
     out
 }
 
+/// The per-workspace config file: `<workspace>/.mnml/config.toml`. This is
+/// the checked-into-the-repo overrides file — `Config::load` already reads it
+/// and layers it over the global `~/.config/mnml/config.toml`. The settings
+/// overlay writes here so a project's settings travel with the repo.
+pub fn workspace_config_path(workspace: &Path) -> PathBuf {
+    workspace.join(".mnml").join("config.toml")
+}
+
+/// Quote + escape a string as a single-line TOML basic string.
+pub fn toml_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Upsert `key = value_toml` under `[section]` in `<workspace>/.mnml/config.toml`,
+/// preserving every other line (comments, whitespace, unrelated sections).
+/// Creates `.mnml/` + the file + the section as needed. `value_toml` is the
+/// already-formatted RHS (`true`, `42`, `"onedark"` — use [`toml_quote`] for
+/// strings). Returns the path written.
+///
+/// This is the generalization of [`upsert_startup_default_workspace`] from the
+/// single `[startup] default_workspace` field to any `[section] key`.
+pub fn persist_workspace_setting(
+    workspace: &Path,
+    section: &str,
+    key: &str,
+    value_toml: &str,
+) -> Result<PathBuf, String> {
+    let cfg_path = workspace_config_path(workspace);
+    if let Some(parent) = cfg_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+    let updated = upsert_toml_kv(&existing, section, key, value_toml);
+    std::fs::write(&cfg_path, &updated)
+        .map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
+    Ok(cfg_path)
+}
+
+/// True when `trimmed` is an assignment line for exactly `key` — i.e. it
+/// starts with `key` followed (ignoring spaces) by `=`. Guards against
+/// `line_numbers` matching `relative_line_numbers`, `scrolloff` matching
+/// `sidescrolloff`, etc.
+fn line_assigns_key(trimmed: &str, key: &str) -> bool {
+    let Some(rest) = trimmed.strip_prefix(key) else {
+        return false;
+    };
+    matches!(rest.trim_start().chars().next(), Some('='))
+}
+
+/// Pure-string TOML upsert — same line-walk strategy as
+/// [`upsert_startup_default_workspace`], generalized to any `[section] key`.
+/// Doesn't understand multi-line TOML values; fine here because every settings
+/// value is a single-line scalar.
+fn upsert_toml_kv(src: &str, section: &str, key: &str, value_toml: &str) -> String {
+    let want_line = format!("{key} = {value_toml}");
+    let want_header = format!("[{section}]");
+    let mut out = String::with_capacity(src.len() + want_line.len() + 8);
+    let mut in_section = false;
+    let mut replaced = false;
+    let mut section_seen = false;
+    for line in src.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            // Leaving the target section without replacing — inject the line
+            // immediately before this next-table header.
+            if in_section && !replaced {
+                out.push_str(&want_line);
+                out.push('\n');
+                replaced = true;
+            }
+            in_section = trimmed.trim_end() == want_header;
+            if in_section {
+                section_seen = true;
+            }
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        if in_section && !replaced && line_assigns_key(trimmed, key) {
+            // Replace the existing assignment in place.
+            out.push_str(&want_line);
+            out.push('\n');
+            replaced = true;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    // EOF while still in the target section without seeing the key — append.
+    if in_section && !replaced {
+        out.push_str(&want_line);
+        out.push('\n');
+        replaced = true;
+    }
+    // Section never existed — create it at the end.
+    if !section_seen && !replaced {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if !out.is_empty() && !out.ends_with("\n\n") {
+            out.push('\n');
+        }
+        out.push_str(&want_header);
+        out.push('\n');
+        out.push_str(&want_line);
+        out.push('\n');
+    }
+    out
+}
+
 /// Scaffold a workspace folder + a starter `README.md` if absent.
 /// Idempotent — running twice on an existing folder is a no-op. Called
 /// from the CLI when `resolve_default_workspace()` returns a path that
@@ -1749,6 +1872,70 @@ fn home_config_path() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn upsert_kv_creates_section_when_absent() {
+        let out = upsert_toml_kv("", "ui", "scrollbar", "true");
+        assert!(out.contains("[ui]"));
+        assert!(out.contains("scrollbar = true"));
+    }
+
+    #[test]
+    fn upsert_kv_replaces_in_existing_section() {
+        let src = "[ui]\nscrollbar = false\ntheme = \"onedark\"\n";
+        let out = upsert_toml_kv(src, "ui", "scrollbar", "true");
+        assert!(out.contains("scrollbar = true"));
+        assert!(!out.contains("scrollbar = false"));
+        // The unrelated key in the same section survives.
+        assert!(out.contains("theme = \"onedark\""));
+        // Only one scrollbar line.
+        assert_eq!(out.matches("scrollbar = ").count(), 1);
+    }
+
+    #[test]
+    fn upsert_kv_is_idempotent() {
+        let once = upsert_toml_kv("", "editor", "tab_width", "2");
+        let twice = upsert_toml_kv(&once, "editor", "tab_width", "2");
+        assert_eq!(once, twice);
+        assert_eq!(twice.matches("tab_width = ").count(), 1);
+    }
+
+    #[test]
+    fn upsert_kv_preserves_comments_and_other_sections() {
+        let src = "# my workspace config\n\
+                   [editor]\n\
+                   tab_width = 4  # project default\n\
+                   \n\
+                   [browser]\n\
+                   headless = true\n";
+        let out = upsert_toml_kv(src, "ui", "theme", "\"gruvbox\"");
+        assert!(out.contains("# my workspace config"));
+        assert!(out.contains("tab_width = 4  # project default"));
+        assert!(out.contains("[browser]"));
+        assert!(out.contains("headless = true"));
+        assert!(out.contains("[ui]"));
+        assert!(out.contains("theme = \"gruvbox\""));
+    }
+
+    #[test]
+    fn upsert_kv_key_boundary_does_not_clobber_prefixed_key() {
+        // Writing `line_numbers` must not touch `relative_line_numbers`.
+        let src = "[ui]\nrelative_line_numbers = true\n";
+        let out = upsert_toml_kv(src, "ui", "line_numbers", "false");
+        assert!(out.contains("relative_line_numbers = true"));
+        assert!(out.contains("line_numbers = false"));
+        assert_eq!(out.matches("relative_line_numbers = ").count(), 1);
+    }
+
+    #[test]
+    fn persist_workspace_setting_writes_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = persist_workspace_setting(dir.path(), "editor", "tab_width", "2").unwrap();
+        assert_eq!(path, dir.path().join(".mnml").join("config.toml"));
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("[editor]"));
+        assert!(body.contains("tab_width = 2"));
+    }
 
     #[test]
     fn workspaces_config_parses_and_appends() {
