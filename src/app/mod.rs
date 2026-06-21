@@ -8428,28 +8428,44 @@ impl App {
         }
     }
 
-    /// Tick hook — every ~3s, rebuild any open Claude Agents pane so
-    /// rows reflect newly-active sessions / state transitions without
-    /// the user pressing `r`. Skipped while the user is typing into
-    /// the pane's filter (`paused = true`).
+    /// Tick hook — two refresh rates:
+    ///   - every ~3s rebuild the full row set (newly-active
+    ///     sessions, state transitions) via `refresh_in_place`.
+    ///   - every tick re-tail JUST the selected row's transcript
+    ///     when it's a live Claude session (`live_tail_selected`),
+    ///     so the drill-down (todos, recent files, bash, cost,
+    ///     tokens) updates ~10×/sec without waiting on the global
+    ///     rebuild. Cursor stays put.
+    ///
+    /// Both are paused by `paused_by_user` (toggle with `p`) and
+    /// the transient `paused` (filter-mode input active).
     pub fn maybe_auto_refresh_claude_agents(&mut self) {
         const REFRESH_EVERY_SECS: u64 = 3;
         let now = std::time::SystemTime::now();
         for i in 0..self.panes.len() {
-            let should_refresh = matches!(
-                self.panes.get(i),
-                Some(Pane::ClaudeAgents(p))
-                    if !p.paused
-                        && !p.paused_by_user
-                        && now
-                            .duration_since(p.built_at)
-                            .map(|d| d.as_secs() >= REFRESH_EVERY_SECS)
-                            .unwrap_or(false)
-            );
-            if should_refresh
+            let (do_full, do_tail) = match self.panes.get(i) {
+                Some(Pane::ClaudeAgents(p)) if !p.paused && !p.paused_by_user => {
+                    let full = now
+                        .duration_since(p.built_at)
+                        .map(|d| d.as_secs() >= REFRESH_EVERY_SECS)
+                        .unwrap_or(false);
+                    let tail = now
+                        .duration_since(p.last_live_tail)
+                        .map(|d| d.as_millis() >= 500)
+                        .unwrap_or(true);
+                    (full, tail)
+                }
+                _ => (false, false),
+            };
+            if do_full
                 && let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i)
             {
                 p.refresh_in_place();
+            }
+            if do_tail
+                && let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i)
+            {
+                p.live_tail_selected();
             }
         }
     }

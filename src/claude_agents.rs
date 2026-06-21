@@ -240,6 +240,11 @@ pub struct ClaudeAgentsPane {
     pub state_filter: Option<AgentState>,
     /// Toggle the `?` help overlay rendered above the row list.
     pub show_help: bool,
+    /// Last time the SELECTED row was re-tailed (live tail). The
+    /// global refresh runs every 3s and rebuilds the row set; this
+    /// tracks the more-frequent (every-tick) per-row poll that
+    /// keeps the drill-down feeling alive on the active session.
+    pub last_live_tail: SystemTime,
 }
 
 impl ClaudeAgentsPane {
@@ -267,7 +272,84 @@ impl ClaudeAgentsPane {
             paused_by_user: false,
             state_filter: None,
             show_help: false,
+            last_live_tail: SystemTime::now(),
         }
+    }
+
+    /// Re-tail JUST the selected row's transcript (if it's a live
+    /// session) and write updated drill-down fields back into the
+    /// row. No re-sort, no PID re-scan — much cheaper than the
+    /// full `refresh_in_place`, and stable for the cursor. Returns
+    /// `true` if the row was actually updated.
+    pub fn live_tail_selected(&mut self) -> bool {
+        let Some(vi) = self
+            .visible_indices()
+            .get(self.selected)
+            .copied()
+        else {
+            return false;
+        };
+        let Some(row) = self.rows.get(vi) else {
+            return false;
+        };
+        if !matches!(row.state, AgentState::Streaming | AgentState::ToolCall) {
+            return false;
+        }
+        if row.source != AgentSource::Claude {
+            return false; // we only parse Claude transcripts deeply
+        }
+        let path = row.transcript_path.clone();
+        if !path.is_file() {
+            return false;
+        }
+        let stats = parse_tail(&path);
+        let cost = stats
+            .model
+            .as_deref()
+            .map(|m| {
+                estimate_cost(
+                    m,
+                    stats.input_tokens,
+                    stats.output_tokens,
+                    stats.cache_create_tokens,
+                    stats.cache_read_tokens,
+                )
+            })
+            .unwrap_or(0.0);
+        let mtime = std::fs::metadata(&path)
+            .ok()
+            .and_then(|m| m.modified().ok());
+        if let Some(row) = self.rows.get_mut(vi) {
+            if let Some(m) = stats.model.clone() {
+                row.model = Some(m);
+            }
+            if let Some(c) = stats.cwd.clone() {
+                row.cwd = Some(c);
+            }
+            if let Some(b) = stats.git_branch.clone() {
+                row.git_branch = Some(b);
+            }
+            row.tokens = stats.tokens;
+            row.input_tokens = stats.input_tokens;
+            row.output_tokens = stats.output_tokens;
+            row.cache_create_tokens = stats.cache_create_tokens;
+            row.cache_read_tokens = stats.cache_read_tokens;
+            row.cost_usd = cost;
+            row.event_count = stats.event_count;
+            row.last_user_msg = stats.last_user_msg;
+            row.last_assistant_msg = stats.last_assistant_msg;
+            row.current_tool = stats.last_tool_name;
+            row.todos = stats.todos;
+            row.recent_bash = stats.recent_bash;
+            row.recent_files = stats.recent_files;
+            row.recent_subagents = stats.recent_subagents;
+            row.pending_tool_uses = stats.pending_tool_uses;
+            if mtime.is_some() {
+                row.last_activity = mtime;
+            }
+        }
+        self.last_live_tail = SystemTime::now();
+        true
     }
 
     /// Rebuild rows in place, preserving the user's selection +
