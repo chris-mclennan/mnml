@@ -160,6 +160,32 @@ impl App {
         self.run_npm_subcommand(&format!("run {script}"));
     }
 
+    /// `:go.run_path` — prompt for a package path, then run
+    /// `go run <path>`. Most non-trivial Go projects put main in
+    /// `cmd/<app>/main.go` rather than the module root; the bare
+    /// `:go.run` (hardcoded `.`) is wrong for those.
+    pub fn open_go_run_path_prompt(&mut self) {
+        if find_manifest_dir(&self.workspace, &["go.mod"]).is_none() {
+            self.toast("go.run_path: no go.mod found");
+            return;
+        }
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::GoRunPath,
+            "go run: package path",
+            "./",
+        ));
+    }
+
+    /// Accept handler for `:go.run_path`.
+    pub fn go_run_path_accept(&mut self, path: String) {
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            self.toast("go.run_path: empty path");
+            return;
+        }
+        self.run_go_subcommand(&format!("run {path}"));
+    }
+
     /// `npm <subcmd>` (test / run dev / build / start / install /
     /// lint). Requires a package.json at the workspace root.
     pub fn run_npm_subcommand(&mut self, subcmd: &str) {

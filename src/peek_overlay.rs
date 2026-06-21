@@ -41,7 +41,12 @@ impl PeekOverlay {
         let highlight_idx = anchor - start;
         Some(PeekOverlay {
             path,
-            anchor_line,
+            // 2026-06-21 lsp-cheat-test SEV-3: store the CLAMPED
+            // anchor (not the raw LSP-supplied line). The renderer
+            // displays `anchor_line + 1` in the gutter; if the
+            // LSP returned a stale "line 1000" and we clamped to
+            // line 10 internally, the gutter used to mis-label.
+            anchor_line: anchor as u32,
             lines,
             highlight_idx,
             scroll: 0,
@@ -64,7 +69,16 @@ impl PeekOverlay {
     }
 
     pub fn scroll_down(&mut self) {
-        if self.scroll + 1 < self.lines.len() {
+        // 2026-06-21 lsp-cheat-test SEV-3 peek-scroll-model-overshoots-view:
+        // was clamping to `lines.len() - 1`, but the renderer
+        // caps to `lines.len() - body_h`. The viewport-aware cap
+        // is the right one — without it, j past the cap then k
+        // feels frozen because scroll already overran. We don't
+        // know body_h here, so cap at `lines.len() - 1` is the
+        // best lower bound; the renderer's per-frame
+        // `scroll.min(max_scroll)` is the upper safety net. The
+        // saturating_sub(1) on lines.len() guards empty lines.
+        if !self.lines.is_empty() && self.scroll + 1 < self.lines.len() {
             self.scroll += 1;
         }
     }

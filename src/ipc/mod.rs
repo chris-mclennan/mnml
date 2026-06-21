@@ -441,8 +441,18 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
             json_event(&[("event", "open"), ("path", &path.display().to_string())])
         }
         IpcCommand::Key(spec) => {
-            if let Some(ev) = parse_key_spec(spec) {
-                crate::tui::dispatch_key(app, ev);
+            // 2026-06-21 nvchad SEV-3 ipc-key-spec-rejects-chord-chains:
+            // accept whitespace-separated chord chains (e.g.
+            // "ctrl+w h" — vim window-prefix → focus left). Was:
+            // single-chord only, so test scripts firing chord
+            // sequences silently got `key_unparsed`. Each token
+            // is parsed independently and dispatched in order.
+            let tokens: Vec<&str> = spec.split_whitespace().collect();
+            let parsed: Vec<KeyEvent> = tokens.iter().filter_map(|t| parse_key_spec(t)).collect();
+            if parsed.len() == tokens.len() && !parsed.is_empty() {
+                for ev in parsed {
+                    crate::tui::dispatch_key(app, ev);
+                }
                 json_event(&[("event", "key"), ("key", spec)])
             } else {
                 json_event(&[("event", "key_unparsed"), ("key", spec)])

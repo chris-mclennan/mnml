@@ -169,6 +169,9 @@ impl CheatsheetPane {
     }
 
     /// Toggle the focused row's section in the collapsed set.
+    /// 2026-06-21 lsp-cheat-test SEV-3 cheatsheet-Z-resets-selection:
+    /// was dropping the user back to the top on every z / Z.
+    /// Now clamps `selected` to the new visible-row count instead.
     pub fn toggle_collapsed_at_selection(&mut self) {
         if let Some(group) = self.selected_group() {
             if self.collapsed.contains(&group) {
@@ -176,23 +179,35 @@ impl CheatsheetPane {
             } else {
                 self.collapsed.insert(group);
             }
-            self.selected = 0;
-            self.scroll = 0;
+            self.clamp_selection();
         }
     }
 
     /// Collapse every section. `Z` chord.
     pub fn collapse_all(&mut self) {
         self.collapsed = self.sections.iter().map(|s| s.group.clone()).collect();
-        self.selected = 0;
-        self.scroll = 0;
+        self.clamp_selection();
     }
 
     /// Expand every section.
     pub fn expand_all(&mut self) {
         self.collapsed.clear();
-        self.selected = 0;
-        self.scroll = 0;
+        self.clamp_selection();
+    }
+
+    /// Re-clamp `selected` after the visible-row count changes
+    /// (collapse / expand toggles). Preserves position when
+    /// possible; falls back to the last valid row.
+    fn clamp_selection(&mut self) {
+        let n = self.visible_row_count();
+        if n == 0 {
+            self.selected = 0;
+            self.scroll = 0;
+            return;
+        }
+        if self.selected >= n {
+            self.selected = n - 1;
+        }
     }
 
     /// Count of selectable (non-header) rows across the visible sections.

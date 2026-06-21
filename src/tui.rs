@@ -1905,6 +1905,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
                     p.close();
                 }
+                app.toast("ws: closing connection…");
             }
             KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.focus_tree();

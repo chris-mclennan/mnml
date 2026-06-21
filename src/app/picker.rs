@@ -1382,6 +1382,10 @@ impl App {
                 let script = p.input.clone();
                 self.npm_run_script_accept(script);
             }
+            crate::prompt::PromptKind::GoRunPath => {
+                let path = p.input.clone();
+                self.go_run_path_accept(path);
+            }
             crate::prompt::PromptKind::GitMergeConfirm => {
                 if p.input.trim().eq_ignore_ascii_case("merge") {
                     if let Some(branch) = self.pending_merge_source.take() {

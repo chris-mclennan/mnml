@@ -4067,6 +4067,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_go_subcommand("run ."),
         },
         Command {
+            id: "go.run_path",
+            title: "go: prompt for a package path → run `go run <path>`",
+            group: "test",
+            keys: &[],
+            run: |app| app.open_go_run_path_prompt(),
+        },
+        Command {
             id: "test.run_all",
             title: "Tests: run the whole Playwright suite",
             group: "test",

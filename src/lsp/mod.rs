@@ -665,10 +665,20 @@ impl LspManager {
                 }
                 Err(e) => {
                     self.dead.insert(sc.name.clone());
-                    let _ = self.tx.send(LspEvent::Message(format!(
-                        "LSP: {} unavailable ({e}) — skipping",
-                        sc.cmd
-                    )));
+                    // 2026-06-21 multilang SEV-3: was including the
+                    // full os-error chain ("(spawn ...: No such
+                    // file or directory (os error 2))") which
+                    // displaced the status bar. Now: short
+                    // message + install hint when we recognize
+                    // a "not found" error.
+                    let short = if e.to_lowercase().contains("not found")
+                        || e.to_lowercase().contains("no such file")
+                    {
+                        format!("LSP: {} not installed — install it on PATH", sc.cmd)
+                    } else {
+                        format!("LSP: {} unavailable", sc.cmd)
+                    };
+                    let _ = self.tx.send(LspEvent::Message(short));
                     return None;
                 }
             }

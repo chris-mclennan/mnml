@@ -137,6 +137,11 @@ pub enum PromptKind {
     /// scripts (next dev, vite, start:dev, etc.) can run them
     /// without a hardcoded chord.
     NpmRunScript,
+    /// Accept ⇒ `go run <input>` in a pty pane. Used by
+    /// `:go.run_path` so projects with a `cmd/<app>/main.go`
+    /// layout can pick the right package without `:go.run` being
+    /// hardcoded to `.`.
+    GoRunPath,
     /// Accept (input == "merge") ⇒ `git merge <pending_merge_source>`.
     /// Confirm prompt for the GitMergeInto picker.
     GitMergeConfirm,
