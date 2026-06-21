@@ -1931,6 +1931,17 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Char('w') => app.claude_agents_toggle_workspace_only(),
+            KeyCode::Char('s') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.cycle_sort();
+                }
+            }
+            KeyCode::Char('R') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.clear_multi_selected();
+                }
+                app.toast("multi-select cleared");
+            }
             KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.claude_agents_clear_filters();
             }

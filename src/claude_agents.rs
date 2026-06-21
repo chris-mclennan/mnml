@@ -297,6 +297,40 @@ pub struct ClaudeAgentsPane {
     /// Grouping mode for section headers in the row list. `g`
     /// cycles between source (current default) and workspace.
     pub group_by: GroupBy,
+    /// Sort key for rows within each section. `s` cycles.
+    pub sort_by: SortBy,
+}
+
+/// How rows are ordered within each section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortBy {
+    /// State first (live → tool → idle → ended), then activity. v1 default.
+    StateActivity,
+    /// Highest token spend first.
+    TokensDesc,
+    /// Highest cost first.
+    CostDesc,
+    /// Most recent activity first.
+    ActivityDesc,
+}
+
+impl SortBy {
+    pub fn label(self) -> &'static str {
+        match self {
+            SortBy::StateActivity => "state",
+            SortBy::TokensDesc => "tokens↓",
+            SortBy::CostDesc => "cost↓",
+            SortBy::ActivityDesc => "recent",
+        }
+    }
+    pub fn cycle(self) -> Self {
+        match self {
+            SortBy::StateActivity => SortBy::TokensDesc,
+            SortBy::TokensDesc => SortBy::CostDesc,
+            SortBy::CostDesc => SortBy::ActivityDesc,
+            SortBy::ActivityDesc => SortBy::StateActivity,
+        }
+    }
 }
 
 /// Section grouping for the row list — what the colored section
@@ -365,6 +399,7 @@ impl ClaudeAgentsPane {
             source_filter: None,
             workspace_only: false,
             anchor_workspace: PathBuf::new(),
+            sort_by: SortBy::StateActivity,
             show_help: false,
             detail_scroll: 0,
             last_live_tail: SystemTime::now(),
@@ -710,7 +745,8 @@ impl ClaudeAgentsPane {
     /// row index ↔ original row without copying.
     pub fn visible_indices(&self) -> Vec<usize> {
         let q = self.query.to_lowercase();
-        self.rows
+        let mut idx: Vec<usize> = self
+            .rows
             .iter()
             .enumerate()
             .filter(|(_, r)| {
@@ -751,7 +787,29 @@ impl ClaudeAgentsPane {
                 hay.to_lowercase().contains(&q)
             })
             .map(|(i, _)| i)
-            .collect()
+            .collect();
+        // Apply the per-section sort key. StateActivity is the
+        // build-time default (rows come pre-sorted), but the other
+        // modes re-sort so the user can flip without an external
+        // rebuild.
+        match self.sort_by {
+            SortBy::StateActivity => {}
+            SortBy::TokensDesc => {
+                idx.sort_by(|&a, &b| self.rows[b].tokens.cmp(&self.rows[a].tokens));
+            }
+            SortBy::CostDesc => {
+                idx.sort_by(|&a, &b| {
+                    self.rows[b]
+                        .cost_usd
+                        .partial_cmp(&self.rows[a].cost_usd)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+            SortBy::ActivityDesc => {
+                idx.sort_by(|&a, &b| self.rows[b].last_activity.cmp(&self.rows[a].last_activity));
+            }
+        }
+        idx
     }
 
     pub fn selected_row(&self) -> Option<&AgentRow> {
@@ -779,6 +837,15 @@ impl ClaudeAgentsPane {
 
     pub fn cycle_group_by(&mut self) {
         self.group_by = self.group_by.cycle();
+    }
+
+    pub fn cycle_sort(&mut self) {
+        self.sort_by = self.sort_by.cycle();
+        self.selected = 0;
+    }
+
+    pub fn clear_multi_selected(&mut self) {
+        self.multi_selected.clear();
     }
 
     /// Drop every narrow — text query, state filter, source
@@ -1896,7 +1963,21 @@ fn extract_assistant_snippet(v: &serde_json::Value, q: &str) -> Option<(SearchRo
 /// metadata-only export so the user still has something to file.
 pub fn export_transcript_as_markdown(row: &AgentRow) -> Result<(String, String), String> {
     let sid_short: String = row.session_id.chars().take(8).collect();
-    let stem = format!("{}-{sid_short}", utc_stamp());
+    // Workspace folded into filename for at-a-glance triage —
+    // "20260621-095422-mnml-019ee836.md" is more meaningful than
+    // "20260621-095422-019ee836.md". Strip anything that isn't
+    // ascii-alnum so the filename stays portable.
+    let ws_safe: String = row
+        .workspace
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    let ws_safe = if ws_safe.is_empty() {
+        "workspace".to_string()
+    } else {
+        ws_safe
+    };
+    let stem = format!("{}-{ws_safe}-{sid_short}", utc_stamp());
 
     if row.source == AgentSource::Codex {
         let mut out = String::new();

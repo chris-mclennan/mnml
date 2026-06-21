@@ -58,7 +58,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         } else {
             format!(" · ☑ {}", p.multi_selected.len())
         };
-        format!(" Claude Agents{source_chip}{state_chip}{ws_chip}{pause_chip}{multi}{count_chip} · j/k · / · w ws · > src · ? help ")
+        format!(" Claude Agents{source_chip}{state_chip}{ws_chip}{pause_chip}{multi}{count_chip} · sort:{} · j/k · / · w ws · > src · s sort · ? help ", p.sort_by.label())
     };
 
     let block = Block::default()
@@ -756,6 +756,8 @@ const HELP_LINES: &[(&str, &str)] = &[
     ("Ctrl+L", "clear all filters at once"),
     ("g", "cycle grouping (by source ↔ by workspace)"),
     ("space", "toggle multi-select on the focused row"),
+    ("R", "clear multi-select (uppercase R)"),
+    ("s", "cycle sort key (state → tokens↓ → cost↓ → recent → …)"),
     ("v", "cycle drill-down view (Summary → Todos → Files → Bash → Agents)"),
     ("r", "refresh now"),
     ("p", "pause/resume the 3s auto-refresh"),
