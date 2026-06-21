@@ -333,6 +333,30 @@ impl App {
         }
     }
 
+    /// `:browser.copy_url` — copy the active browser pane's current
+    /// URL to the system clipboard. Toasts when there's no browser
+    /// pane focused.
+    pub fn browser_copy_url(&mut self) {
+        let url = match self.active.and_then(|i| self.panes.get(i)) {
+            Some(Pane::Browser(b)) => b.url.clone(),
+            _ => {
+                self.toast("browser.copy_url: no browser pane focused");
+                return;
+            }
+        };
+        if url.trim().is_empty() {
+            self.toast("browser.copy_url: pane has no URL yet");
+            return;
+        }
+        self.clipboard.set(url.clone(), false);
+        let short = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))
+            .unwrap_or(&url);
+        let short: String = short.chars().take(48).collect();
+        self.toast(format!("browser: {short} → clipboard"));
+    }
+
     /// `s` in a browser pane (or `browser.screenshot`) — capture the viewport;
     /// the PNG is written to `.mnml/screenshots/` when the reply arrives.
     pub fn browser_screenshot(&mut self) {

@@ -3546,6 +3546,31 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_browser_prompt(),
         },
         Command {
+            id: "browser.reload",
+            title: "Browser: reload the current page (Page.reload)",
+            group: "browser",
+            // Same as `r` inside the browser pane; surfaces it via
+            // the palette so users who can't recall the chord can
+            // discover it.
+            keys: &[],
+            run: |app| app.browser_reload(),
+        },
+        Command {
+            id: "browser.navigate",
+            title: "Browser: navigate to a URL (prompt, seeded with current)",
+            group: "browser",
+            // Same as `g` inside the browser pane.
+            keys: &[],
+            run: |app| app.browser_navigate_prompt(),
+        },
+        Command {
+            id: "browser.copy_url",
+            title: "Browser: copy current URL to clipboard",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_copy_url(),
+        },
+        Command {
             id: "browser.screenshot",
             title: "Browser: screenshot the page → .mnml/screenshots/",
             group: "browser",
