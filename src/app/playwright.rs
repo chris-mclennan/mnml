@@ -132,16 +132,59 @@ impl App {
     /// Used by the cargo.* family of palette commands. Toasts when
     /// no Cargo.toml is found at the workspace root.
     pub fn run_cargo_subcommand(&mut self, subcmd: &str) {
-        let toml = self.workspace.join("Cargo.toml");
-        if !toml.exists() {
+        self.run_manifest_command("Cargo.toml", "cargo", subcmd);
+    }
+
+    /// `npm <subcmd>` (test / run dev / build / start / install /
+    /// lint). Requires a package.json at the workspace root.
+    pub fn run_npm_subcommand(&mut self, subcmd: &str) {
+        self.run_manifest_command("package.json", "npm", subcmd);
+    }
+
+    /// `pytest <args>`. Requires pyproject.toml OR setup.py OR
+    /// tests/ at the workspace root.
+    pub fn run_pytest(&mut self, args: &str) {
+        let has_pyproject = self.workspace.join("pyproject.toml").exists();
+        let has_setup = self.workspace.join("setup.py").exists();
+        let has_tests = self.workspace.join("tests").is_dir();
+        if !has_pyproject && !has_setup && !has_tests {
             self.toast(format!(
-                "cargo.{subcmd}: no Cargo.toml at {}",
+                "pytest: no pyproject.toml / setup.py / tests/ at {}",
                 self.workspace.display()
             ));
             return;
         }
-        let label = format!("cargo {subcmd}");
-        let cmdline = format!("cargo {subcmd}");
+        let cmdline = if args.is_empty() {
+            "pytest".to_string()
+        } else {
+            format!("pytest {args}")
+        };
+        let label = cmdline.clone();
+        let profile = crate::pty_pane::BinaryProfile::task(
+            &label,
+            &cmdline,
+            self.workspace.clone(),
+        );
+        self.open_pty(profile);
+    }
+
+    /// `go <subcmd>` (test ./... / build / run / vet). Requires
+    /// a go.mod at the workspace root.
+    pub fn run_go_subcommand(&mut self, subcmd: &str) {
+        self.run_manifest_command("go.mod", "go", subcmd);
+    }
+
+    fn run_manifest_command(&mut self, manifest: &str, bin: &str, subcmd: &str) {
+        let path = self.workspace.join(manifest);
+        if !path.exists() {
+            self.toast(format!(
+                "{bin}.{subcmd}: no {manifest} at {}",
+                self.workspace.display()
+            ));
+            return;
+        }
+        let label = format!("{bin} {subcmd}");
+        let cmdline = format!("{bin} {subcmd}");
         let profile = crate::pty_pane::BinaryProfile::task(
             &label,
             &cmdline,
