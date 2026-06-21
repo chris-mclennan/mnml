@@ -704,6 +704,10 @@ pub struct SnapshotNetEntry {
 pub struct BrowserPane {
     /// The page's current URL (updated on `Page.frameNavigated`).
     pub url: String,
+    /// Chrome's `--remote-debugging-port`. Set when the worker
+    /// spawns chrome; used by `:browser.devtools` to resolve the
+    /// DevTools frontend URL via `/json/list`.
+    pub debugger_port: Option<u16>,
     /// Down-channel to the CDP worker (commands; `Drop` sends `Close`).
     pub cmd_tx: Sender<CdpCommand>,
     /// Up-channel from the CDP worker (events). `drain_cdp_events` polls
@@ -847,6 +851,7 @@ impl BrowserPane {
     ) -> Self {
         let mut p = BrowserPane {
             url: url.clone(),
+            debugger_port: None,
             cmd_tx,
             event_rx,
             targets: vec![BrowserTarget {

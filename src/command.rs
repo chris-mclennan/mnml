@@ -878,6 +878,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.peek_definition(),
         },
         Command {
+            id: "lsp.peek_definition_overlay",
+            title: "LSP: peek definition as a floating overlay (cursor doesn't move)",
+            group: "lsp",
+            // True VS Code Alt+F12: a bordered box pops up over the
+            // editor showing ~15 lines around the def. Esc closes;
+            // arrows / j/k / PgUp/PgDn scroll within the box.
+            // Cursor stays exactly where it was on close.
+            keys: &[],
+            run: |app| app.peek_definition_overlay(),
+        },
+        Command {
             id: "view.split_open_file_under_cursor",
             title: "Split + open file under cursor (vim `Ctrl+W f`)",
             group: "view",
@@ -3699,6 +3710,18 @@ fn builtin_commands() -> Vec<Command> {
             group: "ai",
             keys: &[],
             run: |app| app.request_ai_write_branch_name(),
+        },
+        Command {
+            id: "ai.recompose_branch",
+            title: "AI: draft rewritten commit messages for this branch (does NOT mutate history)",
+            group: "ai",
+            // Walks merge-base..HEAD via git log, asks Claude to
+            // rewrite each commit message, lands the draft in a
+            // [recompose-suggestions] scratch. User applies the
+            // rebase themselves — we deliberately don't mutate
+            // history from inside mnml.
+            keys: &[],
+            run: |app| app.request_ai_recompose_branch(),
         },
         Command {
             id: "ai.explain_diff",

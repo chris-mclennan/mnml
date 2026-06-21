@@ -3147,6 +3147,22 @@ pub struct App {
     /// opens a prompt seeded with the suggested branch name; user
     /// accepts → :git.new_branch with that name.
     pub pending_branch_name_job: Option<u64>,
+    /// 2026-06-21 — `:ai.recompose_branch` job tag. AiMsg::Done
+    /// goes to a `[recompose-suggestions]` scratch buffer
+    /// (Claude's draft new messages — user applies the rebase
+    /// themselves; we deliberately don't mutate history).
+    pub pending_recompose_branch_job: Option<u64>,
+    /// 2026-06-21 — `:lsp.peek_definition_overlay` floating box.
+    /// Set by the App method; cleared on Esc. Renders ABOVE the
+    /// editor at a fixed centered position, showing 15 lines
+    /// around the def target. Doesn't move the cursor — when
+    /// closed the user is right back where they were.
+    pub peek_overlay: Option<crate::peek_overlay::PeekOverlay>,
+    /// True after `:lsp.peek_definition_overlay` fires
+    /// `lsp_goto_definition`; the next GotoDefinition event
+    /// will populate `peek_overlay` instead of navigating.
+    /// Reset on first use OR on a different action.
+    pub pending_peek_definition: bool,
     /// Channel for background `claude -p` runs (lazily created); worker threads
     /// stream `(job_id, AiMsg)` (deltas then a final Done/Failed), [`Self::tick`]
     /// drains it into the matching `Pane::Ai`.
@@ -3602,6 +3618,9 @@ impl App {
             pending_pr_desc_job: None,
             pending_explain_diff_job: None,
             pending_branch_name_job: None,
+            pending_recompose_branch_job: None,
+            peek_overlay: None,
+            pending_peek_definition: false,
             ai_chan: None,
             suggest_chan: None,
             pending_suggest: None,

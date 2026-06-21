@@ -407,6 +407,46 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // Peek-definition overlay — Esc closes; arrows / j / k / PgUp /
+    // PgDn scroll within the box; anything else closes + falls
+    // through to normal handling.
+    if app.peek_overlay.is_some() {
+        match key.code {
+            KeyCode::Esc => {
+                app.peek_overlay = None;
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(po) = &mut app.peek_overlay {
+                    po.scroll_up();
+                }
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(po) = &mut app.peek_overlay {
+                    po.scroll_down();
+                }
+                return;
+            }
+            KeyCode::PageUp => {
+                if let Some(po) = &mut app.peek_overlay {
+                    for _ in 0..5 {
+                        po.scroll_up();
+                    }
+                }
+                return;
+            }
+            KeyCode::PageDown => {
+                if let Some(po) = &mut app.peek_overlay {
+                    for _ in 0..5 {
+                        po.scroll_down();
+                    }
+                }
+                return;
+            }
+            _ => app.peek_overlay = None, // fall through
+        }
+    }
     // An LSP hover popup is up: arrows / j / k / PgUp / PgDn scroll it; Esc
     // closes it; anything else closes it and is then handled normally.
     if app.hover.is_some() {

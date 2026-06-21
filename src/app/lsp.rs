@@ -190,6 +190,16 @@ impl App {
         self.lsp_goto_definition();
     }
 
+    /// `:lsp.peek_definition_overlay` — true VS Code Alt+F12
+    /// behavior: a floating bordered box appears OVER the editor
+    /// showing 15 lines of source around the def. Cursor doesn't
+    /// move; Esc closes the overlay and the user is right back
+    /// where they were.
+    pub fn peek_definition_overlay(&mut self) {
+        self.pending_peek_definition = true;
+        self.lsp_goto_definition();
+    }
+
     /// If an outline pane is open and the now-active editor is a different
     /// file, retarget the outline to that file and re-fire `documentSymbol`.
     /// No-op when nothing's open, the active pane isn't an editor with a
@@ -1024,9 +1034,20 @@ impl App {
                 line,
                 character,
             } => {
-                self.open_path(&path);
-                if let Some(b) = self.active_editor_mut() {
-                    b.editor.place_cursor(line as usize, character as usize);
+                if self.pending_peek_definition {
+                    self.pending_peek_definition = false;
+                    match crate::peek_overlay::PeekOverlay::load(path.clone(), line) {
+                        Some(po) => self.peek_overlay = Some(po),
+                        None => self.toast(format!(
+                            "peek: can't read {}",
+                            path.display()
+                        )),
+                    }
+                } else {
+                    self.open_path(&path);
+                    if let Some(b) = self.active_editor_mut() {
+                        b.editor.place_cursor(line as usize, character as usize);
+                    }
                 }
             }
             LspEvent::Hover { text } => match crate::hover::HoverPopup::from_text(&text) {

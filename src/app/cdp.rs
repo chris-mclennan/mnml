@@ -351,22 +351,73 @@ impl App {
         }
     }
 
-    /// `:browser.devtools` — open Chrome's devtools console at the
-    /// current page. We can't toggle DevTools directly via CDP
-    /// (it's a UI feature, not a protocol one), but Chrome supports
-    /// `devtools://devtools/bundled/devtools_app.html?wss=…` for
-    /// remote debugging. For now we just hand the user the URL of
-    /// the page's WS endpoint so they can attach via chrome://inspect.
+    /// `:browser.devtools` — open Chrome's DevTools UI for the
+    /// currently-driven page. CDP doesn't expose "open DevTools UI"
+    /// as a method (it's a Chrome UI concern, not a protocol one),
+    /// so we resolve the target's WebSocket debugger URL via the
+    /// HTTP introspection endpoint (`/json`) and shell-out `open`
+    /// (macOS) / `xdg-open` (Linux) to launch DevTools in the
+    /// user's existing Chrome window. Falls back to a toast hint
+    /// when introspection fails (no debugger port, etc.).
     pub fn browser_open_devtools_hint(&mut self) {
-        match self.active_browser_mut() {
-            Some(b) => {
-                let url = b.url.clone();
-                self.toast(format!(
-                    "open chrome://inspect → inspect target → {url}"
-                ));
+        let port = match self.active_browser_mut() {
+            Some(b) => b.debugger_port,
+            None => {
+                self.toast("browser.devtools: no browser pane focused");
+                return;
             }
-            None => self.toast("browser.devtools: no browser pane focused"),
-        }
+        };
+        let Some(port) = port else {
+            self.toast("browser.devtools: no debugger port — open via :browser.open");
+            return;
+        };
+        let cur_url = match self.active_browser_mut() {
+            Some(b) => b.url.clone(),
+            None => String::new(),
+        };
+        // Walk /json/list for the target whose `url` matches ours,
+        // grab its devtoolsFrontendUrl, hand it to `open` (macOS) /
+        // `xdg-open` (linux) to launch DevTools in Chrome itself.
+        std::thread::spawn(move || {
+            let json_url = format!("http://localhost:{port}/json/list");
+            let Ok(resp) = reqwest::blocking::get(json_url) else {
+                return;
+            };
+            let Ok(body) = resp.text() else { return };
+            let Ok(targets) = serde_json::from_str::<serde_json::Value>(&body) else {
+                return;
+            };
+            let arr = match targets.as_array() {
+                Some(a) => a,
+                None => return,
+            };
+            let target = arr
+                .iter()
+                .find(|t| {
+                    t.get("url").and_then(|u| u.as_str()) == Some(cur_url.as_str())
+                })
+                .or_else(|| arr.first());
+            let Some(t) = target else { return };
+            let Some(dt_url) = t
+                .get("devtoolsFrontendUrl")
+                .and_then(|u| u.as_str())
+            else {
+                return;
+            };
+            let full = if dt_url.starts_with("http") {
+                dt_url.to_string()
+            } else {
+                format!("http://localhost:{port}{dt_url}")
+            };
+            #[cfg(target_os = "macos")]
+            let opener = "open";
+            #[cfg(target_os = "linux")]
+            let opener = "xdg-open";
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            let opener = "open";
+            let _ = std::process::Command::new(opener).arg(&full).status();
+        });
+        self.toast("browser.devtools: launching…");
     }
 
     /// `:browser.copy_url` — copy the active browser pane's current
@@ -784,8 +835,18 @@ impl App {
             };
             for ev in events {
                 match ev {
-                    crate::cdp::CdpEvent::Connected { .. } => {
+                    crate::cdp::CdpEvent::Connected { ws_url } => {
+                        // Parse the debugger port out of
+                        // `ws://localhost:PORT/devtools/page/…` so
+                        // `:browser.devtools` can hit `/json/list`.
+                        let port = ws_url
+                            .strip_prefix("ws://")
+                            .or_else(|| ws_url.strip_prefix("wss://"))
+                            .and_then(|rest| rest.split_once('/'))
+                            .and_then(|(host, _)| host.rsplit_once(':'))
+                            .and_then(|(_, p)| p.parse::<u16>().ok());
                         if let Some(Pane::Browser(b)) = self.panes.get_mut(idx) {
+                            b.debugger_port = port;
                             b.push(crate::browser_pane::LogKind::System, "connected to Chrome");
                         }
                     }

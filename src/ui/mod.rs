@@ -28,6 +28,7 @@ pub mod browser_view;
 pub mod bufferline;
 pub mod cheatsheet_view;
 pub mod claude_agents_view;
+pub mod peek_overlay_view;
 pub mod ws_view;
 pub mod close_prompt;
 pub mod cmdline_bar;
@@ -579,6 +580,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if app.completion.is_some() {
         completion::draw(frame, app, area, cursor_pos);
+    }
+    if app.peek_overlay.is_some() {
+        peek_overlay_view::draw(frame, app, area);
     }
     // Hover tooltip — sits above everything else (chip popups can't conflict
     // with picker/prompt/etc. because the hover_chip is only set when the

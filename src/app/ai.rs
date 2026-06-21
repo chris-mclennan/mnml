@@ -1627,6 +1627,51 @@ impl App {
                 }
                 continue;
             }
+            // An "AI: recompose branch commit messages" job?
+            // Route to [recompose-suggestions] scratch.
+            if self.pending_recompose_branch_job == Some(job_id) {
+                let result = match msg {
+                    AiMsg::Delta(_) => continue,
+                    AiMsg::Usage { .. } | AiMsg::ConfirmTool { .. } => continue,
+                    AiMsg::Done(text) => Ok(text),
+                    AiMsg::Failed(e) => Err(e),
+                };
+                self.pending_recompose_branch_job = None;
+                match result {
+                    Ok(text) => {
+                        let clean = text
+                            .trim()
+                            .trim_start_matches("```")
+                            .trim_end_matches("```")
+                            .trim()
+                            .to_string();
+                        let mut body = String::new();
+                        body.push_str("# Recompose suggestions\n\n");
+                        body.push_str(
+                            "_Claude's drafts — review before applying. \
+                             Apply via `git rebase -i <base>`, swapping \
+                             `pick → reword` for each line, then paste in \
+                             the new message when the editor opens._\n\n",
+                        );
+                        body.push_str("```\n");
+                        body.push_str(&clean);
+                        if !clean.ends_with('\n') {
+                            body.push('\n');
+                        }
+                        body.push_str("```\n");
+                        self.open_scratch_with_text(
+                            "[recompose-suggestions]".to_string(),
+                            body,
+                        );
+                        toasts.push(
+                            "ai.recompose_branch: ready → [recompose-suggestions]"
+                                .to_string(),
+                        );
+                    }
+                    Err(e) => toasts.push(format!("ai.recompose_branch: {e}")),
+                }
+                continue;
+            }
             // An "AI: explain this diff" job? Route the final text
             // into a [diff-explanation] scratch buffer.
             if self.pending_explain_diff_job == Some(job_id) {
@@ -1871,6 +1916,93 @@ impl App {
         let (job_id, _sid, _cancel) = self.spawn_ai_job(prompt);
         self.pending_branch_name_job = Some(job_id);
         self.toast("ai.write_branch_name: asking Claude…");
+    }
+
+    /// `:ai.recompose_branch` — draft rewritten commit messages
+    /// for every commit on the current branch (vs origin/main /
+    /// main / master). Output lands in a `[recompose-suggestions]`
+    /// scratch with the original SHA + old message + suggested new
+    /// message per commit, PLUS a copy-pasteable
+    /// `git rebase -i` plan at the end. The user applies the
+    /// rebase themselves — we deliberately don't mutate history
+    /// from inside mnml since one wrong tweak loses commits.
+    pub fn request_ai_recompose_branch(&mut self) {
+        let candidates = ["origin/main", "origin/master", "main", "master"];
+        let base = candidates.iter().find(|r| {
+            std::process::Command::new("git")
+                .args(["rev-parse", "--verify", "--quiet", r])
+                .current_dir(self.active_repo_path())
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        });
+        let Some(base) = base else {
+            self.toast("ai.recompose_branch: no main/master ref found");
+            return;
+        };
+        let mb_out = std::process::Command::new("git")
+            .args(["merge-base", "HEAD", base])
+            .current_dir(self.active_repo_path())
+            .output();
+        let merge_base = match mb_out {
+            Ok(o) if o.status.success() => {
+                String::from_utf8_lossy(&o.stdout).trim().to_string()
+            }
+            _ => {
+                self.toast(format!("ai.recompose_branch: merge-base HEAD..{base} failed"));
+                return;
+            }
+        };
+        // Format: `<sha>\x00<subject>\x00<body>\x00\x00` per commit.
+        // Using NUL separators so newlines in bodies don't confuse parsing.
+        let log_out = std::process::Command::new("git")
+            .args([
+                "log",
+                "--reverse",
+                "--format=%H%x00%s%x00%b%x00%x00",
+                &format!("{merge_base}..HEAD"),
+            ])
+            .current_dir(self.active_repo_path())
+            .output();
+        let raw = match log_out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => {
+                self.toast("ai.recompose_branch: git log failed");
+                return;
+            }
+        };
+        if raw.trim().is_empty() {
+            self.toast(format!(
+                "ai.recompose_branch: HEAD has no commits past {base}"
+            ));
+            return;
+        }
+        let prompt = format!(
+            "Rewrite each commit message below to be cleaner. For each:\n\
+             - First line: imperative mood, ≤72 chars, no trailing period.\n\
+             - Body (if useful): explain WHY, not just WHAT. Reference \
+             tickets/PRs if mentioned in the original.\n\
+             - Preserve any `Co-Authored-By:` trailers verbatim.\n\
+             - Drop redundant boilerplate (\"fix typo\" → maybe drop entirely \
+             if trivial, but still emit something so the SHA mapping stays \
+             1:1).\n\n\
+             Output format (machine-parseable):\n\n\
+             ```\n\
+             <sha>\n\
+             <new subject>\n\
+             <blank line>\n\
+             <new body or nothing>\n\
+             ===\n\
+             ```\n\
+             (the `===` line separates commits. Repeat for every commit.)\n\n\
+             Below are the commits, NUL-separated as \
+             <sha>\\x00<subject>\\x00<body>\\x00\\x00:\n\n{raw}"
+        );
+        let (job_id, _sid, _cancel) = self.spawn_ai_job(prompt);
+        self.pending_recompose_branch_job = Some(job_id);
+        self.toast(format!(
+            "ai.recompose_branch: asking Claude (vs {base})…"
+        ));
     }
 
     /// `:ai.explain_diff` — ask Claude to walk through the staged
