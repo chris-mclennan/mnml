@@ -1394,6 +1394,69 @@ impl App {
         ));
     }
 
+    /// `http.history_global` — load `~/.config/mnml/history-global.jsonl`
+    /// and open a picker over the most recent 100 entries across
+    /// ALL workspaces. Detail line shows the workspace name + status.
+    /// Useful when you remember firing a request but not which
+    /// project you were in. Enter opens a `.curl` scratch so you
+    /// can re-fire it from the current workspace.
+    pub fn open_http_history_global(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let rows = crate::http::history::tail_global(100);
+        if rows.is_empty() {
+            let path = crate::http::history::global_history_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "(HOME unset)".to_string());
+            self.toast(format!("http.history_global: no entries yet at {path}"));
+            return;
+        }
+        let items: Vec<PickerItem> = rows
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(i, v)| {
+                let method = v
+                    .get("method")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let url = v
+                    .get("url")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let workspace = v
+                    .get("workspace")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let status = v.get("status").and_then(|s| s.as_u64());
+                let dur = v.get("duration_ms").and_then(|d| d.as_u64());
+                let detail = match (status, dur) {
+                    (Some(s), Some(d)) => format!("{workspace} · {s} · {d}ms"),
+                    (Some(s), None) => format!("{workspace} · {s}"),
+                    (None, Some(d)) => format!("{workspace} · FAILED · {d}ms"),
+                    (None, None) => format!("{workspace} · FAILED"),
+                };
+                let short = url
+                    .strip_prefix("https://")
+                    .or_else(|| url.strip_prefix("http://"))
+                    .unwrap_or(&url)
+                    .split(['?', '#'])
+                    .next()
+                    .unwrap_or(&url)
+                    .to_string();
+                PickerItem::new(i.to_string(), format!("{method} {short}"), detail)
+            })
+            .collect();
+        self.pending_history_rows = rows;
+        self.open_picker(Picker::new(
+            PickerKind::HistoryRows,
+            "HTTP history · all workspaces",
+            items,
+        ));
+    }
+
     /// `http.history` — load `.rqst/history.jsonl` and open a
     /// picker over the most recent 100 entries. Enter opens the
     /// chosen entry's method/URL as a `.curl` scratch buffer so
@@ -3318,7 +3381,7 @@ impl App {
                     // Phase 9 — append to .rqst/history.jsonl so
                     // grep/jq workflows AND the in-app `http.history`
                     // viewer see the request.
-                    crate::http::history::append(
+                    crate::http::history::append_with_global_mirror(
                         &workspace,
                         &crate::http::history::Entry {
                             method: &rp.request.method,
@@ -3344,7 +3407,7 @@ impl App {
                     toasts.push(format!("request failed: {e}"));
                     // Failed sends still get a history entry so
                     // forensic queries can find them.
-                    crate::http::history::append(
+                    crate::http::history::append_with_global_mirror(
                         &workspace,
                         &crate::http::history::Entry {
                             method: &rp.request.method,

@@ -2918,6 +2918,18 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_http_history(),
         },
         Command {
+            id: "http.history_global",
+            title: "HTTP: history picker across all workspaces (~/.config/mnml/history-global.jsonl)",
+            group: "http",
+            // Cross-workspace recall. Every :http.send mirrors to
+            // ~/.config/mnml/history-global.jsonl with a "workspace"
+            // field; this command opens a picker over the last 100
+            // entries from that file. Useful when you remember
+            // firing a request but not which project you were in.
+            keys: &[],
+            run: |app| app.open_http_history_global(),
+        },
+        Command {
             id: "http.save_mock",
             title: "HTTP: save current response as a sibling .mock.json",
             group: "http",
