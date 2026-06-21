@@ -232,6 +232,10 @@ impl DetailView {
 pub struct ClaudeAgentsPane {
     pub rows: Vec<AgentRow>,
     pub selected: usize,
+    /// Vim `gg` first-press latch. When true, the next `g` jumps
+    /// to the top and clears the flag. A non-`g` key clears it
+    /// silently. 2026-06-21 nvchad SEV-2 chord-collision fix.
+    pub pending_g: bool,
     /// When the snapshot was last built — used by App::tick to
     /// rate-limit auto-refresh and shown in the title.
     pub built_at: SystemTime,
@@ -392,6 +396,7 @@ impl ClaudeAgentsPane {
         ClaudeAgentsPane {
             rows,
             selected: 0,
+            pending_g: false,
             built_at: SystemTime::now(),
             query: String::new(),
             filter_mode: false,

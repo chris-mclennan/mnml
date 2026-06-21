@@ -675,6 +675,76 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.ai_session_search_prompt(),
         },
         Command {
+            id: "ai.dashboard.open_transcript",
+            title: "AI dashboard: open the focused session's transcript",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                use crate::claude_agents::ClaudeAgentsAction;
+                app.claude_agents_action(ClaudeAgentsAction::OpenTranscript);
+            },
+        },
+        Command {
+            id: "ai.dashboard.yank_session_id",
+            title: "AI dashboard: yank the focused session's id",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                use crate::claude_agents::ClaudeAgentsAction;
+                app.claude_agents_action(ClaudeAgentsAction::YankSessionId);
+            },
+        },
+        Command {
+            id: "ai.dashboard.yank_cwd",
+            title: "AI dashboard: yank the focused session's cwd",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                use crate::claude_agents::ClaudeAgentsAction;
+                app.claude_agents_action(ClaudeAgentsAction::YankCwd);
+            },
+        },
+        Command {
+            id: "ai.dashboard.export_markdown",
+            title: "AI dashboard: export the focused session's transcript as markdown",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                use crate::claude_agents::ClaudeAgentsAction;
+                app.claude_agents_action(ClaudeAgentsAction::ExportMarkdown);
+            },
+        },
+        Command {
+            id: "ai.dashboard.kill",
+            title: "AI dashboard: kill the focused session (with confirm)",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                use crate::claude_agents::ClaudeAgentsAction;
+                app.claude_agents_action(ClaudeAgentsAction::KillPrompt);
+            },
+        },
+        Command {
+            id: "ai.dashboard.resume_in_pty",
+            title: "AI dashboard: resume the focused session in a new mnml pty pane",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                use crate::claude_agents::ClaudeAgentsAction;
+                app.claude_agents_action(ClaudeAgentsAction::ResumeSession);
+            },
+        },
+        Command {
+            id: "ai.dashboard.resume_in_tmnl",
+            title: "AI dashboard: resume the focused session in a new tmnl tab",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                use crate::claude_agents::ClaudeAgentsAction;
+                app.claude_agents_action(ClaudeAgentsAction::ResumeSessionInTmnl);
+            },
+        },
+        Command {
             id: "ai.dashboard",
             title: "AI: open Claude Agents dashboard (also lists Codex sessions)",
             group: "ai",

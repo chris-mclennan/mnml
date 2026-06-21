@@ -71,6 +71,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     // (lines.len() at push time, selectable_index) — so we can compute
     // the on-screen rect for each non-header row after we scroll.
     let mut row_line_indices: Vec<(usize, usize)> = Vec::new();
+    // 2026-06-21 vscode-mouse SEV-2 cheatsheet-header-click — collect
+    // (line_idx, group_name) for each header so the mouse dispatcher
+    // can toggle the section's collapsed state.
+    let mut header_line_indices: Vec<(usize, String)> = Vec::new();
     let chord_w: usize = sections
         .iter()
         .flat_map(|s| s.rows.iter().map(|r| r.chord.chars().count()))
@@ -95,6 +99,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
                 Span::styled(format!(" ({})", sec.rows.len()), dim),
             ])
         };
+        header_line_indices.push((lines.len(), sec.group.clone()));
         lines.push(header);
         if is_collapsed {
             continue;
@@ -152,6 +157,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
                 },
                 id,
                 *sel_idx,
+            ));
+        }
+    }
+    // Register per-header click rects so a click toggles collapse
+    // (parity with the `C` chord). 2026-06-21 vscode-mouse SEV-2.
+    for (line_idx, group) in &header_line_indices {
+        if *line_idx >= scroll && *line_idx < scroll + visible_h {
+            let y = inner.y + (*line_idx as u16 - scroll_u16);
+            app.rects.cheatsheet_headers.push((
+                ratatui::layout::Rect {
+                    x: inner.x,
+                    y,
+                    width: inner.width,
+                    height: 1,
+                },
+                group.clone(),
             ));
         }
     }

@@ -22,6 +22,18 @@
 pub mod about_overlay;
 pub mod activity_bar;
 pub mod ai_view;
+
+/// 2026-06-21 vscode-mouse SEV-2 — which Claude Agents dashboard
+/// topbar chip a click is on. The mouse dispatcher matches this
+/// to the corresponding pane-level action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopbarChipKind {
+    View,
+    Sort,
+    Group,
+    Source,
+    Workspace,
+}
 // Azure DevOps views moved to mnml-forge-azdevops.
 pub mod blit_host_view;
 pub mod browser_view;
@@ -146,6 +158,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.request_fields.clear();
         app.rects.completion_rows.clear();
         app.rects.list_rows.clear();
+        app.rects.cheatsheet_headers.clear();
+        app.rects.ws_send_buttons.clear();
+        app.rects.claude_agents_topbar_chips.clear();
         app.rects.claude_drill_files.clear();
         app.rects.split_dividers.clear();
         app.rects.pty_tabs.clear();

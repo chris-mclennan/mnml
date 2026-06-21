@@ -66,7 +66,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         )
     } else {
         format!(
-            " Claude Agents{source_chip}{state_chip}{ws_chip}{pause_chip}{multi}{count_chip} · sort:{} · group:{} · j/k · / · w ws · > src · s sort · g group · ? help ",
+            " Claude Agents{source_chip}{state_chip}{ws_chip}{pause_chip}{multi}{count_chip} · sort:{} · group:{} · j/k gg G · / · W ws · > src · s sort · ^G grp · ? help ",
             p.sort_by.label(),
             group_label,
         )
@@ -102,7 +102,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     let rows_area = split[1];
     let detail_area = split[2];
 
-    draw_topbar(frame, &agg, topbar_area, &t, p.detail);
+    draw_topbar(frame, &agg, topbar_area, &t, p, id, &mut app.rects);
 
     // Help overlay replaces the row + detail area while shown.
     if p.show_help {
@@ -247,7 +247,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     }
 }
 
-fn draw_topbar(frame: &mut Frame, agg: &crate::claude_agents::Aggregate, area: Rect, t: &theme::Theme, detail: DetailView) {
+fn draw_topbar(
+    frame: &mut Frame,
+    agg: &crate::claude_agents::Aggregate,
+    area: Rect,
+    t: &theme::Theme,
+    p: &crate::claude_agents::ClaudeAgentsPane,
+    pane_id: PaneId,
+    rects: &mut crate::app::PaneRects,
+) {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let bg = t.bg_dark;
     let label_style = Style::default().fg(t.comment).bg(bg);
@@ -272,10 +280,7 @@ fn draw_topbar(frame: &mut Frame, agg: &crate::claude_agents::Aggregate, area: R
         Style::default().fg(t.comment).bg(bg),
     ));
     spans.push(Span::styled(
-        format!(
-            "Σ {} tokens  ",
-            format_tokens(agg.total_tokens)
-        ),
+        format!("Σ {} tokens  ", format_tokens(agg.total_tokens)),
         Style::default().fg(t.yellow).bg(bg),
     ));
     if agg.total_cost_usd > 0.0 {
@@ -290,16 +295,69 @@ fn draw_topbar(frame: &mut Frame, agg: &crate::claude_agents::Aggregate, area: R
             Style::default().fg(t.red).bg(bg).add_modifier(Modifier::BOLD),
         ));
     }
-    spans.push(Span::styled(
-        format!("[view: {}] ", detail.label()),
-        Style::default().fg(t.purple).bg(bg),
-    ));
+    // Track byte offsets of clickable chips so we can register
+    // rects on the second pass. Use string-length math for cell
+    // widths (works because chip labels are ASCII / single-cell).
+    let chip_style = Style::default().fg(t.purple).bg(bg);
+
+    // 2026-06-21 vscode-mouse SEV-2: make the topbar chips real
+    // click targets. Each chip is a clickable rect (cycle on click)
+    // — `[view]` cycles drill view (was `v` chord), `[sort]`
+    // cycles sort (was `s`), `[grp]` cycles group_by (was Ctrl+G),
+    // `[src]` cycles source filter (was `>`), `[ws]` toggles
+    // workspace-only (was `W`).
+    let view_label = format!("[view: {}] ", p.detail.label());
+    let sort_label = format!("[sort: {}] ", p.sort_by.label());
+    let grp_label = format!("[grp: {}] ", p.group_by.label());
+    let src_label = format!(
+        "[src: {}] ",
+        match p.source_filter {
+            None => "all".to_string(),
+            Some(crate::claude_agents::AgentSource::Claude) => "claude".to_string(),
+            Some(crate::claude_agents::AgentSource::Codex) => "codex".to_string(),
+        }
+    );
+    let ws_label = if p.workspace_only {
+        "[ws: this-ws] ".to_string()
+    } else {
+        "[ws: all] ".to_string()
+    };
+
+    // Cumulative cell-width so far (sum of chars in pushed spans).
+    let mut cell_off: u16 = spans.iter().map(|s| s.content.chars().count() as u16).sum();
+    let mut register = |kind: super::TopbarChipKind, label: &str, off: &mut u16| {
+        let w = label.chars().count() as u16;
+        let x = area.x.saturating_add(*off);
+        rects
+            .claude_agents_topbar_chips
+            .push((Rect { x, y: area.y, width: w, height: 1 }, pane_id, kind));
+        *off = off.saturating_add(w);
+    };
+
+    spans.push(Span::styled(view_label.clone(), chip_style));
+    register(super::TopbarChipKind::View, &view_label, &mut cell_off);
+
+    spans.push(Span::styled(sort_label.clone(), chip_style));
+    register(super::TopbarChipKind::Sort, &sort_label, &mut cell_off);
+
+    spans.push(Span::styled(grp_label.clone(), chip_style));
+    register(super::TopbarChipKind::Group, &grp_label, &mut cell_off);
+
+    spans.push(Span::styled(src_label.clone(), chip_style));
+    register(super::TopbarChipKind::Source, &src_label, &mut cell_off);
+
+    spans.push(Span::styled(ws_label.clone(), chip_style));
+    register(super::TopbarChipKind::Workspace, &ws_label, &mut cell_off);
+
     let topbar = Line::from(spans);
     let divider = Line::from(Span::styled(
         " ".repeat(area.width as usize),
         Style::default().bg(t.bg2),
     ));
-    frame.render_widget(Paragraph::new(vec![topbar, divider]).style(Style::default().bg(bg)), area);
+    frame.render_widget(
+        Paragraph::new(vec![topbar, divider]).style(Style::default().bg(bg)),
+        area,
+    );
 }
 
 /// Section identity — what the group header represents.
@@ -785,10 +843,11 @@ const HELP_LINES: &[HelpEntry] = &[
     HelpEntry::Row("/", "filter by text (workspace · id · model · last msg)"),
     HelpEntry::Row("0 / 1 / 2 / 3 / 4", "filter by state (all / live / tool / idle / ended)"),
     HelpEntry::Row("> / <", "cycle source filter (all → claude → codex → all)"),
-    HelpEntry::Row("w", "toggle workspace-only filter"),
+    HelpEntry::Row("W", "toggle workspace-only filter (capital — bare w is vim word-motion)"),
     HelpEntry::Row("Ctrl+L", "clear all filters at once"),
     HelpEntry::Section("Layout"),
-    HelpEntry::Row("g", "cycle grouping (by source ↔ by workspace)"),
+    HelpEntry::Row("gg / G", "jump to top / bottom of list (vim canonical)"),
+    HelpEntry::Row("Ctrl+G", "cycle grouping (by source ↔ by workspace)"),
     HelpEntry::Row("s", "cycle sort key (state → tokens↓ → cost↓ → recent → …)"),
     HelpEntry::Row("v", "cycle drill-down view (Summary → Todos → Files → Bash → Agents)"),
     HelpEntry::Row("r", "refresh now · p pause/resume the 3s auto-refresh"),

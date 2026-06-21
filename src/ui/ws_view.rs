@@ -97,9 +97,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     let log_para = Paragraph::new(lines).style(Style::default().bg(t.bg_dark));
     frame.render_widget(log_para, log_area);
 
-    // Render input row. Prompt + the user's typing buffer.
+    // Render input row: prompt + user buffer + a right-aligned
+    // [Send] button. 2026-06-21 vscode-mouse SEV-2: mouse users
+    // can click [Send] for parity with the Enter chord.
     let prompt = " ▸ ";
     let prompt_w = prompt.chars().count() as u16;
+    let send_label = " [Send] ";
+    let send_w = send_label.chars().count();
+    let input_w = input_area.width as usize;
+    let avail_input = input_w
+        .saturating_sub(prompt.chars().count())
+        .saturating_sub(send_w);
+    let input_text = p.input.clone();
+    let input_chars = input_text.chars().count();
+    let pad = avail_input.saturating_sub(input_chars);
+    let send_style = match p.state {
+        WsState::Open => Style::default()
+            .fg(t.bg_dark)
+            .bg(t.green)
+            .add_modifier(Modifier::BOLD),
+        _ => Style::default().fg(t.comment).bg(t.bg2),
+    };
     let input_line = Line::from(vec![
         Span::styled(
             prompt.to_string(),
@@ -108,22 +126,28 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
                 .bg(t.bg2)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            p.input.clone(),
-            Style::default().fg(t.fg).bg(t.bg2),
-        ),
-        Span::styled(
-            " ".repeat(
-                (input_area.width as usize)
-                    .saturating_sub(prompt.chars().count() + p.input.chars().count()),
-            ),
-            Style::default().bg(t.bg2),
-        ),
+        Span::styled(input_text, Style::default().fg(t.fg).bg(t.bg2)),
+        Span::styled(" ".repeat(pad), Style::default().bg(t.bg2)),
+        Span::styled(send_label.to_string(), send_style),
     ]);
     frame.render_widget(
         Paragraph::new(input_line).style(Style::default().bg(t.bg2)),
         input_area,
     );
+    // Register the [Send] rect so the mouse dispatcher routes
+    // clicks → `ws_send_input_at(pid)`.
+    let send_x = input_area
+        .x
+        .saturating_add(input_area.width.saturating_sub(send_w as u16));
+    app.rects.ws_send_buttons.push((
+        Rect {
+            x: send_x,
+            y: input_area.y,
+            width: send_w as u16,
+            height: 1,
+        },
+        id,
+    ));
 
     // Cursor on the input. Uses the actual `input_cursor` byte
     // offset (chars before it), so Left/Right/Home/End work

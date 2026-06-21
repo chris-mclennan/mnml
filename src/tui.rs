@@ -2056,9 +2056,31 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     }
                 }
             }
-            KeyCode::Char('g') => {
+            // 2026-06-21 nvchad SEV-2 chord-collision: `gg` = top
+            // of list (vim canonical). First `g` latches
+            // `pending_g`; second `g` jumps. A non-`g` key clears
+            // the latch silently. Group-by cycle moved to Ctrl+G.
+            KeyCode::Char('g') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    if p.pending_g {
+                        p.selected = 0;
+                        p.pending_g = false;
+                    } else {
+                        p.pending_g = true;
+                    }
+                }
+            }
+            KeyCode::Char('G') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    let n = p.visible_indices().len();
+                    p.selected = n.saturating_sub(1);
+                    p.pending_g = false;
+                }
+            }
+            KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
                     p.cycle_group_by();
+                    p.pending_g = false;
                 }
             }
             KeyCode::Char('o') => app.claude_agents_action(ClaudeAgentsAction::ResumeSession),
@@ -2114,7 +2136,10 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     p.selected = 0;
                 }
             }
-            KeyCode::Char('w') => app.claude_agents_toggle_workspace_only(),
+            // 2026-06-21 nvchad SEV-2 — was bare `w` (vim word
+            // motion); moved to capital W so vim users can still
+            // press `w` without altering the workspace filter.
+            KeyCode::Char('W') => app.claude_agents_toggle_workspace_only(),
             KeyCode::Char('s') => {
                 if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
                     p.cycle_sort();
@@ -2154,9 +2179,21 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('t') | KeyCode::Enter => {
                 app.claude_agents_action(ClaudeAgentsAction::OpenTranscript);
             }
-            KeyCode::Esc => app.focus_tree(),
+            KeyCode::Esc => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.pending_g = false;
+                }
+                app.focus_tree();
+            }
             KeyCode::Char('q') => app.close_active_pane(),
-            _ => {}
+            _ => {
+                // Any non-`g` key clears the gg latch silently.
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    if p.pending_g {
+                        p.pending_g = false;
+                    }
+                }
+            }
         }
         return;
     }
@@ -2225,19 +2262,22 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     c.jump_bottom();
                 }
             }
-            KeyCode::Char('z') => {
+            // 2026-06-21 nvchad SEV-2 cheatsheet-z-collides-with-fold-prefix:
+            // moved collapse to capitals so vim's `z` fold-prefix
+            // + `ZZ` save-quit don't collide. `C` = toggle focused
+            // section. `X` = toggle collapse-all ↔ expand-all.
+            KeyCode::Char('C')
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
                 if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
                     c.toggle_collapsed_at_selection();
                 }
             }
-            KeyCode::Char('Z') => {
-                // 2026-06-21 lsp-cheat-test SEV-2: was
-                // `is_empty? collapse_all : expand_all`, so after
-                // a single `z` the user's one collapsed section
-                // got wiped on `Z` instead of folding the rest.
-                // Now `Z` collapses everything when ANY section
-                // is expanded, and expands everything when all
-                // are collapsed.
+            KeyCode::Char('X')
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
                 if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
                     let total = c.sections.len();
                     if c.collapsed.len() == total && total > 0 {
@@ -3310,6 +3350,104 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
 
+    // 2026-06-21 vscode-mouse SEV-2: Claude Agents topbar chip
+    // clicks cycle the corresponding pane state. Was: chips
+    // looked like buttons but weren't registered.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+        if let Some(&(_, pid, kind)) = app
+            .rects
+            .claude_agents_topbar_chips
+            .iter()
+            .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+        {
+            app.active = Some(pid);
+            app.focus_pane();
+            use crate::ui::TopbarChipKind;
+            match kind {
+                TopbarChipKind::View => {
+                    if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pid) {
+                        p.cycle_detail();
+                    }
+                }
+                TopbarChipKind::Sort => {
+                    if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pid) {
+                        p.cycle_sort();
+                    }
+                }
+                TopbarChipKind::Group => {
+                    if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pid) {
+                        p.cycle_group_by();
+                    }
+                }
+                TopbarChipKind::Source => {
+                    if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pid) {
+                        use crate::claude_agents::AgentSource;
+                        p.source_filter = match p.source_filter {
+                            None => Some(AgentSource::Claude),
+                            Some(AgentSource::Claude) => Some(AgentSource::Codex),
+                            Some(AgentSource::Codex) => None,
+                        };
+                        p.selected = 0;
+                    }
+                }
+                TopbarChipKind::Workspace => {
+                    app.claude_agents_toggle_workspace_only();
+                }
+            }
+            return;
+        }
+    }
+
+    // 2026-06-21 vscode-mouse SEV-2: WS pane [Send] button click
+    // sends the typed message (parity with Enter chord).
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+        if let Some(&(_, pid)) = app
+            .rects
+            .ws_send_buttons
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        {
+            app.active = Some(pid);
+            app.focus_pane();
+            if let Some(Pane::Websocket(p)) = app.panes.get_mut(pid) {
+                p.send_input();
+            }
+            return;
+        }
+    }
+
+    // 2026-06-21 vscode-mouse SEV-2: cheatsheet section header
+    // click toggles collapse. Same intent as the `C` chord but
+    // reachable via mouse — the chip didn't look clickable
+    // before, now it acts on click.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+        if let Some(group) = app
+            .rects
+            .cheatsheet_headers
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .map(|(_, g)| g.clone())
+        {
+            // Find the focused cheatsheet pane id; if none, no-op.
+            if let Some(pid) = app
+                .panes
+                .iter()
+                .position(|p| matches!(p, Pane::Cheatsheet(_)))
+            {
+                if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(pid) {
+                    if c.collapsed.contains(&group) {
+                        c.collapsed.remove(&group);
+                    } else {
+                        c.collapsed.insert(group);
+                    }
+                }
+                app.active = Some(pid);
+                app.focus_pane();
+                return;
+            }
+        }
+    }
+
     // 2026-06-21 vscode SEV-2 peek-overlay-mouse-cannot-dismiss —
     // when the peek overlay is showing, intercept all clicks
     // FIRST. Click inside = no-op (don't bleed through to the
@@ -3858,6 +3996,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
 
     match m.kind {
         MouseEventKind::Down(MouseButton::Right) => {
+            // 2026-06-21 vscode-mouse SEV-2: right-click on a
+            // Claude Agents dashboard row → 7-item context menu.
+            if let Some(&(_, pid, row_idx)) = app
+                .rects
+                .list_rows
+                .iter()
+                .find(|(r, pid, _)| {
+                    matches!(app.panes.get(*pid), Some(Pane::ClaudeAgents(_)))
+                        && crate::app::dispatch::contains(*r, x, y)
+                })
+            {
+                app.open_dashboard_row_context_menu(pid, row_idx, (x, y));
+                return;
+            }
             // Right-click on a statusline chip — context menus for the four
             // clickable chips (branch / workspace / mode / clock).
             if let Some(r) = app.rects.statusline_branch_chip

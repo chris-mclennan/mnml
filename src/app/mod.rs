@@ -2037,6 +2037,19 @@ pub struct PaneRects {
     /// inside-clicks (instead of bleeding through to the editor) and
     /// to dismiss the overlay on outside-clicks.
     pub peek_overlay: Option<Rect>,
+    /// 2026-06-21 vscode-mouse SEV-2 — `(rect, group_name)` per
+    /// rendered cheatsheet section header. Click toggles collapse,
+    /// parity with the `C` chord.
+    pub cheatsheet_headers: Vec<(Rect, String)>,
+    /// 2026-06-21 vscode-mouse SEV-2 — `(rect, pane_id)` per
+    /// rendered WS pane [Send] button. Click sends the typed
+    /// input, parity with the Enter chord.
+    pub ws_send_buttons: Vec<(Rect, usize)>,
+    /// 2026-06-21 vscode-mouse SEV-2 — `(rect, pane_id, kind)`
+    /// per Claude Agents dashboard topbar chip. Click cycles the
+    /// corresponding state (sort / group / source / ws / view).
+    pub claude_agents_topbar_chips:
+        Vec<(Rect, usize, crate::ui::TopbarChipKind)>,
     /// The picker overlay's outer box (when open) and `(rect, filtered-index)` per visible row.
     pub picker_box: Option<Rect>,
     pub picker_items: Vec<(Rect, usize)>,
@@ -8650,6 +8663,59 @@ impl App {
                 p.live_tail_selected();
             }
         }
+    }
+
+    /// 2026-06-21 vscode-mouse SEV-2: right-click on a dashboard
+    /// row opens a context menu with the 7 row actions surfaced.
+    /// Row is selected at click time so the menu acts on the row
+    /// the user actually clicked.
+    pub fn open_dashboard_row_context_menu(
+        &mut self,
+        pid: usize,
+        row_idx: usize,
+        anchor: (u16, u16),
+    ) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(pid) else {
+            return;
+        };
+        p.selected = row_idx.min(p.visible_indices().len().saturating_sub(1));
+        let title = p
+            .selected_row()
+            .map(|r| {
+                let sid_short = &r.session_id[..8.min(r.session_id.len())];
+                format!("{} · {}", r.workspace, sid_short)
+            })
+            .unwrap_or_else(|| "session".to_string());
+        let items = vec![
+            MenuItem::new(
+                "Open transcript",
+                MenuAction::Command("ai.dashboard.open_transcript"),
+            ),
+            MenuItem::new(
+                "Resume in mnml pty",
+                MenuAction::Command("ai.dashboard.resume_in_pty"),
+            ),
+            MenuItem::new(
+                "Resume in tmnl tab",
+                MenuAction::Command("ai.dashboard.resume_in_tmnl"),
+            ),
+            MenuItem::new(
+                "Yank session id",
+                MenuAction::Command("ai.dashboard.yank_session_id"),
+            ),
+            MenuItem::new(
+                "Yank cwd",
+                MenuAction::Command("ai.dashboard.yank_cwd"),
+            ),
+            MenuItem::new(
+                "Export as markdown",
+                MenuAction::Command("ai.dashboard.export_markdown"),
+            ),
+            MenuItem::new("Kill session…", MenuAction::Command("ai.dashboard.kill")),
+        ];
+        self.active = Some(pid);
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
     /// Yank the selected row's session id (or open transcript) — `y` / `t`.
