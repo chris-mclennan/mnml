@@ -653,6 +653,25 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.unfold_all_in_active(),
         },
         Command {
+            id: "lsp.inlay_hints_toggle",
+            title: "LSP: toggle inlay hints (type / parameter chips)",
+            group: "lsp",
+            // Flips `[editor] inlay_hints` for the current session.
+            // Hints are clutter at scan-time but indispensable at
+            // edit-time; many users want one chord between the two
+            // states rather than editing the config.
+            keys: &[],
+            run: |app| {
+                app.config.editor.inlay_hints = !app.config.editor.inlay_hints;
+                let state = if app.config.editor.inlay_hints {
+                    "on"
+                } else {
+                    "off"
+                };
+                app.toast(format!("inlay hints: {state}"));
+            },
+        },
+        Command {
             id: "lsp.fold_all",
             title: "LSP: fold all (server-suggested ranges)",
             group: "lsp",
