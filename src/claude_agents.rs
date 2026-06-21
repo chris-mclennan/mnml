@@ -26,6 +26,33 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+/// Which CLI agent backend a row comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentSource {
+    /// Claude Code — `~/.claude/projects/<encoded>/<sid>.jsonl`,
+    /// `claude --session-id <uuid>` pgrep target.
+    Claude,
+    /// OpenAI Codex CLI — `~/.codex/sessions/<sid>.jsonl` (when
+    /// present; the dashboard falls back to PID-only when not).
+    /// pgrep matches the `codex` exe.
+    Codex,
+}
+
+impl AgentSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            AgentSource::Claude => "claude",
+            AgentSource::Codex => "codex",
+        }
+    }
+    pub fn exe_name(self) -> &'static str {
+        match self {
+            AgentSource::Claude => "claude",
+            AgentSource::Codex => "codex",
+        }
+    }
+}
+
 /// User actions invokable on the selected row.
 #[derive(Debug, Clone, Copy)]
 pub enum ClaudeAgentsAction {
@@ -36,13 +63,18 @@ pub enum ClaudeAgentsAction {
     KillPrompt,
     /// Spawn `claude --resume <session_id>` in a new pty pane in
     /// the row's `cwd` (or the current workspace if cwd is missing).
+    /// For codex rows, opens `codex` (no resume — stateless).
     ResumeSession,
 }
 
 /// One session in the dashboard.
 #[derive(Debug, Clone)]
 pub struct AgentRow {
-    /// Absolute path to the .jsonl transcript.
+    /// Which CLI agent this row comes from.
+    pub source: AgentSource,
+    /// Absolute path to the .jsonl transcript (may be a sentinel
+    /// for Codex rows when no transcript file is available — check
+    /// `transcript_path.is_file()` before opening).
     pub transcript_path: PathBuf,
     /// Session id (UUID, no `.jsonl`).
     pub session_id: String,
@@ -189,8 +221,17 @@ pub struct ClaudeAgentsPane {
 
 impl ClaudeAgentsPane {
     pub fn build() -> Self {
-        let pids = scan_running_claude_pids();
-        let rows = collect_rows(&pids);
+        let claude_pids = scan_running_pids(AgentSource::Claude);
+        let codex_pids = scan_running_pids(AgentSource::Codex);
+        let mut rows = collect_rows(&claude_pids);
+        rows.extend(collect_codex_rows(&codex_pids));
+        // Re-sort after merge so live entries from both backends
+        // bubble to the top.
+        rows.sort_by(|a, b| {
+            state_rank(a.state)
+                .cmp(&state_rank(b.state))
+                .then_with(|| b.last_activity.cmp(&a.last_activity))
+        });
         ClaudeAgentsPane {
             rows,
             selected: 0,
@@ -207,8 +248,16 @@ impl ClaudeAgentsPane {
     /// scroll if the selected session is still present.
     pub fn refresh_in_place(&mut self) {
         let prior_sid = self.selected_row().map(|r| r.session_id.clone());
-        let pids = scan_running_claude_pids();
-        self.rows = collect_rows(&pids);
+        let claude_pids = scan_running_pids(AgentSource::Claude);
+        let codex_pids = scan_running_pids(AgentSource::Codex);
+        let mut rows = collect_rows(&claude_pids);
+        rows.extend(collect_codex_rows(&codex_pids));
+        rows.sort_by(|a, b| {
+            state_rank(a.state)
+                .cmp(&state_rank(b.state))
+                .then_with(|| b.last_activity.cmp(&a.last_activity))
+        });
+        self.rows = rows;
         self.built_at = SystemTime::now();
         if let Some(sid) = prior_sid
             && let Some(new_idx) = self
@@ -331,7 +380,7 @@ fn decode_workspace_label(encoded: &str) -> String {
 /// parser still handles them fast, but a 500 MB file is almost
 /// always the active session being written this very second — we
 /// pick those up anyway because their mtime is fresh).
-fn collect_rows(pids: &[(String, u32)]) -> Vec<AgentRow> {
+fn collect_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
     let Some(root) = home_projects_dir() else {
         return Vec::new();
     };
@@ -376,7 +425,7 @@ fn collect_rows(pids: &[(String, u32)]) -> Vec<AgentRow> {
             let stats = parse_tail(&p);
             let pid = pids
                 .iter()
-                .find_map(|(sid, pid)| (sid == session_id).then_some(*pid));
+                .find_map(|(sid, pid, _)| (sid == session_id).then_some(*pid));
             let state = derive_state(pid.is_some(), mtime, &stats);
             // Prefer the workspace label derived from the actual
             // `cwd` field in the transcript — encoded-dir parsing
@@ -391,6 +440,7 @@ fn collect_rows(pids: &[(String, u32)]) -> Vec<AgentRow> {
                 .unwrap_or_else(|| workspace.clone());
             let current_tool = stats.last_tool_name.clone();
             rows.push(AgentRow {
+                source: AgentSource::Claude,
                 transcript_path: p.clone(),
                 session_id: session_id.to_string(),
                 workspace: workspace.clone(),
@@ -422,6 +472,170 @@ fn collect_rows(pids: &[(String, u32)]) -> Vec<AgentRow> {
             .then_with(|| b.last_activity.cmp(&a.last_activity))
     });
     rows
+}
+
+/// Codex CLI rows. The OpenAI codex stores session jsonl at
+/// `~/.codex/sessions/<sid>.jsonl` (best-effort detection — falls
+/// back to PID+cmdline-only rows when the directory doesn't exist).
+/// We don't claim drill-down parity with Claude: per-tool sidecars
+/// (TodoList, Bash, recent files) all stay empty for codex rows
+/// for now. If/when the codex transcript format stabilizes we can
+/// teach `parse_tail` about it.
+fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
+    let mut rows: Vec<AgentRow> = Vec::new();
+    let sessions_dir = std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join(".codex/sessions"));
+
+    // 1. Sessions on disk (Codex writes one .jsonl per session under
+    //    ~/.codex/sessions/ when present).
+    if let Some(dir) = sessions_dir.as_deref()
+        && let Ok(files) = std::fs::read_dir(dir)
+    {
+        for f in files.flatten() {
+            let p = f.path();
+            let name = match p.file_name().and_then(|s| s.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            let Some(session_id) = name.strip_suffix(".jsonl") else {
+                continue;
+            };
+            let session_id = session_id.to_string();
+            let Ok(meta) = f.metadata() else { continue };
+            let mtime = meta.modified().ok();
+            if let Some(t) = mtime
+                && let Ok(age) = SystemTime::now().duration_since(t)
+                && age.as_secs() > 7 * 24 * 3600
+            {
+                continue;
+            }
+            let pid = pids
+                .iter()
+                .find_map(|(sid, pid, _)| (sid == &session_id).then_some(*pid));
+            let state = if pid.is_some() {
+                let fresh = mtime
+                    .and_then(|t| SystemTime::now().duration_since(t).ok())
+                    .is_some_and(|d| d.as_secs() < 60);
+                if fresh {
+                    AgentState::Streaming
+                } else {
+                    AgentState::Idle
+                }
+            } else {
+                AgentState::Ended
+            };
+            // Try a generic last-line peek so the user sees SOMETHING
+            // in the detail panel for codex sessions. Best-effort.
+            let blurb = peek_last_text_line(&p);
+            rows.push(AgentRow {
+                source: AgentSource::Codex,
+                transcript_path: p,
+                session_id,
+                workspace: "?".to_string(),
+                cwd: None,
+                git_branch: None,
+                model: None,
+                last_activity: mtime,
+                tokens: 0,
+                event_count: 0,
+                last_user_msg: None,
+                last_assistant_msg: blurb,
+                pid,
+                state,
+                current_tool: None,
+                todos: Vec::new(),
+                recent_bash: Vec::new(),
+                recent_files: Vec::new(),
+                recent_subagents: Vec::new(),
+                pending_tool_uses: 0,
+            });
+        }
+    }
+
+    // 2. Running PIDs that don't map to a known on-disk session —
+    //    add stub rows so the user still sees them. Distinguish via
+    //    session_id == "" (placeholder).
+    let on_disk_pids: std::collections::HashSet<u32> =
+        rows.iter().filter_map(|r| r.pid).collect();
+    for (_, pid, cmdline) in pids {
+        if on_disk_pids.contains(pid) {
+            continue;
+        }
+        let cwd = read_pid_cwd(*pid);
+        let workspace = cwd
+            .as_deref()
+            .and_then(|c| std::path::Path::new(c).file_name())
+            .and_then(|s| s.to_str())
+            .unwrap_or("?")
+            .to_string();
+        rows.push(AgentRow {
+            source: AgentSource::Codex,
+            transcript_path: PathBuf::new(),
+            session_id: format!("pid-{pid}"),
+            workspace,
+            cwd,
+            git_branch: None,
+            model: None,
+            last_activity: SystemTime::now().into(),
+            tokens: 0,
+            event_count: 0,
+            last_user_msg: None,
+            last_assistant_msg: Some(format!("(running) {}", truncate(cmdline, 160))),
+            pid: Some(*pid),
+            state: AgentState::Streaming,
+            current_tool: None,
+            todos: Vec::new(),
+            recent_bash: Vec::new(),
+            recent_files: Vec::new(),
+            recent_subagents: Vec::new(),
+            pending_tool_uses: 0,
+        });
+    }
+
+    rows
+}
+
+/// Return the cwd of a running process. Uses `lsof -p PID` on macOS,
+/// `/proc/<pid>/cwd` on Linux. Best-effort; returns `None` on any
+/// failure.
+fn read_pid_cwd(pid: u32) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let p = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+        return Some(p.to_string_lossy().into_owned());
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // macOS / BSD: `lsof -p <pid>` line where COL[3] == "cwd".
+        let out = std::process::Command::new("lsof")
+            .args(["-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            if cols.get(3).copied() == Some("cwd") {
+                return Some(cols[8..].join(" "));
+            }
+        }
+        None
+    }
+}
+
+/// Quick peek at the last line of a Codex transcript — returns the
+/// first text field we can extract for the detail panel. Best-effort.
+fn peek_last_text_line(path: &std::path::Path) -> Option<String> {
+    let text = read_tail(path, 32 * 1024).ok()?;
+    let last = text.lines().last()?;
+    let v: serde_json::Value = serde_json::from_str(last).ok()?;
+    let content = v
+        .get("content")
+        .or_else(|| v.get("text"))
+        .or_else(|| v.get("message").and_then(|m| m.get("content")))
+        .and_then(|x| x.as_str())?;
+    Some(truncate(content, 200))
 }
 
 fn state_rank(s: AgentState) -> u8 {
@@ -736,12 +950,15 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-/// Pgrep for `claude` processes, parse out the `--session-id <uuid>`
-/// arg. Returns `(session_id, pid)` tuples. Best-effort — silently
-/// returns empty on any failure.
-fn scan_running_claude_pids() -> Vec<(String, u32)> {
+/// Pgrep for `claude` or `codex` processes. Returns either:
+///   - `(session_id, pid, cmdline)` when `--session-id <uuid>` is in
+///     the cmdline (Claude),
+///   - `("", pid, cmdline)` for entries we can't tag with a session
+///     id (Codex — usually no session arg).
+fn scan_running_pids(source: AgentSource) -> Vec<(String, u32, String)> {
+    let exe = source.exe_name();
     let out = std::process::Command::new("pgrep")
-        .args(["-af", "claude"])
+        .args(["-af", exe])
         .output();
     let Ok(o) = out else {
         return Vec::new();
@@ -750,16 +967,25 @@ fn scan_running_claude_pids() -> Vec<(String, u32)> {
         return Vec::new();
     }
     let text = String::from_utf8_lossy(&o.stdout);
-    let mut found: Vec<(String, u32)> = Vec::new();
+    let mut found: Vec<(String, u32, String)> = Vec::new();
     for line in text.lines() {
-        // pgrep -af shape: "<pid> <full cmdline>".
         let mut parts = line.splitn(2, ' ');
         let Some(pid_str) = parts.next() else { continue };
         let Some(cmdline) = parts.next() else { continue };
         let Ok(pid) = pid_str.parse::<u32>() else { continue };
-        if let Some(sid) = parse_session_id_arg(cmdline) {
-            found.push((sid, pid));
+        // Defensive: pgrep -af "claude" hits any cmdline containing
+        // "claude" — filter to ones where the binary actually
+        // matches. The first token is the exe path.
+        let first = cmdline.split_whitespace().next().unwrap_or("");
+        let basename = std::path::Path::new(first)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        if basename != exe && !first.ends_with(&format!("/{exe}")) {
+            continue;
         }
+        let sid = parse_session_id_arg(cmdline).unwrap_or_default();
+        found.push((sid, pid, cmdline.to_string()));
     }
     found
 }
@@ -854,6 +1080,15 @@ mod tests {
         let stats = parse_tail(&p);
         assert!(stats.last_was_tool_call);
         assert_eq!(stats.last_assistant_msg.as_deref(), Some("⚙ Bash"));
+    }
+
+    #[test]
+    fn agent_source_labels_are_unique() {
+        // Sanity for the visual identity — labels are user-visible.
+        assert_eq!(AgentSource::Claude.label(), "claude");
+        assert_eq!(AgentSource::Codex.label(), "codex");
+        assert_eq!(AgentSource::Claude.exe_name(), "claude");
+        assert_eq!(AgentSource::Codex.exe_name(), "codex");
     }
 
     #[test]

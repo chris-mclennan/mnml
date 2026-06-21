@@ -654,7 +654,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "ai.agents_dashboard",
-            title: "AI: open Claude Code agents dashboard (running + recent sessions)",
+            title: "AI: open Claude Agents dashboard (also lists Codex sessions)",
             group: "ai",
             // Scans ~/.claude/projects/*/<sid>.jsonl, cross-references
             // pgrep claude, renders one row per session with state /

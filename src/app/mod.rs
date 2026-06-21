@@ -8469,6 +8469,10 @@ impl App {
             }
             ClaudeAgentsAction::OpenTranscript => {
                 let path = row.transcript_path.clone();
+                if path.as_os_str().is_empty() {
+                    self.toast("no transcript on disk for this session");
+                    return;
+                }
                 self.open_path(&path);
             }
             ClaudeAgentsAction::YankCwd => {
@@ -8496,19 +8500,35 @@ impl App {
                 ));
             }
             ClaudeAgentsAction::ResumeSession => {
+                use crate::claude_agents::AgentSource;
                 let sid = row.session_id.clone();
                 let cwd = row
                     .cwd
                     .as_deref()
                     .map(std::path::PathBuf::from)
                     .unwrap_or_else(|| self.workspace.clone());
-                let profile =
-                    crate::pty_pane::BinaryProfile::claude_code_resume(cwd, sid.clone());
-                self.open_pty(profile);
-                self.toast(format!(
-                    "resuming session {}…",
-                    sid.chars().take(8).collect::<String>()
-                ));
+                match row.source {
+                    AgentSource::Claude => {
+                        let profile = crate::pty_pane::BinaryProfile::claude_code_resume(
+                            cwd,
+                            sid.clone(),
+                        );
+                        self.open_pty(profile);
+                        self.toast(format!(
+                            "resuming claude session {}…",
+                            sid.chars().take(8).collect::<String>()
+                        ));
+                    }
+                    AgentSource::Codex => {
+                        // Codex CLI is stateless — open a fresh codex
+                        // pty in the row's cwd. (If a future codex
+                        // gains --resume, swap this for the resume
+                        // profile.)
+                        let profile = crate::pty_pane::BinaryProfile::codex(cwd);
+                        self.open_pty(profile);
+                        self.toast("opened fresh codex (CLI is stateless)");
+                    }
+                }
             }
         }
     }

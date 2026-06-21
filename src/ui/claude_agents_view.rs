@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::App;
-use crate::claude_agents::{AgentRow, AgentState, DetailView};
+use crate::claude_agents::{AgentRow, AgentSource, AgentState, DetailView};
 use crate::layout::PaneId;
 use crate::pane::Pane;
 use crate::ui::theme;
@@ -33,7 +33,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
             p.query
         )
     } else {
-        " Claude Agents · j/k · / filter · v cycle view · r refresh · y yank id · k kill · o resume ".to_string()
+        " Claude Agents · j/k · / filter · v view · r refresh · y id · c cwd · K kill · o resume ".to_string()
     };
 
     let block = Block::default()
@@ -81,19 +81,48 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         return;
     }
 
-    let body_h = rows_area.height as usize;
-    let scroll = p.scroll.min(vis.len().saturating_sub(body_h.max(1)));
-    let lines: Vec<Line> = vis
-        .iter()
-        .enumerate()
-        .skip(scroll)
-        .take(body_h)
-        .filter_map(|(i, &row_idx)| {
-            p.rows
-                .get(row_idx)
-                .map(|row| render_row(row, i == p.selected, &t, rows_area.width))
-        })
-        .collect();
+    // Group visible rows by source so we can drop a section header
+    // between Claude and Codex blocks. Row indices remain stable so
+    // `selected` still refers to a real visible row.
+    let mut claude_indices: Vec<usize> = Vec::new();
+    let mut codex_indices: Vec<usize> = Vec::new();
+    for (vi, &row_idx) in vis.iter().enumerate() {
+        match p.rows[row_idx].source {
+            AgentSource::Claude => claude_indices.push(vi),
+            AgentSource::Codex => codex_indices.push(vi),
+        }
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    let claude_section_tokens: u64 = claude_indices.iter().map(|&i| p.rows[vis[i]].tokens).sum();
+    let codex_section_tokens: u64 = codex_indices.iter().map(|&i| p.rows[vis[i]].tokens).sum();
+    if !claude_indices.is_empty() {
+        lines.push(section_header(
+            AgentSource::Claude,
+            claude_indices.len(),
+            claude_section_tokens,
+            rows_area.width,
+            &t,
+        ));
+        for &vi in &claude_indices {
+            let row_idx = vis[vi];
+            lines.push(render_row(&p.rows[row_idx], vi == p.selected, &t, rows_area.width));
+        }
+    }
+    if !codex_indices.is_empty() {
+        lines.push(section_header(
+            AgentSource::Codex,
+            codex_indices.len(),
+            codex_section_tokens,
+            rows_area.width,
+            &t,
+        ));
+        for &vi in &codex_indices {
+            let row_idx = vis[vi];
+            lines.push(render_row(&p.rows[row_idx], vi == p.selected, &t, rows_area.width));
+        }
+    }
+    let _scroll = p.scroll; // section-aware scroll is v2
     let rows_para = Paragraph::new(lines).style(Style::default().bg(t.bg_dark));
     frame.render_widget(rows_para, rows_area);
 
@@ -151,6 +180,31 @@ fn draw_topbar(frame: &mut Frame, agg: &crate::claude_agents::Aggregate, area: R
     frame.render_widget(Paragraph::new(vec![topbar, divider]).style(Style::default().bg(bg)), area);
 }
 
+fn section_header(
+    source: AgentSource,
+    count: usize,
+    tokens: u64,
+    width: u16,
+    t: &theme::Theme,
+) -> Line<'static> {
+    let (label, accent, glyph) = match source {
+        AgentSource::Claude => ("Claude Code", t.purple, "✦"),
+        AgentSource::Codex => ("Codex (OpenAI)", t.teal, "◈"),
+    };
+    let header = format!(" {glyph}  {label}   {count} session(s)   {} tokens ", format_tokens(tokens));
+    let pad = (width as usize).saturating_sub(header.chars().count());
+    Line::from(vec![
+        Span::styled(
+            header,
+            Style::default()
+                .fg(t.bg_dark)
+                .bg(accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ".repeat(pad), Style::default().bg(accent)),
+    ])
+}
+
 fn render_row(row: &AgentRow, selected: bool, t: &theme::Theme, width: u16) -> Line<'static> {
     let bg = if selected { t.bg2 } else { t.bg_dark };
     let mark = if selected { "▸ " } else { "  " };
@@ -165,13 +219,18 @@ fn render_row(row: &AgentRow, selected: bool, t: &theme::Theme, width: u16) -> L
     let badge = row.state_badge();
     let state = format!("{:<10}", badge);
 
+    let (source_glyph, source_color) = match row.source {
+        AgentSource::Claude => ("✦", t.purple),
+        AgentSource::Codex => ("◈", t.teal),
+    };
+
     let workspace_pad: String = format!("{:<14}", clip(&row.workspace, 14));
     let sid: String = row.session_id.chars().take(8).collect();
     let model = row
         .model
         .as_deref()
         .map(|m| m.strip_prefix("claude-").unwrap_or(m).to_string())
-        .unwrap_or_else(|| "?".to_string());
+        .unwrap_or_else(|| row.source.label().to_string());
     let model_pad = format!("{:<14}", clip(&model, 14));
     let age = row
         .last_activity
@@ -191,10 +250,14 @@ fn render_row(row: &AgentRow, selected: bool, t: &theme::Theme, width: u16) -> L
 
     let row_chars =
         state.chars().count() + workspace_pad.chars().count() + 8 + model_pad.chars().count()
-            + age.chars().count() + tokens.chars().count() + pid.chars().count() + pending.chars().count() + 16;
+            + age.chars().count() + tokens.chars().count() + pid.chars().count() + pending.chars().count() + 18;
     let pad = (width as usize).saturating_sub(row_chars + 2);
 
     Line::from(vec![
+        Span::styled(
+            format!(" {source_glyph}"),
+            Style::default().fg(source_color).bg(bg).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(mark.to_string(), mark_style),
         Span::styled(
             state,
@@ -202,7 +265,7 @@ fn render_row(row: &AgentRow, selected: bool, t: &theme::Theme, width: u16) -> L
         ),
         Span::styled(format!("  {workspace_pad}"), Style::default().fg(t.fg).bg(bg)),
         Span::styled(format!("  {sid}"), Style::default().fg(t.comment).bg(bg)),
-        Span::styled(format!("  {model_pad}"), Style::default().fg(t.purple).bg(bg)),
+        Span::styled(format!("  {model_pad}"), Style::default().fg(source_color).bg(bg)),
         Span::styled(format!("  {:<6}", age), Style::default().fg(t.cyan).bg(bg)),
         Span::styled(format!("  {:>6}", tokens), Style::default().fg(t.yellow).bg(bg)),
         Span::styled(format!("  {:>6}", pid), Style::default().fg(t.comment).bg(bg)),
