@@ -128,6 +128,28 @@ impl App {
         self.focus = Focus::Pane;
     }
 
+    /// Open a pty pane running `cargo <subcmd>` in the workspace.
+    /// Used by the cargo.* family of palette commands. Toasts when
+    /// no Cargo.toml is found at the workspace root.
+    pub fn run_cargo_subcommand(&mut self, subcmd: &str) {
+        let toml = self.workspace.join("Cargo.toml");
+        if !toml.exists() {
+            self.toast(format!(
+                "cargo.{subcmd}: no Cargo.toml at {}",
+                self.workspace.display()
+            ));
+            return;
+        }
+        let label = format!("cargo {subcmd}");
+        let cmdline = format!("cargo {subcmd}");
+        let profile = crate::pty_pane::BinaryProfile::task(
+            &label,
+            &cmdline,
+            self.workspace.clone(),
+        );
+        self.open_pty(profile);
+    }
+
     /// `test.run_all` — the whole Playwright suite.
     pub fn run_tests_all(&mut self) {
         self.run_playwright(Vec::new());
