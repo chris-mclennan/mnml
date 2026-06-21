@@ -1569,6 +1569,33 @@ mod tests {
     }
 
     #[test]
+    fn workspace_file_round_trips_on_load() {
+        // End-to-end: change a setting via the overlay → the workspace file it
+        // writes, when merged onto a fresh (global-default) config the way
+        // `Config::load`'s home→workspace layering does, reflects the new
+        // value. Proves the write side round-trips through the read side.
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        let mut app = App::new(ws.clone(), Config::default()).unwrap();
+        let default_cursor_line = Config::default().ui.cursor_line;
+        app.open_settings_overlay();
+        focus_row(&mut app, "ui.cursor_line");
+        app.settings_adjust_value(1);
+        let set_value = app.config.ui.cursor_line;
+        assert_ne!(set_value, default_cursor_line, "adjust changed the value");
+
+        // Layer the just-written workspace file onto a fresh default config —
+        // the same merge `Config::load` applies (global defaults, then the
+        // workspace override). The workspace value must win.
+        let mut merged = Config::default();
+        merged.apply_file_pub(&ws.join(".mnml").join("config.toml"));
+        assert_eq!(
+            merged.ui.cursor_line, set_value,
+            "workspace override applied on load"
+        );
+    }
+
+    #[test]
     fn adjust_persists_tab_width_editor_section() {
         let d = tempfile::tempdir().unwrap();
         let ws = d.path().to_path_buf();

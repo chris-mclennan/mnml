@@ -1,0 +1,34 @@
+# Changing a setting in the overlay persists it to the per-project, checked-in
+# file <workspace>/.mnml/config.toml — keystroke-driven end-to-end through the
+# real key dispatcher (closes the gap where persistence was only unit-tested at
+# the App-method level). Also proves Esc cancels on disk + preserves unrelated
+# content. 2026-06-21.
+write a.txt hello
+open a.txt
+
+# Seed an existing workspace config so we can prove Esc RESTORES it (not just
+# deletes) and that unrelated content survives a setting write.
+write .mnml/config.toml [ui]\ntree_width = 40\n
+
+command view.settings
+expect screen contains "Settings"
+
+# Row 0 (first focusable) is `ui.line_numbers`. `→` adjusts it; the overlay
+# writes the change live into the workspace file, upserting beside the seed.
+key right
+expect file .mnml/config.toml contains "line_numbers"
+expect file .mnml/config.toml contains "tree_width = 40"
+
+# Esc cancels — restores the workspace file to its pre-open content, so the
+# adjustment is undone on disk while the seeded value survives.
+key esc
+expect screen lacks "Settings"
+expect file .mnml/config.toml lacks "line_numbers"
+expect file .mnml/config.toml contains "tree_width = 40"
+
+# Reopen, adjust, and leave via click-outside (the save path) so it persists.
+command view.settings
+key right
+click 1 1
+expect screen lacks "Settings"
+expect file .mnml/config.toml contains "line_numbers"
