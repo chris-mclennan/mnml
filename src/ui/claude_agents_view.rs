@@ -744,35 +744,45 @@ fn format_cost(usd: f64) -> String {
     }
 }
 
-const HELP_LINES: &[(&str, &str)] = &[
-    ("j / k or ↑/↓", "select row · mouse click also selects"),
-    ("PgUp / PgDn", "page through rows (10 at a time)"),
-    ("Shift+PgUp / Shift+PgDn", "scroll the drill-down panel"),
-    ("Home / End", "first / last row"),
-    ("/", "filter by text (workspace · id · model · last msg)"),
-    ("0 / 1 / 2 / 3 / 4", "filter by state (all / live / tool / idle / ended)"),
-    ("> / <", "cycle source filter (all → claude → codex → all)"),
-    ("w", "toggle workspace-only filter (this workspace's sessions only)"),
-    ("Ctrl+L", "clear all filters at once"),
-    ("g", "cycle grouping (by source ↔ by workspace)"),
-    ("space", "toggle multi-select on the focused row"),
-    ("R", "clear multi-select (uppercase R)"),
-    ("s", "cycle sort key (state → tokens↓ → cost↓ → recent → …)"),
-    ("v", "cycle drill-down view (Summary → Todos → Files → Bash → Agents)"),
-    ("r", "refresh now"),
-    ("p", "pause/resume the 3s auto-refresh"),
-    ("y", "yank session id to clipboard"),
-    ("c", "yank cwd to clipboard"),
-    ("t / Enter", "open the transcript .jsonl in an editor (or dbl-click)"),
-    ("(Files panel)", "click a file row → open in an editor pane"),
-    ("o", "resume the session in a new pty (claude --resume / fresh codex)"),
-    ("K", "SIGTERM (escalates to SIGKILL after 2s if still alive)"),
-    ("e", "export the selected session's transcript as markdown"),
-    (":ai.session_search", "grep all transcripts (via palette)"),
-    (":ai.spend_today", "summary of today's tokens + cost by workspace"),
-    ("? / F1", "toggle this help (F1 works mid-filter)"),
-    ("Esc", "focus file tree"),
-    ("q", "close the pane"),
+enum HelpEntry {
+    Section(&'static str),
+    Row(&'static str, &'static str),
+}
+
+const HELP_LINES: &[HelpEntry] = &[
+    HelpEntry::Section("Navigation"),
+    HelpEntry::Row("j / k or ↑/↓", "select row · mouse click also selects"),
+    HelpEntry::Row("PgUp / PgDn", "page through rows (10 at a time)"),
+    HelpEntry::Row("Shift+PgUp / Shift+PgDn", "scroll the drill-down panel"),
+    HelpEntry::Row("Home / End", "first / last row"),
+    HelpEntry::Section("Filters"),
+    HelpEntry::Row("/", "filter by text (workspace · id · model · last msg)"),
+    HelpEntry::Row("0 / 1 / 2 / 3 / 4", "filter by state (all / live / tool / idle / ended)"),
+    HelpEntry::Row("> / <", "cycle source filter (all → claude → codex → all)"),
+    HelpEntry::Row("w", "toggle workspace-only filter"),
+    HelpEntry::Row("Ctrl+L", "clear all filters at once"),
+    HelpEntry::Section("Layout"),
+    HelpEntry::Row("g", "cycle grouping (by source ↔ by workspace)"),
+    HelpEntry::Row("s", "cycle sort key (state → tokens↓ → cost↓ → recent → …)"),
+    HelpEntry::Row("v", "cycle drill-down view (Summary → Todos → Files → Bash → Agents)"),
+    HelpEntry::Row("r", "refresh now · p pause/resume the 3s auto-refresh"),
+    HelpEntry::Section("Selection"),
+    HelpEntry::Row("space", "toggle multi-select on the focused row"),
+    HelpEntry::Row("R", "clear multi-select"),
+    HelpEntry::Section("Clipboard / Open"),
+    HelpEntry::Row("y / c", "yank session id / cwd to clipboard"),
+    HelpEntry::Row("t / Enter / dbl-click", "open the transcript .jsonl"),
+    HelpEntry::Row("(Files panel) click", "open the file in an editor pane"),
+    HelpEntry::Section("Actions"),
+    HelpEntry::Row("o", "resume the session in a new pty"),
+    HelpEntry::Row("K", "SIGTERM (escalates to SIGKILL after 2s)"),
+    HelpEntry::Row("e", "export the selected transcript as markdown"),
+    HelpEntry::Section("Palette commands"),
+    HelpEntry::Row(":ai.session_search", "grep all transcripts"),
+    HelpEntry::Row(":ai.spend_today", "today's tokens + cost by workspace"),
+    HelpEntry::Section("Meta"),
+    HelpEntry::Row("? / F1", "toggle this help (F1 works mid-filter)"),
+    HelpEntry::Row("Esc / q", "focus tree / close the pane"),
 ];
 
 pub fn help_overlay(t: &theme::Theme, width: u16) -> Vec<Line<'static>> {
@@ -782,13 +792,31 @@ pub fn help_overlay(t: &theme::Theme, width: u16) -> Vec<Line<'static>> {
         format!(" {:<width$}", " Claude Agents — help (? to close)", width = width as usize - 1),
         Style::default().fg(t.yellow).bg(bg).add_modifier(Modifier::BOLD),
     )));
-    for (chord, desc) in HELP_LINES {
-        let txt = format!(" {chord:<22}  {desc}");
-        let pad = (width as usize).saturating_sub(txt.chars().count());
-        lines.push(Line::from(vec![
-            Span::styled(txt, Style::default().fg(t.fg).bg(bg)),
-            Span::styled(" ".repeat(pad), Style::default().bg(bg)),
-        ]));
+    for entry in HELP_LINES {
+        match entry {
+            HelpEntry::Section(name) => {
+                let txt = format!(" ── {name} ");
+                let pad = (width as usize).saturating_sub(txt.chars().count());
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        txt,
+                        Style::default()
+                            .fg(t.cyan)
+                            .bg(bg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" ".repeat(pad), Style::default().bg(bg)),
+                ]));
+            }
+            HelpEntry::Row(chord, desc) => {
+                let txt = format!("   {chord:<24}  {desc}");
+                let pad = (width as usize).saturating_sub(txt.chars().count());
+                lines.push(Line::from(vec![
+                    Span::styled(txt, Style::default().fg(t.fg).bg(bg)),
+                    Span::styled(" ".repeat(pad), Style::default().bg(bg)),
+                ]));
+            }
+        }
     }
     lines
 }

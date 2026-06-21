@@ -696,6 +696,11 @@ impl ClaudeAgentsPane {
         });
         self.rows = rows;
         self.built_at = SystemTime::now();
+        // Prune multi-select set so it doesn't accumulate sids for
+        // sessions that have rolled off (older than 7 days, etc.).
+        let live_sids: std::collections::HashSet<String> =
+            self.rows.iter().map(|r| r.session_id.clone()).collect();
+        self.multi_selected.retain(|sid| live_sids.contains(sid));
         self.merge_lifetime_totals();
         self.recompute_token_rates();
         if let Some(sid) = prior_sid
