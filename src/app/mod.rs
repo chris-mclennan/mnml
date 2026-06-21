@@ -8713,6 +8713,30 @@ impl App {
                     }
                 }
             }
+            ClaudeAgentsAction::ResumeSessionInTmnl => {
+                use crate::claude_agents::AgentSource;
+                if !self.is_inside_tmnl() {
+                    self.toast("not running under tmnl — use o for an mnml pane");
+                    return;
+                }
+                let sid = row.session_id.clone();
+                match row.source {
+                    AgentSource::Claude => {
+                        self.tmnl_open_tab(
+                            "claude".to_string(),
+                            vec!["--resume".to_string(), sid.clone()],
+                        );
+                        self.toast(format!(
+                            "tmnl: claude --resume {}…",
+                            sid.chars().take(8).collect::<String>()
+                        ));
+                    }
+                    AgentSource::Codex => {
+                        self.tmnl_open_tab("codex".to_string(), vec![]);
+                        self.toast("tmnl: opened fresh codex tab");
+                    }
+                }
+            }
         }
     }
 
