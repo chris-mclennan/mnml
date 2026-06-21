@@ -213,7 +213,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     }
 
     if let Some(sel) = p.selected_row() {
-        let file_clicks = draw_detail(frame, sel, p.detail, detail_area, &t);
+        let file_clicks = draw_detail(frame, sel, p.detail, p.detail_scroll, detail_area, &t);
         for (rect, path) in file_clicks {
             app.rects.claude_drill_files.push((rect, path));
         }
@@ -467,6 +467,7 @@ fn draw_detail(
     frame: &mut Frame,
     row: &AgentRow,
     view: DetailView,
+    scroll: usize,
     area: Rect,
     t: &theme::Theme,
 ) -> Vec<(Rect, String)> {
@@ -579,19 +580,22 @@ fn draw_detail(
                                 .add_modifier(Modifier::UNDERLINED),
                         ),
                     ]));
-                    // header line above + (i) lines. y_offset within area:
-                    // 0 = session header, 1 = divider, 2..N = content.
-                    let y_offset = 2u16 + i as u16;
-                    if y_offset < area.height {
-                        file_clicks.push((
-                            Rect {
-                                x: area.x,
-                                y: area.y + y_offset,
-                                width: area.width,
-                                height: 1,
-                            },
-                            f.path.clone(),
-                        ));
+                    // y_offset within area: 0 = session header,
+                    // 1 = divider, 2..N = content. detail_scroll
+                    // shifts the content rows up.
+                    if i >= scroll {
+                        let y_offset = 2u16 + (i - scroll) as u16;
+                        if y_offset < area.height {
+                            file_clicks.push((
+                                Rect {
+                                    x: area.x,
+                                    y: area.y + y_offset,
+                                    width: area.width,
+                                    height: 1,
+                                },
+                                f.path.clone(),
+                            ));
+                        }
                     }
                 }
             }
@@ -637,7 +641,19 @@ fn draw_detail(
         }
     }
 
-    let para = Paragraph::new(lines).style(Style::default().bg(t.bg_dark));
+    // Apply detail_scroll only to the content lines (header +
+    // divider = first 2 lines, always kept on top).
+    let visible_lines: Vec<Line> = if scroll > 0 && lines.len() > 2 {
+        let mut keep: Vec<Line> = lines.iter().take(2).cloned().collect();
+        let content_len = lines.len() - 2;
+        let max_scroll = content_len.saturating_sub(1);
+        let actual_scroll = scroll.min(max_scroll);
+        keep.extend(lines.into_iter().skip(2 + actual_scroll));
+        keep
+    } else {
+        lines
+    };
+    let para = Paragraph::new(visible_lines).style(Style::default().bg(t.bg_dark));
     frame.render_widget(para, area);
     file_clicks
 }
@@ -693,6 +709,7 @@ fn format_cost(usd: f64) -> String {
 const HELP_LINES: &[(&str, &str)] = &[
     ("j / k or ↑/↓", "select row · mouse click also selects"),
     ("PgUp / PgDn", "page through rows (10 at a time)"),
+    ("Shift+PgUp / Shift+PgDn", "scroll the drill-down panel"),
     ("Home / End", "first / last row"),
     ("/", "filter by text (workspace · id · model · last msg)"),
     ("0 / 1 / 2 / 3 / 4", "filter by state (all / live / tool / idle / ended)"),

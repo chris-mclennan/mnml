@@ -249,6 +249,10 @@ pub struct ClaudeAgentsPane {
     pub state_filter: Option<AgentState>,
     /// Toggle the `?` help overlay rendered above the row list.
     pub show_help: bool,
+    /// Scroll offset within the drill-down panel — for lists too
+    /// long to fit (Bash history, recent files, todos). Reset to 0
+    /// when the user picks a different row or cycles `v`.
+    pub detail_scroll: usize,
     /// Last time the SELECTED row was re-tailed (live tail). The
     /// global refresh runs every 3s and rebuilds the row set; this
     /// tracks the more-frequent (every-tick) per-row poll that
@@ -340,6 +344,7 @@ impl ClaudeAgentsPane {
             paused_by_user: false,
             state_filter: None,
             show_help: false,
+            detail_scroll: 0,
             last_live_tail: SystemTime::now(),
             prior_state_snapshot: std::collections::HashMap::new(),
             token_samples: std::collections::HashMap::new(),
@@ -717,17 +722,20 @@ impl ClaudeAgentsPane {
 
     pub fn move_up(&mut self) {
         self.selected = self.selected.saturating_sub(1);
+        self.detail_scroll = 0;
     }
 
     pub fn move_down(&mut self) {
         let n = self.visible_indices().len();
         if self.selected + 1 < n {
             self.selected += 1;
+            self.detail_scroll = 0;
         }
     }
 
     pub fn cycle_detail(&mut self) {
         self.detail = self.detail.cycle();
+        self.detail_scroll = 0;
     }
 
     pub fn cycle_group_by(&mut self) {

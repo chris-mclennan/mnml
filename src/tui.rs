@@ -1804,6 +1804,16 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     p.move_down();
                 }
             }
+            KeyCode::PageUp if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.detail_scroll = p.detail_scroll.saturating_sub(4);
+                }
+            }
+            KeyCode::PageDown if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.detail_scroll = p.detail_scroll.saturating_add(4);
+                }
+            }
             KeyCode::PageUp => {
                 if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
                     for _ in 0..10 {
