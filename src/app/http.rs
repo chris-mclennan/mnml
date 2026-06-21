@@ -335,6 +335,112 @@ impl App {
         }
     }
 
+    /// `:http.run_chain` — picker over `.mnml/chains/*.chain.json`.
+    /// Accept fires the chain in a worker thread; the step-by-step
+    /// trace lands in a `[chain-trace]` scratch when done. Postman
+    /// runner arc — Postman collections are imported into mnml's
+    /// chain format via `:http.import_postman` then run with this.
+    pub fn open_http_chain_picker(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let chains_dir = self.workspace.join(".mnml").join("chains");
+        let mut entries: Vec<std::path::PathBuf> = match std::fs::read_dir(&chains_dir) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|n| n.ends_with(".chain.json"))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        if entries.is_empty() {
+            self.toast(format!(
+                "http.run_chain: no chains at {}",
+                chains_dir.display()
+            ));
+            return;
+        }
+        entries.sort();
+        let items: Vec<PickerItem> = entries
+            .iter()
+            .map(|p| {
+                let name = p
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("?")
+                    .trim_end_matches(".chain.json")
+                    .to_string();
+                let n_steps = std::fs::read_to_string(p)
+                    .ok()
+                    .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                    .and_then(|v| v.as_array().map(|a| a.len()))
+                    .unwrap_or(0);
+                PickerItem::new(
+                    p.to_string_lossy().to_string(),
+                    name,
+                    format!("{n_steps} step(s)"),
+                )
+            })
+            .collect();
+        self.open_picker(Picker::new(PickerKind::HttpChains, "HTTP chains", items));
+    }
+
+    /// Backing for the `HttpChains` picker's accept handler — spawn
+    /// a worker that runs the chain and replies via
+    /// `http_chain_chan`.
+    pub fn http_chain_run_path(&mut self, chain_file: std::path::PathBuf) {
+        if self.http_chain_in_flight {
+            self.toast("http.run_chain: a chain is already running");
+            return;
+        }
+        let tx = self
+            .http_chain_chan
+            .get_or_insert_with(std::sync::mpsc::channel)
+            .0
+            .clone();
+        let workspace = self.workspace.clone();
+        let env_name = std::env::var("MNML_ENV").ok();
+        self.http_chain_in_flight = true;
+        self.toast(format!(
+            "chain: running {}…",
+            chain_file
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("?")
+        ));
+        std::thread::Builder::new()
+            .name("mnml-chain-run".into())
+            .spawn(move || {
+                let mut trace = String::new();
+                let result =
+                    crate::http::chain::run(&chain_file, &workspace, env_name.as_deref(), &mut trace);
+                let _ = tx.send((trace, result));
+            })
+            .ok();
+    }
+
+    /// `tick` hook — drain `:http.run_chain` worker replies.
+    pub fn drain_http_chain(&mut self) {
+        let replies: Vec<(String, Result<(), String>)> = match &self.http_chain_chan {
+            Some((_, rx)) => rx.try_iter().collect(),
+            None => return,
+        };
+        for (trace, result) in replies {
+            self.http_chain_in_flight = false;
+            let mut body = trace;
+            let summary = match &result {
+                Ok(()) => "✓ chain completed successfully".to_string(),
+                Err(e) => format!("✗ chain failed: {e}"),
+            };
+            body.push_str("\n────\n");
+            body.push_str(&summary);
+            body.push('\n');
+            self.open_scratch_with_text("[chain-trace]".to_string(), body);
+            self.toast(summary);
+        }
+    }
+
     /// `:http.ai_build` — open a prompt asking for a natural-language
     /// request description, then spawn a worker that calls Claude
     /// (`api_client::nl_to_curl`). The reply lands as a curl command;

@@ -2930,6 +2930,18 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_http_history_global(),
         },
         Command {
+            id: "http.run_chain",
+            title: "HTTP: run a .chain.json from .mnml/chains (multi-step request chain)",
+            group: "http",
+            // Postman runner arc. Picker over the workspace's
+            // .mnml/chains/*.chain.json files. Enter spawns a worker
+            // that runs the chain step-by-step (see http::chain::run);
+            // the per-step trace + final pass/fail lands in a
+            // [chain-trace] scratch.
+            keys: &[],
+            run: |app| app.open_http_chain_picker(),
+        },
+        Command {
             id: "http.ai_build",
             title: "HTTP: build a request from a natural-language description (Claude)",
             group: "http",

@@ -185,6 +185,12 @@ pub enum PickerKind {
     /// ⇒ read `.mnml/auth/<id>.txt`, set the active Request pane's
     /// Authorization header to its content.
     AuthPresets,
+    /// `id` = absolute path to a `.chain.json` file. Accept ⇒
+    /// run the chain in a worker thread; the step-by-step trace
+    /// lands in a `[chain-trace]` scratch. 2026-06-20 — Postman
+    /// runner arc (chains are mnml's chain format; Postman
+    /// collections feed in via `:http.import_postman` first).
+    HttpChains,
 }
 
 #[derive(Debug, Clone)]

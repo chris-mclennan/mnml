@@ -645,6 +645,10 @@ impl App {
                 let name = item.id.clone();
                 self.accept_auth_preset(&name);
             }
+            PickerKind::HttpChains => {
+                let path = std::path::PathBuf::from(item.id.clone());
+                self.http_chain_run_path(path);
+            }
             PickerKind::CookiesDelete => {
                 if let Some((host, name)) = item.id.split_once('\t') {
                     let removed = {

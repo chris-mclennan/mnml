@@ -3104,6 +3104,16 @@ pub struct App {
     /// Used to gate against double-submits + power a "calling
     /// Claude…" cmdline-bar indicator.
     pub http_ai_build_in_flight: bool,
+    /// 2026-06-20 — channel for `:http.run_chain` (Postman runner
+    /// arc). Worker calls `http::chain::run` and sends back the
+    /// full trace + final result. `tick` drains it and opens a
+    /// `[chain-trace]` scratch.
+    pub http_chain_chan: Option<(
+        std::sync::mpsc::Sender<(String, Result<(), String>)>,
+        std::sync::mpsc::Receiver<(String, Result<(), String>)>,
+    )>,
+    /// True while a chain run is in flight; gates double-submits.
+    pub http_chain_in_flight: bool,
     /// Channel for background `claude -p` runs (lazily created); worker threads
     /// stream `(job_id, AiMsg)` (deltas then a final Done/Failed), [`Self::tick`]
     /// drains it into the matching `Pane::Ai`.
@@ -3551,6 +3561,8 @@ impl App {
             sse_chan: None,
             http_ai_build_chan: None,
             http_ai_build_in_flight: false,
+            http_chain_chan: None,
+            http_chain_in_flight: false,
             ai_chan: None,
             suggest_chan: None,
             pending_suggest: None,
@@ -9062,6 +9074,7 @@ impl App {
         self.drain_sse_jobs();
         self.drain_websocket();
         self.drain_http_ai_build();
+        self.drain_http_chain();
         self.drain_http_sync_result();
         self.drain_http_bench_result();
         self.drain_lookup_fire_result();
