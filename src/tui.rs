@@ -1774,6 +1774,13 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                         p.selected = 0;
                     }
                 }
+                // F1 toggles help even mid-filter so the user
+                // doesn't have to escape just to consult the help.
+                KeyCode::F(1) => {
+                    if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                        p.show_help = !p.show_help;
+                    }
+                }
                 KeyCode::Char(c)
                     if !key.modifiers.contains(KeyModifiers::CONTROL) =>
                 {
