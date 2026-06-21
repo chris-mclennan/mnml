@@ -3092,6 +3092,18 @@ pub struct App {
         std::sync::mpsc::Sender<crate::request_pane::SseStreamMsg>,
         std::sync::mpsc::Receiver<crate::request_pane::SseStreamMsg>,
     )>,
+    /// 2026-06-20 — channel for `:http.ai_build` (Claude one-shot
+    /// "NL → curl"). Worker calls `api_client::nl_to_curl` and sends
+    /// the result back; `tick` drains it, parses the curl, and opens
+    /// a new Request pane.
+    pub http_ai_build_chan: Option<(
+        std::sync::mpsc::Sender<Result<String, String>>,
+        std::sync::mpsc::Receiver<Result<String, String>>,
+    )>,
+    /// Whether a `:http.ai_build` worker is currently in flight.
+    /// Used to gate against double-submits + power a "calling
+    /// Claude…" cmdline-bar indicator.
+    pub http_ai_build_in_flight: bool,
     /// Channel for background `claude -p` runs (lazily created); worker threads
     /// stream `(job_id, AiMsg)` (deltas then a final Done/Failed), [`Self::tick`]
     /// drains it into the matching `Pane::Ai`.
@@ -3537,6 +3549,8 @@ impl App {
             completion: None,
             http_chan: None,
             sse_chan: None,
+            http_ai_build_chan: None,
+            http_ai_build_in_flight: false,
             ai_chan: None,
             suggest_chan: None,
             pending_suggest: None,
@@ -9047,6 +9061,7 @@ impl App {
         self.drain_http_jobs();
         self.drain_sse_jobs();
         self.drain_websocket();
+        self.drain_http_ai_build();
         self.drain_http_sync_result();
         self.drain_http_bench_result();
         self.drain_lookup_fire_result();

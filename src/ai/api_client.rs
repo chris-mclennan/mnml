@@ -262,6 +262,83 @@ pub fn complete_code(
     Ok(out)
 }
 
+/// One-shot non-streaming "build a curl from this natural-language
+/// description". Used by `:http.ai_build` to populate a new Request
+/// pane from "get me the top 5 users from prod". Returns the raw
+/// curl command (with `\` line continuations stripped — `crate::http::parse`
+/// handles either form, but the smaller form is friendlier in the
+/// Source field). Blocking — call from a worker thread.
+pub fn nl_to_curl(description: &str, model: Option<&str>) -> Result<String, String> {
+    let api_key =
+        std::env::var("ANTHROPIC_API_KEY").map_err(|_| "$ANTHROPIC_API_KEY not set".to_string())?;
+    let system = "You are an API request generator. The user describes an HTTP request \
+        in natural language; you output the EXACT corresponding `curl` command on a \
+        SINGLE LINE — no backslash continuations, no markdown fences, no commentary, no \
+        leading `$ ` prompt. Include explicit -X <METHOD>, -H 'Header: …' for every needed \
+        header (Content-Type, Authorization when implied, Accept where useful), and \
+        --data '<json>' for bodies (always JSON unless the user says otherwise). Prefer \
+        https://. When auth is implied but not given, use the placeholder `{{TOKEN}}`. \
+        When a host is implied but not given, use `https://api.example.com`.";
+    let user = format!(
+        "Request description:\n\n{description}\n\nOutput the curl command (one line, no fences):"
+    );
+    let body = serde_json::json!({
+        "model": model.unwrap_or(DEFAULT_MODEL),
+        "max_tokens": 1024u32,
+        "system": system,
+        "messages": [{ "role": "user", "content": user }],
+    })
+    .to_string();
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("build client: {e}"))?;
+    let resp = client
+        .post(ENDPOINT)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", API_VERSION)
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .map_err(|e| format!("POST: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!(
+            "HTTP {status}: {}",
+            text.chars().take(200).collect::<String>()
+        ));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("parse reply: {e}"))?;
+    let raw: String = v
+        .get("content")
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
+                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    // Strip code fences and stray prompt markers if the model added them.
+    let mut out = raw.trim().to_string();
+    if let Some(rest) = out.strip_prefix("```") {
+        // ``` or ```bash / ```sh
+        let body = rest.trim_start_matches(|c: char| c.is_alphanumeric() || c == '-');
+        let body = body.strip_prefix('\n').unwrap_or(body);
+        if let Some(end) = body.rfind("```") {
+            out = body[..end].trim().to_string();
+        }
+    }
+    if let Some(rest) = out.strip_prefix("$ ") {
+        out = rest.to_string();
+    }
+    // Strip backslash line continuations (model sometimes ignores instructions).
+    out = out.replace("\\\n", " ");
+    Ok(out)
+}
+
 /// Stream a one-shot prompt through Anthropic's `/v1/messages` with
 /// `stream: true`. Each `content_block_delta` event with a `text_delta`
 /// becomes an `AiMsg::Delta`; the final accumulated text lands as

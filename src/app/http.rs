@@ -335,6 +335,94 @@ impl App {
         }
     }
 
+    /// `:http.ai_build` — open a prompt asking for a natural-language
+    /// request description, then spawn a worker that calls Claude
+    /// (`api_client::nl_to_curl`). The reply lands as a curl command;
+    /// `drain_http_ai_build` parses it, opens a new Request pane,
+    /// switches it to the Source tab so the user can see what came
+    /// back. Requires `$ANTHROPIC_API_KEY`.
+    pub fn http_ai_build_prompt(&mut self) {
+        if std::env::var("ANTHROPIC_API_KEY").is_err() {
+            self.toast("http.ai_build: $ANTHROPIC_API_KEY not set");
+            return;
+        }
+        if self.http_ai_build_in_flight {
+            self.toast("http.ai_build: a build is already in flight");
+            return;
+        }
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::HttpAiBuild,
+            "Describe the request (NL → curl):".to_string(),
+        ));
+    }
+
+    /// Accept handler for the `HttpAiBuild` prompt. Spawns a worker
+    /// thread calling `api_client::nl_to_curl`.
+    pub fn http_ai_build_accept(&mut self, description: String) {
+        if description.trim().is_empty() {
+            self.toast("http.ai_build: empty description");
+            return;
+        }
+        let tx = self
+            .http_ai_build_chan
+            .get_or_insert_with(std::sync::mpsc::channel)
+            .0
+            .clone();
+        let model = self.ai_model();
+        self.http_ai_build_in_flight = true;
+        self.toast("http.ai_build: calling Claude…");
+        std::thread::Builder::new()
+            .name("mnml-http-ai-build".into())
+            .spawn(move || {
+                let result = crate::ai::api_client::nl_to_curl(&description, model.as_deref());
+                let _ = tx.send(result);
+            })
+            .ok();
+    }
+
+    /// `tick` hook — drain replies from the `:http.ai_build` worker.
+    /// Parses the curl reply + opens a new Request pane with the
+    /// parsed request loaded. Single-shot per call.
+    pub fn drain_http_ai_build(&mut self) {
+        let replies: Vec<Result<String, String>> = match &self.http_ai_build_chan {
+            Some((_, rx)) => rx.try_iter().collect(),
+            None => return,
+        };
+        for result in replies {
+            self.http_ai_build_in_flight = false;
+            match result {
+                Ok(curl) => match crate::http::parse(&curl) {
+                    Ok(parsed) => {
+                        self.open_new_request_pane();
+                        let Some(cur) = self.active else { continue };
+                        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+                            rp.headers_buffer =
+                                crate::request_pane::headers_to_text(&parsed.headers);
+                            rp.headers_cursor = rp.headers_buffer.len();
+                            rp.url_cursor = parsed.url.len();
+                            rp.body_cursor = parsed.body.as_deref().map(str::len).unwrap_or(0);
+                            rp.source_buffer = curl.clone();
+                            rp.source_cursor = curl.len();
+                            rp.request = parsed;
+                            rp.view = crate::request_pane::ViewMode::Edit;
+                            // Land on the Source tab so the user
+                            // immediately sees the curl Claude
+                            // produced (auditable before re-firing).
+                            rp.edit_tab = crate::request_pane::EditTab::Source;
+                        }
+                        self.toast("http.ai_build: ✓ ready (Source tab)");
+                    }
+                    Err(e) => {
+                        self.toast(format!("http.ai_build: parse failed: {e}"));
+                    }
+                },
+                Err(e) => {
+                    self.toast(format!("http.ai_build: {e}"));
+                }
+            }
+        }
+    }
+
     /// `:ws.connect` — open a Prompt for a wss:// URL.
     pub fn ws_connect_prompt(&mut self) {
         if self.websocket.is_some() {

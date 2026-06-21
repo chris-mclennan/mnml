@@ -100,6 +100,11 @@ pub enum PromptKind {
     WsConnect,
     /// Accept ⇒ send the typed message on the active WebSocket.
     WsSendMessage,
+    /// Accept ⇒ send the typed natural-language description to
+    /// Claude (one-shot), wait for the curl reply, then open a new
+    /// Request pane populated with the parsed request. Useful for
+    /// "get me the top 5 users from prod" → fully-formed POST.
+    HttpAiBuild,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into

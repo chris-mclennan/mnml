@@ -1240,6 +1240,10 @@ impl App {
                 let msg = p.input.clone();
                 self.ws_send_on_active(&msg);
             }
+            crate::prompt::PromptKind::HttpAiBuild => {
+                let description = p.input.clone();
+                self.http_ai_build_accept(description);
+            }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();
                 if let Some(FsAction::NewFile { parent }) = self.pending_fs_action.take() {

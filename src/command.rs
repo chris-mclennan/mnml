@@ -2930,6 +2930,18 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_http_history_global(),
         },
         Command {
+            id: "http.ai_build",
+            title: "HTTP: build a request from a natural-language description (Claude)",
+            group: "http",
+            // Prompts for a NL description ("get the top 5 users
+            // from prod"); a worker thread calls Claude's
+            // /v1/messages with a curl-only system prompt; the
+            // reply is parsed as curl and a new Request pane opens
+            // on the Source tab. Requires $ANTHROPIC_API_KEY.
+            keys: &[],
+            run: |app| app.http_ai_build_prompt(),
+        },
+        Command {
             id: "http.save_mock",
             title: "HTTP: save current response as a sibling .mock.json",
             group: "http",
