@@ -2075,6 +2075,71 @@ impl App {
     }
 
     /// Open a fuzzy picker over local + remote branches; accept ⇒ checkout.
+    /// `:git.recent_branches` — picker over local branches sorted
+    /// by `committerdate` (newest first). Same accept handler as
+    /// the standard branch picker (PickerKind::Branches with
+    /// `local:<name>` ids).
+    pub fn open_recent_branches_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let cur = crate::git::branch::current(self.active_repo_path());
+        let branches = crate::git::branch::local_branches_by_recent(self.active_repo_path());
+        if branches.is_empty() {
+            self.toast("no branches (not a git repo?)");
+            return;
+        }
+        let items: Vec<PickerItem> = branches
+            .iter()
+            .map(|b| {
+                let detail = if Some(b) == cur.as_ref() {
+                    "current"
+                } else {
+                    "local"
+                };
+                let label = if Some(b) == cur.as_ref() {
+                    format!("● {b}")
+                } else {
+                    format!("  {b}")
+                };
+                PickerItem::new(format!("local:{b}"), label, detail)
+            })
+            .collect();
+        self.open_picker(Picker::new(
+            PickerKind::Branches,
+            "Recent branches",
+            items,
+        ));
+    }
+
+    /// `:git.copy_current_branch` — copy the active repo's current
+    /// branch name to the clipboard.
+    pub fn copy_current_branch(&mut self) {
+        match crate::git::branch::current(self.active_repo_path()) {
+            Some(b) => {
+                self.clipboard.set(b.clone(), false);
+                self.toast(format!("git: {b} → clipboard"));
+            }
+            None => self.toast("git: detached HEAD or not a repo"),
+        }
+    }
+
+    /// `:git.copy_head_sha` — copy the active repo's HEAD SHA
+    /// (full 40-char hex) to the clipboard.
+    pub fn copy_head_sha(&mut self) {
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(self.active_repo_path())
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {
+                let sha = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                let short: String = sha.chars().take(8).collect();
+                self.clipboard.set(sha, false);
+                self.toast(format!("git: HEAD {short}… → clipboard"));
+            }
+            _ => self.toast("git: rev-parse HEAD failed"),
+        }
+    }
+
     pub fn open_branch_picker(&mut self) {
         use crate::picker::PickerItem;
         let cur = crate::git::branch::current(self.active_repo_path());

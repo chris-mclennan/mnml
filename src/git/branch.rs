@@ -28,6 +28,21 @@ pub fn local_branches(workspace: &Path) -> Vec<String> {
     )
 }
 
+/// Local branches sorted by most-recent committer date (newest
+/// first). Useful for `:git.recent_branches` — surfaces the branches
+/// you actually work in week-to-week ahead of stale ones.
+pub fn local_branches_by_recent(workspace: &Path) -> Vec<String> {
+    lines_of(
+        workspace,
+        &[
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short)",
+            "refs/heads",
+        ],
+    )
+}
+
 /// Remote-tracking branch names (`origin/main`, …), minus the `*/HEAD` aliases.
 pub fn remote_branches(workspace: &Path) -> Vec<String> {
     lines_of(

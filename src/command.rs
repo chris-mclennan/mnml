@@ -2397,6 +2397,30 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_branch_picker(),
         },
         Command {
+            id: "git.recent_branches",
+            title: "Git: recent branches (sorted by last commit date)",
+            group: "git",
+            // Surfaces the branches you actually work in week-to-week
+            // ahead of stale ones. Same checkout flow as :git.checkout
+            // but pre-ordered by `for-each-ref --sort=-committerdate`.
+            keys: &[],
+            run: |app| app.open_recent_branches_picker(),
+        },
+        Command {
+            id: "git.copy_current_branch",
+            title: "Git: copy current branch name to clipboard",
+            group: "git",
+            keys: &[],
+            run: |app| app.copy_current_branch(),
+        },
+        Command {
+            id: "git.copy_head_sha",
+            title: "Git: copy HEAD SHA (full hex) to clipboard",
+            group: "git",
+            keys: &[],
+            run: |app| app.copy_head_sha(),
+        },
+        Command {
             id: "git.new_branch",
             title: "Git: create a new branch",
             group: "git",
