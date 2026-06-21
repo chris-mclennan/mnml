@@ -35,10 +35,16 @@ pub struct CheatsheetPane {
 
 impl CheatsheetPane {
     /// Build a fresh cheatsheet from the active keymap + command registry.
+    /// Sections are populated from chord bindings first; a trailing
+    /// "(unbound)" group lists every registered command WITHOUT a
+    /// chord so the pane functions as a discoverable command catalog
+    /// (not just a chord reference).
     pub fn build(keymap: &crate::input::keymap::Keymap) -> Self {
         let reg = crate::command::registry();
         let mut grouped: BTreeMap<String, Vec<CheatsheetRow>> = BTreeMap::new();
+        let mut bound_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for (seq, id) in keymap.iter() {
+            bound_ids.insert(id);
             let (group, title) = match reg.get(id) {
                 Some(c) => (c.group.to_string(), c.title.to_string()),
                 None => ("(unknown)".to_string(), id.to_string()),
@@ -49,13 +55,34 @@ impl CheatsheetPane {
                 title,
             });
         }
-        let sections: Vec<CheatsheetSection> = grouped
+        let mut sections: Vec<CheatsheetSection> = grouped
             .into_iter()
             .map(|(group, mut rows)| {
                 rows.sort_by(|a, b| a.chord.cmp(&b.chord));
                 CheatsheetSection { group, rows }
             })
             .collect();
+        // Unbound section — every registered command not in the keymap.
+        // 2026-06-20 — cheatsheet now doubles as a discoverable command
+        // catalog (~300+ palette commands; many lack chords).
+        let unbound: Vec<CheatsheetRow> = reg
+            .all()
+            .iter()
+            .filter(|c| !bound_ids.contains(c.id))
+            .map(|c| CheatsheetRow {
+                chord: "·".to_string(),
+                command_id: c.id.to_string(),
+                title: c.title.to_string(),
+            })
+            .collect();
+        if !unbound.is_empty() {
+            let mut rows = unbound;
+            rows.sort_by(|a, b| a.command_id.cmp(&b.command_id));
+            sections.push(CheatsheetSection {
+                group: "(unbound)".to_string(),
+                rows,
+            });
+        }
         CheatsheetPane {
             sections,
             selected: 0,
@@ -172,6 +199,31 @@ mod tests {
         assert!(
             !cs.sections.is_empty(),
             "expected at least one cheatsheet section"
+        );
+    }
+
+    #[test]
+    fn unbound_section_lists_palette_only_commands() {
+        let km = crate::input::keymap::Keymap::build(&Config::default());
+        let cs = CheatsheetPane::build(&km);
+        // The "(unbound)" section must exist (mnml ships hundreds of
+        // palette-only commands).
+        let sec = cs
+            .sections
+            .iter()
+            .find(|s| s.group == "(unbound)")
+            .expect("expected an (unbound) section in the cheatsheet");
+        assert!(!sec.rows.is_empty(), "(unbound) section is empty");
+        // Spot-check a couple of palette-only commands (no default chord).
+        let ids: std::collections::HashSet<&str> =
+            sec.rows.iter().map(|r| r.command_id.as_str()).collect();
+        assert!(
+            ids.contains("http.history_global"),
+            ":http.history_global should appear in (unbound)"
+        );
+        assert!(
+            ids.contains("http.ai_build"),
+            ":http.ai_build should appear in (unbound)"
         );
     }
 
