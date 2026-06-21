@@ -232,7 +232,6 @@ impl DetailView {
 pub struct ClaudeAgentsPane {
     pub rows: Vec<AgentRow>,
     pub selected: usize,
-    pub scroll: usize,
     /// When the snapshot was last built — used by App::tick to
     /// rate-limit auto-refresh and shown in the title.
     pub built_at: SystemTime,
@@ -393,7 +392,6 @@ impl ClaudeAgentsPane {
         ClaudeAgentsPane {
             rows,
             selected: 0,
-            scroll: 0,
             built_at: SystemTime::now(),
             query: String::new(),
             filter_mode: false,
@@ -2125,20 +2123,61 @@ pub fn export_transcript_as_markdown(row: &AgentRow) -> Result<(String, String),
     if row.source == AgentSource::Codex {
         let mut out = String::new();
         out.push_str(&format!(
-            "# Codex session {sid_short}\n\n_workspace: {} · pid: {} · state: {}_\n\n",
+            "# Codex session {sid_short}\n\n_workspace: {} · pid: {} · state: {} · model: {}_\n\n",
             row.workspace,
             row.pid.map(|p| p.to_string()).unwrap_or_else(|| "—".to_string()),
             row.state.badge(),
+            row.model.as_deref().unwrap_or("?"),
         ));
         if let Some(cwd) = &row.cwd {
             out.push_str(&format!("**cwd**: `{cwd}`\n\n"));
         }
-        if let Some(blurb) = &row.last_assistant_msg {
-            out.push_str(&format!("**last seen**: {blurb}\n\n"));
+        // 2026-06-21 claude-agents SEV-3: walk the codex transcript
+        // (parse_codex_tail-style) and emit the conversation. Was:
+        // stubbed-out with "format isn't parsed yet" comment 3
+        // commits after the parser actually shipped (ff174d2).
+        let path = row.transcript_path.clone();
+        if path.is_file() {
+            if let Ok(f) = std::fs::File::open(&path) {
+                use std::io::BufRead;
+                let reader = std::io::BufReader::new(f);
+                for line in reader.lines().map_while(Result::ok) {
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+                        continue;
+                    };
+                    // Codex transcript shape (rollout-*.jsonl):
+                    // each line has a `payload.type`. user_message
+                    // / assistant_message carry `content` strings;
+                    // function_call / function_call_output carry
+                    // tool invocations. Stream them as headings.
+                    let payload = v.get("payload").unwrap_or(&v);
+                    let ty = payload.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    match ty {
+                        "user_message" => {
+                            if let Some(c) = payload.get("content").and_then(|c| c.as_str()) {
+                                out.push_str(&format!("## User\n\n{c}\n\n"));
+                            }
+                        }
+                        "assistant_message" => {
+                            if let Some(c) = payload.get("content").and_then(|c| c.as_str()) {
+                                out.push_str(&format!("## Codex\n\n{c}\n\n"));
+                            }
+                        }
+                        "function_call" => {
+                            let name = payload.get("name").and_then(|s| s.as_str()).unwrap_or("?");
+                            let args = payload
+                                .get("arguments")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("");
+                            out.push_str(&format!(
+                                "### tool: `{name}`\n\n```\n{args}\n```\n\n"
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
-        out.push_str(
-            "_Codex transcript format isn't parsed yet — see mnml claude_agents.rs._\n",
-        );
         return Ok((stem, out));
     }
 

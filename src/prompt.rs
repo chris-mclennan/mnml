@@ -132,6 +132,11 @@ pub enum PromptKind {
     /// Accept (input == "remove") ⇒ `git worktree remove <pending_path>`.
     /// Confirm prompt for the GitWorktreeRemove picker.
     WorktreeRemoveConfirm,
+    /// Accept ⇒ `npm run <input>` in a pty pane. Used by
+    /// `:npm.run_script` so polyglot projects with non-`dev`
+    /// scripts (next dev, vite, start:dev, etc.) can run them
+    /// without a hardcoded chord.
+    NpmRunScript,
     /// Accept (input == "merge") ⇒ `git merge <pending_merge_source>`.
     /// Confirm prompt for the GitMergeInto picker.
     GitMergeConfirm,

@@ -675,7 +675,7 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.ai_session_search_prompt(),
         },
         Command {
-            id: "ai.agents_dashboard",
+            id: "ai.dashboard",
             title: "AI: open Claude Agents dashboard (also lists Codex sessions)",
             group: "ai",
             // Scans ~/.claude/projects/*/<sid>.jsonl, cross-references
@@ -3984,10 +3984,17 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "npm.run",
-            title: "npm: run `npm run dev` in a pty pane",
+            title: "npm: run `npm run dev` (use npm.run_script for a different script)",
             group: "test",
             keys: &[],
             run: |app| app.run_npm_subcommand("run dev"),
+        },
+        Command {
+            id: "npm.run_script",
+            title: "npm: prompt for a script name → run `npm run <script>`",
+            group: "test",
+            keys: &[],
+            run: |app| app.open_npm_run_script_prompt(),
         },
         Command {
             id: "npm.build",

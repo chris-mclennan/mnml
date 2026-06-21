@@ -70,7 +70,7 @@ pub fn draw(
         ),
     ]));
     lines.push(Line::from(Span::styled(
-        "  ⏎ jump   r refresh   esc back",
+        "  ⏎ jump   r refresh   s severity-filter   esc back",
         Style::default().fg(t.comment).bg(t.bg_dark),
     )));
 

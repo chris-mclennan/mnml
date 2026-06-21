@@ -135,6 +135,31 @@ impl App {
         self.run_manifest_command("Cargo.toml", "cargo", subcmd);
     }
 
+    /// Open a prompt for an npm script name, then run
+    /// `npm run <script>` in a pty pane. 2026-06-21 multilang SEV-3
+    /// fix for `:npm.run` being hardcoded to `npm run dev`.
+    pub fn open_npm_run_script_prompt(&mut self) {
+        let pkg = find_manifest_dir(&self.workspace, &["package.json"]);
+        if pkg.is_none() {
+            self.toast("npm.run_script: no package.json found");
+            return;
+        }
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::NpmRunScript,
+            "npm run: script name".to_string(),
+        ));
+    }
+
+    /// Accept handler for `:npm.run_script` — fires the pty.
+    pub fn npm_run_script_accept(&mut self, script: String) {
+        let script = script.trim().to_string();
+        if script.is_empty() {
+            self.toast("npm.run_script: empty script name");
+            return;
+        }
+        self.run_npm_subcommand(&format!("run {script}"));
+    }
+
     /// `npm <subcmd>` (test / run dev / build / start / install /
     /// lint). Requires a package.json at the workspace root.
     pub fn run_npm_subcommand(&mut self, subcmd: &str) {

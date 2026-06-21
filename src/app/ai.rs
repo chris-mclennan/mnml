@@ -8,6 +8,47 @@
 
 use super::*;
 
+/// Strip wrappers Claude commonly emits around a single-line
+/// response: markdown fences, leading "Branch:" / "Name:" labels,
+/// surrounding quotes (single/double/backtick, nestable). Returns
+/// the trimmed body. Used by the AI commands whose reply is a
+/// short identifier (branch name, etc.) — was previously a
+/// brittle `.trim_matches('`').trim_matches('"')` that failed on
+/// `"` `feat/foo`"` and similar (power-user-ai SEV-3).
+pub(crate) fn strip_reply_wrappers(s: &str) -> String {
+    let mut t = s.trim().to_string();
+    // Strip markdown fences (opening + closing).
+    if t.starts_with("```") {
+        if let Some(rest) = t.find('\n') {
+            t = t[rest + 1..].to_string();
+        }
+        if let Some(idx) = t.rfind("```") {
+            t = t[..idx].to_string();
+        }
+    }
+    // Strip a prose preamble label like "Branch name: ".
+    for label in ["branch name:", "branch:", "name:"] {
+        if t.to_lowercase().starts_with(label) {
+            t = t[label.len()..].trim_start().to_string();
+        }
+    }
+    // Strip nested wrappers (quotes / backticks) up to 4 layers.
+    let mut last = t.clone();
+    for _ in 0..4 {
+        let stripped = last
+            .trim_matches(|c: char| c.is_whitespace())
+            .trim_matches('`')
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string();
+        if stripped == last {
+            break;
+        }
+        last = stripped;
+    }
+    last.trim().to_string()
+}
+
 /// Slice the first `max_bytes` of `s` at a char boundary (so we
 /// never bisect a multi-byte UTF-8 codepoint). Returns the empty
 /// string when `s` is empty. 2026-06-21 — fixes the power-user-ai
@@ -1627,14 +1668,7 @@ impl App {
                 self.pending_branch_name_job = None;
                 match result {
                     Ok(text) => {
-                        let suggestion = text
-                            .lines()
-                            .next()
-                            .unwrap_or("")
-                            .trim()
-                            .trim_matches('`')
-                            .trim_matches('"')
-                            .to_string();
+                        let suggestion = strip_reply_wrappers(text.lines().next().unwrap_or(""));
                         if suggestion.is_empty() {
                             toasts.push("ai.write_branch_name: empty reply".to_string());
                         } else {
@@ -1913,6 +1947,18 @@ impl App {
     /// suggestion is seeded into a `BranchName` prompt where the
     /// user accepts or edits.
     pub fn request_ai_write_branch_name(&mut self) {
+        // 2026-06-21 power-user-ai SEV-3: unconditional
+        // `self.prompt = Some(...)` clobbered an open
+        // `AiToolConfirm` prompt, leaving an agent worker
+        // silently wedged with no UI path to deny it. Refuse to
+        // open if a confirm is up; user must answer that first.
+        if matches!(
+            self.prompt.as_ref().map(|p| p.kind),
+            Some(crate::prompt::PromptKind::AiToolConfirm)
+        ) {
+            self.toast("ai.write_branch_name: resolve the tool-confirm prompt first");
+            return;
+        }
         self.prompt = Some(crate::prompt::Prompt::new(
             crate::prompt::PromptKind::AiBranchNameDescription,
             "describe the branch (NL → branch name):".to_string(),
@@ -2029,7 +2075,11 @@ impl App {
              - First line: imperative mood, ≤72 chars, no trailing period.\n\
              - Body (if useful): explain WHY, not just WHAT. Reference \
              tickets/PRs if mentioned in the original.\n\
-             - Preserve any `Co-Authored-By:` trailers verbatim.\n\
+             - Preserve EVERY trailer line at the end of the body verbatim. \
+             A trailer is any `<Key>: <value>` line at the message tail. \
+             Common ones to NOT strip: `Co-Authored-By:`, `Claude-Session:`, \
+             `Signed-off-by:`, `Reviewed-by:`, `Fixes:`, `Closes:`, ticket-key \
+             footers (e.g. `TE-1234`), and any `🤖 Generated with …` markers.\n\
              - Drop redundant boilerplate (\"fix typo\" → maybe drop entirely \
              if trivial, but still emit something so the SHA mapping stays \
              1:1).\n\n\
@@ -2163,8 +2213,12 @@ impl App {
         };
         let diff_text = String::from_utf8_lossy(&d.stdout).to_string();
         if diff_text.trim().is_empty() {
+            // 2026-06-21 power-user-ai SEV-3: clearer wording.
+            // "Forgot to commit?" was misleading for mnml's
+            // documented small-commits-to-main workflow (the user
+            // IS on the base ref).
             self.toast(format!(
-                "ai.pr_desc: HEAD has no changes vs {base_ref} (forgot to commit?)"
+                "ai.pr_desc: HEAD is identical to {base_ref} — nothing to summarize"
             ));
             return;
         }

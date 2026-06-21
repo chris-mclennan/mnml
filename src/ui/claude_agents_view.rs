@@ -44,21 +44,32 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     } else {
         String::new()
     };
+    let multi = if p.multi_selected.is_empty() {
+        String::new()
+    } else {
+        format!(" · ☑ {}", p.multi_selected.len())
+    };
+    let group_label = p.group_by.label();
     let header_text = if p.filter_mode {
         format!(" Claude Agents · /{} · enter applies · esc clears ", p.query)
     } else if !p.query.is_empty() {
+        // 2026-06-21 design-critic + claude-agents SEV-3: when a
+        // text filter is active, the header used to drop sort /
+        // source / ws / multi-select chips. The chips matter MORE
+        // during filter (the user is narrowing — knowing what other
+        // filters are stacked is the point). Now they all stay.
         format!(
-            " Claude Agents · filter: {}{state_chip}{pause_chip} · / edit · ? help ",
-            p.query
+            " Claude Agents · filter: {}{state_chip}{source_chip}{ws_chip}{pause_chip}{multi}{count_chip} · sort:{} · group:{} · / edit · ? help ",
+            p.query,
+            p.sort_by.label(),
+            group_label,
         )
     } else {
-        let _group = p.group_by.label();
-        let multi = if p.multi_selected.is_empty() {
-            String::new()
-        } else {
-            format!(" · ☑ {}", p.multi_selected.len())
-        };
-        format!(" Claude Agents{source_chip}{state_chip}{ws_chip}{pause_chip}{multi}{count_chip} · sort:{} · j/k · / · w ws · > src · s sort · ? help ", p.sort_by.label())
+        format!(
+            " Claude Agents{source_chip}{state_chip}{ws_chip}{pause_chip}{multi}{count_chip} · sort:{} · group:{} · j/k · / · w ws · > src · s sort · g group · ? help ",
+            p.sort_by.label(),
+            group_label,
+        )
     };
 
     let block = Block::default()
