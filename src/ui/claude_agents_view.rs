@@ -33,6 +33,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         Some(AgentState::Ended) => " · ·ended",
         None => "",
     };
+    let source_chip = match p.source_filter {
+        Some(AgentSource::Claude) => " · ✦claude",
+        Some(AgentSource::Codex) => " · ◈codex",
+        None => "",
+    };
     let header_text = if p.filter_mode {
         format!(" Claude Agents · /{} · enter applies · esc clears ", p.query)
     } else if !p.query.is_empty() {
@@ -47,7 +52,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         } else {
             format!(" · ☑ {}", p.multi_selected.len())
         };
-        format!(" Claude Agents{state_chip}{pause_chip}{multi} · j/k · / filter · ? help · v view · g {group} · space mark ")
+        format!(" Claude Agents{source_chip}{state_chip}{pause_chip}{multi} · j/k · / filter · ? help · v view · g {group} · > source ")
     };
 
     let block = Block::default()
@@ -121,6 +126,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     let mut all_lines: Vec<Line> = Vec::new();
     let mut row_line_positions: std::collections::HashMap<usize, usize> =
         std::collections::HashMap::new();
+    all_lines.push(column_header(rows_area.width, &t));
     for (key, indices) in &groups {
         let tokens: u64 = indices.iter().map(|&i| p.rows[vis[i]].tokens).sum();
         let cost: f64 = indices.iter().map(|&i| p.rows[vis[i]].cost_usd).sum();
@@ -319,6 +325,32 @@ fn build_groups(
                 .collect()
         }
     }
+}
+
+/// Header row above the rows list — labels each column so the
+/// dense per-row layout is decodable at a glance.
+fn column_header(width: u16, t: &theme::Theme) -> Line<'static> {
+    let style = Style::default()
+        .fg(t.comment)
+        .bg(t.bg_dark)
+        .add_modifier(Modifier::DIM);
+    let header = format!(
+        "    {state:<10}  {ws:<14}  {sid:<8}  {model:<14}  {age:<6}  {tok:>6}  {rate:>7}  {cost:>7}  {pid:>6}",
+        state = "state",
+        ws = "workspace",
+        sid = "session",
+        model = "model",
+        age = "age",
+        tok = "tokens",
+        rate = "tok/min",
+        cost = "cost",
+        pid = "pid",
+    );
+    let pad = (width as usize).saturating_sub(header.chars().count());
+    Line::from(vec![
+        Span::styled(header, style),
+        Span::styled(" ".repeat(pad), Style::default().bg(t.bg_dark)),
+    ])
 }
 
 fn section_header_keyed(
@@ -713,6 +745,7 @@ const HELP_LINES: &[(&str, &str)] = &[
     ("Home / End", "first / last row"),
     ("/", "filter by text (workspace · id · model · last msg)"),
     ("0 / 1 / 2 / 3 / 4", "filter by state (all / live / tool / idle / ended)"),
+    ("> / <", "cycle source filter (all → claude → codex → all)"),
     ("g", "cycle grouping (by source ↔ by workspace)"),
     ("space", "toggle multi-select on the focused row"),
     ("v", "cycle drill-down view (Summary → Todos → Files → Bash → Agents)"),

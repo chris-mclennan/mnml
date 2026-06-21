@@ -1930,6 +1930,28 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     p.selected = 0;
                 }
             }
+            KeyCode::Char('>') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    use crate::claude_agents::AgentSource;
+                    p.source_filter = match p.source_filter {
+                        None => Some(AgentSource::Claude),
+                        Some(AgentSource::Claude) => Some(AgentSource::Codex),
+                        Some(AgentSource::Codex) => None,
+                    };
+                    p.selected = 0;
+                }
+            }
+            KeyCode::Char('<') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    use crate::claude_agents::AgentSource;
+                    p.source_filter = match p.source_filter {
+                        None => Some(AgentSource::Codex),
+                        Some(AgentSource::Codex) => Some(AgentSource::Claude),
+                        Some(AgentSource::Claude) => None,
+                    };
+                    p.selected = 0;
+                }
+            }
             KeyCode::Char('t') | KeyCode::Enter => {
                 app.claude_agents_action(ClaudeAgentsAction::OpenTranscript);
             }

@@ -247,6 +247,9 @@ pub struct ClaudeAgentsPane {
     /// Filter rows to one specific state (1/2/3/4 chord). `None` =
     /// show all.
     pub state_filter: Option<AgentState>,
+    /// Filter rows to a specific source (Claude / Codex). `None` =
+    /// show both. Cycled by `>` / `<`.
+    pub source_filter: Option<AgentSource>,
     /// Toggle the `?` help overlay rendered above the row list.
     pub show_help: bool,
     /// Scroll offset within the drill-down panel — for lists too
@@ -343,6 +346,7 @@ impl ClaudeAgentsPane {
             paused: false,
             paused_by_user: false,
             state_filter: None,
+            source_filter: None,
             show_help: false,
             detail_scroll: 0,
             last_live_tail: SystemTime::now(),
@@ -697,6 +701,11 @@ impl ClaudeAgentsPane {
                 {
                     return false;
                 }
+                if let Some(src) = self.source_filter
+                    && r.source != src
+                {
+                    return false;
+                }
                 if q.is_empty() {
                     return true;
                 }
@@ -981,13 +990,20 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
                 .and_then(|s| s.to_str())
                 .map(String::from)
                 .unwrap_or_else(|| "?".to_string());
+            // OpenAI's `input_tokens` INCLUDES `cached_input_tokens`
+            // (Anthropic separates them; OpenAI nests). Subtract so
+            // we don't bill the cached portion at BOTH the full
+            // input rate AND the cache-read rate.
+            let net_input = stats
+                .input_tokens
+                .saturating_sub(stats.cache_read_tokens);
             let cost = stats
                 .model
                 .as_deref()
                 .map(|m| {
                     estimate_cost(
                         m,
-                        stats.input_tokens,
+                        net_input,
                         stats.output_tokens,
                         0,
                         stats.cache_read_tokens,
@@ -2214,6 +2230,20 @@ mod tests {
         .unwrap();
         let stats = parse_codex_tail(&p);
         assert_eq!(stats.last_user_msg.as_deref(), Some("real message"));
+    }
+
+    #[test]
+    fn openai_cost_does_not_double_count_cached_portion() {
+        // input_tokens=12229 with cached_input_tokens=9600 → only
+        // 2629 tokens billed at full input rate, 9600 at cache rate.
+        // gpt-5.5: input $5/MT, cache_read $0.50/MT.
+        // Expected: 2629/1e6 × 5 + 9600/1e6 × 0.50 = 0.01315 + 0.0048
+        //         = 0.01795
+        // (Output omitted from this assertion — it's a separate axis.)
+        let net = 12229u64.saturating_sub(9600);
+        let cost = estimate_cost("gpt-5.5", net, 0, 0, 9600);
+        // Tolerance for f64 wiggle.
+        assert!((cost - 0.01795).abs() < 0.0001, "got {cost}");
     }
 
     #[test]
