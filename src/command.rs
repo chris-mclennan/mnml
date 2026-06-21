@@ -653,6 +653,18 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.unfold_all_in_active(),
         },
         Command {
+            id: "ai.agents_dashboard",
+            title: "AI: open Claude Code agents dashboard (running + recent sessions)",
+            group: "ai",
+            // Scans ~/.claude/projects/*/<sid>.jsonl, cross-references
+            // pgrep claude, renders one row per session with state /
+            // model / tokens / cwd / last user+asst exchange. Useful
+            // when you've got several CC sessions across mnml panes
+            // and tmnl tabs and want a unified overview.
+            keys: &[],
+            run: |app| app.open_claude_agents_pane(),
+        },
+        Command {
             id: "lsp.inlay_hints_toggle",
             title: "LSP: toggle inlay hints (type / parameter chips)",
             group: "lsp",

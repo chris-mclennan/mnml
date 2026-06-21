@@ -795,6 +795,16 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     ));
                 }
             }
+            Some(Pane::ClaudeAgents(p)) => {
+                // Scroll the rows by delta.
+                for _ in 0..delta.unsigned_abs() {
+                    if delta < 0 {
+                        p.move_up();
+                    } else {
+                        p.move_down();
+                    }
+                }
+            }
             None => {}
         }
         // Each SCM/CI pane's max_idx depends on which view-mode is

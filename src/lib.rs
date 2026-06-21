@@ -37,6 +37,7 @@ pub(crate) mod browser_pane;
 pub(crate) mod buffer;
 pub(crate) mod cdp;
 pub(crate) mod cheatsheet;
+pub(crate) mod claude_agents;
 pub(crate) mod clipboard;
 pub(crate) mod command;
 pub(crate) mod completion;

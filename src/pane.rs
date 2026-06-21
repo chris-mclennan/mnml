@@ -101,6 +101,13 @@ pub enum Pane {
     /// integration alongside command plugins and Cargo features —
     /// see `docs/PLUGINS.md`. Opened via `:host.launch <binary> [args…]`.
     BlitHost(BlitHostPane),
+    /// Claude Code agents dashboard — one row per session.jsonl
+    /// found under `~/.claude/projects/`, with live/idle/ended
+    /// state, model, token spend, last user/assistant message, and
+    /// PID where the session process is still running. Opened via
+    /// `:ai.agents_dashboard`. v1 is read-only + browseable; v2
+    /// will surface Enter-to-focus, transcript open, cancel, etc.
+    ClaudeAgents(crate::claude_agents::ClaudeAgentsPane),
 }
 
 /// State for [`Pane::DapRepl`]. `input` is the single-line entry;
@@ -425,6 +432,7 @@ impl Pane {
             Pane::Debug(_) => "Debug".to_string(),
             Pane::DapRepl(_) => "DAP REPL".to_string(),
             Pane::Image(p) => p.tab_title(),
+            Pane::ClaudeAgents(p) => p.tab_title(),
         }
     }
 
@@ -451,7 +459,8 @@ impl Pane {
             | Pane::Debug(_)
             | Pane::DapRepl(_)
             | Pane::Image(_)
-            | Pane::BlitHost(_) => false,
+            | Pane::BlitHost(_)
+            | Pane::ClaudeAgents(_) => false,
         }
     }
 

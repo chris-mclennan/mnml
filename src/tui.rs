@@ -1746,6 +1746,33 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // Claude Agents dashboard: j/k navigate, r refresh, y/c/t actions,
+    // Esc focuses the file tree, q closes.
+    if matches!(app.panes.get(i), Some(Pane::ClaudeAgents(_))) {
+        use crate::claude_agents::ClaudeAgentsAction;
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.move_up();
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.move_down();
+                }
+            }
+            KeyCode::Char('r') => app.refresh_claude_agents_pane(),
+            KeyCode::Char('y') => app.claude_agents_action(ClaudeAgentsAction::YankSessionId),
+            KeyCode::Char('c') => app.claude_agents_action(ClaudeAgentsAction::YankCwd),
+            KeyCode::Char('t') | KeyCode::Enter => {
+                app.claude_agents_action(ClaudeAgentsAction::OpenTranscript);
+            }
+            KeyCode::Esc => app.focus_tree(),
+            KeyCode::Char('q') => app.close_active_pane(),
+            _ => {}
+        }
+        return;
+    }
     // The cheatsheet pane: ↑↓ select, Enter → run the highlighted command,
     // r refresh (rebuild from the active keymap), `/` filter, Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::Cheatsheet(_))) {

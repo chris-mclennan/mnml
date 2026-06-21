@@ -7620,6 +7620,7 @@ impl App {
             Pane::Debug(_) => Some(("Debug".to_string(), false)),
             Pane::DapRepl(_) => Some(("DAP REPL".to_string(), false)),
             Pane::Image(p) => Some((p.tab_title(), false)),
+            Pane::ClaudeAgents(p) => Some((p.tab_title(), false)),
         }
     }
 
@@ -8373,6 +8374,82 @@ impl App {
             // dispatches dynamic command ids (mirrors `:` ex command).
             let id_static: &'static str = Box::leak(id.into_boxed_str());
             let _ = crate::command::run(id_static, self);
+        }
+    }
+
+    /// `:ai.agents_dashboard` — open (or refresh) the Claude Code
+    /// agents dashboard pane. Scans `~/.claude/projects/` for every
+    /// session file modified in the last 7 days, cross-references
+    /// running `claude` PIDs via `pgrep`, and renders one row per
+    /// session with live/idle/ended state, model, last user/asst
+    /// message, token spend, and PID.
+    pub fn open_claude_agents_pane(&mut self) {
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::ClaudeAgents(_)))
+        {
+            let fresh = crate::claude_agents::ClaudeAgentsPane::build();
+            if let Some(Pane::ClaudeAgents(c)) = self.panes.get_mut(id) {
+                *c = fresh;
+            }
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::ClaudeAgents(crate::claude_agents::ClaudeAgentsPane::build());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                *self.layout_mut() = Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// Refresh the active Claude Agents pane in place. Same effect
+    /// as `r` key in the pane.
+    pub fn refresh_claude_agents_pane(&mut self) {
+        let Some(i) = self.active else { return };
+        if matches!(self.panes.get(i), Some(Pane::ClaudeAgents(_))) {
+            let fresh = crate::claude_agents::ClaudeAgentsPane::build();
+            if let Some(Pane::ClaudeAgents(c)) = self.panes.get_mut(i) {
+                *c = fresh;
+            }
+        }
+    }
+
+    /// Yank the selected row's session id (or open transcript) — `y` / `t`.
+    pub fn claude_agents_action(&mut self, action: crate::claude_agents::ClaudeAgentsAction) {
+        use crate::claude_agents::ClaudeAgentsAction;
+        let Some(i) = self.active else { return };
+        let Some(Pane::ClaudeAgents(p)) = self.panes.get(i) else {
+            return;
+        };
+        let Some(row) = p.selected_row() else { return };
+        match action {
+            ClaudeAgentsAction::YankSessionId => {
+                let sid = row.session_id.clone();
+                self.clipboard.set(sid.clone(), false);
+                self.toast(format!("yanked session id {sid}"));
+            }
+            ClaudeAgentsAction::OpenTranscript => {
+                let path = row.transcript_path.clone();
+                self.open_path(&path);
+            }
+            ClaudeAgentsAction::YankCwd => {
+                if let Some(cwd) = row.cwd.clone() {
+                    self.clipboard.set(cwd.clone(), false);
+                    self.toast(format!("yanked cwd {cwd}"));
+                } else {
+                    self.toast("no cwd recorded for that session");
+                }
+            }
         }
     }
 
