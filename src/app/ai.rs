@@ -1593,6 +1593,40 @@ impl App {
                 }
                 continue;
             }
+            // An "AI: suggest a branch name" job? Open a BranchName
+            // prompt seeded with the reply.
+            if self.pending_branch_name_job == Some(job_id) {
+                let result = match msg {
+                    AiMsg::Delta(_) => continue,
+                    AiMsg::Usage { .. } | AiMsg::ConfirmTool { .. } => continue,
+                    AiMsg::Done(text) => Ok(text),
+                    AiMsg::Failed(e) => Err(e),
+                };
+                self.pending_branch_name_job = None;
+                match result {
+                    Ok(text) => {
+                        let suggestion = text
+                            .lines()
+                            .next()
+                            .unwrap_or("")
+                            .trim()
+                            .trim_matches('`')
+                            .trim_matches('"')
+                            .to_string();
+                        if suggestion.is_empty() {
+                            toasts.push("ai.write_branch_name: empty reply".to_string());
+                        } else {
+                            self.prompt = Some(crate::prompt::Prompt::seeded(
+                                crate::prompt::PromptKind::BranchName,
+                                "Branch name (Enter to create):".to_string(),
+                                suggestion,
+                            ));
+                        }
+                    }
+                    Err(e) => toasts.push(format!("ai.write_branch_name: {e}")),
+                }
+                continue;
+            }
             // An "AI: explain this diff" job? Route the final text
             // into a [diff-explanation] scratch buffer.
             if self.pending_explain_diff_job == Some(job_id) {
@@ -1800,6 +1834,43 @@ impl App {
             g.ai_msg_job = Some(job_id);
         }
         self.toast("asking Claude for a commit message…");
+    }
+
+    /// `:ai.write_branch_name` — open a prompt for a NL
+    /// description of what the branch is for; Claude returns a
+    /// kebab-case branch name suggestion (e.g.
+    /// "add Apple Pay support" → `feat/apple-pay-support`). The
+    /// suggestion is seeded into a `BranchName` prompt where the
+    /// user accepts or edits.
+    pub fn request_ai_write_branch_name(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::AiBranchNameDescription,
+            "describe the branch (NL → branch name):".to_string(),
+        ));
+    }
+
+    /// Accept handler for `AiBranchNameDescription` — spawns the
+    /// Claude job.
+    pub fn ai_write_branch_name_accept(&mut self, description: String) {
+        if description.trim().is_empty() {
+            self.toast("ai.write_branch_name: empty description");
+            return;
+        }
+        let prompt = format!(
+            "Suggest ONE git branch name for the following work. \
+             Rules:\n\
+             - Format: `<type>/<kebab-case-slug>` where type is one of \
+             feat, fix, chore, docs, test, refactor.\n\
+             - Slug ≤ 30 chars, lowercase, hyphens between words.\n\
+             - No trailing punctuation.\n\
+             - Output ONLY the branch name on a single line — no \
+             explanation, no quotes, no fences.\n\n\
+             Description:\n{description}\n\n\
+             Branch name:"
+        );
+        let (job_id, _sid, _cancel) = self.spawn_ai_job(prompt);
+        self.pending_branch_name_job = Some(job_id);
+        self.toast("ai.write_branch_name: asking Claude…");
     }
 
     /// `:ai.explain_diff` — ask Claude to walk through the staged

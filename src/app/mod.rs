@@ -3140,6 +3140,10 @@ pub struct App {
     /// 2026-06-21 — `:ai.explain_diff` job tag. AiMsg::Done goes
     /// to a `[diff-explanation]` scratch.
     pub pending_explain_diff_job: Option<u64>,
+    /// 2026-06-21 — `:ai.write_branch_name` job tag. AiMsg::Done
+    /// opens a prompt seeded with the suggested branch name; user
+    /// accepts → :git.new_branch with that name.
+    pub pending_branch_name_job: Option<u64>,
     /// Channel for background `claude -p` runs (lazily created); worker threads
     /// stream `(job_id, AiMsg)` (deltas then a final Done/Failed), [`Self::tick`]
     /// drains it into the matching `Pane::Ai`.
@@ -3593,6 +3597,7 @@ impl App {
             theme_preview_restore: None,
             pending_pr_desc_job: None,
             pending_explain_diff_job: None,
+            pending_branch_name_job: None,
             ai_chan: None,
             suggest_chan: None,
             pending_suggest: None,

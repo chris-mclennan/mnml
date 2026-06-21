@@ -1297,6 +1297,21 @@ impl App {
                 let q = p.input.clone();
                 self.ai_session_search_run(q);
             }
+            crate::prompt::PromptKind::AiBranchNameDescription => {
+                let description = p.input.clone();
+                self.ai_write_branch_name_accept(description);
+            }
+            crate::prompt::PromptKind::BranchName => {
+                let name = p.input.trim().to_string();
+                if name.is_empty() {
+                    self.toast("branch name empty");
+                    return;
+                }
+                match crate::git::branch::create(self.active_repo_path(), &name) {
+                    Ok(()) => self.toast(format!("created + checked out {name}")),
+                    Err(e) => self.toast(format!("branch {name}: {e}")),
+                }
+            }
             crate::prompt::PromptKind::GitDeleteBranchConfirm => {
                 if p.input.trim().eq_ignore_ascii_case("delete") {
                     self.git_delete_branch_apply();

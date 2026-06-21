@@ -3658,6 +3658,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.browser_open_devtools_hint(),
         },
         Command {
+            id: "ai.write_branch_name",
+            title: "AI: suggest a branch name from a natural-language description",
+            group: "ai",
+            keys: &[],
+            run: |app| app.request_ai_write_branch_name(),
+        },
+        Command {
             id: "ai.explain_diff",
             title: "AI: explain the staged diff (or working-tree diff) — Claude walks through it",
             group: "ai",

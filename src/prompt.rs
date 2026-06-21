@@ -116,6 +116,14 @@ pub enum PromptKind {
     /// Accept (input == "delete") ⇒ force-delete the branch
     /// stashed in `App.pending_branch_delete`.
     GitDeleteBranchConfirm,
+    /// Accept ⇒ pass the typed natural-language description to
+    /// Claude one-shot; the reply (a branch name) gets seeded
+    /// into a `BranchName` prompt for the user to accept/edit.
+    AiBranchNameDescription,
+    /// Accept ⇒ run `git checkout -b <input>` on the active repo.
+    /// Pre-seeded with the AI's suggestion when the
+    /// `AiBranchNameDescription` flow completes.
+    BranchName,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into

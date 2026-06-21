@@ -2091,6 +2091,20 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     c.jump_bottom();
                 }
             }
+            KeyCode::Char('z') => {
+                if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                    c.toggle_collapsed_at_selection();
+                }
+            }
+            KeyCode::Char('Z') => {
+                if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
+                    if c.collapsed.is_empty() {
+                        c.collapse_all();
+                    } else {
+                        c.expand_all();
+                    }
+                }
+            }
             KeyCode::Enter => {
                 let cmd = match app.panes.get(i) {
                     Some(Pane::Cheatsheet(c)) => c.selected_command_id(),

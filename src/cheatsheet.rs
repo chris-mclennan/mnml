@@ -31,6 +31,11 @@ pub struct CheatsheetPane {
     /// `/`-filter narrowing.
     pub query: String,
     pub filter_mode: bool,
+    /// Group labels currently collapsed. When a group is collapsed
+    /// its rows don't render and don't count toward `selected` /
+    /// flattened-row math. `z` toggles the current row's group;
+    /// `Z` collapses everything.
+    pub collapsed: std::collections::HashSet<String>,
 }
 
 impl CheatsheetPane {
@@ -89,6 +94,7 @@ impl CheatsheetPane {
             scroll: 0,
             query: String::new(),
             filter_mode: false,
+            collapsed: std::collections::HashSet::new(),
         }
     }
 
@@ -102,24 +108,32 @@ impl CheatsheetPane {
     /// no matching rows are omitted entirely; rows inside a kept section
     /// match against chord OR id OR title (case-insensitive substring).
     pub fn visible_sections(&self) -> Vec<CheatsheetSection> {
-        if self.query.is_empty() {
-            return self.sections.clone();
-        }
         let q = self.query.to_lowercase();
         self.sections
             .iter()
             .filter_map(|sec| {
-                let rows: Vec<_> = sec
-                    .rows
-                    .iter()
-                    .filter(|r| {
-                        r.chord.to_lowercase().contains(&q)
-                            || r.command_id.to_lowercase().contains(&q)
-                            || r.title.to_lowercase().contains(&q)
-                    })
-                    .cloned()
-                    .collect();
-                if rows.is_empty() {
+                // Collapsed sections keep their header (rendered as
+                // a collapsed indicator) but contribute zero rows.
+                if self.collapsed.contains(&sec.group) {
+                    return Some(CheatsheetSection {
+                        group: sec.group.clone(),
+                        rows: Vec::new(),
+                    });
+                }
+                let rows: Vec<_> = if q.is_empty() {
+                    sec.rows.clone()
+                } else {
+                    sec.rows
+                        .iter()
+                        .filter(|r| {
+                            r.chord.to_lowercase().contains(&q)
+                                || r.command_id.to_lowercase().contains(&q)
+                                || r.title.to_lowercase().contains(&q)
+                        })
+                        .cloned()
+                        .collect()
+                };
+                if rows.is_empty() && !q.is_empty() {
                     None
                 } else {
                     Some(CheatsheetSection {
@@ -129,6 +143,49 @@ impl CheatsheetPane {
                 }
             })
             .collect()
+    }
+
+    /// Group of the currently-selected row, derived by walking
+    /// flattened rows. Used by `z` to toggle the right section.
+    pub fn selected_group(&self) -> Option<String> {
+        let mut idx = 0usize;
+        for sec in self.visible_sections() {
+            if sec.rows.is_empty() {
+                continue;
+            }
+            if self.selected < idx + sec.rows.len() {
+                return Some(sec.group);
+            }
+            idx += sec.rows.len();
+        }
+        None
+    }
+
+    /// Toggle the focused row's section in the collapsed set.
+    pub fn toggle_collapsed_at_selection(&mut self) {
+        if let Some(group) = self.selected_group() {
+            if self.collapsed.contains(&group) {
+                self.collapsed.remove(&group);
+            } else {
+                self.collapsed.insert(group);
+            }
+            self.selected = 0;
+            self.scroll = 0;
+        }
+    }
+
+    /// Collapse every section. `Z` chord.
+    pub fn collapse_all(&mut self) {
+        self.collapsed = self.sections.iter().map(|s| s.group.clone()).collect();
+        self.selected = 0;
+        self.scroll = 0;
+    }
+
+    /// Expand every section.
+    pub fn expand_all(&mut self) {
+        self.collapsed.clear();
+        self.selected = 0;
+        self.scroll = 0;
     }
 
     /// Count of selectable (non-header) rows across the visible sections.

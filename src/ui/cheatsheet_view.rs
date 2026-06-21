@@ -79,13 +79,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         .min(20);
 
     for sec in &sections {
-        // Section header — `── group ──` styled.
-        let header = Line::from(vec![
-            Span::styled("── ", dim),
-            Span::styled(sec.group.clone(), header_style),
-            Span::styled(format!(" ({})", sec.rows.len()), dim),
-        ]);
+        let is_collapsed = p.collapsed.contains(&sec.group);
+        // Section header — `── group ──` styled. Collapsed sections
+        // show a `▸` indicator instead of the row count.
+        let header = if is_collapsed {
+            Line::from(vec![
+                Span::styled("▸ ", dim),
+                Span::styled(sec.group.clone(), header_style),
+                Span::styled(" (collapsed)", dim),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("── ", dim),
+                Span::styled(sec.group.clone(), header_style),
+                Span::styled(format!(" ({})", sec.rows.len()), dim),
+            ])
+        };
         lines.push(header);
+        if is_collapsed {
+            continue;
+        }
         for row in &sec.rows {
             let is_selected = selectable_index == p.selected;
             if is_selected {
