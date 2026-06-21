@@ -1025,10 +1025,22 @@ fn handle_picker_key(app: &mut App, key: KeyEvent) {
         // cross-host PR picker that originally drove this).
         KeyCode::Tab => app.picker_accept_secondary(),
         KeyCode::Enter => app.picker_accept(),
-        KeyCode::Up => picker.move_up(),
-        KeyCode::Down => picker.move_down(),
-        KeyCode::Char('p') if ctrl => picker.move_up(),
-        KeyCode::Char('n') if ctrl => picker.move_down(),
+        KeyCode::Up => {
+            picker.move_up();
+            app.on_picker_moved();
+        }
+        KeyCode::Down => {
+            picker.move_down();
+            app.on_picker_moved();
+        }
+        KeyCode::Char('p') if ctrl => {
+            picker.move_up();
+            app.on_picker_moved();
+        }
+        KeyCode::Char('n') if ctrl => {
+            picker.move_down();
+            app.on_picker_moved();
+        }
         KeyCode::Char('u') if ctrl => picker.clear_query(),
         KeyCode::Backspace => picker.backspace(),
         KeyCode::Char(c) if !ctrl => picker.type_char(c),

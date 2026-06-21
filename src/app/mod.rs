@@ -3114,6 +3114,11 @@ pub struct App {
     )>,
     /// True while a chain run is in flight; gates double-submits.
     pub http_chain_in_flight: bool,
+    /// 2026-06-20 — theme picker live preview. Snapshot of the
+    /// active theme name when the Themes picker opens; restored on
+    /// Esc / cleared on Enter. Up/Down on the picker applies the
+    /// highlighted theme via `set_theme_silent`.
+    pub theme_preview_restore: Option<String>,
     /// Channel for background `claude -p` runs (lazily created); worker threads
     /// stream `(job_id, AiMsg)` (deltas then a final Done/Failed), [`Self::tick`]
     /// drains it into the matching `Pane::Ai`.
@@ -3563,6 +3568,7 @@ impl App {
             http_ai_build_in_flight: false,
             http_chain_chan: None,
             http_chain_in_flight: false,
+            theme_preview_restore: None,
             ai_chan: None,
             suggest_chan: None,
             pending_suggest: None,

@@ -8,7 +8,28 @@ use super::*;
 impl App {
     pub fn open_picker(&mut self, picker: Picker) {
         self.whichkey = None;
+        // 2026-06-20 — themes picker captures the pre-preview theme
+        // so Esc restores it. set when the kind is Themes; cleared on
+        // accept or restored on close.
+        if matches!(picker.kind, crate::picker::PickerKind::Themes) {
+            self.theme_preview_restore = Some(crate::ui::theme::cur().name.to_string());
+        }
         self.picker = Some(picker);
+    }
+
+    /// Picker Up/Down hook — used for kind-specific previews. For
+    /// the Themes picker, applies the highlighted theme live so
+    /// the user can see it before committing.
+    pub fn on_picker_moved(&mut self) {
+        let Some(p) = self.picker.as_ref() else { return };
+        if !matches!(p.kind, crate::picker::PickerKind::Themes) {
+            return;
+        }
+        let name = match p.selected_item() {
+            Some(it) => it.id.clone(),
+            None => return,
+        };
+        let _ = self.set_theme_silent(&name);
     }
 
     pub fn close_picker(&mut self) {
@@ -26,6 +47,16 @@ impl App {
             self.lookup_fire_rx = None;
             self.pending_lookup_items.clear();
             self.pending_lookup_picked_id = None;
+        }
+        // Themes picker: if Esc-closed (no accept), restore the
+        // pre-preview theme. Clear the snapshot either way.
+        if matches!(
+            self.picker.as_ref().map(|p| p.kind),
+            Some(crate::picker::PickerKind::Themes)
+        ) {
+            if let Some(orig) = self.theme_preview_restore.take() {
+                let _ = self.set_theme_silent(&orig);
+            }
         }
         self.picker = None;
     }
@@ -400,7 +431,10 @@ impl App {
             PickerKind::Commands => {
                 crate::command::run(&item.id, self);
             }
-            PickerKind::Themes => self.set_theme(&item.id),
+            PickerKind::Themes => {
+                self.theme_preview_restore = None;
+                self.set_theme(&item.id);
+            }
             PickerKind::Tasks => {
                 self.run_task(&item.id);
             }
