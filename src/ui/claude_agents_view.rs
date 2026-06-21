@@ -25,15 +25,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     };
 
     let agg = p.aggregate();
+    let pause_chip = if p.paused_by_user { " · paused" } else { "" };
+    let state_chip = match p.state_filter {
+        Some(AgentState::Streaming) => " · ●live",
+        Some(AgentState::ToolCall) => " · ▸tool",
+        Some(AgentState::Idle) => " · ○idle",
+        Some(AgentState::Ended) => " · ·ended",
+        None => "",
+    };
     let header_text = if p.filter_mode {
         format!(" Claude Agents · /{} · enter applies · esc clears ", p.query)
     } else if !p.query.is_empty() {
         format!(
-            " Claude Agents · filter: {} · / to edit · v cycles view · r refresh ",
+            " Claude Agents · filter: {}{state_chip}{pause_chip} · / edit · ? help ",
             p.query
         )
     } else {
-        " Claude Agents · j/k · / filter · v view · r refresh · y id · c cwd · K kill · o resume ".to_string()
+        format!(" Claude Agents{state_chip}{pause_chip} · j/k · / filter · ? help · v view · 0-4 state · p pause ")
     };
 
     let block = Block::default()
@@ -63,6 +71,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     let detail_area = split[2];
 
     draw_topbar(frame, &agg, topbar_area, &t, p.detail);
+
+    // Help overlay replaces the row + detail area while shown.
+    if p.show_help {
+        let help_lines = help_overlay(&t, inner.width);
+        let help_area = Rect::new(
+            inner.x,
+            rows_area.y,
+            inner.width,
+            rows_area.height + detail_area.height,
+        );
+        frame.render_widget(
+            Paragraph::new(help_lines).style(Style::default().bg(t.bg2)),
+            help_area,
+        );
+        return;
+    }
 
     let vis = p.visible_indices();
     if vis.is_empty() {
@@ -162,6 +186,12 @@ fn draw_topbar(frame: &mut Frame, agg: &crate::claude_agents::Aggregate, area: R
         ),
         Style::default().fg(t.yellow).bg(bg),
     ));
+    if agg.total_cost_usd > 0.0 {
+        spans.push(Span::styled(
+            format!("≈ {}  ", format_cost(agg.total_cost_usd)),
+            Style::default().fg(t.orange).bg(bg).add_modifier(Modifier::BOLD),
+        ));
+    }
     if agg.pending_confirms > 0 {
         spans.push(Span::styled(
             format!("⚠ {} pending tool  ", agg.pending_confirms),
@@ -237,6 +267,7 @@ fn render_row(row: &AgentRow, selected: bool, t: &theme::Theme, width: u16) -> L
         .map(|t| age_label(t))
         .unwrap_or_else(|| "?".to_string());
     let tokens = format_tokens(row.tokens);
+    let cost = format_cost(row.cost_usd);
     let pid = row
         .pid
         .map(|p| format!("#{p}"))
@@ -250,7 +281,8 @@ fn render_row(row: &AgentRow, selected: bool, t: &theme::Theme, width: u16) -> L
 
     let row_chars =
         state.chars().count() + workspace_pad.chars().count() + 8 + model_pad.chars().count()
-            + age.chars().count() + tokens.chars().count() + pid.chars().count() + pending.chars().count() + 18;
+            + age.chars().count() + tokens.chars().count() + cost.chars().count()
+            + pid.chars().count() + pending.chars().count() + 22;
     let pad = (width as usize).saturating_sub(row_chars + 2);
 
     Line::from(vec![
@@ -268,6 +300,7 @@ fn render_row(row: &AgentRow, selected: bool, t: &theme::Theme, width: u16) -> L
         Span::styled(format!("  {model_pad}"), Style::default().fg(source_color).bg(bg)),
         Span::styled(format!("  {:<6}", age), Style::default().fg(t.cyan).bg(bg)),
         Span::styled(format!("  {:>6}", tokens), Style::default().fg(t.yellow).bg(bg)),
+        Span::styled(format!("  {:>7}", cost), Style::default().fg(t.orange).bg(bg)),
         Span::styled(format!("  {:>6}", pid), Style::default().fg(t.comment).bg(bg)),
         Span::styled(pending, Style::default().fg(t.red).bg(bg).add_modifier(Modifier::BOLD)),
         Span::styled(" ".repeat(pad), Style::default().bg(bg)),
@@ -452,4 +485,51 @@ fn format_tokens(n: u64) -> String {
     } else {
         format!("{:.1}M", n as f64 / 1_000_000.0)
     }
+}
+
+fn format_cost(usd: f64) -> String {
+    if usd >= 1.0 {
+        format!("${usd:.2}")
+    } else if usd >= 0.01 {
+        format!("${usd:.3}")
+    } else if usd > 0.0 {
+        format!("<$0.01")
+    } else {
+        "—".to_string()
+    }
+}
+
+const HELP_LINES: &[(&str, &str)] = &[
+    ("j / k or ↑/↓", "select row"),
+    ("/", "filter by text (workspace · id · model · last msg)"),
+    ("0 / 1 / 2 / 3 / 4", "filter by state (all / live / tool / idle / ended)"),
+    ("v", "cycle drill-down view (Summary → Todos → Files → Bash → Agents)"),
+    ("r", "refresh now"),
+    ("p", "pause/resume the 3s auto-refresh"),
+    ("y", "yank session id to clipboard"),
+    ("c", "yank cwd to clipboard"),
+    ("t / Enter", "open the transcript .jsonl in an editor"),
+    ("o", "resume the session in a new pty (claude --resume / fresh codex)"),
+    ("K", "SIGTERM the row's PID (after typing 'kill' to confirm)"),
+    ("?", "toggle this help"),
+    ("Esc", "focus file tree"),
+    ("q", "close the pane"),
+];
+
+pub fn help_overlay(t: &theme::Theme, width: u16) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line> = Vec::new();
+    let bg = t.bg2;
+    lines.push(Line::from(Span::styled(
+        format!(" {:<width$}", " Claude Agents — help (? to close)", width = width as usize - 1),
+        Style::default().fg(t.yellow).bg(bg).add_modifier(Modifier::BOLD),
+    )));
+    for (chord, desc) in HELP_LINES {
+        let txt = format!(" {chord:<22}  {desc}");
+        let pad = (width as usize).saturating_sub(txt.chars().count());
+        lines.push(Line::from(vec![
+            Span::styled(txt, Style::default().fg(t.fg).bg(bg)),
+            Span::styled(" ".repeat(pad), Style::default().bg(bg)),
+        ]));
+    }
+    lines
 }

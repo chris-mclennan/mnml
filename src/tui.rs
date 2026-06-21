@@ -1813,6 +1813,56 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char('K') => app.claude_agents_action(ClaudeAgentsAction::KillPrompt),
             KeyCode::Char('o') => app.claude_agents_action(ClaudeAgentsAction::ResumeSession),
+            KeyCode::Char('p') => {
+                let new_state = if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.paused_by_user = !p.paused_by_user;
+                    Some(p.paused_by_user)
+                } else {
+                    None
+                };
+                if let Some(paused) = new_state {
+                    app.toast(if paused {
+                        "auto-refresh paused"
+                    } else {
+                        "auto-refresh resumed"
+                    });
+                }
+            }
+            KeyCode::Char('?') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.show_help = !p.show_help;
+                }
+            }
+            KeyCode::Char('1') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.state_filter = Some(crate::claude_agents::AgentState::Streaming);
+                    p.selected = 0;
+                }
+            }
+            KeyCode::Char('2') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.state_filter = Some(crate::claude_agents::AgentState::ToolCall);
+                    p.selected = 0;
+                }
+            }
+            KeyCode::Char('3') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.state_filter = Some(crate::claude_agents::AgentState::Idle);
+                    p.selected = 0;
+                }
+            }
+            KeyCode::Char('4') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.state_filter = Some(crate::claude_agents::AgentState::Ended);
+                    p.selected = 0;
+                }
+            }
+            KeyCode::Char('0') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.state_filter = None;
+                    p.selected = 0;
+                }
+            }
             KeyCode::Char('t') | KeyCode::Enter => {
                 app.claude_agents_action(ClaudeAgentsAction::OpenTranscript);
             }

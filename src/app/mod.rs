@@ -8440,6 +8440,7 @@ impl App {
                 self.panes.get(i),
                 Some(Pane::ClaudeAgents(p))
                     if !p.paused
+                        && !p.paused_by_user
                         && now
                             .duration_since(p.built_at)
                             .map(|d| d.as_secs() >= REFRESH_EVERY_SECS)

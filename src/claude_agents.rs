@@ -94,6 +94,20 @@ pub struct AgentRow {
     /// assistant event in the tail window. Lower-bound estimate
     /// if the tail truncated.
     pub tokens: u64,
+    /// Input tokens (sum across the tail window).
+    pub input_tokens: u64,
+    /// Output tokens (sum across the tail window).
+    pub output_tokens: u64,
+    /// Cache-creation input tokens (5m/1h ephemeral). Billed full
+    /// rate on creation, then 10% on subsequent reads — we attribute
+    /// at write rate here (so the cost shows the upper bound).
+    pub cache_create_tokens: u64,
+    /// Cache-read input tokens (10% rate).
+    pub cache_read_tokens: u64,
+    /// Estimated USD cost based on a hardcoded per-model pricing
+    /// table. Lower bound when the tail window truncated, or `0.0`
+    /// when the model is unknown.
+    pub cost_usd: f64,
     /// Total events in the tail window.
     pub event_count: usize,
     /// First non-empty text from the most recent user `message`.
@@ -215,8 +229,17 @@ pub struct ClaudeAgentsPane {
     /// Which drill-down view shows under the row list.
     pub detail: DetailView,
     /// True to suppress auto-refresh (e.g. user is typing into the
-    /// filter input).
+    /// filter input, or the user toggled `p`).
     pub paused: bool,
+    /// User-toggled pause (separate from `paused`, which is also
+    /// set by filter-mode entry/exit so the user's preference
+    /// isn't clobbered).
+    pub paused_by_user: bool,
+    /// Filter rows to one specific state (1/2/3/4 chord). `None` =
+    /// show all.
+    pub state_filter: Option<AgentState>,
+    /// Toggle the `?` help overlay rendered above the row list.
+    pub show_help: bool,
 }
 
 impl ClaudeAgentsPane {
@@ -241,6 +264,9 @@ impl ClaudeAgentsPane {
             filter_mode: false,
             detail: DetailView::Summary,
             paused: false,
+            paused_by_user: false,
+            state_filter: None,
+            show_help: false,
         }
     }
 
@@ -282,6 +308,7 @@ impl ClaudeAgentsPane {
             a.total_tokens = a.total_tokens.saturating_add(r.tokens);
             a.pending_confirms =
                 a.pending_confirms.saturating_add(r.pending_tool_uses as u64);
+            a.total_cost_usd += r.cost_usd;
         }
         a
     }
@@ -300,18 +327,23 @@ impl ClaudeAgentsPane {
         }
     }
 
-    /// Rows that pass the current filter, returned as indices into
-    /// `self.rows` so the renderer can map row index ↔ original
-    /// row without copying.
+    /// Rows that pass the current filter (state + text query),
+    /// returned as indices into `self.rows` so the renderer can map
+    /// row index ↔ original row without copying.
     pub fn visible_indices(&self) -> Vec<usize> {
-        if self.query.is_empty() {
-            return (0..self.rows.len()).collect();
-        }
         let q = self.query.to_lowercase();
         self.rows
             .iter()
             .enumerate()
             .filter(|(_, r)| {
+                if let Some(sf) = self.state_filter
+                    && r.state != sf
+                {
+                    return false;
+                }
+                if q.is_empty() {
+                    return true;
+                }
                 let hay = format!(
                     "{} {} {} {} {} {}",
                     r.workspace,
@@ -356,6 +388,8 @@ pub struct Aggregate {
     pub ended: usize,
     pub total_tokens: u64,
     pub pending_confirms: u64,
+    /// Sum of `cost_usd` across all rows.
+    pub total_cost_usd: f64,
 }
 
 fn home_projects_dir() -> Option<PathBuf> {
@@ -439,6 +473,19 @@ fn collect_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
                 .map(String::from)
                 .unwrap_or_else(|| workspace.clone());
             let current_tool = stats.last_tool_name.clone();
+            let cost = stats
+                .model
+                .as_deref()
+                .map(|m| {
+                    estimate_cost(
+                        m,
+                        stats.input_tokens,
+                        stats.output_tokens,
+                        stats.cache_create_tokens,
+                        stats.cache_read_tokens,
+                    )
+                })
+                .unwrap_or(0.0);
             rows.push(AgentRow {
                 source: AgentSource::Claude,
                 transcript_path: p.clone(),
@@ -449,6 +496,11 @@ fn collect_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
                 model: stats.model,
                 last_activity: mtime,
                 tokens: stats.tokens,
+                input_tokens: stats.input_tokens,
+                output_tokens: stats.output_tokens,
+                cache_create_tokens: stats.cache_create_tokens,
+                cache_read_tokens: stats.cache_read_tokens,
+                cost_usd: cost,
                 event_count: stats.event_count,
                 last_user_msg: stats.last_user_msg,
                 last_assistant_msg: stats.last_assistant_msg,
@@ -537,6 +589,11 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
                 model: None,
                 last_activity: mtime,
                 tokens: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_create_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
                 event_count: 0,
                 last_user_msg: None,
                 last_assistant_msg: blurb,
@@ -576,8 +633,13 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
             cwd,
             git_branch: None,
             model: None,
-            last_activity: SystemTime::now().into(),
+            last_activity: Some(SystemTime::now()),
             tokens: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_create_tokens: 0,
+            cache_read_tokens: 0,
+            cost_usd: 0.0,
             event_count: 0,
             last_user_msg: None,
             last_assistant_msg: Some(format!("(running) {}", truncate(cmdline, 160))),
@@ -670,6 +732,10 @@ struct TailStats {
     git_branch: Option<String>,
     model: Option<String>,
     tokens: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_create_tokens: u64,
+    cache_read_tokens: u64,
     event_count: usize,
     last_user_msg: Option<String>,
     last_assistant_msg: Option<String>,
@@ -731,7 +797,19 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                 if let Some(usage) = msg.and_then(|m| m.get("usage")) {
                     let i = usage.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
                     let o = usage.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+                    let cc = usage
+                        .get("cache_creation_input_tokens")
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0);
+                    let cr = usage
+                        .get("cache_read_input_tokens")
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0);
                     stats.tokens = stats.tokens.saturating_add(i + o);
+                    stats.input_tokens = stats.input_tokens.saturating_add(i);
+                    stats.output_tokens = stats.output_tokens.saturating_add(o);
+                    stats.cache_create_tokens = stats.cache_create_tokens.saturating_add(cc);
+                    stats.cache_read_tokens = stats.cache_read_tokens.saturating_add(cr);
                 }
                 if let Some(content) = msg.and_then(|m| m.get("content")).and_then(|c| c.as_array())
                 {
@@ -950,6 +1028,46 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// Hardcoded per-model USD pricing (input / output / cache-write /
+/// cache-read), all in dollars per 1M tokens. Numbers are public
+/// pricing as of mid-2026; if Anthropic adjusts them, edit this
+/// table. Unknown models return all-zeros so cost shows as 0.0
+/// instead of a wrong number.
+fn price_per_mt(model: &str) -> (f64, f64, f64, f64) {
+    // Strip the trailing date suffix if present (e.g.
+    // claude-haiku-4-5-20251001 → claude-haiku-4-5).
+    let trimmed = model
+        .rsplit_once('-')
+        .map(|(stem, tail)| {
+            if tail.chars().all(|c| c.is_ascii_digit()) && tail.len() >= 6 {
+                stem
+            } else {
+                model
+            }
+        })
+        .unwrap_or(model);
+    match trimmed {
+        "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" => (15.0, 75.0, 18.75, 1.50),
+        "claude-sonnet-4-6" | "claude-sonnet-4-5" => (3.0, 15.0, 3.75, 0.30),
+        "claude-haiku-4-5" | "claude-haiku-4-4" => (1.0, 5.0, 1.25, 0.10),
+        // Older / legacy / unknown.
+        _ => (0.0, 0.0, 0.0, 0.0),
+    }
+}
+
+/// Estimate cost for a row's accumulated tokens. Returns USD.
+fn estimate_cost(
+    model: &str,
+    input: u64,
+    output: u64,
+    cache_create: u64,
+    cache_read: u64,
+) -> f64 {
+    let (in_pmt, out_pmt, cw_pmt, cr_pmt) = price_per_mt(model);
+    let f = |n: u64| n as f64 / 1_000_000.0;
+    f(input) * in_pmt + f(output) * out_pmt + f(cache_create) * cw_pmt + f(cache_read) * cr_pmt
+}
+
 /// Pgrep for `claude` or `codex` processes. Returns either:
 ///   - `(session_id, pid, cmdline)` when `--session-id <uuid>` is in
 ///     the cmdline (Claude),
@@ -1080,6 +1198,30 @@ mod tests {
         let stats = parse_tail(&p);
         assert!(stats.last_was_tool_call);
         assert_eq!(stats.last_assistant_msg.as_deref(), Some("⚙ Bash"));
+    }
+
+    #[test]
+    fn pricing_table_handles_known_models_and_falls_back_to_zero() {
+        // Known opus model — non-zero pricing.
+        let (i, o, _, _) = price_per_mt("claude-opus-4-7");
+        assert!(i > 0.0 && o > 0.0);
+        // Dated suffix is stripped.
+        let (i2, o2, _, _) = price_per_mt("claude-haiku-4-5-20251001");
+        assert!(i2 > 0.0 && o2 > 0.0);
+        // Unknown model — zero (so cost displays "—" instead of wrong).
+        let (i3, o3, _, _) = price_per_mt("gpt-5-turbo");
+        assert_eq!(i3, 0.0);
+        assert_eq!(o3, 0.0);
+    }
+
+    #[test]
+    fn cost_computes_dollars_per_million_tokens() {
+        // 1M input tokens at $15/MT = $15.
+        let c = estimate_cost("claude-opus-4-7", 1_000_000, 0, 0, 0);
+        assert!((c - 15.0).abs() < 0.001);
+        // 1M output at $75/MT = $75.
+        let c2 = estimate_cost("claude-opus-4-7", 0, 1_000_000, 0, 0);
+        assert!((c2 - 75.0).abs() < 0.001);
     }
 
     #[test]
