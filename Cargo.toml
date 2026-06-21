@@ -132,6 +132,10 @@ tree-sitter-vue-next = "0.1"
 tree-sitter-svelte-ng = "1.0"
 tree-sitter-astro-next = "0.1"
 unicode-width = "0.2.2"
+# Response-body schema validation for the HTTP track. `foo.curl` →
+# look for `foo.schema.json` sibling; after each :http.send, validate
+# the response body and surface the result on the Response view.
+jsonschema = { version = "0.30", default-features = false }
 
 # Added per-track later (kept out for now to keep build fast / resolution simple):
 #   nucleo             — fuzzy matcher (picker/palette) — hand-rolled in src/fuzzy.rs for now

@@ -1,0 +1,17 @@
+# Response-body schema validation: pre-write a sibling .schema.json,
+# fire a mock response, http.revalidate_schema picks up the schema +
+# reports the result on the response footer.
+
+write users.curl "curl 'http://127.0.0.1:19876/users'"
+write users.curl.mock.json "{\"status\":200,\"status_text\":\"OK\",\"headers\":[[\"content-type\",\"application/json\"]],\"body\":\"{\\\"name\\\":42}\",\"ts\":1}"
+write users.schema.json "{\"type\":\"object\",\"required\":[\"name\"],\"properties\":{\"name\":{\"type\":\"string\"}}}"
+
+open users.curl
+
+command http.send
+wait 600
+
+command http.replay_mock
+command http.revalidate_schema
+
+expect screen contains "schema re-validated"

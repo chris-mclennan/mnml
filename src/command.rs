@@ -3169,6 +3169,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_format_body(),
         },
         Command {
+            id: "http.show_schema_errors",
+            title: "HTTP: open scratch buffer with response schema validation errors",
+            group: "http",
+            // For the active Request pane, opens a `[schema-errors]`
+            // scratch listing every validator error from the last
+            // response. No-op when there's no schema sidecar
+            // (`<request>.schema.json`) or the response validated.
+            keys: &[],
+            run: |app| app.http_show_schema_errors(),
+        },
+        Command {
+            id: "http.revalidate_schema",
+            title: "HTTP: re-run schema validation on the active Request pane's last response",
+            group: "http",
+            // Useful after editing the sidecar `.schema.json` without
+            // re-firing the request — picks up the edited schema and
+            // re-runs validation against the existing response body.
+            keys: &[],
+            run: |app| app.http_revalidate_schema(),
+        },
+        Command {
             id: "http.cycle_method",
             title: "HTTP: cycle method (GET→POST→PUT→DELETE→PATCH→…)",
             group: "http",

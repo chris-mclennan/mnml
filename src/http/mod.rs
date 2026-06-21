@@ -26,6 +26,7 @@ pub mod history;
 pub mod lookup;
 pub mod mock;
 pub mod proxy;
+pub mod schema;
 pub mod script;
 pub mod sources;
 pub mod template;

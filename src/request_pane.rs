@@ -269,6 +269,13 @@ pub struct ResponseView {
     pub elapsed: Duration,
     pub assertions: Vec<AssertionResult>,
     pub captures: Vec<(String, String)>,
+    /// Result of validating the response body against a sibling
+    /// `*.schema.json` file (if one exists). `None` if validation
+    /// wasn't attempted (e.g. response from the browser pane with
+    /// no source file). The Response view renders a one-line
+    /// "Schema: ✓ valid" / "Schema: ✗ N errors" footer when this
+    /// is `Some`.
+    pub schema_result: Option<crate::http::schema::SchemaResult>,
 }
 
 impl RequestPane {

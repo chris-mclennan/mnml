@@ -671,6 +671,120 @@ impl App {
         }
     }
 
+    /// `http.show_schema_errors` — opens a `[schema-errors]` scratch
+    /// with the full validator-error list for the active Request
+    /// pane's last response. Falls back to a toast when there's no
+    /// validation result on the response (no sidecar, or response
+    /// already validated cleanly).
+    pub fn http_show_schema_errors(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("http.show_schema_errors: no active Request pane");
+            return;
+        };
+        use crate::request_pane::RunState;
+        let (status, errors, schema_path) = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => match &rp.state {
+                RunState::Done(rv) | RunState::Streaming(rv) => {
+                    let Some(sr) = rv.schema_result.as_ref() else {
+                        self.toast("schema: no sidecar (.schema.json) for this request");
+                        return;
+                    };
+                    (sr.status.clone(), sr.errors.clone(), sr.schema_path.clone())
+                }
+                _ => {
+                    self.toast("schema: no completed response");
+                    return;
+                }
+            },
+            _ => {
+                self.toast("http.show_schema_errors: not a Request pane");
+                return;
+            }
+        };
+        use crate::http::schema::SchemaStatus;
+        let sidecar = schema_path
+            .as_ref()
+            .and_then(|p| p.to_str())
+            .unwrap_or("<unknown>");
+        let body = match status {
+            SchemaStatus::Valid => {
+                self.toast(format!("✓ schema valid ({sidecar})"));
+                return;
+            }
+            SchemaStatus::NoSidecar => {
+                self.toast("schema: no sidecar (.schema.json) for this request");
+                return;
+            }
+            SchemaStatus::NotJson => format!("Body isn't JSON — schema ({sidecar}) skipped.\n"),
+            SchemaStatus::ReadError(e) => {
+                format!("Schema read error ({sidecar}):\n  {e}\n")
+            }
+            SchemaStatus::SchemaParseError(e) => {
+                format!("Schema parse error ({sidecar}):\n  {e}\n")
+            }
+            SchemaStatus::Invalid => {
+                let mut out = format!("✗ Schema validation failed ({sidecar})\n");
+                out.push_str(&format!("  {} error(s):\n\n", errors.len()));
+                for (i, e) in errors.iter().enumerate() {
+                    out.push_str(&format!("  {:>3}. {e}\n", i + 1));
+                }
+                out
+            }
+        };
+        self.open_scratch_with_text("[schema-errors]".to_string(), body);
+    }
+
+    /// `http.revalidate_schema` — re-run schema validation against
+    /// the existing response body. Useful after editing the
+    /// sidecar `.schema.json` without re-firing the request.
+    pub fn http_revalidate_schema(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("http.revalidate_schema: no active Request pane");
+            return;
+        };
+        use crate::request_pane::RunState;
+        let (source_path, body) = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => match &rp.state {
+                RunState::Done(rv) => (rp.source_path.clone(), rv.body.clone()),
+                _ => {
+                    self.toast("schema: no completed response");
+                    return;
+                }
+            },
+            _ => {
+                self.toast("http.revalidate_schema: not a Request pane");
+                return;
+            }
+        };
+        let result = crate::http::schema::validate_for(source_path.as_deref(), &body);
+        let summary = match &result.status {
+            crate::http::schema::SchemaStatus::Valid => {
+                "✓ schema re-validated: valid".to_string()
+            }
+            crate::http::schema::SchemaStatus::Invalid => {
+                format!("✗ schema re-validated: {} error(s)", result.errors.len())
+            }
+            crate::http::schema::SchemaStatus::NoSidecar => {
+                "schema: no sidecar (.schema.json) for this request".to_string()
+            }
+            crate::http::schema::SchemaStatus::NotJson => {
+                "schema: response body isn't JSON".to_string()
+            }
+            crate::http::schema::SchemaStatus::ReadError(e) => {
+                format!("schema: read error — {e}")
+            }
+            crate::http::schema::SchemaStatus::SchemaParseError(e) => {
+                format!("schema: parse error — {e}")
+            }
+        };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur)
+            && let RunState::Done(rv) = &mut rp.state
+        {
+            rv.schema_result = Some(result);
+        }
+        self.toast(summary);
+    }
+
     /// Click on the Method chip opens this dropdown — one entry
     /// per HTTP verb. Each entry calls `:http.set_method:<VERB>`
     /// which sets that exact verb on the active Request pane.
@@ -777,7 +891,7 @@ impl App {
             return;
         };
         let script = crate::http::script::Script::default();
-        let job_id = self.spawn_http_job(request.clone(), script.clone());
+        let job_id = self.spawn_http_job(request.clone(), script.clone(), None);
         let pane = Pane::Request(crate::request_pane::RequestPane::new(
             None, request, script, job_id,
         ));
@@ -1417,6 +1531,7 @@ impl App {
                     elapsed: std::time::Duration::ZERO,
                     assertions: Vec::new(),
                     captures: Vec::new(),
+                    schema_result: None,
                 },
             ));
             rp.view = crate::request_pane::ViewMode::Response;
@@ -2085,7 +2200,7 @@ impl App {
             *b = http::template::expand(b, &env);
         }
 
-        let job_id = self.spawn_http_job(request.clone(), script.clone());
+        let job_id = self.spawn_http_job(request.clone(), script.clone(), path.clone());
         let mut rp = crate::request_pane::RequestPane::new(path, request, script, job_id);
         rp.source_block_name = source_block_name;
         let new_id =
@@ -2101,11 +2216,11 @@ impl App {
         if let Some(Pane::Request(rp)) = self.panes.get_mut(pane_id) {
             rp.commit_headers();
         }
-        let (request, script) = match self.panes.get(pane_id) {
-            Some(Pane::Request(rp)) => (rp.request.clone(), rp.script.clone()),
+        let (request, script, source_path) = match self.panes.get(pane_id) {
+            Some(Pane::Request(rp)) => (rp.request.clone(), rp.script.clone(), rp.source_path.clone()),
             _ => return,
         };
-        let job_id = self.spawn_http_job(request, script);
+        let job_id = self.spawn_http_job(request, script, source_path);
         if let Some(Pane::Request(rp)) = self.panes.get_mut(pane_id) {
             rp.job_id = job_id;
             rp.state = crate::request_pane::RunState::Sending;
@@ -2114,10 +2229,14 @@ impl App {
     }
 
     /// Allocate a job id, ensure the result channel exists, spawn the worker.
+    /// `source_path` (the request's `.curl` / `.http` source file, if any)
+    /// is threaded through so the worker can resolve a sibling
+    /// `*.schema.json` and validate the response body.
     fn spawn_http_job(
         &mut self,
         mut request: crate::http::Request,
         script: crate::http::script::Script,
+        source_path: Option<std::path::PathBuf>,
     ) -> u64 {
         use crate::request_pane::ResponseView;
         let job_id = self.next_job_id;
@@ -2167,6 +2286,9 @@ impl App {
                     &resp.body,
                     &mut env,
                 );
+                let schema_result = source_path
+                    .as_deref()
+                    .map(|p| crate::http::schema::validate_for(Some(p), &resp.body));
                 Ok(ResponseView {
                     status: resp.status,
                     status_text: resp.status_text,
@@ -2175,6 +2297,7 @@ impl App {
                     elapsed: resp.elapsed,
                     assertions,
                     captures,
+                    schema_result,
                 })
             })();
             let _ = tx.send((job_id, result));
@@ -3095,6 +3218,7 @@ impl App {
                                 elapsed: started.elapsed(),
                                 assertions: Vec::new(),
                                 captures: Vec::new(),
+                                schema_result: None,
                             }));
                         }
                     }
@@ -3131,6 +3255,7 @@ impl App {
                         .find(|(_, p)| matches!(p, Pane::Request(r) if r.job_id == job_id))
                     {
                         if let Some(Pane::Request(rp)) = self.panes.get_mut(pid) {
+                            let source_path = rp.source_path.clone();
                             if let RunState::Streaming(rv) = std::mem::replace(
                                 &mut rp.state,
                                 RunState::Sending,
@@ -3138,6 +3263,9 @@ impl App {
                                 // Clear captures (used as event counter)
                                 let mut rv = *rv;
                                 rv.captures.clear();
+                                rv.schema_result = source_path.as_deref().map(|p| {
+                                    crate::http::schema::validate_for(Some(p), &rv.body)
+                                });
                                 rp.state = RunState::Done(Box::new(rv));
                             }
                         }

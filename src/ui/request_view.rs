@@ -1181,7 +1181,61 @@ fn draw_response(
                     ]));
                 }
             }
+            if let Some(sr) = &r.schema_result {
+                rows.push(plain(String::new(), body_style));
+                rows.push(schema_footer_line(sr, &t));
+            }
         }
+    }
+}
+
+fn schema_footer_line(
+    sr: &crate::http::schema::SchemaResult,
+    t: &crate::ui::theme::Theme,
+) -> Line<'static> {
+    use crate::http::schema::SchemaStatus;
+    let sidecar = sr
+        .schema_path
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    match &sr.status {
+        SchemaStatus::Valid => Line::from(vec![
+            Span::styled(
+                format!("  ✓ Schema valid ({sidecar})"),
+                Style::default()
+                    .fg(t.green)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        SchemaStatus::Invalid => {
+            let n = sr.errors.len();
+            let plural = if n == 1 { "error" } else { "errors" };
+            Line::from(vec![Span::styled(
+                format!(
+                    "  ✗ Schema: {n} {plural} ({sidecar}) — :http.show_schema_errors"
+                ),
+                Style::default()
+                    .fg(t.red)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            )])
+        }
+        SchemaStatus::NoSidecar => Line::from(vec![]),
+        SchemaStatus::ReadError(e) => Line::from(vec![Span::styled(
+            format!("  ⚠ Schema read error ({sidecar}): {e}"),
+            Style::default().fg(t.yellow).bg(t.bg_dark),
+        )]),
+        SchemaStatus::SchemaParseError(e) => Line::from(vec![Span::styled(
+            format!("  ⚠ Schema parse error ({sidecar}): {e}"),
+            Style::default().fg(t.yellow).bg(t.bg_dark),
+        )]),
+        SchemaStatus::NotJson => Line::from(vec![Span::styled(
+            format!("  ⚠ Body isn't JSON — schema ({sidecar}) skipped"),
+            Style::default().fg(t.yellow).bg(t.bg_dark),
+        )]),
     }
 }
 
