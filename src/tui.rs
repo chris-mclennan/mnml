@@ -1797,6 +1797,36 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     p.move_down();
                 }
             }
+            KeyCode::PageUp => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    for _ in 0..10 {
+                        p.move_up();
+                    }
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    for _ in 0..10 {
+                        p.move_down();
+                    }
+                }
+            }
+            KeyCode::Home => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.selected = 0;
+                }
+            }
+            KeyCode::End => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    let n = p.visible_indices().len();
+                    p.selected = n.saturating_sub(1);
+                }
+            }
+            KeyCode::F(1) => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.show_help = !p.show_help;
+                }
+            }
             KeyCode::Char('r') => app.refresh_claude_agents_pane(),
             KeyCode::Char('y') => app.claude_agents_action(ClaudeAgentsAction::YankSessionId),
             KeyCode::Char('c') => app.claude_agents_action(ClaudeAgentsAction::YankCwd),
@@ -4683,6 +4713,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.click_git_rail(hit);
+                return;
+            }
+            // Claude Agents — Files drill-down file row click → open
+            // the file in an editor pane.
+            if let Some(path) = app
+                .rects
+                .claude_drill_files
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                .map(|(_, p)| p.clone())
+            {
+                let pb = std::path::PathBuf::from(&path);
+                app.open_path(&pb);
                 return;
             }
             // SCM/CI pane row click? Match before the generic editor-pane

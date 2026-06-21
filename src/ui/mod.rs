@@ -144,6 +144,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.request_fields.clear();
         app.rects.completion_rows.clear();
         app.rects.list_rows.clear();
+        app.rects.claude_drill_files.clear();
         app.rects.split_dividers.clear();
         app.rects.pty_tabs.clear();
         app.rects.pty_tab_new.clear();
@@ -459,6 +460,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.request_fields.clear();
     app.rects.completion_rows.clear();
     app.rects.list_rows.clear();
+    app.rects.claude_drill_files.clear();
     app.rects.split_dividers.clear();
     app.rects.pty_tabs.clear();
     app.rects.pty_tab_new.clear();

@@ -134,7 +134,7 @@ pub struct AgentRow {
     /// max 10).
     pub recent_bash: Vec<String>,
     /// Recent Edit/Write/NotebookEdit files (newest first, max 10).
-    pub recent_files: Vec<String>,
+    pub recent_files: Vec<RecentFile>,
     /// Recent Agent (subagent) dispatches (newest first, max 5).
     pub recent_subagents: Vec<String>,
     /// Pending tool_use ids — assistant emitted a tool_use that
@@ -260,10 +260,21 @@ pub struct ClaudeAgentsPane {
     /// toasts (`prior_state_snapshot` is empty on first build to
     /// avoid spamming the user on dashboard open).
     pub prior_state_snapshot: std::collections::HashMap<String, (AgentState, usize)>,
-    /// `(session_id → (sample_time, tokens))` — used to derive
-    /// `tokens_per_min` between refreshes. Decays naturally as
-    /// sessions roll off.
-    pub token_samples: std::collections::HashMap<String, (SystemTime, u64)>,
+    /// `(session_id → ring of (sample_time, tokens))` — used to
+    /// derive `tokens_per_min` as a moving average over the last
+    /// few samples. Capped at `TOKEN_SAMPLE_RING` entries per
+    /// session; oldest fall off.
+    pub token_samples: std::collections::HashMap<String, std::collections::VecDeque<(SystemTime, u64)>>,
+    /// PIDs we've sent SIGTERM to, with the timestamp. Polled on
+    /// the next refresh: if the PID is still alive 2s+ after our
+    /// TERM, escalate to SIGKILL.
+    pub kill_escalation: std::collections::HashMap<u32, SystemTime>,
+    /// `(session_id → (last_seen_file_size, lifetime_tokens,
+    /// lifetime_cost_usd))`. The tail-window parse can under-count
+    /// on long sessions whose tail truncated; this cache stores
+    /// the full-file totals from the first read and incrementally
+    /// updates them on each refresh by reading only the new bytes.
+    pub lifetime_cache: std::collections::HashMap<String, LifetimeTotals>,
     /// Multi-select set — `space` toggles a row's session id into
     /// this set; `K` kills every row in the set (falling back to
     /// the focused row when the set is empty).
@@ -305,13 +316,18 @@ impl ClaudeAgentsPane {
         let codex_pids = scan_running_pids(AgentSource::Codex);
         let mut rows = collect_rows(&claude_pids);
         rows.extend(collect_codex_rows(&codex_pids));
-        // Re-sort after merge so live entries from both backends
-        // bubble to the top.
         rows.sort_by(|a, b| {
             state_rank(a.state)
                 .cmp(&state_rank(b.state))
                 .then_with(|| b.last_activity.cmp(&a.last_activity))
         });
+        let mut pane = ClaudeAgentsPane::empty_with_rows(rows);
+        pane.merge_lifetime_totals();
+        pane.recompute_token_rates();
+        pane
+    }
+
+    fn empty_with_rows(rows: Vec<AgentRow>) -> Self {
         ClaudeAgentsPane {
             rows,
             selected: 0,
@@ -327,41 +343,145 @@ impl ClaudeAgentsPane {
             last_live_tail: SystemTime::now(),
             prior_state_snapshot: std::collections::HashMap::new(),
             token_samples: std::collections::HashMap::new(),
+            kill_escalation: std::collections::HashMap::new(),
+            lifetime_cache: std::collections::HashMap::new(),
             multi_selected: std::collections::HashSet::new(),
             group_by: GroupBy::Source,
         }
     }
 
-    /// Walk `self.rows`, compute `tokens_per_min` from the
-    /// `token_samples` cache. Updates the cache with the latest
-    /// sample for each row. Called from `refresh_in_place` after
-    /// row data is settled, and from `live_tail_selected` for the
-    /// single row.
-    pub fn recompute_token_rates(&mut self) {
-        let now = SystemTime::now();
-        let mut new_samples: std::collections::HashMap<String, (SystemTime, u64)> =
-            std::collections::HashMap::new();
+    /// For each Claude row, update `lifetime_cache` by reading
+    /// only the bytes past `last_seen_bytes` and folding usage
+    /// blocks into the running totals. Lower-bound on first call
+    /// per session (since we start from 0, not the file start);
+    /// for accuracy on long-running existing sessions, the first
+    /// pass scans the whole file once.
+    pub fn merge_lifetime_totals(&mut self) {
         for row in &mut self.rows {
+            if row.source != AgentSource::Claude {
+                continue;
+            }
+            let path = &row.transcript_path;
+            if !path.is_file() {
+                continue;
+            }
+            let cur_size = match std::fs::metadata(path) {
+                Ok(m) => m.len(),
+                Err(_) => continue,
+            };
+            let totals = self
+                .lifetime_cache
+                .entry(row.session_id.clone())
+                .or_default();
+            if cur_size > totals.last_seen_bytes {
+                let delta = read_byte_range(path, totals.last_seen_bytes, cur_size);
+                if let Some(text) = delta {
+                    let mut model = row.model.clone();
+                    for line in text.lines() {
+                        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                            continue;
+                        };
+                        if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+                            continue;
+                        }
+                        let msg = v.get("message");
+                        if let Some(m) = msg.and_then(|m| m.get("model")).and_then(|m| m.as_str()) {
+                            model = Some(m.to_string());
+                        }
+                        let usage = match msg.and_then(|m| m.get("usage")) {
+                            Some(u) => u,
+                            None => continue,
+                        };
+                        let i = usage.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+                        let o = usage.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+                        let cc = usage
+                            .get("cache_creation_input_tokens")
+                            .and_then(|n| n.as_u64())
+                            .unwrap_or(0);
+                        let cr = usage
+                            .get("cache_read_input_tokens")
+                            .and_then(|n| n.as_u64())
+                            .unwrap_or(0);
+                        totals.tokens = totals.tokens.saturating_add(i + o);
+                        totals.input_tokens = totals.input_tokens.saturating_add(i);
+                        totals.output_tokens = totals.output_tokens.saturating_add(o);
+                        totals.cache_create_tokens =
+                            totals.cache_create_tokens.saturating_add(cc);
+                        totals.cache_read_tokens =
+                            totals.cache_read_tokens.saturating_add(cr);
+                    }
+                    if let Some(m) = model {
+                        let extra_cost = estimate_cost(
+                            &m,
+                            totals.input_tokens,
+                            totals.output_tokens,
+                            totals.cache_create_tokens,
+                            totals.cache_read_tokens,
+                        );
+                        // Recompute cost from totals (not delta-add)
+                        // because the model might have switched mid-
+                        // session, and the per-million-token pricing
+                        // table is the source of truth.
+                        totals.cost_usd = extra_cost;
+                    }
+                }
+                totals.last_seen_bytes = cur_size;
+            }
+            // Override per-tail values with lifetime totals so the
+            // top bar + per-row chip show full-session truth.
+            if totals.tokens > row.tokens {
+                row.tokens = totals.tokens;
+                row.input_tokens = totals.input_tokens;
+                row.output_tokens = totals.output_tokens;
+                row.cache_create_tokens = totals.cache_create_tokens;
+                row.cache_read_tokens = totals.cache_read_tokens;
+            }
+            if totals.cost_usd > row.cost_usd {
+                row.cost_usd = totals.cost_usd;
+            }
+        }
+    }
+
+    /// Walk `self.rows`, compute `tokens_per_min` as a moving
+    /// average over `TOKEN_SAMPLE_RING` recent samples. Smoother
+    /// than the single-prev-sample delta — irregular bursts during
+    /// tool-call stretches don't whip the rate around.
+    pub fn recompute_token_rates(&mut self) {
+        const RING: usize = 5;
+        let now = SystemTime::now();
+        for row in &mut self.rows {
+            let entry = self
+                .token_samples
+                .entry(row.session_id.clone())
+                .or_default();
+            // Append latest sample.
+            entry.push_back((now, row.tokens));
+            while entry.len() > RING {
+                entry.pop_front();
+            }
             // Only live sessions get a rate.
             if !matches!(row.state, AgentState::Streaming | AgentState::ToolCall) {
                 row.tokens_per_min = None;
-                new_samples.insert(row.session_id.clone(), (now, row.tokens));
                 continue;
             }
-            if let Some(&(prev_ts, prev_tokens)) = self.token_samples.get(&row.session_id) {
-                let dt = now.duration_since(prev_ts).map(|d| d.as_secs_f64()).unwrap_or(0.0);
-                let dtok = row.tokens.saturating_sub(prev_tokens);
-                if dt > 0.5 && dtok > 0 {
-                    row.tokens_per_min = Some((dtok as f64) * 60.0 / dt);
-                } else {
-                    row.tokens_per_min = None;
-                }
+            // Need ≥2 samples and at least 0.5s of span to compute.
+            if entry.len() < 2 {
+                row.tokens_per_min = None;
+                continue;
+            }
+            let (oldest_ts, oldest_tokens) = entry[0];
+            let dt = now.duration_since(oldest_ts).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+            let dtok = row.tokens.saturating_sub(oldest_tokens);
+            if dt > 0.5 && dtok > 0 {
+                row.tokens_per_min = Some((dtok as f64) * 60.0 / dt);
             } else {
                 row.tokens_per_min = None;
             }
-            new_samples.insert(row.session_id.clone(), (now, row.tokens));
         }
-        self.token_samples = new_samples;
+        // Prune samples for sessions that have rolled off.
+        let live_sids: std::collections::HashSet<String> =
+            self.rows.iter().map(|r| r.session_id.clone()).collect();
+        self.token_samples.retain(|sid, _| live_sids.contains(sid));
     }
 
     /// Re-tail JUST the selected row's transcript (if it's a live
@@ -514,6 +634,7 @@ impl ClaudeAgentsPane {
         });
         self.rows = rows;
         self.built_at = SystemTime::now();
+        self.merge_lifetime_totals();
         self.recompute_token_rates();
         if let Some(sid) = prior_sid
             && let Some(new_idx) = self
@@ -1006,8 +1127,8 @@ struct TailStats {
     todos: Vec<TodoEntry>,
     /// Recent Bash invocations (most recent first, capped at 10).
     recent_bash: Vec<String>,
-    /// Recent Edit/Write file paths (most recent first, capped at 10).
-    recent_files: Vec<String>,
+    /// Recent Edit/Write file events (most recent first, capped at 10).
+    recent_files: Vec<RecentFile>,
     /// Subagent dispatches via the Agent tool (newest first, capped
     /// at 5).
     recent_subagents: Vec<String>,
@@ -1020,6 +1141,32 @@ struct TailStats {
 pub struct TodoEntry {
     pub content: String,
     pub status: String,
+}
+
+/// One recent Edit/Write/NotebookEdit event — the tool name and
+/// the full file path. The drill-down's Files view renders these
+/// as clickable rows (Enter / click opens the file in an editor
+/// pane).
+#[derive(Debug, Clone)]
+pub struct RecentFile {
+    pub tool: String,
+    pub path: String,
+}
+
+/// Per-session lifetime totals — accurate even when the
+/// `parse_tail` window truncates. Maintained incrementally by
+/// `merge_lifetime_totals`.
+#[derive(Debug, Clone, Default)]
+pub struct LifetimeTotals {
+    /// File size as of the last refresh. Reads on the next refresh
+    /// only need to cover bytes past this offset.
+    pub last_seen_bytes: u64,
+    pub tokens: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_create_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cost_usd: f64,
 }
 
 /// Tail-parse the .jsonl file. Reads up to the last 256KB and walks
@@ -1141,19 +1288,13 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                                         if let Some(p) =
                                             input.and_then(|i| i.get("file_path")).and_then(|f| f.as_str())
                                         {
-                                            // Trim long paths to the last 2 segments.
-                                            let short = std::path::Path::new(p)
-                                                .components()
-                                                .rev()
-                                                .take(2)
-                                                .collect::<Vec<_>>()
-                                                .into_iter()
-                                                .rev()
-                                                .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                                                .collect::<Vec<_>>()
-                                                .join("/");
-                                            let entry = format!("{name} {short}");
-                                            if !stats.recent_files.iter().any(|e| e == &entry) {
+                                            let entry = RecentFile {
+                                                tool: name.clone(),
+                                                path: p.to_string(),
+                                            };
+                                            if !stats.recent_files.iter().any(|e| {
+                                                e.tool == entry.tool && e.path == entry.path
+                                            }) {
                                                 stats.recent_files.insert(0, entry);
                                                 stats.recent_files.truncate(10);
                                             }
@@ -1241,6 +1382,27 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
     stats.last_was_tool_call = last_assistant_was_tool;
     stats.pending_tool_uses = pending.len();
     stats
+}
+
+/// Read bytes `[start, end)` from `path`. Used by lifetime cost
+/// merging to scan only the new tail of a transcript.
+fn read_byte_range(path: &std::path::Path, start: u64, end: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    if end <= start {
+        return Some(String::new());
+    }
+    let mut f = std::fs::File::open(path).ok()?;
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::with_capacity((end - start) as usize);
+    f.take(end - start).read_to_end(&mut buf).ok()?;
+    let s = String::from_utf8_lossy(&buf).into_owned();
+    // If `start > 0`, the first line is partial — drop it.
+    if start > 0 {
+        if let Some(nl) = s.find('\n') {
+            return Some(s[nl + 1..].to_string());
+        }
+    }
+    Some(s)
 }
 
 /// Read up to `cap` bytes from the END of `path`. Returns a String
@@ -1482,7 +1644,32 @@ fn extract_assistant_snippet(v: &serde_json::Value, q: &str) -> Option<(SearchRo
 
 /// Format a row's transcript as a markdown export. Returns
 /// `(filename_stem, markdown_text)` for the caller to write/open.
+/// For Codex rows (no parsable transcript), returns a minimal
+/// metadata-only export so the user still has something to file.
 pub fn export_transcript_as_markdown(row: &AgentRow) -> Result<(String, String), String> {
+    let sid_short: String = row.session_id.chars().take(8).collect();
+    let stem = format!("{}-{sid_short}", utc_stamp());
+
+    if row.source == AgentSource::Codex {
+        let mut out = String::new();
+        out.push_str(&format!(
+            "# Codex session {sid_short}\n\n_workspace: {} · pid: {} · state: {}_\n\n",
+            row.workspace,
+            row.pid.map(|p| p.to_string()).unwrap_or_else(|| "—".to_string()),
+            row.state.badge(),
+        ));
+        if let Some(cwd) = &row.cwd {
+            out.push_str(&format!("**cwd**: `{cwd}`\n\n"));
+        }
+        if let Some(blurb) = &row.last_assistant_msg {
+            out.push_str(&format!("**last seen**: {blurb}\n\n"));
+        }
+        out.push_str(
+            "_Codex transcript format isn't parsed yet — see mnml claude_agents.rs._\n",
+        );
+        return Ok((stem, out));
+    }
+
     let path = row.transcript_path.clone();
     if !path.is_file() {
         return Err("no transcript on disk".to_string());
@@ -1491,7 +1678,6 @@ pub fn export_transcript_as_markdown(row: &AgentRow) -> Result<(String, String),
     use std::io::BufRead;
     let reader = std::io::BufReader::new(f);
     let mut out = String::new();
-    let sid_short: String = row.session_id.chars().take(8).collect();
     out.push_str(&format!(
         "# Claude session {sid_short}\n\n_workspace: {} · branch: {} · model: {}_\n\n",
         row.workspace,
@@ -1554,9 +1740,6 @@ pub fn export_transcript_as_markdown(row: &AgentRow) -> Result<(String, String),
             _ => {}
         }
     }
-    // YYYYMMDD-HHMMSS stamp from the system clock — gives the
-    // export filename a real timestamp without pulling in chrono.
-    let stem = format!("{}-{sid_short}", utc_stamp());
     Ok((stem, out))
 }
 
@@ -1779,6 +1962,30 @@ mod tests {
         let stats = parse_tail(&p);
         assert!(stats.last_was_tool_call);
         assert_eq!(stats.last_assistant_msg.as_deref(), Some("⚙ Bash"));
+    }
+
+    #[test]
+    fn read_byte_range_skips_partial_first_line_when_offset_nonzero() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("rolling.jsonl");
+        std::fs::write(
+            &p,
+            b"line one is long here\n{\"k\":\"v\"}\n{\"second\":true}\n",
+        )
+        .unwrap();
+        let s = read_byte_range(&p, 5, 50).unwrap();
+        // First line is partial — should be dropped.
+        assert!(!s.contains("line one"));
+        assert!(s.contains("\"k\":\"v\""));
+    }
+
+    #[test]
+    fn read_byte_range_returns_empty_when_no_new_bytes() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("rolling.jsonl");
+        std::fs::write(&p, b"hello").unwrap();
+        let s = read_byte_range(&p, 5, 5).unwrap();
+        assert_eq!(s, "");
     }
 
     #[test]

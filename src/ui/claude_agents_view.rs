@@ -213,7 +213,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     }
 
     if let Some(sel) = p.selected_row() {
-        draw_detail(frame, sel, p.detail, detail_area, &t);
+        let file_clicks = draw_detail(frame, sel, p.detail, detail_area, &t);
+        for (rect, path) in file_clicks {
+            app.rects.claude_drill_files.push((rect, path));
+        }
     }
 }
 
@@ -466,8 +469,9 @@ fn draw_detail(
     view: DetailView,
     area: Rect,
     t: &theme::Theme,
-) {
+) -> Vec<(Rect, String)> {
     let mut lines: Vec<Line> = Vec::new();
+    let mut file_clicks: Vec<(Rect, String)> = Vec::new();
     let label_style = Style::default().fg(t.comment).bg(t.bg_dark);
     let value_style = Style::default().fg(t.fg).bg(t.bg_dark);
 
@@ -551,11 +555,44 @@ fn draw_detail(
                     Style::default().fg(t.comment).bg(t.bg_dark),
                 )));
             } else {
-                for f in &row.recent_files {
-                    lines.push(Line::from(Span::styled(
-                        format!("  {f}"),
-                        value_style,
-                    )));
+                for (i, f) in row.recent_files.iter().enumerate() {
+                    let short = std::path::Path::new(&f.path)
+                        .components()
+                        .rev()
+                        .take(2)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("  {} ", f.tool),
+                            Style::default().fg(t.purple).bg(t.bg_dark),
+                        ),
+                        Span::styled(
+                            short,
+                            Style::default()
+                                .fg(t.cyan)
+                                .bg(t.bg_dark)
+                                .add_modifier(Modifier::UNDERLINED),
+                        ),
+                    ]));
+                    // header line above + (i) lines. y_offset within area:
+                    // 0 = session header, 1 = divider, 2..N = content.
+                    let y_offset = 2u16 + i as u16;
+                    if y_offset < area.height {
+                        file_clicks.push((
+                            Rect {
+                                x: area.x,
+                                y: area.y + y_offset,
+                                width: area.width,
+                                height: 1,
+                            },
+                            f.path.clone(),
+                        ));
+                    }
                 }
             }
         }
@@ -602,6 +639,7 @@ fn draw_detail(
 
     let para = Paragraph::new(lines).style(Style::default().bg(t.bg_dark));
     frame.render_widget(para, area);
+    file_clicks
 }
 
 fn clip(s: &str, max: usize) -> String {
@@ -654,6 +692,8 @@ fn format_cost(usd: f64) -> String {
 
 const HELP_LINES: &[(&str, &str)] = &[
     ("j / k or ↑/↓", "select row · mouse click also selects"),
+    ("PgUp / PgDn", "page through rows (10 at a time)"),
+    ("Home / End", "first / last row"),
     ("/", "filter by text (workspace · id · model · last msg)"),
     ("0 / 1 / 2 / 3 / 4", "filter by state (all / live / tool / idle / ended)"),
     ("g", "cycle grouping (by source ↔ by workspace)"),
@@ -664,11 +704,12 @@ const HELP_LINES: &[(&str, &str)] = &[
     ("y", "yank session id to clipboard"),
     ("c", "yank cwd to clipboard"),
     ("t / Enter", "open the transcript .jsonl in an editor (or dbl-click)"),
+    ("(Files panel)", "click a file row → open in an editor pane"),
     ("o", "resume the session in a new pty (claude --resume / fresh codex)"),
-    ("K", "SIGTERM (batch when rows are multi-selected; confirm prompt)"),
+    ("K", "SIGTERM (escalates to SIGKILL after 2s if still alive)"),
     ("e", "export the selected session's transcript as markdown"),
     (":ai.session_search", "grep all transcripts (via palette)"),
-    ("?", "toggle this help"),
+    ("? / F1", "toggle this help (F1 works mid-filter)"),
     ("Esc", "focus file tree"),
     ("q", "close the pane"),
 ];

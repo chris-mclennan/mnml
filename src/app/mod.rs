@@ -2020,6 +2020,10 @@ pub struct PaneRects {
     /// per render. Click on a row ⇒ select; click on a header row ⇒
     /// toggle collapse (sibling to keyboard Enter).
     pub list_rows: Vec<(Rect, PaneId, usize)>,
+    /// `(rect, file_path)` for clickable file rows in the Claude
+    /// Agents dashboard's Files drill-down. Click opens the file
+    /// in an editor pane. Cleared + rebuilt per render.
+    pub claude_drill_files: Vec<(Rect, String)>,
     /// `(row_rect, pane_id, env_idx, row_in_env_filter)` for every visible
     /// data row across the 3 env columns in `Pane::TestExecutions`. Also
     /// records each column's header rect with `row_in_env_filter = usize::MAX`
@@ -8658,13 +8662,17 @@ impl App {
     /// Fire SIGTERM at the pending kill targets. Used by the
     /// `PromptKind::ClaudeKillConfirm` accept path. Handles both
     /// single-PID (`pending_kill_pid`) and batch
-    /// (`pending_kill_batch`) targets.
+    /// (`pending_kill_batch`) targets. PIDs that survive 2s of
+    /// TERM are escalated to SIGKILL by
+    /// `maybe_escalate_claude_kills` (tick hook).
     pub fn claude_agents_kill_confirmed(&mut self) {
+        let now = std::time::SystemTime::now();
         if !self.pending_kill_batch.is_empty() {
             let batch = std::mem::take(&mut self.pending_kill_batch);
             let mut killed = 0usize;
             let mut failed = 0usize;
             let mut killed_sids: Vec<String> = Vec::new();
+            let mut escalation: Vec<(u32, std::time::SystemTime)> = Vec::new();
             for (sid, pid) in &batch {
                 let out = std::process::Command::new("kill")
                     .arg("-TERM")
@@ -8674,8 +8682,16 @@ impl App {
                     Ok(o) if o.status.success() => {
                         killed += 1;
                         killed_sids.push(sid.clone());
+                        escalation.push((*pid, now));
                     }
                     _ => failed += 1,
+                }
+            }
+            if let Some(i) = self.active
+                && let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i)
+            {
+                for (pid, ts) in escalation {
+                    p.kill_escalation.insert(pid, ts);
                 }
             }
             // Drop the killed sids from the multi-select set.
@@ -8697,9 +8713,11 @@ impl App {
             .arg("-TERM")
             .arg(pid.to_string())
             .output();
+        let mut sent_term = false;
         match out {
             Ok(o) if o.status.success() => {
                 self.toast(format!("SIGTERM → {pid}"));
+                sent_term = true;
             }
             Ok(o) => {
                 let err = String::from_utf8_lossy(&o.stderr);
@@ -8707,7 +8725,64 @@ impl App {
             }
             Err(e) => self.toast(format!("kill {pid}: {e}")),
         }
+        if sent_term
+            && let Some(i) = self.active
+            && let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i)
+        {
+            p.kill_escalation.insert(pid, now);
+        }
         self.refresh_claude_agents_pane();
+    }
+
+    /// Tick hook — for every PID we SIGTERM'd more than 2s ago, if
+    /// it's still alive escalate to SIGKILL. Drops the entry on
+    /// successful escalation OR PID disappearance.
+    pub fn maybe_escalate_claude_kills(&mut self) {
+        const ESCALATE_AFTER_SECS: u64 = 2;
+        let now = std::time::SystemTime::now();
+        let mut to_kill: Vec<u32> = Vec::new();
+        let mut to_drop: Vec<u32> = Vec::new();
+        for i in 0..self.panes.len() {
+            let Some(Pane::ClaudeAgents(p)) = self.panes.get(i) else {
+                continue;
+            };
+            for (pid, ts) in &p.kill_escalation {
+                let age = now.duration_since(*ts).map(|d| d.as_secs()).unwrap_or(0);
+                if age < ESCALATE_AFTER_SECS {
+                    continue;
+                }
+                // `kill -0 PID` returns 0 if the process is still
+                // alive (without sending any signal).
+                let alive = std::process::Command::new("kill")
+                    .args(["-0", &pid.to_string()])
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
+                if alive {
+                    to_kill.push(*pid);
+                } else {
+                    to_drop.push(*pid);
+                }
+            }
+        }
+        for pid in to_kill {
+            let out = std::process::Command::new("kill")
+                .args(["-KILL", &pid.to_string()])
+                .output();
+            if let Ok(o) = out
+                && o.status.success()
+            {
+                self.toast(format!("SIGKILL → {pid} (TERM ignored)"));
+                to_drop.push(pid);
+            }
+        }
+        for i in 0..self.panes.len() {
+            if let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i) {
+                for pid in &to_drop {
+                    p.kill_escalation.remove(pid);
+                }
+            }
+        }
     }
 
     pub fn open_cheatsheet(&mut self) {
@@ -9422,6 +9497,7 @@ impl App {
         self.drain_http_ai_build();
         self.drain_http_chain();
         self.maybe_auto_refresh_claude_agents();
+        self.maybe_escalate_claude_kills();
         self.drain_http_sync_result();
         self.drain_http_bench_result();
         self.drain_lookup_fire_result();
