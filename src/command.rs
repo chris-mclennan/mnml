@@ -2421,6 +2421,18 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.copy_head_sha(),
         },
         Command {
+            id: "ai.write_pr_description",
+            title: "AI: draft a PR description from this branch's commits + diff vs main",
+            group: "ai",
+            // Resolves merge-base with origin/main (falling back to
+            // origin/master / main / master), collects the diff +
+            // commit subjects on this branch, asks Claude for a
+            // Summary + Test plan markdown block. Result lands in a
+            // [pr-description] scratch.
+            keys: &[],
+            run: |app| app.request_ai_pr_description(),
+        },
+        Command {
             id: "git.new_branch",
             title: "Git: create a new branch",
             group: "git",

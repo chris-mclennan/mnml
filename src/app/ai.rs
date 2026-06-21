@@ -1593,6 +1593,33 @@ impl App {
                 }
                 continue;
             }
+            // An "AI: write me a PR description" job? Route the final
+            // text into a [pr-description] scratch buffer.
+            if self.pending_pr_desc_job == Some(job_id) {
+                let result = match msg {
+                    AiMsg::Delta(_) => continue,
+                    AiMsg::Usage { .. } | AiMsg::ConfirmTool { .. } => continue,
+                    AiMsg::Done(text) => Ok(text),
+                    AiMsg::Failed(e) => Err(e),
+                };
+                self.pending_pr_desc_job = None;
+                match result {
+                    Ok(text) => {
+                        let clean = text
+                            .trim()
+                            .trim_start_matches("```markdown")
+                            .trim_start_matches("```md")
+                            .trim_start_matches("```")
+                            .trim_end_matches("```")
+                            .trim()
+                            .to_string();
+                        self.open_scratch_with_text("[pr-description]".to_string(), clean);
+                        toasts.push("ai.pr_desc: ready → [pr-description]".to_string());
+                    }
+                    Err(e) => toasts.push(format!("ai.pr_desc: {e}")),
+                }
+                continue;
+            }
             // An "AI: write me a commit message" job? Route the final text to the
             // commit prompt; deltas are noise here.
             if self.pending_commit_msg_job == Some(job_id) {
@@ -1743,6 +1770,86 @@ impl App {
             g.ai_msg_job = Some(job_id);
         }
         self.toast("asking Claude for a commit message…");
+    }
+
+    /// `:ai.write_pr_description` — diff the current branch against
+    /// its merge-base with origin/main (falling back to main /
+    /// master / origin/master), collect the commits on this branch,
+    /// ask Claude to draft a PR description, and drop the result
+    /// into a `[pr-description]` scratch. Useful for the "I've got
+    /// 5 commits, give me something I can paste into the PR body"
+    /// workflow.
+    pub fn request_ai_pr_description(&mut self) {
+        // Resolve a base ref. Try origin/main → origin/master →
+        // main → master, in that order.
+        let candidates = ["origin/main", "origin/master", "main", "master"];
+        let base_ref = candidates.iter().find(|r| {
+            std::process::Command::new("git")
+                .args(["rev-parse", "--verify", "--quiet", r])
+                .current_dir(self.active_repo_path())
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        });
+        let Some(base_ref) = base_ref else {
+            self.toast("ai.pr_desc: no main/master ref found");
+            return;
+        };
+        // Find merge-base so the diff covers only this branch's work,
+        // not main's recent commits.
+        let mb_out = std::process::Command::new("git")
+            .args(["merge-base", "HEAD", base_ref])
+            .current_dir(self.active_repo_path())
+            .output();
+        let merge_base = match mb_out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            _ => {
+                self.toast(format!("ai.pr_desc: merge-base HEAD..{base_ref} failed"));
+                return;
+            }
+        };
+        let diff = std::process::Command::new("git")
+            .args(["diff", &format!("{merge_base}..HEAD")])
+            .current_dir(self.active_repo_path())
+            .output();
+        let Ok(d) = diff else {
+            self.toast("ai.pr_desc: git diff failed");
+            return;
+        };
+        let diff_text = String::from_utf8_lossy(&d.stdout).to_string();
+        if diff_text.trim().is_empty() {
+            self.toast(format!(
+                "ai.pr_desc: HEAD has no changes vs {base_ref} (forgot to commit?)"
+            ));
+            return;
+        }
+        // Commit list (subjects) on this branch.
+        let log_out = std::process::Command::new("git")
+            .args(["log", "--format=%h %s", &format!("{merge_base}..HEAD")])
+            .current_dir(self.active_repo_path())
+            .output();
+        let commits = match log_out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => String::new(),
+        };
+        let diff = if diff_text.len() > 32_000 {
+            format!("{}\n…(diff truncated)…", &diff_text[..32_000])
+        } else {
+            diff_text
+        };
+        let prompt = format!(
+            "Write a GitHub Pull Request description for the changes below. \
+             Structure: a 1-sentence summary line, then a `## Summary` section \
+             with 2-4 bullet points covering what changed and why, then a \
+             `## Test plan` section with a markdown checklist of TODOs for a \
+             reviewer to verify. No preamble, no code fences around the whole \
+             output, no '🤖 Generated by …' footer.\n\n\
+             Commits on this branch:\n{commits}\n\
+             Diff (vs {base_ref}):\n```diff\n{diff}\n```"
+        );
+        let (job_id, _sid, _cancel) = self.spawn_ai_job(prompt);
+        self.pending_pr_desc_job = Some(job_id);
+        self.toast(format!("ai.pr_desc: asking Claude (vs {base_ref})…"));
     }
 
     /// `git.codex_commit` — same shape as `request_ai_commit_message` but

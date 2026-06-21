@@ -3119,6 +3119,11 @@ pub struct App {
     /// Esc / cleared on Enter. Up/Down on the picker applies the
     /// highlighted theme via `set_theme_silent`.
     pub theme_preview_restore: Option<String>,
+    /// 2026-06-20 — `:ai.write_pr_description` job tag. When the
+    /// drain hook sees an AiMsg::Done for this job, it opens a
+    /// `[pr-description]` scratch instead of routing to a commit
+    /// prompt.
+    pub pending_pr_desc_job: Option<u64>,
     /// Channel for background `claude -p` runs (lazily created); worker threads
     /// stream `(job_id, AiMsg)` (deltas then a final Done/Failed), [`Self::tick`]
     /// drains it into the matching `Pane::Ai`.
@@ -3569,6 +3574,7 @@ impl App {
             http_chain_chan: None,
             http_chain_in_flight: false,
             theme_preview_restore: None,
+            pending_pr_desc_job: None,
             ai_chan: None,
             suggest_chan: None,
             pending_suggest: None,
