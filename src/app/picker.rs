@@ -1287,12 +1287,12 @@ impl App {
                 self.ai_session_search_run(q);
             }
             crate::prompt::PromptKind::ClaudeKillConfirm => {
-                if p.input.trim() == "kill" {
+                if p.input.trim().eq_ignore_ascii_case("kill") {
                     self.claude_agents_kill_confirmed();
                 } else {
                     self.pending_kill_pid = None;
                     self.pending_kill_batch.clear();
-                    self.toast("kill cancelled (type 'kill' exactly to confirm)");
+                    self.toast("kill cancelled (type 'kill' to confirm)");
                 }
             }
             crate::prompt::PromptKind::NewFile => {

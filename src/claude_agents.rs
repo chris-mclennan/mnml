@@ -1554,9 +1554,41 @@ pub fn export_transcript_as_markdown(row: &AgentRow) -> Result<(String, String),
             _ => {}
         }
     }
-    let date = "session"; // No Date::now in this codebase context — caller can stamp.
-    let stem = format!("{date}-{sid_short}");
+    // YYYYMMDD-HHMMSS stamp from the system clock — gives the
+    // export filename a real timestamp without pulling in chrono.
+    let stem = format!("{}-{sid_short}", utc_stamp());
     Ok((stem, out))
+}
+
+/// `YYYYMMDD-HHMMSS` from the system clock, computed via plain
+/// integer math against the Unix epoch. Used for export filenames
+/// so each `e` writes a distinct file.
+fn utc_stamp() -> String {
+    let secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Civil-from-days algorithm (Howard Hinnant). Works for any
+    // year >= 1970.
+    let days_since_epoch = (secs / 86400) as i64;
+    let time_of_day = secs % 86400;
+    let h = time_of_day / 3600;
+    let m = (time_of_day % 3600) / 60;
+    let s = time_of_day % 60;
+    let z = days_since_epoch + 719468;
+    let era = z.div_euclid(146097);
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m_civil = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y_civil = if m_civil <= 2 { y + 1 } else { y };
+    format!(
+        "{:04}{:02}{:02}-{:02}{:02}{:02}",
+        y_civil, m_civil, d, h, m, s
+    )
 }
 
 fn extract_user_message_text(v: &serde_json::Value) -> Option<String> {
@@ -1747,6 +1779,23 @@ mod tests {
         let stats = parse_tail(&p);
         assert!(stats.last_was_tool_call);
         assert_eq!(stats.last_assistant_msg.as_deref(), Some("⚙ Bash"));
+    }
+
+    #[test]
+    fn utc_stamp_has_yyyymmdd_hhmmss_shape() {
+        let s = utc_stamp();
+        // 8 + 1 + 6 = 15 chars: `YYYYMMDD-HHMMSS`.
+        assert_eq!(s.len(), 15);
+        assert_eq!(s.as_bytes()[8], b'-');
+        // Year starts with 20 (test will only run past 2000).
+        assert!(s.starts_with("20"));
+        // Every other char is an ASCII digit.
+        for (i, c) in s.char_indices() {
+            if i == 8 {
+                continue;
+            }
+            assert!(c.is_ascii_digit(), "non-digit at pos {i}: {c}");
+        }
     }
 
     #[test]

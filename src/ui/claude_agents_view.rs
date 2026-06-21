@@ -115,14 +115,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     // workspace). Each group gets a colored section header.
     let groups: Vec<(SectionKey, Vec<usize>)> = build_groups(p.group_by, &vis, &p.rows);
 
-    let mut lines: Vec<Line> = Vec::new();
-    // Track each rendered row's y-offset within rows_area + its
-    // `selected` index so the click handler can map (x,y) → vi.
-    let mut row_y_to_vi: Vec<(u16, usize)> = Vec::new();
+    // Build the full line set first, then slice by scroll so the
+    // selected row is always visible. `row_line_positions[vi]` is
+    // the line index of row vi within the full set.
+    let mut all_lines: Vec<Line> = Vec::new();
+    let mut row_line_positions: std::collections::HashMap<usize, usize> =
+        std::collections::HashMap::new();
     for (key, indices) in &groups {
         let tokens: u64 = indices.iter().map(|&i| p.rows[vis[i]].tokens).sum();
         let cost: f64 = indices.iter().map(|&i| p.rows[vis[i]].cost_usd).sum();
-        lines.push(section_header_keyed(
+        all_lines.push(section_header_keyed(
             key,
             indices.len(),
             tokens,
@@ -135,8 +137,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
             let marked = p
                 .multi_selected
                 .contains(&p.rows[row_idx].session_id);
-            row_y_to_vi.push((lines.len() as u16, vi));
-            lines.push(render_row(
+            row_line_positions.insert(vi, all_lines.len());
+            all_lines.push(render_row(
                 &p.rows[row_idx],
                 vi == p.selected,
                 marked,
@@ -145,17 +147,32 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
             ));
         }
     }
-    let _scroll = p.scroll;
-    let rows_para = Paragraph::new(lines).style(Style::default().bg(t.bg_dark));
+    let body_h = rows_area.height as usize;
+    let sel_line = row_line_positions.get(&p.selected).copied().unwrap_or(0);
+    // Auto-scroll: keep the selected row visible. Snaps cursor-row
+    // to bottom of viewport when it would otherwise be cut off,
+    // and to top when scrolling back up past the viewport.
+    let scroll = if sel_line >= body_h {
+        sel_line + 1 - body_h
+    } else {
+        0
+    };
+    let visible_lines: Vec<Line> = all_lines
+        .iter()
+        .skip(scroll)
+        .take(body_h)
+        .cloned()
+        .collect();
+    let rows_para = Paragraph::new(visible_lines).style(Style::default().bg(t.bg_dark));
     frame.render_widget(rows_para, rows_area);
 
-    // Push rects for click selection. The dispatcher in tui.rs
-    // looks up by (pane_id, vi) to call p.selected = vi.
-    for (y_in_area, vi) in row_y_to_vi {
-        let screen_y = rows_area.y.saturating_add(y_in_area);
-        if screen_y >= rows_area.y.saturating_add(rows_area.height) {
+    // Push rects for click selection. Accounts for the auto-scroll
+    // so the y coordinate is the actual on-screen row.
+    for (vi, &line_idx) in row_line_positions.iter() {
+        if line_idx < scroll || line_idx >= scroll + body_h {
             continue;
         }
+        let screen_y = rows_area.y.saturating_add((line_idx - scroll) as u16);
         app.rects.list_rows.push((
             Rect {
                 x: rows_area.x,
@@ -164,8 +181,35 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
                 height: 1,
             },
             id,
-            vi,
+            *vi,
         ));
+    }
+    // Visual scrollbar — a `▎` glyph at the right edge of the
+    // rows area showing the visible window vs total height.
+    if all_lines.len() > body_h && rows_area.width > 1 {
+        let total = all_lines.len();
+        let bar_h = ((body_h as f64 / total as f64) * body_h as f64)
+            .max(1.0) as usize;
+        let bar_top = ((scroll as f64 / total as f64) * body_h as f64) as usize;
+        for i in 0..body_h {
+            let in_bar = i >= bar_top && i < bar_top + bar_h;
+            let glyph = if in_bar { "▎" } else { " " };
+            let style = if in_bar {
+                Style::default().fg(t.cyan).bg(t.bg_dark)
+            } else {
+                Style::default().bg(t.bg_dark)
+            };
+            let area = Rect {
+                x: rows_area.x + rows_area.width - 1,
+                y: rows_area.y + i as u16,
+                width: 1,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(glyph, style))),
+                area,
+            );
+        }
     }
 
     if let Some(sel) = p.selected_row() {
