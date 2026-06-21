@@ -1260,9 +1260,66 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+/// True for panes that should let `:` and `Ctrl+W` (the vim
+/// ex-cmdline + window prefix) fall through to global handlers
+/// before the per-pane key dispatcher runs. These are "view"
+/// panes — the user isn't typing into them as a text-input
+/// surface. Editor / Pty / Request / Browser / Ai / Websocket
+/// keep their own input semantics. (The Request pane's bare
+/// `r` / `a` reflex collisions are a separate finding —
+/// `nvchad-request-pane-r-refires-a-spawns-ai`.)
+fn is_view_only_pane(pane: Option<&Pane>) -> bool {
+    matches!(
+        pane,
+        Some(Pane::Diagnostics(_))
+            | Some(Pane::Cheatsheet(_))
+            | Some(Pane::ClaudeAgents(_))
+            | Some(Pane::Grep(_))
+            | Some(Pane::Quickfix(_))
+            | Some(Pane::CmdlineHistory(_))
+            | Some(Pane::Outline(_))
+            | Some(Pane::Tests(_))
+            | Some(Pane::Flaky(_))
+            | Some(Pane::Debug(_))
+    )
+}
+
 fn handle_pane_key(app: &mut App, key: KeyEvent) {
     let viewport = crate::app::dispatch::pane_viewport(app);
     let Some(i) = app.active else { return };
+    // 2026-06-21 — nvchad SEV-1: every special-purpose pane has its
+    // own `_ => {}` fall-through that ate Ctrl+W (vim window prefix)
+    // and `:` (ex cmdline), so vim users lost both reflexes anywhere
+    // outside the editor. Intercept BEFORE per-pane dispatch when
+    // the active pane is a non-editor "view" pane (no text-input
+    // role; Pty / Editor / Request / Browser / Pane::Ai keep their
+    // own input semantics — the Request pane's bare `r` reflex is
+    // a separate finding).
+    if is_view_only_pane(app.panes.get(i)) {
+        // `:` → open ex-command prompt, same as the tree handler.
+        if matches!(key.code, KeyCode::Char(':'))
+            && !key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            app.open_ex_command_prompt();
+            return;
+        }
+        // Ctrl+W → in vim mode, jump to the first editor pane and
+        // re-dispatch so its vim handler enters Prefix::Window.
+        // Standard mode treats Ctrl+W as buffer.close — skip.
+        if key.code == KeyCode::Char('w')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && app.config.editor.input_style == "vim"
+        {
+            if let Some(editor_id) =
+                app.panes.iter().position(|p| matches!(p, Pane::Editor(_)))
+            {
+                app.active = Some(editor_id);
+                app.focus = crate::focus::Focus::Pane;
+                handle_pane_key(app, key);
+            }
+            return;
+        }
+    }
     if handle_md_preview_key(app, key, viewport, i) {
         return;
     }
@@ -1786,15 +1843,20 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // Websocket pane — Enter sends, Esc closes, printable chars edit
-    // the input, PgUp/PgDn scroll the log.
+    // Websocket pane — Enter sends, Esc focuses tree (consistent
+    // with every other pane), printable chars edit the input,
+    // PgUp/PgDn scroll the log. Explicit close paths:
+    // `Ctrl+C` (universal cancel reflex), `:ws.disconnect`
+    // palette command.
+    //
+    // 2026-06-21 nvchad/vscode-kbd/power-user-ws-git agents (4
+    // separate finds!) flagged Esc → close as hostile to vim +
+    // standard muscle memory and risky during typing. Was: Esc
+    // killed the connection. Now: Esc focuses tree (same as every
+    // other pane); to close, use Ctrl+C or the palette.
     if matches!(app.panes.get(i), Some(Pane::Websocket(_))) {
         match key.code {
-            KeyCode::Esc => {
-                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
-                    p.close();
-                }
-            }
+            KeyCode::Esc => app.focus_tree(),
             KeyCode::Enter => {
                 if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
                     p.send_input();

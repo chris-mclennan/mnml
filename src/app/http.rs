@@ -8,6 +8,69 @@
 
 use super::*;
 
+/// Result of a backgrounded `:ws.send` worker.
+pub struct WsSendReply {
+    pub url: String,
+    pub message: String,
+    pub result: Result<WsSendOutput, String>,
+}
+
+pub struct WsSendOutput {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub elapsed_ms: u128,
+}
+
+/// Run `websocat --exit-on-eof -n1 <url>` with `message` written to
+/// stdin. Polls for child exit up to `timeout_ms`; kills + reports
+/// "timeout" on overrun. Called from a worker thread.
+fn run_websocat_send(
+    url: &str,
+    message: &str,
+    timeout_ms: u64,
+    headers: &[(String, String)],
+) -> Result<WsSendOutput, String> {
+    let mut cmd = std::process::Command::new("websocat");
+    cmd.arg("--exit-on-eof").arg("-n1").arg(url);
+    for (k, v) in headers {
+        cmd.arg("-H").arg(format!("{k}: {v}"));
+    }
+    cmd.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("spawn websocat: {e} (is it on PATH?)"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let _ = writeln!(stdin, "{message}");
+        drop(stdin);
+    }
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let out = child
+                    .wait_with_output()
+                    .map_err(|e| format!("websocat wait: {e}"))?;
+                return Ok(WsSendOutput {
+                    stdout: out.stdout,
+                    stderr: out.stderr,
+                    elapsed_ms: started.elapsed().as_millis(),
+                });
+            }
+            Ok(None) => {
+                if started.elapsed().as_millis() as u64 > timeout_ms {
+                    let _ = child.kill();
+                    return Err(format!("timeout after {timeout_ms}ms"));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("websocat: {e}")),
+        }
+    }
+}
+
 /// Replace the named block inside an `.http` / `.rest` source with the
 /// pre-rendered `new_block` text, leaving every other block untouched.
 /// `name` is what `RequestPane.source_block_name` stored — `Some(s)` means
@@ -655,70 +718,80 @@ impl App {
             .get("timeout_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(5000);
-        let mut cmd = std::process::Command::new("websocat");
-        // -n1 reads exactly 1 message from server then exits.
-        cmd.arg("--exit-on-eof")
-            .arg("-n1")
-            .arg(&url);
-        if let Some(headers) = cfg.get("headers").and_then(|v| v.as_object()) {
-            for (k, v) in headers {
-                if let Some(vs) = v.as_str() {
-                    cmd.arg("-H").arg(format!("{k}: {vs}"));
-                }
-            }
-        }
-        cmd.stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+        let headers: Vec<(String, String)> = cfg
+            .get("headers")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let tx = self
+            .ws_send_chan
+            .get_or_insert_with(std::sync::mpsc::channel)
+            .0
+            .clone();
+        let worker_url = url.clone();
+        let worker_msg = message.clone();
         self.toast(format!("ws: connecting {url}…"));
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                self.toast(format!("ws: spawn websocat failed: {e} (is it on PATH?)"));
-                return;
-            }
+        // 2026-06-21 — was: busy-polled child.wait_with_output() on
+        // the main app thread for up to timeout_ms ms, freezing
+        // every render tick (the api-workflow SEV-1 finding). Now:
+        // spawn a worker that does the websocat call + sends back
+        // the result via `ws_send_chan`; drain_ws_send opens the
+        // scratch when it arrives.
+        std::thread::Builder::new()
+            .name("mnml-ws-send".into())
+            .spawn(move || {
+                let result = run_websocat_send(
+                    &worker_url,
+                    &worker_msg,
+                    timeout_ms,
+                    &headers,
+                );
+                let _ = tx.send(WsSendReply {
+                    url: worker_url,
+                    message: worker_msg,
+                    result,
+                });
+            })
+            .ok();
+    }
+
+    /// Tick hook — render any completed `:ws.send` worker replies
+    /// into a `[ws-response]` scratch.
+    pub fn drain_ws_send(&mut self) {
+        let replies: Vec<WsSendReply> = match &self.ws_send_chan {
+            Some((_, rx)) => rx.try_iter().collect(),
+            None => return,
         };
-        // Write message to websocat's stdin.
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            let _ = writeln!(stdin, "{message}");
-            drop(stdin); // close stdin so websocat sees EOF
+        for reply in replies {
+            let mut body = format!("# ws {}\n\n## sent\n\n{}\n\n", reply.url, reply.message);
+            match reply.result {
+                Ok(out) => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    if !stdout.is_empty() {
+                        body.push_str("## received\n\n");
+                        body.push_str(&stdout);
+                    }
+                    if !stderr.is_empty() {
+                        body.push_str("\n## stderr\n\n");
+                        body.push_str(&stderr);
+                    }
+                    self.toast(format!(
+                        "ws: ok ({}ms) → [ws-response]",
+                        out.elapsed_ms
+                    ));
+                }
+                Err(e) => {
+                    body.push_str(&format!("\n## error\n\n{e}\n"));
+                    self.toast(format!("ws.send: {e}"));
+                }
+            }
+            self.open_scratch_with_text("[ws-response]".to_string(), body);
         }
-        let started = std::time::Instant::now();
-        // Poll for completion with timeout.
-        let response = std::thread::scope(|s| {
-            let handle = s.spawn(|| child.wait_with_output());
-            loop {
-                if handle.is_finished() {
-                    return handle.join().ok().and_then(|r| r.ok());
-                }
-                if started.elapsed().as_millis() as u64 > timeout_ms {
-                    return None;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-        });
-        let mut body = format!("# ws {url}\n\n## sent\n\n{message}\n\n");
-        match response {
-            Some(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                if !stdout.is_empty() {
-                    body.push_str("## received\n\n");
-                    body.push_str(&stdout);
-                }
-                if !stderr.is_empty() {
-                    body.push_str("\n## stderr\n\n");
-                    body.push_str(&stderr);
-                }
-                self.toast(format!("ws: ok ({}ms) → [ws-response]", started.elapsed().as_millis()));
-            }
-            None => {
-                body.push_str(&format!("\n## timeout ({timeout_ms}ms)\n"));
-                self.toast(format!("ws: timeout after {timeout_ms}ms"));
-            }
-        }
-        self.open_scratch_with_text("[ws-response]".to_string(), body);
     }
 
     /// `grpc.send` — fire the active `.grpc` JSON file via the

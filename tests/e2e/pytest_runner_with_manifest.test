@@ -1,0 +1,11 @@
+# pytest runner with pyproject.toml present: should open pty pane, NOT toast.
+
+shell echo '[build-system]\nrequires = ["setuptools"]' > pyproject.toml
+
+command pytest.run
+wait 200
+expect screen lacks "pytest: no pyproject.toml"
+
+command pytest.failed
+wait 200
+expect screen lacks "pytest: no pyproject.toml"

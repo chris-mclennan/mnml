@@ -1,0 +1,19 @@
+# Probe: :git.worktree_add with path that already exists — git's own
+# error should surface
+shell git init -q
+shell git config user.email t@x.com
+shell git config user.name t
+write seed.txt seed
+shell git add .
+shell git commit -q -m seed
+shell mkdir -p /tmp/mnml-existing-wt
+
+command git.worktree_add
+type /tmp/mnml-existing-wt
+key enter
+expect screen contains "Branch for"
+type some-new-branch
+key enter
+wait 200
+# git worktree add errors with "already exists" or similar
+expect screen contains "worktree"

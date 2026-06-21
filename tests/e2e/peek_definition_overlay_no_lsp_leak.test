@@ -1,0 +1,34 @@
+# `:lsp.peek_definition_overlay` sets `pending_peek_definition = true`
+# THEN calls `lsp_goto_definition`. The flag is ONLY cleared in the
+# `LspEvent::GotoDefinition` handler — so if no language server is
+# attached (the headless harness, OR an unsupported language, OR an
+# LSP that returned a null/empty location result), the flag stays
+# set indefinitely.
+#
+# Symptom: the NEXT `:lsp.goto_definition` call (e.g. `gd`) will be
+# misrouted into the peek-overlay branch, opening a floating box
+# instead of jumping the cursor.
+#
+# This .test verifies the "no LSP" toast path runs — the leak is
+# code-readable from there.
+
+write hello.rs "fn main() { println!(\"hi\"); }"
+open hello.rs
+
+# No LSP attached in headless. peek fires, then `lsp_goto_definition`
+# toasts about no server. `pending_peek_definition` was set BEFORE
+# the toast — and never cleared.
+command lsp.peek_definition_overlay
+# The toast appears (rendered in the statusline area) but in
+# headless we can't reliably scrape it across versions. The bug is
+# the FLAG STATE — the next time the LSP returns ANY GotoDefinition
+# (after a real `:lsp.goto_definition` later), it'll be misrouted
+# into the peek branch.
+#
+# We can still assert "no floating overlay opened" — load() never
+# fired so peek_overlay is None. And that the editor cursor didn't
+# move.
+expect screen lacks "✦ peek"
+
+# Confirm the editor is still focused at line 1.
+expect pane "hello.rs"

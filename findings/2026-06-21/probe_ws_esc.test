@@ -1,0 +1,22 @@
+# Probe: WS pane Esc behavior — does Esc destroy the connection or just
+# back out of typing?
+shell git init -q
+shell git config user.email t@x.com
+shell git config user.name t
+write seed.txt seed
+shell git add .
+shell git commit -q -m seed
+
+command ws.connect
+type ws://does-not-exist.invalid
+key enter
+wait 50
+expect screen contains "ws"
+# Type some chars
+type hello
+expect screen contains "hello"
+# Hit Esc — vim users would expect this to back out of typing or
+# unfocus, but it closes the WS connection
+key esc
+wait 50
+expect screen contains "closing"

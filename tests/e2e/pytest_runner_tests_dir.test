@@ -1,0 +1,9 @@
+# pytest runner with only a tests/ directory (no pyproject.toml).
+# The detection logic checks for "tests/" as a fallback.
+
+shell mkdir -p tests
+shell touch tests/test_sample.py
+
+command pytest.run
+wait 200
+expect screen lacks "pytest: no pyproject.toml"

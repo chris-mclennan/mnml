@@ -136,6 +136,24 @@ impl WebsocketPane {
     }
 }
 
+/// Toggle non-blocking on the underlying TCP stream. tungstenite's
+/// `MaybeTlsStream<TcpStream>` is what `connect()` returns; we
+/// reach the raw TcpStream regardless of TLS wrapping.
+fn set_socket_nonblocking(
+    stream: &mut tungstenite::stream::MaybeTlsStream<std::net::TcpStream>,
+    on: bool,
+) {
+    use tungstenite::stream::MaybeTlsStream;
+    // mnml's tungstenite is built without TLS features (no wss://
+    // support), so only Plain is reachable. The TLS arms are
+    // gated so they don't compile-warn here while keeping
+    // forward-compat if we ever enable wss.
+    let MaybeTlsStream::Plain(tcp) = stream else {
+        return;
+    };
+    let _ = tcp.set_nonblocking(on);
+}
+
 fn host_of_url(url: &str) -> String {
     let trimmed = url
         .strip_prefix("wss://")
@@ -176,10 +194,15 @@ fn worker(
             return;
         }
     };
+    // 2026-06-21 — Set the underlying TCP socket non-blocking so
+    // `socket.read()` returns WouldBlock instead of stalling the
+    // worker. Was: read blocked until the server spoke, which
+    // meant `OutMsg::Send`/`Close` queued via out_rx were stuck
+    // behind it — first `:ws.send_message` to a quiet echo/RPC
+    // server deadlocked (the SEV-1 power-user-ws-git finding).
+    set_socket_nonblocking(socket.get_mut(), true);
     let _ = tx.send(WsMsg::State(WsState::Open));
 
-    // Loop: try to read from server (with short timeout), then
-    // drain any pending outgoing messages, repeat.
     loop {
         // Drain pending outgoing first so user-initiated sends
         // don't sit behind a slow read.
@@ -197,9 +220,6 @@ fn worker(
                 }
             }
         }
-        // Try a non-blocking-ish read. tungstenite::read blocks;
-        // wrap in a thread might be heavier than just sleeping.
-        // Compromise: read with a small sleep loop on no data.
         match socket.read() {
             Ok(Message::Text(s)) => {
                 let _ = tx.send(WsMsg::Recv {
@@ -224,6 +244,12 @@ fn worker(
             | Err(tungstenite::Error::AlreadyClosed) => {
                 let _ = tx.send(WsMsg::State(WsState::Closed));
                 return;
+            }
+            Err(tungstenite::Error::Io(io)) if io.kind() == std::io::ErrorKind::WouldBlock => {
+                // No data — sleep briefly so the loop doesn't burn
+                // CPU. 25ms gives a UI-imperceptible round-trip
+                // between out_rx drain and read.
+                std::thread::sleep(std::time::Duration::from_millis(25));
             }
             Err(e) => {
                 let _ = tx.send(WsMsg::Error(format!("read error: {e}")));

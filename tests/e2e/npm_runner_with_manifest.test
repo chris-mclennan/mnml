@@ -1,0 +1,21 @@
+# npm runner with package.json present: should open a pty pane, NOT toast.
+# We can't verify pty output in headless (no real npm), but we verify
+# that no "no package.json" toast fires and a pane is opened.
+
+shell echo '{"name":"test","scripts":{"test":"jest","build":"tsc","start":"node .","dev":"node ."}}' > package.json
+
+command npm.test
+wait 200
+expect screen lacks "no package.json"
+
+command npm.build
+wait 200
+expect screen lacks "no package.json"
+
+command npm.start
+wait 200
+expect screen lacks "no package.json"
+
+command npm.install
+wait 200
+expect screen lacks "no package.json"

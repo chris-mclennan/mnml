@@ -3113,6 +3113,14 @@ pub struct App {
         std::sync::mpsc::Sender<(String, Result<(), String>)>,
         std::sync::mpsc::Receiver<(String, Result<(), String>)>,
     )>,
+    /// 2026-06-21 — channel for `:ws.send` (websocat shell-out)
+    /// after the SEV-1 main-thread-freeze fix. Worker thread calls
+    /// `run_websocat_send` and sends back a `WsSendReply`;
+    /// `drain_ws_send` opens the `[ws-response]` scratch.
+    pub ws_send_chan: Option<(
+        std::sync::mpsc::Sender<crate::app::http::WsSendReply>,
+        std::sync::mpsc::Receiver<crate::app::http::WsSendReply>,
+    )>,
     /// True while a chain run is in flight; gates double-submits.
     pub http_chain_in_flight: bool,
     /// Pending kill (SIGTERM) target for `:ai.agents_dashboard`'s
@@ -3610,6 +3618,7 @@ impl App {
             http_ai_build_in_flight: false,
             http_chain_chan: None,
             http_chain_in_flight: false,
+            ws_send_chan: None,
             pending_kill_pid: None,
             pending_kill_batch: Vec::new(),
             pending_branch_delete: None,
@@ -9610,6 +9619,7 @@ impl App {
         self.drain_websocket();
         self.drain_http_ai_build();
         self.drain_http_chain();
+        self.drain_ws_send();
         self.maybe_auto_refresh_claude_agents();
         self.maybe_escalate_claude_kills();
         self.drain_http_sync_result();

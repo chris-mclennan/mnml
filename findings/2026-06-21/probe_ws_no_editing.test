@@ -1,0 +1,23 @@
+# Probe: WS pane input editing — no left/right/home/end/delete support;
+# Backspace is the only editing key. Test that typing then arrows do
+# nothing useful.
+shell git init -q
+shell git config user.email t@x.com
+shell git config user.name t
+write seed.txt seed
+shell git add .
+shell git commit -q -m seed
+
+command ws.connect
+type ws://127.0.0.1:1
+key enter
+wait 50
+type hello
+expect screen contains "hello"
+# Try Left arrow — should be a no-op since the WS pane handler doesn't
+# match KeyCode::Left
+key left
+# Now type — if Left moved cursor we'd see "helXlo", if no-op we see "helloX"
+type X
+expect screen contains "helloX"
+expect screen lacks "helXlo"

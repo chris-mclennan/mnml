@@ -1,0 +1,30 @@
+# Probe: does Esc on the worktree-add path prompt leave a sticky
+# sentinel that hijacks the next AddWorkspace use?
+shell git init -q
+shell git config user.email t@x.com
+shell git config user.name t
+write seed.txt seed
+shell git add .
+shell git commit -q -m seed
+
+# Open the worktree-add path prompt — sets pending_worktree_path =
+# Some(PathBuf::new()) sentinel
+command git.worktree_add
+expect screen contains "Worktree"
+# Cancel via Esc
+key esc
+
+# Now open the regular "Open folder…" workspace prompt
+command view.add_workspace
+expect screen contains "Workspace path"
+
+# Type a real folder path + Enter — should add it as a workspace,
+# NOT route through git_worktree_add_path_chosen
+type /tmp
+key enter
+wait 100
+# If the sentinel were cleared, we'd expect either the workspace to be
+# added or an error toast. Instead the sentinel is still alive, so this
+# is routed to the worktree-add flow and asks for a branch name.
+# (Bug repro: this assertion confirms the bug.)
+expect screen contains "Branch for"

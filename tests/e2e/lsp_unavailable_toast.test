@@ -1,0 +1,13 @@
+# LSP unavailable: opening a .ts file when typescript-language-server is
+# not on PATH should show a toast, not crash.
+# In CI/test environments, LSP servers are typically not installed.
+
+write src/greet.ts "function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n"
+open src/greet.ts
+wait 300
+# The LSP unavailable message should appear as a toast
+# (not crash, not silently fail)
+# Accept either: a helpful error toast OR graceful silence (no crash)
+expect screen contains "greet"
+# The screen should still show the file content normally
+expect screen contains "Hello"

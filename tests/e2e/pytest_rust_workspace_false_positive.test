@@ -1,0 +1,23 @@
+# pytest detection false positive: if a Rust workspace has a tests/ dir
+# (which most Rust projects do), pytest.run will not toast and will try
+# to spawn pytest. This is incorrect — tests/ alone should not trigger
+# pytest detection in a workspace that clearly isn't Python.
+#
+# The mnml workspace itself has tests/ — so pytest.run from here
+# should still show the toast (or at least not silently spawn pytest
+# against a Rust codebase). We expect the toast.
+#
+# This test documents the current (broken) behavior where tests/ alone
+# causes pytest to "detect" a Python workspace.
+
+# Seed a tests/ dir (already exists in the mnml e2e temp workspace).
+shell mkdir -p tests
+
+# No pyproject.toml or setup.py — only tests/ present.
+# The spec says "pyproject.toml OR setup.py OR tests/" but tests/ in a
+# Rust workspace is misleading.
+command pytest.run
+wait 200
+# Currently this does NOT toast — it tries to spawn pytest.
+# We're documenting this: we expect "no pyproject.toml" but get a pty pane.
+expect screen lacks "no pyproject.toml"

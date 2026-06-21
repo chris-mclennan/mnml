@@ -500,6 +500,25 @@ mod tests {
     }
 
     #[test]
+    fn node_modules_visible_without_gitignore() {
+        // node_modules should appear in the tree when there's no .gitignore
+        // suppressing it. The `ignore` crate has no built-in rule for it.
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir_all(d.path().join("node_modules")).unwrap();
+        fs::write(d.path().join("node_modules").join("dep.js"), "module={}").unwrap();
+        fs::create_dir_all(d.path().join("src")).unwrap();
+        fs::write(d.path().join("src").join("index.ts"), "console.log('hi')").unwrap();
+        // Deliberately no .gitignore file.
+        let t = Tree::open(d.path());
+        let names: Vec<String> = t.visible_rows().iter().map(|r| r.name.clone()).collect();
+        assert!(
+            names.contains(&"node_modules".to_string()),
+            "node_modules should appear in tree without .gitignore; got: {names:?}"
+        );
+        assert!(names.contains(&"src".to_string()));
+    }
+
+    #[test]
     fn filter_narrows_and_keeps_ancestors() {
         let d = workspace();
         let mut t = Tree::open(d.path());

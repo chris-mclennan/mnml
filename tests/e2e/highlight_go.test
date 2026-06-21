@@ -1,0 +1,8 @@
+# Open a small Go file with struct literals, interface, and channel ops;
+# confirm the go tree-sitter grammar fires.
+
+write main.go "package main\n\nimport \"fmt\"\n\ntype User struct {\n    ID   int\n    Name string\n}\n\nfunc greet(u User) string {\n    return fmt.Sprintf(\"Hello, %s!\", u.Name)\n}\n\nfunc main() {\n    ch := make(chan string, 1)\n    u := User{ID: 1, Name: \"Alice\"}\n    ch <- greet(u)\n    fmt.Println(<-ch)\n}\n"
+open main.go
+expect pane "main.go"
+expect screen contains "package main"
+expect highlights at_least 8

@@ -1,0 +1,26 @@
+# Probe: :git.worktree_add with empty branch name on the second prompt —
+# clean cancellation? Or does pending_worktree_path leak?
+shell git init -q
+shell git config user.email t@x.com
+shell git config user.name t
+write seed.txt seed
+shell git add .
+shell git commit -q -m seed
+
+command git.worktree_add
+type /tmp/mnml-probe-wt-xyz
+key enter
+expect screen contains "Branch for"
+# Empty branch name
+key enter
+expect screen contains "branch name empty"
+
+# Now the pending_worktree_path SHOULD be cleared. Verify by opening
+# view.add_workspace and check the next path entry doesn't get
+# hijacked.
+command view.add_workspace
+expect screen contains "Workspace path"
+type /tmp
+key enter
+wait 50
+expect screen lacks "Branch for"

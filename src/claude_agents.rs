@@ -1062,6 +1062,19 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
     let sessions_dir = std::env::var_os("HOME")
         .map(|h| PathBuf::from(h).join(".codex/sessions"));
 
+    // 2026-06-21 — Codex CLI doesn't emit `--session-id <uuid>` in
+    // its cmdline (only Claude does), so the sid-based pgrep match
+    // returns "" for every Codex PID. Pre-resolve each PID's cwd
+    // so disk rows can match by cwd as a fallback. Then a single
+    // claimed-pids set ensures: (1) each disk row claims at most
+    // one PID, (2) PIDs claimed by a disk row don't generate a
+    // duplicate stub row in stage 2 of this fn.
+    let pid_cwds: Vec<(u32, Option<String>)> = pids
+        .iter()
+        .map(|(_, pid, _)| (*pid, read_pid_cwd(*pid)))
+        .collect();
+    let mut claimed_pids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+
     if let Some(dir) = sessions_dir.as_deref() {
         for p in walk_codex_sessions(dir) {
             let name = match p.file_name().and_then(|s| s.to_str()) {
@@ -1097,7 +1110,28 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
             let stats = parse_codex_tail(&p);
             let pid = pids
                 .iter()
-                .find_map(|(sid, pid, _)| (sid == &session_id).then_some(*pid));
+                .find_map(|(sid, pid, _)| (sid == &session_id).then_some(*pid))
+                .or_else(|| {
+                    // Codex sid-fallback: match a not-yet-claimed
+                    // running PID whose cwd matches this transcript's
+                    // recorded cwd. First match wins. Works for the
+                    // common case (one codex per cwd); multiple
+                    // sessions in the same cwd will assign the PID
+                    // to whichever disk row comes up first in the
+                    // filesystem walk.
+                    stats.cwd.as_ref().and_then(|disk_cwd| {
+                        pid_cwds.iter().find_map(|(p_pid, p_cwd)| {
+                            if claimed_pids.contains(p_pid) {
+                                return None;
+                            }
+                            (p_cwd.as_deref() == Some(disk_cwd.as_str()))
+                                .then_some(*p_pid)
+                        })
+                    })
+                });
+            if let Some(p) = pid {
+                claimed_pids.insert(p);
+            }
             let state = if pid.is_some() {
                 if stats.last_was_tool_call {
                     AgentState::ToolCall
@@ -1178,11 +1212,13 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
 
     // 2. Running PIDs that don't map to a known on-disk session —
     //    add stub rows so the user still sees them. Distinguish via
-    //    session_id == "" (placeholder).
-    let on_disk_pids: std::collections::HashSet<u32> =
-        rows.iter().filter_map(|r| r.pid).collect();
+    //    session_id == "" (placeholder). Pre-`claimed_pids` this
+    //    used to scan `rows.iter().filter_map(.pid)` which always
+    //    came up empty for Codex (sids never matched), so every
+    //    running codex PID got both an "ended" disk row AND a
+    //    "live" stub — the SEV-1 fixed in 2026-06-21.
     for (_, pid, cmdline) in pids {
-        if on_disk_pids.contains(pid) {
+        if claimed_pids.contains(pid) {
             continue;
         }
         let cwd = read_pid_cwd(*pid);

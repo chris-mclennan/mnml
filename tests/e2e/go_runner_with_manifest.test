@@ -1,0 +1,19 @@
+# go runner with go.mod present: should open pty pane, NOT toast.
+
+shell echo 'module example.com/test\n\ngo 1.22' > go.mod
+
+command go.test
+wait 200
+expect screen lacks "no go.mod"
+
+command go.build
+wait 200
+expect screen lacks "no go.mod"
+
+command go.vet
+wait 200
+expect screen lacks "no go.mod"
+
+command go.run
+wait 200
+expect screen lacks "no go.mod"

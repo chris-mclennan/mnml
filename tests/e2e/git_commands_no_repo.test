@@ -1,0 +1,18 @@
+# Git commands from a non-git workspace should toast gracefully,
+# not panic or show an error without context.
+
+command git.recent_branches
+wait 50
+expect screen contains "no branches (not a git repo?)"
+
+key esc
+
+command git.merge
+wait 50
+expect screen contains "no other branches"
+
+key esc
+
+command git.rebase
+wait 50
+expect screen contains "no branches to rebase"

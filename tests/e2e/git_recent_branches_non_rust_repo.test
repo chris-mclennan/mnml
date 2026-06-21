@@ -1,0 +1,18 @@
+# git.recent_branches from a non-Rust git repo (TypeScript-layout workspace).
+# Sets up a git repo with package.json and a couple of branches, then
+# verifies the picker lists them.
+
+shell git init -q
+shell git config user.email "test@mnml.dev"
+shell git config user.name "mnml test"
+shell echo '{"name":"app","scripts":{"test":"jest"}}' > package.json
+shell git add package.json
+shell git commit -q -m "init"
+shell git checkout -q -b feature/auth
+shell git checkout -q -b feature/dashboard
+shell git checkout -q main
+
+command git.recent_branches
+wait 100
+expect screen contains "Recent branches"
+expect screen contains "main"

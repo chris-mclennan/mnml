@@ -1,0 +1,24 @@
+# go runners from a workspace WITHOUT go.mod (e.g. a Rust or TypeScript repo).
+# Each command should toast "no go.mod" and NOT open a pty pane.
+
+command go.test
+wait 50
+expect screen contains "no go.mod"
+
+key esc
+
+command go.build
+wait 50
+expect screen contains "no go.mod"
+
+key esc
+
+command go.vet
+wait 50
+expect screen contains "no go.mod"
+
+key esc
+
+command go.run
+wait 50
+expect screen contains "no go.mod"

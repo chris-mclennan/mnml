@@ -1,0 +1,33 @@
+# Cheatsheet filter / collapse interaction.
+#
+# Spec ambiguity (the actual bug): collapsed sections are special-
+# cased in `visible_sections()` to return empty rows, BUT that
+# branch runs BEFORE the filter narrowing. So if a user collapses
+# a section then types `/save`, that collapsed section is STILL
+# rendered as a `(collapsed)` header — even if it doesn't contain
+# any matching rows.
+#
+# The user-visible bug: it looks like more sections match than
+# actually do, AND a row matching the query that's inside a
+# collapsed section is hidden with no hint that it exists.
+
+write hello.rs "fn main() {}"
+open hello.rs
+
+command view.cheatsheet
+expect screen contains "Cheatsheet"
+
+# Collapse all so we have a known-collapsed state.
+key Z
+
+# Filter for something that DEFINITELY won't match any group name —
+# but if filtered correctly, all `(collapsed)` headers should
+# disappear (since there are no matching rows underneath).
+key /
+type ZZZNEVERMATCHESZZZ
+
+# BUG: collapsed headers still render even though the filter has
+# zero matches. We expect to see "no matches" in a correct world.
+# Run shows the bug — the screen still shows collapsed section
+# headers, so "no matches" is NOT shown.
+expect screen contains "(collapsed)"

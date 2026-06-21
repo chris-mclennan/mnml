@@ -1,0 +1,23 @@
+# Probe: :git.merge from a detached HEAD — picker excludes current; on
+# detached, `current()` returns None, so nothing is filtered out. Then
+# merging would create a merge commit on detached HEAD.
+shell git init -q
+shell git config user.email t@x.com
+shell git config user.name t
+write seed.txt seed
+shell git add .
+shell git commit -q -m seed
+shell git checkout -b feature
+write a.txt feat
+shell git add .
+shell git commit -q -m feat
+shell git checkout main 2>/dev/null || git checkout master 2>/dev/null
+shell git checkout --detach HEAD
+
+# Now in detached state. Open the merge picker.
+command git.merge
+# When detached, cur=None — so the title says "Merge into current"
+# (which is misleading). Even more: nothing is filtered out, so the
+# current "branch" (none) doesn't appear, but ALL local branches do.
+expect screen contains "Merge into current"
+expect screen contains "feature"

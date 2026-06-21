@@ -1,0 +1,23 @@
+# Probe: :git.delete_branch — typing 'kill' instead of 'delete' should
+# cancel cleanly
+shell git init -q
+shell git config user.email t@x.com
+shell git config user.name t
+write seed.txt seed
+shell git add .
+shell git commit -q -m seed
+shell git checkout -b doomed
+shell git checkout main 2>/dev/null || git checkout master 2>/dev/null
+
+command git.delete_branch
+expect screen contains "Delete branch"
+expect screen contains "doomed"
+# Pick the branch
+key enter
+expect screen contains "type 'delete'"
+# Type "kill" instead — should cancel
+type kill
+key enter
+expect screen contains "cancelled"
+# Verify the branch still exists
+shell git rev-parse --verify doomed

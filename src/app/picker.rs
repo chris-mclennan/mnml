@@ -48,6 +48,20 @@ impl App {
             self.pending_lookup_items.clear();
             self.pending_lookup_picked_id = None;
         }
+        // 2026-06-21 — api-workflow SEV-1: `pending_history_rows`
+        // is shared between :http.history (workspace) and
+        // :http.history_global (cross-workspace). Esc on one and
+        // opening the other left stale rows in the shared Vec,
+        // so picker-index resolution at accept time pointed into
+        // the wrong snapshot — either silently returning the
+        // wrong workspace's curl or hitting `None` for high
+        // indexes. Clear it on close so the next opener owns it.
+        if matches!(
+            self.picker.as_ref().map(|p| p.kind),
+            Some(crate::picker::PickerKind::HistoryRows)
+        ) {
+            self.pending_history_rows.clear();
+        }
         // Themes picker: if Esc-closed (no accept), restore the
         // pre-preview theme. Clear the snapshot either way.
         if matches!(
@@ -1018,6 +1032,17 @@ impl App {
         self.pending_worktree_remove = None;
         self.pending_branch_source = None;
         self.rename_preview_state = None;
+        // 2026-06-21 — power-user-ws-git SEV-1: Esc on the
+        // `:git.worktree_add` path prompt left
+        // `pending_worktree_path = Some(empty)` stuck, so the very
+        // next `view.add_workspace` (which reuses the AddWorkspace
+        // PromptKind) silently hijacked the typed path into the
+        // worktree-add flow. Clear it alongside the other path
+        // stashes.
+        self.pending_worktree_path = None;
+        self.pending_branch_delete = None;
+        self.pending_kill_pid = None;
+        self.pending_kill_batch.clear();
         // 2026-06-19 — api-workflow-user SEV-3: Esc on a lookup
         // var-name / env edit prompt left these stashes set, so the
         // next picker accept of the same type could fire against

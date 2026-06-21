@@ -1,0 +1,40 @@
+# npm runners from a workspace WITHOUT package.json (e.g. a Rust repo).
+# Each command should toast "no package.json" and NOT open a pty pane.
+# This catches the manifest-detection guard and the toast message format.
+
+# Workspace has no package.json — so all npm.* commands should toast.
+
+command npm.test
+wait 50
+expect screen contains "no package.json"
+
+# Toast clears, run next command.
+key esc
+
+command npm.build
+wait 50
+expect screen contains "no package.json"
+
+key esc
+
+command npm.start
+wait 50
+expect screen contains "no package.json"
+
+key esc
+
+command npm.install
+wait 50
+expect screen contains "no package.json"
+
+key esc
+
+command npm.lint
+wait 50
+expect screen contains "no package.json"
+
+key esc
+
+command npm.run
+wait 50
+expect screen contains "no package.json"

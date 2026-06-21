@@ -1,0 +1,12 @@
+# Probe: :ws.disconnect with no focused WS pane fires its toast
+shell git init -q
+shell git config user.email t@x.com
+shell git config user.name t
+write seed.txt seed
+shell git add .
+shell git commit -q -m seed
+open seed.txt
+
+# Active pane is the editor (NOT a WS pane)
+command ws.disconnect
+expect screen contains "focus a ws pane"

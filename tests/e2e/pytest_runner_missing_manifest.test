@@ -1,0 +1,12 @@
+# pytest runners from a workspace with no pyproject.toml, setup.py, or tests/ dir.
+# Should toast "pytest: no pyproject.toml / setup.py / tests/ at ..."
+
+command pytest.run
+wait 50
+expect screen contains "pytest: no pyproject.toml"
+
+key esc
+
+command pytest.failed
+wait 50
+expect screen contains "pytest: no pyproject.toml"

@@ -1,0 +1,26 @@
+# Verify the `Z` chord's asymmetric semantics in the cheatsheet.
+#
+# Spec (per CLAUDE.md & code reading):
+#   - Press Z when nothing is collapsed → collapse_all().
+#   - Press Z when ≥1 section is collapsed → expand_all().
+#
+# Edge case (the actual bug): if the user collapses ONE section with
+# `z`, then presses `Z`, the code branch `if c.collapsed.is_empty()`
+# is FALSE, so `Z` does `expand_all()` — wiping the user's single
+# collapse instead of collapsing the rest. This .test reproduces.
+
+write hello.rs "fn main() {}"
+open hello.rs
+
+command view.cheatsheet
+expect screen contains "Cheatsheet"
+
+# Step 1: collapse ONE section with `z`.
+key z
+expect screen contains "(collapsed)"
+
+# Step 2: press `Z` — naively the user expects collapse-all, but the
+# code branches on `collapsed.is_empty()`, so it triggers expand_all.
+# After Z, NO section should still be collapsed.
+key Z
+expect screen lacks "(collapsed)"

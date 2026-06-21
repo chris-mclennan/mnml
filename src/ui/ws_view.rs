@@ -32,7 +32,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         WsState::Closed => ("· closed", t.comment),
     };
     let header = format!(
-        " ws · {} · {} · {} msgs · enter=send · esc=close · ctrl+e=tree ",
+        " ws · {} · {} · {} msgs · enter=send · ctrl+c=disconnect · esc=tree ",
         state_chip.0,
         p.url,
         p.log.len()

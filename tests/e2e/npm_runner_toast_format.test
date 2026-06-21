@@ -1,0 +1,31 @@
+# npm toast format: when package.json is absent, the toast should identify
+# the command by its ID (npm.run, npm.build, npm.lint), not by spelling out
+# the full subcmd string (which produces "npm.run dev:" — confusing and wrong).
+#
+# Workspace has no package.json — so all npm.* commands should toast.
+
+# npm.run fires run_npm_subcommand("run dev")
+# The toast format is "{bin}.{subcmd}: no {manifest} at ..."
+# With subcmd="run dev" that becomes: "npm.run dev: no package.json at ..."
+# Expected: should say "npm.run:" not "npm.run dev:"
+command npm.run
+wait 50
+# This SHOULD contain "npm.run:" but NOT "npm.run dev:"
+expect screen contains "npm.run"
+expect screen lacks "npm.run dev"
+
+key esc
+
+# npm.build fires run_npm_subcommand("run build")
+command npm.build
+wait 50
+expect screen contains "npm.build"
+expect screen lacks "npm.run build"
+
+key esc
+
+# npm.lint fires run_npm_subcommand("run lint")
+command npm.lint
+wait 50
+expect screen contains "npm.lint"
+expect screen lacks "npm.run lint"

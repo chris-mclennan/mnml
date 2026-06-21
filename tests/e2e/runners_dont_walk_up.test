@@ -1,0 +1,25 @@
+# Test runner manifest detection only checks the WORKSPACE ROOT —
+# it never walks up. A common dev layout has the user open a
+# sub-package inside a larger monorepo (Go module at /repo/go.mod,
+# editor opened at /repo/cmd/foo) — in that layout `:go.test` will
+# toast "no go.mod" even though one exists upstream.
+#
+# This .test asserts the current (regressive) behavior so a fix
+# is detectable.
+
+# Create a manifest at workspace root, then "open" a subdir as if
+# the workspace were that subdir. We can't change the workspace
+# mid-test, so we approximate by NOT placing the manifest at root.
+write src/main.go "package main"
+
+# Try go.test — there's no go.mod at the workspace root, so it
+# should toast. (Confirms detection is root-only.)
+command go.test
+expect screen contains "no go.mod"
+
+# Same shape for pytest:
+write src/test_app.py "def test(): pass"
+command pytest.run
+# pytest fails-open because it accepts `tests/` too; but with no
+# `tests/` dir AND no pyproject AND no setup.py, it toasts.
+expect screen contains "no pyproject"
