@@ -250,6 +250,14 @@ pub struct ClaudeAgentsPane {
     /// Filter rows to a specific source (Claude / Codex). `None` =
     /// show both. Cycled by `>` / `<`.
     pub source_filter: Option<AgentSource>,
+    /// Filter rows to sessions whose cwd is inside the user's
+    /// current mnml workspace. Toggled by `w`. Lets you focus on
+    /// "what's running in THIS project" when several projects
+    /// have active CC sessions side by side.
+    pub workspace_only: bool,
+    /// The workspace path the pane was opened in — used by
+    /// `workspace_only`. Set by `App::open_claude_agents_pane`.
+    pub anchor_workspace: PathBuf,
     /// Toggle the `?` help overlay rendered above the row list.
     pub show_help: bool,
     /// Scroll offset within the drill-down panel — for lists too
@@ -319,6 +327,13 @@ impl GroupBy {
 
 impl ClaudeAgentsPane {
     pub fn build() -> Self {
+        Self::build_anchored(PathBuf::new())
+    }
+
+    /// Build with an anchor workspace path stored so the `w`
+    /// workspace-only filter has something to compare cwds
+    /// against.
+    pub fn build_anchored(anchor: PathBuf) -> Self {
         let claude_pids = scan_running_pids(AgentSource::Claude);
         let codex_pids = scan_running_pids(AgentSource::Codex);
         let mut rows = collect_rows(&claude_pids);
@@ -329,6 +344,7 @@ impl ClaudeAgentsPane {
                 .then_with(|| b.last_activity.cmp(&a.last_activity))
         });
         let mut pane = ClaudeAgentsPane::empty_with_rows(rows);
+        pane.anchor_workspace = anchor;
         pane.merge_lifetime_totals();
         pane.recompute_token_rates();
         pane
@@ -347,6 +363,8 @@ impl ClaudeAgentsPane {
             paused_by_user: false,
             state_filter: None,
             source_filter: None,
+            workspace_only: false,
+            anchor_workspace: PathBuf::new(),
             show_help: false,
             detail_scroll: 0,
             last_live_tail: SystemTime::now(),
@@ -706,6 +724,18 @@ impl ClaudeAgentsPane {
                 {
                     return false;
                 }
+                if self.workspace_only
+                    && !self.anchor_workspace.as_os_str().is_empty()
+                {
+                    let cwd_ok = r
+                        .cwd
+                        .as_deref()
+                        .map(|c| std::path::Path::new(c).starts_with(&self.anchor_workspace))
+                        .unwrap_or(false);
+                    if !cwd_ok {
+                        return false;
+                    }
+                }
                 if q.is_empty() {
                     return true;
                 }
@@ -749,6 +779,26 @@ impl ClaudeAgentsPane {
 
     pub fn cycle_group_by(&mut self) {
         self.group_by = self.group_by.cycle();
+    }
+
+    /// Drop every narrow — text query, state filter, source
+    /// filter, workspace-only. Cursor falls back to row 0.
+    pub fn clear_filters(&mut self) {
+        self.query.clear();
+        self.filter_mode = false;
+        self.state_filter = None;
+        self.source_filter = None;
+        self.workspace_only = false;
+        self.selected = 0;
+    }
+
+    /// True when any filter is non-default (used to show a
+    /// "filtered" chip in the title).
+    pub fn any_filter_active(&self) -> bool {
+        !self.query.is_empty()
+            || self.state_filter.is_some()
+            || self.source_filter.is_some()
+            || self.workspace_only
     }
 
     /// Toggle the focused row's session id into `multi_selected`.
@@ -1988,6 +2038,112 @@ fn extract_user_message_text(v: &serde_json::Value) -> Option<String> {
             .next(),
         _ => None,
     }
+}
+
+/// One-stop "today's AI spend" — sums tokens + cost across every
+/// session (Claude + Codex) whose transcript was touched in the
+/// last 24 hours. Used by `:ai.spend_today` palette command.
+#[derive(Debug, Clone, Default)]
+pub struct SpendToday {
+    pub claude_sessions: usize,
+    pub codex_sessions: usize,
+    pub total_tokens: u64,
+    pub total_cost_usd: f64,
+    pub per_workspace: Vec<(String, u64, f64)>,
+}
+
+pub fn spend_today() -> SpendToday {
+    let mut s = SpendToday::default();
+    let mut by_workspace: std::collections::BTreeMap<String, (u64, f64)> =
+        std::collections::BTreeMap::new();
+    let cutoff = SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(24 * 3600))
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    // Claude
+    if let Some(root) = home_projects_dir()
+        && let Ok(dirs) = std::fs::read_dir(&root)
+    {
+        for d in dirs.flatten() {
+            let p = d.path();
+            let workspace = p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(decode_workspace_label)
+                .unwrap_or_else(|| "?".to_string());
+            let Ok(rd) = std::fs::read_dir(&p) else { continue };
+            for f in rd.flatten() {
+                let fp = f.path();
+                if !fp.extension().is_some_and(|e| e == "jsonl") {
+                    continue;
+                }
+                let Ok(meta) = f.metadata() else { continue };
+                let Ok(mt) = meta.modified() else { continue };
+                if mt < cutoff {
+                    continue;
+                }
+                let stats = parse_tail(&fp);
+                let cost = stats
+                    .model
+                    .as_deref()
+                    .map(|m| {
+                        estimate_cost(
+                            m,
+                            stats.input_tokens,
+                            stats.output_tokens,
+                            stats.cache_create_tokens,
+                            stats.cache_read_tokens,
+                        )
+                    })
+                    .unwrap_or(0.0);
+                s.claude_sessions += 1;
+                s.total_tokens += stats.tokens;
+                s.total_cost_usd += cost;
+                let bucket = by_workspace.entry(workspace.clone()).or_default();
+                bucket.0 += stats.tokens;
+                bucket.1 += cost;
+            }
+        }
+    }
+    // Codex
+    if let Some(root) = std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join(".codex/sessions"))
+    {
+        for fp in walk_codex_sessions(&root) {
+            let Ok(meta) = std::fs::metadata(&fp) else { continue };
+            let Ok(mt) = meta.modified() else { continue };
+            if mt < cutoff {
+                continue;
+            }
+            let stats = parse_codex_tail(&fp);
+            let net_input = stats.input_tokens.saturating_sub(stats.cache_read_tokens);
+            let cost = stats
+                .model
+                .as_deref()
+                .map(|m| estimate_cost(m, net_input, stats.output_tokens, 0, stats.cache_read_tokens))
+                .unwrap_or(0.0);
+            let workspace = stats
+                .cwd
+                .as_deref()
+                .and_then(|c| std::path::Path::new(c).file_name())
+                .and_then(|s| s.to_str())
+                .map(String::from)
+                .unwrap_or_else(|| "?".to_string());
+            s.codex_sessions += 1;
+            s.total_tokens += stats.tokens;
+            s.total_cost_usd += cost;
+            let bucket = by_workspace.entry(workspace).or_default();
+            bucket.0 += stats.tokens;
+            bucket.1 += cost;
+        }
+    }
+    // Sort workspaces by cost descending.
+    let mut per_ws: Vec<(String, u64, f64)> = by_workspace
+        .into_iter()
+        .map(|(k, (tok, cost))| (k, tok, cost))
+        .collect();
+    per_ws.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+    s.per_workspace = per_ws;
+    s
 }
 
 /// Hardcoded per-model USD pricing (input / output / cache-write /

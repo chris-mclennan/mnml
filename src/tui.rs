@@ -1930,6 +1930,10 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     p.selected = 0;
                 }
             }
+            KeyCode::Char('w') => app.claude_agents_toggle_workspace_only(),
+            KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.claude_agents_clear_filters();
+            }
             KeyCode::Char('>') => {
                 if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
                     use crate::claude_agents::AgentSource;

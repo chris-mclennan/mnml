@@ -38,6 +38,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         Some(AgentSource::Codex) => " · ◈codex",
         None => "",
     };
+    let ws_chip = if p.workspace_only { " · this-ws" } else { "" };
+    let count_chip = if p.any_filter_active() {
+        format!(" · {}/{}", p.visible_indices().len(), p.rows.len())
+    } else {
+        String::new()
+    };
     let header_text = if p.filter_mode {
         format!(" Claude Agents · /{} · enter applies · esc clears ", p.query)
     } else if !p.query.is_empty() {
@@ -46,13 +52,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
             p.query
         )
     } else {
-        let group = p.group_by.label();
+        let _group = p.group_by.label();
         let multi = if p.multi_selected.is_empty() {
             String::new()
         } else {
             format!(" · ☑ {}", p.multi_selected.len())
         };
-        format!(" Claude Agents{source_chip}{state_chip}{pause_chip}{multi} · j/k · / filter · ? help · v view · g {group} · > source ")
+        format!(" Claude Agents{source_chip}{state_chip}{ws_chip}{pause_chip}{multi}{count_chip} · j/k · / · w ws · > src · ? help ")
     };
 
     let block = Block::default()
@@ -746,6 +752,8 @@ const HELP_LINES: &[(&str, &str)] = &[
     ("/", "filter by text (workspace · id · model · last msg)"),
     ("0 / 1 / 2 / 3 / 4", "filter by state (all / live / tool / idle / ended)"),
     ("> / <", "cycle source filter (all → claude → codex → all)"),
+    ("w", "toggle workspace-only filter (this workspace's sessions only)"),
+    ("Ctrl+L", "clear all filters at once"),
     ("g", "cycle grouping (by source ↔ by workspace)"),
     ("space", "toggle multi-select on the focused row"),
     ("v", "cycle drill-down view (Summary → Todos → Files → Bash → Agents)"),
@@ -759,6 +767,7 @@ const HELP_LINES: &[(&str, &str)] = &[
     ("K", "SIGTERM (escalates to SIGKILL after 2s if still alive)"),
     ("e", "export the selected session's transcript as markdown"),
     (":ai.session_search", "grep all transcripts (via palette)"),
+    (":ai.spend_today", "summary of today's tokens + cost by workspace"),
     ("? / F1", "toggle this help (F1 works mid-filter)"),
     ("Esc", "focus file tree"),
     ("q", "close the pane"),

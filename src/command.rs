@@ -653,6 +653,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.unfold_all_in_active(),
         },
         Command {
+            id: "ai.spend_today",
+            title: "AI: today's token + cost spend across all sessions (Claude + Codex)",
+            group: "ai",
+            // Walks every transcript modified in the last 24h
+            // across ~/.claude/projects/ AND ~/.codex/sessions/,
+            // sums tokens + cost, breaks down by workspace.
+            // Result lands in a [ai-spend-today] scratch.
+            keys: &[],
+            run: |app| app.ai_spend_today(),
+        },
+        Command {
             id: "ai.session_search",
             title: "AI: grep every Claude transcript for a substring",
             group: "ai",

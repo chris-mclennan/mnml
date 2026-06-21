@@ -8398,19 +8398,22 @@ impl App {
     /// session with live/idle/ended state, model, last user/asst
     /// message, token spend, and PID.
     pub fn open_claude_agents_pane(&mut self) {
+        let anchor = self.workspace.clone();
         if let Some(id) = self
             .panes
             .iter()
             .position(|p| matches!(p, Pane::ClaudeAgents(_)))
         {
-            let fresh = crate::claude_agents::ClaudeAgentsPane::build();
+            let fresh = crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor.clone());
             if let Some(Pane::ClaudeAgents(c)) = self.panes.get_mut(id) {
                 *c = fresh;
             }
             self.reveal_pane(id);
             return;
         }
-        let pane = Pane::ClaudeAgents(crate::claude_agents::ClaudeAgentsPane::build());
+        let pane = Pane::ClaudeAgents(
+            crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor),
+        );
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
@@ -8427,7 +8430,7 @@ impl App {
     }
 
     /// Refresh the active Claude Agents pane in place. Same effect
-    /// as `r` key in the pane.
+    /// as `r` key in the pane. Preserves filter/group state.
     pub fn refresh_claude_agents_pane(&mut self) {
         let Some(i) = self.active else { return };
         if matches!(self.panes.get(i), Some(Pane::ClaudeAgents(_))) {
@@ -8435,6 +8438,60 @@ impl App {
                 c.refresh_in_place();
             }
         }
+    }
+
+    pub fn claude_agents_toggle_workspace_only(&mut self) {
+        let Some(i) = self.active else { return };
+        let on = if let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i) {
+            p.workspace_only = !p.workspace_only;
+            p.selected = 0;
+            Some(p.workspace_only)
+        } else {
+            None
+        };
+        if let Some(on) = on {
+            self.toast(if on {
+                "showing this workspace only"
+            } else {
+                "showing all workspaces"
+            });
+        }
+    }
+
+    pub fn claude_agents_clear_filters(&mut self) {
+        let Some(i) = self.active else { return };
+        if let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i) {
+            p.clear_filters();
+        }
+        self.toast("filters cleared");
+    }
+
+    /// `:ai.spend_today` — open a `[ai-spend-today]` scratch with
+    /// total token + cost spend across every Claude + Codex session
+    /// touched in the last 24 hours, broken down by workspace.
+    pub fn ai_spend_today(&mut self) {
+        let s = crate::claude_agents::spend_today();
+        let mut body = String::new();
+        body.push_str("# AI spend (last 24h)\n\n");
+        body.push_str(&format!(
+            "- claude sessions: **{}**\n- codex sessions: **{}**\n- total tokens: **{}**\n- total cost: **${:.4}**\n\n",
+            s.claude_sessions, s.codex_sessions, s.total_tokens, s.total_cost_usd
+        ));
+        body.push_str("## Per workspace\n\n");
+        if s.per_workspace.is_empty() {
+            body.push_str("_(no sessions in window)_\n");
+        } else {
+            body.push_str("| workspace | tokens | cost |\n|---|---|---|\n");
+            for (ws, tok, cost) in &s.per_workspace {
+                body.push_str(&format!("| {ws} | {tok} | ${cost:.4} |\n"));
+            }
+        }
+        self.open_scratch_with_text("[ai-spend-today]".to_string(), body);
+        self.toast(format!(
+            "today: {} sessions · ${:.4}",
+            s.claude_sessions + s.codex_sessions,
+            s.total_cost_usd
+        ));
     }
 
     /// `:ai.session_search` — open a prompt for a search term.
