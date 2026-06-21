@@ -263,6 +263,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Image(_) => (if nerd { "\u{F021F}" } else { "▤" }, theme::cur().purple),
             // nf-md-robot — Claude agent dashboard.
             Pane::ClaudeAgents(_) => (if nerd { "\u{F06A9}" } else { "◆" }, theme::cur().purple),
+            // nf-md-lan — websocket connection.
+            Pane::Websocket(_) => (if nerd { "\u{F0317}" } else { "◇" }, theme::cur().teal),
         };
         // Dirty: filled circle. Clean: `nf-md-close` (\u{F0156}) — same
         // Material-Design glyph NvChad uses for buffer close, renders

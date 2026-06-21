@@ -108,6 +108,13 @@ pub enum Pane {
     /// `:ai.agents_dashboard`. v1 is read-only + browseable; v2
     /// will surface Enter-to-focus, transcript open, cancel, etc.
     ClaudeAgents(crate::claude_agents::ClaudeAgentsPane),
+    /// A native WebSocket connection — top is a scrolling log of
+    /// messages (← incoming / → outgoing), bottom is a single-line
+    /// input where Enter sends. Multi-connection: each pane has
+    /// its own worker thread + tungstenite socket. Opened via
+    /// `:ws.connect`. Distinct from the scratch-buffer approach
+    /// (v1) which only supported a single connection at a time.
+    Websocket(crate::websocket::WebsocketPane),
 }
 
 /// State for [`Pane::DapRepl`]. `input` is the single-line entry;
@@ -433,6 +440,7 @@ impl Pane {
             Pane::DapRepl(_) => "DAP REPL".to_string(),
             Pane::Image(p) => p.tab_title(),
             Pane::ClaudeAgents(p) => p.tab_title(),
+            Pane::Websocket(p) => p.tab_title(),
         }
     }
 
@@ -460,7 +468,8 @@ impl Pane {
             | Pane::DapRepl(_)
             | Pane::Image(_)
             | Pane::BlitHost(_)
-            | Pane::ClaudeAgents(_) => false,
+            | Pane::ClaudeAgents(_)
+            | Pane::Websocket(_) => false,
         }
     }
 

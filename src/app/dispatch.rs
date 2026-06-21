@@ -805,6 +805,16 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     }
                 }
             }
+            Some(Pane::Websocket(p)) => {
+                // Wheel scrolls the log view; clamped in the
+                // renderer so we just bump the offset here.
+                let step = delta.unsigned_abs() as usize;
+                if delta < 0 {
+                    p.scroll = p.scroll.saturating_add(step);
+                } else {
+                    p.scroll = p.scroll.saturating_sub(step);
+                }
+            }
             None => {}
         }
         // Each SCM/CI pane's max_idx depends on which view-mode is

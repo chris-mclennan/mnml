@@ -28,6 +28,7 @@ pub mod browser_view;
 pub mod bufferline;
 pub mod cheatsheet_view;
 pub mod claude_agents_view;
+pub mod ws_view;
 pub mod close_prompt;
 pub mod cmdline_bar;
 pub mod cmdline_popup_view;
@@ -677,6 +678,7 @@ fn render_layout(
                 Some(crate::pane::Pane::Image(_)) => 32,
                 Some(crate::pane::Pane::BlitHost(_)) => 33,
                 Some(crate::pane::Pane::ClaudeAgents(_)) => 34,
+                Some(crate::pane::Pane::Websocket(_)) => 35,
                 _ => 0,
             };
             match kind {
@@ -713,6 +715,10 @@ fn render_layout(
                 33 => blit_host_view::draw(frame, app, *id, area, focused),
                 34 => {
                     claude_agents_view::draw(frame, app, *id, area, focused);
+                    None
+                }
+                35 => {
+                    ws_view::draw(frame, app, *id, area, focused);
                     None
                 }
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),

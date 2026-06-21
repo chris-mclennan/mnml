@@ -46,6 +46,9 @@ pub struct WebsocketPane {
     pub rx: Receiver<WsMsg>,
     /// Channel to the worker for sending messages or close.
     pub tx_out: Sender<OutMsg>,
+    /// Scroll offset within the log (rows from the bottom — 0 =
+    /// follow tail). Bumped by wheel + PgUp/PgDn.
+    pub scroll: usize,
 }
 
 pub enum OutMsg {
@@ -60,6 +63,19 @@ pub struct LogEntry {
 }
 
 impl WebsocketPane {
+    /// Tab title — `ws://host` or `wss://host`, schema implied by
+    /// the URL scheme. Truncates long URLs.
+    pub fn tab_title(&self) -> String {
+        let host = host_of_url(&self.url);
+        let badge = match self.state {
+            WsState::Connecting => "…",
+            WsState::Open => "●",
+            WsState::Closing => "▼",
+            WsState::Closed => "·",
+        };
+        format!("ws {badge} {host}")
+    }
+
     pub fn connect(url: String) -> Self {
         let (msg_tx, rx) = std::sync::mpsc::channel::<WsMsg>();
         let (tx_out, out_rx) = std::sync::mpsc::channel::<OutMsg>();
@@ -74,6 +90,7 @@ impl WebsocketPane {
             input_cursor: 0,
             rx,
             tx_out,
+            scroll: 0,
         }
     }
 
@@ -116,6 +133,21 @@ impl WebsocketPane {
     pub fn close(&mut self) {
         let _ = self.tx_out.send(OutMsg::Close);
         self.state = WsState::Closing;
+    }
+}
+
+fn host_of_url(url: &str) -> String {
+    let trimmed = url
+        .strip_prefix("wss://")
+        .or_else(|| url.strip_prefix("ws://"))
+        .unwrap_or(url);
+    let host = trimmed.split(['/', '?']).next().unwrap_or(trimmed);
+    let max = 32usize;
+    if host.chars().count() <= max {
+        host.to_string()
+    } else {
+        let cut: String = host.chars().take(max).collect();
+        format!("{cut}…")
     }
 }
 

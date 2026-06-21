@@ -63,17 +63,6 @@ fn splice_http_block(existing: &str, name: Option<&str>, new_block: &str) -> Opt
 /// for `key`? Used by `write_env_var` to decide which file gets
 /// the write when both `.mnml/env/` and `.rqst/env/` exist.
 /// Extract the host portion from a wss:// or ws:// URL.
-/// `wss://api.example.com/x` → "api.example.com". Fallback to
-/// "ws" if parsing fails. Used to name the scratch buffer.
-fn host_of(url: &str) -> String {
-    let after = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
-    after
-        .split(['/', '?', ':'])
-        .next()
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| "ws".to_string())
-}
 
 fn file_contains_env_key(path: &std::path::Path, key: &str) -> bool {
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -529,12 +518,10 @@ impl App {
         }
     }
 
-    /// `:ws.connect` — open a Prompt for a wss:// URL.
+    /// `:ws.connect` — open a Prompt for a wss:// URL. Each
+    /// connection opens its own `Pane::Websocket`; multiple
+    /// connections can run side by side.
     pub fn ws_connect_prompt(&mut self) {
-        if self.websocket.is_some() {
-            self.toast("ws: already connected — :ws.disconnect first");
-            return;
-        }
         self.prompt = Some(crate::prompt::Prompt::new(
             crate::prompt::PromptKind::WsConnect,
             "WebSocket URL (wss://…):".to_string(),
@@ -542,9 +529,13 @@ impl App {
     }
 
     /// `:ws.send_message` — open a Prompt for the message to send.
+    /// The message goes to the focused `Pane::Websocket`.
     pub fn ws_send_message_prompt(&mut self) {
-        if self.websocket.is_none() {
-            self.toast("ws: not connected (:ws.connect first)");
+        if !matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Websocket(_))
+        ) {
+            self.toast("ws: focus a ws pane first");
             return;
         }
         self.prompt = Some(crate::prompt::Prompt::new(
@@ -553,80 +544,70 @@ impl App {
         ));
     }
 
-    /// `:ws.disconnect` — close the active connection + clear UI.
+    /// `:ws.disconnect` — close the focused WS pane's connection.
+    /// The pane stays open showing the final log; user closes it
+    /// like any other pane (`:close` / `Ctrl+W`).
     pub fn ws_disconnect(&mut self) {
-        if let Some(mut ws) = self.websocket.take() {
-            ws.close();
+        let Some(i) = self.active else {
+            self.toast("ws: no focused pane");
+            return;
+        };
+        if let Some(Pane::Websocket(p)) = self.panes.get_mut(i) {
+            p.close();
             self.toast("ws: closing…");
         } else {
-            self.toast("ws: not connected");
+            self.toast("ws: focus a ws pane first");
         }
-        self.websocket_pane_id = None;
     }
 
-    /// Accept handler — actually connects.
+    /// Accept handler — actually connects. Opens a new pane split
+    /// off the active leaf.
     pub fn ws_connect_to(&mut self, url: &str) {
         let url = url.trim().to_string();
         if url.is_empty() {
             self.toast("ws: URL can't be empty");
             return;
         }
-        let pane = crate::websocket::WebsocketPane::connect(url.clone());
-        // Open a scratch buffer to render the log into. App.tick
-        // drains the pane's channel + appends to this buffer.
-        let initial = format!("# ws {url}\n\n(connecting…)\n");
-        self.open_scratch_with_text(format!("[ws-{}]", host_of(&url)), initial);
-        self.websocket_pane_id = self.active;
-        self.websocket = Some(pane);
+        let pane = Pane::Websocket(crate::websocket::WebsocketPane::connect(url.clone()));
+        match self.active {
+            Some(cur) => {
+                let new_id =
+                    self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                *self.layout_mut() = crate::layout::Layout::Leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
         self.toast(format!("ws: connecting to {url}"));
     }
 
-    /// Accept handler — sends the typed message on the active conn.
+    /// Accept handler — sends the typed message on the focused WS pane.
     pub fn ws_send_on_active(&mut self, message: &str) {
-        let Some(ws) = self.websocket.as_mut() else {
-            self.toast("ws: not connected");
+        let Some(i) = self.active else {
+            self.toast("ws: no focused pane");
             return;
         };
-        ws.input = message.to_string();
-        ws.send_input();
+        let Some(Pane::Websocket(p)) = self.panes.get_mut(i) else {
+            self.toast("ws: focus a ws pane first");
+            return;
+        };
+        p.input = message.to_string();
+        p.input_cursor = message.len();
+        p.send_input();
     }
 
-    /// Drain incoming WebSocket events; called from App.tick.
+    /// Drain incoming WebSocket events for every `Pane::Websocket`.
+    /// Called from `App.tick`.
     pub fn drain_websocket(&mut self) {
-        let Some(ws) = self.websocket.as_mut() else {
-            return;
-        };
-        let prev_len = ws.log.len();
-        ws.drain();
-        if ws.log.len() == prev_len {
-            return;
-        }
-        // Append new entries to the scratch buffer text.
-        let new_lines: String = ws.log[prev_len..]
-            .iter()
-            .map(|e| {
-                let dir = if e.outgoing { "→" } else { "←" };
-                format!("{dir} {}\n", e.text)
-            })
-            .collect();
-        let state = ws.state;
-        let Some(pid) = self.websocket_pane_id else {
-            return;
-        };
-        if let Some(Pane::Editor(b)) = self.panes.get_mut(pid) {
-            // Move cursor to end + append new lines (cheap insert).
-            let end = b.editor.text().len();
-            b.editor.set_cursor_byte(end);
-            let _ = b.editor.apply(
-                crate::edit_op::EditOp::InsertStr(new_lines),
-                24,
-                &mut crate::clipboard::Clipboard::detached(),
-            );
-        }
-        if state == crate::websocket::WsState::Closed {
-            self.toast("ws: closed");
-            self.websocket = None;
-            self.websocket_pane_id = None;
+        for i in 0..self.panes.len() {
+            if let Some(Pane::Websocket(p)) = self.panes.get_mut(i) {
+                p.drain();
+            }
         }
     }
 

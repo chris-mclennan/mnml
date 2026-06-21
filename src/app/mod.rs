@@ -2706,12 +2706,9 @@ pub struct App {
     /// increments this AtomicU32 after each completed request;
     /// cmdline_bar reads it to show `bench (12/100 · 5s)`.
     pub http_bench_progress: Option<(std::sync::Arc<std::sync::atomic::AtomicU32>, u32)>,
-    /// 2026-06-20 — native WebSocket. Single active connection per
-    /// App for v1; multi-connection (multiple scratches) is a v2
-    /// follow-up. Tracks the live worker pane via its log-target
-    /// pane id so :ws.send + :ws.disconnect know where to dispatch.
-    pub websocket: Option<crate::websocket::WebsocketPane>,
-    pub websocket_pane_id: Option<PaneId>,
+    /// 2026-06-21 — WS v2 moved the connection state onto its own
+    /// `Pane::Websocket` variant; multi-connection is now native.
+    /// `App.websocket{,_pane_id}` removed.
     pub http_sync_started: Option<std::time::Instant>,
     pub lookup_fire_started: Option<std::time::Instant>,
     /// 2026-06-19 — v2 polish: shared "user has asked us to stop"
@@ -3486,8 +3483,6 @@ impl App {
             http_bench_rx: None,
             http_bench_started: None,
             http_bench_progress: None,
-            websocket: None,
-            websocket_pane_id: None,
             http_sync_started: None,
             lookup_fire_started: None,
             http_abort: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -7635,6 +7630,7 @@ impl App {
             Pane::DapRepl(_) => Some(("DAP REPL".to_string(), false)),
             Pane::Image(p) => Some((p.tab_title(), false)),
             Pane::ClaudeAgents(p) => Some((p.tab_title(), false)),
+            Pane::Websocket(p) => Some((p.tab_title(), false)),
         }
     }
 

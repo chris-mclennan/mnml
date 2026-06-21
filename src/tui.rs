@@ -1746,6 +1746,55 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // Websocket pane — Enter sends, Esc closes, printable chars edit
+    // the input, PgUp/PgDn scroll the log.
+    if matches!(app.panes.get(i), Some(Pane::Websocket(_))) {
+        match key.code {
+            KeyCode::Esc => {
+                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
+                    p.close();
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
+                    p.send_input();
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
+                    if let Some(c) = p.input.pop() {
+                        p.input_cursor = p.input_cursor.saturating_sub(c.len_utf8());
+                    }
+                }
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
+                    p.close();
+                }
+            }
+            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.focus_tree();
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_add(10);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_sub(10);
+                }
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
+                    p.input.push(c);
+                    p.input_cursor += c.len_utf8();
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
     // Claude Agents dashboard
     if matches!(app.panes.get(i), Some(Pane::ClaudeAgents(_))) {
         use crate::claude_agents::ClaudeAgentsAction;
