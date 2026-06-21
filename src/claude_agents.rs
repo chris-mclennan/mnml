@@ -1099,13 +1099,17 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
                 .iter()
                 .find_map(|(sid, pid, _)| (sid == &session_id).then_some(*pid));
             let state = if pid.is_some() {
-                let fresh = mtime
-                    .and_then(|t| SystemTime::now().duration_since(t).ok())
-                    .is_some_and(|d| d.as_secs() < 60);
-                if fresh {
-                    AgentState::Streaming
+                if stats.last_was_tool_call {
+                    AgentState::ToolCall
                 } else {
-                    AgentState::Idle
+                    let fresh = mtime
+                        .and_then(|t| SystemTime::now().duration_since(t).ok())
+                        .is_some_and(|d| d.as_secs() < 60);
+                    if fresh {
+                        AgentState::Streaming
+                    } else {
+                        AgentState::Idle
+                    }
                 }
             } else {
                 AgentState::Ended
@@ -1157,12 +1161,16 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
                 last_assistant_msg: stats.last_assistant_msg,
                 pid,
                 state,
-                current_tool: None,
+                current_tool: if stats.last_was_tool_call {
+                    Some("exec".to_string())
+                } else {
+                    None
+                },
                 todos: Vec::new(),
-                recent_bash: Vec::new(),
+                recent_bash: stats.recent_bash,
                 recent_files: Vec::new(),
                 recent_subagents: Vec::new(),
-                pending_tool_uses: 0,
+                pending_tool_uses: stats.pending_tool_uses,
                 tokens_per_min: None,
             });
         }
@@ -1252,6 +1260,12 @@ struct CodexTailStats {
     event_count: usize,
     last_user_msg: Option<String>,
     last_assistant_msg: Option<String>,
+    /// Recent `exec_command` invocations (newest first, max 10).
+    recent_bash: Vec<String>,
+    /// Unresolved call_ids — used to derive `pending_tool_uses` +
+    /// `last_was_tool_call` for state derivation.
+    pending_tool_uses: usize,
+    last_was_tool_call: bool,
 }
 
 /// Codex transcript tail-parse. Codex's format:
@@ -1276,6 +1290,11 @@ fn parse_codex_tail(path: &std::path::Path) -> CodexTailStats {
     let Ok(text) = read_tail(path, 256 * 1024) else {
         return stats;
     };
+    // Pair function_call ↔ function_call_output by call_id so we
+    // can derive pending tool count.
+    let mut pending_calls: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    let mut last_assistant_was_tool = false;
     for line in text.lines() {
         stats.event_count += 1;
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -1302,8 +1321,44 @@ fn parse_codex_tail(path: &std::path::Path) -> CodexTailStats {
                     .and_then(|p| p.get("type"))
                     .and_then(|t| t.as_str())
                     .unwrap_or("");
-                if inner_type != "message" {
-                    continue;
+                match inner_type {
+                    "function_call" => {
+                        // Codex's only tool is `exec_command`. The
+                        // arguments are a JSON-encoded string in
+                        // payload.arguments — parse it to extract
+                        // the actual `cmd`.
+                        let call_id = payload
+                            .and_then(|p| p.get("call_id"))
+                            .and_then(|c| c.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if !call_id.is_empty() {
+                            pending_calls.insert(call_id);
+                        }
+                        last_assistant_was_tool = true;
+                        let args_str = payload
+                            .and_then(|p| p.get("arguments"))
+                            .and_then(|a| a.as_str())
+                            .unwrap_or("");
+                        if let Ok(args) = serde_json::from_str::<serde_json::Value>(args_str)
+                            && let Some(cmd) = args.get("cmd").and_then(|c| c.as_str())
+                        {
+                            stats.recent_bash.insert(0, truncate(cmd, 96));
+                            stats.recent_bash.truncate(10);
+                        }
+                        continue;
+                    }
+                    "function_call_output" => {
+                        if let Some(call_id) = payload
+                            .and_then(|p| p.get("call_id"))
+                            .and_then(|c| c.as_str())
+                        {
+                            pending_calls.remove(call_id);
+                        }
+                        continue;
+                    }
+                    "message" => {} // fall through to text extraction
+                    _ => continue,
                 }
                 let role = payload
                     .and_then(|p| p.get("role"))
@@ -1323,8 +1378,6 @@ fn parse_codex_tail(path: &std::path::Path) -> CodexTailStats {
                     });
                 let Some(text) = text else { continue };
                 let text = text.trim();
-                // Filter codex's internal context blocks that arrive
-                // tagged as user messages.
                 if text.starts_with("<environment_context>")
                     || text.starts_with("<permissions instructions>")
                     || text.starts_with("<task_complete>")
@@ -1334,7 +1387,10 @@ fn parse_codex_tail(path: &std::path::Path) -> CodexTailStats {
                 }
                 match role {
                     "user" => stats.last_user_msg = Some(truncate(text, 200)),
-                    "assistant" => stats.last_assistant_msg = Some(truncate(text, 200)),
+                    "assistant" => {
+                        stats.last_assistant_msg = Some(truncate(text, 200));
+                        last_assistant_was_tool = false;
+                    }
                     _ => {}
                 }
             }
@@ -1374,6 +1430,8 @@ fn parse_codex_tail(path: &std::path::Path) -> CodexTailStats {
             _ => {}
         }
     }
+    stats.pending_tool_uses = pending_calls.len();
+    stats.last_was_tool_call = last_assistant_was_tool && stats.pending_tool_uses > 0;
     stats
 }
 
@@ -2457,6 +2515,48 @@ mod tests {
         assert_eq!(stats.output_tokens, 15);
         assert_eq!(stats.cache_read_tokens, 9600);
         assert_eq!(stats.tokens, 12244);
+    }
+
+    #[test]
+    fn parse_codex_tail_extracts_function_call_as_bash_and_tracks_pending() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("rollout-x.jsonl");
+        let mut f = std::fs::File::create(&p).unwrap();
+        use std::io::Write;
+        // function_call event (codex's only tool is exec_command;
+        // the JSON-encoded `arguments` string carries the `cmd`).
+        writeln!(
+            f,
+            r#"{{"timestamp":"t","type":"response_item","payload":{{"type":"function_call","name":"exec_command","arguments":"{{\"cmd\":\"cat /tmp/foo\"}}","call_id":"call_A"}}}}"#
+        )
+        .unwrap();
+        // Matching output — pairs by call_id so pending drops to 0.
+        writeln!(
+            f,
+            r#"{{"timestamp":"t","type":"response_item","payload":{{"type":"function_call_output","call_id":"call_A","output":"hello\n"}}}}"#
+        )
+        .unwrap();
+        let stats = parse_codex_tail(&p);
+        assert_eq!(stats.recent_bash, vec!["cat /tmp/foo".to_string()]);
+        assert_eq!(stats.pending_tool_uses, 0);
+        assert!(!stats.last_was_tool_call);
+    }
+
+    #[test]
+    fn parse_codex_tail_marks_pending_when_function_call_has_no_output() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("rollout-x.jsonl");
+        let mut f = std::fs::File::create(&p).unwrap();
+        use std::io::Write;
+        writeln!(
+            f,
+            r#"{{"timestamp":"t","type":"response_item","payload":{{"type":"function_call","name":"exec_command","arguments":"{{\"cmd\":\"sleep 5\"}}","call_id":"call_B"}}}}"#
+        )
+        .unwrap();
+        let stats = parse_codex_tail(&p);
+        assert_eq!(stats.pending_tool_uses, 1);
+        assert!(stats.last_was_tool_call);
+        assert_eq!(stats.recent_bash, vec!["sleep 5".to_string()]);
     }
 
     #[test]
