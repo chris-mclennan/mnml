@@ -622,6 +622,8 @@ const HELP_LINES: &[(&str, &str)] = &[
     ("t / Enter", "open the transcript .jsonl in an editor (or dbl-click)"),
     ("o", "resume the session in a new pty (claude --resume / fresh codex)"),
     ("K", "SIGTERM (batch when rows are multi-selected; confirm prompt)"),
+    ("e", "export the selected session's transcript as markdown"),
+    (":ai.session_search", "grep all transcripts (via palette)"),
     ("?", "toggle this help"),
     ("Esc", "focus file tree"),
     ("q", "close the pane"),

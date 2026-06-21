@@ -1832,6 +1832,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Char('o') => app.claude_agents_action(ClaudeAgentsAction::ResumeSession),
+            KeyCode::Char('e') => app.claude_agents_action(ClaudeAgentsAction::ExportMarkdown),
             KeyCode::Char('p') => {
                 let new_state = if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
                     p.paused_by_user = !p.paused_by_user;

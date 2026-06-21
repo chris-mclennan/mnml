@@ -8433,6 +8433,56 @@ impl App {
         }
     }
 
+    /// `:ai.session_search` — open a prompt for a search term.
+    /// Accept runs `claude_agents::search_all_transcripts` (greps
+    /// every .jsonl under ~/.claude/projects/) and dumps the hits
+    /// into a `[session-search]` scratch.
+    pub fn ai_session_search_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::ClaudeSessionSearch,
+            "search all Claude transcripts:".to_string(),
+        ));
+    }
+
+    /// Accept handler — runs the search synchronously (grep is fast
+    /// enough for a few hundred MB; if it ever gets too slow we can
+    /// move to a worker).
+    pub fn ai_session_search_run(&mut self, query: String) {
+        let hits = crate::claude_agents::search_all_transcripts(&query);
+        if hits.is_empty() {
+            self.toast(format!("no matches for {query:?}"));
+            return;
+        }
+        let mut body = String::new();
+        body.push_str(&format!(
+            "# {} hits for {:?} across ~/.claude/projects/\n\n",
+            hits.len(),
+            query
+        ));
+        // Group by workspace so the scratch reads top-down.
+        use std::collections::BTreeMap;
+        let mut grouped: BTreeMap<String, Vec<&crate::claude_agents::SearchHit>> =
+            BTreeMap::new();
+        for h in &hits {
+            grouped.entry(h.workspace.clone()).or_default().push(h);
+        }
+        for (ws, hs) in grouped {
+            body.push_str(&format!("\n## {ws}\n\n"));
+            for h in hs {
+                let sid_short: String = h.session_id.chars().take(8).collect();
+                body.push_str(&format!(
+                    "- [{}] {sid_short}  ·  {}\n  {}\n  {}\n",
+                    h.role.glyph(),
+                    h.transcript_path.display(),
+                    h.snippet,
+                    "",
+                ));
+            }
+        }
+        self.open_scratch_with_text("[session-search]".to_string(), body);
+        self.toast(format!("{} hits → [session-search]", hits.len()));
+    }
+
     /// Tick hook — two refresh rates:
     ///   - every ~3s rebuild the full row set (newly-active
     ///     sessions, state transitions) via `refresh_in_place`.
@@ -8547,6 +8597,29 @@ impl App {
                         sid.chars().take(8).collect::<String>()
                     ),
                 ));
+            }
+            ClaudeAgentsAction::ExportMarkdown => {
+                match crate::claude_agents::export_transcript_as_markdown(row) {
+                    Ok((stem, md)) => {
+                        let dir = self.workspace.join(".mnml").join("claude-exports");
+                        if let Err(e) = std::fs::create_dir_all(&dir) {
+                            self.toast(format!("export: mkdir {}: {e}", dir.display()));
+                            return;
+                        }
+                        let path = dir.join(format!("{stem}.md"));
+                        match std::fs::write(&path, &md) {
+                            Ok(()) => {
+                                self.toast(format!(
+                                    "exported → {}",
+                                    path.display()
+                                ));
+                                self.open_path(&path);
+                            }
+                            Err(e) => self.toast(format!("export write: {e}")),
+                        }
+                    }
+                    Err(e) => self.toast(format!("export: {e}")),
+                }
             }
             ClaudeAgentsAction::ResumeSession => {
                 use crate::claude_agents::AgentSource;

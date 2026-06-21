@@ -1282,6 +1282,10 @@ impl App {
                 let description = p.input.clone();
                 self.http_ai_build_accept(description);
             }
+            crate::prompt::PromptKind::ClaudeSessionSearch => {
+                let q = p.input.clone();
+                self.ai_session_search_run(q);
+            }
             crate::prompt::PromptKind::ClaudeKillConfirm => {
                 if p.input.trim() == "kill" {
                     self.claude_agents_kill_confirmed();

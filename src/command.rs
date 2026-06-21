@@ -653,6 +653,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.unfold_all_in_active(),
         },
         Command {
+            id: "ai.session_search",
+            title: "AI: grep every Claude transcript for a substring",
+            group: "ai",
+            // Walks every .jsonl under ~/.claude/projects/, matches
+            // lowercase substrings against user/assistant text +
+            // Bash commands + Edit file paths. Hits land in a
+            // [session-search] scratch, grouped by workspace.
+            keys: &[],
+            run: |app| app.ai_session_search_prompt(),
+        },
+        Command {
             id: "ai.agents_dashboard",
             title: "AI: open Claude Agents dashboard (also lists Codex sessions)",
             group: "ai",

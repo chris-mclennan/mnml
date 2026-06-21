@@ -65,6 +65,10 @@ pub enum ClaudeAgentsAction {
     /// the row's `cwd` (or the current workspace if cwd is missing).
     /// For codex rows, opens `codex` (no resume — stateless).
     ResumeSession,
+    /// Export the focused row's transcript as markdown into the
+    /// current workspace's `.mnml/claude-exports/` and open it in
+    /// an editor pane.
+    ExportMarkdown,
 }
 
 /// One session in the dashboard.
@@ -1284,6 +1288,295 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// One hit from `search_all_transcripts`.
+#[derive(Debug, Clone)]
+pub struct SearchHit {
+    pub transcript_path: PathBuf,
+    pub workspace: String,
+    pub session_id: String,
+    /// User-facing snippet — the message text trimmed + truncated.
+    pub snippet: String,
+    /// Which side of the conversation the match came from.
+    pub role: SearchRole,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchRole {
+    User,
+    Assistant,
+    ToolBash,
+    ToolEdit,
+}
+
+impl SearchRole {
+    pub fn glyph(self) -> &'static str {
+        match self {
+            SearchRole::User => "user",
+            SearchRole::Assistant => "asst",
+            SearchRole::ToolBash => "bash",
+            SearchRole::ToolEdit => "edit",
+        }
+    }
+}
+
+/// Grep every transcript under `~/.claude/projects/*/<sid>.jsonl`
+/// for `query` (lowercase substring). Returns hits ordered by
+/// transcript mtime (newest first). Hard-caps at 200 hits to keep
+/// the scratch readable.
+pub fn search_all_transcripts(query: &str) -> Vec<SearchHit> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    let Some(root) = home_projects_dir() else {
+        return Vec::new();
+    };
+    let Ok(dirs) = std::fs::read_dir(&root) else {
+        return Vec::new();
+    };
+
+    // Collect (path, mtime, workspace_label) tuples first so we can
+    // process newest-first.
+    let mut files: Vec<(PathBuf, SystemTime, String)> = Vec::new();
+    for d in dirs.flatten() {
+        let dir = d.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let workspace = dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(decode_workspace_label)
+            .unwrap_or_else(|| "?".to_string());
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for f in rd.flatten() {
+            let p = f.path();
+            if !p.extension().is_some_and(|e| e == "jsonl") {
+                continue;
+            }
+            let mtime = f
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            files.push((p, mtime, workspace.clone()));
+        }
+    }
+    files.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let mut hits: Vec<SearchHit> = Vec::new();
+    const HIT_CAP: usize = 200;
+    'outer: for (path, _mtime, workspace) in files {
+        let session_id = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("?")
+            .to_string();
+        // Stream-read line-by-line; transcripts can be huge so a
+        // BufReader keeps memory bounded.
+        let Ok(f) = std::fs::File::open(&path) else { continue };
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(f);
+        for line in reader.lines().map_while(Result::ok) {
+            if !line.to_lowercase().contains(&q) {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            // Find the role-tagged text snippet that contains the
+            // match. Prefer matches in user / asst text first, then
+            // Bash commands and Edit file paths.
+            let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            let extracted = match ty {
+                "user" => extract_user_snippet(&v, &q),
+                "assistant" => extract_assistant_snippet(&v, &q),
+                _ => None,
+            };
+            if let Some((role, snippet)) = extracted {
+                hits.push(SearchHit {
+                    transcript_path: path.clone(),
+                    workspace: workspace.clone(),
+                    session_id: session_id.clone(),
+                    snippet,
+                    role,
+                });
+                if hits.len() >= HIT_CAP {
+                    break 'outer;
+                }
+            }
+        }
+    }
+    hits
+}
+
+fn extract_user_snippet(v: &serde_json::Value, q: &str) -> Option<(SearchRole, String)> {
+    let content = v.get("message").and_then(|m| m.get("content"))?;
+    let text = match content {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|b| {
+                if b.get("type").and_then(|t| t.as_str()) == Some("text") {
+                    b.get("text").and_then(|t| t.as_str()).map(String::from)
+                } else {
+                    None
+                }
+            })
+            .next()?,
+        _ => return None,
+    };
+    if !text.to_lowercase().contains(q) {
+        return None;
+    }
+    if text.starts_with("<system-reminder>")
+        || text.starts_with("<command-")
+        || text.starts_with("Caveat:")
+    {
+        return None;
+    }
+    Some((SearchRole::User, truncate(&text, 160)))
+}
+
+fn extract_assistant_snippet(v: &serde_json::Value, q: &str) -> Option<(SearchRole, String)> {
+    let content = v
+        .get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_array())?;
+    for block in content {
+        let bt = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        match bt {
+            "text" => {
+                if let Some(s) = block.get("text").and_then(|t| t.as_str())
+                    && s.to_lowercase().contains(q)
+                {
+                    return Some((SearchRole::Assistant, truncate(s, 160)));
+                }
+            }
+            "tool_use" => {
+                let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let input = block.get("input");
+                match name {
+                    "Bash" => {
+                        if let Some(cmd) = input.and_then(|i| i.get("command")).and_then(|c| c.as_str())
+                            && cmd.to_lowercase().contains(q)
+                        {
+                            return Some((SearchRole::ToolBash, truncate(cmd, 160)));
+                        }
+                    }
+                    "Edit" | "Write" | "Read" => {
+                        if let Some(p) = input.and_then(|i| i.get("file_path")).and_then(|f| f.as_str())
+                            && p.to_lowercase().contains(q)
+                        {
+                            return Some((SearchRole::ToolEdit, format!("{name} {p}")));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Format a row's transcript as a markdown export. Returns
+/// `(filename_stem, markdown_text)` for the caller to write/open.
+pub fn export_transcript_as_markdown(row: &AgentRow) -> Result<(String, String), String> {
+    let path = row.transcript_path.clone();
+    if !path.is_file() {
+        return Err("no transcript on disk".to_string());
+    }
+    let f = std::fs::File::open(&path).map_err(|e| format!("open: {e}"))?;
+    use std::io::BufRead;
+    let reader = std::io::BufReader::new(f);
+    let mut out = String::new();
+    let sid_short: String = row.session_id.chars().take(8).collect();
+    out.push_str(&format!(
+        "# Claude session {sid_short}\n\n_workspace: {} · branch: {} · model: {}_\n\n",
+        row.workspace,
+        row.git_branch.as_deref().unwrap_or("?"),
+        row.model.as_deref().unwrap_or("?"),
+    ));
+    for line in reader.lines().map_while(Result::ok) {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        match ty {
+            "user" => {
+                if let Some(txt) = extract_user_message_text(&v) {
+                    if txt.starts_with("<system-reminder>") {
+                        continue;
+                    }
+                    out.push_str("## 👤 User\n\n");
+                    out.push_str(&txt);
+                    out.push_str("\n\n");
+                }
+            }
+            "assistant" => {
+                if let Some(content) =
+                    v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array())
+                {
+                    let mut header_written = false;
+                    for block in content {
+                        let bt = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        match bt {
+                            "text" => {
+                                if !header_written {
+                                    out.push_str("## 🤖 Assistant\n\n");
+                                    header_written = true;
+                                }
+                                if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                                    out.push_str(t);
+                                    out.push_str("\n\n");
+                                }
+                            }
+                            "tool_use" => {
+                                let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+                                let input = block.get("input").unwrap_or(&serde_json::Value::Null);
+                                if !header_written {
+                                    out.push_str("## 🤖 Assistant\n\n");
+                                    header_written = true;
+                                }
+                                out.push_str(&format!("_⚙ tool: {name}_\n\n```json\n"));
+                                if let Ok(s) = serde_json::to_string_pretty(input) {
+                                    let trimmed: String = s.chars().take(2000).collect();
+                                    out.push_str(&trimmed);
+                                }
+                                out.push_str("\n```\n\n");
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let date = "session"; // No Date::now in this codebase context — caller can stamp.
+    let stem = format!("{date}-{sid_short}");
+    Ok((stem, out))
+}
+
+fn extract_user_message_text(v: &serde_json::Value) -> Option<String> {
+    let content = v.get("message").and_then(|m| m.get("content"))?;
+    match content {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|b| {
+                if b.get("type").and_then(|t| t.as_str()) == Some("text") {
+                    b.get("text").and_then(|t| t.as_str()).map(String::from)
+                } else {
+                    None
+                }
+            })
+            .next(),
+        _ => None,
+    }
+}
+
 /// Hardcoded per-model USD pricing (input / output / cache-write /
 /// cache-read), all in dollars per 1M tokens. Numbers are public
 /// pricing as of mid-2026; if Anthropic adjusts them, edit this
@@ -1454,6 +1747,99 @@ mod tests {
         let stats = parse_tail(&p);
         assert!(stats.last_was_tool_call);
         assert_eq!(stats.last_assistant_msg.as_deref(), Some("⚙ Bash"));
+    }
+
+    #[test]
+    fn export_markdown_walks_user_and_assistant_blocks() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("session.jsonl");
+        let mut f = std::fs::File::create(&p).unwrap();
+        use std::io::Write;
+        writeln!(
+            f,
+            r#"{{"type":"user","message":{{"role":"user","content":"hello there"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","message":{{"model":"x","content":[{{"type":"text","text":"hi back"}}]}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","message":{{"model":"x","content":[{{"type":"tool_use","name":"Bash","input":{{"command":"ls"}}}}]}}}}"#
+        )
+        .unwrap();
+        let row = AgentRow {
+            source: AgentSource::Claude,
+            transcript_path: p.clone(),
+            session_id: "abcdef12-3456-7890-aaaa-bbbbbbbbbbbb".to_string(),
+            workspace: "x".to_string(),
+            cwd: Some("/Users/x".to_string()),
+            git_branch: Some("main".to_string()),
+            model: Some("claude-opus-4-7".to_string()),
+            last_activity: None,
+            tokens: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_create_tokens: 0,
+            cache_read_tokens: 0,
+            cost_usd: 0.0,
+            event_count: 0,
+            last_user_msg: None,
+            last_assistant_msg: None,
+            pid: None,
+            state: AgentState::Ended,
+            current_tool: None,
+            todos: Vec::new(),
+            recent_bash: Vec::new(),
+            recent_files: Vec::new(),
+            recent_subagents: Vec::new(),
+            pending_tool_uses: 0,
+            tokens_per_min: None,
+        };
+        let (_stem, md) = export_transcript_as_markdown(&row).unwrap();
+        assert!(md.contains("hello there"));
+        assert!(md.contains("hi back"));
+        assert!(md.contains("Bash"));
+        assert!(md.contains("ls"));
+        assert!(md.contains("# Claude session"));
+    }
+
+    #[test]
+    fn search_finds_substring_across_transcripts() {
+        // We can't easily redirect HOME, but we CAN unit-test the
+        // helper that extracts the snippet from a single line.
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"type":"user","message":{"role":"user","content":"please run cargo build for me"}}"#,
+        )
+        .unwrap();
+        let s = extract_user_snippet(&v, "cargo");
+        assert!(s.is_some());
+        assert_eq!(s.unwrap().0, SearchRole::User);
+    }
+
+    #[test]
+    fn search_skips_system_reminder_user_messages() {
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"type":"user","message":{"role":"user","content":"<system-reminder>cargo info</system-reminder>"}}"#,
+        )
+        .unwrap();
+        let s = extract_user_snippet(&v, "cargo");
+        assert!(s.is_none());
+    }
+
+    #[test]
+    fn search_extracts_bash_command_from_assistant_tool_use() {
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"type":"assistant","message":{"model":"x","content":[{"type":"tool_use","name":"Bash","input":{"command":"cargo build --release"}}]}}"#,
+        )
+        .unwrap();
+        let s = extract_assistant_snippet(&v, "cargo build");
+        assert!(s.is_some());
+        let (role, snippet) = s.unwrap();
+        assert_eq!(role, SearchRole::ToolBash);
+        assert!(snippet.contains("cargo build"));
     }
 
     #[test]
