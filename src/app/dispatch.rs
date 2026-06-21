@@ -967,6 +967,20 @@ pub(crate) fn handle_scm_row_click(
         }
         return;
     }
+    if matches!(app.panes.get(pane_id), Some(Pane::ClaudeAgents(_))) {
+        if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pane_id) {
+            let n = p.visible_indices().len();
+            if flat_idx < n {
+                p.selected = flat_idx;
+            }
+        }
+        if is_double_click {
+            app.claude_agents_action(
+                crate::claude_agents::ClaudeAgentsAction::OpenTranscript,
+            );
+        }
+        return;
+    }
     if matches!(app.panes.get(pane_id), Some(Pane::Tests(_))) {
         if let Some(Pane::Tests(t)) = app.panes.get_mut(pane_id)
             && let crate::playwright::TestsState::Done(r) = &t.state

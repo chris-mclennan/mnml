@@ -245,6 +245,12 @@ pub struct ClaudeAgentsPane {
     /// tracks the more-frequent (every-tick) per-row poll that
     /// keeps the drill-down feeling alive on the active session.
     pub last_live_tail: SystemTime,
+    /// `(session_id → (state, pending_tool_uses))` snapshot taken
+    /// after every refresh. `refresh_in_place` compares the new
+    /// snapshot to the previous one and surfaces transitions as
+    /// toasts (`prior_state_snapshot` is empty on first build to
+    /// avoid spamming the user on dashboard open).
+    pub prior_state_snapshot: std::collections::HashMap<String, (AgentState, usize)>,
 }
 
 impl ClaudeAgentsPane {
@@ -273,6 +279,7 @@ impl ClaudeAgentsPane {
             state_filter: None,
             show_help: false,
             last_live_tail: SystemTime::now(),
+            prior_state_snapshot: std::collections::HashMap::new(),
         }
     }
 
@@ -350,6 +357,63 @@ impl ClaudeAgentsPane {
         }
         self.last_live_tail = SystemTime::now();
         true
+    }
+
+    /// Diff the current row set against the previous snapshot and
+    /// return user-facing transition messages — "session X went
+    /// live", "session Y now waiting on tool confirm", etc.
+    /// Updates `prior_state_snapshot` in place. Returns an empty
+    /// Vec on the first call after `build()` (initial snapshot,
+    /// no spammy toasts on dashboard open).
+    pub fn compute_transitions(&mut self) -> Vec<String> {
+        let mut messages: Vec<String> = Vec::new();
+        let was_empty = self.prior_state_snapshot.is_empty();
+        let mut new_snapshot: std::collections::HashMap<String, (AgentState, usize)> =
+            std::collections::HashMap::new();
+        for row in &self.rows {
+            let sid_short: String = row.session_id.chars().take(8).collect();
+            new_snapshot.insert(
+                row.session_id.clone(),
+                (row.state, row.pending_tool_uses),
+            );
+            if was_empty {
+                continue;
+            }
+            let prev = self.prior_state_snapshot.get(&row.session_id);
+            match prev {
+                None => {
+                    // Brand-new session.
+                    if matches!(row.state, AgentState::Streaming | AgentState::ToolCall) {
+                        messages.push(format!(
+                            "{} new {} session ({})",
+                            row.source.label(),
+                            row.state.badge(),
+                            sid_short
+                        ));
+                    }
+                }
+                Some(&(prev_state, prev_pending)) => {
+                    if prev_state != row.state {
+                        messages.push(format!(
+                            "{} {} → {} ({})",
+                            row.source.label(),
+                            prev_state.badge(),
+                            row.state.badge(),
+                            sid_short
+                        ));
+                    }
+                    if row.pending_tool_uses > prev_pending {
+                        messages.push(format!(
+                            "{} ⚠ pending tool ({})",
+                            row.source.label(),
+                            sid_short
+                        ));
+                    }
+                }
+            }
+        }
+        self.prior_state_snapshot = new_snapshot;
+        messages
     }
 
     /// Rebuild rows in place, preserving the user's selection +

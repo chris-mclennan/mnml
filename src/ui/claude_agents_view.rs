@@ -118,6 +118,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     }
 
     let mut lines: Vec<Line> = Vec::new();
+    // Track each rendered row's y-offset within rows_area + its
+    // `selected` index so the click handler can map (x,y) → vi.
+    let mut row_y_to_vi: Vec<(u16, usize)> = Vec::new();
     let claude_section_tokens: u64 = claude_indices.iter().map(|&i| p.rows[vis[i]].tokens).sum();
     let codex_section_tokens: u64 = codex_indices.iter().map(|&i| p.rows[vis[i]].tokens).sum();
     if !claude_indices.is_empty() {
@@ -130,6 +133,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         ));
         for &vi in &claude_indices {
             let row_idx = vis[vi];
+            row_y_to_vi.push((lines.len() as u16, vi));
             lines.push(render_row(&p.rows[row_idx], vi == p.selected, &t, rows_area.width));
         }
     }
@@ -143,12 +147,32 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         ));
         for &vi in &codex_indices {
             let row_idx = vis[vi];
+            row_y_to_vi.push((lines.len() as u16, vi));
             lines.push(render_row(&p.rows[row_idx], vi == p.selected, &t, rows_area.width));
         }
     }
-    let _scroll = p.scroll; // section-aware scroll is v2
+    let _scroll = p.scroll;
     let rows_para = Paragraph::new(lines).style(Style::default().bg(t.bg_dark));
     frame.render_widget(rows_para, rows_area);
+
+    // Push rects for click selection. The dispatcher in tui.rs
+    // looks up by (pane_id, vi) to call p.selected = vi.
+    for (y_in_area, vi) in row_y_to_vi {
+        let screen_y = rows_area.y.saturating_add(y_in_area);
+        if screen_y >= rows_area.y.saturating_add(rows_area.height) {
+            continue;
+        }
+        app.rects.list_rows.push((
+            Rect {
+                x: rows_area.x,
+                y: screen_y,
+                width: rows_area.width,
+                height: 1,
+            },
+            id,
+            vi,
+        ));
+    }
 
     if let Some(sel) = p.selected_row() {
         draw_detail(frame, sel, p.detail, detail_area, &t);
@@ -272,6 +296,17 @@ fn render_row(row: &AgentRow, selected: bool, t: &theme::Theme, width: u16) -> L
         .pid
         .map(|p| format!("#{p}"))
         .unwrap_or_else(|| "—".to_string());
+    // TodoList progress, when the session has one.
+    let todos_chip = if row.todos.is_empty() {
+        String::new()
+    } else {
+        let done = row
+            .todos
+            .iter()
+            .filter(|t| t.status == "completed")
+            .count();
+        format!("  ☑ {done}/{}", row.todos.len())
+    };
 
     let pending = if row.pending_tool_uses > 0 {
         format!(" ⚠{}", row.pending_tool_uses)
@@ -282,7 +317,7 @@ fn render_row(row: &AgentRow, selected: bool, t: &theme::Theme, width: u16) -> L
     let row_chars =
         state.chars().count() + workspace_pad.chars().count() + 8 + model_pad.chars().count()
             + age.chars().count() + tokens.chars().count() + cost.chars().count()
-            + pid.chars().count() + pending.chars().count() + 22;
+            + pid.chars().count() + pending.chars().count() + todos_chip.chars().count() + 22;
     let pad = (width as usize).saturating_sub(row_chars + 2);
 
     Line::from(vec![
@@ -303,6 +338,7 @@ fn render_row(row: &AgentRow, selected: bool, t: &theme::Theme, width: u16) -> L
         Span::styled(format!("  {:>7}", cost), Style::default().fg(t.orange).bg(bg)),
         Span::styled(format!("  {:>6}", pid), Style::default().fg(t.comment).bg(bg)),
         Span::styled(pending, Style::default().fg(t.red).bg(bg).add_modifier(Modifier::BOLD)),
+        Span::styled(todos_chip, Style::default().fg(t.green).bg(bg)),
         Span::styled(" ".repeat(pad), Style::default().bg(bg)),
     ])
 }

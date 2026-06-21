@@ -8457,10 +8457,18 @@ impl App {
                 }
                 _ => (false, false),
             };
-            if do_full
+            let transitions = if do_full
                 && let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i)
             {
                 p.refresh_in_place();
+                Some(p.compute_transitions())
+            } else {
+                None
+            };
+            if let Some(msgs) = transitions {
+                for msg in msgs.into_iter().take(3) {
+                    self.toast(msg);
+                }
             }
             if do_tail
                 && let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i)
