@@ -32,6 +32,11 @@ pub enum ClaudeAgentsAction {
     YankSessionId,
     YankCwd,
     OpenTranscript,
+    /// Open a confirm prompt before SIGTERM'ing the row's PID.
+    KillPrompt,
+    /// Spawn `claude --resume <session_id>` in a new pty pane in
+    /// the row's `cwd` (or the current workspace if cwd is missing).
+    ResumeSession,
 }
 
 /// One session in the dashboard.
@@ -69,6 +74,23 @@ pub struct AgentRow {
     pub pid: Option<u32>,
     /// Derived activity state for the row badge.
     pub state: AgentState,
+    /// Tool name from the last assistant tool_use block (e.g.
+    /// "Bash", "Edit", "Agent"), when `state == ToolCall`.
+    pub current_tool: Option<String>,
+    /// Most recent TodoList state (from a TaskCreate/TodoWrite
+    /// tool_use input in the tail).
+    pub todos: Vec<TodoEntry>,
+    /// Recent Bash commands run in this session (newest first,
+    /// max 10).
+    pub recent_bash: Vec<String>,
+    /// Recent Edit/Write/NotebookEdit files (newest first, max 10).
+    pub recent_files: Vec<String>,
+    /// Recent Agent (subagent) dispatches (newest first, max 5).
+    pub recent_subagents: Vec<String>,
+    /// Pending tool_use ids — assistant emitted a tool_use that
+    /// hasn't gotten a matching tool_result back yet. Lower bound;
+    /// useful as a "waiting on you to confirm" badge counter.
+    pub pending_tool_uses: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +107,21 @@ pub enum AgentState {
     ToolCall,
 }
 
+impl AgentRow {
+    /// Compact state badge — when the row is in ToolCall state and
+    /// we know the tool name, surfaces it (`▸ Bash`); otherwise falls
+    /// back to the generic badge.
+    pub fn state_badge(&self) -> String {
+        if matches!(self.state, AgentState::ToolCall) {
+            if let Some(name) = &self.current_tool {
+                let short: String = name.chars().take(8).collect();
+                return format!("▸ {short}");
+            }
+        }
+        self.state.badge().to_string()
+    }
+}
+
 impl AgentState {
     pub fn badge(self) -> &'static str {
         match self {
@@ -96,12 +133,58 @@ impl AgentState {
     }
 }
 
+/// Which detail-panel view to show under the row list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetailView {
+    /// Default — last user msg + last assistant msg + meta.
+    Summary,
+    /// Most recent TodoList from a TaskCreate/TodoWrite event.
+    Todos,
+    /// Recent files touched via Edit/Write.
+    Files,
+    /// Recent Bash commands run.
+    Bash,
+    /// Recent Agent (subagent) dispatches.
+    Subagents,
+}
+
+impl DetailView {
+    pub fn label(self) -> &'static str {
+        match self {
+            DetailView::Summary => "Summary",
+            DetailView::Todos => "Todos",
+            DetailView::Files => "Files",
+            DetailView::Bash => "Bash",
+            DetailView::Subagents => "Agents",
+        }
+    }
+    pub fn cycle(self) -> Self {
+        match self {
+            DetailView::Summary => DetailView::Todos,
+            DetailView::Todos => DetailView::Files,
+            DetailView::Files => DetailView::Bash,
+            DetailView::Bash => DetailView::Subagents,
+            DetailView::Subagents => DetailView::Summary,
+        }
+    }
+}
+
 pub struct ClaudeAgentsPane {
     pub rows: Vec<AgentRow>,
     pub selected: usize,
     pub scroll: usize,
-    /// When the snapshot was built — shown in the title for clarity.
+    /// When the snapshot was last built — used by App::tick to
+    /// rate-limit auto-refresh and shown in the title.
     pub built_at: SystemTime,
+    /// `/` filter — narrows rows by workspace / id / model /
+    /// last-msg substring. Lowercase substring match.
+    pub query: String,
+    pub filter_mode: bool,
+    /// Which drill-down view shows under the row list.
+    pub detail: DetailView,
+    /// True to suppress auto-refresh (e.g. user is typing into the
+    /// filter input).
+    pub paused: bool,
 }
 
 impl ClaudeAgentsPane {
@@ -113,7 +196,45 @@ impl ClaudeAgentsPane {
             selected: 0,
             scroll: 0,
             built_at: SystemTime::now(),
+            query: String::new(),
+            filter_mode: false,
+            detail: DetailView::Summary,
+            paused: false,
         }
+    }
+
+    /// Rebuild rows in place, preserving the user's selection +
+    /// scroll if the selected session is still present.
+    pub fn refresh_in_place(&mut self) {
+        let prior_sid = self.selected_row().map(|r| r.session_id.clone());
+        let pids = scan_running_claude_pids();
+        self.rows = collect_rows(&pids);
+        self.built_at = SystemTime::now();
+        if let Some(sid) = prior_sid
+            && let Some(new_idx) = self
+                .visible_indices()
+                .iter()
+                .position(|&i| self.rows.get(i).map(|r| &r.session_id) == Some(&sid))
+        {
+            self.selected = new_idx;
+        }
+    }
+
+    /// Aggregate stats across the full row set (not filtered).
+    pub fn aggregate(&self) -> Aggregate {
+        let mut a = Aggregate::default();
+        for r in &self.rows {
+            match r.state {
+                AgentState::Streaming => a.streaming += 1,
+                AgentState::ToolCall => a.tool_calls += 1,
+                AgentState::Idle => a.idle += 1,
+                AgentState::Ended => a.ended += 1,
+            }
+            a.total_tokens = a.total_tokens.saturating_add(r.tokens);
+            a.pending_confirms =
+                a.pending_confirms.saturating_add(r.pending_tool_uses as u64);
+        }
+        a
     }
 
     pub fn tab_title(&self) -> String {
@@ -130,8 +251,36 @@ impl ClaudeAgentsPane {
         }
     }
 
+    /// Rows that pass the current filter, returned as indices into
+    /// `self.rows` so the renderer can map row index ↔ original
+    /// row without copying.
+    pub fn visible_indices(&self) -> Vec<usize> {
+        if self.query.is_empty() {
+            return (0..self.rows.len()).collect();
+        }
+        let q = self.query.to_lowercase();
+        self.rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                let hay = format!(
+                    "{} {} {} {} {} {}",
+                    r.workspace,
+                    r.session_id,
+                    r.model.as_deref().unwrap_or(""),
+                    r.last_user_msg.as_deref().unwrap_or(""),
+                    r.last_assistant_msg.as_deref().unwrap_or(""),
+                    r.git_branch.as_deref().unwrap_or(""),
+                );
+                hay.to_lowercase().contains(&q)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     pub fn selected_row(&self) -> Option<&AgentRow> {
-        self.rows.get(self.selected)
+        let vis = self.visible_indices();
+        vis.get(self.selected).and_then(|&i| self.rows.get(i))
     }
 
     pub fn move_up(&mut self) {
@@ -139,10 +288,25 @@ impl ClaudeAgentsPane {
     }
 
     pub fn move_down(&mut self) {
-        if self.selected + 1 < self.rows.len() {
+        let n = self.visible_indices().len();
+        if self.selected + 1 < n {
             self.selected += 1;
         }
     }
+
+    pub fn cycle_detail(&mut self) {
+        self.detail = self.detail.cycle();
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Aggregate {
+    pub streaming: usize,
+    pub tool_calls: usize,
+    pub idle: usize,
+    pub ended: usize,
+    pub total_tokens: u64,
+    pub pending_confirms: u64,
 }
 
 fn home_projects_dir() -> Option<PathBuf> {
@@ -214,6 +378,18 @@ fn collect_rows(pids: &[(String, u32)]) -> Vec<AgentRow> {
                 .iter()
                 .find_map(|(sid, pid)| (sid == session_id).then_some(*pid));
             let state = derive_state(pid.is_some(), mtime, &stats);
+            // Prefer the workspace label derived from the actual
+            // `cwd` field in the transcript — encoded-dir parsing
+            // (`-Users-x-Projects-y` → `y`) breaks on paths that
+            // contain literal dashes, but `cwd` is authoritative.
+            let workspace = stats
+                .cwd
+                .as_deref()
+                .and_then(|c| std::path::Path::new(c).file_name())
+                .and_then(|s| s.to_str())
+                .map(String::from)
+                .unwrap_or_else(|| workspace.clone());
+            let current_tool = stats.last_tool_name.clone();
             rows.push(AgentRow {
                 transcript_path: p.clone(),
                 session_id: session_id.to_string(),
@@ -228,6 +404,12 @@ fn collect_rows(pids: &[(String, u32)]) -> Vec<AgentRow> {
                 last_assistant_msg: stats.last_assistant_msg,
                 pid,
                 state,
+                current_tool,
+                todos: stats.todos,
+                recent_bash: stats.recent_bash,
+                recent_files: stats.recent_files,
+                recent_subagents: stats.recent_subagents,
+                pending_tool_uses: stats.pending_tool_uses,
             });
         }
     }
@@ -278,6 +460,26 @@ struct TailStats {
     last_user_msg: Option<String>,
     last_assistant_msg: Option<String>,
     last_was_tool_call: bool,
+    last_tool_name: Option<String>,
+    /// Most recent TodoList state — extracted from the last
+    /// TaskCreate/TaskUpdate tool_use input we see in the tail.
+    todos: Vec<TodoEntry>,
+    /// Recent Bash invocations (most recent first, capped at 10).
+    recent_bash: Vec<String>,
+    /// Recent Edit/Write file paths (most recent first, capped at 10).
+    recent_files: Vec<String>,
+    /// Subagent dispatches via the Agent tool (newest first, capped
+    /// at 5).
+    recent_subagents: Vec<String>,
+    /// `tool_use_id`s that haven't yet seen a matching tool_result.
+    /// Lower-bound count for "pending tool" badges.
+    pending_tool_uses: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct TodoEntry {
+    pub content: String,
+    pub status: String,
 }
 
 /// Tail-parse the .jsonl file. Reads up to the last 256KB and walks
@@ -288,10 +490,11 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
         return stats;
     };
     let lines: Vec<&str> = text.lines().collect();
-    // Walk forward so the LAST occurrence wins for the "last *" fields.
     let mut seen_assistant_text = false;
     let mut seen_user_msg = false;
     let mut last_assistant_was_tool = false;
+    // Track tool_use_id → not-yet-completed for the pending count.
+    let mut pending: std::collections::HashSet<String> = std::collections::HashSet::new();
     for line in &lines {
         stats.event_count += 1;
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -318,7 +521,6 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                 }
                 if let Some(content) = msg.and_then(|m| m.get("content")).and_then(|c| c.as_array())
                 {
-                    // First text block, OR sentinel for tool_use.
                     let mut text_acc: Option<String> = None;
                     let mut tool_name: Option<String> = None;
                     for block in content {
@@ -333,9 +535,92 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                                 }
                             }
                             "tool_use" => {
+                                let name = block
+                                    .get("name")
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("?")
+                                    .to_string();
+                                let id = block
+                                    .get("id")
+                                    .and_then(|i| i.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let input = block.get("input");
+                                if !id.is_empty() {
+                                    pending.insert(id);
+                                }
                                 if tool_name.is_none() {
-                                    tool_name =
-                                        block.get("name").and_then(|n| n.as_str()).map(String::from);
+                                    tool_name = Some(name.clone());
+                                }
+                                // Per-tool sidecars.
+                                match name.as_str() {
+                                    "TaskCreate" | "TodoWrite" => {
+                                        if let Some(arr) =
+                                            input.and_then(|i| i.get("todos")).and_then(|t| t.as_array())
+                                        {
+                                            stats.todos = arr
+                                                .iter()
+                                                .filter_map(|t| {
+                                                    let content = t
+                                                        .get("content")
+                                                        .or_else(|| t.get("activeForm"))
+                                                        .and_then(|c| c.as_str())?;
+                                                    let status = t
+                                                        .get("status")
+                                                        .and_then(|s| s.as_str())
+                                                        .unwrap_or("pending");
+                                                    Some(TodoEntry {
+                                                        content: content.to_string(),
+                                                        status: status.to_string(),
+                                                    })
+                                                })
+                                                .collect();
+                                        }
+                                    }
+                                    "Bash" => {
+                                        if let Some(cmd) =
+                                            input.and_then(|i| i.get("command")).and_then(|c| c.as_str())
+                                        {
+                                            stats.recent_bash.insert(0, truncate(cmd, 96));
+                                            stats.recent_bash.truncate(10);
+                                        }
+                                    }
+                                    "Edit" | "Write" | "NotebookEdit" => {
+                                        if let Some(p) =
+                                            input.and_then(|i| i.get("file_path")).and_then(|f| f.as_str())
+                                        {
+                                            // Trim long paths to the last 2 segments.
+                                            let short = std::path::Path::new(p)
+                                                .components()
+                                                .rev()
+                                                .take(2)
+                                                .collect::<Vec<_>>()
+                                                .into_iter()
+                                                .rev()
+                                                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                                                .collect::<Vec<_>>()
+                                                .join("/");
+                                            let entry = format!("{name} {short}");
+                                            if !stats.recent_files.iter().any(|e| e == &entry) {
+                                                stats.recent_files.insert(0, entry);
+                                                stats.recent_files.truncate(10);
+                                            }
+                                        }
+                                    }
+                                    "Agent" => {
+                                        let sub_type = input
+                                            .and_then(|i| i.get("subagent_type"))
+                                            .and_then(|s| s.as_str())
+                                            .unwrap_or("?");
+                                        let desc = input
+                                            .and_then(|i| i.get("description"))
+                                            .and_then(|s| s.as_str())
+                                            .unwrap_or("");
+                                        stats.recent_subagents
+                                            .insert(0, format!("{sub_type}: {desc}"));
+                                        stats.recent_subagents.truncate(5);
+                                    }
+                                    _ => {}
                                 }
                             }
                             _ => {}
@@ -347,6 +632,7 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                     } else if let Some(n) = tool_name {
                         stats.last_assistant_msg = Some(format!("⚙ {n}"));
                         last_assistant_was_tool = true;
+                        stats.last_tool_name = Some(n);
                         seen_assistant_text = true;
                     }
                 }
@@ -355,6 +641,20 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                 let content = v
                     .get("message")
                     .and_then(|m| m.get("content"));
+                // Look for tool_result blocks first — match them
+                // against the pending set so we can compute pending
+                // tool-use count.
+                if let Some(serde_json::Value::Array(arr)) = content {
+                    for b in arr {
+                        if b.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
+                            if let Some(id) =
+                                b.get("tool_use_id").and_then(|i| i.as_str())
+                            {
+                                pending.remove(id);
+                            }
+                        }
+                    }
+                }
                 let text = match content {
                     Some(serde_json::Value::String(s)) => Some(s.clone()),
                     Some(serde_json::Value::Array(arr)) => arr
@@ -371,9 +671,6 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                 };
                 if let Some(t) = text {
                     let t = t.trim();
-                    // Filter out tool_result / system reminders / hook
-                    // outputs masquerading as user messages — they
-                    // don't add signal.
                     if !t.is_empty()
                         && !t.starts_with("<system-reminder>")
                         && !t.starts_with("<command-")
@@ -390,6 +687,7 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
         let _ = seen_user_msg;
     }
     stats.last_was_tool_call = last_assistant_was_tool;
+    stats.pending_tool_uses = pending.len();
     stats
 }
 
@@ -415,11 +713,25 @@ fn read_tail(path: &std::path::Path, cap: usize) -> std::io::Result<String> {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    let s = s.trim();
-    if s.chars().count() <= max {
-        s.to_string()
+    // Collapse all whitespace (including newlines) to single spaces
+    // so multi-line messages render as one row.
+    let mut collapsed = String::with_capacity(s.len());
+    let mut last_was_space = false;
+    for c in s.trim().chars() {
+        if c.is_whitespace() {
+            if !last_was_space {
+                collapsed.push(' ');
+            }
+            last_was_space = true;
+        } else {
+            collapsed.push(c);
+            last_was_space = false;
+        }
+    }
+    if collapsed.chars().count() <= max {
+        collapsed
     } else {
-        let cut: String = s.chars().take(max).collect();
+        let cut: String = collapsed.chars().take(max).collect();
         format!("{cut}…")
     }
 }

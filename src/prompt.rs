@@ -105,6 +105,10 @@ pub enum PromptKind {
     /// Request pane populated with the parsed request. Useful for
     /// "get me the top 5 users from prod" → fully-formed POST.
     HttpAiBuild,
+    /// Accept (any non-empty input ⇒ proceed) ⇒ SIGTERM the PID
+    /// stashed in `App.pending_kill_pid`. Prompt copy is
+    /// "type 'kill' to terminate PID N · esc cancels".
+    ClaudeKillConfirm,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into

@@ -1746,12 +1746,48 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
-    // Claude Agents dashboard: j/k navigate, r refresh, y/c/t actions,
-    // Esc focuses the file tree, q closes.
+    // Claude Agents dashboard
     if matches!(app.panes.get(i), Some(Pane::ClaudeAgents(_))) {
         use crate::claude_agents::ClaudeAgentsAction;
+        // Filter mode owns keystrokes (matches the cheatsheet/grep
+        // convention). Typing edits the query; Enter applies +
+        // exits filter mode; Esc clears + exits.
+        if matches!(app.panes.get(i), Some(Pane::ClaudeAgents(p)) if p.filter_mode) {
+            match key.code {
+                KeyCode::Esc => {
+                    if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                        p.query.clear();
+                        p.filter_mode = false;
+                        p.paused = false;
+                        p.selected = 0;
+                    }
+                }
+                KeyCode::Enter => {
+                    if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                        p.filter_mode = false;
+                        p.paused = false;
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                        p.query.pop();
+                        p.selected = 0;
+                    }
+                }
+                KeyCode::Char(c)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                        p.query.push(c);
+                        p.selected = 0;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up | KeyCode::Char('k') if !key.modifiers.contains(KeyModifiers::SHIFT) => {
                 if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
                     p.move_up();
                 }
@@ -1764,6 +1800,19 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('r') => app.refresh_claude_agents_pane(),
             KeyCode::Char('y') => app.claude_agents_action(ClaudeAgentsAction::YankSessionId),
             KeyCode::Char('c') => app.claude_agents_action(ClaudeAgentsAction::YankCwd),
+            KeyCode::Char('v') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.cycle_detail();
+                }
+            }
+            KeyCode::Char('/') => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
+                    p.filter_mode = true;
+                    p.paused = true;
+                }
+            }
+            KeyCode::Char('K') => app.claude_agents_action(ClaudeAgentsAction::KillPrompt),
+            KeyCode::Char('o') => app.claude_agents_action(ClaudeAgentsAction::ResumeSession),
             KeyCode::Char('t') | KeyCode::Enter => {
                 app.claude_agents_action(ClaudeAgentsAction::OpenTranscript);
             }

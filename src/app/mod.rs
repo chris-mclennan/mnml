@@ -3114,6 +3114,10 @@ pub struct App {
     )>,
     /// True while a chain run is in flight; gates double-submits.
     pub http_chain_in_flight: bool,
+    /// Pending kill (SIGTERM) target for `:ai.agents_dashboard`'s
+    /// confirm prompt. Set when the user presses `K` on a row;
+    /// resolved on prompt accept.
+    pub pending_kill_pid: Option<u32>,
     /// 2026-06-20 — theme picker live preview. Snapshot of the
     /// active theme name when the Themes picker opens; restored on
     /// Esc / cleared on Enter. Up/Down on the picker applies the
@@ -3573,6 +3577,7 @@ impl App {
             http_ai_build_in_flight: false,
             http_chain_chan: None,
             http_chain_in_flight: false,
+            pending_kill_pid: None,
             theme_preview_restore: None,
             pending_pr_desc_job: None,
             ai_chan: None,
@@ -8417,9 +8422,33 @@ impl App {
     pub fn refresh_claude_agents_pane(&mut self) {
         let Some(i) = self.active else { return };
         if matches!(self.panes.get(i), Some(Pane::ClaudeAgents(_))) {
-            let fresh = crate::claude_agents::ClaudeAgentsPane::build();
             if let Some(Pane::ClaudeAgents(c)) = self.panes.get_mut(i) {
-                *c = fresh;
+                c.refresh_in_place();
+            }
+        }
+    }
+
+    /// Tick hook — every ~3s, rebuild any open Claude Agents pane so
+    /// rows reflect newly-active sessions / state transitions without
+    /// the user pressing `r`. Skipped while the user is typing into
+    /// the pane's filter (`paused = true`).
+    pub fn maybe_auto_refresh_claude_agents(&mut self) {
+        const REFRESH_EVERY_SECS: u64 = 3;
+        let now = std::time::SystemTime::now();
+        for i in 0..self.panes.len() {
+            let should_refresh = matches!(
+                self.panes.get(i),
+                Some(Pane::ClaudeAgents(p))
+                    if !p.paused
+                        && now
+                            .duration_since(p.built_at)
+                            .map(|d| d.as_secs() >= REFRESH_EVERY_SECS)
+                            .unwrap_or(false)
+            );
+            if should_refresh
+                && let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i)
+            {
+                p.refresh_in_place();
             }
         }
     }
@@ -8450,7 +8479,63 @@ impl App {
                     self.toast("no cwd recorded for that session");
                 }
             }
+            ClaudeAgentsAction::KillPrompt => {
+                let Some(pid) = row.pid else {
+                    self.toast("no PID — session already ended");
+                    return;
+                };
+                let sid = row.session_id.clone();
+                let workspace = row.workspace.clone();
+                self.pending_kill_pid = Some(pid);
+                self.prompt = Some(crate::prompt::Prompt::new(
+                    crate::prompt::PromptKind::ClaudeKillConfirm,
+                    format!(
+                        "type 'kill' to SIGTERM PID {pid} ({workspace} · {})",
+                        sid.chars().take(8).collect::<String>()
+                    ),
+                ));
+            }
+            ClaudeAgentsAction::ResumeSession => {
+                let sid = row.session_id.clone();
+                let cwd = row
+                    .cwd
+                    .as_deref()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| self.workspace.clone());
+                let profile =
+                    crate::pty_pane::BinaryProfile::claude_code_resume(cwd, sid.clone());
+                self.open_pty(profile);
+                self.toast(format!(
+                    "resuming session {}…",
+                    sid.chars().take(8).collect::<String>()
+                ));
+            }
         }
+    }
+
+    /// Fire SIGTERM at `pid`. Used by the
+    /// `PromptKind::ClaudeKillConfirm` accept path. Best-effort —
+    /// no-op when the OS rejects the signal or `kill` isn't on PATH.
+    pub fn claude_agents_kill_confirmed(&mut self) {
+        let Some(pid) = self.pending_kill_pid.take() else {
+            return;
+        };
+        let out = std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {
+                self.toast(format!("SIGTERM → {pid}"));
+            }
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr);
+                self.toast(format!("kill {pid} failed: {err}"));
+            }
+            Err(e) => self.toast(format!("kill {pid}: {e}")),
+        }
+        // Refresh so the row's state updates.
+        self.refresh_claude_agents_pane();
     }
 
     pub fn open_cheatsheet(&mut self) {
@@ -9164,6 +9249,7 @@ impl App {
         self.drain_websocket();
         self.drain_http_ai_build();
         self.drain_http_chain();
+        self.maybe_auto_refresh_claude_agents();
         self.drain_http_sync_result();
         self.drain_http_bench_result();
         self.drain_lookup_fire_result();

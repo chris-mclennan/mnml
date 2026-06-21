@@ -1282,6 +1282,14 @@ impl App {
                 let description = p.input.clone();
                 self.http_ai_build_accept(description);
             }
+            crate::prompt::PromptKind::ClaudeKillConfirm => {
+                if p.input.trim() == "kill" {
+                    self.claude_agents_kill_confirmed();
+                } else {
+                    self.pending_kill_pid = None;
+                    self.toast("kill cancelled (type 'kill' exactly to confirm)");
+                }
+            }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();
                 if let Some(FsAction::NewFile { parent }) = self.pending_fs_action.take() {
