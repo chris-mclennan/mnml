@@ -238,6 +238,18 @@ pub(crate) fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
             // EX_COMPLETION_NAMES). Now Enter just runs whatever
             // is in the cmdline; users wanting the popup match
             // use Tab/click first to insert it into the line.
+            // 2026-06-20 — mirror the ExCommand arm: also push
+            // onto App.ex_history so vim's `q:` window sees the
+            // entry (otherwise vim users' history lived only in
+            // the handler-side mirror, which the cmdline-history
+            // pane couldn't read).
+            if app.ex_history.last() != Some(&typed) {
+                app.ex_history.push(typed.clone());
+                if app.ex_history.len() > 100 {
+                    let drop = app.ex_history.len() - 100;
+                    app.ex_history.drain(..drop);
+                }
+            }
             app.run_ex_command(&typed);
         }
         RepeatInsertStart { count, above } => app.repeat_insert_start(count as usize, above),
