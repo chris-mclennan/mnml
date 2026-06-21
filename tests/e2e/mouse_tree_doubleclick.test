@@ -1,0 +1,10 @@
+# Double-clicking a tree file opens it (a permanent tab). Guards the
+# deferred-open path for the count>=2 case.
+write aa.txt aa-content
+write bb.txt bb-content
+open aa.txt
+command tree.refresh
+# row 2 = aa.txt, row 3 = bb.txt
+doubleclick 5 3
+expect pane "bb.txt"
+expect screen contains "bb-content"

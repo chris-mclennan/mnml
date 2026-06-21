@@ -1,0 +1,13 @@
+# Drag a tab onto the BOTTOM zone of a pane → stacked (vertical) split.
+write aa.txt AAAAAAAA
+write bb.txt BBBBBBBB
+open aa.txt
+command view.toggle_tree
+open bb.txt
+
+# bb.txt visible; drag aa.txt's tab (row 1) to the bottom of the pane.
+# Bottom zone → bb.txt on top, aa.txt stacked below. Both visible.
+drag 5 1 60 35
+expect screen contains "AAAAAAAA"
+expect screen contains "BBBBBBBB"
+expect pane "aa.txt"
