@@ -598,6 +598,17 @@ fn draw_detail(
                     Style::default().fg(t.comment).bg(t.bg_dark),
                 )));
             } else {
+                // 2026-06-21 claude-agents SEV-2 file-click-offset-wrong —
+                // the renderer (further down) clamps scroll to
+                // `actual_scroll = scroll.min(max_scroll)` so over-
+                // scroll doesn't drop visible rows; the click rects
+                // were computed against the raw `scroll`, so when
+                // detail_scroll > max_scroll the rects pointed at
+                // rows that weren't there. Compute the same clamp
+                // here so click rects match what's rendered.
+                let max_scroll = row.recent_files.len().saturating_sub(1);
+                let actual_scroll = scroll.min(max_scroll);
+                let scroll = actual_scroll; // shadow for the loop below
                 for (i, f) in row.recent_files.iter().enumerate() {
                     let short = std::path::Path::new(&f.path)
                         .components()

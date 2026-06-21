@@ -276,6 +276,11 @@ pub struct ResponseView {
     /// "Schema: ✓ valid" / "Schema: ✗ N errors" footer when this
     /// is `Some`.
     pub schema_result: Option<crate::http::schema::SchemaResult>,
+    /// 2026-06-21 api-workflow SEV-2 — proper SSE event counter
+    /// for streaming responses. Was previously emulated by pushing
+    /// empty `("", "")` tuples into `captures` and clearing on
+    /// close — which silently dropped any real `@capture` results.
+    pub sse_event_count: u32,
 }
 
 impl RequestPane {

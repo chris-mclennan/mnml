@@ -945,7 +945,7 @@ fn draw_edit(
             Style::default().fg(t.yellow).bg(t.bg_dark),
         )),
         RunState::Streaming(r) => rows.push(plain(
-            format!("  ▶ streaming · {} events received", r.captures.len()),
+            format!("  ▶ streaming · {} events received", r.sse_event_count),
             Style::default().fg(t.cyan).bg(t.bg_dark),
         )),
         RunState::Failed(e) => rows.push(plain(

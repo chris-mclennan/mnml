@@ -5556,11 +5556,20 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
             KeyCode::PageDown => rp.scroll += viewport,
             KeyCode::Home | KeyCode::Char('g') => rp.scroll = 0,
             KeyCode::End | KeyCode::Char('G') => rp.scroll = usize::MAX, // clamped on draw
-            KeyCode::Char('r') => app.send_request_from_active(),
+            // 2026-06-21 nvchad SEV-2: bare `r` re-fired the
+            // request — destructive on PUT/DELETE. Bare `a` opened
+            // an AI debug pane that bills tokens. Both were a
+            // hostile match for a vim user's `r<char>` (replace)
+            // and `a` (append) reflexes. Now: capital `R` re-fires
+            // (vim canon for replace-mode actions of consequence),
+            // `.` keeps the AI debug binding (was paired with `a`),
+            // and the `a` chord is removed. The cheatsheet headers
+            // are updated separately.
+            KeyCode::Char('R') => app.send_request_from_active(),
             KeyCode::Char('y') => app.copy_active_curl(),
             KeyCode::Char('Y') => app.copy_active_response_body(),
             KeyCode::Char('e') => rp.toggle_view(),
-            KeyCode::Char('.') | KeyCode::Char('a') => app.ai_debug_request(),
+            KeyCode::Char('.') => app.ai_debug_request(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }

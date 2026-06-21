@@ -942,8 +942,19 @@ impl App {
         let (status, errors, schema_path) = match self.panes.get(cur) {
             Some(Pane::Request(rp)) => match &rp.state {
                 RunState::Done(rv) | RunState::Streaming(rv) => {
+                    // 2026-06-21 api-workflow SEV-2 — distinguish
+                    // "no sidecar" from "validation not yet run".
+                    // For streaming responses, schema_result is None
+                    // until Close; the old toast falsely blamed the
+                    // sidecar.
                     let Some(sr) = rv.schema_result.as_ref() else {
-                        self.toast("schema: no sidecar (.schema.json) for this request");
+                        if matches!(rp.state, RunState::Streaming(_)) {
+                            self.toast(
+                                "schema: stream still open — wait for close before validating",
+                            );
+                        } else {
+                            self.toast("schema: no sidecar (.schema.json) for this request");
+                        }
                         return;
                     };
                     (sr.status.clone(), sr.errors.clone(), sr.schema_path.clone())
@@ -1003,6 +1014,12 @@ impl App {
         let (source_path, body) = match self.panes.get(cur) {
             Some(Pane::Request(rp)) => match &rp.state {
                 RunState::Done(rv) => (rp.source_path.clone(), rv.body.clone()),
+                RunState::Streaming(_) => {
+                    self.toast(
+                        "schema: stream still open — wait for close before revalidating",
+                    );
+                    return;
+                }
                 _ => {
                     self.toast("schema: no completed response");
                     return;
@@ -1852,6 +1869,7 @@ impl App {
                     assertions: Vec::new(),
                     captures: Vec::new(),
                     schema_result: None,
+                    sse_event_count: 0,
                 },
             ));
             rp.view = crate::request_pane::ViewMode::Response;
@@ -2618,6 +2636,7 @@ impl App {
                     assertions,
                     captures,
                     schema_result,
+                    sse_event_count: 0,
                 })
             })();
             let _ = tx.send((job_id, result));
@@ -3549,6 +3568,7 @@ impl App {
                                 assertions: Vec::new(),
                                 captures: Vec::new(),
                                 schema_result: None,
+                                sse_event_count: 0,
                             }));
                         }
                     }
@@ -3572,8 +3592,12 @@ impl App {
                             }
                             rv.body.push_str(&data);
                             rv.body.push_str("\n\n");
-                            // Use captures count to track event count
-                            rv.captures.push((String::new(), String::new()));
+                            // 2026-06-21 api-workflow SEV-2: proper
+                            // per-pane SSE event counter. Was
+                            // pushing empty ("", "") into captures
+                            // — abused as a counter, then clobbered
+                            // any real @capture results on Close.
+                            rv.sse_event_count = rv.sse_event_count.saturating_add(1);
                         }
                     }
                 }
@@ -3590,9 +3614,10 @@ impl App {
                                 &mut rp.state,
                                 RunState::Sending,
                             ) {
-                                // Clear captures (used as event counter)
                                 let mut rv = *rv;
-                                rv.captures.clear();
+                                // captures stays untouched — was
+                                // being cleared as part of the
+                                // event-counter hack.
                                 rv.schema_result = source_path.as_deref().map(|p| {
                                     crate::http::schema::validate_for(Some(p), &rv.body)
                                 });
