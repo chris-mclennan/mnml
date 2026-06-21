@@ -2450,6 +2450,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_branch_picker(),
         },
         Command {
+            id: "git.delete_branch",
+            title: "Git: delete a local branch (picker, force -D, confirm prompt)",
+            group: "git",
+            // Picker over local branches (current branch excluded —
+            // git refuses to delete checked-out). Enter → confirm
+            // prompt "type 'delete' to force-delete branch X".
+            // Force (-D) means unmerged branches go away too.
+            keys: &[],
+            run: |app| app.open_delete_branch_picker(),
+        },
+        Command {
             id: "git.recent_branches",
             title: "Git: recent branches (sorted by last commit date)",
             group: "git",
@@ -3603,6 +3614,34 @@ fn builtin_commands() -> Vec<Command> {
             group: "browser",
             keys: &[],
             run: |app| app.browser_copy_url(),
+        },
+        Command {
+            id: "browser.back",
+            title: "Browser: navigate back (window.history.back)",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_back(),
+        },
+        Command {
+            id: "browser.forward",
+            title: "Browser: navigate forward (window.history.forward)",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_forward(),
+        },
+        Command {
+            id: "browser.devtools",
+            title: "Browser: open DevTools (chrome://inspect hint)",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_open_devtools_hint(),
+        },
+        Command {
+            id: "ai.explain_diff",
+            title: "AI: explain the staged diff (or working-tree diff) — Claude walks through it",
+            group: "ai",
+            keys: &[],
+            run: |app| app.request_ai_explain_diff(),
         },
         Command {
             id: "browser.screenshot",

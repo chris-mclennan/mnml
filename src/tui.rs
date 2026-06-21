@@ -2411,6 +2411,11 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::End | KeyCode::Char('G') => app.move_diagnostics_selection(isize::MAX / 2),
             KeyCode::Enter => app.jump_to_selected_diagnostic(),
             KeyCode::Char('r') => app.refresh_diagnostics_panes(),
+            KeyCode::Char('s') => {
+                if let Some(Pane::Diagnostics(d)) = app.panes.get_mut(i) {
+                    d.cycle_severity_filter();
+                }
+            }
             KeyCode::Esc => app.focus_tree(),
             _ => {}
         }

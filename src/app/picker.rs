@@ -683,6 +683,9 @@ impl App {
                 let path = std::path::PathBuf::from(item.id.clone());
                 self.http_chain_run_path(path);
             }
+            PickerKind::GitDeleteBranch => {
+                self.git_delete_branch_confirm(item.id.clone());
+            }
             PickerKind::CookiesDelete => {
                 if let Some((host, name)) = item.id.split_once('\t') {
                     let removed = {
@@ -1285,6 +1288,14 @@ impl App {
             crate::prompt::PromptKind::ClaudeSessionSearch => {
                 let q = p.input.clone();
                 self.ai_session_search_run(q);
+            }
+            crate::prompt::PromptKind::GitDeleteBranchConfirm => {
+                if p.input.trim().eq_ignore_ascii_case("delete") {
+                    self.git_delete_branch_apply();
+                } else {
+                    self.pending_branch_delete = None;
+                    self.toast("branch delete cancelled");
+                }
             }
             crate::prompt::PromptKind::ClaudeKillConfirm => {
                 if p.input.trim().eq_ignore_ascii_case("kill") {

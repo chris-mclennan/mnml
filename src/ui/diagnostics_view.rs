@@ -74,13 +74,19 @@ pub fn draw(
         Style::default().fg(t.comment).bg(t.bg_dark),
     )));
 
-    if d.items.is_empty() {
+    let vis = d.visible_indices();
+    if vis.is_empty() {
         lines.push(Line::from(Span::styled(
             " ",
             Style::default().bg(t.bg_dark),
         )));
+        let msg = if d.items.is_empty() {
+            "  ✓ no diagnostics in open files"
+        } else {
+            "  (filtered out — `s` cycles severity)"
+        };
         lines.push(Line::from(Span::styled(
-            "  ✓ no diagnostics in open files",
+            msg,
             Style::default().fg(t.green).bg(t.bg_dark),
         )));
         frame.render_widget(
@@ -90,16 +96,24 @@ pub fn draw(
         return None;
     }
 
+    // Severity chip on row 1.
+    let total = d.items.len();
+    let shown = vis.len();
+    let chip = format!(
+        "  filter: {} ({shown}/{total})  ·  `s` cycles severity",
+        d.severity_label()
+    );
     lines.push(Line::from(Span::styled(
-        " ",
-        Style::default().bg(t.bg_dark),
+        chip,
+        Style::default().fg(t.comment).bg(t.bg_dark),
     )));
 
     let body_start_offset = lines.len();
     let mut selected_row = lines.len();
-    let mut row_indices: Vec<usize> = Vec::with_capacity(d.items.len());
-    for (idx, it) in d.items.iter().enumerate() {
-        let sel = idx == d.selected;
+    let mut row_indices: Vec<usize> = Vec::with_capacity(vis.len());
+    for (visible_idx, &items_idx) in vis.iter().enumerate() {
+        let it = &d.items[items_idx];
+        let sel = visible_idx == d.selected;
         if sel {
             selected_row = lines.len();
         }

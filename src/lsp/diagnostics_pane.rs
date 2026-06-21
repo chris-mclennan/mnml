@@ -28,6 +28,10 @@ pub struct DiagnosticsPane {
     pub selected: usize,
     /// Top rendered row.
     pub scroll: usize,
+    /// Minimum severity shown in the list. `Hint` = all. Cycled by
+    /// `s` chord. Errors-only mode is the common "ship this PR"
+    /// view; full mode is for housekeeping. 2026-06-21.
+    pub min_severity: Severity,
 }
 
 fn sev_rank(s: Severity) -> u8 {
@@ -76,7 +80,53 @@ impl DiagnosticsPane {
             items,
             selected: 0,
             scroll: 0,
+            min_severity: Severity::Hint,
         }
+    }
+
+    /// Items that pass the current severity filter.
+    pub fn visible(&self) -> Vec<&DiagItem> {
+        let cap = sev_rank(self.min_severity);
+        self.items
+            .iter()
+            .filter(|it| sev_rank(it.severity) <= cap)
+            .collect()
+    }
+
+    /// Indices into `self.items` for rows that pass the current
+    /// severity filter (parallel to `visible()`). Used by the
+    /// renderer + click handler so flat_idx ↔ items index stays
+    /// consistent.
+    pub fn visible_indices(&self) -> Vec<usize> {
+        let cap = sev_rank(self.min_severity);
+        self.items
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| sev_rank(it.severity) <= cap)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Severity-filter label for the title bar.
+    pub fn severity_label(&self) -> &'static str {
+        match self.min_severity {
+            Severity::Error => "errors only",
+            Severity::Warning => "errors + warnings",
+            Severity::Info => "errors + warnings + info",
+            Severity::Hint => "all",
+        }
+    }
+
+    /// `s` chord — cycle errors-only ↔ errors+warnings ↔ all.
+    pub fn cycle_severity_filter(&mut self) {
+        self.min_severity = match self.min_severity {
+            Severity::Hint => Severity::Error,
+            Severity::Error => Severity::Warning,
+            Severity::Warning => Severity::Info,
+            Severity::Info => Severity::Hint,
+        };
+        self.selected = 0;
+        self.scroll = 0;
     }
 
     /// `(errors, warnings)` counts.
@@ -114,15 +164,16 @@ impl DiagnosticsPane {
     }
 
     pub fn move_selection(&mut self, delta: isize) {
-        if self.items.is_empty() {
+        let n = self.visible_indices().len();
+        if n == 0 {
             return;
         }
-        let n = self.items.len() as isize;
-        self.selected = (self.selected as isize + delta).clamp(0, n - 1) as usize;
+        self.selected = (self.selected as isize + delta).clamp(0, n as isize - 1) as usize;
     }
 
     pub fn selected_item(&self) -> Option<&DiagItem> {
-        self.items.get(self.selected)
+        let vis = self.visible_indices();
+        vis.get(self.selected).and_then(|&i| self.items.get(i))
     }
 }
 

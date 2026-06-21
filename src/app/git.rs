@@ -2075,6 +2075,55 @@ impl App {
     }
 
     /// Open a fuzzy picker over local + remote branches; accept ⇒ checkout.
+    /// `:git.delete_branch` — picker over local branches. Accept
+    /// runs `git branch -D <name>` (force delete) after a confirm
+    /// prompt. The current branch is excluded from the list since
+    /// git refuses to delete it.
+    pub fn open_delete_branch_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let cur = crate::git::branch::current(self.active_repo_path());
+        let mut branches = crate::git::branch::local_branches(self.active_repo_path());
+        if let Some(c) = cur.as_ref() {
+            branches.retain(|b| b != c);
+        }
+        if branches.is_empty() {
+            self.toast("no other branches to delete");
+            return;
+        }
+        let items: Vec<PickerItem> = branches
+            .iter()
+            .map(|b| PickerItem::new(b.clone(), b.clone(), "delete"))
+            .collect();
+        self.open_picker(Picker::new(
+            PickerKind::GitDeleteBranch,
+            "Delete branch (force -D)",
+            items,
+        ));
+    }
+
+    /// Backing for the GitDeleteBranch picker — fires the confirm
+    /// prompt. The accept handler in picker.rs calls this after
+    /// the user picks a branch.
+    pub fn git_delete_branch_confirm(&mut self, name: String) {
+        self.pending_branch_delete = Some(name.clone());
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::GitDeleteBranchConfirm,
+            format!("type 'delete' to force-delete branch {name}"),
+        ));
+    }
+
+    /// Fire `git branch -D <name>` once the confirm prompt is accepted.
+    pub fn git_delete_branch_apply(&mut self) {
+        let Some(name) = self.pending_branch_delete.take() else {
+            return;
+        };
+        let repo = self.active_repo_path().to_path_buf();
+        match crate::git::branch::delete_branch(&repo, &name) {
+            Ok(()) => self.toast(format!("deleted branch {name}")),
+            Err(e) => self.toast(format!("delete {name}: {e}")),
+        }
+    }
+
     /// `:git.recent_branches` — picker over local branches sorted
     /// by `committerdate` (newest first). Same accept handler as
     /// the standard branch picker (PickerKind::Branches with

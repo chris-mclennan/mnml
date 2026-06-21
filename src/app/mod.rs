@@ -3123,6 +3123,10 @@ pub struct App {
     /// the user presses `K` while rows are multi-selected. Resolved
     /// on prompt accept the same way as `pending_kill_pid`.
     pub pending_kill_batch: Vec<(String, u32)>,
+    /// Pending branch name for `:git.delete_branch`'s confirm
+    /// prompt. Set when the GitDeleteBranch picker accepts; resolved
+    /// on the confirm prompt accept.
+    pub pending_branch_delete: Option<String>,
     /// 2026-06-20 — theme picker live preview. Snapshot of the
     /// active theme name when the Themes picker opens; restored on
     /// Esc / cleared on Enter. Up/Down on the picker applies the
@@ -3133,6 +3137,9 @@ pub struct App {
     /// `[pr-description]` scratch instead of routing to a commit
     /// prompt.
     pub pending_pr_desc_job: Option<u64>,
+    /// 2026-06-21 — `:ai.explain_diff` job tag. AiMsg::Done goes
+    /// to a `[diff-explanation]` scratch.
+    pub pending_explain_diff_job: Option<u64>,
     /// Channel for background `claude -p` runs (lazily created); worker threads
     /// stream `(job_id, AiMsg)` (deltas then a final Done/Failed), [`Self::tick`]
     /// drains it into the matching `Pane::Ai`.
@@ -3582,8 +3589,10 @@ impl App {
             http_chain_in_flight: false,
             pending_kill_pid: None,
             pending_kill_batch: Vec::new(),
+            pending_branch_delete: None,
             theme_preview_restore: None,
             pending_pr_desc_job: None,
+            pending_explain_diff_job: None,
             ai_chan: None,
             suggest_chan: None,
             pending_suggest: None,

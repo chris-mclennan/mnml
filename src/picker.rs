@@ -191,6 +191,9 @@ pub enum PickerKind {
     /// runner arc (chains are mnml's chain format; Postman
     /// collections feed in via `:http.import_postman` first).
     HttpChains,
+    /// `id` = local branch name. Accept ⇒ open a confirm prompt
+    /// before running `git branch -D`. 2026-06-21 — git polish.
+    GitDeleteBranch,
 }
 
 #[derive(Debug, Clone)]

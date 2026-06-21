@@ -113,6 +113,9 @@ pub enum PromptKind {
     /// for the typed substring (case-insensitive). Results land in
     /// a `[session-search]` scratch buffer.
     ClaudeSessionSearch,
+    /// Accept (input == "delete") ⇒ force-delete the branch
+    /// stashed in `App.pending_branch_delete`.
+    GitDeleteBranchConfirm,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into

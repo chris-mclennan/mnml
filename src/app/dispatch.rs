@@ -885,10 +885,12 @@ pub(crate) fn handle_scm_row_click(
     use crate::pane::Pane;
     // Plain list panes — set selected, optionally fire primary action.
     if matches!(app.panes.get(pane_id), Some(Pane::Diagnostics(_))) {
-        if let Some(Pane::Diagnostics(d)) = app.panes.get_mut(pane_id)
-            && flat_idx < d.items.len()
-        {
-            d.selected = flat_idx;
+        if let Some(Pane::Diagnostics(d)) = app.panes.get_mut(pane_id) {
+            // flat_idx is the index into visible (filtered) rows.
+            let n = d.visible_indices().len();
+            if flat_idx < n {
+                d.selected = flat_idx;
+            }
         }
         if is_double_click {
             app.jump_to_selected_diagnostic();

@@ -1593,6 +1593,36 @@ impl App {
                 }
                 continue;
             }
+            // An "AI: explain this diff" job? Route the final text
+            // into a [diff-explanation] scratch buffer.
+            if self.pending_explain_diff_job == Some(job_id) {
+                let result = match msg {
+                    AiMsg::Delta(_) => continue,
+                    AiMsg::Usage { .. } | AiMsg::ConfirmTool { .. } => continue,
+                    AiMsg::Done(text) => Ok(text),
+                    AiMsg::Failed(e) => Err(e),
+                };
+                self.pending_explain_diff_job = None;
+                match result {
+                    Ok(text) => {
+                        let clean = text
+                            .trim()
+                            .trim_start_matches("```markdown")
+                            .trim_start_matches("```md")
+                            .trim_start_matches("```")
+                            .trim_end_matches("```")
+                            .trim()
+                            .to_string();
+                        self.open_scratch_with_text(
+                            "[diff-explanation]".to_string(),
+                            clean,
+                        );
+                        toasts.push("ai.explain_diff: ready → [diff-explanation]".to_string());
+                    }
+                    Err(e) => toasts.push(format!("ai.explain_diff: {e}")),
+                }
+                continue;
+            }
             // An "AI: write me a PR description" job? Route the final
             // text into a [pr-description] scratch buffer.
             if self.pending_pr_desc_job == Some(job_id) {
@@ -1770,6 +1800,50 @@ impl App {
             g.ai_msg_job = Some(job_id);
         }
         self.toast("asking Claude for a commit message…");
+    }
+
+    /// `:ai.explain_diff` — ask Claude to walk through the staged
+    /// diff (or the working diff if nothing is staged) and explain
+    /// what it changes + why. Output lands in a `[diff-explanation]`
+    /// scratch. Useful before pushing a chunk you want a second
+    /// reading of.
+    pub fn request_ai_explain_diff(&mut self) {
+        // Prefer staged diff; fall back to working-tree diff.
+        let staged = crate::git::stage::staged_diff(self.active_repo_path());
+        let (diff, label) = if !staged.trim().is_empty() {
+            (staged, "staged")
+        } else {
+            let out = std::process::Command::new("git")
+                .args(["diff"])
+                .current_dir(self.active_repo_path())
+                .output();
+            let working = out
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                .unwrap_or_default();
+            if working.trim().is_empty() {
+                self.toast("ai.explain_diff: no diff (nothing staged or modified)");
+                return;
+            }
+            (working, "working tree")
+        };
+        let diff = if diff.len() > 32_000 {
+            format!("{}\n…(diff truncated)…", &diff[..32_000])
+        } else {
+            diff
+        };
+        let prompt = format!(
+            "Walk through the following git diff and explain what it changes \
+             and why. Structure:\n\n## Summary\n<1-3 sentence overview>\n\n\
+             ## Per-file walkthrough\n<for each file: what changed + why \
+             you think the author did it>\n\n## Risks / questions\n<anything \
+             you'd flag in a code review>\n\nNo preamble, no code fences \
+             around the whole output. Be specific — quote actual lines from \
+             the diff to ground each claim.\n\n```diff\n{diff}\n```"
+        );
+        let (job_id, _sid, _cancel) = self.spawn_ai_job(prompt);
+        self.pending_explain_diff_job = Some(job_id);
+        self.toast(format!("ai.explain_diff: asking Claude ({label})…"));
     }
 
     /// `:ai.write_pr_description` — diff the current branch against

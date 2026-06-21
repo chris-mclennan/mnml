@@ -333,6 +333,42 @@ impl App {
         }
     }
 
+    /// `:browser.back` — `window.history.back()` via Runtime.evaluate.
+    /// CDP doesn't expose Page.goBack directly; runtime eval is the
+    /// portable path.
+    pub fn browser_back(&mut self) {
+        match self.active_browser_mut() {
+            Some(b) => b.eval_silent("window.history.back()"),
+            None => self.toast("browser.back: no browser pane focused"),
+        }
+    }
+
+    /// `:browser.forward` — `window.history.forward()` via Runtime.evaluate.
+    pub fn browser_forward(&mut self) {
+        match self.active_browser_mut() {
+            Some(b) => b.eval_silent("window.history.forward()"),
+            None => self.toast("browser.forward: no browser pane focused"),
+        }
+    }
+
+    /// `:browser.devtools` — open Chrome's devtools console at the
+    /// current page. We can't toggle DevTools directly via CDP
+    /// (it's a UI feature, not a protocol one), but Chrome supports
+    /// `devtools://devtools/bundled/devtools_app.html?wss=…` for
+    /// remote debugging. For now we just hand the user the URL of
+    /// the page's WS endpoint so they can attach via chrome://inspect.
+    pub fn browser_open_devtools_hint(&mut self) {
+        match self.active_browser_mut() {
+            Some(b) => {
+                let url = b.url.clone();
+                self.toast(format!(
+                    "open chrome://inspect → inspect target → {url}"
+                ));
+            }
+            None => self.toast("browser.devtools: no browser pane focused"),
+        }
+    }
+
     /// `:browser.copy_url` — copy the active browser pane's current
     /// URL to the system clipboard. Toasts when there's no browser
     /// pane focused.
